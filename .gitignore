@@ -142,14 +142,11 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-# Agents docs
-docs/
-
 # Node version
 .node-version
 
 # Package
 package.json
 
-# AGENTS
-AGENTS.md
+# Local Codex override
+AGENTS.override.md
