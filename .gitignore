@@ -151,5 +151,5 @@ docs/
 # Package
 package.json
 
-# AGENTS
-AGENTS.md
+# Local Codex override
+AGENTS.override.md
