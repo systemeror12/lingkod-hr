@@ -1,0 +1,1509 @@
+# Philippine Public-Sector HRIS MVP
+## Status Transition and Role-Permission Control Specification
+
+**Document status:** Draft for approval  
+**Source documents:**  
+- Philippine Public-Sector HRIS MVP BRD v1.0  
+- Philippine Public-Sector HRIS MVP Workflow Specification v1.0  
+
+**Primary implementation profile:** Civilian National Government Agency  
+**Version:** 1.0  
+**Date:** August 5, 2026  
+
+---
+
+# 1. Purpose
+
+This document defines the system controls that sit between the approved business workflows and the future data model.
+
+It specifies:
+
+1. valid entity statuses;
+2. allowed status transitions;
+3. actors authorized to perform each transition;
+4. required permissions;
+5. required validations;
+6. transition side effects;
+7. audit requirements;
+8. the baseline public-sector HRIS role and permission matrix.
+
+This document is intended to guide:
+
+- conceptual and logical ERD design;
+- API authorization;
+- workflow services;
+- user-interface actions;
+- audit-event design;
+- automated tests;
+- segregation-of-duties controls.
+
+---
+
+# 2. Control Principles
+
+The system shall follow these principles:
+
+1. Authentication establishes identity only; it does not automatically authorize an action.
+2. Every protected operation must validate agency membership.
+3. Every protected operation must validate role, permission, record scope, and workflow status.
+4. Status changes must occur through approved application services.
+5. Users may not directly assign arbitrary entity statuses.
+6. Every material transition must create an audit event.
+7. Historical records must remain traceable after correction.
+8. Finalized payroll, issued appointments, approved service records, and final performance ratings must not be edited directly.
+9. Sensitive permissions shall be assigned separately from general HR permissions.
+10. Payroll preparation, review, certification, approval, and disbursement may be separated.
+11. Plantilla occupancy must be validated before an appointment or personnel action takes effect.
+12. AI services may not bypass normal workflow, permission, and approval controls.
+13. Agency-specific rules may add restrictions but may not weaken mandatory security controls.
+14. Deactivated or suspended accounts may not perform protected actions.
+15. Every override requires an explicit reason and audit record.
+
+---
+
+# 3. Permission Naming Convention
+
+Permissions use this format:
+
+```text
+<domain>.<resource>.<action>
+```
+
+Examples:
+
+```text
+organization.units.read
+positions.items.create
+positions.items.authorize
+recruitment.applications.screen
+appointments.records.issue
+personnel.pds.update
+attendance.corrections.approve
+leave.credits.certify
+overtime.coc.award
+payroll.periods.finalize
+performance.ratings.approve
+security.users.deactivate
+audit.events.read
+```
+
+Scope suffixes may be enforced internally:
+
+```text
+own
+direct_reports
+assigned_office
+agency
+restricted
+```
+
+Examples:
+
+```text
+personnel.records.read:own
+personnel.records.read:direct_reports
+personnel.records.read:agency
+payroll.payslips.read:own
+```
+
+The permission string stored in the system may remain normalized while scope is represented separately.
+
+---
+
+# 4. Baseline Roles
+
+| Role | Purpose |
+|---|---|
+| Agency Administrator | Manages agency setup, accounts, roles, and technical configuration |
+| HRMO Administrator | Broad HR management excluding unrestricted payroll and system administration |
+| Plantilla Officer | Manages authorized positions and position history |
+| Recruitment Officer | Manages vacancies, applicants, screening, and selection administration |
+| HRMPSB Member | Evaluates applicants and records board recommendations |
+| Appointing Authority | Approves or signs appointments and designated personnel actions |
+| Personnel Records Officer | Maintains PDS, documents, service records, and personnel actions |
+| Attendance Administrator | Manages schedules, attendance periods, exceptions, and DTR |
+| Leave Administrator | Maintains leave policies, balances, certifications, and leave records |
+| Supervisor | Manages direct reports, approvals, attendance review, and performance evaluation |
+| Employee | Uses employee self-service functions |
+| Payroll Preparer | Builds payroll, resolves inputs, and performs calculations |
+| HR Certifying Officer | Certifies personnel, attendance, and HR payroll inputs |
+| Budget Officer | Validates funding, position authority, and personnel-services availability |
+| Accounting Reviewer | Reviews payroll accounting and deduction schedules |
+| Payroll Approver | Approves and finalizes payroll according to agency authority |
+| Cashier / Disbursing Officer | Processes approved payment outputs and disbursement status |
+| Performance Management Officer | Configures SPMS cycles and supports calibration |
+| Records Officer | Controls official records, retention, and certified document releases |
+| Internal Auditor / COA Auditor | Reads authorized records and audit evidence without operational editing |
+| Data Protection Officer | Reviews privacy controls, access, retention, and incidents |
+| Security Administrator | Manages high-risk security settings, session revocation, and security events |
+| AI Feature Administrator | Enables agency-approved AI capabilities and model policies |
+
+A user may hold more than one role only where agency policy permits it.
+
+---
+
+# 5. Status Transition Matrix
+
+## 5.1 User Account
+
+Statuses:
+
+```text
+INVITED
+ACTIVE
+LOCKED
+SUSPENDED
+DEACTIVATED
+```
+
+| Current | Action | Next | Primary actor | Required permission | Validations | Side effects and audit |
+|---|---|---|---|---|---|---|
+| None | Invite user | INVITED | Agency Administrator | `security.users.invite` | Valid email; agency exists; role assignment permitted | Create invitation; send email; audit invitation |
+| INVITED | Accept invitation | ACTIVE | Invited user | Public invitation flow | Token valid, unused, unexpired; email verified | Create credentials; activate membership; audit activation |
+| INVITED | Resend invitation | INVITED | Agency Administrator | `security.users.invite` | Existing invitation pending; resend limit | Replace or renew token; audit resend |
+| INVITED | Cancel invitation | DEACTIVATED | Agency Administrator | `security.users.deactivate` | Invitation not accepted | Invalidate token; audit cancellation |
+| ACTIVE | Lock account | LOCKED | Security Administrator / System | `security.users.lock` | Security rule or authorized action | Revoke sessions; audit lock |
+| LOCKED | Unlock account | ACTIVE | Security Administrator | `security.users.unlock` | Identity or security review completed | Revoke old sessions; audit unlock |
+| ACTIVE | Suspend account | SUSPENDED | Agency Administrator / Security Administrator | `security.users.suspend` | Reason required | Revoke sessions; deny access; audit suspension |
+| SUSPENDED | Reactivate account | ACTIVE | Agency Administrator / Security Administrator | `security.users.reactivate` | Reason and review required | Restore membership access; audit reactivation |
+| ACTIVE | Deactivate account | DEACTIVATED | Agency Administrator | `security.users.deactivate` | Separation or administrative basis | Revoke sessions; preserve history; audit deactivation |
+| SUSPENDED | Deactivate account | DEACTIVATED | Agency Administrator | `security.users.deactivate` | Reason required | Revoke sessions; preserve history |
+| DEACTIVATED | Reactivate account | ACTIVE | Agency Administrator / Security Administrator | `security.users.reactivate` | Valid agency membership; no policy restriction | Reissue access; audit exceptional reactivation |
+
+Invalid examples:
+
+```text
+DEACTIVATED → successful login
+INVITED → protected dashboard without activation
+SUSPENDED → password reset that silently restores access
+```
+
+---
+
+## 5.2 Organization Unit
+
+Statuses:
+
+```text
+DRAFT
+ACTIVE
+INACTIVE
+ABOLISHED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create unit | DRAFT | Agency Administrator / HRMO | `organization.units.create` | Parent unit and effective date valid | Create draft history |
+| DRAFT | Activate | ACTIVE | Agency Administrator / HRMO | `organization.units.activate` | Code and hierarchy valid | Unit becomes assignable |
+| ACTIVE | Rename or reorganize | ACTIVE | HRMO Administrator | `organization.units.update` | Effective date; no hierarchy cycle | Create history version |
+| ACTIVE | Inactivate | INACTIVE | HRMO Administrator | `organization.units.inactivate` | No active required assignments or migration plan exists | Prevent new assignments |
+| INACTIVE | Reactivate | ACTIVE | HRMO Administrator | `organization.units.activate` | Valid authority and hierarchy | Restore assignment availability |
+| ACTIVE | Abolish | ABOLISHED | Agency Administrator / HRMO | `organization.units.abolish` | Legal or administrative authority; effective date | Close assignments; preserve history |
+| INACTIVE | Abolish | ABOLISHED | Agency Administrator / HRMO | `organization.units.abolish` | Authority required | Preserve history |
+
+---
+
+## 5.3 Plantilla Position
+
+Statuses:
+
+```text
+PROPOSED
+AUTHORIZED
+VACANT
+RESERVED
+OCCUPIED
+FROZEN
+ABOLISHED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects and audit |
+|---|---|---|---|---|---|---|
+| None | Create proposed item | PROPOSED | Plantilla Officer | `positions.items.create` | Item number format; unit exists | Create position history |
+| PROPOSED | Authorize item | AUTHORIZED | HRMO / Budget Officer | `positions.items.authorize` | Supporting authority; grade; funding; QS | Mark authorized; audit authority |
+| AUTHORIZED | Declare vacant | VACANT | Plantilla Officer | `positions.items.declare_vacant` | No active incumbent | Enable request-to-fill |
+| VACANT | Reserve for appointment | RESERVED | Personnel Records Officer | `positions.items.reserve` | Selected applicant; no conflicting reservation | Block other occupancy actions |
+| RESERVED | Release reservation | VACANT | Personnel Records Officer | `positions.items.release_reservation` | Appointment cancelled, returned, or expired | Remove reservation |
+| RESERVED | Occupy position | OCCUPIED | Personnel Records Officer | `positions.items.occupy` | Issued appointment; assumption recorded | Create incumbency; start service segment |
+| OCCUPIED | Vacate position | VACANT | Personnel Records Officer | `positions.items.vacate` | Separation or movement effective | Close incumbency; allow request-to-fill |
+| VACANT | Freeze | FROZEN | HRMO / Budget Officer | `positions.items.freeze` | Authority and reason | Prevent request-to-fill |
+| AUTHORIZED | Freeze | FROZEN | HRMO / Budget Officer | `positions.items.freeze` | Authority and reason | Prevent occupancy |
+| FROZEN | Unfreeze | VACANT | HRMO / Budget Officer | `positions.items.unfreeze` | No incumbent; authority | Restore vacancy |
+| OCCUPIED | Freeze item after incumbent leaves | FROZEN | HRMO / Budget Officer | `positions.items.freeze` | Future-effective action; incumbent exit scheduled | Freeze after vacancy |
+| PROPOSED | Cancel proposal | ABOLISHED | Plantilla Officer | `positions.items.cancel` | Reason required | Preserve unsuccessful proposal |
+| AUTHORIZED | Abolish | ABOLISHED | HRMO / Budget Officer | `positions.items.abolish` | Authority; no active incumbent or transition plan | Close position history |
+| VACANT | Abolish | ABOLISHED | HRMO / Budget Officer | `positions.items.abolish` | Authority required | Remove from recruitment scope |
+| OCCUPIED | Abolish future-effective | ABOLISHED | HRMO / Budget Officer | `positions.items.abolish` | Reorganization and incumbent treatment documented | Close occupancy and position on effectivity |
+
+Critical rule:
+
+```text
+VACANT → OCCUPIED
+```
+
+is permitted only through an issued appointment or approved personnel action with assumption/effectivity validation.
+
+---
+
+## 5.4 Request to Fill
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+FOR_REVIEW
+APPROVED
+REJECTED
+CANCELLED
+CLOSED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create request | DRAFT | Requesting Office / Recruitment Officer | `recruitment.requests.create` | Position is VACANT; office scope valid | Create request |
+| DRAFT | Submit | SUBMITTED | Requesting Office | `recruitment.requests.submit` | Required justification complete | Start review |
+| SUBMITTED | Begin review | FOR_REVIEW | Recruitment Officer / HRMO | `recruitment.requests.review` | Position still vacant and funded | Create review task |
+| FOR_REVIEW | Approve | APPROVED | Authorized HR / Agency Approver | `recruitment.requests.approve` | Authority, funding, and QS confirmed | Permit vacancy publication |
+| FOR_REVIEW | Reject | REJECTED | Authorized HR / Agency Approver | `recruitment.requests.reject` | Reason required | Notify requesting office |
+| DRAFT | Cancel | CANCELLED | Requesting Office | `recruitment.requests.cancel` | Not submitted | Close request |
+| SUBMITTED | Withdraw | CANCELLED | Requesting Office / HRMO | `recruitment.requests.cancel` | No active publication | Stop workflow |
+| APPROVED | Close after recruitment | CLOSED | Recruitment Officer | `recruitment.requests.close` | Vacancy filled or recruitment formally closed | Link result |
+
+---
+
+## 5.5 Vacancy Publication
+
+Statuses:
+
+```text
+DRAFT
+FOR_APPROVAL
+PUBLISHED
+CLOSED
+CANCELLED
+REPUBLISHED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Prepare publication | DRAFT | Recruitment Officer | `recruitment.vacancies.create` | Approved request to fill | Create publication draft |
+| DRAFT | Submit for approval | FOR_APPROVAL | Recruitment Officer | `recruitment.vacancies.submit` | Position details and dates complete | Start approval |
+| FOR_APPROVAL | Approve and publish | PUBLISHED | HRMO Approver | `recruitment.vacancies.publish` | Posting period and channels valid | Open applications; audit publication |
+| FOR_APPROVAL | Return | DRAFT | HRMO Approver | `recruitment.vacancies.return` | Comment required | Notify officer |
+| PUBLISHED | Close applications | CLOSED | Recruitment Officer / System | `recruitment.vacancies.close` | Closing date reached or authorized early closure | Stop normal submissions |
+| PUBLISHED | Cancel publication | CANCELLED | HRMO Administrator | `recruitment.vacancies.cancel` | Reason and authority required | Notify affected applicants |
+| CLOSED | Republish | REPUBLISHED | Recruitment Officer | `recruitment.vacancies.republish` | Approved basis; dates reset | Create linked new publication |
+
+---
+
+## 5.6 Application
+
+Statuses:
+
+```text
+RECEIVED
+INCOMPLETE
+QUALIFIED
+NOT_QUALIFIED
+FOR_ASSESSMENT
+FOR_INTERVIEW
+FOR_DELIBERATION
+RECOMMENDED
+NOT_RECOMMENDED
+SELECTED
+NOT_SELECTED
+WITHDRAWN
+CLOSED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Record application | RECEIVED | Recruitment Officer | `recruitment.applications.create` | Vacancy open or authorized late handling | Create applicant/application record |
+| RECEIVED | Mark incomplete | INCOMPLETE | Recruitment Officer | `recruitment.applications.screen` | Missing required evidence | Notify applicant where applicable |
+| INCOMPLETE | Complete application | RECEIVED | Recruitment Officer | `recruitment.applications.update` | Documents received before allowed cutoff | Reopen screening |
+| RECEIVED | Qualify | QUALIFIED | Recruitment Officer | `recruitment.applications.screen` | Minimum QS evidence satisfied | Permit assessment |
+| RECEIVED | Mark not qualified | NOT_QUALIFIED | Recruitment Officer / HRMO Reviewer | `recruitment.applications.disqualify` | Reason and QS comparison required | Audit basis |
+| QUALIFIED | Schedule assessment | FOR_ASSESSMENT | Recruitment Officer | `recruitment.assessments.manage` | Assessment plan exists | Create assessment |
+| FOR_ASSESSMENT | Schedule interview | FOR_INTERVIEW | Recruitment Officer | `recruitment.interviews.manage` | Required assessment complete | Create interview |
+| FOR_INTERVIEW | Send to board | FOR_DELIBERATION | Recruitment Officer | `recruitment.deliberations.submit` | Scores and evidence complete | Include in board packet |
+| FOR_DELIBERATION | Recommend | RECOMMENDED | HRMPSB Member / Board | `recruitment.deliberations.recommend` | Quorum and deliberation complete | Record recommendation |
+| FOR_DELIBERATION | Do not recommend | NOT_RECOMMENDED | HRMPSB Member / Board | `recruitment.deliberations.recommend` | Reason and board record | Audit board result |
+| RECOMMENDED | Select | SELECTED | Appointing Authority | `recruitment.selection.select` | Authority and recommendation available | Start appointment preparation |
+| RECOMMENDED | Not select | NOT_SELECTED | Appointing Authority | `recruitment.selection.decide` | Decision basis recorded | Close application |
+| Any open state | Withdraw | WITHDRAWN | Recruitment Officer | `recruitment.applications.withdraw` | Applicant withdrawal evidence | Stop evaluation |
+| NOT_QUALIFIED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
+| NOT_SELECTED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
+| SELECTED | Close after appointment | CLOSED | Recruitment Officer | `recruitment.applications.close` | Appointment workflow started or completed | Preserve recruitment history |
+
+AI may assist with summaries but may not execute `select`, `not select`, `qualify`, or `not qualified` as an autonomous final action.
+
+---
+
+## 5.7 Appointment
+
+Statuses:
+
+```text
+DRAFT
+FOR_REVIEW
+FOR_SIGNATURE
+ISSUED
+SUBMITTED
+RETURNED
+VALIDATED
+INVALIDATED
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Prepare appointment | DRAFT | Personnel Records Officer | `appointments.records.create` | Selected candidate; reserved position | Create appointment record |
+| DRAFT | Submit for review | FOR_REVIEW | Personnel Records Officer | `appointments.records.submit` | Required fields and documents complete | Start review |
+| FOR_REVIEW | Return for correction | DRAFT | HRMO Reviewer | `appointments.records.return` | Comment required | Notify preparer |
+| FOR_REVIEW | Endorse for signature | FOR_SIGNATURE | HRMO Reviewer | `appointments.records.endorse` | QS and selection validation passed | Route to authority |
+| FOR_SIGNATURE | Issue appointment | ISSUED | Appointing Authority | `appointments.records.issue` | Signature authority; position reserved | Lock issued version |
+| FOR_SIGNATURE | Reject or cancel | CANCELLED | Appointing Authority | `appointments.records.cancel` | Reason required | Release position reservation |
+| ISSUED | Record submission | SUBMITTED | Personnel Records Officer | `appointments.submissions.record` | Submission reference and date | Start external tracking |
+| SUBMITTED | Record return | RETURNED | Personnel Records Officer | `appointments.submissions.update` | Return basis documented | Create compliance task |
+| RETURNED | Resubmit | SUBMITTED | Personnel Records Officer | `appointments.submissions.record` | Deficiency resolved | Preserve submission history |
+| SUBMITTED | Record validation | VALIDATED | Personnel Records Officer / Authorized HR | `appointments.records.validate` | Official result evidence | Update appointment standing |
+| SUBMITTED | Record invalidation | INVALIDATED | Personnel Records Officer / Authorized HR | `appointments.records.invalidate` | Official basis required | Trigger personnel review |
+| ISSUED | Cancel before assumption | CANCELLED | Appointing Authority / HRMO | `appointments.records.cancel` | No active assumption or lawful cancellation basis | Release reservation |
+| RETURNED | Cancel | CANCELLED | HRMO / Appointing Authority | `appointments.records.cancel` | Decision basis | Release reservation |
+
+Issued and validated appointment versions are immutable; corrections require a linked amendment or replacement record.
+
+---
+
+## 5.8 Assumption to Duty
+
+Statuses:
+
+```text
+PENDING
+ASSUMED
+DID_NOT_ASSUME
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create pending assumption | PENDING | Personnel Records Officer | `appointments.assumption.create` | Appointment ISSUED | Reserve onboarding action |
+| PENDING | Record assumption | ASSUMED | Personnel Records Officer / Certifying Officer | `appointments.assumption.certify` | Oath and certification; actual date valid | Occupy position; create service segment; activate employee |
+| PENDING | Record failure to assume | DID_NOT_ASSUME | Personnel Records Officer | `appointments.assumption.fail` | Evidence and authority | Cancel onboarding; release reservation |
+| PENDING | Cancel assumption | CANCELLED | HRMO / Appointing Authority | `appointments.assumption.cancel` | Appointment cancellation | Release position |
+| ASSUMED | Correct date | ASSUMED | Personnel Records Officer / HRMO Approver | `appointments.assumption.correct` | Supporting evidence; no conflicting payroll | Create correction history; recalculate dependent dates |
+
+---
+
+## 5.9 Employee Service Status
+
+Statuses:
+
+```text
+PREBOARDING
+ACTIVE
+ON_EXTENDED_LEAVE
+SUSPENDED
+SEPARATED
+DECEASED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create preboarding employee | PREBOARDING | Personnel Records Officer | `personnel.employees.create` | Appointment preparation or direct authorized record | Create employee master |
+| PREBOARDING | Activate service | ACTIVE | Personnel Records Officer | `personnel.employees.activate` | Assumption completed; required setup | Include in HR and payroll scope |
+| ACTIVE | Record extended leave status | ON_EXTENDED_LEAVE | Leave Administrator / HRMO | `personnel.employees.change_status` | Approved leave basis | Adjust attendance and payroll scope |
+| ON_EXTENDED_LEAVE | Return to active | ACTIVE | HRMO | `personnel.employees.change_status` | Return-to-duty evidence | Restore normal scope |
+| ACTIVE | Suspend service status | SUSPENDED | HRMO / Authorized Authority | `personnel.employees.suspend` | Official basis and dates | Restrict work/payroll according to action |
+| SUSPENDED | Reinstate active status | ACTIVE | HRMO / Appointing Authority | `personnel.employees.reinstate` | Official reinstatement action | Create personnel action |
+| ACTIVE | Separate | SEPARATED | Personnel Records Officer / HRMO | `personnel.employees.separate` | Approved separation action | Close service; vacate position; stop future payroll |
+| SUSPENDED | Separate | SEPARATED | Personnel Records Officer / HRMO | `personnel.employees.separate` | Approved basis | Close service |
+| ACTIVE | Record death | DECEASED | Personnel Records Officer | `personnel.employees.record_death` | Official evidence | Close service and access |
+| Any nonfinal status | Correct classification | Same or valid target | HRMO Approver | `personnel.employees.correct_status` | Evidence; reason; effectivity | Preserve prior value |
+
+---
+
+## 5.10 Personnel Action
+
+Statuses:
+
+```text
+DRAFT
+FOR_REVIEW
+FOR_APPROVAL
+APPROVED
+EFFECTIVE
+RETURNED
+REJECTED
+CANCELLED
+SUPERSEDED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create action | DRAFT | Personnel Records Officer | `personnel.actions.create` | Employee and action type valid | Create draft |
+| DRAFT | Submit | FOR_REVIEW | Personnel Records Officer | `personnel.actions.submit` | Required authority and fields complete | Start HR review |
+| FOR_REVIEW | Return | RETURNED | HRMO Reviewer | `personnel.actions.return` | Comment required | Notify preparer |
+| RETURNED | Resubmit | FOR_REVIEW | Personnel Records Officer | `personnel.actions.submit` | Deficiency resolved | Preserve revisions |
+| FOR_REVIEW | Endorse | FOR_APPROVAL | HRMO Reviewer | `personnel.actions.endorse` | Position, QS, salary, and authority valid | Route approval |
+| FOR_APPROVAL | Approve | APPROVED | Appointing Authority / Authorized Approver | `personnel.actions.approve` | Signature authority | Lock approved version |
+| FOR_APPROVAL | Reject | REJECTED | Appointing Authority | `personnel.actions.reject` | Reason required | Stop action |
+| APPROVED | Take effect | EFFECTIVE | System / Personnel Records Officer | `personnel.actions.effectuate` | Effectivity reached; no conflict | Update service, position, salary, and history |
+| DRAFT | Cancel | CANCELLED | Personnel Records Officer | `personnel.actions.cancel` | Not approved | Close draft |
+| APPROVED | Cancel before effectivity | CANCELLED | Appointing Authority | `personnel.actions.cancel_approved` | Lawful basis; not effective | Preserve approval and cancellation |
+| EFFECTIVE | Supersede | SUPERSEDED | HRMO / Appointing Authority | `personnel.actions.supersede` | New valid action | Close prior action prospectively |
+
+---
+
+## 5.11 Attendance Day
+
+Statuses:
+
+```text
+PENDING
+CALCULATED
+EXCEPTION
+FOR_REVIEW
+APPROVED
+LOCKED
+ADJUSTED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create attendance day | PENDING | System | Internal | Employee and schedule valid | Initialize day |
+| PENDING | Calculate | CALCULATED | System / Attendance Administrator | `attendance.days.calculate` | Raw events and schedule available | Store computed values |
+| PENDING | Detect exception | EXCEPTION | System | Internal | Missing or inconsistent data | Create exception |
+| CALCULATED | Flag exception | EXCEPTION | Attendance Administrator | `attendance.days.flag` | Reason required | Create review task |
+| EXCEPTION | Submit for review | FOR_REVIEW | Employee / Attendance Administrator | `attendance.corrections.submit` | Correction or explanation exists | Start review |
+| FOR_REVIEW | Approve result | APPROVED | Supervisor / Attendance Administrator | `attendance.days.approve` | Correction reviewed | Publish approved result |
+| FOR_REVIEW | Reject correction | EXCEPTION | Supervisor / Attendance Administrator | `attendance.corrections.reject` | Reason required | Preserve original calculation |
+| CALCULATED | Approve result | APPROVED | Supervisor / Attendance Administrator | `attendance.days.approve` | No unresolved exception | Mark payroll-ready |
+| APPROVED | Lock period | LOCKED | Attendance Administrator / HR Certifying Officer | `attendance.periods.lock` | Period complete and certified | Prevent normal edits; publish payroll inputs |
+| LOCKED | Apply authorized adjustment | ADJUSTED | Attendance Administrator / Payroll Authorized User | `attendance.days.adjust_locked` | Adjustment approval; reason | Create linked adjustment, not overwrite |
+| ADJUSTED | Relock adjusted result | LOCKED | Attendance Administrator | `attendance.periods.lock` | Adjustment finalized | Publish correction input |
+
+---
+
+## 5.12 Attendance Correction
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+NEEDS_INFORMATION
+APPROVED
+REJECTED
+CANCELLED
+APPLIED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create request | DRAFT | Employee / Attendance Administrator | `attendance.corrections.create` | Employee owns record or admin scope | Save draft |
+| DRAFT | Submit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested values and reason complete | Notify approver |
+| SUBMITTED | Request information | NEEDS_INFORMATION | Supervisor / Attendance Administrator | `attendance.corrections.return` | Comment required | Notify employee |
+| NEEDS_INFORMATION | Resubmit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested evidence provided | Resume review |
+| SUBMITTED | Approve | APPROVED | Supervisor / Attendance Administrator | `attendance.corrections.approve` | Supporting evidence; no conflict | Create approved correction |
+| SUBMITTED | Reject | REJECTED | Supervisor / Attendance Administrator | `attendance.corrections.reject` | Reason required | Notify employee |
+| DRAFT | Cancel | CANCELLED | Employee | `attendance.corrections.cancel` | Not submitted | Close request |
+| SUBMITTED | Cancel | CANCELLED | Employee / Attendance Administrator | `attendance.corrections.cancel` | Not yet decided or authorized withdrawal | Stop approval |
+| APPROVED | Apply correction | APPLIED | System / Attendance Administrator | `attendance.corrections.apply` | Attendance period handling valid | Recalculate or create adjustment |
+
+---
+
+## 5.13 Leave Application
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+FOR_CERTIFICATION
+FOR_RECOMMENDATION
+FOR_APPROVAL
+APPROVED
+REJECTED
+NEEDS_INFORMATION
+CANCEL_REQUESTED
+CANCELLED
+POSTED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create application | DRAFT | Employee / Leave Administrator | `leave.applications.create` | Leave type available | Save draft |
+| DRAFT | Submit | SUBMITTED | Employee | `leave.applications.submit` | Required fields and attachments | Start workflow |
+| SUBMITTED | Send for credit certification | FOR_CERTIFICATION | System / Leave Administrator | `leave.applications.route` | Employee record valid | Reserve review task |
+| FOR_CERTIFICATION | Certify credits | FOR_RECOMMENDATION | Leave Administrator | `leave.credits.certify` | Ledger balance and eligibility checked | Store certification |
+| FOR_CERTIFICATION | Request information | NEEDS_INFORMATION | Leave Administrator | `leave.applications.return` | Comment required | Notify employee |
+| NEEDS_INFORMATION | Resubmit | SUBMITTED | Employee | `leave.applications.submit` | Missing data resolved | Restart route |
+| FOR_RECOMMENDATION | Recommend approval | FOR_APPROVAL | Supervisor | `leave.applications.recommend` | Service needs considered | Route approving official |
+| FOR_RECOMMENDATION | Recommend rejection | FOR_APPROVAL | Supervisor | `leave.applications.recommend` | Reason required | Route final decision |
+| FOR_APPROVAL | Approve | APPROVED | Authorized Approving Official | `leave.applications.approve` | Certification and recommendation available | Create pending ledger/payroll actions |
+| FOR_APPROVAL | Reject | REJECTED | Authorized Approving Official | `leave.applications.reject` | Reason required | Release reservation |
+| APPROVED | Post leave | POSTED | Leave Administrator / System | `leave.applications.post` | Dates valid; no conflicting posting | Create leave-ledger and attendance entries |
+| APPROVED | Request cancellation | CANCEL_REQUESTED | Employee | `leave.applications.request_cancel` | Policy and cutoff permit | Route cancellation |
+| POSTED | Request cancellation | CANCEL_REQUESTED | Employee / Leave Administrator | `leave.applications.request_cancel` | Reversal policy permits | Route cancellation and payroll review |
+| CANCEL_REQUESTED | Approve cancellation | CANCELLED | Authorized Approver | `leave.applications.cancel` | Reason and downstream effects checked | Reverse ledger/attendance/payroll prospectively |
+| CANCEL_REQUESTED | Reject cancellation | APPROVED or POSTED | Authorized Approver | `leave.applications.reject_cancel` | Reason required | Preserve leave |
+
+---
+
+## 5.14 Leave Monetization Request
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+FOR_VALIDATION
+FOR_APPROVAL
+APPROVED
+REJECTED
+POSTED_TO_PAYROLL
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create request | DRAFT | Employee / Leave Administrator | `leave.monetization.create` | Eligible leave account | Save request |
+| DRAFT | Submit | SUBMITTED | Employee | `leave.monetization.submit` | Required reason and amount | Route validation |
+| SUBMITTED | Validate eligibility | FOR_VALIDATION | Leave Administrator | `leave.monetization.validate` | Balance, limits, retention, rule version | Store result |
+| FOR_VALIDATION | Endorse | FOR_APPROVAL | Leave Administrator / Budget Officer | `leave.monetization.endorse` | Funding and eligibility valid | Route approval |
+| FOR_VALIDATION | Reject | REJECTED | Leave Administrator | `leave.monetization.reject` | Reason required | Notify employee |
+| FOR_APPROVAL | Approve | APPROVED | Agency Head / Authorized Approver | `leave.monetization.approve` | Authority and funding | Reserve leave credit |
+| FOR_APPROVAL | Reject | REJECTED | Agency Head / Authorized Approver | `leave.monetization.reject` | Reason required | Release reservation |
+| APPROVED | Post to payroll | POSTED_TO_PAYROLL | Leave Administrator / Payroll Preparer | `leave.monetization.post` | Payroll period open | Create ledger deduction and earning input |
+| DRAFT | Cancel | CANCELLED | Employee | `leave.monetization.cancel` | Not submitted | Close request |
+
+---
+
+## 5.15 Overtime Authority
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+FOR_REVIEW
+APPROVED
+REJECTED
+ACTIVE
+COMPLETED
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create authority | DRAFT | Supervisor / HRMO | `overtime.authorities.create` | Purpose, dates, employees, method | Save draft |
+| DRAFT | Submit | SUBMITTED | Supervisor | `overtime.authorities.submit` | Required details complete | Start review |
+| SUBMITTED | Review | FOR_REVIEW | HRMO / Budget Officer | `overtime.authorities.review` | Eligibility, necessity, funding | Create review result |
+| FOR_REVIEW | Approve | APPROVED | Authorized Approver | `overtime.authorities.approve` | Prior authority requirement satisfied | Authorize service |
+| FOR_REVIEW | Reject | REJECTED | Authorized Approver | `overtime.authorities.reject` | Reason required | Notify requester |
+| APPROVED | Activate on start date | ACTIVE | System | Internal | Effective date reached | Permit service records |
+| ACTIVE | Complete authority | COMPLETED | Supervisor / HRMO | `overtime.authorities.complete` | Service period ended | Start accomplishment validation |
+| DRAFT | Cancel | CANCELLED | Supervisor | `overtime.authorities.cancel` | Not submitted | Close |
+| APPROVED | Cancel before service | CANCELLED | Authorized Approver | `overtime.authorities.cancel` | No rendered service or documented treatment | Stop authority |
+
+---
+
+## 5.16 Overtime Service Record
+
+Statuses:
+
+```text
+PENDING
+RENDERED
+FOR_CERTIFICATION
+CERTIFIED
+NOT_CERTIFIED
+FOR_COMPENSATION
+COMPENSATED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create expected record | PENDING | System / Supervisor | `overtime.service.create` | Approved authority | Initialize |
+| PENDING | Record service | RENDERED | Employee / Supervisor | `overtime.service.record` | Actual attendance/accomplishment | Store claimed hours |
+| RENDERED | Submit certification | FOR_CERTIFICATION | Employee / Supervisor | `overtime.service.submit` | Evidence complete | Route supervisor |
+| FOR_CERTIFICATION | Certify | CERTIFIED | Supervisor / Authorized Certifier | `overtime.service.certify` | Hours and accomplishment validated | Permit compensation |
+| FOR_CERTIFICATION | Decline certification | NOT_CERTIFIED | Supervisor | `overtime.service.reject` | Reason required | Exclude compensation |
+| CERTIFIED | Determine compensation | FOR_COMPENSATION | HRMO / Budget Officer | `overtime.compensation.determine` | Rule, funding, employee category | Select OT pay, COC, or none |
+| FOR_COMPENSATION | Post compensation | COMPENSATED | HRMO / Payroll Preparer | `overtime.compensation.post` | Approved method | Create payroll input or COC ledger credit |
+
+---
+
+## 5.17 COC Ledger Entry
+
+Entry types:
+
+```text
+EARNED
+USED
+ADJUSTMENT
+EXPIRATION
+REVERSAL
+```
+
+COC entries are immutable. Corrections shall create adjusting or reversing entries.
+
+| Action | Actor | Permission | Validation | Side effect |
+|---|---|---|---|---|
+| Post earned COC | Leave/Overtime Administrator | `overtime.coc.award` | Certified service and approved method | Increase balance |
+| Post CTO usage | Leave Administrator / System | `overtime.coc.use` | Approved CTO request and sufficient balance | Decrease balance |
+| Adjust COC | HRMO Approver | `overtime.coc.adjust` | Reason and supporting authority | Create adjustment entry |
+| Expire COC | System / HRMO | `overtime.coc.expire` | Effective rule version | Decrease balance |
+| Reverse incorrect entry | HRMO Approver | `overtime.coc.reverse` | Original entry identified | Create linked reversal |
+
+---
+
+## 5.18 CTO Request
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+FOR_RECOMMENDATION
+FOR_APPROVAL
+APPROVED
+REJECTED
+POSTED
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create request | DRAFT | Employee | `overtime.cto.create` | COC account exists | Save |
+| DRAFT | Submit | SUBMITTED | Employee | `overtime.cto.submit` | Requested units valid | Start review |
+| SUBMITTED | Recommend | FOR_APPROVAL | Supervisor | `overtime.cto.recommend` | Service needs and balance | Route approval |
+| SUBMITTED | Return | DRAFT | Supervisor | `overtime.cto.return` | Comment required | Notify employee |
+| FOR_APPROVAL | Approve | APPROVED | Authorized Approver | `overtime.cto.approve` | Available COC | Reserve units |
+| FOR_APPROVAL | Reject | REJECTED | Authorized Approver | `overtime.cto.reject` | Reason required | Release reservation |
+| APPROVED | Post usage | POSTED | Leave Administrator / System | `overtime.cto.post` | Date reached; attendance valid | Create COC usage and attendance entry |
+| DRAFT | Cancel | CANCELLED | Employee | `overtime.cto.cancel` | Not submitted | Close |
+| APPROVED | Cancel before use | CANCELLED | Authorized Approver | `overtime.cto.cancel` | Policy permits | Release reservation |
+
+---
+
+## 5.19 Payroll Period
+
+Statuses:
+
+```text
+DRAFT
+CALCULATING
+FOR_REVIEW
+CERTIFIED
+APPROVED
+FINALIZED
+VOIDED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects and audit |
+|---|---|---|---|---|---|---|
+| None | Create period | DRAFT | Payroll Preparer | `payroll.periods.create` | No duplicate profile/period | Create period |
+| DRAFT | Start calculation | CALCULATING | Payroll Preparer | `payroll.periods.calculate` | Rule snapshot; source cutoff complete | Queue calculation |
+| CALCULATING | Complete calculation | FOR_REVIEW | System | Internal | No technical failure; results stored | Run validations |
+| CALCULATING | Return on failure | DRAFT | System / Payroll Preparer | `payroll.periods.reopen` | Failure or blocking setup issue | Record failure |
+| FOR_REVIEW | Return for correction | DRAFT | Accounting Reviewer / HR Certifier | `payroll.periods.return` | Review comment required | Unlock permitted inputs |
+| FOR_REVIEW | Certify HR inputs | CERTIFIED | HR Certifying Officer | `payroll.periods.certify` | Personnel, attendance, and leave checks complete | Lock certified version |
+| CERTIFIED | Revoke certification | FOR_REVIEW | HR Certifying Officer / Authorized Approver | `payroll.periods.revoke_certification` | Reason and no finalization | Audit revocation |
+| CERTIFIED | Approve payroll | APPROVED | Payroll Approver | `payroll.periods.approve` | Review, budget, and accounting controls satisfied | Lock approval version |
+| APPROVED | Return before finalization | FOR_REVIEW | Payroll Approver | `payroll.periods.return_approved` | Reason; no payment release | Reopen controlled review |
+| APPROVED | Finalize payroll | FINALIZED | Payroll Approver | `payroll.periods.finalize` | Approved version unchanged; segregation satisfied | Immutable lines; generate outputs |
+| FINALIZED | Void payroll | VOIDED | Payroll Approver / Agency Authority | `payroll.periods.void` | Formal correction case and authority | Preserve original; create replacement path |
+
+Invalid examples:
+
+```text
+DRAFT → FINALIZED
+FOR_REVIEW → FINALIZED
+FINALIZED → DRAFT
+```
+
+---
+
+## 5.20 Payslip
+
+Statuses:
+
+```text
+GENERATING
+READY
+RELEASED
+WITHHELD
+SUPERSEDED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Generate | GENERATING | System | Internal | Payroll FINALIZED | Queue PDF |
+| GENERATING | Mark ready | READY | System | Internal | File generated and secured | Store document |
+| READY | Release | RELEASED | Payroll Approver / System | `payroll.payslips.release` | Release policy satisfied | Notify employee |
+| READY | Withhold release | WITHHELD | Payroll Approver | `payroll.payslips.withhold` | Authorized reason | Prevent employee access |
+| WITHHELD | Release | RELEASED | Payroll Approver | `payroll.payslips.release` | Issue resolved | Notify employee |
+| RELEASED | Supersede | SUPERSEDED | Payroll Approver | `payroll.payslips.supersede` | Replacement payroll exists | Keep historical access according to policy |
+
+---
+
+## 5.21 Performance Cycle
+
+Statuses:
+
+```text
+DRAFT
+PLANNING
+ACTIVE
+MIDYEAR_REVIEW
+RATING
+CALIBRATION
+FINALIZED
+CLOSED
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create cycle | DRAFT | Performance Management Officer | `performance.cycles.create` | Period and policy version | Create cycle |
+| DRAFT | Open planning | PLANNING | Performance Management Officer | `performance.cycles.open_planning` | Organizational goals available | Permit commitments |
+| PLANNING | Activate cycle | ACTIVE | Performance Management Officer | `performance.cycles.activate` | Required commitments approved | Start monitoring |
+| ACTIVE | Open midyear review | MIDYEAR_REVIEW | Performance Management Officer | `performance.cycles.open_review` | Review date reached | Permit target review |
+| MIDYEAR_REVIEW | Resume active cycle | ACTIVE | Performance Management Officer | `performance.cycles.resume` | Reviews completed | Continue monitoring |
+| ACTIVE | Open rating | RATING | Performance Management Officer | `performance.cycles.open_rating` | Period ended | Permit assessments |
+| RATING | Begin calibration | CALIBRATION | Performance Management Officer | `performance.cycles.calibrate` | Required ratings submitted | Create calibration tasks |
+| CALIBRATION | Finalize cycle | FINALIZED | Authorized Performance Approver | `performance.cycles.finalize` | Ratings approved and signed | Lock final ratings |
+| FINALIZED | Close | CLOSED | Performance Management Officer | `performance.cycles.close` | Reports generated | Archive cycle |
+| DRAFT | Cancel | CANCELLED | Performance Management Officer | `performance.cycles.cancel` | No active commitments | Close draft |
+
+---
+
+## 5.22 Individual Performance Commitment
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+APPROVED
+RETURNED
+ACTIVE
+FOR_RATING
+RATED
+FINALIZED
+AMENDED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create commitment | DRAFT | Employee / Supervisor | `performance.commitments.create` | Active planning cycle | Save targets |
+| DRAFT | Submit | SUBMITTED | Employee | `performance.commitments.submit` | Required indicators complete | Notify supervisor |
+| SUBMITTED | Approve | APPROVED | Supervisor | `performance.commitments.approve` | Targets aligned and measurable | Lock approved plan |
+| SUBMITTED | Return | RETURNED | Supervisor | `performance.commitments.return` | Comment required | Notify employee |
+| RETURNED | Resubmit | SUBMITTED | Employee | `performance.commitments.submit` | Revisions complete | Resume review |
+| APPROVED | Activate | ACTIVE | System | Internal | Cycle ACTIVE | Permit accomplishments |
+| ACTIVE | Submit for rating | FOR_RATING | Employee / System | `performance.commitments.submit_rating` | Rating period open | Freeze normal edits |
+| FOR_RATING | Record supervisor rating | RATED | Supervisor | `performance.ratings.evaluate` | Evidence and rating complete | Route review/calibration |
+| RATED | Finalize rating | FINALIZED | Authorized Approver | `performance.ratings.approve` | Calibration and sign-off complete | Lock rating |
+| APPROVED | Amend target | AMENDED | Employee / Supervisor | `performance.commitments.amend` | Approved midcycle basis | Preserve original plan |
+| AMENDED | Approve amendment | ACTIVE | Supervisor | `performance.commitments.approve_amendment` | Revised targets valid | Activate new version |
+
+---
+
+## 5.23 Separation Case
+
+Statuses:
+
+```text
+DRAFT
+SUBMITTED
+FOR_REVIEW
+APPROVED
+CLEARANCE_IN_PROGRESS
+CLEARED
+EFFECTIVE
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create separation case | DRAFT | Employee / Personnel Records Officer | `personnel.separations.create` | Employee active or suspended | Save case |
+| DRAFT | Submit | SUBMITTED | Employee / Personnel Records Officer | `personnel.separations.submit` | Required basis and date | Start review |
+| SUBMITTED | Review | FOR_REVIEW | HRMO | `personnel.separations.review` | Authority and notice requirements | Create review |
+| FOR_REVIEW | Approve | APPROVED | Appointing Authority / Authorized Approver | `personnel.separations.approve` | Acceptance or legal basis | Create clearance workflow |
+| FOR_REVIEW | Reject or return | DRAFT | HRMO / Appointing Authority | `personnel.separations.return` | Reason required | Notify initiator |
+| APPROVED | Start clearance | CLEARANCE_IN_PROGRESS | Personnel Records Officer | `personnel.clearance.start` | Clearance offices configured | Create tasks |
+| CLEARANCE_IN_PROGRESS | Complete clearance | CLEARED | Personnel Records Officer | `personnel.clearance.complete` | Required offices complete or approved exception | Permit effectuation |
+| CLEARED | Effect separation | EFFECTIVE | Personnel Records Officer / System | `personnel.separations.effectuate` | Effectivity reached | Close service, vacate position, revoke access |
+| DRAFT | Cancel | CANCELLED | Initiator / HRMO | `personnel.separations.cancel` | Not approved | Close case |
+| APPROVED | Cancel before effectivity | CANCELLED | Appointing Authority | `personnel.separations.cancel_approved` | Lawful basis | Stop separation and clearance |
+
+---
+
+## 5.24 Clearance Task
+
+Statuses:
+
+```text
+PENDING
+IN_PROGRESS
+CLEARED
+WITH_ACCOUNTABILITY
+WAIVED
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create task | PENDING | System / Records Officer | `personnel.clearance.manage` | Separation approved | Assign office |
+| PENDING | Start review | IN_PROGRESS | Assigned Clearing Officer | `personnel.clearance.review` | Officer scope | Record review |
+| IN_PROGRESS | Clear employee | CLEARED | Assigned Clearing Officer | `personnel.clearance.clear` | No outstanding accountability | Sign task |
+| IN_PROGRESS | Record accountability | WITH_ACCOUNTABILITY | Assigned Clearing Officer | `personnel.clearance.record_accountability` | Details and amount/item required | Block overall clearance |
+| WITH_ACCOUNTABILITY | Resolve and clear | CLEARED | Assigned Clearing Officer | `personnel.clearance.clear` | Resolution evidence | Remove blocker |
+| WITH_ACCOUNTABILITY | Waive | WAIVED | Authorized Agency Approver | `personnel.clearance.waive` | Legal and policy authority | Permit overall clearance |
+| PENDING | Cancel task | CANCELLED | Personnel Records Officer | `personnel.clearance.manage` | Separation cancelled | Close task |
+
+---
+
+## 5.25 Approval Request
+
+Statuses:
+
+```text
+PENDING
+IN_PROGRESS
+APPROVED
+REJECTED
+RETURNED
+CANCELLED
+EXPIRED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create approval request | PENDING | System | Internal | Workflow route resolved | Create steps |
+| PENDING | Activate first step | IN_PROGRESS | System | Internal | Approver available | Notify approver |
+| IN_PROGRESS | Approve current step | IN_PROGRESS or APPROVED | Assigned Approver | Domain-specific approval permission | Approver is assigned/delegated | Advance step or complete |
+| IN_PROGRESS | Reject | REJECTED | Assigned Approver | Domain-specific rejection permission | Reason required | Stop workflow |
+| IN_PROGRESS | Return | RETURNED | Assigned Approver | Domain-specific return permission | Comment required | Return source record |
+| RETURNED | Resubmit | IN_PROGRESS | Requester | Domain-specific submit permission | Source corrected | Rebuild or resume route |
+| PENDING | Cancel | CANCELLED | Requester / Workflow Owner | Domain-specific cancel permission | No completed binding decision | Stop workflow |
+| PENDING or IN_PROGRESS | Expire | EXPIRED | System | Internal | Deadline exceeded under policy | Notify owner |
+
+---
+
+## 5.26 Official Document
+
+Statuses:
+
+```text
+DRAFT
+FOR_REVIEW
+APPROVED
+ISSUED
+ARCHIVED
+SUPERSEDED
+VOIDED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create document | DRAFT | Authorized Domain User | `documents.records.create` | Entity and template valid | Create version |
+| DRAFT | Submit review | FOR_REVIEW | Document Creator | `documents.records.submit` | Required fields complete | Route review |
+| FOR_REVIEW | Approve | APPROVED | Authorized Reviewer | `documents.records.approve` | Content and authority valid | Lock approved version |
+| APPROVED | Issue | ISSUED | Authorized Signatory / Records Officer | `documents.records.issue` | Signature and issue metadata | Create official copy |
+| ISSUED | Archive | ARCHIVED | Records Officer | `documents.records.archive` | Retention classification | Move to archive state |
+| ISSUED | Supersede | SUPERSEDED | Authorized Domain User | `documents.records.supersede` | Replacement document exists | Link versions |
+| ISSUED | Void | VOIDED | Authorized Signatory / Records Officer | `documents.records.void` | Formal reason and authority | Preserve document and mark invalid |
+
+---
+
+## 5.27 AI Request
+
+Statuses:
+
+```text
+CREATED
+PROCESSING
+VALIDATED
+NEEDS_REVIEW
+ACCEPTED
+REJECTED
+FAILED
+CANCELLED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+|---|---|---|---|---|---|---|
+| None | Create request | CREATED | Authorized User | Domain AI permission | Feature enabled; minimum data | Store request metadata |
+| CREATED | Start processing | PROCESSING | System | Internal | Provider available | Send controlled request |
+| PROCESSING | Validate output | VALIDATED | System | Internal | Schema and policy checks | Store safe draft |
+| VALIDATED | Present for review | NEEDS_REVIEW | System | Internal | User session active | Display recommendation |
+| NEEDS_REVIEW | Accept | ACCEPTED | User | Domain AI permission | Human confirmation | Send through normal workflow |
+| NEEDS_REVIEW | Reject | REJECTED | User | Domain AI permission | Optional reason | Discard authoritative effect |
+| PROCESSING | Fail | FAILED | System | Internal | Provider or validation error | Log safe failure |
+| CREATED | Cancel | CANCELLED | User | Domain AI permission | Not processing or provider cancellation supported | Stop request |
+
+AI acceptance does not authorize the downstream business action. Normal domain permissions and approvals remain mandatory.
+
+---
+
+# 6. Role and Permission Matrix
+
+Legend:
+
+| Symbol | Meaning |
+|---|---|
+| A | Allowed by baseline role |
+| S | Allowed only within assigned office or direct-report scope |
+| O | Own-record access only |
+| R | Read-only |
+| C | Conditional or agency-configurable |
+| — | Not included in baseline role |
+
+Roles may be customized, but high-risk combinations must be reviewed.
+
+---
+
+## 6.1 Identity and Security
+
+| Permission | Agency Admin | HRMO Admin | Supervisor | Employee | Security Admin | DPO | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `security.users.read` | A | R | S | O | A | R | R |
+| `security.users.invite` | A | C | — | — | A | — | — |
+| `security.users.update_roles` | A | — | — | — | A | — | — |
+| `security.users.suspend` | A | C | — | — | A | — | — |
+| `security.users.deactivate` | A | C | — | — | A | — | — |
+| `security.users.reactivate` | A | — | — | — | A | — | — |
+| `security.sessions.revoke` | A | — | — | — | A | C | — |
+| `security.events.read` | A | — | — | — | A | A | R |
+| `security.mfa.manage_policy` | A | — | — | — | A | C | — |
+| `security.permissions.manage` | A | — | — | — | A | — | — |
+
+Controls:
+
+- Agency Administrator and Security Administrator should be separate where staffing permits.
+- A user should not approve their own elevated role assignment.
+- Security-event logs are read-only to auditors and DPO users.
+
+---
+
+## 6.2 Agency Organization
+
+| Permission | Agency Admin | HRMO Admin | Plantilla Officer | Budget Officer | Supervisor | Employee | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `organization.agency.read` | A | A | R | R | R | R | R |
+| `organization.agency.update` | A | C | — | — | — | — | — |
+| `organization.units.read` | A | A | A | A | S | R | R |
+| `organization.units.create` | A | A | C | — | — | — | — |
+| `organization.units.update` | A | A | C | — | — | — | — |
+| `organization.units.inactivate` | A | A | — | — | — | — | — |
+| `organization.policies.read` | A | A | R | R | R | R | R |
+| `organization.policies.manage` | A | A | C | C | — | — | — |
+
+---
+
+## 6.3 Plantilla and Position Control
+
+| Permission | HRMO Admin | Plantilla Officer | Budget Officer | Recruitment Officer | Personnel Officer | Appointing Authority | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `positions.items.read` | A | A | A | R | R | R | R |
+| `positions.items.create` | C | A | C | — | — | — | — |
+| `positions.items.update` | C | A | C | — | — | — | — |
+| `positions.items.authorize` | C | C | A | — | — | C | — |
+| `positions.items.declare_vacant` | A | A | C | — | C | — | — |
+| `positions.items.freeze` | C | A | A | — | — | — | — |
+| `positions.items.reserve` | C | C | — | — | A | — | — |
+| `positions.items.occupy` | C | C | — | — | A | — | — |
+| `positions.items.vacate` | C | C | — | — | A | — | — |
+| `positions.items.abolish` | C | C | A | — | — | C | — |
+| `positions.history.read` | A | A | A | R | A | R | R |
+| `positions.qs.manage` | A | A | C | C | R | — | R |
+
+---
+
+## 6.4 Recruitment and Merit Selection
+
+| Permission | HRMO Admin | Recruitment Officer | HRMPSB Member | Supervisor | Appointing Authority | Records Officer | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `recruitment.requests.create` | A | A | — | S | — | — | — |
+| `recruitment.requests.review` | A | A | — | — | — | — | R |
+| `recruitment.requests.approve` | A | C | — | — | C | — | — |
+| `recruitment.vacancies.create` | A | A | — | — | — | — | — |
+| `recruitment.vacancies.publish` | A | C | — | — | — | — | — |
+| `recruitment.applications.read` | A | A | C | C | C | — | R |
+| `recruitment.applications.create` | A | A | — | — | — | — | — |
+| `recruitment.applications.screen` | A | A | R | — | — | — | — |
+| `recruitment.assessments.manage` | A | A | C | C | — | — | — |
+| `recruitment.interviews.manage` | A | A | C | C | — | — | — |
+| `recruitment.deliberations.read` | A | C | A | — | C | — | R |
+| `recruitment.deliberations.recommend` | — | — | A | — | — | — | — |
+| `recruitment.selection.select` | — | — | — | — | A | — | — |
+| `recruitment.selection.decide` | — | — | — | — | A | — | — |
+| `recruitment.reports.read` | A | A | R | S | R | — | R |
+
+HRMPSB Member access should be limited to assigned vacancies and deliberation periods.
+
+---
+
+## 6.5 Appointment and Assumption
+
+| Permission | HRMO Admin | Personnel Officer | Appointing Authority | Records Officer | Budget Officer | Auditor |
+|---|---:|---:|---:|---:|---:|---:|
+| `appointments.records.read` | A | A | R | R | R | R |
+| `appointments.records.create` | C | A | — | — | — | — |
+| `appointments.records.submit` | C | A | — | — | — | — |
+| `appointments.records.review` | A | C | — | — | C | — |
+| `appointments.records.endorse` | A | C | — | — | — | — |
+| `appointments.records.issue` | — | — | A | — | — | — |
+| `appointments.records.cancel` | C | C | A | — | — | — |
+| `appointments.submissions.record` | C | A | — | C | — | — |
+| `appointments.records.validate` | A | A | — | C | — | — |
+| `appointments.records.invalidate` | A | A | — | C | — | — |
+| `appointments.assumption.create` | C | A | — | — | — | — |
+| `appointments.assumption.certify` | C | A | C | — | — | — |
+| `appointments.assumption.correct` | A | C | C | — | — | — |
+
+---
+
+## 6.6 Personnel Records and PDS
+
+| Permission | HRMO Admin | Personnel Officer | Supervisor | Employee | Payroll Preparer | Records Officer | DPO | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `personnel.records.read` | A | A | S | O | C | C | R | R |
+| `personnel.records.create` | C | A | — | — | — | — | — | — |
+| `personnel.records.update` | C | A | — | O/C | — | — | — | — |
+| `personnel.pds.read` | A | A | C | O | — | C | R | R |
+| `personnel.pds.update` | C | A | — | O/C | — | — | — | — |
+| `personnel.pds.certify` | A | A | — | O | — | — | — | — |
+| `personnel.documents.read` | A | A | C | O | C | A | R | R |
+| `personnel.documents.upload` | A | A | — | O | — | C | — | — |
+| `personnel.documents.classify` | C | A | — | — | — | A | C | — |
+| `personnel.service_record.read` | A | A | C | O | C | A | R | R |
+| `personnel.service_record.generate` | A | A | — | — | — | C | — | — |
+| `personnel.actions.create` | A | A | — | — | — | — | — | — |
+| `personnel.actions.review` | A | C | — | — | — | — | — | R |
+| `personnel.actions.approve` | C | — | — | — | — | — | — | — |
+| `personnel.saln_compliance.read` | A | C | — | O | — | C | R | R |
+| `personnel.saln_compliance.update` | C | A | — | O/C | — | C | — | — |
+
+Sensitive PDS fields require field-level authorization even when the role has general read access.
+
+---
+
+## 6.7 Attendance and DTR
+
+| Permission | Attendance Admin | HRMO Admin | Supervisor | Employee | HR Certifier | Payroll Preparer | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `attendance.events.create_manual` | A | C | C | — | — | — | — |
+| `attendance.events.clock` | — | — | O | O | — | — | — |
+| `attendance.events.read` | A | A | S | O | A | R | R |
+| `attendance.days.calculate` | A | C | — | — | — | — | — |
+| `attendance.days.read` | A | A | S | O | A | R | R |
+| `attendance.days.approve` | A | C | S | — | C | — | — |
+| `attendance.corrections.create` | A | C | S | O | — | — | — |
+| `attendance.corrections.submit` | A | C | S | O | — | — | — |
+| `attendance.corrections.approve` | A | C | S | — | C | — | — |
+| `attendance.corrections.reject` | A | C | S | — | C | — | — |
+| `attendance.periods.lock` | A | C | — | — | A | — | — |
+| `attendance.periods.reopen` | A | A | — | — | C | — | — |
+| `attendance.dtr.generate` | A | A | S | O | A | R | R |
+| `attendance.reports.read` | A | A | S | O/C | A | R | R |
+
+---
+
+## 6.8 Leave Administration
+
+| Permission | Leave Admin | HRMO Admin | Supervisor | Employee | Approving Official | Payroll Preparer | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `leave.types.read` | A | A | R | R | R | R | R |
+| `leave.types.manage` | A | A | — | — | — | — | — |
+| `leave.accounts.read` | A | A | S | O | C | R | R |
+| `leave.credits.certify` | A | C | — | — | — | — | — |
+| `leave.credits.adjust` | A | A | — | — | C | — | — |
+| `leave.applications.create` | A | C | S | O | — | — | — |
+| `leave.applications.submit` | A | C | S | O | — | — | — |
+| `leave.applications.recommend` | — | C | S | — | — | — | — |
+| `leave.applications.approve` | — | C | — | — | A | — | — |
+| `leave.applications.reject` | — | C | — | — | A | — | — |
+| `leave.applications.post` | A | C | — | — | — | C | — |
+| `leave.monetization.validate` | A | A | — | — | — | R | R |
+| `leave.monetization.approve` | — | C | — | — | A | — | — |
+| `leave.monetization.post` | A | C | — | — | — | A | — |
+| `leave.reports.read` | A | A | S | O/C | R | R | R |
+
+---
+
+## 6.9 Overtime, COC, and CTO
+
+| Permission | HRMO Admin | Supervisor | Employee | Budget Officer | Approving Official | Payroll Preparer | Leave Admin | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `overtime.authorities.create` | A | S | — | — | — | — | — | — |
+| `overtime.authorities.submit` | A | S | — | — | — | — | — | — |
+| `overtime.authorities.review` | A | — | — | A | — | — | — | R |
+| `overtime.authorities.approve` | C | — | — | C | A | — | — | — |
+| `overtime.service.record` | C | S | O | — | — | — | — | — |
+| `overtime.service.certify` | C | S | — | — | C | — | — | — |
+| `overtime.compensation.determine` | A | — | — | A | C | — | — | R |
+| `overtime.compensation.post` | A | — | — | C | — | A | C | — |
+| `overtime.coc.read` | A | S | O | — | R | R | A | R |
+| `overtime.coc.award` | A | — | — | — | C | — | A | — |
+| `overtime.coc.adjust` | A | — | — | — | C | — | A | — |
+| `overtime.cto.create` | C | S | O | — | — | — | A | — |
+| `overtime.cto.recommend` | C | S | — | — | — | — | — | — |
+| `overtime.cto.approve` | C | — | — | — | A | — | — | — |
+| `overtime.cto.post` | C | — | — | — | — | — | A | — |
+
+---
+
+## 6.10 Payroll
+
+| Permission | Payroll Preparer | HR Certifier | Budget Officer | Accounting Reviewer | Payroll Approver | Cashier | HRMO Admin | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `payroll.periods.read` | A | A | A | A | A | R | C | R |
+| `payroll.periods.create` | A | — | — | — | — | — | — | — |
+| `payroll.periods.calculate` | A | — | — | — | — | — | — | — |
+| `payroll.periods.return` | C | A | C | A | A | — | — | — |
+| `payroll.periods.certify` | — | A | — | — | — | — | — | — |
+| `payroll.periods.approve` | — | — | — | C | A | — | — | — |
+| `payroll.periods.finalize` | — | — | — | — | A | — | — | — |
+| `payroll.periods.void` | — | — | — | C | A | — | — | — |
+| `payroll.inputs.read` | A | A | R | A | A | — | C | R |
+| `payroll.inputs.adjust` | A | C | — | C | C | — | — | — |
+| `payroll.compensation.read` | A | A | C | A | A | R | C | R |
+| `payroll.compensation.manage` | C | C | — | — | — | — | A | — |
+| `payroll.deductions.manage` | A | C | — | C | — | — | C | — |
+| `payroll.payslips.read` | A | C | — | R | A | R | C | R |
+| `payroll.payslips.release` | — | — | — | — | A | — | — | — |
+| `payroll.registers.generate` | A | A | A | A | A | A | C | R |
+| `payroll.payment_exports.generate` | C | — | — | A | A | A | — | R |
+| `payroll.disbursement.update` | — | — | — | C | C | A | — | R |
+| `payroll.audit.read` | R | R | R | R | R | R | R | A |
+
+Recommended separation:
+
+```text
+Payroll Preparer ≠ Payroll Approver
+```
+
+and, where staffing permits:
+
+```text
+Payroll Approver ≠ Cashier / Disbursing Officer
+```
+
+---
+
+## 6.11 Performance Management
+
+| Permission | Performance Officer | HRMO Admin | Supervisor | Employee | Performance Approver | Auditor |
+|---|---:|---:|---:|---:|---:|---:|
+| `performance.cycles.read` | A | A | R | R | R | R |
+| `performance.cycles.create` | A | C | — | — | — | — |
+| `performance.cycles.activate` | A | C | — | — | — | — |
+| `performance.cycles.finalize` | C | C | — | — | A | — |
+| `performance.commitments.create` | C | C | S | O | — | — |
+| `performance.commitments.submit` | C | C | S | O | — | — |
+| `performance.commitments.approve` | C | C | S | — | — | — |
+| `performance.accomplishments.update` | C | C | S | O | — | — |
+| `performance.ratings.evaluate` | C | C | S | — | — | — |
+| `performance.ratings.calibrate` | A | C | C | — | C | R |
+| `performance.ratings.approve` | C | C | — | — | A | — |
+| `performance.ratings.read` | A | A | S | O | A | R |
+| `performance.reports.read` | A | A | S | O/C | A | R |
+
+Supervisors may not finalize their own rating unless the agency's approved hierarchy explicitly permits and records a higher-level review.
+
+---
+
+## 6.12 Separation and Clearance
+
+| Permission | Personnel Officer | HRMO Admin | Supervisor | Employee | Appointing Authority | Clearing Officer | Security Admin | Auditor |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `personnel.separations.create` | A | A | C | O | — | — | — | — |
+| `personnel.separations.submit` | A | A | C | O | — | — | — | — |
+| `personnel.separations.review` | C | A | C | — | R | — | — | R |
+| `personnel.separations.approve` | — | C | — | — | A | — | — | — |
+| `personnel.separations.effectuate` | A | A | — | — | C | — | — | — |
+| `personnel.clearance.start` | A | C | — | — | — | — | — | — |
+| `personnel.clearance.review` | C | C | C | — | — | A | — | R |
+| `personnel.clearance.clear` | C | C | C | — | — | A | — | — |
+| `personnel.clearance.waive` | — | C | — | — | A | C | — | — |
+| `security.sessions.revoke` | — | — | — | O | — | — | A | — |
+| `security.users.deactivate` | C | C | — | — | — | — | A | — |
+| `personnel.service_record.generate` | A | A | — | — | — | C | — | R |
+
+---
+
+## 6.13 Documents, Records, Audit, Privacy, and AI
+
+| Permission | Records Officer | DPO | Internal Auditor | Agency Admin | HRMO Admin | AI Admin | Employee |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `documents.records.read` | A | R | R | C | C | — | O |
+| `documents.records.create` | A | — | — | C | C | — | O/C |
+| `documents.records.approve` | A | — | — | C | C | — | — |
+| `documents.records.issue` | A | — | — | C | C | — | — |
+| `documents.records.archive` | A | C | — | — | — | — | — |
+| `documents.records.void` | A | C | R | C | C | — | — |
+| `records.retention.manage` | A | A | R | C | C | — | — |
+| `audit.events.read` | R | A | A | A | C | — | — |
+| `audit.exports.create` | C | C | A | C | C | — | — |
+| `privacy.requests.manage` | C | A | R | C | C | — | O |
+| `privacy.incidents.manage` | C | A | R | A | C | — | — |
+| `ai.features.configure` | — | C | R | C | — | A | — |
+| `ai.features.use` | C | C | — | C | C | C | O/C |
+| `ai.audit.read` | R | A | A | A | C | A | O/C |
+
+---
+
+# 7. Segregation-of-Duties Rules
+
+## 7.1 Mandatory baseline checks
+
+The system shall prevent or warn against these combinations for the same transaction:
+
+1. The payroll preparer must not be the sole payroll approver.
+2. A user must not approve their own leave application.
+3. A user must not approve their own overtime or CTO request.
+4. A selection-board member must not act on a record where a declared conflict exists.
+5. The appointing authority action must not be simulated by a preparer.
+6. A user must not approve their own elevated role assignment.
+7. A user must not certify their own attendance correction unless an exceptional rule is documented.
+8. A user must not waive their own clearance accountability.
+9. An employee must not finalize their own performance rating without required supervisor or higher-level review.
+10. AI output must not be treated as a human approval.
+
+## 7.2 Configurable high-risk combinations
+
+The agency should review assignments where one person holds:
+
+- Agency Administrator and Security Administrator;
+- Payroll Preparer and Accounting Reviewer;
+- Payroll Approver and Cashier;
+- Recruitment Officer and Appointing Authority;
+- Plantilla Officer and sole Budget Approver;
+- Records Officer and unrestricted document-deletion authority;
+- DPO and operational HR editing roles;
+- Auditor and operational write roles.
+
+---
+
+# 8. Record-Scope Rules
+
+Permissions must be combined with record scope.
+
+## 8.1 Employee
+
+May generally access:
+
+- own PDS;
+- own DTR;
+- own leave balances and applications;
+- own COC balance and CTO requests;
+- own payslips;
+- own performance commitments and ratings;
+- own documents explicitly released for self-service.
+
+## 8.2 Supervisor
+
+May generally access:
+
+- direct reports;
+- delegated team members;
+- assigned office records;
+- approval tasks routed to the supervisor.
+
+Supervisor access does not automatically include:
+
+- full PDS sensitive fields;
+- bank details;
+- government identifier values;
+- unrestricted payroll;
+- medical records;
+- SALN content;
+- confidential recruitment deliberations outside assigned vacancies.
+
+## 8.3 HRMO users
+
+Broad HR access must still exclude permissions not necessary for the assigned function.
+
+Examples:
+
+- Recruitment Officer does not automatically receive payroll access.
+- Attendance Administrator does not automatically receive full PDS access.
+- Leave Administrator does not automatically receive appointment-signing authority.
+- Personnel Records Officer does not automatically receive role-management access.
+
+## 8.4 Auditor
+
+Auditor access is normally:
+
+- read-only;
+- time-bound where appropriate;
+- logged;
+- limited to the audit scope;
+- prohibited from altering operational records.
+
+---
+
+# 9. Override Controls
+
+An override must capture:
+
+```text
+override_type
+entity_type
+entity_id
+original_value
+replacement_value
+reason
+supporting_document_id
+requested_by
+approved_by
+approved_at
+effective_date
+request_id
+```
+
+Overrides requiring additional approval include:
+
+- position occupancy conflict resolution;
+- appointment-data correction after issuance;
+- leave-credit adjustment;
+- locked attendance adjustment;
+- COC adjustment;
+- payroll-line override;
+- finalized payroll void;
+- performance-rating amendment;
+- clearance waiver;
+- account reactivation after security suspension.
+
+---
+
+# 10. Audit Event Requirements
+
+Every material transition shall record:
+
+```text
+id
+agency_id
+actor_user_id
+actor_membership_id
+action
+entity_type
+entity_id
+previous_status
+new_status
+before_data
+after_data
+reason
+approval_request_id
+request_id
+ip_address
+user_agent
+occurred_at
+```
+
+The audit record shall not contain:
+
+- passwords;
+- session tokens;
+- password-reset tokens;
+- MFA secrets;
+- raw API secrets;
+- unnecessary copies of sensitive PDS data.
+
+---
+
+# 11. Implementation Rules for the Future ERD
+
+The logical data model should support:
+
+1. status as a constrained value, not unrestricted text;
+2. transition history separate from the current status;
+3. effective-dated position and personnel records;
+4. immutable ledger entries for leave, COC, and payroll;
+5. generic approval requests with domain-specific validation;
+6. role assignments separate from permissions;
+7. record-scope assignments;
+8. delegated authority with start and end dates;
+9. conflict-of-interest declarations;
+10. actor and agency context on all audit events;
+11. source-document links for material actions;
+12. versioned government forms and policy rules;
+13. external submission tracking without assuming direct integration;
+14. separation between an identity, agency membership, and employee record;
+15. separate service segments for government-service history.
+
+---
+
+# 12. Acceptance Criteria
+
+This control specification is ready for ERD design when:
+
+- [ ] All major workflow entities have statuses.
+- [ ] Every status has allowed inbound and outbound transitions.
+- [ ] Invalid direct transitions are prohibited.
+- [ ] Every material transition has an actor and permission.
+- [ ] Approval actions require assigned approvers.
+- [ ] Position occupancy cannot occur without a valid appointment or personnel action.
+- [ ] Assumption to duty is separate from appointment issuance.
+- [ ] Leave and COC balances use immutable ledger entries.
+- [ ] Payroll finalization is separate from preparation and certification.
+- [ ] Finalized payroll cannot return to Draft.
+- [ ] Account deactivation revokes active sessions.
+- [ ] Employee, supervisor, HR, payroll, audit, and privacy scopes are distinct.
+- [ ] Sensitive fields require field-level authorization.
+- [ ] AI cannot execute authoritative transitions directly.
+- [ ] Every override requires reason and audit history.
+- [ ] The role matrix supports agency-specific customization without weakening mandatory controls.
+
+---
+
+# 13. Recommended Next Artifact
+
+After approval of this document, create:
+
+```text
+docs/data-model/public-sector-hris-conceptual-erd.md
+```
+
+The conceptual ERD should cover:
+
+- identity and agency;
+- organization and plantilla;
+- recruitment and selection;
+- appointment and assumption;
+- employee, PDS, and service history;
+- attendance and leave;
+- overtime, COC, and CTO;
+- payroll;
+- SPMS;
+- separation;
+- approvals, documents, audit, and AI.
+
+The conceptual ERD should show major entities and cardinalities without defining every physical column.
+
+---
+
+# 14. Approval
+
+| Role | Name | Decision | Date |
+|---|---|---|---|
+| Product Owner |  | Pending |  |
+| Government HR / HRMO Reviewer |  | Pending |  |
+| Payroll / Accounting Reviewer |  | Pending |  |
+| Technical Owner |  | Pending |  |
+| Security / Privacy Reviewer |  | Pending |  |
+
+---
+
+# 15. Change Log
+
+| Version | Date | Description |
+|---|---|---|
+| 1.0 | August 5, 2026 | Initial public-sector HRIS status transition and role-permission control specification |

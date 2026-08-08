@@ -1,0 +1,1256 @@
+# Business Requirements Document (BRD)
+## Philippine Public-Sector HRIS MVP
+
+**Document status:** Draft for approval  
+**Product profile:** Philippine civilian public-sector HRIS  
+**Primary implementation profile:** National Government Agency (NGA)  
+**Extensible profiles:** Local Government Unit (LGU), State University and College (SUC), and GOCC with original charter  
+**Architecture:** Multi-tenant SaaS, with optional dedicated-agency deployment  
+**Primary objective:** Digitize and control government human resource management processes  
+**Version:** 1.0  
+**Date:** August 5, 2026  
+
+---
+
+# 1. Executive Summary
+
+This document replaces the earlier private-sector HRIS assumptions with requirements designed for the Philippine public sector.
+
+A public-sector HRIS is not merely a private HRIS with different payroll deductions. It must manage government positions, plantilla items, qualification standards, merit selection, appointments, assumption to duty, personnel actions, service records, government leave credits, Daily Time Records, salary grades and steps, government payroll, GSIS-related deductions, Civil Service forms, performance records, and regulatory reporting.
+
+The MVP will support the employee lifecycle from an authorized plantilla position through vacancy publication, merit selection, appointment, personnel administration, attendance, leave, overtime or compensatory time, payroll, performance review, and separation.
+
+The initial implementation profile is for a civilian National Government Agency. LGUs, SUCs, and GOCCs with original charters have additional rules and forms, so the product will use configurable agency profiles rather than assuming that every public institution operates identically.
+
+---
+
+# 2. Public- and Private-Sector Product Separation
+
+The public-sector product profile shall be maintained separately from a private-sector HRIS profile.
+
+| Area | Private-sector HRIS | Public-sector HRIS |
+|---|---|---|
+| Position control | Company-defined jobs and headcount | Authorized organizational structure, plantilla, item number, salary grade, and step |
+| Hiring | Company recruitment policy | Publication, qualification standards, merit selection, appointing authority, and CSC appointment rules |
+| Employee record | Company employee profile | PDS, eligibility, appointment, oath, assumption, service record, and personnel actions |
+| Employment status | Regular, probationary, contractual, etc. | Career/non-career and government appointment statuses under applicable rules |
+| Performance | Company appraisal | Agency SPMS, OPCR/IPCR, targets, ratings, and review cycle |
+| Leave | Company policy and labor law | Government leave credits, CSC leave rules, Form 6, mandatory leave, monetization, and special leave |
+| Overtime | Company-authorized OT pay | Prior-authorized overtime service, overtime pay or COC/CTO, subject to applicable rules and funds |
+| Payroll | Company pay structure and SSS | Salary grade/step, DBM salary schedule, GSIS, government allowances, and agency-specific deductions |
+| Audit | Management and statutory audit | CSC, DBM, COA, agency internal control, records, and public accountability requirements |
+| Separation | Company clearance/final pay | Acceptance of resignation, clearance, service record, retirement or separation action, and access revocation |
+
+The system shall not mix public- and private-sector rule engines within one organization profile.
+
+---
+
+# 3. Regulatory and Policy Baseline
+
+The public-sector HRIS shall be designed around official rules and forms, including:
+
+- Civil Service Commission 2025 Omnibus Rules on Appointments and Other Human Resource Actions (ORAOHRA);
+- the applicable CSC Personal Data Sheet and Work Experience Sheet;
+- CSC Omnibus Rules on Leave, as amended;
+- CSC Strategic Performance Management System guidance;
+- CSC competency-based HRM and qualification standards;
+- DBM position classification, compensation, staffing, and salary schedule issuances;
+- CSC-DBM rules on overtime pay and compensatory time;
+- GSIS, PhilHealth, Pag-IBIG, and BIR requirements;
+- Commission on Audit and government internal-control requirements;
+- Data Privacy Act and National Privacy Commission guidance;
+- applicable agency Merit Selection Plan, SPMS, PRAISE, and internal policies.
+
+All rates, forms, rule tables, and policy versions shall be effective-dated and configurable. The software shall not hard-code current values as permanent rules.
+
+As of August 2026, CSC has temporarily deferred PRIME-HRM accreditation, validation, assessment, reassessment, maturity determination, and related activities while the program is being upgraded. The HRIS may align its modules with public-sector HRM domains, but the product shall not represent itself as guaranteeing or conferring PRIME-HRM accreditation.
+
+---
+
+# 4. Target Agencies and MVP Boundary
+
+## 4.1 Primary target
+
+The first production profile shall target civilian National Government Agencies.
+
+## 4.2 Future or configurable profiles
+
+The architecture shall permit later support for:
+
+- LGUs;
+- SUCs and LUCs;
+- GOCCs with original charters;
+- constitutional bodies and other agencies with special charters.
+
+## 4.3 Excluded from the first MVP
+
+The first MVP does not fully support:
+
+- military and uniformed personnel;
+- elective officials and barangay-specific compensation;
+- judiciary-specific appointment and payroll rules;
+- GOCCs governed primarily by private-sector labor rules;
+- public-school teacher-specific workload and payroll variations;
+- medical personnel benefits under every special law;
+- direct CSC, DBM, COA, GSIS, PhilHealth, Pag-IBIG, or BIR electronic submission;
+- biometric-device integrations or biometric export-file imports;
+- vendor-specific attendance parsers;
+- full administrative-case adjudication;
+- full learning and development management;
+- full PRAISE rewards and recognition administration;
+- pension or retirement-benefit computation;
+- applicant self-service accounts.
+
+Job Order and Contract of Service personnel may be recorded, but their engagement and payment rules shall remain separate from regular plantilla employee payroll.
+
+---
+
+# 5. Business Objectives
+
+The MVP shall:
+
+1. Maintain authorized agency structures, plantilla positions, and position histories.
+2. Control recruitment, selection, appointment, and assumption-to-duty workflows.
+3. Maintain complete government personnel records and service histories.
+4. Automate DTR, attendance exceptions, leave credits, and leave applications.
+5. Manage authorized overtime, COC, CTO, and overtime-pay outcomes.
+6. Calculate government payroll using salary grade, step, compensation rules, and statutory deductions.
+7. Support SPMS performance planning, review, rating, and sign-off.
+8. Provide secure employee, supervisor, HR, payroll, and appointing-authority access.
+9. Produce traceable forms, registers, reports, and audit records.
+10. Preserve historical rule versions and finalized payroll results.
+11. Reduce spreadsheet dependence without removing required human review.
+12. Use AI only for controlled extraction, drafting, explanation, and exception summarization.
+
+---
+
+# 6. Primary Users and Stakeholders
+
+| Role | Responsibilities |
+|---|---|
+| Agency Administrator | Agency profile, security, users, and configuration |
+| HRMO / HR Administrator | Plantilla, recruitment, appointments, personnel records, leave, and HR reports |
+| HRMPSB / Selection Board Member | Candidate evaluation, deliberation, and recommendations |
+| Appointing Authority / Authorized Approver | Appointment and designated high-level approvals |
+| Supervisor / Division Chief | Attendance, leave, overtime, and performance review |
+| Payroll Preparer | Payroll data, calculation, deductions, and reconciliation |
+| Payroll Reviewer / Certifying Officer | Review, certification, and exception resolution |
+| Payroll Approver / Agency Authority | Payroll authorization and finalization |
+| Employee / Official | PDS, DTR, leave, payslip, performance commitments, and self-service |
+| Budget Officer | Position and personnel-services validation |
+| Accounting Office | Payroll obligations, deductions, and accounting reports |
+| Cashier / Disbursing Officer | Payment processing and remittance support |
+| Records Officer | Retention, document control, and certified records |
+| Internal Audit / COA Auditor | Audit evidence and control review |
+| Data Protection Officer | Privacy, access, retention, and incident controls |
+
+---
+
+# 7. MVP Modules
+
+1. Authentication, login, and account lifecycle
+2. Agency organization and office structure
+3. Plantilla and position control
+4. Recruitment, selection, and placement
+5. Appointment and assumption to duty
+6. Personnel records, PDS, and service record
+7. Personnel actions and employment history
+8. Attendance and Daily Time Record
+9. Leave administration and leave-credit ledger
+10. Overtime service, COC, CTO, and overtime pay
+11. Government payroll
+12. SPMS performance management
+13. Employee and supervisor self-service
+14. Government forms, documents, and reports
+15. Notifications and approvals
+16. Audit trail and security events
+17. Controlled AI assistance
+
+---
+
+# 8. Authentication and Access Requirements
+
+## AUTH-001 Individual accounts
+
+Every user shall have an individual account. Shared accounts are prohibited.
+
+## AUTH-002 Login
+
+The MVP shall support email and password login through an approved managed identity or OIDC-compatible service.
+
+## AUTH-003 Invitation and activation
+
+Authorized administrators shall invite users, assign agency membership and roles, and track activation.
+
+## AUTH-004 Password recovery
+
+The system shall support secure, non-disclosing password-reset workflows.
+
+## AUTH-005 Account states
+
+```text
+INVITED
+ACTIVE
+LOCKED
+SUSPENDED
+DEACTIVATED
+```
+
+## AUTH-006 MFA
+
+MFA shall be supported and may be required for:
+
+- agency administrators;
+- HRMO users;
+- payroll users;
+- appointing authorities;
+- users with access to compensation, bank details, or government identifiers.
+
+## AUTH-007 Session controls
+
+The system shall support secure sessions, timeout, logout, session revocation, and reauthentication for sensitive actions.
+
+## AUTH-008 Authorization
+
+Login establishes identity only. Every protected operation shall also check:
+
+- agency membership;
+- role and permission;
+- office or organizational scope;
+- employee-record relationship;
+- workflow state;
+- sensitive-field access.
+
+## AUTH-009 Login audit
+
+Successful and failed login, invitation, activation, reset, lock, suspension, and revocation events shall be audited.
+
+---
+
+# 9. Agency Organization Requirements
+
+## ORG-001 Agency profile
+
+The system shall store:
+
+- official agency name and acronym;
+- agency type;
+- department or parent organization;
+- agency code and reporting identifiers;
+- head of agency;
+- appointing authority;
+- registered offices and regions;
+- default timezone and currency;
+- payroll and remittance settings;
+- CSC accreditation or agency-profile information where applicable.
+
+## ORG-002 Organization structure
+
+The system shall maintain effective-dated:
+
+- central, regional, field, and satellite offices;
+- services, bureaus, divisions, sections, and units;
+- reporting relationships;
+- cost centers and responsibility centers;
+- office heads;
+- abolished, merged, renamed, and reorganized units.
+
+## ORG-003 Agency policy profiles
+
+The system shall support versioned internal policies for:
+
+- Merit Selection Plan;
+- SPMS;
+- attendance and flexible work arrangements;
+- leave administration;
+- overtime and compensatory time;
+- payroll cutoffs and approvals;
+- data retention;
+- records classification;
+- separation of duties.
+
+---
+
+# 10. Plantilla and Position Control Requirements
+
+## POS-001 Authorized position
+
+Each plantilla position shall store:
+
+- unique position or item number;
+- position title;
+- parenthetical title where applicable;
+- salary grade;
+- authorized step or incumbent step;
+- office and organizational unit;
+- employment category;
+- funding source;
+- position status;
+- qualification standard;
+- position description form reference;
+- creation, reclassification, transfer, abolition, or conversion history.
+
+## POS-002 Position statuses
+
+```text
+PROPOSED
+AUTHORIZED
+VACANT
+RESERVED
+OCCUPIED
+FROZEN
+ABOLISHED
+```
+
+## POS-003 Position-incumbent relationship
+
+A plantilla item shall have no more than one active incumbent unless a specific lawful exception is configured.
+
+## POS-004 Qualification standards
+
+The system shall maintain requirements for:
+
+- education;
+- training;
+- experience;
+- civil service eligibility;
+- competency requirements;
+- licenses or special qualifications.
+
+## POS-005 Position history
+
+Changes to title, salary grade, office, funding, or status shall be effective-dated and shall not overwrite history.
+
+## POS-006 Vacancy control
+
+Recruitment for plantilla appointments shall originate from a valid vacant authorized position.
+
+---
+
+# 11. Recruitment, Selection, and Placement Requirements
+
+## RSP-001 Request to fill
+
+HR or the requesting office shall create a request to fill a valid vacancy.
+
+## RSP-002 Publication
+
+The system shall track:
+
+- vacancy-publication request;
+- posting dates;
+- closing date;
+- publication channel or CSC reference;
+- position details;
+- qualification standards;
+- application requirements.
+
+## RSP-003 Applicant record
+
+The applicant record shall support information needed for government recruitment, including:
+
+- PDS-compatible personal data;
+- education;
+- training;
+- experience;
+- eligibility;
+- licenses;
+- performance ratings where required;
+- documents;
+- consent and privacy notice;
+- applied position.
+
+## RSP-004 Qualification screening
+
+The system shall compare applicant credentials with the approved qualification standard and identify:
+
+- meets requirements;
+- conditionally reviewable;
+- does not meet requirements;
+- missing evidence.
+
+The system shall not automatically make the final qualification or selection decision.
+
+## RSP-005 Merit selection
+
+The system shall support:
+
+- initial screening;
+- examination or assessment;
+- interview;
+- competency assessment;
+- comparative evaluation;
+- board deliberation;
+- ranking or recommendation;
+- appointing-authority decision;
+- conflict-of-interest disclosure.
+
+## RSP-006 Selection board records
+
+Board membership, quorum, attendance, scores, comments, deliberation, and recommendation shall be auditable.
+
+## RSP-007 Non-selection and applicant status
+
+Decisions and notices shall be recorded without exposing confidential deliberation beyond authorized users.
+
+---
+
+# 12. Appointment and Assumption-to-Duty Requirements
+
+## APP-001 Appointment preparation
+
+The system shall prepare appointment data using:
+
+- selected applicant;
+- authorized position;
+- appointment status;
+- nature of appointment;
+- salary grade and step;
+- effectivity;
+- appointing authority;
+- qualification evidence;
+- required CSC forms and attachments.
+
+## APP-002 Appointment validation
+
+Before issuance, the system shall validate:
+
+- vacant authorized item;
+- qualification requirements;
+- required publication and selection steps;
+- documentary completeness;
+- compensation alignment;
+- absence of conflicting active incumbency.
+
+## APP-003 Appointment statuses
+
+```text
+DRAFT
+FOR_REVIEW
+FOR_SIGNATURE
+ISSUED
+SUBMITTED
+VALIDATED
+INVALIDATED
+RETURNED
+CANCELLED
+```
+
+## APP-004 CSC transaction tracking
+
+The MVP shall track submission, acknowledgment, action, return, validation, invalidation, and compliance dates. Direct CSC integration is future scope.
+
+## APP-005 Oath and assumption
+
+The system shall record:
+
+- oath of office;
+- certification of assumption to duty;
+- actual assumption date;
+- first day of service;
+- responsible certifying officer;
+- supporting documents.
+
+## APP-006 Employee creation
+
+An issued appointment and assumption shall create or activate the employee service segment and occupy the plantilla item.
+
+---
+
+# 13. Personnel Records and PDS Requirements
+
+## PER-001 PDS
+
+The system shall maintain the applicable CSC Personal Data Sheet structure, including:
+
+- personal information;
+- family background;
+- education;
+- eligibility;
+- work experience;
+- voluntary work;
+- learning and development;
+- other information and declarations;
+- references;
+- government-issued identifiers;
+- attachments and version history.
+
+## PER-002 Employee master record
+
+The employee record shall store:
+
+- agency employee number;
+- current appointment;
+- plantilla item;
+- office and supervisor;
+- appointment status;
+- first government-service date;
+- agency-service date;
+- current salary grade and step;
+- tax, GSIS, PhilHealth, Pag-IBIG, and bank details;
+- work arrangement;
+- separation or retirement information.
+
+## PER-003 Service record
+
+The system shall generate a service history from effective-dated service segments and personnel actions.
+
+## PER-004 Personnel actions
+
+The system shall support records for:
+
+- original appointment;
+- promotion;
+- transfer;
+- reappointment;
+- reinstatement;
+- reemployment;
+- detail;
+- reassignment;
+- designation;
+- demotion where applicable;
+- salary adjustment;
+- step increment;
+- change of status;
+- secondment where applicable;
+- separation.
+
+## PER-005 Documents
+
+Documents shall include:
+
+- PDS and WES;
+- appointment paper;
+- oath of office;
+- assumption to duty;
+- medical certificate;
+- clearances;
+- eligibility evidence;
+- diplomas and transcripts;
+- training certificates;
+- licenses;
+- performance ratings;
+- SALN filing compliance record;
+- notices of salary adjustment;
+- separation records.
+
+## PER-006 SALN boundary
+
+The system may track filing requirement, submission date, status, repository, and acknowledgment. The MVP shall not expose SALN content broadly or act as a public SALN repository.
+
+## PER-007 Record correction
+
+Corrections shall preserve the original value, supporting document, approving authority, and audit history.
+
+---
+
+# 14. Attendance and Daily Time Record Requirements
+
+## ATT-001 Supported attendance sources
+
+The MVP shall support:
+
+- authorized manual time entry;
+- employee web clock-in and clock-out when enabled;
+- HR-entered official business, travel, training, and approved absence records.
+
+The MVP shall not support biometric-device integrations or biometric export-file imports.
+
+## ATT-002 Work schedules
+
+The system shall support:
+
+- regular schedules;
+- flexible work schedules;
+- compressed workweek where authorized;
+- shifting schedules;
+- work-from-home or hybrid arrangements;
+- field work and official business;
+- rest days and holidays;
+- effective-dated assignments.
+
+## ATT-003 Raw time events
+
+Original time events shall remain immutable. Corrections shall be stored separately.
+
+## ATT-004 DTR
+
+The system shall generate a Daily Time Record view and printable report from approved attendance data.
+
+## ATT-005 Attendance calculations
+
+The system shall calculate:
+
+- hours rendered;
+- tardiness;
+- undertime;
+- absence;
+- incomplete time entries;
+- official business;
+- leave;
+- overtime candidate hours;
+- compensatory time candidate hours;
+- schedule and work-arrangement compliance.
+
+## ATT-006 Correction workflow
+
+Employees may request a correction with date, requested values, reason, and evidence. Supervisor or HR approval shall be required.
+
+## ATT-007 Period locking
+
+Attendance periods used in payroll shall be lockable. Changes after payroll shall create an adjustment process.
+
+---
+
+# 15. Leave Administration Requirements
+
+## LEA-001 Government leave types
+
+The system shall support configurable government leave categories, including:
+
+- vacation leave;
+- sick leave;
+- mandatory or forced leave;
+- maternity leave;
+- paternity leave;
+- special privilege leave;
+- solo parent leave;
+- rehabilitation leave;
+- study leave;
+- adoption leave;
+- wellness leave where applicable;
+- leave for victims of violence;
+- special emergency leave;
+- other leave under law or CSC issuance;
+- leave without pay.
+
+## LEA-002 Leave-credit ledger
+
+Vacation and sick leave credits shall use a ledger containing:
+
+- opening balance;
+- earned credits;
+- deduction;
+- restoration;
+- adjustment;
+- monetization;
+- terminal leave;
+- forfeiture or expiration where applicable;
+- source and rule version.
+
+## LEA-003 Leave application
+
+The workflow shall capture the information required for the applicable government leave form and agency approval process.
+
+## LEA-004 Certification of leave credits
+
+HR shall certify available credits as of the applicable date.
+
+## LEA-005 Approval
+
+Approval routing shall support supervisor recommendation, HR certification, and authorized approving official.
+
+## LEA-006 Mandatory leave
+
+The system shall identify employees subject to mandatory or forced leave based on applicable balances and policy.
+
+## LEA-007 Monetization
+
+The system shall support a request, eligibility validation, funding/authority review, approval, payroll input, and ledger deduction.
+
+## LEA-008 Terminal leave
+
+The system shall preserve data required for a later terminal-leave computation, but full retirement-benefit computation is outside MVP.
+
+---
+
+# 16. Overtime, COC, CTO, and Overtime Pay Requirements
+
+## OT-001 Prior authority
+
+Overtime service shall begin with an approved authority containing:
+
+- purpose and necessity;
+- covered employees;
+- dates and expected hours;
+- funding or compensation method;
+- approving authority.
+
+## OT-002 Actual service
+
+Actual overtime shall be validated against approved attendance or certified accomplishment.
+
+## OT-003 Compensation method
+
+The system shall classify the approved outcome as:
+
+- overtime pay;
+- Compensatory Overtime Credit (COC);
+- Compensatory Time-Off (CTO);
+- non-compensable;
+- for further review.
+
+## OT-004 COC ledger
+
+COC shall use a ledger recording earned, used, adjusted, expired, and remaining credits.
+
+## OT-005 CTO request
+
+Employees shall be able to request CTO against available COC, subject to supervisor and agency approval.
+
+## OT-006 Overtime-pay input
+
+Only approved, fund-supported, and validated overtime shall become a payroll input.
+
+## OT-007 Work-arrangement restrictions
+
+The rule engine shall support restrictions based on employee category, work arrangement, authorization, and applicable CSC-DBM rules.
+
+---
+
+# 17. Government Payroll Requirements
+
+## PAY-001 Payroll profiles
+
+Payroll rules shall be separated by personnel category:
+
+- plantilla personnel;
+- casual or contractual personnel where covered by the agency profile;
+- Job Order or Contract of Service personnel through a distinct payment profile.
+
+## PAY-002 Salary basis
+
+For plantilla personnel, the system shall use:
+
+- position salary grade;
+- authorized step;
+- applicable DBM salary schedule and tranche;
+- effectivity date;
+- notices of salary adjustment;
+- step-increment actions;
+- statutory and special-law adjustments.
+
+## PAY-003 Compensation components
+
+The system shall support effective-dated:
+
+- basic salary;
+- PERA and other authorized allowances;
+- RATA where applicable;
+- hazard, subsistence, laundry, or special-law benefits where configured;
+- overtime pay;
+- leave monetization;
+- bonuses and incentives authorized by current issuances;
+- deductions for absence, tardiness, and undertime;
+- loans and agency deductions;
+- adjustments and refunds.
+
+## PAY-004 Deductions and employer shares
+
+The system shall support configurable:
+
+- GSIS premiums and loan deductions;
+- PhilHealth contributions;
+- Pag-IBIG contributions and loans;
+- BIR withholding tax;
+- employee association or cooperative deductions;
+- court or legal deductions;
+- other authorized deductions.
+
+## PAY-005 Payroll workflow
+
+Payroll shall include:
+
+```text
+DRAFT
+CALCULATING
+FOR_REVIEW
+CERTIFIED
+APPROVED
+FINALIZED
+VOIDED
+```
+
+## PAY-006 Segregation of duties
+
+The system shall support different users for:
+
+- preparation;
+- HR certification;
+- budget or fund validation;
+- accounting review;
+- approval;
+- payment or disbursement.
+
+## PAY-007 Payroll details
+
+Each employee calculation shall preserve:
+
+- source record;
+- quantity;
+- rate;
+- amount;
+- rule version;
+- employee/employer share;
+- accounting or reporting category;
+- override and reason.
+
+## PAY-008 Finalization
+
+Finalized payroll lines shall be immutable. Corrections shall use adjustment, supplemental payroll, refund, or void-and-replace workflows.
+
+## PAY-009 Outputs
+
+The system shall produce:
+
+- payroll register;
+- payslip;
+- deduction register;
+- agency and employee contribution summaries;
+- loan-remittance summaries;
+- tax summaries;
+- bank or payment export;
+- funding and cost-center summaries;
+- accounting-support schedules;
+- variance and exception reports.
+
+## PAY-010 Direct filing boundary
+
+The MVP shall not directly remit or file to government portals. It shall produce reviewable export and report data.
+
+---
+
+# 18. SPMS Performance Management Requirements
+
+## SPM-001 Performance cycle
+
+The system shall support:
+
+1. performance planning and commitment;
+2. monitoring and coaching;
+3. review and evaluation;
+4. rewarding and development planning.
+
+## SPM-002 Organizational alignment
+
+Office and individual commitments shall align with agency mandate, plans, and organizational targets.
+
+## SPM-003 Forms
+
+The system shall support configurable OPCR, DPCR, and IPCR structures or agency-equivalent forms.
+
+## SPM-004 Success indicators
+
+Targets shall include:
+
+- output or outcome;
+- measure;
+- target;
+- quality;
+- efficiency;
+- timeliness;
+- weight;
+- evidence.
+
+## SPM-005 Monitoring
+
+Employees and supervisors shall record accomplishments, coaching notes, and supporting evidence.
+
+## SPM-006 Rating
+
+The system shall support agency-approved rating scales, review, calibration, sign-off, and final rating.
+
+## SPM-007 HR integration
+
+Performance results may support:
+
+- promotion and selection evidence;
+- learning needs;
+- rewards and recognition;
+- probation or development plans;
+- reports.
+
+Full L&D and PRAISE modules are future scope.
+
+---
+
+# 19. Separation, Retirement, and Clearance Requirements
+
+## SEP-001 Separation types
+
+The system shall record:
+
+- resignation;
+- retirement;
+- transfer to another agency;
+- expiration of appointment;
+- termination or dropping from rolls where applicable;
+- death;
+- abolition or reorganization-related separation;
+- other authorized modes.
+
+## SEP-002 Resignation and acceptance
+
+The workflow shall track submission, acceptance, effectivity, and required form or document.
+
+## SEP-003 Clearance
+
+The system shall route clearance to applicable offices and record liabilities, property, records, and financial accountabilities.
+
+## SEP-004 Service record closure
+
+The final service segment, appointment, position occupancy, and payroll scope shall close on the effective date.
+
+## SEP-005 Access revocation
+
+Agency membership and sessions shall be revoked according to the approved separation date and risk.
+
+## SEP-006 Records retention
+
+Historical personnel, payroll, service, leave, performance, and audit records shall be preserved according to retention rules.
+
+---
+
+# 20. Reports and Government Forms
+
+The MVP shall support configurable generation or data preparation for:
+
+- PDS and Work Experience Sheet;
+- position description and qualification profile;
+- vacancy publication request;
+- appointment and appointment-transmittal data;
+- oath of office;
+- assumption-to-duty certification;
+- appointment reports;
+- service record;
+- DTR;
+- leave application and leave-credit certification;
+- leave card or ledger;
+- overtime authority and accomplishment;
+- COC and CTO ledger;
+- payroll registers and payslips;
+- contribution, loan, and tax schedules;
+- staffing and vacancy reports;
+- personnel action history;
+- SPMS forms and ratings;
+- SALN filing compliance;
+- separation and clearance records;
+- audit and access reports.
+
+Official form versions shall be configurable and versioned.
+
+---
+
+# 21. AI-Assisted Features
+
+AI may:
+
+- extract PDS or applicant-document fields into a draft;
+- summarize applicant qualifications against a position profile;
+- draft vacancy descriptions and interview questions;
+- summarize appointment-document completeness;
+- explain attendance exceptions;
+- draft HR notices;
+- answer policy questions from approved agency issuances;
+- summarize payroll variances;
+- summarize performance accomplishments.
+
+AI may not:
+
+- determine final applicant selection;
+- approve or issue an appointment;
+- alter a plantilla item;
+- approve leave, overtime, payroll, or performance rating;
+- execute arbitrary database queries;
+- change government records without normal validation and approval.
+
+Every AI output shall be validated and visibly labeled as a draft or recommendation.
+
+---
+
+# 22. Privacy, Security, and Audit Requirements
+
+## SEC-001 Data classification
+
+PDS data, eligibility records, compensation, payroll, bank details, government identifiers, medical documents, performance ratings, disciplinary records, and SALN-related information shall be classified and access-controlled.
+
+## SEC-002 Least privilege
+
+Permissions shall be granular. General HR access shall not automatically grant payroll, SALN, bank-detail, or system-administration access.
+
+## SEC-003 Tenant and agency isolation
+
+An agency shall access only its own data. Dedicated deployment shall remain an option for agencies that require it.
+
+## SEC-004 Audit events
+
+The system shall record:
+
+- login and security events;
+- position changes;
+- selection and board decisions;
+- appointment actions;
+- personnel-record changes;
+- attendance corrections;
+- leave and overtime decisions;
+- payroll preparation, certification, approval, and finalization;
+- performance-rating changes;
+- exports and sensitive-record access;
+- AI-assisted actions.
+
+## SEC-005 Immutable records
+
+Finalized payroll, issued appointments, approved service history, and historical audit records shall not be silently edited.
+
+## SEC-006 Electronic signatures
+
+The design shall support electronic-signature metadata and certification where an agency adopts an authorized process. Legal sufficiency shall remain subject to agency policy and applicable issuance.
+
+---
+
+# 23. Non-Functional Requirements
+
+- Standard pages should respond within two seconds under normal load where practical.
+- Large payroll, report, and document-generation tasks shall run asynchronously.
+- Every sensitive request shall carry a request ID and trusted agency context.
+- The system shall support accessibility and keyboard navigation.
+- Timestamps shall be stored consistently and displayed in Philippine Standard Time by default.
+- Backups and restore procedures shall be tested before production.
+- Rule and form versions shall be traceable.
+- The architecture shall support at least 5,000 personnel records per agency without redesign, while the first pilot may be smaller.
+- Exported government records shall preserve confidentiality markings and access controls.
+
+---
+
+# 24. Data Migration Requirements
+
+The MVP shall support validated import templates for:
+
+- offices and organizational units;
+- plantilla positions;
+- employee master data;
+- appointment and service history;
+- salary grade and step;
+- leave opening balances;
+- COC opening balances;
+- current payroll components;
+- government identifiers;
+- user accounts.
+
+Biometric attendance exports are not included.
+
+Imports shall provide:
+
+- preview;
+- validation;
+- row-level errors;
+- duplicate detection;
+- idempotency;
+- approval;
+- audit history.
+
+---
+
+# 25. MVP Acceptance Criteria
+
+The public-sector MVP is acceptable when an agency can:
+
+## Identity and access
+
+- invite, activate, log in, recover, suspend, and deactivate users;
+- enforce agency and role-based access;
+- require MFA for privileged users;
+- audit login and security events.
+
+## Plantilla and organization
+
+- create the agency structure;
+- load authorized positions;
+- track item number, title, salary grade, office, status, and history;
+- prevent conflicting active incumbents.
+
+## Recruitment and appointment
+
+- request to fill a vacancy;
+- record publication;
+- receive and screen applications;
+- document board evaluation and recommendation;
+- record appointing-authority decision;
+- prepare and validate appointment data;
+- record oath and assumption;
+- convert the appointee into an active employee.
+
+## Personnel records
+
+- maintain PDS-compatible employee data;
+- maintain appointment and personnel-action history;
+- generate a service record;
+- control sensitive documents;
+- track SALN filing compliance.
+
+## Attendance and leave
+
+- record manual or web attendance;
+- generate a DTR;
+- process corrections;
+- maintain leave-credit ledgers;
+- process leave applications and approvals;
+- identify mandatory leave;
+- process leave monetization into payroll inputs.
+
+## Overtime and compensatory time
+
+- issue prior overtime authority;
+- validate actual service;
+- award overtime pay or COC;
+- maintain COC balance;
+- process CTO requests.
+
+## Payroll
+
+- apply salary grade and step;
+- use an effective-dated salary schedule;
+- compute earnings, GSIS-related deductions, PhilHealth, Pag-IBIG, tax, loans, and adjustments;
+- route preparation, certification, review, and approval;
+- finalize immutable payroll;
+- generate payslips and registers;
+- process later corrections without editing finalized history.
+
+## Performance
+
+- create an SPMS cycle;
+- define office and individual targets;
+- record accomplishments and coaching;
+- calculate and approve ratings;
+- preserve final performance records.
+
+## Audit and security
+
+- prevent unauthorized cross-agency or cross-office access;
+- record material actions and exports;
+- revoke access on separation;
+- preserve original and corrected values.
+
+---
+
+# 26. Delivery Phases
+
+## Phase 1 — Foundation and position control
+
+- authentication and roles;
+- agency structure;
+- plantilla positions;
+- employee master records;
+- PDS;
+- document storage;
+- audit logging.
+
+## Phase 2 — Recruitment and appointments
+
+- vacancy request and publication;
+- applicants;
+- qualification screening;
+- merit selection;
+- appointment;
+- oath and assumption;
+- service-record foundation.
+
+## Phase 3 — Attendance, leave, and overtime
+
+- schedules and work arrangements;
+- manual/web attendance and DTR;
+- attendance corrections;
+- leave-credit ledger and applications;
+- overtime authority;
+- COC and CTO.
+
+## Phase 4 — Government payroll
+
+- salary grade and step;
+- compensation and deductions;
+- payroll calculation;
+- certification and approval;
+- payslips and reports;
+- adjustment workflows.
+
+## Phase 5 — SPMS and hardening
+
+- OPCR/IPCR cycles;
+- monitoring and rating;
+- security review;
+- records retention;
+- backup and restore;
+- pilot migration;
+- AI-assisted drafting and summarization.
+
+---
+
+# 27. Open Decisions
+
+1. Exact pilot-agency type: NGA, LGU, SUC, or GOCC with original charter.
+2. Whether the first release will support only plantilla personnel or also casual personnel.
+3. Whether Job Order and Contract of Service payment processing is required at launch.
+4. Which official forms must be generated exactly versus exported as structured data.
+5. Whether web clock-in/out is required.
+6. Whether MFA is mandatory for all users or privileged users only.
+7. Required salary, allowance, and deduction profiles for the pilot agency.
+8. Required payroll bank or disbursement export format.
+9. Whether direct integration with existing accounting or budget systems is required.
+10. Agency-specific Merit Selection Plan and approval hierarchy.
+11. Agency-specific SPMS forms and rating cycle.
+12. Retention periods and archival requirements.
+13. Whether deployment must be shared SaaS, dedicated cloud, or agency-hosted.
+
+---
+
+# 28. Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Treating all public agencies as identical | Incorrect workflows | Agency profiles and a defined first pilot |
+| Outdated CSC or DBM rule | Invalid transaction | Effective-dated policies and formal update process |
+| Incomplete plantilla data | Invalid appointment or payroll | Position reconciliation and migration validation |
+| Appointment-document error | CSC return or invalidation | Completeness checks and human review |
+| Payroll rule error | Financial and audit exposure | Regression tests, certification, and immutable finalization |
+| Excessive scope | Delayed MVP | Phased modules and explicit exclusions |
+| Sensitive-record breach | Legal and trust impact | Least privilege, MFA, encryption, and audit |
+| AI-generated error | Incorrect HR action | Draft-only output and human approval |
+| Agency-specific legacy process | Adoption difficulty | Configurable workflows without arbitrary scripting |
+| Regulatory integration expectation | Deployment delay | Export-first boundary and later official integration |
+
+---
+
+# 29. Official Reference Baseline
+
+- [CSC 2025 Omnibus Rules on Appointments and Other Human Resource Actions](https://csc.gov.ph/downloads/2025-oraohra)
+- [CSC Forms and Personnel Records Resources](https://www.csc.gov.ph/downloads/forms)
+- [CSC Strategic Performance Management System](https://csc.gov.ph/programs/spms)
+- [CSC PRIME-HRM](https://csc.gov.ph/programs/prime-hrm)
+- [CSC Omnibus Rules on Leave amendment and Form 6](https://www.csc.gov.ph/downloads/category/298-mc-no-05-s-2021-amendment-to-omnibus-rules-on-leave-csc-mc-no-41-s-1998-as-amended)
+- [DBM Compendium on Organization, Staffing, Position Classification and Compensation](https://www.dbm.gov.ph/index.php/compendium-of-issuances-on-organization-staffing-position-classification-and-compensation)
+- [DBM National Budget Circular No. 601, 2026 Salary Schedule Tranche](https://www.dbm.gov.ph/index.php/central-office?catid=428&id=3801&view=article)
+- [PhilHealth Formal Economy Membership](https://www.philhealth.gov.ph/members/formal/member.php)
+- [GSIS Official Website](https://www.gsis.gov.ph/)
+- [National Privacy Commission](https://privacy.gov.ph/)
+
+The reference baseline must be revalidated before production and whenever an issuance changes.
+
+---
+
+# 30. Approval
+
+| Role | Name | Decision | Date |
+|---|---|---|---|
+| Product Owner |  | Pending |  |
+| Government HR / HRMO Reviewer |  | Pending |  |
+| Payroll / Accounting Reviewer |  | Pending |  |
+| Technical Owner |  | Pending |  |
+| Privacy / Security Reviewer |  | Pending |  |
+
+---
+
+# 31. Change Log
+
+| Version | Date | Description |
+|---|---|---|
+| 1.0 | August 5, 2026 | Reframed the product as a Philippine public-sector HRIS and replaced private-sector assumptions |
