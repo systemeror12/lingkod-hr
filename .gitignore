@@ -144,3 +144,9 @@ vite.config.ts.timestamp-*
 
 # Agents docs
 docs/
+
+# Node version
+.node-version
+
+# Package
+package.json
