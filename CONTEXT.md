@@ -62,6 +62,60 @@ _Avoid_: Generated form, system record
 A user whose effective access through any agency membership meets a mandatory MFA risk trigger or a stricter agency policy; MFA applies to the user's whole identity.
 _Avoid_: Privileged user, MFA role
 
+## Merit Selection
+
+**Agency Merit Selection Plan Version**:
+An immutable, effective-dated configuration package representing one CSC-approved version of an agency's Merit Selection Plan within the fixed national selection structure. It becomes active only with recorded approval evidence and must be the sole applicable version for a Request to Fill.
+_Avoid_: Recruitment workflow, editable selection policy
+
+**Merit Selection Criteria Set**:
+An ordered, typed collection of assessment criteria, weights, cutoffs, rating scales, evidence requirements, evaluator roles, and fixed aggregation rules owned by an Agency Merit Selection Plan Version. Its explicit applicability selectors must produce exactly one match for a vacancy.
+_Avoid_: Scoring formula, editable scorecard
+
+**Assessment Result Version**:
+An immutable, evidence-backed result for one applicant, criterion, and evaluator under a Merit Selection Criteria Set; a correction creates a reasoned replacement version rather than overwriting the result.
+_Avoid_: Editable score, score override
+
+**Board Definition**:
+A versioned specification of an HRMPSB or specialized selection board's required seats, permitted alternates, and quorum rule, separate from the people designated to serve.
+_Avoid_: Board roster, board session
+
+**Board Appointment**:
+An effective-dated designation of an Agency Member as principal or alternate for a Board Definition seat, supported by the applicable Office Order or other authority.
+_Avoid_: Board role, session attendee
+
+**Board Member Participation**:
+The immutable record of a Board Appointee's actual role, attendance, conflict declarations, and recusals in one Selection Board Session.
+_Avoid_: Board Appointment, board membership
+
+**Board Roster Snapshot**:
+The immutable set of Board Appointments resolved for a Selection Board Session when deliberation begins; it records the actual seat filled without allowing one person to satisfy multiple voting seats or serve simultaneously as voting member and secretariat.
+_Avoid_: Board Definition, current board roster
+
+**Board Quorum**:
+The minimum eligible voting participation required for a Selection Board Session or applicant-specific deliberation, never weaker than the applicable national floor.
+_Avoid_: Attendance count, configured headcount
+
+**Board Recommendation**:
+The HRMPSB's recruitment-domain recommendation for an applicant; it is not an Approval Decision and does not select the appointee.
+_Avoid_: Approval, selection
+
+**Comprehensive Candidate Evaluation Report**:
+The versioned board output that preserves comparative evaluation results, qualified candidates, and the identified top five under the bound Agency Merit Selection Plan Version; it remains advisory to the appointing authority.
+_Avoid_: Selection Decision, ranking-only report
+
+**Selection Decision**:
+The appointing authority's recruitment-domain choice following the board process; it remains distinct from administrative approvals handled through Approval Routes.
+_Avoid_: Board Recommendation, approval step
+
+**MSP Rebaseline**:
+An authorized, audited replacement of the Agency Merit Selection Plan Version bound to a Request to Fill before vacancy publication. After publication, a materially changed plan requires cancellation and republication rather than rebaseline.
+_Avoid_: Policy edit, retroactive amendment
+
+**Recruitment Approval Checkpoint**:
+An administrative approval point whose Agency Merit Selection Plan Version references an applicable Approval Route Version; it is distinct from a Board Recommendation or Selection Decision.
+_Avoid_: Selection stage, board approval
+
 ## Attendance
 
 **Attendance Event**:
