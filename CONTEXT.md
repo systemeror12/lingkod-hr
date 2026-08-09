@@ -62,6 +62,16 @@ _Avoid_: Generated form, system record
 A user whose effective access through any agency membership meets a mandatory MFA risk trigger or a stricter agency policy; MFA applies to the user's whole identity.
 _Avoid_: Privileged user, MFA role
 
+## Attendance
+
+**Attendance Event**:
+A raw record of an attendance action preserved as the input for attendance calculation and correction; it is distinct from a calculated Attendance Day or Daily Time Record.
+_Avoid_: DTR entry, time-sheet entry
+
+**Web Clock Attendance Event**:
+An Attendance Event captured through the authenticated HRIS web clock by Appointed Personnel when the agency has enabled that source; it does not imply biometric, device, location, or geofence verification.
+_Avoid_: AM/PM event, biometric clock entry, JO/COS clock-in
+
 ## Workforce Relationships
 
 **JO/COS Worker**:
