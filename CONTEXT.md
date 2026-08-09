@@ -103,3 +103,25 @@ _Avoid_: Fully supported employee, universal workflow support
 **Excluded Personnel Category**:
 A personnel category that the first release cannot create or process; imported occurrences are identified as unsupported.
 _Avoid_: Record-only category, deferred workflow
+
+## Payroll Rules
+
+**Appointed Personnel Payroll Rule Set**:
+The effective-dated rules used to calculate payroll for admitted Appointed Personnel, with pay-basis and eligibility variations rather than separate plantilla, casual, or contractual payroll systems.
+_Avoid_: Plantilla payroll profile, casual payroll profile, contractual payroll profile
+
+**National Payroll Rule Version**:
+An immutable, effective-dated representation of an authoritative national salary, compensation, contribution, tax, or deduction rule. An agency may select an applicable version but cannot alter its substance.
+_Avoid_: Agency default, editable national rate
+
+**Agency Payroll Applicability**:
+An effective-dated, evidence-backed fact that determines whether a National Payroll Rule Version or conditional pay component applies to an agency or member of its Appointed Personnel.
+_Avoid_: Agency rule override, assumed entitlement
+
+**Native Payroll Component**:
+A lawful earning, contribution, tax, or deduction calculated by the Appointed Personnel Payroll Rule Set from authoritative inputs and an applicable National Payroll Rule Version.
+_Avoid_: Hard-coded allowance, agency formula
+
+**Authorized Payroll Component Input**:
+An evidence-backed amount or quantity accepted for a lawful pay component when the Reference Agency Profile cannot authoritatively calculate it. It does not authorize a new component or override a national rule.
+_Avoid_: Free-form pay item, manual rule override
