@@ -125,3 +125,15 @@ _Avoid_: Hard-coded allowance, agency formula
 **Authorized Payroll Component Input**:
 An evidence-backed amount or quantity accepted for a lawful pay component when the Reference Agency Profile cannot authoritatively calculate it. It does not authorize a new component or override a national rule.
 _Avoid_: Free-form pay item, manual rule override
+
+**Payment Export**:
+A provider-neutral, reviewable set of Payment Instructions derived from one finalized payroll result. It does not assert provider acceptance or that funds were disbursed.
+_Avoid_: Bank file, disbursement confirmation
+
+**Payment Instruction**:
+The positive-net-pay direction for one Payroll Employee result to one designated disbursement destination within a Payment Export.
+_Avoid_: Payroll line, split payment
+
+**Disbursement Outcome**:
+External evidence of a Payment Instruction's progress or result after handoff, distinct from payroll finalization and Payment Export generation.
+_Avoid_: Payment Export status, paid flag
