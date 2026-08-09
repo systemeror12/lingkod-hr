@@ -38,6 +38,12 @@ _Avoid_: Unconstrained product decision
 An explicitly non-authoritative configuration point used when a required official or agency-specific answer is unavailable.
 _Avoid_: Default policy, assumed rule
 
+## Identity and Access
+
+**MFA-Required User**:
+A user whose effective access through any agency membership meets a mandatory MFA risk trigger or a stricter agency policy; MFA applies to the user's whole identity.
+_Avoid_: Privileged user, MFA role
+
 ## Workforce Relationships
 
 **JO/COS Worker**:
