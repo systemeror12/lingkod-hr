@@ -295,7 +295,7 @@ Content:
 24
 ```
 
-## 7.2 Fish Shell Setup
+## 7.2.a Fish Shell Setup
 
 For Fish, `fnm` must be initialized before it can modify the active Node.js version.
 
@@ -322,6 +322,34 @@ source ~/.config/fish/config.fish
 ```
 
 After changing `config.fish`, close and reopen existing integrated terminals such as the Visual Studio Code terminal.
+
+## 7.2.b Zsh Shell Setup
+
+For Zsh, `fnm` must be initialized before it can modify the active Node.js version.
+
+Add this line to:
+
+```text
+~/.zshrc
+```
+
+```zsh
+eval "$(fnm env --use-on-cd --shell zsh)"
+```
+
+You may append it with:
+
+```zsh
+echo 'eval "$(fnm env --use-on-cd --shell zsh)"' >> ~/.zshrc
+```
+
+Reload Zsh:
+
+```zsh
+source ~/.zshrc
+```
+
+After changing `.zshrc`, close and reopen existing integrated terminals such as the Visual Studio Code terminal.
 
 ## 7.3 Verify Automatic Switching
 
