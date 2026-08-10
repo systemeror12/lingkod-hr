@@ -13,12 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/setup@v2
         with:
-          node-version-file: .node-version
-          cache: pnpm
-      - name: Enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.17.0 --activate
+          version: 11.17.0
+          runtime: node@24
+          cache: true
+          install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Start local infrastructure
