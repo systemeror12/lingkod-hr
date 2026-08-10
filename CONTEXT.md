@@ -124,9 +124,25 @@ _Avoid_: Archive status, storage migration
 
 ## Identity and Access
 
+**External Identity Link**:
+The durable association between an HRIS User and an identity-provider subject, identified by the exact issuer-and-subject pair. Email addresses and other mutable profile attributes cannot establish or silently replace this link.
+_Avoid_: External user ID, email identity, automatic email match
+
+**Agency Membership Suspension**:
+An agency-scoped denial of access through one Agency Membership that leaves the User's identity and other Agency Memberships unchanged.
+_Avoid_: User lock, global account suspension
+
+**Global User Lock**:
+An identity-wide security restriction that denies every Agency Membership and invalidates all application sessions for the User.
+_Avoid_: Agency suspension, role removal
+
 **MFA-Required User**:
 A user whose effective access through any agency membership meets a mandatory MFA risk trigger or a stricter agency policy; MFA applies to the user's whole identity.
 _Avoid_: Privileged user, MFA role
+
+**Security Event**:
+An append-only HRIS record of identity or access activity observed by the application or imported from the identity provider, retaining source correlation without credentials or tokens.
+_Avoid_: Provider log copy, editable security status
 
 ## Merit Selection
 
