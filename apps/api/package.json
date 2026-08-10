@@ -1,0 +1,27 @@
+{
+  "name": "@lingkod-hr/api",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "eslint .",
+    "start": "node dist/main.js",
+    "test": "vitest run --passWithNoTests",
+    "test:e2e": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@lingkod-hr/config": "workspace:*",
+    "@lingkod-hr/database": "workspace:*",
+    "@lingkod-hr/observability": "workspace:*",
+    "@nestjs/common": "11.1.29",
+    "@nestjs/core": "11.1.29",
+    "@nestjs/platform-express": "11.1.29",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "tsx": "4.23.12"
+  }
+}

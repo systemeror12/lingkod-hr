@@ -1,0 +1,85 @@
+import { resolve } from 'node:path';
+import { config as loadDotenv } from 'dotenv';
+import { z } from 'zod';
+
+loadDotenv({ path: resolve(__dirname, '../../../.env') });
+
+const localDefaults = {
+  API_PORT: '3001',
+  WORKER_PORT: '3002',
+  APP_URL: 'http://localhost:3000',
+  API_URL: 'http://localhost:3001',
+  DATABASE_URL: 'postgresql://hris_local:local_only@localhost:5432/hris',
+  DATABASE_DIRECT_URL: 'postgresql://hris_local:local_only@localhost:5432/hris',
+  REDIS_URL: 'redis://localhost:6379',
+  OIDC_ISSUER: 'https://example.invalid',
+  OIDC_CLIENT_ID: 'local-client',
+  OIDC_CLIENT_SECRET: 'local-client-secret',
+  SESSION_SECRET: 'local-development-session-secret-change-me',
+  S3_ENDPOINT: 'http://localhost:8333',
+  S3_REGION: 'us-east-1',
+  S3_BUCKET: 'hris-local',
+  S3_ACCESS_KEY_ID: 'lingkod_local',
+  S3_SECRET_ACCESS_KEY: 'lingkod_local_secret',
+  EMAIL_FROM: 'lingkod-hr@localhost.test',
+  EMAIL_PROVIDER_API_KEY: 'local-only',
+};
+
+const configSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  APP_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  APP_URL: z.string().url(),
+  API_URL: z.string().url(),
+  API_PORT: z.coerce.number().int().positive(),
+  WORKER_PORT: z.coerce.number().int().positive(),
+  DATABASE_URL: z.string().url(),
+  DATABASE_DIRECT_URL: z.string().url(),
+  REDIS_URL: z.string().url(),
+  OIDC_ISSUER: z.string().url().optional(),
+  OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  SESSION_SECRET: z.string().min(32),
+  S3_ENDPOINT: z.string().url(),
+  S3_REGION: z.string().min(1),
+  S3_BUCKET: z.string().min(1),
+  S3_ACCESS_KEY_ID: z.string().min(1),
+  S3_SECRET_ACCESS_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  AI_DEFAULT_MODEL: z.string().min(1).optional(),
+  AI_EMBEDDING_MODEL: z.string().min(1).optional(),
+  AI_FEATURES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+  EMAIL_FROM: z.string().email(),
+  EMAIL_PROVIDER_API_KEY: z.string().min(1),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
+  ERROR_TRACKING_DSN: z.string().url().optional(),
+  DATA_ENCRYPTION_KEY: z.string().min(1).optional(),
+  BLIND_INDEX_KEY: z.string().min(1).optional(),
+});
+
+export type AppConfig = z.infer<typeof configSchema>;
+
+export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
+  const deploymentEnvironment = environment.APP_ENV ?? environment.NODE_ENV ?? 'development';
+  const values =
+    deploymentEnvironment === 'production' ? environment : { ...localDefaults, ...environment };
+  const parsed = configSchema.safeParse(values);
+
+  if (!parsed.success) {
+    const details = parsed.error.issues
+      .map((issue) => `${issue.path.join('.') || 'config'}: ${issue.message}`)
+      .join('; ');
+    throw new Error(`Invalid application configuration: ${details}`);
+  }
+
+  return parsed.data;
+}
+
+let cachedConfig: AppConfig | undefined;
+
+export function getConfig(): AppConfig {
+  cachedConfig ??= parseConfig();
+  return cachedConfig;
+}
