@@ -182,6 +182,32 @@ _Avoid_: Policy edit, retroactive amendment
 An administrative approval point whose Agency Merit Selection Plan Version references an applicable Approval Route Version; it is distinct from a Board Recommendation or Selection Decision.
 _Avoid_: Selection stage, board approval
 
+## Performance Management
+
+**Agency SPMS Version**:
+An immutable, effective-dated configuration package representing one CSC-approved version of an agency's SPMS within the fixed national performance cycle. It binds form structures, applicability, cycle rules, rating rules, sign-off routes, and approval evidence as one active version.
+_Avoid_: Performance workflow, editable appraisal policy
+
+**Rating Rule Set**:
+A typed collection of rating scales, dimensions, weights, evidence requirements, bounded aggregation methods, rounding rules, and non-ratable outcomes owned by an Agency SPMS Version.
+_Avoid_: Rating formula, editable scorecard
+
+**Performance Sign-off Checkpoint**:
+An administrative approval point whose Agency SPMS Version references an applicable Approval Route Version; performance reviews, ratings, calibration, and appeals remain performance-domain records.
+_Avoid_: Rating result, generic performance workflow step
+
+**Agency SPMS Form Template Version**:
+An immutable rendering definition supported by an agency-approved SPMS form and bound to every performance record issued from it. The Reference Agency Profile has no active agency form template.
+_Avoid_: Official generic OPCR, editable form layout
+
+**Performance Rating Appeal**:
+A formal challenge to a finalized individual performance rating routed to the configured Performance Management Team without reopening or overwriting the rating.
+_Avoid_: Approval comment, rating correction
+
+**Rating Amendment**:
+A controlled, reasoned replacement of a finalized Performance Rating that preserves the original rating and its governing configuration.
+_Avoid_: Rating edit, reopened rating
+
 ## Attendance
 
 **Attendance Event**:
