@@ -1,0 +1,31 @@
+{
+  "name": "lingkod-hr",
+  "private": true,
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "db:generate": "pnpm --filter @lingkod-hr/database generate",
+    "db:migrate": "pnpm --filter @lingkod-hr/database migrate:deploy",
+    "dev": "turbo run dev",
+    "format": "prettier --write \"apps/**/*.{js,mjs,json,ts,tsx,css}\" \"packages/**/*.{js,mjs,json,ts,tsx,css}\" \"infrastructure/**/*.{yaml,yml,json}\" \"*.{json,mjs,yaml,yml}\"",
+    "format:check": "prettier --check \"apps/**/*.{js,mjs,json,ts,tsx,css}\" \"packages/**/*.{js,mjs,json,ts,tsx,css}\" \"infrastructure/**/*.{yaml,yml,json}\" \"*.{json,mjs,yaml,yml}\"",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "typecheck": "turbo run typecheck",
+    "validate": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "turbo": "2.10.9",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.66.0",
+    "vitest": "4.1.10"
+  }
+}
