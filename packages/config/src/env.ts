@@ -65,8 +65,15 @@ export type AppConfig = z.infer<typeof configSchema>;
 
 export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
   const deploymentEnvironment = environment.APP_ENV ?? environment.NODE_ENV ?? 'development';
+  const normalizedEnvironment = {
+    ...environment,
+    NODE_ENV: deploymentEnvironment,
+    APP_ENV: deploymentEnvironment,
+  };
   const values =
-    deploymentEnvironment === 'production' ? environment : { ...localDefaults, ...environment };
+    deploymentEnvironment === 'production'
+      ? normalizedEnvironment
+      : { ...localDefaults, ...normalizedEnvironment };
   const parsed = configSchema.safeParse(values);
 
   if (!parsed.success) {

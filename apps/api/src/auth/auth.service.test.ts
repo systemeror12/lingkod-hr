@@ -197,25 +197,29 @@ it.skipIf(!enabled)('allows a replacement after a pending invitation expires', a
       status: 'PENDING',
     },
   });
+  const context: RequestContext = {
+    requestId,
+    userId: user.id,
+    agencyId: agency.id,
+    membershipId: membership.id,
+    primaryOrganizationUnitId: null,
+    permissions: [
+      { code: 'security.users.invite', scopePolicy: 'AGENCY' },
+      { code: 'security.users.update_roles', scopePolicy: 'AGENCY' },
+    ],
+  };
 
   try {
     await expect(
       new AuthService().createInvitation(
-        {
-          requestId,
-          userId: user.id,
-          agencyId: agency.id,
-          membershipId: membership.id,
-          primaryOrganizationUnitId: null,
-          permissions: [
-            { code: 'security.users.invite', scopePolicy: 'AGENCY' },
-            { code: 'security.users.update_roles', scopePolicy: 'AGENCY' },
-          ],
-        },
-        email,
+        context,
+        user.emailNormalized,
         ['agency_administrator'],
         requestId,
       ),
+    ).rejects.toMatchObject({ code: 'MEMBERSHIP_EXISTS', statusCode: 409 });
+    await expect(
+      new AuthService().createInvitation(context, email, ['agency_administrator'], requestId),
     ).resolves.toMatchObject({ email });
     await expect(
       admin.securityEvent.findFirst({
@@ -255,10 +259,11 @@ it.skipIf(!enabled)(
       ),
     );
     const authTime = new Date('2026-08-10T23:00:00.000Z');
+    const subject = `subject-${suffix}`;
     const user = await admin.user.create({
       data: {
         identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
-        externalSubject: `subject-${suffix}`,
+        externalSubject: subject,
         emailNormalized: `switch-${suffix}@example.test`,
         displayName: 'E2E User',
         globalStatus: 'ACTIVE',
@@ -275,8 +280,9 @@ it.skipIf(!enabled)(
     if (!targetMembership) throw new Error('The target E2E Agency Membership was not created.');
 
     try {
-      const login = await new AuthService().signIn(
-        identity(`subject-${suffix}`, user.emailNormalized, authTime),
+      const service = new AuthService();
+      const login = await service.signIn(
+        identity(subject, user.emailNormalized, authTime),
         null,
         null,
         `request-${suffix}`,
@@ -301,6 +307,30 @@ it.skipIf(!enabled)(
       expect(rotated.expiresAt).toEqual(original.expiresAt);
       expect(rotated.authTime).toEqual(original.authTime);
       expect(revoked.revokedAt).not.toBeNull();
+      Object.defineProperty(service, 'oidc', {
+        value: {
+          verifyLogoutToken: async () => ({
+            eventId: `backchannel-${suffix}`,
+            subject,
+            providerSid: null,
+          }),
+        },
+      });
+      await service.handleBackChannelLogout('verified-by-test-double', `backchannel-${suffix}`);
+      await expect(
+        admin.userSession.findUniqueOrThrow({ where: { id: switched.sessionId } }),
+      ).resolves.toMatchObject({
+        revocationReason: 'OIDC_BACKCHANNEL_LOGOUT',
+      });
+      await expect(
+        admin.auditEvent.findFirstOrThrow({
+          where: {
+            agencyId: switched.context.agencyId,
+            action: 'SESSION_REVOKED',
+            entityId: switched.sessionId,
+          },
+        }),
+      ).resolves.toMatchObject({ actorType: 'SYSTEM', reason: 'OIDC_BACKCHANNEL_LOGOUT' });
     } finally {
       await cleanup(
         admin,
@@ -318,6 +348,14 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
   const requestId = `request-${suffix}`;
   const agency = await admin.agency.create({
     data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
+  });
+  const priorAgency = await admin.agency.create({
+    data: {
+      code: `E2E-PRIOR-${suffix}`,
+      name: 'Prior E2E Agency',
+      agencyType: 'NGA',
+      status: 'ACTIVE',
+    },
   });
   const inviter = await admin.user.create({
     data: {
@@ -340,7 +378,18 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
     },
   });
   const inviteeEmail = `invitee-${suffix}@example.test`;
-  let inviteeId: string | undefined;
+  const invitee = await admin.user.create({
+    data: {
+      identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+      externalSubject: `invitee-${suffix}`,
+      emailNormalized: inviteeEmail,
+      displayName: 'E2E Invitee',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  await admin.agencyMembership.create({
+    data: { agencyId: priorAgency.id, userId: invitee.id, status: 'ACTIVE' },
+  });
 
   try {
     const invitation = await new AuthService().createInvitation(
@@ -359,19 +408,16 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
       ['agency_administrator'],
       requestId,
     );
-    await new AuthService().signIn(
+    const login = await new AuthService().signIn(
       identity(`invitee-${suffix}`, inviteeEmail),
       null,
       invitation.activationToken,
       requestId,
     );
-    const invitee = await admin.user.findUniqueOrThrow({
-      where: { emailNormalized: inviteeEmail },
-    });
-    inviteeId = invitee.id;
     const membership = await admin.agencyMembership.findFirstOrThrow({
       where: { agencyId: agency.id, userId: invitee.id },
     });
+    expect(login.context).toMatchObject({ agencyId: agency.id, membershipId: membership.id });
 
     await expect(
       admin.membershipRole.findFirstOrThrow({
@@ -393,7 +439,7 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
       },
     });
   } finally {
-    await cleanup(admin, [agency.id], [inviter.id, ...(inviteeId ? [inviteeId] : [])]);
+    await cleanup(admin, [agency.id, priorAgency.id], [inviter.id, invitee.id]);
     await admin.$disconnect();
   }
 });

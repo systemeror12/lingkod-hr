@@ -248,16 +248,16 @@ export class AuthService {
             await setDatabaseContext(transaction, { userId: user.id });
           }
 
-          if (invitationTokenHash) {
-            await this.acceptInvitation(
-              transaction,
-              user.id,
-              identity.email,
-              invitationTokenHash,
-              requestId,
-              now,
-            );
-          }
+          const invitationMembershipId = invitationTokenHash
+            ? await this.acceptInvitation(
+                transaction,
+                user.id,
+                identity.email,
+                invitationTokenHash,
+                requestId,
+                now,
+              )
+            : null;
 
           const memberships = await transaction.agencyMembership.findMany({
             where: { userId: user.id, status: 'ACTIVE' },
@@ -271,8 +271,9 @@ export class AuthService {
             );
           }
 
-          const membership = selectedMembershipId
-            ? memberships.find(({ id }) => id === selectedMembershipId)
+          const requestedMembershipId = invitationMembershipId ?? selectedMembershipId;
+          const membership = requestedMembershipId
+            ? memberships.find(({ id }) => id === requestedMembershipId)
             : memberships[0];
           if (!membership) {
             throw new AuthServiceError(
@@ -457,6 +458,23 @@ export class AuthService {
           'One or more requested roles are unavailable.',
           400,
           'ROLE_NOT_FOUND',
+        );
+      }
+      const emailOwner = await transaction.user.findUnique({
+        where: { emailNormalized: normalizedEmail },
+        select: { id: true },
+      });
+      const existingMembership = emailOwner
+        ? await transaction.agencyMembership.findFirst({
+            where: { agencyId: context.agencyId, userId: emailOwner.id },
+            select: { status: true },
+          })
+        : null;
+      if (existingMembership && existingMembership.status !== 'INVITED') {
+        throw new AuthServiceError(
+          'The User already has an Agency Membership.',
+          409,
+          'MEMBERSHIP_EXISTS',
         );
       }
       const expiredInvitations = await transaction.invitation.updateManyAndReturn({
@@ -653,14 +671,45 @@ export class AuthService {
       } else {
         await setDatabaseContext(transaction, { providerSid: identity.providerSid as string });
       }
-      await transaction.userSession.updateMany({
+      const revokedAt = new Date();
+      const sessions = await transaction.userSession.updateManyAndReturn({
         where: {
           ...(userId ? { userId } : {}),
           ...(identity.providerSid ? { providerSid: identity.providerSid } : {}),
           revokedAt: null,
         },
-        data: { revokedAt: new Date(), revocationReason: 'OIDC_BACKCHANNEL_LOGOUT' },
+        data: { revokedAt, revocationReason: 'OIDC_BACKCHANNEL_LOGOUT' },
+        select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
       });
+      for (const session of sessions) {
+        await setDatabaseContext(transaction, {
+          agencyId: session.agencyId,
+          userId: session.userId,
+          membershipId: session.agencyMembershipId,
+        });
+        await transaction.securityEvent.create({
+          data: {
+            agencyId: session.agencyId,
+            userId: session.userId,
+            membershipId: session.agencyMembershipId,
+            eventType: 'SESSION_REVOKED',
+            requestId,
+            details: { reason: 'OIDC_BACKCHANNEL_LOGOUT', providerEventId: identity.eventId },
+          },
+        });
+        await transaction.auditEvent.create({
+          data: {
+            agencyId: session.agencyId,
+            actorType: 'SYSTEM',
+            action: 'SESSION_REVOKED',
+            entityType: 'UserSession',
+            entityId: session.id,
+            reason: 'OIDC_BACKCHANNEL_LOGOUT',
+            requestId,
+            metadata: { providerEventId: identity.eventId },
+          },
+        });
+      }
     });
   }
 
@@ -732,7 +781,7 @@ export class AuthService {
     tokenHash: Buffer,
     requestId: string,
     now: Date,
-  ): Promise<void> {
+  ): Promise<string> {
     const invitation = await transaction.invitation.findFirst({
       where: { tokenHash: prismaBytes(tokenHash), status: 'PENDING' },
     });
@@ -848,6 +897,7 @@ export class AuthService {
         assignedByMembershipId: invitation.invitedByMembershipId,
       },
     });
+    return membership.id;
   }
 
   private async createSession(

@@ -22,7 +22,8 @@ model Agency {
   createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  profiles       AgencyProfileVersion[]
+  currentProfile AgencyProfileVersion?  @relation("AgencyCurrentProfile", fields: [id, currentProfileVersionId], references: [agencyId, id], onDelete: Restrict, map: "agencies_current_profile_fkey")
+  profiles       AgencyProfileVersion[] @relation("AgencyProfiles")
   memberships    AgencyMembership[]
   invitations    Invitation[]
   roles          Role[]
@@ -48,7 +49,8 @@ model AgencyProfileVersion {
   status                   String
   createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  agency           Agency  @relation("AgencyProfiles", fields: [agencyId], references: [id], onDelete: Restrict)
+  currentForAgencies Agency[] @relation("AgencyCurrentProfile")
 
   @@unique([agencyId, versionNo])
   @@unique([agencyId, id])
