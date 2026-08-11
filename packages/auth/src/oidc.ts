@@ -204,14 +204,12 @@ export class OidcClient {
     return { subject, providerSid, eventId: payload.jti };
   }
 
-  async providerLogoutUrl(providerSid: string | null): Promise<string | null> {
-    if (!providerSid) return null;
+  async providerLogoutUrl(): Promise<string | null> {
     try {
       const endpoint = (await this.discovery()).endSessionEndpoint;
       if (!endpoint) return null;
       const url = new URL(endpoint);
       url.searchParams.set('client_id', this.options.clientId);
-      url.searchParams.set('sid', providerSid);
       return url.toString();
     } catch {
       return null;

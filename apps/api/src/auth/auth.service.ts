@@ -318,7 +318,7 @@ export class AuthService {
     const result = transactionResult.session;
     return {
       ...result,
-      providerLogoutUrl: await this.oidc.providerLogoutUrl(result.providerSid),
+      providerLogoutUrl: await this.oidc.providerLogoutUrl(),
     };
   }
 
@@ -541,6 +541,15 @@ export class AuthService {
         metadata: { email: normalizedEmail, roleCodes: roles.map(({ code }) => code) },
       });
       return { id: invitation.id, email: normalizedEmail, expiresAt, activationToken };
+    }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new AuthServiceError(
+          'A pending invitation already exists for this email.',
+          409,
+          'INVITATION_PENDING',
+        );
+      }
+      throw error;
     });
   }
 
@@ -551,7 +560,7 @@ export class AuthService {
     requestId: string,
   ): Promise<string | null> {
     const tokenHash = hashSessionToken(rawToken);
-    const providerSid = await withDatabaseContext(
+    await withDatabaseContext(
       { ...session.context, sessionTokenHash: tokenHash.toString('hex') },
       async (transaction) => {
         const revoked = await transaction.userSession.updateMany({
@@ -579,10 +588,9 @@ export class AuthService {
             metadata: { reason },
           });
         }
-        return session.providerSid;
       },
     );
-    return this.oidc.providerLogoutUrl(providerSid);
+    return this.oidc.providerLogoutUrl();
   }
 
   async switchAgency(

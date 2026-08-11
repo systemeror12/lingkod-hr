@@ -273,6 +273,9 @@ it.skipIf(!enabled)('allows a replacement after a pending invitation expires', a
       new AuthService().createInvitation(context, email, ['agency_administrator'], requestId),
     ).resolves.toMatchObject({ email });
     await expect(
+      new AuthService().createInvitation(context, email, ['agency_administrator'], requestId),
+    ).rejects.toMatchObject({ code: 'INVITATION_PENDING', statusCode: 409 });
+    await expect(
       admin.securityEvent.findFirst({
         where: { agencyId: agency.id, eventType: 'INVITATION_EXPIRED', requestId },
       }),

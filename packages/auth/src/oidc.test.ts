@@ -42,7 +42,34 @@ it('treats provider logout discovery as optional', async () => {
   });
 
   try {
-    await expect(client.providerLogoutUrl('provider-session')).resolves.toBeNull();
+    await expect(client.providerLogoutUrl()).resolves.toBeNull();
+  } finally {
+    fetch.mockRestore();
+  }
+});
+
+it('uses standard RP-initiated provider logout parameters', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        authorization_endpoint: 'https://issuer.example/authorize',
+        token_endpoint: 'https://issuer.example/token',
+        jwks_uri: 'https://issuer.example/jwks',
+        end_session_endpoint: 'https://issuer.example/logout',
+      }),
+    ),
+  );
+  const client = new OidcClient({
+    issuer: 'https://issuer.example',
+    clientId: 'client',
+    clientSecret: 'secret',
+    redirectUri: 'https://app.example/callback',
+  });
+
+  try {
+    const url = new URL((await client.providerLogoutUrl()) ?? '');
+    expect(url.searchParams.get('client_id')).toBe('client');
+    expect(url.searchParams.has('sid')).toBe(false);
   } finally {
     fetch.mockRestore();
   }
