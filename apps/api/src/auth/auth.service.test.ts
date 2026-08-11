@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { hashSessionToken, type OidcIdentity } from '@lingkod-hr/auth';
+import { hashSessionToken, type OidcIdentity, type RequestContext } from '@lingkod-hr/auth';
 import { expect, it } from 'vitest';
 import { AuthService } from './auth.service';
 
@@ -60,6 +60,29 @@ async function cleanup(
   await admin.agency.deleteMany({ where: { id: { in: [...agencyIds] } } });
 }
 
+it('rejects invitation role assignment without Agency-scoped role-management permission', async () => {
+  const context: RequestContext = {
+    requestId: 'request-role-authorization',
+    userId: '00000000-0000-4000-8000-000000000001',
+    agencyId: '00000000-0000-4000-8000-000000000002',
+    membershipId: '00000000-0000-4000-8000-000000000003',
+    primaryOrganizationUnitId: null,
+    permissions: [
+      { code: 'security.users.invite', scopePolicy: 'AGENCY' },
+      { code: 'security.users.update_roles', scopePolicy: 'RESTRICTED' },
+    ],
+  };
+
+  await expect(
+    new AuthService().createInvitation(
+      context,
+      'invitee@example.test',
+      ['security_administrator'],
+      context.requestId,
+    ),
+  ).rejects.toMatchObject({ code: 'ROLE_ASSIGNMENT_FORBIDDEN', statusCode: 403 });
+});
+
 it.skipIf(!enabled)(
   'commits an expired invitation before returning its authentication error',
   async () => {
@@ -112,6 +135,78 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)('allows a replacement after a pending invitation expires', async () => {
+  const admin = await createAdminClient();
+  const suffix = `${Date.now()}-replacement`;
+  const email = `replacement-${suffix}@example.test`;
+  const requestId = `request-${suffix}`;
+  const agency = await admin.agency.create({
+    data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
+  });
+  const user = await admin.user.create({
+    data: {
+      identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+      externalSubject: `subject-${suffix}`,
+      emailNormalized: `inviter-${suffix}@example.test`,
+      displayName: 'E2E User',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  const membership = await admin.agencyMembership.create({
+    data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+  });
+  const staleInvitation = await admin.invitation.create({
+    data: {
+      agencyId: agency.id,
+      emailNormalized: email,
+      invitedByMembershipId: membership.id,
+      tokenHash: databaseBytes(hashSessionToken(`stale-token-${suffix}`)),
+      requestedRoleCodes: ['agency_administrator'],
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      expiresAt: new Date('2026-08-02T00:00:00.000Z'),
+      status: 'PENDING',
+    },
+  });
+
+  try {
+    await expect(
+      new AuthService().createInvitation(
+        {
+          requestId,
+          userId: user.id,
+          agencyId: agency.id,
+          membershipId: membership.id,
+          primaryOrganizationUnitId: null,
+          permissions: [
+            { code: 'security.users.invite', scopePolicy: 'AGENCY' },
+            { code: 'security.users.update_roles', scopePolicy: 'AGENCY' },
+          ],
+        },
+        email,
+        ['agency_administrator'],
+        requestId,
+      ),
+    ).resolves.toMatchObject({ email });
+    await expect(
+      admin.securityEvent.findFirst({
+        where: { agencyId: agency.id, eventType: 'INVITATION_EXPIRED', requestId },
+      }),
+    ).resolves.toMatchObject({ details: { invitationId: staleInvitation.id } });
+    await expect(
+      admin.auditEvent.findFirst({
+        where: { agencyId: agency.id, action: 'INVITATION_EXPIRED', requestId },
+      }),
+    ).resolves.toMatchObject({
+      entityId: staleInvitation.id,
+      previousStatus: 'PENDING',
+      newStatus: 'EXPIRED',
+    });
+  } finally {
+    await cleanup(admin, [agency.id], user.id);
+    await admin.$disconnect();
+  }
+});
 
 it.skipIf(!enabled)(
   'keeps absolute expiry and authentication time when switching agencies',

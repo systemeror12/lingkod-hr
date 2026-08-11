@@ -17,6 +17,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.setGlobalPrefix('api/v1');
+  app.enableCors({ origin: new URL(config.APP_URL).origin, credentials: true });
   app.use((request: Request, response: Response, next: NextFunction) => {
     const requestId = request.header('x-request-id') ?? createRequestId();
     request.headers['x-request-id'] = requestId;

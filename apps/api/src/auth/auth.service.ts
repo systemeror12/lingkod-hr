@@ -2,7 +2,6 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
-  AuthorizationError,
   createSessionToken,
   hashSessionToken,
   hasMfaEvidence,
@@ -366,8 +365,20 @@ export class AuthService {
     roleCodes: readonly string[],
     requestId: string,
   ): Promise<InvitationResult> {
-    if (!hasPermission(context, 'security.users.invite')) {
-      throw new AuthorizationError('The current Membership cannot invite users.');
+    const agencyRecord = { agencyId: context.agencyId };
+    if (!hasPermission(context, 'security.users.invite', agencyRecord)) {
+      throw new AuthServiceError(
+        'The current Membership cannot invite users.',
+        403,
+        'INVITATION_FORBIDDEN',
+      );
+    }
+    if (!hasPermission(context, 'security.users.update_roles', agencyRecord)) {
+      throw new AuthServiceError(
+        'The current Membership cannot assign Agency roles.',
+        403,
+        'ROLE_ASSIGNMENT_FORBIDDEN',
+      );
     }
     const normalizedEmail = normalizeEmail(email);
     const requestedRoleCodes = normalizeRoleCodes(roleCodes);
@@ -375,7 +386,8 @@ export class AuthService {
       throw new AuthServiceError('At least one Agency role is required.', 400, 'ROLE_REQUIRED');
     }
     const activationToken = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + INVITATION_LIFETIME_MS);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + INVITATION_LIFETIME_MS);
 
     return withDatabaseContext(context, async (transaction) => {
       const roles = await transaction.role.findMany({
@@ -392,6 +404,30 @@ export class AuthService {
           400,
           'ROLE_NOT_FOUND',
         );
+      }
+      const expiredInvitations = await transaction.invitation.updateManyAndReturn({
+        where: {
+          agencyId: context.agencyId,
+          emailNormalized: normalizedEmail,
+          status: 'PENDING',
+          expiresAt: { lte: now },
+        },
+        data: { status: 'EXPIRED' },
+        select: { id: true },
+      });
+      for (const expiredInvitation of expiredInvitations) {
+        await this.recordSecurityEvent(transaction, context, 'INVITATION_EXPIRED', requestId, {
+          invitationId: expiredInvitation.id,
+        });
+        await this.recordAuditEvent(transaction, context, {
+          action: 'INVITATION_EXPIRED',
+          entityType: 'Invitation',
+          entityId: expiredInvitation.id,
+          previousStatus: 'PENDING',
+          newStatus: 'EXPIRED',
+          requestId,
+          metadata: { email: normalizedEmail },
+        });
       }
       const invitation = await transaction.invitation.create({
         data: {
