@@ -59,6 +59,9 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
   const membershipB = await admin.agencyMembership.create({
     data: { agencyId: agencyB.id, userId: user.id, status: 'ACTIVE' },
   });
+  const targetMembershipA = await admin.agencyMembership.create({
+    data: { agencyId: agencyA.id, userId: targetUser.id, status: 'ACTIVE' },
+  });
   let securityEventId: string | undefined;
 
   try {
@@ -138,6 +141,29 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
         `,
       ).toBe(0);
     });
+    const sessionB = await admin.userSession.create({
+      data: {
+        userId: user.id,
+        agencyId: agencyB.id,
+        agencyMembershipId: membershipB.id,
+        sessionTokenHash: Buffer.from(`e2e-session-${Date.now()}`),
+        expiresAt: new Date('2099-12-31'),
+      },
+    });
+    await expect(
+      withContext(
+        app,
+        contextValues(agencyA.id, user.id),
+        (transaction) =>
+          transaction.$executeRaw`
+          UPDATE "user_sessions"
+          SET "agency_id" = ${agencyA.id}::uuid,
+              "agency_membership_id" = ${targetMembershipA.id}::uuid,
+              "user_id" = ${targetUser.id}::uuid
+          WHERE "id" = ${sessionB.id}::uuid
+        `,
+      ),
+    ).rejects.toThrow(/permission denied/i);
 
     const globalRole = await admin.role.findFirstOrThrow({
       where: { code: 'agency_administrator', agencyId: null },
@@ -213,7 +239,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
     await admin.agencyProfileVersion.deleteMany({
       where: { agencyId: { in: [agencyA.id, agencyB.id] } },
     });
-    await admin.userSession.deleteMany({ where: { userId: user.id } });
+    await admin.userSession.deleteMany({ where: { userId: { in: [user.id, targetUser.id] } } });
     await admin.membershipRole.deleteMany({
       where: { membershipId: { in: [membershipA.id, membershipB.id] } },
     });
@@ -221,7 +247,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
       where: { agencyId: { in: [agencyA.id, agencyB.id] } },
     });
     await admin.agencyMembership.deleteMany({
-      where: { id: { in: [membershipA.id, membershipB.id] } },
+      where: { id: { in: [membershipA.id, membershipB.id, targetMembershipA.id] } },
     });
     await admin.agency.deleteMany({ where: { id: { in: [agencyA.id, agencyB.id] } } });
     await admin.user.deleteMany({ where: { id: { in: [user.id, targetUser.id] } } });

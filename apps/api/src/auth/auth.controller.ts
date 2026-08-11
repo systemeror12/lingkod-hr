@@ -26,7 +26,6 @@ import {
   loginQuerySchema,
   switchAgencySchema,
 } from './auth.schemas';
-import { assertCookieMutationOrigin } from './csrf';
 
 function translateError(error: unknown): never {
   if (error instanceof AuthServiceError) {
@@ -166,7 +165,6 @@ export class AuthController {
   @UseGuards(AuthGuard)
   async logout(@Req() request: AuthenticatedRequest, @Res() response: Response): Promise<void> {
     if (!request.authSession || !request.sessionToken) throw new UnauthorizedException();
-    assertCookieMutationOrigin(request, new URL(this.config.APP_URL).origin);
     try {
       const providerLogoutUrl = await this.authService.revokeSession(
         request.sessionToken,
@@ -191,7 +189,6 @@ export class AuthController {
     if (!request.authSession || !request.sessionToken) throw new UnauthorizedException();
     const parsed = switchAgencySchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException('membershipId must be a UUID.');
-    assertCookieMutationOrigin(request, new URL(this.config.APP_URL).origin);
     try {
       const result = await this.authService.switchAgency(
         request.sessionToken,

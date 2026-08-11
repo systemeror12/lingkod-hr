@@ -430,6 +430,9 @@ CREATE TABLE "user_sessions" (
 CREATE INDEX "user_sessions_user_active_idx"
   ON "user_sessions" ("user_id", "revoked_at");
 
+REVOKE UPDATE ON "user_sessions" FROM hris_app;
+GRANT UPDATE ("last_seen_at", "revoked_at", "revocation_reason") ON "user_sessions" TO hris_app;
+
 CREATE TABLE "security_events" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "event_key" TEXT,
@@ -553,7 +556,24 @@ CREATE POLICY "delegated_authorities_isolation" ON "delegated_authorities"
   USING ("agency_id" = app_agency_id())
   WITH CHECK ("agency_id" = app_agency_id());
 
-CREATE POLICY "user_sessions_isolation" ON "user_sessions"
+CREATE POLICY "user_sessions_select" ON "user_sessions"
+  FOR SELECT
+  USING (
+    "agency_id" = app_agency_id()
+    OR "user_id" = app_user_id()
+    OR "provider_sid" = current_setting('app.provider_sid', true)
+    OR encode("session_token_hash", 'hex') = current_setting('app.session_token_hash', true)
+  );
+
+CREATE POLICY "user_sessions_insert" ON "user_sessions"
+  FOR INSERT
+  WITH CHECK (
+    "agency_id" = app_agency_id()
+    AND "user_id" = app_user_id()
+  );
+
+CREATE POLICY "user_sessions_update" ON "user_sessions"
+  FOR UPDATE
   USING (
     "agency_id" = app_agency_id()
     OR "user_id" = app_user_id()

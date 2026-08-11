@@ -1,8 +1,10 @@
 import { PrismaClient } from '@prisma/client';
 import { hashSessionToken, type OidcIdentity, type RequestContext } from '@lingkod-hr/auth';
+import type { ExecutionContext } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller';
+import { AuthGuard } from './auth.guard';
 import { AuthService, AuthServiceError } from './auth.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -88,6 +90,27 @@ it('records an OIDC callback failure once with its reason and client IP', async 
     'MEMBERSHIP_DENIED',
     '203.0.113.1',
   );
+});
+
+it('rejects an untrusted cookie origin before refreshing the session', async () => {
+  const authenticateSession = vi.fn();
+  const request = {
+    headers: { cookie: 'hris_session=session-token' },
+    header: (name: string) =>
+      name === 'origin'
+        ? 'https://attacker.example'
+        : name === 'x-request-id'
+          ? 'request-cross-site'
+          : undefined,
+  } as unknown as Request;
+  const executionContext = {
+    switchToHttp: () => ({ getRequest: () => request }),
+  } as unknown as ExecutionContext;
+
+  await expect(
+    new AuthGuard({ authenticateSession } as unknown as AuthService).canActivate(executionContext),
+  ).rejects.toMatchObject({ status: 403 });
+  expect(authenticateSession).not.toHaveBeenCalled();
 });
 
 it('rejects invitation role assignment without Agency-scoped role-management permission', async () => {

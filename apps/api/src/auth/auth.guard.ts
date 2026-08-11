@@ -1,7 +1,9 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { getConfig } from '@lingkod-hr/config';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
+import { assertCookieMutationOrigin } from './csrf';
 
 function cookieValue(request: Request, name: string): string | null {
   const header = request.headers.cookie;
@@ -27,10 +29,13 @@ export function requestSessionToken(request: Request): string | null {
 
 @Injectable()
 export class AuthGuard implements CanActivate {
+  private readonly allowedOrigin = new URL(getConfig().APP_URL).origin;
+
   constructor(private readonly authService: AuthService) {}
 
   async canActivate(executionContext: ExecutionContext): Promise<boolean> {
     const request = executionContext.switchToHttp().getRequest<AuthenticatedRequest>();
+    assertCookieMutationOrigin(request, this.allowedOrigin);
     const token = requestSessionToken(request);
     const authSession = token
       ? await this.authService.authenticateSession(

@@ -16,7 +16,6 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import type { AuthenticatedRequest } from './auth.types';
 import { getConfig } from '@lingkod-hr/config';
 import { agencyIdSchema, invitationSchema } from './auth.schemas';
-import { assertCookieMutationOrigin } from './csrf';
 
 @Controller('agencies')
 @UseGuards(AuthGuard, PermissionGuard)
@@ -43,7 +42,6 @@ export class AgencyController {
         { error: { code: 'INVALID_INPUT', message: 'Invalid invitation input.' } },
         400,
       );
-    assertCookieMutationOrigin(request, new URL(this.config.APP_URL).origin);
     let invitation: InvitationResult;
     try {
       invitation = await this.authService.createInvitation(
