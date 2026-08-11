@@ -119,6 +119,7 @@ model AgencyMembership {
   auditEvents         AuditEvent[]     @relation("AuditEventMembership")
 
   @@unique([agencyId, id])
+  @@unique([agencyId, id, userId])
   @@index([userId])
   @@map("agency_memberships")
 }
@@ -246,7 +247,7 @@ model UserSession {
 
   user       User             @relation(fields: [userId], references: [id], onDelete: Restrict)
   agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  membership AgencyMembership @relation(fields: [agencyMembershipId], references: [id], onDelete: Restrict)
+  membership AgencyMembership @relation(fields: [agencyId, agencyMembershipId, userId], references: [agencyId, id, userId], onDelete: Restrict)
 
   @@index([userId, revokedAt])
   @@index([agencyId, agencyMembershipId])

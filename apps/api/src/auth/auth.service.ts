@@ -60,7 +60,6 @@ export interface InvitationResult {
   activationToken: string;
 }
 
-type InvitationAcceptance = { status: 'accepted' } | { status: 'expired' };
 type SignInTransactionResult =
   | { status: 'invitation_expired' }
   | { status: 'authenticated'; session: AuthenticatedSession & { token: string } };
@@ -86,6 +85,19 @@ function normalizeEmail(email: string): string {
 
 function normalizeRoleCodes(roleCodes: readonly string[]): string[] {
   return [...new Set(roleCodes.map((code) => code.trim().toLowerCase()).filter(Boolean))];
+}
+
+function selectInvitationRoles<T extends { agencyId: string | null; code: string }>(
+  roles: readonly T[],
+  roleCodes: readonly string[],
+  agencyId: string,
+): T[] {
+  const selected = new Map<string, T>();
+  for (const role of roles) {
+    const code = role.code.toLowerCase();
+    if (!selected.has(code) || role.agencyId === agencyId) selected.set(code, role);
+  }
+  return roleCodes.flatMap((code) => (selected.has(code) ? [selected.get(code)!] : []));
 }
 
 function prismaBytes(value: Buffer): Uint8Array<ArrayBuffer> {
@@ -181,29 +193,49 @@ export class AuthService {
       const transactionResult: SignInTransactionResult = await withDatabaseContext(
         {},
         async (transaction) => {
+          const now = new Date();
+          const invitationTokenHash = invitationToken ? hashSessionToken(invitationToken) : null;
+          if (invitationTokenHash) {
+            await setDatabaseContext(transaction, {
+              invitationTokenHash: invitationTokenHash.toString('hex'),
+            });
+            const invitation = await transaction.invitation.findFirst({
+              where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
+              select: { id: true, agencyId: true, expiresAt: true },
+            });
+            if (invitation && invitation.expiresAt <= now) {
+              await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
+              await transaction.invitation.update({
+                where: { id: invitation.id },
+                data: { status: 'EXPIRED' },
+              });
+              return { status: 'invitation_expired' as const };
+            }
+          }
+
           const user = await this.resolveIdentity(transaction, identity);
           if (user.globalStatus !== 'ACTIVE') {
             throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
           }
 
-          if (invitationToken) {
+          if (invitationTokenHash) {
             await setDatabaseContext(transaction, {
               userId: user.id,
-              invitationTokenHash: hashSessionToken(invitationToken).toString('hex'),
+              invitationTokenHash: invitationTokenHash.toString('hex'),
             });
           } else {
             await setDatabaseContext(transaction, { userId: user.id });
           }
 
-          if (invitationToken) {
-            const accepted = await this.acceptInvitation(
+          if (invitationTokenHash) {
+            await this.acceptInvitation(
               transaction,
               user.id,
               identity.email,
-              invitationToken,
+              invitationTokenHash,
               requestId,
+              now,
             );
-            if (accepted.status === 'expired') return { status: 'invitation_expired' as const };
           }
 
           const memberships = await transaction.agencyMembership.findMany({
@@ -390,14 +422,15 @@ export class AuthService {
     const expiresAt = new Date(now.getTime() + INVITATION_LIFETIME_MS);
 
     return withDatabaseContext(context, async (transaction) => {
-      const roles = await transaction.role.findMany({
+      const availableRoles = await transaction.role.findMany({
         where: {
           code: { in: requestedRoleCodes },
           status: 'ACTIVE',
           OR: [{ agencyId: null }, { agencyId: context.agencyId }],
         },
-        select: { code: true },
+        select: { agencyId: true, code: true },
       });
+      const roles = selectInvitationRoles(availableRoles, requestedRoleCodes, context.agencyId);
       if (roles.length !== requestedRoleCodes.length) {
         throw new AuthServiceError(
           'One or more requested roles are unavailable.',
@@ -443,13 +476,14 @@ export class AuthService {
       await this.recordSecurityEvent(transaction, context, 'INVITATION_CREATED', requestId, {
         invitationId: invitation.id,
         email: normalizedEmail,
+        roleCodes: roles.map(({ code }) => code),
       });
       await this.recordAuditEvent(transaction, context, {
         action: 'INVITATION_CREATED',
         entityType: 'Invitation',
         entityId: invitation.id,
         requestId,
-        metadata: { email: normalizedEmail },
+        metadata: { email: normalizedEmail, roleCodes: roles.map(({ code }) => code) },
       });
       return { id: invitation.id, email: normalizedEmail, expiresAt, activationToken };
     });
@@ -674,11 +708,12 @@ export class AuthService {
     transaction: Prisma.TransactionClient,
     userId: string,
     email: string,
-    rawToken: string,
+    tokenHash: Buffer,
     requestId: string,
-  ): Promise<InvitationAcceptance> {
+    now: Date,
+  ): Promise<void> {
     const invitation = await transaction.invitation.findFirst({
-      where: { tokenHash: prismaBytes(hashSessionToken(rawToken)), status: 'PENDING' },
+      where: { tokenHash: prismaBytes(tokenHash), status: 'PENDING' },
     });
     if (!invitation) {
       throw new AuthServiceError(
@@ -686,14 +721,6 @@ export class AuthService {
         400,
         'INVITATION_INVALID',
       );
-    }
-    if (invitation.expiresAt <= new Date()) {
-      await setDatabaseContext(transaction, { agencyId: invitation.agencyId, userId });
-      await transaction.invitation.update({
-        where: { id: invitation.id },
-        data: { status: 'EXPIRED' },
-      });
-      return { status: 'expired' };
     }
     if (normalizeEmail(email) !== invitation.emailNormalized.toLowerCase()) {
       throw new AuthServiceError(
@@ -726,7 +753,7 @@ export class AuthService {
           where: { id: membership.id },
           data: {
             status: 'ACTIVE',
-            activatedAt: new Date(),
+            activatedAt: now,
             deactivatedAt: null,
             deactivationReason: null,
           },
@@ -736,18 +763,23 @@ export class AuthService {
             agencyId: invitation.agencyId,
             userId,
             status: 'ACTIVE',
-            activatedAt: new Date(),
+            activatedAt: now,
           },
         });
 
-    const roles = await transaction.role.findMany({
+    const availableRoles = await transaction.role.findMany({
       where: {
         code: { in: invitation.requestedRoleCodes },
         status: 'ACTIVE',
         OR: [{ agencyId: null }, { agencyId: invitation.agencyId }],
       },
-      select: { id: true },
+      select: { id: true, agencyId: true, code: true },
     });
+    const roles = selectInvitationRoles(
+      availableRoles,
+      invitation.requestedRoleCodes,
+      invitation.agencyId,
+    );
     if (roles.length !== invitation.requestedRoleCodes.length) {
       throw new AuthServiceError(
         'One or more invitation roles are no longer available.',
@@ -761,7 +793,7 @@ export class AuthService {
           agencyId: invitation.agencyId,
           membershipId: membership.id,
           roleId: role.id,
-          effectiveFrom: new Date(),
+          effectiveFrom: now,
           assignedByMembershipId: invitation.invitedByMembershipId,
           reason: 'Invitation role assignment',
         },
@@ -769,7 +801,7 @@ export class AuthService {
     }
     await transaction.invitation.update({
       where: { id: invitation.id },
-      data: { status: 'ACCEPTED', acceptedAt: new Date() },
+      data: { status: 'ACCEPTED', acceptedAt: now },
     });
     const context = {
       requestId,
@@ -781,15 +813,20 @@ export class AuthService {
     };
     await this.recordSecurityEvent(transaction, context, 'INVITATION_ACCEPTED', requestId, {
       invitationId: invitation.id,
+      roleCodes: roles.map(({ code }) => code),
+      assignedByMembershipId: invitation.invitedByMembershipId,
     });
     await this.recordAuditEvent(transaction, context, {
       action: 'INVITATION_ACCEPTED',
       entityType: 'AgencyMembership',
       entityId: membership.id,
       requestId,
-      metadata: { invitationId: invitation.id },
+      metadata: {
+        invitationId: invitation.id,
+        roleCodes: roles.map(({ code }) => code),
+        assignedByMembershipId: invitation.invitedByMembershipId,
+      },
     });
-    return { status: 'accepted' };
   }
 
   private async createSession(

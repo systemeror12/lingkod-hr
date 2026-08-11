@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { NextFunction, Request, Response } from 'express';
 import { getConfig } from '@lingkod-hr/config';
 import {
@@ -14,8 +15,9 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const config = getConfig();
   await startTelemetry('lingkod-hr-api');
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
 
+  if (config.NODE_ENV === 'production') app.set('trust proxy', 1);
   app.setGlobalPrefix('api/v1');
   app.enableCors({ origin: new URL(config.APP_URL).origin, credentials: true });
   app.use((request: Request, response: Response, next: NextFunction) => {
