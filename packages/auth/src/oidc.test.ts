@@ -31,3 +31,19 @@ it('normalizes invalid provider tokens to an OIDC error', async () => {
     fetch.mockRestore();
   }
 });
+
+it('treats provider logout discovery as optional', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider unavailable'));
+  const client = new OidcClient({
+    issuer: 'https://issuer.example',
+    clientId: 'client',
+    clientSecret: 'secret',
+    redirectUri: 'https://app.example/callback',
+  });
+
+  try {
+    await expect(client.providerLogoutUrl('provider-session')).resolves.toBeNull();
+  } finally {
+    fetch.mockRestore();
+  }
+});

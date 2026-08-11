@@ -44,6 +44,11 @@ async function main(): Promise<void> {
     await ensureRole(database, 'hris_migrator', rolePassword(migratorUrl, 'hris_migrator'));
     await ensureRole(database, 'hris_app', rolePassword(appUrl, 'hris_app'));
     const databaseName = decodeURIComponent(ownerDatabase.pathname.slice(1));
+    for (const extension of ['pgcrypto', 'btree_gist', 'citext']) {
+      await database.$executeRawUnsafe(
+        `CREATE EXTENSION IF NOT EXISTS ${sqlIdentifier(extension)}`,
+      );
+    }
     await database.$executeRawUnsafe('GRANT hris_migrator TO current_user');
     await database.$executeRawUnsafe(
       `GRANT CONNECT ON DATABASE ${sqlIdentifier(databaseName)} TO hris_migrator, hris_app`,

@@ -715,6 +715,7 @@ export class AuthService {
   }
 
   private async resolveIdentity(transaction: Prisma.TransactionClient, identity: OidcIdentity) {
+    const normalizedEmail = normalizeEmail(identity.email);
     const link = await transaction.externalIdentityLink.findFirst({
       where: { issuer: identity.issuer, subject: identity.subject },
     });
@@ -732,7 +733,7 @@ export class AuthService {
         });
     if (!user) {
       const emailOwner = await transaction.user.findUnique({
-        where: { emailNormalized: identity.email },
+        where: { emailNormalized: normalizedEmail },
       });
       if (emailOwner) {
         throw new AuthServiceError(
@@ -745,21 +746,33 @@ export class AuthService {
         data: {
           identityProvider: identity.issuer,
           externalSubject: identity.subject,
-          emailNormalized: identity.email,
+          emailNormalized: normalizedEmail,
           displayName: identity.displayName,
           globalStatus: 'ACTIVE',
           emailVerifiedAt: identity.emailVerified ? new Date() : null,
         },
       });
     } else {
-      user = await transaction.user.update({
-        where: { id: user.id },
-        data: {
-          displayName: identity.displayName,
-          emailVerifiedAt: identity.emailVerified ? new Date() : user.emailVerifiedAt,
-          lastLoginAt: new Date(),
-        },
-      });
+      try {
+        user = await transaction.user.update({
+          where: { id: user.id },
+          data: {
+            emailNormalized: normalizedEmail,
+            displayName: identity.displayName,
+            emailVerifiedAt: identity.emailVerified ? new Date() : user.emailVerifiedAt,
+            lastLoginAt: new Date(),
+          },
+        });
+      } catch (error: unknown) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new AuthServiceError(
+            'The verified email belongs to another HRIS User.',
+            401,
+            'EMAIL_ALREADY_IN_USE',
+          );
+        }
+        throw error;
+      }
     }
 
     if (!link) {

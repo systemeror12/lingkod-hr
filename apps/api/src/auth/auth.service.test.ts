@@ -270,6 +270,62 @@ it.skipIf(!enabled)('allows a replacement after a pending invitation expires', a
 });
 
 it.skipIf(!enabled)(
+  'reconciles linked verified emails and rejects ownership conflicts',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-email-change`;
+    const issuer = process.env.OIDC_ISSUER ?? 'https://example.invalid';
+    const newEmail = `updated-${suffix}@example.test`;
+    const agency = await admin.agency.create({
+      data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
+    });
+    const users = await Promise.all(
+      ['first', 'second'].map((label) =>
+        admin.user.create({
+          data: {
+            identityProvider: issuer,
+            externalSubject: `${label}-${suffix}`,
+            emailNormalized: `${label}-${suffix}@example.test`,
+            displayName: `E2E ${label}`,
+            globalStatus: 'ACTIVE',
+          },
+        }),
+      ),
+    );
+    const firstUser = users[0];
+    const secondUser = users[1];
+    if (!firstUser || !secondUser) throw new Error('The E2E Users were not created.');
+    await Promise.all(
+      users.map(async (user) => {
+        await admin.agencyMembership.create({
+          data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+        });
+        await admin.externalIdentityLink.create({
+          data: { userId: user.id, issuer, subject: user.externalSubject, status: 'ACTIVE' },
+        });
+      }),
+    );
+
+    try {
+      await new AuthService().signIn(identity(firstUser.externalSubject, newEmail));
+      await expect(
+        admin.user.findUniqueOrThrow({ where: { id: firstUser.id } }),
+      ).resolves.toMatchObject({ emailNormalized: newEmail });
+      await expect(
+        new AuthService().signIn(identity(secondUser.externalSubject, newEmail)),
+      ).rejects.toMatchObject({ code: 'EMAIL_ALREADY_IN_USE', statusCode: 401 });
+    } finally {
+      await cleanup(
+        admin,
+        [agency.id],
+        users.map(({ id }) => id),
+      );
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'keeps absolute expiry and authentication time when switching agencies',
   async () => {
     const admin = await createAdminClient();
