@@ -9,12 +9,13 @@ const localDefaults = {
   WORKER_PORT: '3002',
   APP_URL: 'http://localhost:3000',
   API_URL: 'http://localhost:3001',
-  DATABASE_URL: 'postgresql://hris_local:local_only@localhost:5432/hris',
-  DATABASE_DIRECT_URL: 'postgresql://hris_local:local_only@localhost:5432/hris',
+  DATABASE_URL: 'postgresql://hris_app:local_app@localhost:5432/hris',
+  DATABASE_DIRECT_URL: 'postgresql://hris_migrator:local_migrator@localhost:5432/hris',
   REDIS_URL: 'redis://localhost:6379',
   OIDC_ISSUER: 'https://example.invalid',
   OIDC_CLIENT_ID: 'local-client',
   OIDC_CLIENT_SECRET: 'local-client-secret',
+  OIDC_REDIRECT_URI: 'http://localhost:3001/api/v1/auth/callback',
   SESSION_SECRET: 'local-development-session-secret-change-me',
   S3_ENDPOINT: 'http://localhost:8333',
   S3_REGION: 'us-east-1',
@@ -35,9 +36,10 @@ const configSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_DIRECT_URL: z.string().url(),
   REDIS_URL: z.string().url(),
-  OIDC_ISSUER: z.string().url().optional(),
-  OIDC_CLIENT_ID: z.string().min(1).optional(),
-  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  OIDC_ISSUER: z.string().url(),
+  OIDC_CLIENT_ID: z.string().min(1),
+  OIDC_CLIENT_SECRET: z.string().min(1),
+  OIDC_REDIRECT_URI: z.string().url(),
   SESSION_SECRET: z.string().min(32),
   S3_ENDPOINT: z.string().url(),
   S3_REGION: z.string().min(1),
@@ -63,8 +65,15 @@ export type AppConfig = z.infer<typeof configSchema>;
 
 export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
   const deploymentEnvironment = environment.APP_ENV ?? environment.NODE_ENV ?? 'development';
+  const normalizedEnvironment = {
+    ...environment,
+    NODE_ENV: deploymentEnvironment,
+    APP_ENV: deploymentEnvironment,
+  };
   const values =
-    deploymentEnvironment === 'production' ? environment : { ...localDefaults, ...environment };
+    deploymentEnvironment === 'production'
+      ? normalizedEnvironment
+      : { ...localDefaults, ...normalizedEnvironment };
   const parsed = configSchema.safeParse(values);
 
   if (!parsed.success) {
@@ -72,6 +81,15 @@ export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppCo
       .map((issue) => `${issue.path.join('.') || 'config'}: ${issue.message}`)
       .join('; ');
     throw new Error(`Invalid application configuration: ${details}`);
+  }
+  if (parsed.data.NODE_ENV === 'production') {
+    for (const field of ['OIDC_ISSUER', 'OIDC_REDIRECT_URI'] as const) {
+      if (new URL(parsed.data[field]).protocol !== 'https:') {
+        throw new Error(
+          `Invalid application configuration: ${field}: Production URL must use HTTPS.`,
+        );
+      }
+    }
   }
 
   return parsed.data;
