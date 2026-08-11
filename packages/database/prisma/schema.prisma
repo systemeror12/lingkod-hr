@@ -9,12 +9,291 @@ datasource db {
 }
 
 model Agency {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code       String   @unique @db.Citext
-  name       String
-  rowVersion Int      @default(1) @map("row_version")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                   String   @unique @db.Citext
+  name                   String
+  acronym                String?
+  agencyType             String   @map("agency_type")
+  status                 String
+  defaultTimezone        String   @default("Asia/Manila") @map("default_timezone")
+  defaultCurrency        String   @default("PHP") @map("default_currency") @db.Char(3)
+  currentProfileVersionId String?  @map("current_profile_version_id") @db.Uuid
+  rowVersion             Int      @default(1) @map("row_version")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  profiles       AgencyProfileVersion[]
+  memberships    AgencyMembership[]
+  invitations    Invitation[]
+  roles          Role[]
+  membershipRoles MembershipRole[]
+  delegatedAuthorities DelegatedAuthority[]
+  sessions       UserSession[]
+  securityEvents SecurityEvent[]
+  auditEvents    AuditEvent[]
+
+  @@unique([id, code])
   @@map("agencies")
+}
+
+model AgencyProfileVersion {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String   @map("agency_id") @db.Uuid
+  versionNo                Int      @map("version_no")
+  appointingAuthorityTitle String?  @map("appointing_authority_title")
+  deploymentProfile        String   @map("deployment_profile")
+  effectiveFrom            DateTime @map("effective_from") @db.Date
+  effectiveTo              DateTime? @map("effective_to") @db.Date
+  configuration            Json     @default("{}")
+  status                   String
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+
+  @@unique([agencyId, versionNo])
+  @@unique([agencyId, id])
+  @@map("agency_profile_versions")
+}
+
+model User {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identityProvider String    @map("identity_provider")
+  externalSubject  String    @map("external_subject")
+  emailNormalized  String    @map("email_normalized") @db.Citext
+  displayName      String    @map("display_name")
+  globalStatus     String    @map("global_status")
+  emailVerifiedAt  DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  memberships    AgencyMembership[]
+  identityLinks  ExternalIdentityLink[]
+  sessions       UserSession[]
+  securityEvents SecurityEvent[] @relation("SecurityEventUser")
+  auditEvents    AuditEvent[]    @relation("AuditEventUser")
+
+  @@unique([identityProvider, externalSubject])
+  @@unique([emailNormalized])
+  @@map("users")
+}
+
+model ExternalIdentityLink {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  issuer      String
+  subject     String
+  status      String
+  linkedAt    DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(6)
+  reason      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([issuer, subject])
+  @@index([userId, status])
+  @@map("external_identity_links")
+}
+
+model AgencyMembership {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  userId                     String    @map("user_id") @db.Uuid
+  employeeId                 String?   @map("employee_id") @db.Uuid
+  primaryOrganizationUnitId  String?   @map("primary_organization_unit_id") @db.Uuid
+  status                     String
+  activatedAt                DateTime? @map("activated_at") @db.Timestamptz(6)
+  deactivatedAt              DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  deactivationReason         String?   @map("deactivation_reason")
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency              Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  user                User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  membershipRoles     MembershipRole[] @relation("MembershipRoleMembership")
+  assignedRoleChanges  MembershipRole[] @relation("MembershipRoleAssigner")
+  invitedUsers        Invitation[]     @relation("InvitationInviter")
+  rolePermissionGrants RolePermission[] @relation("RolePermissionGrantor")
+  delegationsGiven    DelegatedAuthority[] @relation("DelegationDelegator")
+  delegationsReceived DelegatedAuthority[] @relation("DelegationDelegate")
+  sessions             UserSession[]
+  securityEvents      SecurityEvent[]  @relation("SecurityEventMembership")
+  auditEvents         AuditEvent[]     @relation("AuditEventMembership")
+
+  @@unique([agencyId, id])
+  @@index([userId])
+  @@map("agency_memberships")
+}
+
+model Invitation {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  emailNormalized       String    @map("email_normalized") @db.Citext
+  invitedByMembershipId String    @map("invited_by_membership_id") @db.Uuid
+  tokenHash             Bytes     @unique @map("token_hash")
+  requestedRoleCodes    String[]  @default([]) @map("requested_role_codes")
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  acceptedAt            DateTime? @map("accepted_at") @db.Timestamptz(6)
+  cancelledAt           DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  status                String
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency              Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  invitedByMembership AgencyMembership @relation("InvitationInviter", fields: [agencyId, invitedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@index([agencyId, emailNormalized, status])
+  @@map("invitations")
+}
+
+model Role {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String?          @map("agency_id") @db.Uuid
+  code              String           @db.Citext
+  name              String
+  isSystemTemplate  Boolean          @default(false) @map("is_system_template")
+  status            String
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency?          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  membershipRoles MembershipRole[]
+  permissions     RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String           @unique @db.Citext
+  domain      String
+  riskLevel   String           @map("risk_level")
+  description String
+
+  roles RolePermission[]
+  delegatedAuthorities DelegatedAuthority[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId                 String    @map("role_id") @db.Uuid
+  permissionId           String    @map("permission_id") @db.Uuid
+  scopePolicy            String    @map("scope_policy")
+  grantedAt              DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  grantedByMembershipId  String?   @map("granted_by_membership_id") @db.Uuid
+
+  role                Role              @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission          Permission        @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+  grantedByMembership AgencyMembership? @relation("RolePermissionGrantor", fields: [grantedByMembershipId], references: [id], onDelete: SetNull)
+
+  @@id([roleId, permissionId, scopePolicy])
+  @@map("role_permissions")
+}
+
+model MembershipRole {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String    @map("agency_id") @db.Uuid
+  membershipId             String    @map("membership_id") @db.Uuid
+  roleId                   String    @map("role_id") @db.Uuid
+  effectiveFrom            DateTime  @map("effective_from") @db.Timestamptz(6)
+  effectiveTo              DateTime? @map("effective_to") @db.Timestamptz(6)
+  assignedByMembershipId   String    @map("assigned_by_membership_id") @db.Uuid
+  reason                   String?
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency             Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  membership         AgencyMembership @relation("MembershipRoleMembership", fields: [agencyId, membershipId], references: [agencyId, id], onDelete: Restrict)
+  role               Role             @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  assignedByMembership AgencyMembership @relation("MembershipRoleAssigner", fields: [agencyId, assignedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@index([agencyId, membershipId, roleId, effectiveFrom, effectiveTo])
+  @@map("membership_roles")
+}
+
+model DelegatedAuthority {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  delegatorMembershipId String    @map("delegator_membership_id") @db.Uuid
+  delegateMembershipId  String    @map("delegate_membership_id") @db.Uuid
+  permissionCode        String    @map("permission_code") @db.Citext
+  organizationUnitId    String?   @map("organization_unit_id") @db.Uuid
+  effectiveFrom         DateTime  @map("effective_from") @db.Timestamptz(6)
+  effectiveTo           DateTime  @map("effective_to") @db.Timestamptz(6)
+  status                String
+  authorityDocumentId   String?   @map("authority_document_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency    Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  delegator AgencyMembership @relation("DelegationDelegator", fields: [agencyId, delegatorMembershipId], references: [agencyId, id], onDelete: Restrict)
+  delegate  AgencyMembership @relation("DelegationDelegate", fields: [agencyId, delegateMembershipId], references: [agencyId, id], onDelete: Restrict)
+  permission Permission       @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+
+  @@index([agencyId, delegateMembershipId, effectiveFrom, effectiveTo])
+  @@map("delegated_authorities")
+}
+
+model UserSession {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String    @map("user_id") @db.Uuid
+  agencyId            String    @map("agency_id") @db.Uuid
+  agencyMembershipId  String    @map("agency_membership_id") @db.Uuid
+  sessionTokenHash    Bytes     @unique @map("session_token_hash")
+  providerSid         String?   @map("provider_sid")
+  authTime            DateTime? @map("auth_time") @db.Timestamptz(6)
+  authenticationMethods String[] @default([]) @map("authentication_methods")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt          DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt           DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revocationReason    String?   @map("revocation_reason")
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  membership AgencyMembership @relation(fields: [agencyMembershipId], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt])
+  @@index([agencyId, agencyMembershipId])
+  @@map("user_sessions")
+}
+
+model SecurityEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventKey    String?   @unique @map("event_key")
+  agencyId    String?   @map("agency_id") @db.Uuid
+  userId      String?   @map("user_id") @db.Uuid
+  membershipId String?  @map("membership_id") @db.Uuid
+  eventType   String    @map("event_type")
+  occurredAt  DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  requestId   String?   @map("request_id")
+  ipAddress   String?   @map("ip_address") @db.Inet
+  userAgent   String?   @map("user_agent")
+  details     Json      @default("{}")
+
+  agency    Agency?           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  user      User?             @relation("SecurityEventUser", fields: [userId], references: [id], onDelete: SetNull)
+  membership AgencyMembership? @relation("SecurityEventMembership", fields: [agencyId, membershipId], references: [agencyId, id], onDelete: SetNull)
+
+  @@index([agencyId, occurredAt(sort: Desc)])
+  @@map("security_events")
+}
+
+model AuditEvent {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId            String    @map("agency_id") @db.Uuid
+  actorUserId         String?   @map("actor_user_id") @db.Uuid
+  actorMembershipId   String?   @map("actor_membership_id") @db.Uuid
+  actorType           String    @map("actor_type")
+  action              String
+  entityType          String    @map("entity_type")
+  entityId            String    @map("entity_id") @db.Uuid
+  previousStatus      String?   @map("previous_status")
+  newStatus           String?   @map("new_status")
+  reason              String?
+  requestId           String?   @map("request_id")
+  occurredAt          DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  metadata            Json      @default("{}")
+
+  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  actorUser   User?             @relation("AuditEventUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorMembership AgencyMembership? @relation("AuditEventMembership", fields: [agencyId, actorMembershipId], references: [agencyId, id], onDelete: SetNull)
+
+  @@index([agencyId, occurredAt(sort: Desc)])
+  @@map("audit_events")
 }

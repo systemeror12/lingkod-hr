@@ -19,6 +19,7 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
   app.use((request: Request, response: Response, next: NextFunction) => {
     const requestId = request.header('x-request-id') ?? createRequestId();
+    request.headers['x-request-id'] = requestId;
     const startedAt = performance.now();
     const span = tracer.startSpan(`${request.method} ${request.path}`);
 

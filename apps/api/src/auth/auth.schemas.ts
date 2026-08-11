@@ -1,0 +1,34 @@
+import { z } from 'zod';
+
+const token = z.string().min(1).max(512);
+
+export const loginQuerySchema = z
+  .object({
+    invitation: token.optional(),
+    membershipId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export const callbackQuerySchema = z
+  .object({
+    state: token,
+    code: z.string().min(1).max(4096),
+  })
+  .strict();
+
+export const activationTokenSchema = token;
+
+export const switchAgencySchema = z.object({ membershipId: z.string().uuid() }).strict();
+
+export const invitationSchema = z
+  .object({
+    email: z.string().trim().email().max(320),
+    roleCodes: z.array(z.string().trim().min(1).max(100)).min(1).max(32),
+  })
+  .strict();
+
+export const agencyIdSchema = z.string().uuid();
+
+export const backchannelLogoutSchema = z
+  .object({ logout_token: z.string().min(1).max(8192) })
+  .strict();

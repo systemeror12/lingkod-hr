@@ -16,8 +16,8 @@
     "lint": "eslint .",
     "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
-    "test": "vitest run --passWithNoTests",
-    "test:e2e": "vitest run --passWithNoTests",
+    "test": "vitest run src --passWithNoTests",
+    "test:e2e": "vitest run src --passWithNoTests",
     "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
