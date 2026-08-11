@@ -14,8 +14,9 @@
     "build": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json",
     "generate": "prisma generate --schema prisma/schema.prisma",
     "lint": "eslint .",
-    "migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
-    "migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "migrate:prepare": "tsx scripts/migrate-prepare.ts",
+    "migrate:deploy": "pnpm migrate:prepare && prisma migrate deploy --schema prisma/schema.prisma",
+    "migrate:dev": "pnpm migrate:prepare && prisma migrate dev --schema prisma/schema.prisma",
     "test": "vitest run src --passWithNoTests",
     "test:e2e": "vitest run src --passWithNoTests",
     "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"

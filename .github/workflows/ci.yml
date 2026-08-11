@@ -27,6 +27,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://hris_app:local_app@localhost:5432/hris
           DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:5432/hris
+          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:5432/hris
         run: pnpm db:migrate
       - name: Validate repository
         env:

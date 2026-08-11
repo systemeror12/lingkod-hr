@@ -43,6 +43,9 @@ export interface AuthenticatedSession {
   sessionId: string;
   providerSid: string | null;
   authenticationMethods: readonly string[];
+  authTime: Date | null;
+  createdAt: Date;
+  expiresAt: Date;
   context: RequestContext;
 }
 
@@ -57,6 +60,11 @@ export interface InvitationResult {
   expiresAt: Date;
   activationToken: string;
 }
+
+type InvitationAcceptance = { status: 'accepted' } | { status: 'expired' };
+type SignInTransactionResult =
+  | { status: 'invitation_expired' }
+  | { status: 'authenticated'; session: AuthenticatedSession & { token: string } };
 
 export class AuthServiceError extends Error {
   constructor(
@@ -170,63 +178,83 @@ export class AuthService {
       throw new AuthServiceError('A verified identity is required.', 401, 'EMAIL_NOT_VERIFIED');
     }
 
-    let result: AuthenticatedSession & { token: string };
     try {
-      result = await withDatabaseContext({}, async (transaction) => {
-        const user = await this.resolveIdentity(transaction, identity);
-        if (user.globalStatus !== 'ACTIVE') {
-          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
-        }
+      const transactionResult: SignInTransactionResult = await withDatabaseContext(
+        {},
+        async (transaction) => {
+          const user = await this.resolveIdentity(transaction, identity);
+          if (user.globalStatus !== 'ACTIVE') {
+            throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+          }
 
-        if (invitationToken) {
+          if (invitationToken) {
+            await setDatabaseContext(transaction, {
+              userId: user.id,
+              invitationTokenHash: hashSessionToken(invitationToken).toString('hex'),
+            });
+          } else {
+            await setDatabaseContext(transaction, { userId: user.id });
+          }
+
+          if (invitationToken) {
+            const accepted = await this.acceptInvitation(
+              transaction,
+              user.id,
+              identity.email,
+              invitationToken,
+              requestId,
+            );
+            if (accepted.status === 'expired') return { status: 'invitation_expired' as const };
+          }
+
+          const memberships = await transaction.agencyMembership.findMany({
+            where: { userId: user.id, status: 'ACTIVE' },
+            orderBy: { createdAt: 'asc' },
+          });
+          if (memberships.length === 0) {
+            throw new AuthServiceError(
+              'No active Agency Membership is available.',
+              403,
+              'NO_MEMBERSHIP',
+            );
+          }
+
+          const membership = selectedMembershipId
+            ? memberships.find(({ id }) => id === selectedMembershipId)
+            : memberships[0];
+          if (!membership) {
+            throw new AuthServiceError(
+              'The selected Agency Membership is not active.',
+              403,
+              'MEMBERSHIP_DENIED',
+            );
+          }
+
           await setDatabaseContext(transaction, {
             userId: user.id,
-            invitationTokenHash: hashSessionToken(invitationToken).toString('hex'),
+            agencyId: membership.agencyId,
+            membershipId: membership.id,
           });
-        } else {
-          await setDatabaseContext(transaction, { userId: user.id });
-        }
-
-        if (invitationToken) {
-          await this.acceptInvitation(
-            transaction,
-            user.id,
-            identity.email,
-            invitationToken,
-            requestId,
-          );
-        }
-
-        const memberships = await transaction.agencyMembership.findMany({
-          where: { userId: user.id, status: 'ACTIVE' },
-          orderBy: { createdAt: 'asc' },
-        });
-        if (memberships.length === 0) {
-          throw new AuthServiceError(
-            'No active Agency Membership is available.',
-            403,
-            'NO_MEMBERSHIP',
-          );
-        }
-
-        const membership = selectedMembershipId
-          ? memberships.find(({ id }) => id === selectedMembershipId)
-          : memberships[0];
-        if (!membership) {
-          throw new AuthServiceError(
-            'The selected Agency Membership is not active.',
-            403,
-            'MEMBERSHIP_DENIED',
-          );
-        }
-
-        await setDatabaseContext(transaction, {
-          userId: user.id,
-          agencyId: membership.agencyId,
-          membershipId: membership.id,
-        });
-        return this.createSession(transaction, user.id, membership.id, identity, requestId);
-      });
+          return {
+            status: 'authenticated' as const,
+            session: await this.createSession(
+              transaction,
+              user.id,
+              membership.id,
+              identity,
+              requestId,
+            ),
+          };
+        },
+      );
+      if (transactionResult.status === 'invitation_expired') {
+        throw new AuthServiceError('The invitation has expired.', 400, 'INVITATION_EXPIRED');
+      }
+      const result = transactionResult.session;
+      return {
+        ...result,
+        providerLogoutUrl: await this.oidc.providerLogoutUrl(result.providerSid),
+      };
     } catch (error: unknown) {
       if (error instanceof AuthServiceError) {
         try {
@@ -237,11 +265,6 @@ export class AuthService {
       }
       throw error;
     }
-
-    return {
-      ...result,
-      providerLogoutUrl: await this.oidc.providerLogoutUrl(result.providerSid),
-    };
   }
 
   async authenticateSession(
@@ -315,6 +338,9 @@ export class AuthService {
           sessionId: session.id,
           providerSid: session.providerSid,
           authenticationMethods: session.authenticationMethods,
+          authTime: session.authTime,
+          createdAt: session.createdAt,
+          expiresAt: session.expiresAt,
           context,
         };
       },
@@ -487,6 +513,11 @@ export class AuthService {
               authenticationMethods: session.authenticationMethods,
             },
             requestId,
+            {
+              authTime: session.authTime,
+              createdAt: session.createdAt,
+              expiresAt: session.expiresAt,
+            },
           )),
           providerLogoutUrl: null,
         };
@@ -609,7 +640,7 @@ export class AuthService {
     email: string,
     rawToken: string,
     requestId: string,
-  ): Promise<void> {
+  ): Promise<InvitationAcceptance> {
     const invitation = await transaction.invitation.findFirst({
       where: { tokenHash: prismaBytes(hashSessionToken(rawToken)), status: 'PENDING' },
     });
@@ -626,7 +657,7 @@ export class AuthService {
         where: { id: invitation.id },
         data: { status: 'EXPIRED' },
       });
-      throw new AuthServiceError('The invitation has expired.', 400, 'INVITATION_EXPIRED');
+      return { status: 'expired' };
     }
     if (normalizeEmail(email) !== invitation.emailNormalized.toLowerCase()) {
       throw new AuthServiceError(
@@ -722,6 +753,7 @@ export class AuthService {
       requestId,
       metadata: { invitationId: invitation.id },
     });
+    return { status: 'accepted' };
   }
 
   private async createSession(
@@ -730,6 +762,7 @@ export class AuthService {
     membershipId: string,
     identity: OidcIdentity,
     requestId: string,
+    previousSession?: Pick<AuthenticatedSession, 'authTime' | 'createdAt' | 'expiresAt'>,
   ): Promise<AuthenticatedSession & { token: string }> {
     const membership = await transaction.agencyMembership.findFirstOrThrow({
       where: { id: membershipId, userId, status: 'ACTIVE' },
@@ -741,7 +774,7 @@ export class AuthService {
       throw new AuthServiceError('MFA is required for this User identity.', 403, 'MFA_REQUIRED');
     }
     const token = createSessionToken();
-    const createdAt = new Date();
+    const createdAt = previousSession?.createdAt ?? new Date();
     const session = await transaction.userSession.create({
       data: {
         userId,
@@ -749,11 +782,11 @@ export class AuthService {
         agencyMembershipId: membership.id,
         sessionTokenHash: prismaBytes(hashSessionToken(token)),
         providerSid: identity.providerSid,
-        authTime: identity.authTime,
+        authTime: previousSession ? previousSession.authTime : identity.authTime,
         authenticationMethods: [...identity.authenticationMethods],
         createdAt,
-        lastSeenAt: createdAt,
-        expiresAt: sessionExpiry(createdAt),
+        lastSeenAt: new Date(),
+        expiresAt: previousSession?.expiresAt ?? sessionExpiry(createdAt),
       },
     });
     const context = await this.contextFor(transaction, userId, membership, requestId);
@@ -779,6 +812,9 @@ export class AuthService {
       sessionId: session.id,
       providerSid: session.providerSid,
       authenticationMethods: session.authenticationMethods,
+      authTime: session.authTime,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
       context,
     };
   }
