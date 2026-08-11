@@ -49,6 +49,9 @@ async function main(): Promise<void> {
         `CREATE EXTENSION IF NOT EXISTS ${sqlIdentifier(extension)}`,
       );
     }
+    if (process.env.APP_ENV === 'development') {
+      await database.$executeRawUnsafe('ALTER ROLE hris_migrator CREATEDB');
+    }
     await database.$executeRawUnsafe('GRANT hris_migrator TO current_user');
     await database.$executeRawUnsafe(
       `GRANT CONNECT ON DATABASE ${sqlIdentifier(databaseName)} TO hris_migrator, hris_app`,

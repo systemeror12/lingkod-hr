@@ -360,8 +360,12 @@ it.skipIf(!enabled)(
         }),
       ),
     );
+    const sourceAgency = agencies[0];
+    const sourceMembership = memberships[0];
     const targetMembership = memberships[1];
-    if (!targetMembership) throw new Error('The target E2E Agency Membership was not created.');
+    if (!sourceAgency || !sourceMembership || !targetMembership) {
+      throw new Error('The E2E Agencies and Memberships were not created.');
+    }
 
     try {
       const service = new AuthService();
@@ -466,6 +470,33 @@ it.skipIf(!enabled)(
           },
         }),
       ).resolves.toMatchObject({ actorType: 'SYSTEM', reason: 'OIDC_BACKCHANNEL_LOGOUT' });
+
+      const inactiveAgencyToken = `inactive-agency-${suffix}`;
+      const inactiveAgencySession = await admin.userSession.create({
+        data: {
+          userId: user.id,
+          agencyId: sourceAgency.id,
+          agencyMembershipId: sourceMembership.id,
+          sessionTokenHash: databaseBytes(hashSessionToken(inactiveAgencyToken)),
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      });
+      await admin.agency.update({
+        where: { id: sourceAgency.id },
+        data: { status: 'SUSPENDED' },
+      });
+      await expect(
+        new AuthService().authenticateSession(inactiveAgencyToken, `inactive-agency-${suffix}`),
+      ).resolves.toBeNull();
+      await expect(
+        admin.userSession.findUniqueOrThrow({ where: { id: inactiveAgencySession.id } }),
+      ).resolves.toMatchObject({ revocationReason: 'SESSION_EXPIRED_OR_ACCESS_REMOVED' });
+      await expect(
+        new AuthService().signIn(
+          identity(subject, user.emailNormalized, authTime),
+          sourceMembership.id,
+        ),
+      ).rejects.toMatchObject({ code: 'MEMBERSHIP_DENIED' });
     } finally {
       await cleanup(
         admin,

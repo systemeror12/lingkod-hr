@@ -504,9 +504,22 @@ CREATE POLICY "agency_profiles_isolation" ON "agency_profile_versions"
   USING ("agency_id" = app_agency_id())
   WITH CHECK ("agency_id" = app_agency_id());
 
-CREATE POLICY "agency_memberships_isolation" ON "agency_memberships"
-  USING ("agency_id" = app_agency_id() OR "user_id" = app_user_id())
+CREATE POLICY "agency_memberships_select" ON "agency_memberships"
+  FOR SELECT
+  USING ("agency_id" = app_agency_id() OR "user_id" = app_user_id());
+
+CREATE POLICY "agency_memberships_insert" ON "agency_memberships"
+  FOR INSERT
   WITH CHECK ("agency_id" = app_agency_id());
+
+CREATE POLICY "agency_memberships_update" ON "agency_memberships"
+  FOR UPDATE
+  USING ("agency_id" = app_agency_id())
+  WITH CHECK ("agency_id" = app_agency_id());
+
+CREATE POLICY "agency_memberships_delete" ON "agency_memberships"
+  FOR DELETE
+  USING ("agency_id" = app_agency_id());
 
 CREATE POLICY "invitations_isolation" ON "invitations"
   USING (

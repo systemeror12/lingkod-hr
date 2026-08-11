@@ -262,7 +262,20 @@ export class AuthService {
           where: { userId: user.id, status: 'ACTIVE' },
           orderBy: { createdAt: 'asc' },
         });
-        if (memberships.length === 0) {
+        const activeMemberships: typeof memberships = [];
+        for (const membership of memberships) {
+          await setDatabaseContext(transaction, {
+            userId: user.id,
+            agencyId: membership.agencyId,
+            membershipId: membership.id,
+          });
+          const agency = await transaction.agency.findUnique({
+            where: { id: membership.agencyId },
+            select: { status: true },
+          });
+          if (agency?.status === 'ACTIVE') activeMemberships.push(membership);
+        }
+        if (activeMemberships.length === 0) {
           throw new AuthServiceError(
             'No active Agency Membership is available.',
             403,
@@ -272,8 +285,8 @@ export class AuthService {
 
         const requestedMembershipId = invitationMembershipId ?? selectedMembershipId;
         const membership = requestedMembershipId
-          ? memberships.find(({ id }) => id === requestedMembershipId)
-          : memberships[0];
+          ? activeMemberships.find(({ id }) => id === requestedMembershipId)
+          : activeMemberships[0];
         if (!membership) {
           throw new AuthServiceError(
             'The selected Agency Membership is not active.',
@@ -332,12 +345,14 @@ export class AuthService {
         const user = await transaction.user.findUnique({ where: { id: session.userId } });
         const membership = await transaction.agencyMembership.findFirst({
           where: { id: session.agencyMembershipId, agencyId: session.agencyId },
+          include: { agency: { select: { status: true } } },
         });
         const accessRemoved =
           !user ||
           !membership ||
           membership.userId !== user.id ||
           membership.status !== 'ACTIVE' ||
+          membership.agency.status !== 'ACTIVE' ||
           user.globalStatus !== 'ACTIVE';
         if (accessRemoved || !isSessionActive(session)) {
           const reason = 'SESSION_EXPIRED_OR_ACCESS_REMOVED';
@@ -583,13 +598,30 @@ export class AuthService {
         const membership = await transaction.agencyMembership.findFirst({
           where: { id: membershipId, userId: session.context.userId, status: 'ACTIVE' },
         });
-        if (!membership) {
+        if (membership) {
+          await setDatabaseContext(transaction, {
+            userId: session.context.userId,
+            agencyId: membership.agencyId,
+            membershipId: membership.id,
+          });
+        }
+        const agency = membership
+          ? await transaction.agency.findUnique({
+              where: { id: membership.agencyId },
+              select: { status: true },
+            })
+          : null;
+        if (!membership || agency?.status !== 'ACTIVE') {
           throw new AuthServiceError(
             'The selected Agency Membership is not active.',
             403,
             'MEMBERSHIP_DENIED',
           );
         }
+        await setDatabaseContext(transaction, {
+          ...session.context,
+          sessionTokenHash: tokenHash.toString('hex'),
+        });
         const reason = 'AGENCY_CONTEXT_SWITCHED';
         const revoked = await transaction.userSession.updateMany({
           where: {

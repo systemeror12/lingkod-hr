@@ -44,6 +44,15 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
       globalStatus: 'ACTIVE',
     },
   });
+  const targetUser = await admin.user.create({
+    data: {
+      identityProvider: 'e2e',
+      externalSubject: `e2e-target-${Date.now()}`,
+      emailNormalized: `e2e-target-${Date.now()}@example.test`,
+      displayName: 'E2E Target User',
+      globalStatus: 'ACTIVE',
+    },
+  });
   const membershipA = await admin.agencyMembership.create({
     data: { agencyId: agencyA.id, userId: user.id, status: 'ACTIVE' },
   });
@@ -119,6 +128,16 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
         }),
       ),
     ).rejects.toThrow(/row-level security/i);
+
+    await withContext(app, contextValues(agencyA.id, user.id), async (transaction) => {
+      expect(
+        await transaction.$executeRaw`
+          UPDATE "agency_memberships"
+          SET "agency_id" = ${agencyA.id}::uuid, "user_id" = ${targetUser.id}::uuid
+          WHERE "id" = ${membershipB.id}::uuid
+        `,
+      ).toBe(0);
+    });
 
     const globalRole = await admin.role.findFirstOrThrow({
       where: { code: 'agency_administrator', agencyId: null },
@@ -205,7 +224,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
       where: { id: { in: [membershipA.id, membershipB.id] } },
     });
     await admin.agency.deleteMany({ where: { id: { in: [agencyA.id, agencyB.id] } } });
-    await admin.user.delete({ where: { id: user.id } });
+    await admin.user.deleteMany({ where: { id: { in: [user.id, targetUser.id] } } });
     await app.$disconnect();
     await admin.$disconnect();
   }

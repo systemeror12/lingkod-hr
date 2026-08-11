@@ -53,7 +53,7 @@ function cookieOptions(secure: boolean) {
   return {
     httpOnly: true,
     secure,
-    sameSite: 'lax' as const,
+    sameSite: secure ? ('none' as const) : ('lax' as const),
     path: '/',
   };
 }
