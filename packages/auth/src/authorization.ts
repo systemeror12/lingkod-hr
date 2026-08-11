@@ -13,12 +13,11 @@ export interface PermissionGrant {
   scopePolicy: ScopePolicy;
 }
 
-const MFA_METHODS = new Set([
+const SECOND_FACTOR_METHODS = new Set([
   'face',
   'fpt',
   'hwk',
   'iris',
-  'mfa',
   'otp',
   'passkey',
   'retina',
@@ -28,7 +27,11 @@ const MFA_METHODS = new Set([
 ]);
 
 export function hasMfaEvidence(methods: readonly string[]): boolean {
-  return methods.some((method) => MFA_METHODS.has(method.toLowerCase()));
+  const normalized = new Set(methods.map((method) => method.toLowerCase()));
+  return (
+    normalized.has('mfa') ||
+    (normalized.has('pwd') && [...normalized].some((method) => SECOND_FACTOR_METHODS.has(method)))
+  );
 }
 
 export function permissionsRequireMfa(permissions: readonly PermissionGrant[]): boolean {

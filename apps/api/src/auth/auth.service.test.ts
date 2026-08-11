@@ -409,6 +409,33 @@ it.skipIf(!enabled)(
           },
         }),
       ).resolves.toMatchObject({ details: { reason: 'AGENCY_CONTEXT_SWITCHED' } });
+      const expiredToken = `expired-session-${suffix}`;
+      const expiredSession = await admin.userSession.create({
+        data: {
+          userId: user.id,
+          agencyId: login.context.agencyId,
+          agencyMembershipId: login.context.membershipId,
+          sessionTokenHash: databaseBytes(hashSessionToken(expiredToken)),
+          createdAt: new Date('2026-08-01T00:00:00.000Z'),
+          lastSeenAt: new Date('2026-08-01T00:00:00.000Z'),
+          expiresAt: new Date('2026-08-02T00:00:00.000Z'),
+        },
+      });
+      await expect(
+        service.authenticateSession(expiredToken, `expired-${suffix}`),
+      ).resolves.toBeNull();
+      await expect(
+        admin.auditEvent.findFirstOrThrow({
+          where: {
+            agencyId: login.context.agencyId,
+            action: 'SESSION_REVOKED',
+            entityId: expiredSession.id,
+          },
+        }),
+      ).resolves.toMatchObject({
+        actorType: 'SYSTEM',
+        reason: 'SESSION_EXPIRED_OR_ACCESS_REMOVED',
+      });
       Object.defineProperty(service, 'oidc', {
         value: {
           verifyLogoutToken: async () => ({

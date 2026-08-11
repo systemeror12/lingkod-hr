@@ -340,7 +340,8 @@ export class AuthService {
           membership.status !== 'ACTIVE' ||
           user.globalStatus !== 'ACTIVE';
         if (accessRemoved || !isSessionActive(session)) {
-          await transaction.userSession.updateMany({
+          const reason = 'SESSION_EXPIRED_OR_ACCESS_REMOVED';
+          const revokedSessions = await transaction.userSession.updateManyAndReturn({
             where: {
               ...(accessRemoved
                 ? {
@@ -354,9 +355,18 @@ export class AuthService {
             },
             data: {
               revokedAt: new Date(),
-              revocationReason: 'SESSION_EXPIRED_OR_ACCESS_REMOVED',
+              revocationReason: reason,
             },
+            select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
           });
+          for (const revokedSession of revokedSessions) {
+            await this.recordSystemSessionRevocation(
+              transaction,
+              revokedSession,
+              reason,
+              requestId,
+            );
+          }
           return null;
         }
 
@@ -365,10 +375,12 @@ export class AuthService {
           (await this.userRequiresMfa(transaction, user.id, membership.agencyId, membership.id)) &&
           !hasMfaEvidence(session.authenticationMethods)
         ) {
+          const reason = 'MFA_REQUIRED';
           await transaction.userSession.update({
             where: { id: session.id },
-            data: { revokedAt: new Date(), revocationReason: 'MFA_REQUIRED' },
+            data: { revokedAt: new Date(), revocationReason: reason },
           });
+          await this.recordSystemSessionRevocation(transaction, session, reason, requestId);
           return null;
         }
 
@@ -683,33 +695,13 @@ export class AuthService {
         select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
       });
       for (const session of sessions) {
-        await setDatabaseContext(transaction, {
-          agencyId: session.agencyId,
-          userId: session.userId,
-          membershipId: session.agencyMembershipId,
-        });
-        await transaction.securityEvent.create({
-          data: {
-            agencyId: session.agencyId,
-            userId: session.userId,
-            membershipId: session.agencyMembershipId,
-            eventType: 'SESSION_REVOKED',
-            requestId,
-            details: { reason: 'OIDC_BACKCHANNEL_LOGOUT', providerEventId: identity.eventId },
-          },
-        });
-        await transaction.auditEvent.create({
-          data: {
-            agencyId: session.agencyId,
-            actorType: 'SYSTEM',
-            action: 'SESSION_REVOKED',
-            entityType: 'UserSession',
-            entityId: session.id,
-            reason: 'OIDC_BACKCHANNEL_LOGOUT',
-            requestId,
-            metadata: { providerEventId: identity.eventId },
-          },
-        });
+        await this.recordSystemSessionRevocation(
+          transaction,
+          session,
+          'OIDC_BACKCHANNEL_LOGOUT',
+          requestId,
+          { providerEventId: identity.eventId },
+        );
       }
     });
   }
@@ -1094,6 +1086,42 @@ export class AuthService {
         eventType,
         requestId,
         details: safeJson(details),
+      },
+    });
+  }
+
+  private async recordSystemSessionRevocation(
+    transaction: Prisma.TransactionClient,
+    session: { id: string; agencyId: string; userId: string; agencyMembershipId: string },
+    reason: string,
+    requestId: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<void> {
+    await setDatabaseContext(transaction, {
+      agencyId: session.agencyId,
+      userId: session.userId,
+      membershipId: session.agencyMembershipId,
+    });
+    await transaction.securityEvent.create({
+      data: {
+        agencyId: session.agencyId,
+        userId: session.userId,
+        membershipId: session.agencyMembershipId,
+        eventType: 'SESSION_REVOKED',
+        requestId,
+        details: safeJson({ reason, ...metadata }),
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        agencyId: session.agencyId,
+        actorType: 'SYSTEM',
+        action: 'SESSION_REVOKED',
+        entityType: 'UserSession',
+        entityId: session.id,
+        reason,
+        requestId,
+        metadata: safeJson(metadata),
       },
     });
   }

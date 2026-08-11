@@ -259,7 +259,8 @@ CREATE TRIGGER "role_permissions_grantor_agency_trigger"
 ALTER TABLE "role_permissions" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "role_permissions" FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY "role_permissions_isolation" ON "role_permissions"
+CREATE POLICY "role_permissions_select" ON "role_permissions"
+  FOR SELECT
   USING (
     EXISTS (
       SELECT 1
@@ -267,8 +268,41 @@ CREATE POLICY "role_permissions_isolation" ON "role_permissions"
       WHERE "roles"."id" = "role_permissions"."role_id"
         AND ("roles"."agency_id" IS NULL OR "roles"."agency_id" = app_agency_id())
     )
+  );
+
+CREATE POLICY "role_permissions_insert" ON "role_permissions"
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM "roles"
+      WHERE "roles"."id" = "role_permissions"."role_id"
+        AND "roles"."agency_id" = app_agency_id()
+    )
+  );
+
+CREATE POLICY "role_permissions_update" ON "role_permissions"
+  FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM "roles"
+      WHERE "roles"."id" = "role_permissions"."role_id"
+        AND "roles"."agency_id" = app_agency_id()
+    )
   )
   WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM "roles"
+      WHERE "roles"."id" = "role_permissions"."role_id"
+        AND "roles"."agency_id" = app_agency_id()
+    )
+  );
+
+CREATE POLICY "role_permissions_delete" ON "role_permissions"
+  FOR DELETE
+  USING (
     EXISTS (
       SELECT 1
       FROM "roles"
@@ -481,9 +515,22 @@ CREATE POLICY "invitations_isolation" ON "invitations"
   )
   WITH CHECK ("agency_id" = app_agency_id());
 
-CREATE POLICY "roles_isolation" ON "roles"
-  USING ("agency_id" IS NULL OR "agency_id" = app_agency_id())
+CREATE POLICY "roles_select" ON "roles"
+  FOR SELECT
+  USING ("agency_id" IS NULL OR "agency_id" = app_agency_id());
+
+CREATE POLICY "roles_insert" ON "roles"
+  FOR INSERT
   WITH CHECK ("agency_id" = app_agency_id());
+
+CREATE POLICY "roles_update" ON "roles"
+  FOR UPDATE
+  USING ("agency_id" = app_agency_id())
+  WITH CHECK ("agency_id" = app_agency_id());
+
+CREATE POLICY "roles_delete" ON "roles"
+  FOR DELETE
+  USING ("agency_id" = app_agency_id());
 
 CREATE POLICY "membership_roles_isolation" ON "membership_roles"
   USING ("agency_id" = app_agency_id())

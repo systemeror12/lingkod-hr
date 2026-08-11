@@ -123,6 +123,27 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
     const globalRole = await admin.role.findFirstOrThrow({
       where: { code: 'agency_administrator', agencyId: null },
     });
+    const globalGrant = await admin.rolePermission.findFirstOrThrow({
+      where: { roleId: globalRole.id },
+    });
+    await withContext(app, contextValues(agencyA.id, user.id), async (transaction) => {
+      expect(
+        await transaction.$executeRaw`
+          UPDATE "roles"
+          SET "agency_id" = ${agencyA.id}::uuid, "is_system_template" = FALSE
+          WHERE "id" = ${globalRole.id}::uuid
+        `,
+      ).toBe(0);
+      expect(
+        await transaction.$executeRaw`
+          UPDATE "role_permissions"
+          SET "scope_policy" = 'OWN'
+          WHERE "role_id" = ${globalGrant.roleId}::uuid
+            AND "permission_id" = ${globalGrant.permissionId}::uuid
+            AND "scope_policy" = ${globalGrant.scopePolicy}
+        `,
+      ).toBe(0);
+    });
     await expect(
       admin.membershipRole.create({
         data: {
