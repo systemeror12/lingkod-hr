@@ -139,7 +139,7 @@ export class AuthController {
       try {
         await this.authService.recordLoginFailure(
           requestId,
-          'OIDC_CALLBACK_FAILED',
+          error instanceof AuthServiceError ? error.code : 'OIDC_CALLBACK_FAILED',
           request.ip ?? 'unknown',
         );
       } catch {

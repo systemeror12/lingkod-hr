@@ -189,135 +189,124 @@ export class AuthService {
       throw new AuthServiceError('A verified identity is required.', 401, 'EMAIL_NOT_VERIFIED');
     }
 
-    try {
-      const transactionResult: SignInTransactionResult = await withDatabaseContext(
-        {},
-        async (transaction) => {
-          const now = new Date();
-          const invitationTokenHash = invitationToken ? hashSessionToken(invitationToken) : null;
-          if (invitationTokenHash) {
-            await setDatabaseContext(transaction, {
-              invitationTokenHash: invitationTokenHash.toString('hex'),
-            });
-            const invitation = await transaction.invitation.findFirst({
-              where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
-              select: { id: true, agencyId: true, expiresAt: true },
-            });
-            if (invitation && invitation.expiresAt <= now) {
-              await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
-              await transaction.invitation.update({
-                where: { id: invitation.id },
-                data: { status: 'EXPIRED' },
-              });
-              await transaction.securityEvent.create({
-                data: {
-                  agencyId: invitation.agencyId,
-                  eventType: 'INVITATION_EXPIRED',
-                  requestId,
-                  details: { invitationId: invitation.id },
-                },
-              });
-              await transaction.auditEvent.create({
-                data: {
-                  agencyId: invitation.agencyId,
-                  actorType: 'SYSTEM',
-                  action: 'INVITATION_EXPIRED',
-                  entityType: 'Invitation',
-                  entityId: invitation.id,
-                  previousStatus: 'PENDING',
-                  newStatus: 'EXPIRED',
-                  requestId,
-                  metadata: {},
-                },
-              });
-              return { status: 'invitation_expired' as const };
-            }
-          }
-
-          const user = await this.resolveIdentity(transaction, identity);
-          if (user.globalStatus !== 'ACTIVE') {
-            throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
-          }
-
-          if (invitationTokenHash) {
-            await setDatabaseContext(transaction, {
-              userId: user.id,
-              invitationTokenHash: invitationTokenHash.toString('hex'),
-            });
-          } else {
-            await setDatabaseContext(transaction, { userId: user.id });
-          }
-
-          const invitationMembershipId = invitationTokenHash
-            ? await this.acceptInvitation(
-                transaction,
-                user.id,
-                identity.email,
-                invitationTokenHash,
-                requestId,
-                now,
-              )
-            : null;
-
-          const memberships = await transaction.agencyMembership.findMany({
-            where: { userId: user.id, status: 'ACTIVE' },
-            orderBy: { createdAt: 'asc' },
+    const transactionResult: SignInTransactionResult = await withDatabaseContext(
+      {},
+      async (transaction) => {
+        const now = new Date();
+        const invitationTokenHash = invitationToken ? hashSessionToken(invitationToken) : null;
+        if (invitationTokenHash) {
+          await setDatabaseContext(transaction, {
+            invitationTokenHash: invitationTokenHash.toString('hex'),
           });
-          if (memberships.length === 0) {
-            throw new AuthServiceError(
-              'No active Agency Membership is available.',
-              403,
-              'NO_MEMBERSHIP',
-            );
+          const invitation = await transaction.invitation.findFirst({
+            where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
+            select: { id: true, agencyId: true, expiresAt: true },
+          });
+          if (invitation && invitation.expiresAt <= now) {
+            await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
+            await transaction.invitation.update({
+              where: { id: invitation.id },
+              data: { status: 'EXPIRED' },
+            });
+            await transaction.securityEvent.create({
+              data: {
+                agencyId: invitation.agencyId,
+                eventType: 'INVITATION_EXPIRED',
+                requestId,
+                details: { invitationId: invitation.id },
+              },
+            });
+            await transaction.auditEvent.create({
+              data: {
+                agencyId: invitation.agencyId,
+                actorType: 'SYSTEM',
+                action: 'INVITATION_EXPIRED',
+                entityType: 'Invitation',
+                entityId: invitation.id,
+                previousStatus: 'PENDING',
+                newStatus: 'EXPIRED',
+                requestId,
+                metadata: {},
+              },
+            });
+            return { status: 'invitation_expired' as const };
           }
+        }
 
-          const requestedMembershipId = invitationMembershipId ?? selectedMembershipId;
-          const membership = requestedMembershipId
-            ? memberships.find(({ id }) => id === requestedMembershipId)
-            : memberships[0];
-          if (!membership) {
-            throw new AuthServiceError(
-              'The selected Agency Membership is not active.',
-              403,
-              'MEMBERSHIP_DENIED',
-            );
-          }
+        const user = await this.resolveIdentity(transaction, identity);
+        if (user.globalStatus !== 'ACTIVE') {
+          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+        }
 
+        if (invitationTokenHash) {
           await setDatabaseContext(transaction, {
             userId: user.id,
-            agencyId: membership.agencyId,
-            membershipId: membership.id,
+            invitationTokenHash: invitationTokenHash.toString('hex'),
           });
-          return {
-            status: 'authenticated' as const,
-            session: await this.createSession(
+        } else {
+          await setDatabaseContext(transaction, { userId: user.id });
+        }
+
+        const invitationMembershipId = invitationTokenHash
+          ? await this.acceptInvitation(
               transaction,
               user.id,
-              membership.id,
-              identity,
+              identity.email,
+              invitationTokenHash,
               requestId,
-            ),
-          };
-        },
-      );
-      if (transactionResult.status === 'invitation_expired') {
-        throw new AuthServiceError('The invitation has expired.', 400, 'INVITATION_EXPIRED');
-      }
-      const result = transactionResult.session;
-      return {
-        ...result,
-        providerLogoutUrl: await this.oidc.providerLogoutUrl(result.providerSid),
-      };
-    } catch (error: unknown) {
-      if (error instanceof AuthServiceError) {
-        try {
-          await this.recordLoginFailure(requestId, error.code);
-        } catch {
-          // Preserve the denial when the audit store is temporarily unavailable.
+              now,
+            )
+          : null;
+
+        const memberships = await transaction.agencyMembership.findMany({
+          where: { userId: user.id, status: 'ACTIVE' },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (memberships.length === 0) {
+          throw new AuthServiceError(
+            'No active Agency Membership is available.',
+            403,
+            'NO_MEMBERSHIP',
+          );
         }
-      }
-      throw error;
+
+        const requestedMembershipId = invitationMembershipId ?? selectedMembershipId;
+        const membership = requestedMembershipId
+          ? memberships.find(({ id }) => id === requestedMembershipId)
+          : memberships[0];
+        if (!membership) {
+          throw new AuthServiceError(
+            'The selected Agency Membership is not active.',
+            403,
+            'MEMBERSHIP_DENIED',
+          );
+        }
+
+        await setDatabaseContext(transaction, {
+          userId: user.id,
+          agencyId: membership.agencyId,
+          membershipId: membership.id,
+        });
+        return {
+          status: 'authenticated' as const,
+          session: await this.createSession(
+            transaction,
+            user.id,
+            membership.id,
+            identity,
+            requestId,
+          ),
+        };
+      },
+    );
+    if (transactionResult.status === 'invitation_expired') {
+      throw new AuthServiceError('The invitation has expired.', 400, 'INVITATION_EXPIRED');
     }
+    const result = transactionResult.session;
+    return {
+      ...result,
+      providerLogoutUrl: await this.oidc.providerLogoutUrl(result.providerSid),
+    };
   }
 
   async authenticateSession(
@@ -583,13 +572,14 @@ export class AuthService {
             'MEMBERSHIP_DENIED',
           );
         }
+        const reason = 'AGENCY_CONTEXT_SWITCHED';
         const revoked = await transaction.userSession.updateMany({
           where: {
             id: session.sessionId,
             sessionTokenHash: prismaBytes(tokenHash),
             revokedAt: null,
           },
-          data: { revokedAt: new Date(), revocationReason: 'AGENCY_CONTEXT_SWITCHED' },
+          data: { revokedAt: new Date(), revocationReason: reason },
         });
         if (revoked.count !== 1) {
           throw new AuthServiceError(
@@ -598,6 +588,17 @@ export class AuthService {
             'SESSION_REVOKED',
           );
         }
+        await this.recordSecurityEvent(transaction, session.context, 'SESSION_REVOKED', requestId, {
+          reason,
+        });
+        await this.recordAuditEvent(transaction, session.context, {
+          action: 'SESSION_REVOKED',
+          entityType: 'UserSession',
+          entityId: session.sessionId,
+          reason,
+          requestId,
+          metadata: {},
+        });
         await setDatabaseContext(transaction, {
           userId: session.context.userId,
           agencyId: membership.agencyId,

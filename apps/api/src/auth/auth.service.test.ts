@@ -1,7 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 import { hashSessionToken, type OidcIdentity, type RequestContext } from '@lingkod-hr/auth';
-import { expect, it } from 'vitest';
-import { AuthService } from './auth.service';
+import type { Request, Response } from 'express';
+import { expect, it, vi } from 'vitest';
+import { AuthController } from './auth.controller';
+import { AuthService, AuthServiceError } from './auth.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -61,6 +63,32 @@ async function cleanup(
   await admin.role.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
   await admin.agency.deleteMany({ where: { id: { in: [...agencyIds] } } });
 }
+
+it('records an OIDC callback failure once with its reason and client IP', async () => {
+  const recordLoginFailure = vi.fn().mockResolvedValue(undefined);
+  const authService = {
+    assertLoginAllowed: vi.fn().mockResolvedValue(undefined),
+    completeLogin: vi
+      .fn()
+      .mockRejectedValue(new AuthServiceError('Membership denied.', 403, 'MEMBERSHIP_DENIED')),
+    recordLoginFailure,
+  } as unknown as AuthService;
+  const request = {
+    headers: { cookie: 'hris_oidc_flow=flow-cookie' },
+    header: () => 'request-callback-failure',
+    ip: '203.0.113.1',
+  } as unknown as Request;
+
+  await expect(
+    new AuthController(authService).callback('state', 'code', request, {} as Response),
+  ).rejects.toMatchObject({ status: 403 });
+  expect(recordLoginFailure).toHaveBeenCalledOnce();
+  expect(recordLoginFailure).toHaveBeenCalledWith(
+    'request-callback-failure',
+    'MEMBERSHIP_DENIED',
+    '203.0.113.1',
+  );
+});
 
 it('rejects invitation role assignment without Agency-scoped role-management permission', async () => {
   const context: RequestContext = {
@@ -307,6 +335,24 @@ it.skipIf(!enabled)(
       expect(rotated.expiresAt).toEqual(original.expiresAt);
       expect(rotated.authTime).toEqual(original.authTime);
       expect(revoked.revokedAt).not.toBeNull();
+      await expect(
+        admin.auditEvent.findFirstOrThrow({
+          where: {
+            agencyId: login.context.agencyId,
+            action: 'SESSION_REVOKED',
+            entityId: login.sessionId,
+          },
+        }),
+      ).resolves.toMatchObject({ reason: 'AGENCY_CONTEXT_SWITCHED' });
+      await expect(
+        admin.securityEvent.findFirstOrThrow({
+          where: {
+            agencyId: login.context.agencyId,
+            eventType: 'SESSION_REVOKED',
+            requestId: `switch-${suffix}`,
+          },
+        }),
+      ).resolves.toMatchObject({ details: { reason: 'AGENCY_CONTEXT_SWITCHED' } });
       Object.defineProperty(service, 'oidc', {
         value: {
           verifyLogoutToken: async () => ({
