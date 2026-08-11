@@ -32,6 +32,32 @@ it('normalizes invalid provider tokens to an OIDC error', async () => {
   }
 });
 
+it('rejects non-HTTPS endpoints discovered from an HTTPS issuer', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        authorization_endpoint: 'https://issuer.example/authorize',
+        token_endpoint: 'http://issuer.example/token',
+        jwks_uri: 'https://issuer.example/jwks',
+      }),
+    ),
+  );
+  const client = new OidcClient({
+    issuer: 'https://issuer.example',
+    clientId: 'client',
+    clientSecret: 'secret',
+    redirectUri: 'https://app.example/callback',
+  });
+
+  try {
+    await expect(client.authorizationUrl('state', 'nonce', 'verifier')).rejects.toThrow(
+      /non-HTTPS token_endpoint/,
+    );
+  } finally {
+    fetch.mockRestore();
+  }
+});
+
 it('treats provider logout discovery as optional', async () => {
   const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('provider unavailable'));
   const client = new OidcClient({

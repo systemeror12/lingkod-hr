@@ -65,24 +65,33 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   return value as Record<string, unknown>;
 }
 
-function requiredUrl(value: unknown, field: string): string {
+function requiredUrl(value: unknown, field: string, requireHttps: boolean): string {
   if (typeof value !== 'string') throw new OidcError(`OIDC discovery is missing ${field}.`);
+  let url: URL;
   try {
-    return new URL(value).toString();
+    url = new URL(value);
   } catch {
     throw new OidcError(`OIDC discovery returned an invalid ${field}.`);
   }
+  if (requireHttps && url.protocol !== 'https:') {
+    throw new OidcError(`OIDC discovery returned a non-HTTPS ${field}.`);
+  }
+  return url.toString();
 }
 
-function parseDiscovery(value: Record<string, unknown>): OidcDiscovery {
+function parseDiscovery(value: Record<string, unknown>, requireHttps: boolean): OidcDiscovery {
   return {
-    authorizationEndpoint: requiredUrl(value.authorization_endpoint, 'authorization_endpoint'),
-    tokenEndpoint: requiredUrl(value.token_endpoint, 'token_endpoint'),
-    jwksUri: requiredUrl(value.jwks_uri, 'jwks_uri'),
+    authorizationEndpoint: requiredUrl(
+      value.authorization_endpoint,
+      'authorization_endpoint',
+      requireHttps,
+    ),
+    tokenEndpoint: requiredUrl(value.token_endpoint, 'token_endpoint', requireHttps),
+    jwksUri: requiredUrl(value.jwks_uri, 'jwks_uri', requireHttps),
     endSessionEndpoint:
       value.end_session_endpoint === undefined || value.end_session_endpoint === null
         ? null
-        : requiredUrl(value.end_session_endpoint, 'end_session_endpoint'),
+        : requiredUrl(value.end_session_endpoint, 'end_session_endpoint', requireHttps),
   };
 }
 
@@ -222,7 +231,10 @@ export class OidcClient {
     }
     const issuer = this.options.issuer.replace(/\/$/, '');
     const response = await fetch(`${issuer}/.well-known/openid-configuration`);
-    const discovery = parseDiscovery(await readJson(response));
+    const discovery = parseDiscovery(
+      await readJson(response),
+      new URL(this.options.issuer).protocol === 'https:',
+    );
     this.discoveryCache = { value: discovery, expiresAt: cacheExpiry(response.headers) };
     return discovery;
   }
