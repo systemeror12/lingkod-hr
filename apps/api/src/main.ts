@@ -24,22 +24,24 @@ async function bootstrap() {
     const requestId = request.header('x-request-id') ?? createRequestId();
     request.headers['x-request-id'] = requestId;
     const startedAt = performance.now();
-    const span = tracer.startSpan(`${request.method} ${request.path}`);
+    const span = tracer.startSpan(`${request.method} request`);
 
     response.setHeader('x-request-id', requestId);
     response.on('finish', () => {
       const durationMs = Math.round(performance.now() - startedAt);
+      const route = String(request.route?.path ?? 'unmatched');
       requestDuration.record(durationMs, {
         'http.request.method': request.method,
         'http.response.status_code': response.statusCode,
       });
+      span.updateName(`${request.method} ${route}`);
       span.setAttribute('http.response.status_code', response.statusCode);
       span.setAttribute('http.request.id', requestId);
       span.end();
       log('info', 'request.completed', {
         requestId,
         method: request.method,
-        route: request.path,
+        route,
         statusCode: response.statusCode,
         durationMs,
       });

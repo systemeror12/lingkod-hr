@@ -209,6 +209,27 @@ export class AuthService {
                 where: { id: invitation.id },
                 data: { status: 'EXPIRED' },
               });
+              await transaction.securityEvent.create({
+                data: {
+                  agencyId: invitation.agencyId,
+                  eventType: 'INVITATION_EXPIRED',
+                  requestId,
+                  details: { invitationId: invitation.id },
+                },
+              });
+              await transaction.auditEvent.create({
+                data: {
+                  agencyId: invitation.agencyId,
+                  actorType: 'SYSTEM',
+                  action: 'INVITATION_EXPIRED',
+                  entityType: 'Invitation',
+                  entityId: invitation.id,
+                  previousStatus: 'PENDING',
+                  newStatus: 'EXPIRED',
+                  requestId,
+                  metadata: {},
+                },
+              });
               return { status: 'invitation_expired' as const };
             }
           }

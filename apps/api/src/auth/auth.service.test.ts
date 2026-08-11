@@ -133,6 +133,29 @@ it.skipIf(!enabled)(
         admin.invitation.findUniqueOrThrow({ where: { id: invitation.id } }),
       ).resolves.toMatchObject({ status: 'EXPIRED' });
       await expect(
+        admin.securityEvent.findFirstOrThrow({
+          where: {
+            agencyId: agency.id,
+            eventType: 'INVITATION_EXPIRED',
+            requestId: `request-${suffix}`,
+          },
+        }),
+      ).resolves.toMatchObject({ details: { invitationId: invitation.id } });
+      await expect(
+        admin.auditEvent.findFirstOrThrow({
+          where: {
+            agencyId: agency.id,
+            action: 'INVITATION_EXPIRED',
+            requestId: `request-${suffix}`,
+          },
+        }),
+      ).resolves.toMatchObject({
+        actorType: 'SYSTEM',
+        entityId: invitation.id,
+        previousStatus: 'PENDING',
+        newStatus: 'EXPIRED',
+      });
+      await expect(
         admin.user.findUnique({ where: { emailNormalized: inviteeEmail } }),
       ).resolves.toBeNull();
     } finally {
