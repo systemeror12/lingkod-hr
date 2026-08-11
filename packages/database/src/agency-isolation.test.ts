@@ -228,13 +228,10 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
     ).rejects.toThrow(/foreign key|agency/i);
   } finally {
     if (securityEventId) {
-      await admin.$executeRawUnsafe(
-        'ALTER TABLE "security_events" DISABLE TRIGGER "security_events_append_only_trigger"',
-      );
-      await admin.securityEvent.delete({ where: { id: securityEventId } });
-      await admin.$executeRawUnsafe(
-        'ALTER TABLE "security_events" ENABLE TRIGGER "security_events_append_only_trigger"',
-      );
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.securityEvent.delete({ where: { id: securityEventId } });
+      });
     }
     await admin.agencyProfileVersion.deleteMany({
       where: { agencyId: { in: [agencyA.id, agencyB.id] } },

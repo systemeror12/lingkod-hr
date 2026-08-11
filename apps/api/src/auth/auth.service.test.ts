@@ -39,23 +39,11 @@ async function cleanup(
   agencyIds: readonly string[],
   userIds: readonly string[],
 ): Promise<void> {
-  await admin.$executeRawUnsafe(
-    'ALTER TABLE "security_events" DISABLE TRIGGER "security_events_append_only_trigger"',
-  );
-  await admin.$executeRawUnsafe(
-    'ALTER TABLE "audit_events" DISABLE TRIGGER "audit_events_append_only_trigger"',
-  );
-  try {
-    await admin.securityEvent.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
-    await admin.auditEvent.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
-  } finally {
-    await admin.$executeRawUnsafe(
-      'ALTER TABLE "security_events" ENABLE TRIGGER "security_events_append_only_trigger"',
-    );
-    await admin.$executeRawUnsafe(
-      'ALTER TABLE "audit_events" ENABLE TRIGGER "audit_events_append_only_trigger"',
-    );
-  }
+  await admin.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.securityEvent.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
+    await transaction.auditEvent.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
+  });
   await admin.userSession.deleteMany({ where: { userId: { in: [...userIds] } } });
   await admin.membershipRole.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
   await admin.externalIdentityLink.deleteMany({ where: { userId: { in: [...userIds] } } });

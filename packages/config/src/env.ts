@@ -82,6 +82,14 @@ export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppCo
       .join('; ');
     throw new Error(`Invalid application configuration: ${details}`);
   }
+  if (
+    parsed.data.NODE_ENV === 'production' &&
+    new URL(parsed.data.OIDC_ISSUER).protocol !== 'https:'
+  ) {
+    throw new Error(
+      'Invalid application configuration: OIDC_ISSUER: Production OIDC issuer must use HTTPS.',
+    );
+  }
 
   return parsed.data;
 }

@@ -399,10 +399,11 @@ export class AuthService {
           return null;
         }
 
-        await transaction.userSession.update({
-          where: { id: session.id },
+        const refreshed = await transaction.userSession.updateMany({
+          where: { id: session.id, revokedAt: null },
           data: { lastSeenAt: new Date() },
         });
+        if (refreshed.count !== 1) return null;
         return {
           sessionId: session.id,
           providerSid: session.providerSid,
