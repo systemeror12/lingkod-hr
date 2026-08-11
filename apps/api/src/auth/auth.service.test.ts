@@ -409,6 +409,12 @@ it.skipIf(!enabled)(
           },
         }),
       ).resolves.toMatchObject({ details: { reason: 'AGENCY_CONTEXT_SWITCHED' } });
+      await expect(
+        service.revokeSession(login.token, login, 'USER_LOGOUT', `stale-logout-${suffix}`),
+      ).resolves.toBeNull();
+      await expect(
+        admin.auditEvent.findFirst({ where: { requestId: `stale-logout-${suffix}` } }),
+      ).resolves.toBeNull();
       const expiredToken = `expired-session-${suffix}`;
       const expiredSession = await admin.userSession.create({
         data: {

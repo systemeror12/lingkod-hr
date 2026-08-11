@@ -539,7 +539,7 @@ export class AuthService {
     const providerSid = await withDatabaseContext(
       { ...session.context, sessionTokenHash: tokenHash.toString('hex') },
       async (transaction) => {
-        await transaction.userSession.updateMany({
+        const revoked = await transaction.userSession.updateMany({
           where: {
             id: session.sessionId,
             sessionTokenHash: prismaBytes(tokenHash),
@@ -547,17 +547,23 @@ export class AuthService {
           },
           data: { revokedAt: new Date(), revocationReason: reason },
         });
-        await this.recordSecurityEvent(transaction, session.context, 'SESSION_REVOKED', requestId, {
-          reason,
-        });
-        await this.recordAuditEvent(transaction, session.context, {
-          action: 'SESSION_REVOKED',
-          entityType: 'UserSession',
-          entityId: session.sessionId,
-          reason,
-          requestId,
-          metadata: { reason },
-        });
+        if (revoked.count === 1) {
+          await this.recordSecurityEvent(
+            transaction,
+            session.context,
+            'SESSION_REVOKED',
+            requestId,
+            { reason },
+          );
+          await this.recordAuditEvent(transaction, session.context, {
+            action: 'SESSION_REVOKED',
+            entityType: 'UserSession',
+            entityId: session.sessionId,
+            reason,
+            requestId,
+            metadata: { reason },
+          });
+        }
         return session.providerSid;
       },
     );
@@ -742,6 +748,7 @@ export class AuthService {
           displayName: identity.displayName,
           globalStatus: 'ACTIVE',
           emailVerifiedAt: identity.emailVerified ? new Date() : null,
+          lastLoginAt: new Date(),
         },
       });
     } else {
