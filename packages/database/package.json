@@ -15,8 +15,10 @@
     "generate": "prisma generate --schema prisma/schema.prisma",
     "lint": "eslint .",
     "migrate:prepare": "prisma generate --schema prisma/schema.prisma && tsx scripts/migrate-prepare.ts",
-    "migrate:deploy": "pnpm migrate:prepare && prisma migrate deploy --schema prisma/schema.prisma",
-    "migrate:dev": "APP_ENV=development pnpm migrate:prepare && prisma migrate dev --schema prisma/schema.prisma",
+    "migrate:deploy": "tsx scripts/run-with-root-env.ts migrate:deploy:loaded",
+    "migrate:deploy:loaded": "pnpm migrate:prepare && prisma migrate deploy --schema prisma/schema.prisma",
+    "migrate:dev": "tsx scripts/run-with-root-env.ts migrate:dev:loaded",
+    "migrate:dev:loaded": "APP_ENV=development pnpm migrate:prepare && prisma migrate dev --schema prisma/schema.prisma",
     "test": "vitest run src --passWithNoTests",
     "test:e2e": "vitest run src --passWithNoTests",
     "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"

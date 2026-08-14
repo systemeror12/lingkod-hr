@@ -566,7 +566,7 @@ services:
       POSTGRES_USER: hris_local
       POSTGRES_PASSWORD: local_only
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -947,7 +947,7 @@ These are recommended defaults and may be changed by the repository.
 |---|---:|
 | Next.js web | 3000 |
 | NestJS API | 3001 |
-| PostgreSQL | 5432 |
+| PostgreSQL host port | 55432 |
 | Redis | 6379 |
 | Object-storage API | 9000 |
 | Object-storage console | 9001 |

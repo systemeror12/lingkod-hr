@@ -919,7 +919,7 @@ services:
       POSTGRES_USER: erp_local
       POSTGRES_PASSWORD: local_only
     ports:
-      - "5432:5432"
+      - "55432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 

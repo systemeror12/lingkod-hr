@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { loadRootEnvironment } from './load-root-env';
+
+loadRootEnvironment();
 
 function required(name: string): string {
   const value = process.env[name];
