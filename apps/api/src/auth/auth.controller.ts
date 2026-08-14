@@ -5,6 +5,7 @@ import {
   Get,
   HttpException,
   HttpStatus,
+  Inject,
   Param,
   Post,
   Query,
@@ -17,6 +18,7 @@ import type { Request, Response } from 'express';
 import { OidcError } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
 import { AuthGuard } from './auth.guard';
+import { AuthMeResponseDto } from './auth.dto';
 import { AuthService, AuthServiceError, OIDC_FLOW_COOKIE, SESSION_COOKIE } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
 import {
@@ -61,7 +63,7 @@ function cookieOptions(secure: boolean) {
 export class AuthController {
   private readonly config = getConfig();
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   @Get('login')
   async login(
@@ -150,15 +152,19 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(AuthGuard)
-  me(@Req() request: AuthenticatedRequest) {
-    const context = request.authSession?.context;
-    if (!context) throw new UnauthorizedException();
-    return {
-      userId: context.userId,
-      agencyId: context.agencyId,
-      membershipId: context.membershipId,
-      permissions: context.permissions,
-    };
+  me(@Req() request: AuthenticatedRequest): AuthMeResponseDto {
+    const session = request.authSession;
+    if (!session) throw new UnauthorizedException();
+    const { context, display } = session;
+    return new AuthMeResponseDto(
+      context.userId,
+      context.agencyId,
+      context.membershipId,
+      display.agency,
+      display.identity,
+      display.effectiveRoles,
+      context.permissions,
+    );
   }
 
   @Post('logout')

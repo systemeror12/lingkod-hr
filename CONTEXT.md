@@ -12,6 +12,16 @@ _Avoid_: Generic pilot agency, hypothetical pilot agency
 An identified agency participating in a controlled rollout, whose official documents and authorized representatives can supply agency-specific requirements.
 _Avoid_: Reference agency, generic agency
 
+## Agency Organization
+
+**Organization Unit**:
+A stable, agency-owned node in the formal organization structure whose name, parent relationship, and effectivity may change over time without replacing its identity.
+_Avoid_: Department-only record, office label
+
+**Draft Organization Unit**:
+A proposed Organization Unit that has been recorded but is not yet active or available for operational assignment.
+_Avoid_: Active office, completed organization change
+
 ## Decision Authority
 
 **Authoritative Business Rule**:
@@ -159,6 +169,30 @@ An authorized transfer of control or custody of public records to the National A
 _Avoid_: Archive status, storage migration
 
 ## Identity and Access
+
+**Agency Provisioning**:
+A controlled setup process that creates an Agency and issues the single-use invitation through which its initial Agency Administrator establishes agency-scoped access.
+_Avoid_: Agency self-registration, public agency signup
+
+**Agency Administrator**:
+An agency-scoped role responsible for Agency setup, user access, role assignment, and technical configuration.
+_Avoid_: Platform administrator, HR administrator
+
+**HRMO Administrator**:
+An agency-scoped role responsible for broad human-resource management without unrestricted system-administration or payroll authority.
+_Avoid_: Agency Administrator, HR administrator
+
+**Invitation Role Assignment**:
+A role assignment requested for a prospective Agency Membership that becomes effective only when the invitation is accepted.
+_Avoid_: Post-activation role assignment, active invited role
+
+**Agency Context**:
+The trusted Agency Membership boundary under which a user's permissions and record access are evaluated for a session or request.
+_Avoid_: Client-supplied agency ID, tenant selector value
+
+**Cross-Agency Isolation**:
+The enforced boundary that prevents one Agency Context from reading, changing, or relating records owned by another Agency.
+_Avoid_: UI filtering, Agency preference
 
 **External Identity Link**:
 The durable association between an HRIS User and an identity-provider subject, identified by the exact issuer-and-subject pair. Email addresses and other mutable profile attributes cannot establish or silently replace this link.
