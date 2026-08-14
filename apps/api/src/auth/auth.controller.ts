@@ -18,6 +18,7 @@ import type { Request, Response } from 'express';
 import { OidcError } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
 import { AuthGuard } from './auth.guard';
+import { AuthMeResponseDto } from './auth.dto';
 import { AuthService, AuthServiceError, OIDC_FLOW_COOKIE, SESSION_COOKIE } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
 import {
@@ -151,19 +152,19 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(AuthGuard)
-  me(@Req() request: AuthenticatedRequest) {
+  me(@Req() request: AuthenticatedRequest): AuthMeResponseDto {
     const session = request.authSession;
     if (!session) throw new UnauthorizedException();
     const { context, display } = session;
-    return {
-      userId: context.userId,
-      agencyId: context.agencyId,
-      membershipId: context.membershipId,
-      agency: display.agency,
-      identity: display.identity,
-      effectiveRoles: display.effectiveRoles,
-      permissions: context.permissions,
-    };
+    return new AuthMeResponseDto(
+      context.userId,
+      context.agencyId,
+      context.membershipId,
+      display.agency,
+      display.identity,
+      display.effectiveRoles,
+      context.permissions,
+    );
   }
 
   @Post('logout')

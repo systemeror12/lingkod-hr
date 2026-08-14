@@ -36,11 +36,13 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
   await expect(navigation.getByRole('link', { name: 'Audit Log' })).toBeVisible();
   await expect(navigation.getByRole('link', { name: 'Organization' })).toHaveCount(0);
 
-  const rail = page.getByTestId('application-rail');
-  await expect(rail).toHaveCSS('width', '200px');
+  const rail = page.getByRole('complementary', { name: 'Application' });
+  await expect(page.getByText('LingkodHR', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('expanded.png'), fullPage: true });
   await page.getByRole('button', { name: 'Collapse navigation' }).click();
-  await expect(rail).toHaveCSS('width', '72px');
+  await expect(page.getByText('LingkodHR', { exact: true })).toBeHidden();
+  await navigation.getByRole('link', { name: 'Dashboard' }).hover();
+  await expect(rail.getByRole('tooltip', { name: 'Dashboard' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Expand navigation' })).toBeFocused();
   await page.screenshot({ path: testInfo.outputPath('collapsed.png'), fullPage: true });
 
@@ -50,4 +52,8 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
   await expect(navigation.getByRole('link', { name: 'Users & Access' })).toBeVisible();
   await expect(navigation.getByRole('link', { name: 'Audit Log' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('narrow.png'), fullPage: true });
+
+  await page.goto('/records/non-disclosable-id');
+  await expect(page.getByRole('heading', { name: 'The record could not be found' })).toBeVisible();
+  await expect(page.getByText('non-disclosable-id')).toHaveCount(0);
 });

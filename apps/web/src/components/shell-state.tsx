@@ -1,5 +1,7 @@
 import Link from 'next/link';
-import styles from './workspace.module.css';
+import { cn } from '../lib/class-names';
+import { StateCode, StateSurface } from './state-surface';
+import { buttonVariants } from './ui/button';
 
 export function ShellState({
   code,
@@ -11,11 +13,21 @@ export function ShellState({
   message: string;
 }) {
   return (
-    <section className={styles.state} aria-labelledby="shell-state-title">
-      <span className={styles.stateCode}>{code}</span>
-      <h1 id="shell-state-title">{title}</h1>
-      <p>{message}</p>
-      <Link href="/dashboard">Return to Dashboard</Link>
-    </section>
+    <StateSurface labelledBy="shell-state-title">
+      <StateCode>{code}</StateCode>
+      <h1
+        className="m-0 text-2xl font-[670] tracking-[-0.025em] text-midnight"
+        id="shell-state-title"
+      >
+        {title}
+      </h1>
+      <p className="m-0 max-w-[500px] text-sm leading-[1.6] text-muted">{message}</p>
+      <Link
+        className={cn(buttonVariants({ variant: 'primary', size: 'default' }), 'mt-2 no-underline')}
+        href="/dashboard"
+      >
+        Return to Dashboard
+      </Link>
+    </StateSurface>
   );
 }

@@ -1,11 +1,11 @@
-import styles from '../../components/workspace.module.css';
+import { StateCode, StateSurface } from '../../components/state-surface';
 
 export default function Loading() {
   return (
-    <section className={styles.state} aria-label="Loading workspace" aria-busy="true">
-      <span className={styles.stateCode}>Loading</span>
-      <div className={styles.loadingLine} />
-      <div className={`${styles.loadingLine} ${styles.loadingLineShort}`} />
-    </section>
+    <StateSurface label="Loading workspace" busy>
+      <StateCode>Loading</StateCode>
+      <div className="h-[10px] w-[min(380px,70vw)] rounded-sm bg-pale-blue" />
+      <div className="h-[10px] w-[min(230px,50vw)] rounded-sm bg-pale-blue" />
+    </StateSurface>
   );
 }

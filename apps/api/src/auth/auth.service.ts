@@ -11,6 +11,7 @@ import {
   type OidcIdentity,
   type PermissionGrant,
   type RequestContext,
+  type SessionDisplay,
   permissionsRequireMfa,
   SCOPE_POLICIES,
   sessionExpiry,
@@ -47,23 +48,6 @@ export interface AuthenticatedSession {
   expiresAt: Date;
   context: RequestContext;
   display: SessionDisplay;
-}
-
-export interface SessionDisplay {
-  agency: {
-    id: string;
-    name: string;
-    acronym: string | null;
-  };
-  identity: {
-    id: string;
-    displayName: string;
-    email: string;
-  };
-  effectiveRoles: readonly {
-    code: string;
-    name: string;
-  }[];
 }
 
 export interface LoginResult extends AuthenticatedSession {

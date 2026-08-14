@@ -1,22 +1,12 @@
 import type { Metadata } from 'next';
-import { ShellState } from '../../../components/shell-state';
-import { getActiveSession, hasPermission } from '../../../lib/session';
+import { AuthorizedPlaceholder } from '../../../components/authorized-placeholder';
 
 export const metadata: Metadata = { title: 'Users & Access' };
 
-export default async function UsersAccessPage() {
-  const session = await getActiveSession();
-  if (!hasPermission(session, 'security.users.read')) {
-    return (
-      <ShellState
-        code="403"
-        title="You can’t open this page"
-        message="Your active Agency Membership does not permit this work. Return to the Dashboard to continue."
-      />
-    );
-  }
+export default function UsersAccessPage() {
   return (
-    <ShellState
+    <AuthorizedPlaceholder
+      permission="security.users.read"
       code="Users & Access"
       title="No access work is waiting"
       message="Authorized invitations and membership tasks will appear here when they need attention."
