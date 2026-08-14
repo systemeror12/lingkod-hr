@@ -5,6 +5,7 @@ import {
   Get,
   HttpException,
   HttpStatus,
+  Inject,
   Param,
   Post,
   Query,
@@ -61,7 +62,7 @@ function cookieOptions(secure: boolean) {
 export class AuthController {
   private readonly config = getConfig();
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   @Get('login')
   async login(
@@ -151,12 +152,16 @@ export class AuthController {
   @Get('me')
   @UseGuards(AuthGuard)
   me(@Req() request: AuthenticatedRequest) {
-    const context = request.authSession?.context;
-    if (!context) throw new UnauthorizedException();
+    const session = request.authSession;
+    if (!session) throw new UnauthorizedException();
+    const { context, display } = session;
     return {
       userId: context.userId,
       agencyId: context.agencyId,
       membershipId: context.membershipId,
+      agency: display.agency,
+      identity: display.identity,
+      effectiveRoles: display.effectiveRoles,
       permissions: context.permissions,
     };
   }

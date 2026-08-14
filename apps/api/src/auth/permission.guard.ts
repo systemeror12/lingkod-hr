@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { hasPermission } from '@lingkod-hr/auth';
 import { REQUIRED_PERMISSIONS } from './auth.decorators';
@@ -6,7 +12,7 @@ import type { AuthenticatedRequest } from './auth.types';
 
 @Injectable()
 export class PermissionGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(executionContext: ExecutionContext): boolean {
     const required = this.reflector.getAllAndOverride<string[]>(REQUIRED_PERMISSIONS, [

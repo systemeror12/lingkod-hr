@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Inject,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { getConfig } from '@lingkod-hr/config';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
@@ -31,7 +37,7 @@ export function requestSessionToken(request: Request): string | null {
 export class AuthGuard implements CanActivate {
   private readonly allowedOrigin = new URL(getConfig().APP_URL).origin;
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   async canActivate(executionContext: ExecutionContext): Promise<boolean> {
     const request = executionContext.switchToHttp().getRequest<AuthenticatedRequest>();

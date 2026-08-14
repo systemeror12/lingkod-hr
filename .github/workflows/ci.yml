@@ -21,6 +21,8 @@ jobs:
           install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm --filter @lingkod-hr/web exec playwright install --with-deps chromium
       - name: Start local infrastructure
         run: docker compose -f infrastructure/compose.yaml up -d --wait
       - name: Apply Prisma migrations
@@ -36,6 +38,13 @@ jobs:
           DATABASE_E2E: 'true'
           DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
         run: pnpm validate
+      - name: Test protected browser entry
+        env:
+          DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
+          DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
+          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
+          DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
+        run: pnpm --filter @lingkod-hr/web test:e2e
       - name: Stop local infrastructure
         if: always()
         run: docker compose -f infrastructure/compose.yaml down

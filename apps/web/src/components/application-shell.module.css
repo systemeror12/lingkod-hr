@@ -1,0 +1,384 @@
+.shell {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  min-height: 100dvh;
+  background: var(--canvas);
+  transition: grid-template-columns 160ms ease-out;
+}
+
+.shellCollapsed {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  display: flex;
+  width: 200px;
+  height: 100dvh;
+  flex-direction: column;
+  overflow: visible;
+  border-right: 1px solid rgb(255 255 255 / 12%);
+  background: var(--midnight);
+  color: #f7f9fc;
+  transition: width 160ms ease-out;
+}
+
+.shellCollapsed .rail {
+  width: 72px;
+}
+
+.brandRow {
+  display: flex;
+  min-height: 68px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid rgb(255 255 255 / 10%);
+}
+
+.brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+
+.brandMark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 44%);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.brandName {
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 690;
+  letter-spacing: -0.015em;
+}
+
+.collapseButton {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  cursor: pointer;
+  place-items: center;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #b9c4d5;
+}
+
+.collapseButton:hover {
+  background: rgb(255 255 255 / 8%);
+  color: #fff;
+}
+
+.collapseButton svg {
+  width: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.shellCollapsed .brandRow {
+  padding: 0;
+  justify-content: center;
+}
+
+.shellCollapsed .brandName,
+.shellCollapsed .navLabel,
+.shellCollapsed .profileCopy {
+  display: none;
+}
+
+.navigation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 10px;
+}
+
+.navLink {
+  position: relative;
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border-radius: 3px;
+  color: #c3ccda;
+  font-size: 13px;
+  font-weight: 560;
+  text-decoration: none;
+}
+
+.navLink::before {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: -10px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: transparent;
+  content: '';
+}
+
+.navLink:hover {
+  background: rgb(255 255 255 / 7%);
+  color: #fff;
+}
+
+.navLinkCurrent {
+  background: rgb(65 109 169 / 30%);
+  color: #fff;
+}
+
+.navLinkCurrent::before {
+  background: #7fa4d8;
+}
+
+.navIcon {
+  display: grid;
+  width: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 5;
+  top: 50%;
+  left: calc(100% + 9px);
+  display: none;
+  width: max-content;
+  max-width: 180px;
+  padding: 6px 8px;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  box-shadow: 0 8px 24px rgb(23 32 51 / 16%);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shellCollapsed .navLink {
+  justify-content: center;
+  padding: 0;
+}
+
+.shellCollapsed .navLink:hover .tooltip,
+.shellCollapsed .navLink:focus-visible .tooltip {
+  display: block;
+}
+
+.profile {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+}
+
+.avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 50%;
+  background: rgb(65 109 169 / 38%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 740;
+}
+
+.profileCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.profileCopy strong,
+.profileCopy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profileCopy strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.profileCopy span {
+  color: #9fabbc;
+  font-size: 10px;
+}
+
+.shellCollapsed .profile {
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.workspace {
+  min-width: 0;
+}
+
+.contextBar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.contextBar strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.contextLabel {
+  color: var(--cobalt);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.contextDivider {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+
+.content {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 42px 40px 64px;
+}
+
+@media (max-width: 979px) {
+  .shell,
+  .shellCollapsed {
+    display: block;
+  }
+
+  .rail,
+  .shellCollapsed .rail {
+    position: static;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    border-right: 0;
+  }
+
+  .brandRow,
+  .shellCollapsed .brandRow {
+    min-height: 58px;
+    justify-content: flex-start;
+    padding: 0 22px;
+  }
+
+  .shellCollapsed .brandName,
+  .shellCollapsed .brandMark,
+  .shellCollapsed .navLabel,
+  .shellCollapsed .profileCopy {
+    display: initial;
+  }
+
+  .collapseButton {
+    display: none;
+  }
+
+  .navigation {
+    flex: none;
+    flex-direction: row;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 8px 14px;
+    border-top: 1px solid rgb(255 255 255 / 8%);
+  }
+
+  .navLink,
+  .shellCollapsed .navLink {
+    min-width: max-content;
+    justify-content: flex-start;
+    padding: 0 10px;
+  }
+
+  .navLink::before {
+    top: auto;
+    right: 10px;
+    bottom: -8px;
+    left: 10px;
+    width: auto;
+    height: 3px;
+    border-radius: 2px 2px 0 0;
+  }
+
+  .profile {
+    position: absolute;
+    top: 0;
+    right: 18px;
+    min-height: 58px;
+    padding: 9px 0;
+    border: 0;
+  }
+
+  .profileCopy {
+    display: none !important;
+  }
+
+  .contextBar {
+    padding: 0 24px;
+  }
+
+  .content {
+    padding: 34px 24px 56px;
+  }
+}
+
+@media (max-width: 620px) {
+  .contextBar {
+    min-height: 58px;
+    flex-wrap: wrap;
+    gap: 3px 8px;
+    padding-block: 9px;
+  }
+
+  .contextLabel {
+    width: 100%;
+  }
+
+  .content {
+    padding: 28px 18px 48px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell,
+  .rail {
+    transition: none;
+  }
+}
