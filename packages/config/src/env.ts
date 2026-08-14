@@ -9,8 +9,8 @@ const localDefaults = {
   WORKER_PORT: '3002',
   APP_URL: 'http://localhost:3000',
   API_URL: 'http://localhost:3001',
-  DATABASE_URL: 'postgresql://hris_app:local_app@localhost:5432/hris',
-  DATABASE_DIRECT_URL: 'postgresql://hris_migrator:local_migrator@localhost:5432/hris',
+  DATABASE_URL: 'postgresql://hris_app:local_app@localhost:55432/hris',
+  DATABASE_DIRECT_URL: 'postgresql://hris_migrator:local_migrator@localhost:55432/hris',
   REDIS_URL: 'redis://localhost:6379',
   OIDC_ISSUER: 'https://example.invalid',
   OIDC_CLIENT_ID: 'local-client',
@@ -25,6 +25,11 @@ const localDefaults = {
   EMAIL_FROM: 'lingkod-hr@localhost.test',
   EMAIL_PROVIDER_API_KEY: 'local-only',
 };
+
+const emptyStringAsUndefined = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+const optionalString = z.preprocess(emptyStringAsUndefined, z.string().min(1).optional());
+const optionalUrl = z.preprocess(emptyStringAsUndefined, z.string().url().optional());
 
 const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -46,19 +51,19 @@ const configSchema = z.object({
   S3_BUCKET: z.string().min(1),
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_ACCESS_KEY: z.string().min(1),
-  OPENAI_API_KEY: z.string().min(1).optional(),
-  AI_DEFAULT_MODEL: z.string().min(1).optional(),
-  AI_EMBEDDING_MODEL: z.string().min(1).optional(),
+  OPENAI_API_KEY: optionalString,
+  AI_DEFAULT_MODEL: optionalString,
+  AI_EMBEDDING_MODEL: optionalString,
   AI_FEATURES_ENABLED: z
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
   EMAIL_FROM: z.string().email(),
   EMAIL_PROVIDER_API_KEY: z.string().min(1),
-  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
-  ERROR_TRACKING_DSN: z.string().url().optional(),
-  DATA_ENCRYPTION_KEY: z.string().min(1).optional(),
-  BLIND_INDEX_KEY: z.string().min(1).optional(),
+  OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
+  ERROR_TRACKING_DSN: optionalUrl,
+  DATA_ENCRYPTION_KEY: optionalString,
+  BLIND_INDEX_KEY: optionalString,
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
