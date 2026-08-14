@@ -506,6 +506,11 @@ Use an outbox or background-job record for:
 - external exports;
 - notifications.
 
+A controlled one-shot operational command may instead call its provider after
+the authoritative transaction commits when the command contract requires a
+synchronous delivery failure. It must use a compensating state transition on
+failure and must never call the provider inside the database transaction.
+
 ---
 
 ## 20. Required Verification

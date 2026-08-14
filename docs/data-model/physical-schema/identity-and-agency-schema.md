@@ -104,12 +104,15 @@ Employee and organization-unit foreign keys are added in later migrations after 
 
 ### `invitations`
 
+System-issued invitations may have no inviter membership; later Agency-scoped
+invitations must still supply the initiating membership.
+
 ```sql
 CREATE TABLE invitations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   email_normalized citext NOT NULL,
-  invited_by_membership_id uuid NOT NULL,
+  invited_by_membership_id uuid,
   token_hash bytea NOT NULL,
   expires_at timestamptz NOT NULL,
   accepted_at timestamptz,
@@ -168,6 +171,9 @@ CREATE TABLE role_permissions (
 
 ### `membership_roles`
 
+The first system-issued Agency Administrator role assignment may have no
+assigning membership; later role assignments must still identify the actor.
+
 ```sql
 CREATE TABLE membership_roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -176,7 +182,7 @@ CREATE TABLE membership_roles (
   role_id uuid NOT NULL REFERENCES roles(id) ON DELETE RESTRICT,
   effective_from timestamptz NOT NULL,
   effective_to timestamptz,
-  assigned_by_membership_id uuid NOT NULL,
+  assigned_by_membership_id uuid,
   reason text,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (effective_to IS NULL OR effective_to > effective_from),

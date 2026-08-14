@@ -4,10 +4,11 @@ CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE ROLE hris_migrator LOGIN PASSWORD 'local_migrator' NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE hris_app LOGIN PASSWORD 'local_app' NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE hris_operator LOGIN PASSWORD 'local_operator' NOSUPERUSER NOBYPASSRLS;
 
-GRANT CONNECT ON DATABASE hris TO hris_migrator, hris_app;
+GRANT CONNECT ON DATABASE hris TO hris_migrator, hris_app, hris_operator;
 GRANT USAGE, CREATE ON SCHEMA public TO hris_migrator;
-GRANT USAGE ON SCHEMA public TO hris_app;
+GRANT USAGE ON SCHEMA public TO hris_app, hris_operator;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE hris_migrator IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE ON TABLES TO hris_app;

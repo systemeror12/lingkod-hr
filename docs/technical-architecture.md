@@ -668,6 +668,15 @@ Domain transaction
 
 Do not call email, file, or AI providers inside authoritative database transactions.
 
+The Phase 3 invitation workflows are a documented exception to the
+asynchronous email path: the non-HTTP Agency Provisioning command and the
+existing Agency invitation mutation may dispatch their provider-neutral mail
+adapter after the authoritative transaction commits because their contracts
+must report delivery failure. They must compensate the committed invitation
+state on failure and must never call the provider while the database
+transaction is open. General asynchronous workflows continue to use the
+outbox/worker path as that infrastructure is introduced.
+
 ---
 
 # 12. File and Document Storage
@@ -1091,6 +1100,7 @@ API_URL
 DATABASE_URL
 DATABASE_DIRECT_URL
 DATABASE_MIGRATION_OWNER_URL
+DATABASE_OPERATIONAL_URL
 
 # Redis
 REDIS_URL
@@ -1100,6 +1110,12 @@ OIDC_ISSUER
 OIDC_CLIENT_ID
 OIDC_CLIENT_SECRET
 SESSION_SECRET
+
+# Email
+EMAIL_FROM
+EMAIL_HOST
+EMAIL_PORT
+EMAIL_SECURE
 
 # Object storage
 S3_ENDPOINT
