@@ -34,7 +34,7 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
   );
   await expect(navigation.getByRole('link', { name: 'Users & Access' })).toBeVisible();
   await expect(navigation.getByRole('link', { name: 'Audit Log' })).toBeVisible();
-  await expect(navigation.getByRole('link', { name: 'Organization' })).toHaveCount(0);
+  await expect(navigation.getByRole('link', { name: 'Organization' })).toBeVisible();
 
   const rail = page.getByRole('complementary', { name: 'Application' });
   await expect(page.getByText('LingkodHR', { exact: true })).toBeVisible();
