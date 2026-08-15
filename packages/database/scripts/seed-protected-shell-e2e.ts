@@ -26,6 +26,14 @@ async function seed(): Promise<void> {
   await prisma.invitation.deleteMany({
     where: { agencyId: agency.id, status: 'PENDING' },
   });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.auditEvent.deleteMany({
+      where: { agencyId: agency.id, action: 'ORGANIZATION_UNIT_CREATED' },
+    });
+    await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.organizationUnit.deleteMany({ where: { agencyId: agency.id } });
+  });
   const user = await prisma.user.upsert({
     where: { emailNormalized: 'marisol.santos@example.test' },
     update: {

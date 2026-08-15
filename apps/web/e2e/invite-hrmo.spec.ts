@@ -98,6 +98,11 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
         name: 'Users & Access',
       }),
     ).toHaveCount(0);
+    await expect(
+      hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
+        name: 'Organization',
+      }),
+    ).toBeVisible();
     await expect(hrmoPage.getByRole('button', { name: 'Invite user' })).toHaveCount(0);
 
     const me = await hrmoPage.request.get('http://localhost:3101/api/v1/auth/me', {

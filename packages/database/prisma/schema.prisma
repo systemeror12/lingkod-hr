@@ -32,6 +32,8 @@ model Agency {
   sessions       UserSession[]
   securityEvents SecurityEvent[]
   auditEvents    AuditEvent[]
+  organizationUnits OrganizationUnit[]
+  organizationUnitVersions OrganizationUnitVersion[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -55,6 +57,50 @@ model AgencyProfileVersion {
   @@unique([agencyId, versionNo])
   @@unique([agencyId, id])
   @@map("agency_profile_versions")
+}
+
+model OrganizationUnit {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId        String    @map("agency_id") @db.Uuid
+  code            String    @db.Citext
+  unitType        String    @map("unit_type")
+  status          String
+  currentVersionId String?  @map("current_version_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  currentVersion  OrganizationUnitVersion? @relation("OrganizationUnitCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
+  versions        OrganizationUnitVersion[] @relation("OrganizationUnitVersions")
+  childVersions   OrganizationUnitVersion[] @relation("OrganizationUnitVersionParent")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, code])
+  @@map("organization_units")
+}
+
+model OrganizationUnitVersion {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String    @map("agency_id") @db.Uuid
+  organizationUnitId String    @map("organization_unit_id") @db.Uuid
+  versionNo          Int       @map("version_no")
+  name               String
+  parentUnitId       String?   @map("parent_unit_id") @db.Uuid
+  headPositionId     String?   @map("head_position_id") @db.Uuid
+  costCenterCode     String?   @map("cost_center_code")
+  effectiveFrom      DateTime  @map("effective_from") @db.Date
+  effectiveTo        DateTime? @map("effective_to") @db.Date
+  status             String
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  organizationUnit OrganizationUnit @relation("OrganizationUnitVersions", fields: [agencyId, organizationUnitId], references: [agencyId, id], onDelete: Restrict)
+  currentForUnits OrganizationUnit[] @relation("OrganizationUnitCurrentVersion")
+  parentUnit      OrganizationUnit? @relation("OrganizationUnitVersionParent", fields: [agencyId, parentUnitId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([organizationUnitId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, parentUnitId, effectiveFrom])
+  @@map("organization_unit_versions")
 }
 
 model User {
