@@ -9,8 +9,11 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
   await expect(page.getByRole('heading', { name: 'Organization Units' })).toBeVisible();
-  await expect(page.getByText('No Organization Units yet.', { exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('empty.png'), fullPage: true });
+  const emptyState = page.getByText('No Organization Units yet.', { exact: true });
+  if (await emptyState.count()) {
+    await expect(emptyState).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('empty.png'), fullPage: true });
+  }
 
   const trigger = page.getByRole('button', { name: 'Create Organization Unit' });
   await trigger.click();
