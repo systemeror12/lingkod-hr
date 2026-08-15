@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 
 interface MailpitMessageSummary {
   ID: string;
@@ -12,6 +12,13 @@ interface MailpitMessagesResponse {
 
 interface MailpitMessage {
   Text: string;
+}
+
+async function expectInvitationDialog(dialog: Locator): Promise<void> {
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAccessibleDescription(
+    'Send a secure, single-use invitation for an HRMO Administrator in this Agency Context.',
+  );
 }
 
 async function readMailpitMessage(recipient: string, subject: string): Promise<string> {
@@ -50,8 +57,27 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
   await expect(page.getByRole('heading', { name: 'Invite an HRMO Administrator' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('invitation-ready.png'), fullPage: true });
   await page.getByRole('button', { name: 'Invite user' }).click();
-  await expect(page.getByRole('dialog', { name: 'Invite user' })).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'Invite user' });
+  await expectInvitationDialog(dialog);
   await expect(page.getByLabel('Email address')).toBeFocused();
+  const desktopViewport = page.viewportSize();
+  const desktopDialogBox = await dialog.boundingBox();
+  expect(desktopViewport).not.toBeNull();
+  expect(desktopDialogBox).not.toBeNull();
+  if (!desktopViewport || !desktopDialogBox) {
+    throw new Error('The desktop invitation dialog geometry was unavailable.');
+  }
+  expect(desktopDialogBox.x).toBeGreaterThanOrEqual(16);
+  expect(desktopDialogBox.x + desktopDialogBox.width).toBeLessThanOrEqual(
+    desktopViewport.width - 16,
+  );
+  expect(
+    Math.abs(desktopDialogBox.x + desktopDialogBox.width / 2 - desktopViewport.width / 2),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath('invitation-modal-desktop.png'),
+    fullPage: true,
+  });
   await page.getByLabel('Email address').fill(recipient);
   await page.getByRole('button', { name: 'Send invitation' }).click();
   await expect(page.getByRole('status')).toContainText(`Invitation sent to ${recipient}`);
@@ -128,15 +154,157 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
   await expect(page.getByText('0', { exact: true })).toBeVisible();
 });
 
-test('keeps the invitation dialog keyboard-safe at a narrow width', async ({ page }) => {
+test('keeps the invitation dialog keyboard-safe at a narrow width', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
-  await page.getByRole('button', { name: 'Invite user' }).click();
-  await expect(page.getByRole('dialog', { name: 'Invite user' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Invite an HRMO Administrator' })).toBeVisible();
+  const trigger = page.getByRole('button', { name: 'Invite user' });
+  await page.screenshot({
+    path: testInfo.outputPath('invitation-ready-narrow.png'),
+    fullPage: true,
+  });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Invite user' });
+  await expectInvitationDialog(dialog);
   await expect(page.getByLabel('Email address')).toBeFocused();
+  await page.screenshot({
+    path: testInfo.outputPath('invitation-modal-narrow.png'),
+    fullPage: true,
+  });
+
+  const viewport = page.viewportSize();
+  const dialogBox = await dialog.boundingBox();
+  expect(viewport).not.toBeNull();
+  expect(dialogBox).not.toBeNull();
+  if (!viewport || !dialogBox) throw new Error('The invitation dialog geometry was unavailable.');
+  expect(dialogBox.x).toBeGreaterThanOrEqual(16);
+  expect(dialogBox.x + dialogBox.width).toBeLessThanOrEqual(viewport.width - 16);
+  expect(Math.abs(dialogBox.x + dialogBox.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(1);
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send invitation' })).toBeVisible();
+
+  await page.mouse.click(1, 1);
+  await expect(dialog).toBeVisible();
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press('Tab');
+    await expect(dialog.locator(':focus')).toHaveCount(1);
+  }
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press('Shift+Tab');
+    await expect(dialog.locator(':focus')).toHaveCount(1);
+  }
+
+  await page.getByRole('button', { name: 'Close invitation dialog' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Invite user' })).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Invite user' })).toBeFocused();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
+test('keeps invitation framing visible while the body scrolls on a short viewport', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 320 });
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/users-access');
+  await page.getByRole('button', { name: 'Invite user' }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Invite user' });
+  const title = dialog.getByRole('heading', { name: 'Invite user' });
+  const helper = page.getByText(
+    'Use the verified email address of the individual who will accept the invitation.',
+    { exact: true },
+  );
+  const sendButton = page.getByRole('button', { name: 'Send invitation' });
+  await expect(dialog).toBeVisible();
+  await expect(title).toBeInViewport();
+  await expect(sendButton).toBeInViewport();
+
+  const titleBefore = await title.boundingBox();
+  const helperBefore = await helper.boundingBox();
+  const emailBox = await page.getByLabel('Email address').boundingBox();
+  expect(titleBefore).not.toBeNull();
+  expect(helperBefore).not.toBeNull();
+  expect(emailBox).not.toBeNull();
+  if (!titleBefore || !helperBefore || !emailBox) {
+    throw new Error('The constrained invitation geometry was unavailable.');
+  }
+
+  await page.mouse.move(emailBox.x + emailBox.width / 2, emailBox.y + emailBox.height / 2);
+  await page.mouse.wheel(0, 160);
+  await expect
+    .poll(async () => (await helper.boundingBox())?.y ?? Number.POSITIVE_INFINITY)
+    .toBeLessThan(helperBefore.y);
+
+  const titleAfter = await title.boundingBox();
+  const helperAfter = await helper.boundingBox();
+  expect(titleAfter).not.toBeNull();
+  expect(helperAfter).not.toBeNull();
+  if (!titleAfter || !helperAfter) {
+    throw new Error('The scrolled invitation geometry was unavailable.');
+  }
+  expect(Math.abs(titleAfter.y - titleBefore.y)).toBeLessThanOrEqual(1);
+  expect(helperAfter.y).toBeLessThan(helperBefore.y);
+  await expect(title).toBeInViewport();
+  await expect(sendButton).toBeInViewport();
+});
+
+test('guards every invitation dismissal path during submission', async ({ page }) => {
+  const recipient = `held-${Date.now()}@example.test`;
+  let releaseResponse!: () => void;
+  const responseReleased = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
+
+  await page.route('**/api/v1/agencies/*/invitations', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    await responseReleased;
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'held-invitation',
+        email: recipient,
+        expiresAt: '2026-08-22T00:00:00.000Z',
+      }),
+    });
+  });
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/users-access');
+  const trigger = page.getByRole('button', { name: 'Invite user' });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Invite user' });
+  await expect(dialog).toBeVisible();
+  await page.getByLabel('Email address').fill(recipient);
+  const sendButton = page.getByRole('button', { name: /Send invitation|Sending…/ });
+  await sendButton.click();
+  await expect(sendButton).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Close invitation dialog' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(1, 1);
+  await expect(dialog).toBeVisible();
+
+  releaseResponse();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
 });
