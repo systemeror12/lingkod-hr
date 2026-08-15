@@ -124,6 +124,37 @@ it('rejects invitation role assignment without Agency-scoped role-management per
   ).rejects.toMatchObject({ code: 'ROLE_ASSIGNMENT_FORBIDDEN', statusCode: 403 });
 });
 
+it('keeps the HRMO invitation workflow to exactly one eligible role', async () => {
+  const context: RequestContext = {
+    requestId: 'request-hrmo-role-policy',
+    userId: '00000000-0000-4000-8000-000000000001',
+    agencyId: '00000000-0000-4000-8000-000000000002',
+    membershipId: '00000000-0000-4000-8000-000000000003',
+    primaryOrganizationUnitId: null,
+    permissions: [
+      { code: 'security.users.invite', scopePolicy: 'AGENCY' },
+      { code: 'security.users.update_roles', scopePolicy: 'AGENCY' },
+    ],
+  };
+
+  await expect(
+    new AuthService().createHrmoAdministratorInvitation(
+      context,
+      'invitee@example.test',
+      ['agency_administrator'],
+      context.requestId,
+    ),
+  ).rejects.toMatchObject({ code: 'ROLE_NOT_ALLOWED', statusCode: 400 });
+  await expect(
+    new AuthService().createHrmoAdministratorInvitation(
+      context,
+      'invitee@example.test',
+      ['hrmo_administrator', 'hrmo_administrator'],
+      context.requestId,
+    ),
+  ).rejects.toMatchObject({ code: 'ROLE_NOT_ALLOWED', statusCode: 400 });
+});
+
 it.skipIf(!enabled)(
   'commits an expired invitation before returning its authentication error',
   async () => {

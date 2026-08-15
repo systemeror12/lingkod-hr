@@ -10,7 +10,7 @@ const redirectUri = 'http://localhost:3101/api/v1/auth/callback';
 const keyId = 'lingkod-hr-local-oidc';
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const publicJwk = publicKey.export({ format: 'jwk' });
-const authorizationCodes = new Map<string, { challenge: string; nonce: string }>();
+const authorizationCodes = new Map<string, { challenge: string; nonce: string; email: string }>();
 
 function json(response: ServerResponse, value: unknown, status = 200): void {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -21,21 +21,37 @@ function encoded(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function idToken(nonce: string, signingKey: KeyObject): string {
+function identityForEmail(email: string): { subject: string; displayName: string } {
+  if (email === 'marisol.santos@example.test') {
+    return { subject: 'local-work-queue-user', displayName: 'Marisol Santos' };
+  }
+  const displayName =
+    email
+      .split('@')[0]
+      ?.split(/[._-]+/)
+      .filter(Boolean)
+      .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
+      .join(' ') || 'Invited User';
+  const subject = `local-${createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
+  return { subject, displayName };
+}
+
+function idToken(nonce: string, signingKey: KeyObject, email: string): string {
   const issuedAt = Math.floor(Date.now() / 1000);
+  const identity = identityForEmail(email);
   const unsigned = `${encoded({ alg: 'RS256', kid: keyId, typ: 'JWT' })}.${encoded({
     iss: issuer,
-    sub: 'local-work-queue-user',
+    sub: identity.subject,
     aud: clientId,
     azp: clientId,
     exp: issuedAt + 300,
     iat: issuedAt,
     auth_time: issuedAt,
     nonce,
-    email: 'marisol.santos@example.test',
+    email,
     email_verified: true,
-    name: 'Marisol Santos',
-    sid: 'local-work-queue-session',
+    name: identity.displayName,
+    sid: `local-session-${identity.subject}`,
     amr: ['pwd', 'otp'],
   })}`;
   const signature = sign('RSA-SHA256', Buffer.from(unsigned), signingKey).toString('base64url');
@@ -79,7 +95,11 @@ const server = createServer((request, response) => {
       return;
     }
     const code = randomUUID();
-    authorizationCodes.set(code, { challenge, nonce });
+    authorizationCodes.set(code, {
+      challenge,
+      nonce,
+      email: url.searchParams.get('login_hint') ?? 'marisol.santos@example.test',
+    });
     const callback = new URL(redirectUri);
     callback.searchParams.set('state', state);
     callback.searchParams.set('code', code);
@@ -114,7 +134,7 @@ const server = createServer((request, response) => {
       json(response, {
         token_type: 'Bearer',
         expires_in: 300,
-        id_token: idToken(flow.nonce, privateKey),
+        id_token: idToken(flow.nonce, privateKey, flow.email),
       });
     });
     return;

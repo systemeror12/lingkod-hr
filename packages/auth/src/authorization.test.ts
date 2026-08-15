@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import {
   canAccessRecord,
+  hasAllPermissions,
   hasMfaEvidence,
   hasPermission,
   permissionsRequireMfa,
@@ -20,6 +21,15 @@ const context = {
 
 it('denies a permission outside the authenticated agency', () => {
   expect(hasPermission(context, 'organization.units.read', { agencyId: 'agency-2' })).toBe(false);
+});
+
+it('requires every permission for a compound protected action', () => {
+  expect(hasAllPermissions(context, ['personnel.records.read', 'organization.units.read'])).toBe(
+    true,
+  );
+  expect(
+    hasAllPermissions(context, ['personnel.records.read', 'security.users.update_roles']),
+  ).toBe(false);
 });
 
 it('enforces the permission scope for a record', () => {

@@ -9,13 +9,24 @@ export interface Destination {
   icon: DestinationIcon;
 }
 
-const destinations: readonly (Destination & { permission?: string })[] = [
+export function canManageHrmoInvitations(session: ActiveSession): boolean {
+  return (
+    session.effectiveRoles.some(({ code }) => code === 'agency_administrator') &&
+    hasPermission(session, 'security.users.invite') &&
+    hasPermission(session, 'security.users.update_roles')
+  );
+}
+
+const destinations: readonly (Destination & {
+  permission?: string;
+  visible?: (session: ActiveSession) => boolean;
+})[] = [
   { href: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
   {
     href: '/users-access',
     label: 'Users & Access',
     icon: 'users',
-    permission: 'security.users.read',
+    visible: canManageHrmoInvitations,
   },
   {
     href: '/organization',
@@ -28,6 +39,10 @@ const destinations: readonly (Destination & { permission?: string })[] = [
 
 export function authorizedDestinations(session: ActiveSession): readonly Destination[] {
   return destinations
-    .filter(({ permission }) => permission === undefined || hasPermission(session, permission))
+    .filter(
+      ({ permission, visible }) =>
+        (permission === undefined || hasPermission(session, permission)) &&
+        (visible === undefined || visible(session)),
+    )
     .map(({ href, label, icon }) => ({ href, label, icon }));
 }

@@ -23,6 +23,9 @@ async function seed(): Promise<void> {
       status: 'ACTIVE',
     },
   });
+  await prisma.invitation.deleteMany({
+    where: { agencyId: agency.id, status: 'PENDING' },
+  });
   const user = await prisma.user.upsert({
     where: { emailNormalized: 'marisol.santos@example.test' },
     update: {
