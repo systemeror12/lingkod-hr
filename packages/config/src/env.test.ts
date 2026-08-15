@@ -6,6 +6,8 @@ it('provides safe local defaults and rejects incomplete production configuration
   expect(local.API_PORT).toBe(3001);
   expect(local.DATABASE_URL).toContain('@localhost:55432/');
   expect(local.DATABASE_DIRECT_URL).toContain('@localhost:55432/');
+  expect(local.DATABASE_OPERATIONAL_URL).toContain('@localhost:55432/');
+  expect(local.EMAIL_PORT).toBe(1025);
   expect(parseConfig({ APP_ENV: 'test' }).NODE_ENV).toBe('test');
   expect(parseConfig({ NODE_ENV: 'test' }).APP_ENV).toBe('test');
   expect(() => parseConfig({ NODE_ENV: 'production' })).toThrow(/DATABASE_URL/);
@@ -20,6 +22,10 @@ it('provides safe local defaults and rejects incomplete production configuration
     OIDC_REDIRECT_URI: 'https://api.example/auth/callback',
   };
   expect(parseConfig(production).NODE_ENV).toBe('production');
+  const productionWithoutOperationalUrl = Object.fromEntries(
+    Object.entries(production).filter(([key]) => key !== 'DATABASE_OPERATIONAL_URL'),
+  );
+  expect(parseConfig(productionWithoutOperationalUrl).DATABASE_OPERATIONAL_URL).toBeUndefined();
   for (const field of ['OIDC_ISSUER', 'OIDC_REDIRECT_URI'] as const) {
     expect(() => parseConfig({ ...production, [field]: `http://${field}.example` })).toThrow(
       new RegExp(`${field}: Production URL must use HTTPS`),

@@ -64,6 +64,10 @@ pnpm db:migrate
 pnpm run dev
 ```
 
+To provision an Agency, use the documented non-HTTP operational command in
+[`docs/agency-provisioning.md`](docs/agency-provisioning.md). Agency creation
+is not exposed through the web or API runtime.
+
 ### Local services
 
 | Service          | Local address                         |
@@ -115,9 +119,9 @@ docker compose -f infrastructure/compose.yaml logs postgres
 ```
 
 If `pnpm db:migrate` reports that a database URL is missing, confirm that `.env`
-exists and contains `DATABASE_URL`, `DATABASE_DIRECT_URL`, and
-`DATABASE_MIGRATION_OWNER_URL`. Copy any newly added keys from `.env.example`
-without overwriting existing local secrets.
+exists and contains `DATABASE_URL`, `DATABASE_DIRECT_URL`,
+`DATABASE_OPERATIONAL_URL`, and `DATABASE_MIGRATION_OWNER_URL`. Copy any newly
+added keys from `.env.example` without overwriting existing local secrets.
 
 If port `55432` is unavailable, choose another host port in `.env` and update
 `POSTGRES_PORT` plus all three database URLs to the same port.

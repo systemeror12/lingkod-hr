@@ -5,6 +5,7 @@
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch src/main.ts",
     "lint": "eslint .",
+    "provision:agency": "tsx src/agency-provisioning/provision-agency.ts",
     "start": "node dist/main.js",
     "test": "vitest run --passWithNoTests",
     "test:e2e": "vitest run --passWithNoTests",

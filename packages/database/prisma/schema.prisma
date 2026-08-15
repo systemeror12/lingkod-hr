@@ -130,7 +130,7 @@ model Invitation {
   id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId              String    @map("agency_id") @db.Uuid
   emailNormalized       String    @map("email_normalized") @db.Citext
-  invitedByMembershipId String    @map("invited_by_membership_id") @db.Uuid
+  invitedByMembershipId String?   @map("invited_by_membership_id") @db.Uuid
   tokenHash             Bytes     @unique @map("token_hash")
   requestedRoleCodes    String[]  @default([]) @map("requested_role_codes")
   expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
@@ -140,7 +140,7 @@ model Invitation {
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   agency              Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  invitedByMembership AgencyMembership @relation("InvitationInviter", fields: [agencyId, invitedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  invitedByMembership AgencyMembership? @relation("InvitationInviter", fields: [agencyId, invitedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@index([agencyId, emailNormalized, status])
   @@map("invitations")
@@ -197,14 +197,14 @@ model MembershipRole {
   roleId                   String    @map("role_id") @db.Uuid
   effectiveFrom            DateTime  @map("effective_from") @db.Timestamptz(6)
   effectiveTo              DateTime? @map("effective_to") @db.Timestamptz(6)
-  assignedByMembershipId   String    @map("assigned_by_membership_id") @db.Uuid
+  assignedByMembershipId   String?   @map("assigned_by_membership_id") @db.Uuid
   reason                   String?
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   agency             Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   membership         AgencyMembership @relation("MembershipRoleMembership", fields: [agencyId, membershipId], references: [agencyId, id], onDelete: Restrict)
   role               Role             @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  assignedByMembership AgencyMembership @relation("MembershipRoleAssigner", fields: [agencyId, assignedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  assignedByMembership AgencyMembership? @relation("MembershipRoleAssigner", fields: [agencyId, assignedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@index([agencyId, membershipId, roleId, effectiveFrom, effectiveTo])
   @@map("membership_roles")
