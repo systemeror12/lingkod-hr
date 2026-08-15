@@ -67,6 +67,14 @@ export function hasPermission(
   );
 }
 
+export function hasAllPermissions(
+  context: RequestContext,
+  codes: readonly string[],
+  record?: AgencyRecord,
+): boolean {
+  return codes.every((code) => hasPermission(context, code, record));
+}
+
 export function canAccessRecord(
   context: RequestContext,
   code: string,

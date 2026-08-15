@@ -93,11 +93,29 @@ export class AuthController {
   @Get('invitations/:token/activate')
   async activateInvitation(
     @Param('token') token: string,
+    @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
     const parsed = activationTokenSchema.safeParse(token);
-    if (!parsed.success) throw new BadRequestException('The invitation token is invalid.');
-    response.redirect(`/api/v1/auth/login?invitation=${encodeURIComponent(parsed.data)}`);
+    const recoveryUrl = `${this.config.APP_URL.replace(/\/$/, '')}/invite/error`;
+    if (!parsed.success) {
+      response.redirect(recoveryUrl);
+      return;
+    }
+    try {
+      const status = await this.authService.inspectInvitationToken(
+        parsed.data,
+        request.header('x-request-id') ?? 'unknown-request',
+      );
+      if (status !== 'VALID') {
+        response.redirect(recoveryUrl);
+        return;
+      }
+    } catch {
+      response.redirect(recoveryUrl);
+      return;
+    }
+    response.redirect(`${this.config.APP_URL.replace(/\/$/, '')}/invite/${parsed.data}`);
   }
 
   @Get('callback')
@@ -116,6 +134,7 @@ export class AuthController {
       ?.slice(OIDC_FLOW_COOKIE.length + 1);
     if (!flowCookie) throw new BadRequestException('OIDC callback parameters are incomplete.');
     const requestId = request.header('x-request-id') ?? 'unknown-request';
+    let invitationFlow = false;
     try {
       await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
       let decodedFlowCookie: string;
@@ -124,6 +143,9 @@ export class AuthController {
       } catch {
         throw new BadRequestException('The authentication flow cookie is invalid.');
       }
+      invitationFlow =
+        typeof this.authService.hasInvitationFlow === 'function' &&
+        this.authService.hasInvitationFlow(decodedFlowCookie);
       const result = await this.authService.completeLogin(
         decodedFlowCookie,
         query.data.state,
@@ -145,6 +167,21 @@ export class AuthController {
         );
       } catch {
         // Preserve the authentication error when the audit store is unavailable.
+      }
+      if (
+        invitationFlow ||
+        (error instanceof AuthServiceError &&
+          [
+            'INVITATION_INVALID',
+            'INVITATION_EXPIRED',
+            'INVITATION_EMAIL_MISMATCH',
+            'MEMBERSHIP_EXISTS',
+            'MEMBERSHIP_REACTIVATION_REQUIRED',
+            'ROLE_NOT_FOUND',
+          ].includes(error.code))
+      ) {
+        response.redirect(`${this.config.APP_URL.replace(/\/$/, '')}/invite/error`);
+        return;
       }
       translateError(error);
     }

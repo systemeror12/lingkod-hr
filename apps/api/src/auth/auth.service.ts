@@ -34,6 +34,8 @@ const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 
 export const SESSION_COOKIE = 'hris_session';
 export const OIDC_FLOW_COOKIE = 'hris_oidc_flow';
+export const HRMO_ADMINISTRATOR_ROLE_CODE = 'hrmo_administrator';
+const PENDING_INVITATION_PAGE_SIZE = 100;
 
 interface OidcFlowState {
   state: string;
@@ -70,6 +72,14 @@ export interface InvitationResult {
   email: string;
   expiresAt: Date;
   activationToken: string;
+}
+
+export interface PendingInvitation {
+  id: string;
+  email: string;
+  roleCode: string | null;
+  expiresAt: Date;
+  status: 'PENDING';
 }
 
 type SignInTransactionResult =
@@ -125,10 +135,24 @@ export class AuthService {
       invitationToken,
       membershipId,
     };
+    const loginHint = invitationToken ? await this.invitationEmailHint(invitationToken) : null;
     return {
-      authorizationUrl: await this.oidc.authorizationUrl(state.state, state.nonce, state.verifier),
+      authorizationUrl: await this.oidc.authorizationUrl(
+        state.state,
+        state.nonce,
+        state.verifier,
+        loginHint,
+      ),
       flowCookie: this.signFlowState(state),
     };
+  }
+
+  hasInvitationFlow(flowCookie: string): boolean {
+    try {
+      return this.readFlowState(flowCookie).invitationToken !== null;
+    } catch {
+      return false;
+    }
   }
 
   async completeLogin(
@@ -190,39 +214,38 @@ export class AuthService {
           await setDatabaseContext(transaction, {
             invitationTokenHash: invitationTokenHash.toString('hex'),
           });
-          const invitation = await transaction.invitation.findFirst({
-            where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
-            select: { id: true, agencyId: true, expiresAt: true },
+        }
+        const pendingInvitation = invitationTokenHash
+          ? await transaction.invitation.findFirst({
+              where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
+              select: { id: true, agencyId: true, emailNormalized: true, expiresAt: true },
+            })
+          : null;
+        if (invitationTokenHash && !pendingInvitation) {
+          throw new AuthServiceError(
+            'The invitation is invalid or already used.',
+            400,
+            'INVITATION_INVALID',
+          );
+        }
+        if (pendingInvitation && pendingInvitation.expiresAt <= now) {
+          await this.expireInvitation(transaction, pendingInvitation, requestId);
+          return { status: 'invitation_expired' as const };
+        }
+        if (
+          pendingInvitation &&
+          normalizeEmail(identity.email) !== pendingInvitation.emailNormalized.toLowerCase()
+        ) {
+          throw new AuthServiceError(
+            'The authenticated email does not match the invitation.',
+            403,
+            'INVITATION_EMAIL_MISMATCH',
+          );
+        }
+        if (invitationTokenHash) {
+          await setDatabaseContext(transaction, {
+            invitationTokenHash: invitationTokenHash.toString('hex'),
           });
-          if (invitation && invitation.expiresAt <= now) {
-            await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
-            await transaction.invitation.update({
-              where: { id: invitation.id },
-              data: { status: 'EXPIRED' },
-            });
-            await transaction.securityEvent.create({
-              data: {
-                agencyId: invitation.agencyId,
-                eventType: 'INVITATION_EXPIRED',
-                requestId,
-                details: { invitationId: invitation.id },
-              },
-            });
-            await transaction.auditEvent.create({
-              data: {
-                agencyId: invitation.agencyId,
-                actorType: 'SYSTEM',
-                action: 'INVITATION_EXPIRED',
-                entityType: 'Invitation',
-                entityId: invitation.id,
-                previousStatus: 'PENDING',
-                newStatus: 'EXPIRED',
-                requestId,
-                metadata: {},
-              },
-            });
-            return { status: 'invitation_expired' as const };
-          }
         }
 
         const user = await this.resolveIdentity(transaction, identity);
@@ -429,21 +452,7 @@ export class AuthService {
     roleCodes: readonly string[],
     requestId: string,
   ): Promise<InvitationResult> {
-    const agencyRecord = { agencyId: context.agencyId };
-    if (!hasPermission(context, 'security.users.invite', agencyRecord)) {
-      throw new AuthServiceError(
-        'The current Membership cannot invite users.',
-        403,
-        'INVITATION_FORBIDDEN',
-      );
-    }
-    if (!hasPermission(context, 'security.users.update_roles', agencyRecord)) {
-      throw new AuthServiceError(
-        'The current Membership cannot assign Agency roles.',
-        403,
-        'ROLE_ASSIGNMENT_FORBIDDEN',
-      );
-    }
+    this.assertInvitationManagementAccess(context);
     let invitation;
     try {
       invitation = await withDatabaseContext(context, (transaction) =>
@@ -497,6 +506,86 @@ export class AuthService {
       expiresAt: invitation.expiresAt,
       activationToken: invitation.activationToken,
     };
+  }
+
+  async createHrmoAdministratorInvitation(
+    context: RequestContext,
+    email: string,
+    roleCodes: readonly string[],
+    requestId: string,
+  ): Promise<InvitationResult> {
+    this.assertInvitationManagementAccess(context);
+    if (
+      roleCodes.length !== 1 ||
+      roleCodes[0]?.trim().toLowerCase() !== HRMO_ADMINISTRATOR_ROLE_CODE
+    ) {
+      throw new AuthServiceError(
+        'This workflow can assign only the HRMO Administrator role.',
+        400,
+        'ROLE_NOT_ALLOWED',
+      );
+    }
+    return this.createInvitation(context, email, [HRMO_ADMINISTRATOR_ROLE_CODE], requestId);
+  }
+
+  async listPendingInvitations(context: RequestContext): Promise<{
+    pendingCount: number;
+    hasMore: boolean;
+    invitations: PendingInvitation[];
+  }> {
+    this.assertInvitationManagementAccess(context);
+    const now = new Date();
+    return withDatabaseContext(context, async (transaction) => {
+      const where = { agencyId: context.agencyId, status: 'PENDING', expiresAt: { gt: now } };
+      const [pendingCount, invitations] = await Promise.all([
+        transaction.invitation.count({ where }),
+        transaction.invitation.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          take: PENDING_INVITATION_PAGE_SIZE,
+          select: {
+            id: true,
+            emailNormalized: true,
+            requestedRoleCodes: true,
+            expiresAt: true,
+            status: true,
+          },
+        }),
+      ]);
+      return {
+        pendingCount,
+        hasMore: pendingCount > invitations.length,
+        invitations: invitations.map((invitation) => ({
+          id: invitation.id,
+          email: invitation.emailNormalized,
+          roleCode: invitation.requestedRoleCodes[0] ?? null,
+          expiresAt: invitation.expiresAt,
+          status: 'PENDING' as const,
+        })),
+      };
+    });
+  }
+
+  async inspectInvitationToken(
+    token: string,
+    requestId: string,
+  ): Promise<'VALID' | 'INVALID' | 'EXPIRED'> {
+    const tokenHash = hashSessionToken(token);
+    return withDatabaseContext(
+      { invitationTokenHash: tokenHash.toString('hex') },
+      async (transaction) => {
+        const invitation = await transaction.invitation.findFirst({
+          where: { tokenHash: prismaBytes(tokenHash), status: 'PENDING' },
+          select: { id: true, agencyId: true, expiresAt: true, emailNormalized: true },
+        });
+        if (!invitation) return 'INVALID' as const;
+        if (invitation.expiresAt <= new Date()) {
+          await this.expireInvitation(transaction, invitation, requestId);
+          return 'EXPIRED' as const;
+        }
+        return 'VALID' as const;
+      },
+    );
   }
 
   async revokeSession(
@@ -695,6 +784,75 @@ export class AuthService {
           { providerEventId: identity.eventId },
         );
       }
+    });
+  }
+
+  private assertInvitationManagementAccess(context: RequestContext): void {
+    const agencyRecord = { agencyId: context.agencyId };
+    if (!hasPermission(context, 'security.users.invite', agencyRecord)) {
+      throw new AuthServiceError(
+        'The current Membership cannot invite users.',
+        403,
+        'INVITATION_FORBIDDEN',
+      );
+    }
+    if (!hasPermission(context, 'security.users.update_roles', agencyRecord)) {
+      throw new AuthServiceError(
+        'The current Membership cannot assign Agency roles.',
+        403,
+        'ROLE_ASSIGNMENT_FORBIDDEN',
+      );
+    }
+  }
+
+  private async invitationEmailHint(token: string): Promise<string | null> {
+    const tokenHash = hashSessionToken(token);
+    return withDatabaseContext(
+      { invitationTokenHash: tokenHash.toString('hex') },
+      async (transaction) => {
+        const invitation = await transaction.invitation.findFirst({
+          where: {
+            tokenHash: prismaBytes(tokenHash),
+            status: 'PENDING',
+            expiresAt: { gt: new Date() },
+          },
+          select: { emailNormalized: true },
+        });
+        return invitation?.emailNormalized.toLowerCase() ?? null;
+      },
+    );
+  }
+
+  private async expireInvitation(
+    transaction: Prisma.TransactionClient,
+    invitation: { id: string; agencyId: string },
+    requestId: string,
+  ): Promise<void> {
+    await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
+    await transaction.invitation.update({
+      where: { id: invitation.id },
+      data: { status: 'EXPIRED' },
+    });
+    await transaction.securityEvent.create({
+      data: {
+        agencyId: invitation.agencyId,
+        eventType: 'INVITATION_EXPIRED',
+        requestId,
+        details: { invitationId: invitation.id },
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        agencyId: invitation.agencyId,
+        actorType: 'SYSTEM',
+        action: 'INVITATION_EXPIRED',
+        entityType: 'Invitation',
+        entityId: invitation.id,
+        previousStatus: 'PENDING',
+        newStatus: 'EXPIRED',
+        requestId,
+        metadata: {},
+      },
     });
   }
 

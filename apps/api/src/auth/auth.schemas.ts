@@ -16,7 +16,9 @@ export const callbackQuerySchema = z
   })
   .strict();
 
-export const activationTokenSchema = token;
+export const activationTokenSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid invitation token.');
 
 export const switchAgencySchema = z.object({ membershipId: z.string().uuid() }).strict();
 
@@ -24,6 +26,13 @@ export const invitationSchema = z
   .object({
     email: z.string().trim().email().max(320),
     roleCodes: z.array(z.string().trim().min(1).max(100)).min(1).max(32),
+  })
+  .strict();
+
+export const hrmoInvitationSchema = z
+  .object({
+    email: z.string().trim().email().max(320),
+    roleCodes: z.tuple([z.literal('hrmo_administrator')]),
   })
   .strict();
 

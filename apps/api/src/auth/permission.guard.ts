@@ -6,8 +6,8 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { hasPermission } from '@lingkod-hr/auth';
-import { REQUIRED_PERMISSIONS } from './auth.decorators';
+import { hasAllPermissions } from '@lingkod-hr/auth';
+import { REQUIRED_PERMISSIONS, REQUIRED_ROLES } from './auth.decorators';
 import type { AuthenticatedRequest } from './auth.types';
 
 @Injectable()
@@ -19,10 +19,22 @@ export class PermissionGuard implements CanActivate {
       executionContext.getHandler(),
       executionContext.getClass(),
     ]);
-    if (!required || required.length === 0) return true;
+    const requiredRoles = this.reflector.getAllAndOverride<string[]>(REQUIRED_ROLES, [
+      executionContext.getHandler(),
+      executionContext.getClass(),
+    ]);
+    if ((!required || required.length === 0) && (!requiredRoles || requiredRoles.length === 0)) {
+      return true;
+    }
     const request = executionContext.switchToHttp().getRequest<AuthenticatedRequest>();
     const context = request.authSession?.context;
-    if (!context || !required.some((permission) => hasPermission(context, permission))) {
+    const hasRequiredRoles =
+      !requiredRoles ||
+      requiredRoles.length === 0 ||
+      requiredRoles.every((role) =>
+        request.authSession?.display.effectiveRoles.some(({ code }) => code === role),
+      );
+    if (!context || !hasRequiredRoles || (required && !hasAllPermissions(context, required))) {
       throw new ForbiddenException('The current Agency Membership lacks the required permission.');
     }
     return true;
