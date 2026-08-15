@@ -11,6 +11,7 @@ import {
   type OidcIdentity,
   type PermissionGrant,
   type RequestContext,
+  type SessionDisplay,
   permissionsRequireMfa,
   SCOPE_POLICIES,
   sessionExpiry,
@@ -56,6 +57,7 @@ export interface AuthenticatedSession {
   createdAt: Date;
   expiresAt: Date;
   context: RequestContext;
+  display: SessionDisplay;
 }
 
 export interface LoginResult extends AuthenticatedSession {
@@ -375,7 +377,7 @@ export class AuthService {
           return null;
         }
 
-        const context = await this.contextFor(transaction, user.id, membership, requestId);
+        const resolved = await this.sessionContextFor(transaction, user.id, membership, requestId);
         if (
           (await this.userRequiresMfa(transaction, user.id, membership.agencyId, membership.id)) &&
           !hasMfaEvidence(session.authenticationMethods)
@@ -401,7 +403,8 @@ export class AuthService {
           authTime: session.authTime,
           createdAt: session.createdAt,
           expiresAt: session.expiresAt,
-          context,
+          context: resolved.context,
+          display: resolved.display,
         };
       },
     );
@@ -929,7 +932,7 @@ export class AuthService {
         expiresAt: previousSession?.expiresAt ?? sessionExpiry(createdAt),
       },
     });
-    const context = await this.contextFor(transaction, userId, membership, requestId);
+    const resolved = await this.sessionContextFor(transaction, userId, membership, requestId);
     await transaction.securityEvent.create({
       data: {
         agencyId: membership.agencyId,
@@ -940,7 +943,7 @@ export class AuthService {
         details: { provider: identity.issuer || this.config.OIDC_ISSUER },
       },
     });
-    await this.recordAuditEvent(transaction, context, {
+    await this.recordAuditEvent(transaction, resolved.context, {
       action: 'LOGIN_SUCCESS',
       entityType: 'UserSession',
       entityId: session.id,
@@ -955,7 +958,8 @@ export class AuthService {
       authTime: session.authTime,
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
-      context,
+      context: resolved.context,
+      display: resolved.display,
     };
   }
 
@@ -1015,33 +1019,50 @@ export class AuthService {
     }
   }
 
-  private async contextFor(
+  private async sessionContextFor(
     transaction: Prisma.TransactionClient,
     userId: string,
     membership: { id: string; agencyId: string; primaryOrganizationUnitId: string | null },
     requestId: string,
-  ): Promise<RequestContext> {
+  ): Promise<{ context: RequestContext; display: SessionDisplay }> {
     const now = new Date();
-    const assignments = await transaction.membershipRole.findMany({
-      where: {
-        agencyId: membership.agencyId,
-        membershipId: membership.id,
-        role: { status: 'ACTIVE' },
-        effectiveFrom: { lte: now },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-      },
-      select: {
-        role: {
-          select: {
-            permissions: {
-              select: { permission: { select: { code: true } }, scopePolicy: true },
+    const [agency, user, assignments] = await Promise.all([
+      transaction.agency.findUniqueOrThrow({
+        where: { id: membership.agencyId },
+        select: { id: true, name: true, acronym: true },
+      }),
+      transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { id: true, displayName: true, emailNormalized: true },
+      }),
+      transaction.membershipRole.findMany({
+        where: {
+          agencyId: membership.agencyId,
+          membershipId: membership.id,
+          role: { status: 'ACTIVE' },
+          effectiveFrom: { lte: now },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+        },
+        select: {
+          role: {
+            select: {
+              code: true,
+              name: true,
+              permissions: {
+                select: { permission: { select: { code: true } }, scopePolicy: true },
+              },
             },
           },
         },
-      },
-    });
+      }),
+    ]);
     const permissions = new Map<string, PermissionGrant>();
+    const roles = new Map<string, { code: string; name: string }>();
     for (const assignment of assignments) {
+      roles.set(assignment.role.code, {
+        code: assignment.role.code,
+        name: assignment.role.name,
+      });
       for (const grant of assignment.role.permissions) {
         if (SCOPE_POLICIES.includes(grant.scopePolicy as (typeof SCOPE_POLICIES)[number])) {
           permissions.set(`${grant.permission.code}:${grant.scopePolicy}`, {
@@ -1052,12 +1073,25 @@ export class AuthService {
       }
     }
     return {
-      requestId,
-      userId,
-      agencyId: membership.agencyId,
-      membershipId: membership.id,
-      primaryOrganizationUnitId: membership.primaryOrganizationUnitId,
-      permissions: [...permissions.values()],
+      context: {
+        requestId,
+        userId,
+        agencyId: membership.agencyId,
+        membershipId: membership.id,
+        primaryOrganizationUnitId: membership.primaryOrganizationUnitId,
+        permissions: [...permissions.values()],
+      },
+      display: {
+        agency,
+        identity: {
+          id: user.id,
+          displayName: user.displayName,
+          email: user.emailNormalized,
+        },
+        effectiveRoles: [...roles.values()].sort((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+      },
     };
   }
 

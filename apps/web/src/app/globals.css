@@ -1,24 +1,66 @@
+@import 'tailwindcss';
+
 :root {
   color-scheme: light;
-  font-family: Arial, Helvetica, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
+  --midnight: #172033;
+  --canvas: #f4f6f9;
+  --cobalt: #416da9;
+  --pale-blue: #e6edf8;
+  --ink: #202a38;
+  --line: #dce2ea;
+  --paper: #ffffff;
+  --muted: #667184;
+  --focus: #2f5e9e;
+  font-family: 'Noto Sans Variable', 'Noto Sans', sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+@theme inline {
+  --color-midnight: var(--midnight);
+  --color-canvas: var(--canvas);
+  --color-cobalt: var(--cobalt);
+  --color-pale-blue: var(--pale-blue);
+  --color-ink: var(--ink);
+  --color-line: var(--line);
+  --color-paper: var(--paper);
+  --color-muted: var(--muted);
+  --color-focus: var(--focus);
+  --font-sans: 'Noto Sans Variable', 'Noto Sans', sans-serif;
 }
 
 * {
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
+html {
+  min-width: 320px;
+  background: var(--canvas);
 }
 
-main {
-  margin: 0 auto;
-  max-width: 48rem;
-  padding: 4rem 1.5rem;
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--canvas);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
 
 a {
-  color: #0369a1;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--pale-blue);
+  color: var(--midnight);
 }

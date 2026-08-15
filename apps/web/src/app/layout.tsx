@@ -1,8 +1,12 @@
 import type { Metadata } from 'next';
+import '@fontsource-variable/noto-sans/wght.css';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'LingkodHR',
+  title: {
+    default: 'LingkodHR',
+    template: '%s · LingkodHR',
+  },
   description: 'Philippine Public-Sector HRIS',
 };
 

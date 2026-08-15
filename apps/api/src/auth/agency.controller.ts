@@ -3,6 +3,7 @@ import {
   Controller,
   ForbiddenException,
   HttpException,
+  Inject,
   Param,
   Post,
   Req,
@@ -22,7 +23,7 @@ import { agencyIdSchema, invitationSchema } from './auth.schemas';
 export class AgencyController {
   private readonly config = getConfig();
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
 
   @Post(':agencyId/invitations')
   @RequirePermission('security.users.invite')
