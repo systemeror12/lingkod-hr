@@ -6,6 +6,10 @@ const databaseUrl =
   process.env.DATABASE_MIGRATION_OWNER_URL ??
   'postgresql://hris_local:local_only@localhost:55432/hris';
 const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+const foreignAgencyId = '11111111-1111-4111-8111-111111111111';
+const foreignUnitId = '22222222-2222-4222-8222-222222222222';
+const foreignUnitVersionId = '33333333-3333-4333-8333-333333333333';
+const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 
 async function seed(): Promise<void> {
   const agency = await prisma.agency.upsert({
@@ -88,6 +92,71 @@ async function seed(): Promise<void> {
       },
     });
   }
+
+  const foreignAgency = await prisma.agency.upsert({
+    where: { id: foreignAgencyId },
+    update: {
+      code: 'E2E-FOREIGN-RECORDS',
+      name: 'Synthetic Foreign Records Agency',
+      agencyType: 'NGA',
+      status: 'ACTIVE',
+    },
+    create: {
+      id: foreignAgencyId,
+      code: 'E2E-FOREIGN-RECORDS',
+      name: 'Synthetic Foreign Records Agency',
+      agencyType: 'NGA',
+      status: 'ACTIVE',
+    },
+  });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.auditEvent.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.organizationUnit.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.organizationUnit.create({
+      data: {
+        id: foreignUnitId,
+        agencyId: foreignAgency.id,
+        code: 'FOREIGN-RECORD',
+        unitType: 'OFFICE',
+        status: 'DRAFT',
+      },
+    });
+    await transaction.organizationUnitVersion.create({
+      data: {
+        id: foreignUnitVersionId,
+        agencyId: foreignAgency.id,
+        organizationUnitId: foreignUnitId,
+        versionNo: 1,
+        name: 'Synthetic Foreign Records Office',
+        effectiveFrom: new Date('2026-08-16'),
+        status: 'DRAFT',
+      },
+    });
+    await transaction.organizationUnit.update({
+      where: { id: foreignUnitId },
+      data: { currentVersionId: foreignUnitVersionId },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        id: foreignAuditEventId,
+        agencyId: foreignAgency.id,
+        actorType: 'SYSTEM',
+        action: 'ORGANIZATION_UNIT_CREATED',
+        entityType: 'OrganizationUnit',
+        entityId: foreignUnitId,
+        previousStatus: 'None',
+        newStatus: 'DRAFT',
+        metadata: {
+          officialName: 'Synthetic Foreign Records Office',
+          code: 'FOREIGN-RECORD',
+          unitType: 'OFFICE',
+          effectiveDate: '2026-08-16',
+        },
+      },
+    });
+  });
 }
 
 seed()

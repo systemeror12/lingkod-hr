@@ -17,7 +17,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from './ui/dialog';
 
 function dateLabel(value: string): string {
@@ -85,6 +84,7 @@ export function AuditWorkspace({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const closeRef = useRef<{ focus(): void } | null>(null);
+  const returnFocusRef = useRef<{ focus(): void } | null>(null);
   const detailRequestRef = useRef(0);
 
   function handleDialogOpenChange(nextOpen: boolean): void {
@@ -209,40 +209,44 @@ export function AuditWorkspace({
           ) : (
             <div className="divide-y divide-line">
               {events.map((event) => (
-                <DialogTrigger asChild key={event.id}>
-                  <button
-                    className="grid w-full gap-4 px-5 py-5 text-left hover:bg-canvas min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-start"
-                    type="button"
-                    aria-expanded={selectedId === event.id}
-                    onClick={() => openDetail(event)}
-                  >
-                    <span className="grid min-w-0 gap-2">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <strong className="font-mono text-xs font-[700] tracking-[0.02em] text-midnight">
-                          {event.action}
-                        </strong>
-                        <span className="rounded-full bg-pale-blue px-2 py-1 text-[10px] font-[700] tracking-[0.04em] text-cobalt uppercase">
-                          {statusLabel(event.previousStatus)} → {statusLabel(event.newStatus)}
-                        </span>
-                      </span>
-                      <span className="grid gap-1 text-[13px] text-muted min-[621px]:grid-cols-3 min-[621px]:gap-4">
-                        <span>
-                          <span className="font-[650] text-ink">Actor:</span> {event.actor}
-                        </span>
-                        <span>
-                          <span className="font-[650] text-ink">Entity:</span> {event.entityType}
-                        </span>
-                        <span className="break-all font-mono text-[11px]">{event.entityId}</span>
+                <button
+                  className="grid w-full gap-4 px-5 py-5 text-left hover:bg-canvas min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-start"
+                  key={event.id}
+                  type="button"
+                  aria-expanded={selectedId === event.id}
+                  onClick={(clickEvent) => {
+                    returnFocusRef.current = clickEvent.currentTarget as unknown as {
+                      focus(): void;
+                    };
+                    openDetail(event);
+                  }}
+                >
+                  <span className="grid min-w-0 gap-2">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <strong className="font-mono text-xs font-[700] tracking-[0.02em] text-midnight">
+                        {event.action}
+                      </strong>
+                      <span className="rounded-full bg-pale-blue px-2 py-1 text-[10px] font-[700] tracking-[0.04em] text-cobalt uppercase">
+                        {statusLabel(event.previousStatus)} → {statusLabel(event.newStatus)}
                       </span>
                     </span>
-                    <time
-                      className="text-xs text-muted min-[621px]:text-right"
-                      dateTime={event.occurredAt}
-                    >
-                      {dateLabel(event.occurredAt)}
-                    </time>
-                  </button>
-                </DialogTrigger>
+                    <span className="grid gap-1 text-[13px] text-muted min-[621px]:grid-cols-3 min-[621px]:gap-4">
+                      <span>
+                        <span className="font-[650] text-ink">Actor:</span> {event.actor}
+                      </span>
+                      <span>
+                        <span className="font-[650] text-ink">Entity:</span> {event.entityType}
+                      </span>
+                      <span className="break-all font-mono text-[11px]">{event.entityId}</span>
+                    </span>
+                  </span>
+                  <time
+                    className="text-xs text-muted min-[621px]:text-right"
+                    dateTime={event.occurredAt}
+                  >
+                    {dateLabel(event.occurredAt)}
+                  </time>
+                </button>
               ))}
             </div>
           )}
@@ -273,6 +277,10 @@ export function AuditWorkspace({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           closeRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusRef.current?.focus();
         }}
       >
         <DialogHeader>

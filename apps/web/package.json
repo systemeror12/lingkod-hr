@@ -8,6 +8,7 @@
     "start": "next start --hostname 0.0.0.0 --port 3000",
     "test": "vitest run --passWithNoTests --exclude 'e2e/**'",
     "test:e2e": "playwright test",
+    "test:e2e:phase3": "playwright test e2e/phase-3.spec.ts --project=chromium",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
