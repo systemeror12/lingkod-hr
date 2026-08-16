@@ -104,6 +104,112 @@ Run the full repository validation suite with:
 pnpm validate
 ```
 
+## Playwright E2E testing
+
+Browser tests live in `apps/web/e2e` and use
+[`apps/web/playwright.config.ts`](apps/web/playwright.config.ts). Run the
+interactive commands from `apps/web` so Playwright loads that configuration.
+
+### Run tests
+
+From the repository root, run the complete web E2E suite with:
+
+```bash
+pnpm --filter @lingkod-hr/web test:e2e
+```
+
+For focused runs, work from `apps/web`:
+
+```bash
+cd apps/web
+
+# List discovered tests without opening a browser
+pnpm exec playwright test --list --project=chromium
+
+# Run the full Chromium suite
+pnpm exec playwright test --project=chromium
+
+# Run one spec or one test by name
+pnpm exec playwright test e2e/audit.spec.ts --project=chromium
+pnpm exec playwright test --grep "keyboard-safe detail dialog" --project=chromium
+```
+
+The E2E configuration prepares PostgreSQL, applies migrations, seeds the
+protected shell, and starts or reuses these dedicated services:
+
+| Service | Port |
+| --- | ---: |
+| E2E web server | `3100` |
+| E2E API | `3101` |
+| Local OIDC | `4100` |
+
+The normal development web server uses port `3000`; it is separate from the
+E2E web server.
+
+### Interactive testing
+
+Playwright UI Mode provides the test list, browser preview, actions, and
+traces:
+
+```bash
+cd apps/web
+pnpm exec playwright test --ui --project=chromium --ui-host=127.0.0.1 --ui-port=0
+```
+
+The UI port is dynamic. UI Mode can appear to load indefinitely while the
+database setup and E2E servers are starting. Wait for the migration/seed
+output in the terminal, then refresh the UI. Use `--list` first if you need
+to confirm test discovery.
+
+For a single test with the Playwright Inspector:
+
+```bash
+cd apps/web
+PWDEBUG=1 pnpm exec playwright test e2e/audit.spec.ts --project=chromium
+```
+
+For a visible browser without the UI dashboard:
+
+```bash
+cd apps/web
+pnpm exec playwright test e2e/audit.spec.ts --headed --project=chromium
+```
+
+To inspect the running application without the E2E test runner, use Playwright
+directly. This does not run database setup or create the E2E services:
+
+```bash
+cd apps/web
+pnpm exec playwright open -b chromium http://localhost:3000
+pnpm exec playwright codegen --target=playwright-test http://localhost:3000
+```
+
+### Stale E2E web server
+
+If UI Mode spins forever, check the E2E web health endpoint:
+
+```bash
+curl -fsS --max-time 5 http://localhost:3100/health
+```
+
+If it does not respond, stop the stale E2E web process and start UI Mode
+again:
+
+```bash
+fuser -k 3100/tcp
+```
+
+Only use that cleanup command for the dedicated E2E port. Do not use it on
+port `3000`, which belongs to the normal development server.
+
+Failed runs keep traces and screenshots under `apps/web/test-results`. Open a
+trace with:
+
+```bash
+cd apps/web
+pnpm exec playwright show-trace test-results/<failed-test>/trace.zip
+```
+
 ### Troubleshooting
 
 Check infrastructure health:
