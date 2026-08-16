@@ -1,4 +1,17 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
+
+async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
+  const box = await dialog.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) throw new Error('The Organization Unit dialog geometry was unavailable.');
+  expect(box.x).toBeGreaterThanOrEqual(16);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 16);
+  expect(Math.abs(box.x + box.width / 2 - viewportWidth / 2)).toBeLessThanOrEqual(1);
+}
+
+async function expectFocusInside(dialog: Locator): Promise<void> {
+  expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+}
 
 test('creates and highlights a Draft Organization Unit through the Work queue', async ({
   page,
@@ -17,13 +30,29 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
 
   const trigger = page.getByRole('button', { name: 'Create Organization Unit' });
   await trigger.click();
-  const panel = page.getByRole('dialog', { name: 'Create Organization Unit' });
-  await expect(panel).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'Create Organization Unit' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAccessibleDescription(
+    'Register the unit now. Hierarchy and activation come later.',
+  );
   await expect(page.getByLabel('Official name')).toBeFocused();
+  await expectCenteredDialog(dialog, page.viewportSize()?.width ?? 1280);
+  await page.mouse.click(1, 1);
+  await expect(dialog).toBeVisible();
+
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press('Tab');
+    await expectFocusInside(dialog);
+  }
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press('Shift+Tab');
+    await expectFocusInside(dialog);
+  }
 
   await page.getByRole('button', { name: 'Create Draft' }).click();
   await expect(page.getByText('Enter the official name.', { exact: true })).toBeVisible();
-  await expect(panel).toBeVisible();
+  await expect(page.getByLabel('Official name')).toBeFocused();
+  await expect(dialog).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('validation.png'), fullPage: true });
 
   await page.getByLabel('Official name').fill('Records Management Division');
@@ -55,22 +84,80 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
     'Replacement Records Management Division',
   );
   await expect(page.getByLabel('Agency-unique code')).toHaveValue(code);
-  await panel.press('Escape');
-  await expect(panel).toBeHidden();
+  await dialog.press('Escape');
+  await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 
   await page.setViewportSize({ width: 820, height: 900 });
   await trigger.click();
-  await expect(panel).toBeVisible();
-  const contextualPanelBox = await panel.boundingBox();
-  expect(contextualPanelBox?.width).toBeLessThan(600);
-  await panel.press('Escape');
+  await expect(dialog).toBeVisible();
+  await expectCenteredDialog(dialog, 820);
+  await dialog.press('Escape');
 
   await page.setViewportSize({ width: 720, height: 900 });
   await trigger.click();
-  await expect(panel).toBeVisible();
-  const panelBox = await panel.boundingBox();
-  expect(panelBox?.width).toBeGreaterThan(680);
+  await expect(dialog).toBeVisible();
+  await expectCenteredDialog(dialog, 720);
   await expect(page.getByLabel('Official name')).toBeFocused();
-  await page.screenshot({ path: testInfo.outputPath('responsive-panel.png'), fullPage: true });
+  await dialog.press('Escape');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await trigger.click();
+  await expect(dialog).toBeVisible();
+  await expectCenteredDialog(dialog, 390);
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create Draft' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('responsive-modal.png'), fullPage: true });
+});
+
+test('guards every Organization Unit dismissal path during submission', async ({ page }) => {
+  let releaseResponse!: () => void;
+  const responseReleased = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
+
+  await page.route('**/api/v1/agencies/*/organization-units', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    await responseReleased;
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'held-organization-unit',
+        code: 'HELD',
+        officialName: 'Held Organization Unit',
+        unitType: 'OFFICE',
+        effectiveDate: '2026-08-16',
+        status: 'DRAFT',
+      }),
+    });
+  });
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/organization');
+  const trigger = page.getByRole('button', { name: 'Create Organization Unit' });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Create Organization Unit' });
+  await expect(dialog).toBeVisible();
+  await page.getByLabel('Official name').fill('Held Organization Unit');
+  await page.getByLabel('Agency-unique code').fill('HELD');
+  await page.getByRole('button', { name: 'Create Draft' }).click();
+
+  const createButton = page.getByRole('button', { name: /Create Draft|Creating…/ });
+  await expect(createButton).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Close Organization Unit dialog' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(1, 1);
+  await expect(dialog).toBeVisible();
+
+  releaseResponse();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
 });

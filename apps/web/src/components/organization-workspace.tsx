@@ -1,6 +1,17 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from './ui/dialog';
 
 type OrganizationUnitType =
   'DEPARTMENT' | 'BUREAU' | 'SERVICE' | 'DIVISION' | 'SECTION' | 'OFFICE' | 'OTHER';
@@ -131,27 +142,30 @@ export function OrganizationWorkspace({
   const [success, setSuccess] = useState('');
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const triggerRef = useRef<{ focus(): void } | null>(null);
-  const firstDialogControlRef = useRef<{ focus(): void } | null>(null);
   const firstFieldRef = useRef<{ focus(): void } | null>(null);
-  const lastDialogControlRef = useRef<{ focus(): void } | null>(null);
-  const dialogWasOpenRef = useRef(false);
+  const codeFieldRef = useRef<{ focus(): void } | null>(null);
+  const effectiveDateFieldRef = useRef<{ focus(): void } | null>(null);
 
-  useEffect(() => {
-    if (open) {
-      dialogWasOpenRef.current = true;
-      firstFieldRef.current?.focus();
-    } else if (dialogWasOpenRef.current) {
-      triggerRef.current?.focus();
+  function handleOpenChange(nextOpen: boolean): void {
+    if (nextOpen) {
+      setFieldErrors({});
+      setFormError('');
+      setSuccess('');
+      setDraft(emptyDraft());
+      setOpen(true);
+      return;
     }
-  }, [open]);
+    closePanel();
+  }
 
-  function openPanel(): void {
-    setFieldErrors({});
-    setFormError('');
-    setSuccess('');
-    setDraft(emptyDraft());
-    setOpen(true);
+  function focusFirstError(errors: Record<string, string>): void {
+    if (errors.officialName) {
+      firstFieldRef.current?.focus();
+    } else if (errors.code) {
+      codeFieldRef.current?.focus();
+    } else if (errors.effectiveDate) {
+      effectiveDateFieldRef.current?.focus();
+    }
   }
 
   function closePanel(): void {
@@ -185,7 +199,10 @@ export function OrganizationWorkspace({
     setFieldErrors(localErrors);
     setFormError('');
     setSuccess('');
-    if (Object.keys(localErrors).length > 0) return;
+    if (Object.keys(localErrors).length > 0) {
+      focusFirstError(localErrors);
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -205,6 +222,7 @@ export function OrganizationWorkspace({
         const details = errorDetails(value);
         setFieldErrors(details.fields);
         setFormError(details.message);
+        focusFirstError(details.fields);
         return;
       }
       if (!isOrganizationUnit(value)) {
@@ -228,167 +246,153 @@ export function OrganizationWorkspace({
   }
 
   return (
-    <div className="grid gap-7">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="grid max-w-[680px] gap-2">
-          <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-            Organization
-          </p>
-          <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-            Organization Units
-          </h1>
-          <p className="m-0 text-sm leading-[1.65] text-muted">
-            Keep the Agency structure ready for later activation and Plantilla work.
-          </p>
-        </div>
-        {canCreate ? (
-          <button
-            className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
-            type="button"
-            ref={triggerRef}
-            onClick={openPanel}
-          >
-            Create Organization Unit
-          </button>
-        ) : null}
-      </header>
-
-      {success ? (
-        <p
-          className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
-          role="status"
-        >
-          {success} The new Draft is highlighted below.
-        </p>
-      ) : null}
-      {formError && !open ? (
-        <p
-          className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-          role="alert"
-        >
-          {formError}
-        </p>
-      ) : null}
-
-      <section
-        className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        aria-labelledby="organization-units-heading"
-      >
-        <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
-          <div className="grid gap-1">
-            <h2 className="m-0 text-sm font-[670] text-midnight" id="organization-units-heading">
-              Organization list
-            </h2>
-            <span className="text-xs text-muted">
-              {units.length === 1 ? '1 unit' : `${units.length} units`}
-            </span>
-          </div>
-          <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-            Agency scoped
-          </span>
-        </header>
-        {units.length === 0 ? (
-          <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12 text-left">
-            <strong className="text-[15px] font-[650] text-midnight">
-              No Organization Units yet.
-            </strong>
-            <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
-              Create a Draft Organization Unit with its official name, Agency-unique code, type, and
-              effective date.
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <div className="grid gap-7">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="grid max-w-[680px] gap-2">
+            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
+              Organization
+            </p>
+            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
+              Organization Units
+            </h1>
+            <p className="m-0 text-sm leading-[1.65] text-muted">
+              Keep the Agency structure ready for later activation and Plantilla work.
             </p>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[650px] border-collapse text-left">
-              <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                <tr>
-                  <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
-                  <th className="border-b border-line px-5 py-3 font-bold">Code</th>
-                  <th className="border-b border-line px-5 py-3 font-bold">Type</th>
-                  <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
-                  <th className="border-b border-line px-5 py-3 font-bold">Status</th>
-                </tr>
-              </thead>
-              <tbody className="text-[13px] text-ink">
-                {units.map((unit) => (
-                  <tr
-                    className="border-b border-line last:border-b-0 data-[highlighted=true]:bg-pale-blue"
-                    data-highlighted={highlightedId === unit.id}
-                    key={unit.id}
-                  >
-                    <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
-                      {unit.officialName}
-                    </th>
-                    <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
-                    <td className="px-5 py-4">{unitTypeLabel(unit.unitType)}</td>
-                    <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
-                    <td className="px-5 py-4">
-                      <span className="inline-flex rounded-full bg-pale-blue px-2 py-1 text-[11px] font-[700] tracking-[0.04em] text-cobalt uppercase">
-                        {unit.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {open ? (
-        <div className="fixed inset-0 z-20 bg-midnight/35" role="presentation">
-          <section
-            className="fixed inset-2 z-30 grid max-h-[calc(100dvh-16px)] grid-rows-[auto_1fr] overflow-y-auto rounded-[5px] border border-line bg-paper shadow-[0_18px_55px_rgb(23_32_51/20%)] min-[820px]:inset-y-0 min-[820px]:right-0 min-[820px]:left-auto min-[820px]:w-[520px] min-[820px]:max-w-[calc(100vw-32px)] min-[820px]:rounded-none min-[820px]:rounded-l-[5px]"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="organization-panel-title"
-            aria-describedby="organization-panel-help"
-            aria-busy={submitting}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                closePanel();
-                return;
-              }
-              if (event.key !== 'Tab') return;
-              const target = event.target as unknown;
-              if (event.shiftKey && target === firstDialogControlRef.current) {
-                event.preventDefault();
-                lastDialogControlRef.current?.focus();
-              } else if (!event.shiftKey && target === lastDialogControlRef.current) {
-                event.preventDefault();
-                firstDialogControlRef.current?.focus();
-              }
-            }}
-          >
-            <header className="flex items-start justify-between gap-4 border-b border-line px-6 py-5 min-[621px]:px-8">
-              <div className="grid gap-1.5">
-                <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-                  New Draft
-                </p>
-                <h2
-                  className="m-0 text-xl font-[680] tracking-[-0.025em] text-midnight"
-                  id="organization-panel-title"
-                >
-                  Create Organization Unit
-                </h2>
-              </div>
+          {canCreate ? (
+            <DialogTrigger asChild>
               <button
-                className="min-h-9 min-w-9 rounded-[3px] text-xl text-muted hover:bg-canvas"
+                className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
                 type="button"
-                ref={firstDialogControlRef}
-                aria-label="Close Organization Unit panel"
-                onClick={closePanel}
+              >
+                Create Organization Unit
+              </button>
+            </DialogTrigger>
+          ) : null}
+        </header>
+
+        {success ? (
+          <p
+            className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
+            role="status"
+          >
+            {success} The new Draft is highlighted below.
+          </p>
+        ) : null}
+        {formError && !open ? (
+          <p
+            className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
+            role="alert"
+          >
+            {formError}
+          </p>
+        ) : null}
+
+        <section
+          className="overflow-hidden rounded-[5px] border border-line bg-paper"
+          aria-labelledby="organization-units-heading"
+        >
+          <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
+            <div className="grid gap-1">
+              <h2 className="m-0 text-sm font-[670] text-midnight" id="organization-units-heading">
+                Organization list
+              </h2>
+              <span className="text-xs text-muted">
+                {units.length === 1 ? '1 unit' : `${units.length} units`}
+              </span>
+            </div>
+            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
+              Agency scoped
+            </span>
+          </header>
+          {units.length === 0 ? (
+            <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12 text-left">
+              <strong className="text-[15px] font-[650] text-midnight">
+                No Organization Units yet.
+              </strong>
+              <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
+                Create a Draft Organization Unit with its official name, Agency-unique code, type,
+                and effective date.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[650px] border-collapse text-left">
+                <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                  <tr>
+                    <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
+                    <th className="border-b border-line px-5 py-3 font-bold">Code</th>
+                    <th className="border-b border-line px-5 py-3 font-bold">Type</th>
+                    <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
+                    <th className="border-b border-line px-5 py-3 font-bold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="text-[13px] text-ink">
+                  {units.map((unit) => (
+                    <tr
+                      className="border-b border-line last:border-b-0 data-[highlighted=true]:bg-pale-blue"
+                      data-highlighted={highlightedId === unit.id}
+                      key={unit.id}
+                    >
+                      <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
+                        {unit.officialName}
+                      </th>
+                      <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
+                      <td className="px-5 py-4">{unitTypeLabel(unit.unitType)}</td>
+                      <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex rounded-full bg-pale-blue px-2 py-1 text-[11px] font-[700] tracking-[0.04em] text-cobalt uppercase">
+                          {unit.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <DialogContent
+          aria-busy={submitting}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            firstFieldRef.current?.focus();
+          }}
+        >
+          <DialogHeader>
+            <div className="grid min-w-0 gap-1.5">
+              <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
+                Organization registry / New record
+              </p>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="grid gap-1.5">
+                  <DialogTitle>Create Organization Unit</DialogTitle>
+                  <DialogDescription>
+                    Register the unit now. Hierarchy and activation come later.
+                  </DialogDescription>
+                </div>
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#fff3d6] px-2.5 py-1 text-[10px] font-[760] tracking-[0.08em] text-[#79531c] uppercase">
+                  <span className="size-1.5 rounded-full bg-[#b27625]" aria-hidden="true" />
+                  DRAFT
+                </span>
+              </div>
+            </div>
+            <DialogClose asChild>
+              <button
+                className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                type="button"
+                aria-label="Close Organization Unit dialog"
+                disabled={submitting}
               >
                 ×
               </button>
-            </header>
+            </DialogClose>
+          </DialogHeader>
 
-            <form className="grid content-start gap-5 px-6 py-6 min-[621px]:px-8" onSubmit={submit}>
-              <p className="m-0 text-[13px] leading-[1.6] text-muted" id="organization-panel-help">
-                The new record starts as <strong className="font-[700] text-ink">DRAFT</strong>.
-                Activation, hierarchy, leadership, and Plantilla details are handled in later work.
-              </p>
-
+          <DialogBody>
+            <form className="grid gap-5" id="create-organization-unit-form" onSubmit={submit}>
               <div className="grid gap-2">
                 <label className="text-sm font-[650] text-ink" htmlFor="organization-official-name">
                   Official name
@@ -429,6 +433,7 @@ export function OrganizationWorkspace({
                 <input
                   className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink uppercase"
                   id="organization-code"
+                  ref={codeFieldRef}
                   type="text"
                   autoComplete="off"
                   maxLength={50}
@@ -488,6 +493,7 @@ export function OrganizationWorkspace({
                 <input
                   className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
                   id="organization-effective-date"
+                  ref={effectiveDateFieldRef}
                   type="date"
                   value={draft.effectiveDate}
                   aria-invalid={Boolean(fieldErrors.effectiveDate)}
@@ -521,27 +527,47 @@ export function OrganizationWorkspace({
                 </p>
               ) : null}
 
-              <div className="flex flex-wrap justify-end gap-3 border-t border-line pt-5">
-                <button
-                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas"
-                  type="button"
-                  onClick={closePanel}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
-                  type="submit"
-                  ref={lastDialogControlRef}
-                  disabled={submitting}
-                >
-                  {submitting ? 'Creating…' : 'Create Draft'}
-                </button>
+              <div className="grid grid-cols-[72px_1fr] overflow-hidden rounded-[4px] border border-line bg-[#fafbfd] text-xs">
+                <span className="grid place-items-center border-r border-line bg-pale-blue font-mono font-bold text-cobalt">
+                  DRAFT
+                </span>
+                <span className="grid gap-1 px-4 py-3 text-muted">
+                  <strong className="font-[680] text-ink">
+                    {draft.officialName || 'Untitled Organization Unit'}
+                  </strong>
+                  <span>
+                    {draft.code || 'No code yet'} · {unitTypeLabel(draft.unitType).toLowerCase()} ·
+                    effective {draft.effectiveDate || '—'}
+                  </span>
+                </span>
               </div>
             </form>
-          </section>
-        </div>
-      ) : null}
-    </div>
+          </DialogBody>
+
+          <DialogFooter>
+            <span className="mr-auto hidden text-[11px] text-muted min-[621px]:block">
+              Agency scoped · Four required fields
+            </span>
+            <DialogClose asChild>
+              <button
+                className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                type="button"
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+            </DialogClose>
+            <button
+              className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+              type="submit"
+              form="create-organization-unit-form"
+              disabled={submitting}
+            >
+              {submitting ? 'Creating…' : 'Create Draft'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </div>
+    </Dialog>
   );
 }
