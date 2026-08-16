@@ -36,6 +36,34 @@ Use `$ask-matt` for Matt Pocock skill routing.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images. Motion or timing needs a short video.
 
+## Global modal contract
+
+Every blocking modal, detail dialog, confirmation, loading state, and form
+dialog in the web UI uses the agreed global modal design. The source of truth
+is `apps/web/src/components/ui/dialog.tsx`, grounded in GitHub issues #69 and
+#70.
+
+When implementing or changing a modal:
+
+- Compose it from the shared `Dialog` primitives: `DialogTrigger`,
+  `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`,
+  `DialogBody`, `DialogFooter`, and `DialogClose` as applicable.
+- Use the shared centered, responsive, safe-inset shell so the foundation
+  owns the portal, backdrop, focus containment/restoration, Escape handling,
+  and body scrolling.
+- Keep workflow state, validation, loading, errors, and read-only content in
+  the feature component; keep shell and accessibility behavior in the shared
+  foundation.
+- Treat a side panel, drawer, or sheet as an explicit product exception that
+  must be named and justified by the issue or specification before coding.
+- Add or update focused browser coverage for the accessible name/description,
+  initial focus, focus containment/restoration, dismissal behavior, responsive
+  centered geometry, and submission/loading guards that apply to the surface.
+
+Completion means the surface consumes the shared foundation, has no custom
+overlay or focus-trap shell, and its focused browser test plus before/after
+visual evidence pass.
+
 ## Codex routing
 
 `$ask-matt` is routing-only.
