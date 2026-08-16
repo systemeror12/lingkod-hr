@@ -118,16 +118,6 @@ From the repository root, run the complete web E2E suite with:
 pnpm --filter @lingkod-hr/web test:e2e
 ```
 
-Run the complete Phase 3 acceptance journey, including its local dependency
-setup, with:
-
-```bash
-pnpm test:e2e:phase3
-```
-
-See [`docs/phase-3-acceptance.md`](docs/phase-3-acceptance.md) for the wider
-API, PostgreSQL, CI, and manual-smoke evidence map.
-
 For focused runs, work from `apps/web`:
 
 ```bash
