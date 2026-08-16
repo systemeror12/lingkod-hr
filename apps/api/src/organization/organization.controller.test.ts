@@ -40,8 +40,32 @@ it('treats a list request outside the active Agency as not found', async () => {
   const service = serviceMock();
   const controller = new OrganizationController(service as never);
 
-  await expect(controller.list(otherAgencyId, context)).rejects.toMatchObject({ status: 404 });
+  await expect(controller.list(otherAgencyId, context)).rejects.toMatchObject({
+    status: 404,
+    response: {
+      error: {
+        code: 'ORGANIZATION_UNIT_NOT_FOUND',
+        requestId: context.requestId,
+      },
+    },
+  });
   expect(service.list).not.toHaveBeenCalled();
+});
+
+it('returns a generic missing-record response for an unavailable unit', async () => {
+  const service = serviceMock();
+  service.findById.mockResolvedValue(null);
+  const controller = new OrganizationController(service as never);
+
+  await expect(controller.findById(agencyId, unitId, context)).rejects.toMatchObject({
+    status: 404,
+    response: {
+      error: {
+        code: 'ORGANIZATION_UNIT_NOT_FOUND',
+        requestId: context.requestId,
+      },
+    },
+  });
 });
 
 it('returns the explicit list response from the active Agency', async () => {
@@ -80,6 +104,7 @@ it('keeps API validation and service authorization errors in the public envelope
     response: {
       error: {
         code: 'ORGANIZATION_UNIT_CREATE_FORBIDDEN',
+        requestId: context.requestId,
       },
     },
   });
@@ -94,6 +119,14 @@ it('keeps API validation and service authorization errors in the public envelope
       },
       context,
     ),
-  ).rejects.toMatchObject({ status: 400 });
+  ).rejects.toMatchObject({
+    status: 400,
+    response: {
+      error: {
+        code: 'INVALID_INPUT',
+        requestId: context.requestId,
+      },
+    },
+  });
   expect(service.create).toHaveBeenCalledOnce();
 });

@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import type { OidcIdentity } from '@lingkod-hr/auth';
 import { createOperationalDatabaseClient } from '@lingkod-hr/database';
@@ -278,6 +280,84 @@ it.skipIf(!enabled)(
     } finally {
       await cleanup(admin, agencyId ? [agencyId] : [], userId ? [userId] : []);
       await database.$disconnect();
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'runs the documented provisioning command against local dependencies',
+  async () => {
+    const config = getConfig();
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-cli`;
+    const code = `E2E-I64-${suffix}`;
+    const email = `first-admin-${suffix}@example.test`;
+    let agencyId: string | undefined;
+
+    try {
+      const output = execFileSync(
+        'pnpm',
+        [
+          '--filter',
+          '@lingkod-hr/api',
+          'provision:agency',
+          '--',
+          '--code',
+          code,
+          '--name',
+          'Issue 64 Command Boundary Agency',
+          '--agency-type',
+          'NGA',
+          '--administrator-email',
+          email,
+        ],
+        {
+          cwd: resolve(__dirname, '../../../..'),
+          env: {
+            ...process.env,
+            API_URL: config.API_URL,
+            DATABASE_OPERATIONAL_URL: operationalDatabaseUrl(),
+            EMAIL_HOST: 'localhost',
+            EMAIL_PORT: '1025',
+            EMAIL_SECURE: 'false',
+          },
+          encoding: 'utf8',
+        },
+      );
+      expect(output).toContain(`Agency provisioned: ${code}`);
+
+      const agency = await admin.agency.findUniqueOrThrow({ where: { code } });
+      agencyId = agency.id;
+      expect(agency).toMatchObject({
+        name: 'Issue 64 Command Boundary Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      });
+      const invitation = await admin.invitation.findFirstOrThrow({ where: { agencyId } });
+      expect(invitation).toMatchObject({
+        emailNormalized: email,
+        invitedByMembershipId: null,
+        requestedRoleCodes: ['agency_administrator'],
+        status: 'PENDING',
+      });
+
+      const messageText = await readMailpitMessage(
+        email,
+        'LingkodHR invitation for Issue 64 Command Boundary Agency',
+      );
+      const token = /\/auth\/invitations\/([A-Za-z0-9_-]+)\/activate/.exec(messageText)?.[1];
+      if (!token) throw new Error('The command-boundary invitation email did not contain a token.');
+      expect(output).not.toContain(token);
+      expect(messageText).toContain('Agency Administrator');
+      await expect(
+        admin.auditEvent.count({ where: { agencyId, action: 'AGENCY_PROVISIONED' } }),
+      ).resolves.toBe(1);
+      await expect(
+        admin.auditEvent.count({ where: { agencyId, action: 'INVITATION_CREATED' } }),
+      ).resolves.toBe(1);
+    } finally {
+      await cleanup(admin, agencyId ? [agencyId] : []);
       await admin.$disconnect();
     }
   },
