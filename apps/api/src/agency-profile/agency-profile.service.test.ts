@@ -161,6 +161,18 @@ it.skipIf(!enabled)(
         effectiveFrom: draftInput.effectiveFrom,
       });
 
+      await expect(
+        service.activate(
+          requestContext,
+          draft.id,
+          '2024-01-01',
+          'This effectivity overlaps the existing profile.',
+        ),
+      ).rejects.toMatchObject({
+        code: 'AGENCY_PROFILE_EFFECTIVE_DATE_INVALID',
+        statusCode: 409,
+      });
+
       const activated = await service.activate(
         requestContext,
         draft.id,
@@ -272,6 +284,67 @@ it.skipIf(!enabled)('voids an active version and creates a reasoned replacement'
       entityId: replacement.id,
       reason: correction.reason,
     });
+  } finally {
+    await cleanup(admin, agency.id, user.id);
+    await admin.$disconnect();
+  }
+});
+
+it.skipIf(!enabled)('voids and replaces a superseded historical version', async () => {
+  const admin = await createAdminClient();
+  const suffix = `${Date.now()}-historical-correction`;
+  const agency = await admin.agency.create({
+    data: {
+      code: `PROFILE-HISTORICAL-${suffix}`,
+      name: 'Historical Public Service Office',
+      agencyType: 'NGA',
+      status: 'ACTIVE',
+    },
+  });
+  const user = await admin.user.create({
+    data: {
+      identityProvider: 'agency-profile-e2e',
+      externalSubject: `historical-user-${suffix}`,
+      emailNormalized: `historical-user-${suffix}@example.test`,
+      displayName: 'Historical Correction User',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  const membership = await admin.agencyMembership.create({
+    data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+  });
+  const initial = await seedProfile(admin, agency.id, agency.name);
+  const requestContext = context(agency.id, user.id, membership.id);
+  const service = new AgencyProfileService(agencyProfileAuditWriter);
+
+  try {
+    const draft = await service.createDraft(requestContext);
+    await service.updateDraft(requestContext, draft.id, draftInput);
+    await service.activate(
+      requestContext,
+      draft.id,
+      draftInput.effectiveFrom,
+      'Approved prospective identity change.',
+    );
+
+    const replacement = await service.correct(requestContext, initial.id, {
+      ...draftInput,
+      officialName: 'Corrected Historical Public Service Office',
+      reason: 'Corrected the historical official name after activation.',
+    });
+
+    expect(replacement).toMatchObject({
+      versionNo: 3,
+      versionState: 'SUPERSEDED',
+      effectiveFrom: '2024-01-01',
+      effectiveTo: '2026-09-30',
+    });
+    await expect(
+      admin.agencyProfileVersion.findUniqueOrThrow({ where: { id: initial.id } }),
+    ).resolves.toMatchObject({ status: 'VOIDED' });
+    await expect(
+      admin.agency.findUniqueOrThrow({ where: { id: agency.id } }),
+    ).resolves.toMatchObject({ currentProfileVersionId: replacement.id });
   } finally {
     await cleanup(admin, agency.id, user.id);
     await admin.$disconnect();

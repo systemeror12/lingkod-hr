@@ -231,7 +231,7 @@ function PageHeading({
   canUpdate: boolean;
   selected: AgencyProfileVersion | null;
   onPrepare(): void;
-  onEdit(): void;
+  onEdit(opener: FocusableField): void;
 }) {
   return (
     <header className="flex flex-wrap items-start justify-between gap-5">
@@ -259,7 +259,7 @@ function PageHeading({
         <button
           className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
           type="button"
-          onClick={onEdit}
+          onClick={(event) => onEdit(event.currentTarget as unknown as FocusableField)}
         >
           Continue draft
         </button>
@@ -277,6 +277,7 @@ function ProfileDialog({
   onClose,
   onSave,
   onActivate,
+  onRestoreFocus,
   registerField,
 }: {
   mode: 'edit' | 'activate' | null;
@@ -287,6 +288,7 @@ function ProfileDialog({
   onClose(): void;
   onSave(values: EditableProfile): void;
   onActivate(effectiveDate: string, reason: string): void;
+  onRestoreFocus(): void;
   registerField(field: string, element: FocusableField | null): void;
 }) {
   const [values, setValues] = useState<EditableProfile | null>(null);
@@ -316,6 +318,10 @@ function ProfileDialog({
     >
       <DialogContent
         aria-busy={submitting}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onRestoreFocus();
+        }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           firstFieldRef.current?.focus?.();
@@ -654,6 +660,7 @@ export function AgencyProfileWorkspace({
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
   const fieldRefs = useRef<Record<string, FocusableField | null>>({});
+  const returnFocusRef = useRef<FocusableField | null>(null);
 
   const selected = data.versions.find((version) => version.id === selectedId) ?? data.current;
   const draft = data.draft;
@@ -680,11 +687,18 @@ export function AgencyProfileWorkspace({
     setNotice('');
   }
 
-  function openDialog(mode: 'edit' | 'activate'): void {
+  function openDialog(mode: 'edit' | 'activate', opener: FocusableField): void {
     if (!draft || selected?.id !== draft.id) return;
     setFieldErrors({});
     setFormError('');
+    returnFocusRef.current = opener;
     setDialogMode(mode);
+  }
+
+  function restoreFocus(): void {
+    const opener = returnFocusRef.current;
+    returnFocusRef.current = null;
+    opener?.focus?.();
   }
 
   async function prepareDraft(): Promise<void> {
@@ -837,7 +851,7 @@ export function AgencyProfileWorkspace({
         canUpdate={canUpdate}
         selected={selected}
         onPrepare={() => void prepareDraft()}
-        onEdit={() => openDialog('edit')}
+        onEdit={(opener) => openDialog('edit', opener)}
       />
 
       {selected ? (
@@ -905,14 +919,18 @@ export function AgencyProfileWorkspace({
                   <button
                     className="min-h-10 rounded-[3px] border border-line px-4 text-sm font-[650] text-cobalt hover:bg-pale-blue"
                     type="button"
-                    onClick={() => openDialog('edit')}
+                    onClick={(event) =>
+                      openDialog('edit', event.currentTarget as unknown as FocusableField)
+                    }
                   >
                     Edit proposed fields
                   </button>
                   <button
                     className="min-h-10 rounded-[3px] bg-midnight px-4 text-sm font-[650] text-white hover:bg-[#273650]"
                     type="button"
-                    onClick={() => openDialog('activate')}
+                    onClick={(event) =>
+                      openDialog('activate', event.currentTarget as unknown as FocusableField)
+                    }
                   >
                     Review activation
                   </button>
@@ -1005,6 +1023,7 @@ export function AgencyProfileWorkspace({
         }}
         onSave={(values) => void saveDraft(values)}
         onActivate={(effectiveDate, reason) => void activate(effectiveDate, reason)}
+        onRestoreFocus={restoreFocus}
         registerField={(field, element) => {
           fieldRefs.current[field] = element;
         }}

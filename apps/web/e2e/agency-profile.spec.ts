@@ -22,7 +22,8 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
     page.getByRole('heading', { name: 'National Archives Coordination Office' }),
   ).toBeVisible();
 
-  await page.getByRole('button', { name: 'Continue draft' }).click();
+  const editOpener = page.getByRole('button', { name: 'Continue draft' });
+  await editOpener.click();
   const editDialog = page.getByRole('dialog', { name: 'Edit draft successor' });
   await expect(editDialog).toBeVisible();
   await expect(editDialog).toHaveAccessibleDescription(
@@ -30,6 +31,11 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
   );
   await expect(page.getByLabel('Official name')).toBeFocused();
   await page.mouse.click(1, 1);
+  await expect(editDialog).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(editDialog).toBeHidden();
+  await expect(editOpener).toBeFocused();
+  await editOpener.click();
   await expect(editDialog).toBeVisible();
 
   await page.getByLabel('Official name').fill('');
@@ -46,8 +52,20 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
   await page.getByLabel('Default timezone').selectOption('Asia/Manila');
   await page.getByLabel('Default currency').selectOption('PHP');
   await page.getByLabel('Proposed effective date').fill('2026-10-01');
-  await page.getByRole('button', { name: 'Save draft' }).click();
+  let patchRequests = 0;
+  await page.route('**/api/v1/agencies/*/agency-profile/draft/*', async (route) => {
+    if (route.request().method() === 'PATCH') {
+      patchRequests += 1;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    await route.continue();
+  });
+  const saveButton = page.getByRole('button', { name: 'Save draft' });
+  await saveButton.click();
+  await expect(page.getByRole('button', { name: 'Saving…' })).toBeDisabled();
   await expect(page.getByRole('status')).toContainText('Draft successor saved.');
+  expect(patchRequests).toBe(1);
+  await page.unroute('**/api/v1/agencies/*/agency-profile/draft/*');
   await expect(editDialog).toBeHidden();
 
   await page.getByRole('button', { name: 'Review activation' }).click();

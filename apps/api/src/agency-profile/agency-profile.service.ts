@@ -472,12 +472,12 @@ export class AgencyProfileService {
 
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const source = await transaction.agencyProfileVersion.findFirst({
-        where: { id: versionId, agencyId: context.agencyId, status: 'ACTIVE' },
+        where: { id: versionId, agencyId: context.agencyId, status: { in: PUBLISHED_STATES } },
         select: profileSelect,
       });
       if (!source) {
         throw new AgencyProfileServiceError(
-          'Only the active Agency Profile version can be corrected.',
+          'Only an activated Agency Profile version can be corrected.',
           409,
           'AGENCY_PROFILE_CORRECTION_NOT_ALLOWED',
         );
@@ -500,7 +500,7 @@ export class AgencyProfileService {
           deploymentProfile: source.deploymentProfile,
           effectiveFrom: source.effectiveFrom,
           effectiveTo: source.effectiveTo,
-          status: 'ACTIVE',
+          status: source.status,
           domainStatus: source.domainStatus,
         },
         select: profileSelect,
@@ -531,8 +531,8 @@ export class AgencyProfileService {
         action: 'AGENCY_PROFILE_CORRECTED',
         entityType: 'AgencyProfileVersion',
         entityId: corrected.id,
-        previousStatus: 'ACTIVE',
-        newStatus: 'ACTIVE',
+        previousStatus: source.status,
+        newStatus: source.status,
         reason: input.reason,
         requestId: context.requestId,
         metadata: {
