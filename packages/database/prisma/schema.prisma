@@ -34,6 +34,8 @@ model Agency {
   auditEvents    AuditEvent[]
   organizationUnits OrganizationUnit[]
   organizationUnitVersions OrganizationUnitVersion[]
+  documents              Document[]
+  documentVersions       DocumentVersion[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -174,6 +176,9 @@ model AgencyMembership {
   sessions             UserSession[]
   securityEvents      SecurityEvent[]  @relation("SecurityEventMembership")
   auditEvents         AuditEvent[]     @relation("AuditEventMembership")
+  createdDocuments    Document[]       @relation("DocumentCreator")
+  updatedDocuments    Document[]       @relation("DocumentUpdater")
+  createdDocumentVersions DocumentVersion[] @relation("DocumentVersionCreator")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -354,4 +359,54 @@ model AuditEvent {
 
   @@index([agencyId, occurredAt(sort: Desc)])
   @@map("audit_events")
+}
+
+model Document {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  documentNo            String?   @map("document_no") @db.Citext
+  documentType          String    @map("document_type")
+  classification        String
+  status                String
+  currentVersionId      String?   @map("current_version_id") @db.Uuid
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String?   @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int       @default(1) @map("row_version")
+
+  agency          Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy       AgencyMembership @relation("DocumentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy       AgencyMembership? @relation("DocumentUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion  DocumentVersion? @relation("DocumentCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
+  versions        DocumentVersion[] @relation("DocumentVersions")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, documentNo])
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  documentId            String    @map("document_id") @db.Uuid
+  versionNo             Int       @map("version_no")
+  storageKey            String    @unique @map("storage_key")
+  contentHash           String    @map("content_hash")
+  mimeType              String    @map("mime_type")
+  sizeBytes             BigInt    @map("size_bytes")
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  issuedAt              DateTime? @map("issued_at") @db.Timestamptz(6)
+  signatureMetadata     Json?     @map("signature_metadata")
+
+  agency              Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  document            Document         @relation("DocumentVersions", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  currentForDocuments Document[]       @relation("DocumentCurrentVersion")
+  createdBy           AgencyMembership @relation("DocumentVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([documentId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, documentId, versionNo])
+  @@map("document_versions")
 }
