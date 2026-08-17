@@ -22,6 +22,48 @@ _Avoid_: Department-only record, office label
 A proposed Organization Unit that has been recorded but is not yet active or available for operational assignment.
 _Avoid_: Active office, completed organization change
 
+## Plantilla and Position Control
+
+**Plantilla Position**:
+A stable, agency-owned authorized position whose effective-dated attributes and occupancy may change without replacing its identity.
+_Avoid_: Plantilla item, employee position, job record
+
+**Item Number**:
+The permanent agency-unique identifier assigned to a Plantilla Position. It is not reassigned after the position is abolished.
+_Avoid_: Position identity, employee number
+
+**Plantilla Position Version**:
+An effective-dated description of a Plantilla Position, including its title, salary grade, Organization Unit, funding, employment category, applicable Qualification Standard, and lifecycle status.
+_Avoid_: Position history, overwritten position record
+
+**Qualification Standard**:
+A stable, agency-owned specification of the minimum education, training, experience, eligibility, competency, license, and special requirements applicable to positions.
+_Avoid_: Applicant assessment, position description
+
+**Qualification Standard Version**:
+An immutable, effective-dated, evidence-backed description of a Qualification Standard.
+_Avoid_: Editable qualification standard, overwritten requirements
+
+**Position Incumbency**:
+The effective-dated relationship between one Employee and one Plantilla Position.
+_Avoid_: Plantilla Position, employee position
+
+**Staffing Authority**:
+The evidence-backed authority under which a Plantilla Position is created, changed, frozen, or abolished.
+_Avoid_: Position document, unverified authority reference
+
+**Draft Staffing Authority**:
+A proposed Staffing Authority whose identifying metadata has been recorded but whose required External Evidence has not yet been linked and validated.
+_Avoid_: Active authority, verified authority
+
+**Revoked Staffing Authority**:
+A Staffing Authority whose revocation has been recorded with supporting evidence without deleting or rewriting the authority, its evidence, or its historical links. Its effect on current Plantilla Positions is determined only by an applicable Authoritative Business Rule.
+_Avoid_: Deleted authority, automatically abolished position
+
+**Recruitable Vacancy**:
+A vacant, authorized Plantilla Position that satisfies every Authoritative Business Rule applicable to recruitment on the relevant date.
+_Avoid_: Vacant status, open job, assumed vacancy
+
 ## Decision Authority
 
 **Authoritative Business Rule**:

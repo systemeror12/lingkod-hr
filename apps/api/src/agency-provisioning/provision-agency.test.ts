@@ -107,8 +107,18 @@ async function cleanup(
     await admin.agencyMembership.deleteMany({ where: { userId: { in: [...userIds] } } });
     await admin.user.deleteMany({ where: { id: { in: [...userIds] } } });
   }
-  await admin.invitation.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
-  await admin.agency.deleteMany({ where: { id: { in: [...agencyIds] } } });
+  await admin.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.agency.updateMany({
+      where: { id: { in: [...agencyIds] } },
+      data: { currentProfileVersionId: null },
+    });
+    await transaction.agencyProfileVersion.deleteMany({
+      where: { agencyId: { in: [...agencyIds] } },
+    });
+    await transaction.invitation.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
+    await transaction.agency.deleteMany({ where: { id: { in: [...agencyIds] } } });
+  });
 }
 
 it('parses the documented non-HTTP provisioning command input', () => {

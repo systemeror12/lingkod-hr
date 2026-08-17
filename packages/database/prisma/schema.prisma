@@ -43,12 +43,20 @@ model AgencyProfileVersion {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                 String   @map("agency_id") @db.Uuid
   versionNo                Int      @map("version_no")
+  officialName             String   @map("official_name")
+  acronym                  String?
+  agencyType               String   @default("NGA") @map("agency_type")
+  parentOrganization       String?  @map("parent_organization")
+  reportingIdentifiers     String?  @map("reporting_identifiers")
   appointingAuthorityTitle String?  @map("appointing_authority_title")
+  defaultTimezone          String   @default("Asia/Manila") @map("default_timezone")
+  defaultCurrency          String   @default("PHP") @map("default_currency") @db.Char(3)
   deploymentProfile        String   @map("deployment_profile")
   effectiveFrom            DateTime @map("effective_from") @db.Date
   effectiveTo              DateTime? @map("effective_to") @db.Date
   configuration            Json     @default("{}")
   status                   String
+  domainStatus             String   @default("ACTIVE") @map("domain_status")
   createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   agency           Agency  @relation("AgencyProfiles", fields: [agencyId], references: [id], onDelete: Restrict)
@@ -56,6 +64,7 @@ model AgencyProfileVersion {
 
   @@unique([agencyId, versionNo])
   @@unique([agencyId, id])
+  @@index([agencyId, effectiveFrom])
   @@map("agency_profile_versions")
 }
 

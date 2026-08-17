@@ -70,6 +70,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
         data: {
           agencyId: agencyA.id,
           versionNo: 1,
+          officialName: agencyA.name,
           deploymentProfile: 'SHARED_SAAS',
           effectiveFrom: new Date('2026-01-01'),
           status: 'ACTIVE',
@@ -80,6 +81,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
       data: {
         agencyId: agencyB.id,
         versionNo: 1,
+        officialName: agencyB.name,
         deploymentProfile: 'SHARED_SAAS',
         effectiveFrom: new Date('2026-01-01'),
         status: 'ACTIVE',
@@ -90,6 +92,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
         data: {
           agencyId: agencyA.id,
           versionNo: 2,
+          officialName: agencyA.name,
           deploymentProfile: 'SHARED_SAAS',
           effectiveFrom: new Date('2026-06-01'),
           status: 'ACTIVE',
@@ -124,6 +127,7 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
           data: {
             agencyId: agencyB.id,
             versionNo: 2,
+            officialName: agencyB.name,
             deploymentProfile: 'SHARED_SAAS',
             effectiveFrom: new Date('2026-01-01'),
             status: 'ACTIVE',
@@ -233,8 +237,11 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
         await transaction.securityEvent.delete({ where: { id: securityEventId } });
       });
     }
-    await admin.agencyProfileVersion.deleteMany({
-      where: { agencyId: { in: [agencyA.id, agencyB.id] } },
+    await admin.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      await transaction.agencyProfileVersion.deleteMany({
+        where: { agencyId: { in: [agencyA.id, agencyB.id] } },
+      });
     });
     await admin.userSession.deleteMany({ where: { userId: { in: [user.id, targetUser.id] } } });
     await admin.membershipRole.deleteMany({

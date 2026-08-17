@@ -11,6 +11,56 @@ const foreignUnitId = '22222222-2222-4222-8222-222222222222';
 const foreignUnitVersionId = '33333333-3333-4333-8333-333333333333';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 
+async function resetProfile(agency: {
+  id: string;
+  name: string;
+  acronym: string | null;
+  agencyType: string;
+  status: string;
+}): Promise<void> {
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.agency.update({
+      where: { id: agency.id },
+      data: { currentProfileVersionId: null },
+    });
+    await transaction.auditEvent.deleteMany({
+      where: { agencyId: agency.id, entityType: 'AgencyProfileVersion' },
+    });
+    await transaction.agencyProfileVersion.deleteMany({ where: { agencyId: agency.id } });
+    const profile = await transaction.agencyProfileVersion.create({
+      data: {
+        agencyId: agency.id,
+        versionNo: 1,
+        officialName: agency.name,
+        acronym: agency.acronym,
+        agencyType: agency.agencyType,
+        parentOrganization: 'Office of the President',
+        reportingIdentifiers: 'UACS 240010000',
+        appointingAuthorityTitle: 'Secretary',
+        defaultTimezone: 'Asia/Manila',
+        defaultCurrency: 'PHP',
+        deploymentProfile: 'SHARED_SAAS',
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        status: 'ACTIVE',
+        domainStatus: agency.status,
+      },
+    });
+    await transaction.agency.update({
+      where: { id: agency.id },
+      data: {
+        currentProfileVersionId: profile.id,
+        name: agency.name,
+        acronym: agency.acronym,
+        agencyType: agency.agencyType,
+        status: agency.status,
+        defaultTimezone: 'Asia/Manila',
+        defaultCurrency: 'PHP',
+      },
+    });
+  });
+}
+
 async function seed(): Promise<void> {
   const agency = await prisma.agency.upsert({
     where: { code: 'E2E-WORK-QUEUE' },
@@ -27,6 +77,7 @@ async function seed(): Promise<void> {
       status: 'ACTIVE',
     },
   });
+  await resetProfile(agency);
   await prisma.invitation.deleteMany({
     where: { agencyId: agency.id, status: 'PENDING' },
   });
@@ -109,6 +160,7 @@ async function seed(): Promise<void> {
       status: 'ACTIVE',
     },
   });
+  await resetProfile(foreignAgency);
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: foreignAgency.id } });

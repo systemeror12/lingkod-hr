@@ -153,6 +153,29 @@ export class AgencyProvisioningCommand {
           agencyId: agency.id,
           operationalProvisioning: true,
         });
+        const effectiveFrom = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+        const profile = await transaction.agencyProfileVersion.create({
+          data: {
+            agencyId: agency.id,
+            versionNo: 1,
+            officialName: normalizedInput.name,
+            acronym: null,
+            agencyType: normalizedInput.agencyType,
+            parentOrganization: null,
+            reportingIdentifiers: null,
+            appointingAuthorityTitle: null,
+            defaultTimezone: 'Asia/Manila',
+            defaultCurrency: 'PHP',
+            deploymentProfile: 'SHARED_SAAS',
+            effectiveFrom,
+            status: 'ACTIVE',
+            domainStatus: 'ACTIVE',
+          },
+        });
+        await transaction.agency.update({
+          where: { id: agency.id },
+          data: { currentProfileVersionId: profile.id },
+        });
         await transaction.securityEvent.create({
           data: {
             agencyId: agency.id,
