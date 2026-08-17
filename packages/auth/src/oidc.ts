@@ -116,7 +116,12 @@ export class OidcClient {
 
   constructor(private readonly options: OidcClientOptions) {}
 
-  async authorizationUrl(state: string, nonce: string, verifier: string): Promise<string> {
+  async authorizationUrl(
+    state: string,
+    nonce: string,
+    verifier: string,
+    loginHint: string | null = null,
+  ): Promise<string> {
     const discovery = await this.discovery();
     const url = new URL(discovery.authorizationEndpoint);
     url.searchParams.set('client_id', this.options.clientId);
@@ -127,6 +132,7 @@ export class OidcClient {
     url.searchParams.set('nonce', nonce);
     url.searchParams.set('code_challenge', createPkceChallenge(verifier));
     url.searchParams.set('code_challenge_method', 'S256');
+    if (loginHint) url.searchParams.set('login_hint', loginHint);
     return url.toString();
   }
 

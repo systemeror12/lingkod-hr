@@ -9,6 +9,7 @@ export interface DatabaseContext {
   invitationTokenHash?: string;
   providerSid?: string;
   platformSecurity?: boolean;
+  operationalProvisioning?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -33,6 +34,11 @@ export async function setDatabaseContext(
       set_config('app.session_token_hash', ${context.sessionTokenHash ?? ''}, true),
       set_config('app.invitation_token_hash', ${context.invitationTokenHash ?? ''}, true),
       set_config('app.provider_sid', ${context.providerSid ?? ''}, true),
-      set_config('app.platform_security', ${context.platformSecurity ? 'true' : ''}, true)
+      set_config('app.platform_security', ${context.platformSecurity ? 'true' : ''}, true),
+      set_config(
+        'app.operational_provisioning',
+        ${context.operationalProvisioning ? 'true' : ''},
+        true
+      )
   `;
 }

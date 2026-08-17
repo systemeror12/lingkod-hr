@@ -1,5 +1,5 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   createSessionToken,
@@ -11,18 +11,31 @@ import {
   type OidcIdentity,
   type PermissionGrant,
   type RequestContext,
+  type SessionDisplay,
   permissionsRequireMfa,
   SCOPE_POLICIES,
   sessionExpiry,
 } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
 import { setDatabaseContext, withDatabaseContext } from '@lingkod-hr/database';
+import {
+  InvitationDeliveryError,
+  InvitationIssueError,
+  InvitationIssuer,
+} from '../invitations/invitation-issuer';
+import {
+  createMailDelivery,
+  INVITATION_MAIL_DELIVERY,
+  type MailDelivery,
+} from '../invitations/mail';
+import { prismaBytes, safeJson, selectInvitationRoles } from '../invitations/invitation-utils';
 
-const INVITATION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 
 export const SESSION_COOKIE = 'hris_session';
 export const OIDC_FLOW_COOKIE = 'hris_oidc_flow';
+export const HRMO_ADMINISTRATOR_ROLE_CODE = 'hrmo_administrator';
+const PENDING_INVITATION_PAGE_SIZE = 100;
 
 interface OidcFlowState {
   state: string;
@@ -46,6 +59,7 @@ export interface AuthenticatedSession {
   createdAt: Date;
   expiresAt: Date;
   context: RequestContext;
+  display: SessionDisplay;
 }
 
 export interface LoginResult extends AuthenticatedSession {
@@ -58,6 +72,14 @@ export interface InvitationResult {
   email: string;
   expiresAt: Date;
   activationToken: string;
+}
+
+export interface PendingInvitation {
+  id: string;
+  email: string;
+  roleCode: string | null;
+  expiresAt: Date;
+  status: 'PENDING';
 }
 
 type SignInTransactionResult =
@@ -83,34 +105,6 @@ function normalizeEmail(email: string): string {
   return normalized;
 }
 
-function normalizeRoleCodes(roleCodes: readonly string[]): string[] {
-  return [...new Set(roleCodes.map((code) => code.trim().toLowerCase()).filter(Boolean))];
-}
-
-function selectInvitationRoles<T extends { agencyId: string | null; code: string }>(
-  roles: readonly T[],
-  roleCodes: readonly string[],
-  agencyId: string,
-): T[] {
-  const selected = new Map<string, T>();
-  for (const role of roles) {
-    const code = role.code.toLowerCase();
-    if (!selected.has(code) || role.agencyId === agencyId) selected.set(code, role);
-  }
-  return roleCodes.flatMap((code) => (selected.has(code) ? [selected.get(code)!] : []));
-}
-
-function prismaBytes(value: Buffer): Uint8Array<ArrayBuffer> {
-  const bytes = new Uint8Array(new ArrayBuffer(value.byteLength));
-  bytes.set(value);
-  return bytes;
-}
-
-function safeJson(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
-  if (value === null) return Prisma.JsonNull;
-  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-}
-
 @Injectable()
 export class AuthService {
   private readonly config = getConfig();
@@ -120,6 +114,14 @@ export class AuthService {
     clientSecret: this.config.OIDC_CLIENT_SECRET,
     redirectUri: this.config.OIDC_REDIRECT_URI,
   });
+  private readonly invitationIssuer: InvitationIssuer;
+
+  constructor(@Optional() @Inject(INVITATION_MAIL_DELIVERY) mailDelivery?: MailDelivery) {
+    this.invitationIssuer = new InvitationIssuer(
+      mailDelivery ?? createMailDelivery(this.config),
+      this.config.API_URL,
+    );
+  }
 
   async beginLogin(
     invitationToken: string | null,
@@ -133,10 +135,24 @@ export class AuthService {
       invitationToken,
       membershipId,
     };
+    const loginHint = invitationToken ? await this.invitationEmailHint(invitationToken) : null;
     return {
-      authorizationUrl: await this.oidc.authorizationUrl(state.state, state.nonce, state.verifier),
+      authorizationUrl: await this.oidc.authorizationUrl(
+        state.state,
+        state.nonce,
+        state.verifier,
+        loginHint,
+      ),
       flowCookie: this.signFlowState(state),
     };
+  }
+
+  hasInvitationFlow(flowCookie: string): boolean {
+    try {
+      return this.readFlowState(flowCookie).invitationToken !== null;
+    } catch {
+      return false;
+    }
   }
 
   async completeLogin(
@@ -198,39 +214,38 @@ export class AuthService {
           await setDatabaseContext(transaction, {
             invitationTokenHash: invitationTokenHash.toString('hex'),
           });
-          const invitation = await transaction.invitation.findFirst({
-            where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
-            select: { id: true, agencyId: true, expiresAt: true },
+        }
+        const pendingInvitation = invitationTokenHash
+          ? await transaction.invitation.findFirst({
+              where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
+              select: { id: true, agencyId: true, emailNormalized: true, expiresAt: true },
+            })
+          : null;
+        if (invitationTokenHash && !pendingInvitation) {
+          throw new AuthServiceError(
+            'The invitation is invalid or already used.',
+            400,
+            'INVITATION_INVALID',
+          );
+        }
+        if (pendingInvitation && pendingInvitation.expiresAt <= now) {
+          await this.expireInvitation(transaction, pendingInvitation, requestId);
+          return { status: 'invitation_expired' as const };
+        }
+        if (
+          pendingInvitation &&
+          normalizeEmail(identity.email) !== pendingInvitation.emailNormalized.toLowerCase()
+        ) {
+          throw new AuthServiceError(
+            'The authenticated email does not match the invitation.',
+            403,
+            'INVITATION_EMAIL_MISMATCH',
+          );
+        }
+        if (invitationTokenHash) {
+          await setDatabaseContext(transaction, {
+            invitationTokenHash: invitationTokenHash.toString('hex'),
           });
-          if (invitation && invitation.expiresAt <= now) {
-            await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
-            await transaction.invitation.update({
-              where: { id: invitation.id },
-              data: { status: 'EXPIRED' },
-            });
-            await transaction.securityEvent.create({
-              data: {
-                agencyId: invitation.agencyId,
-                eventType: 'INVITATION_EXPIRED',
-                requestId,
-                details: { invitationId: invitation.id },
-              },
-            });
-            await transaction.auditEvent.create({
-              data: {
-                agencyId: invitation.agencyId,
-                actorType: 'SYSTEM',
-                action: 'INVITATION_EXPIRED',
-                entityType: 'Invitation',
-                entityId: invitation.id,
-                previousStatus: 'PENDING',
-                newStatus: 'EXPIRED',
-                requestId,
-                metadata: {},
-              },
-            });
-            return { status: 'invitation_expired' as const };
-          }
         }
 
         const user = await this.resolveIdentity(transaction, identity);
@@ -385,7 +400,7 @@ export class AuthService {
           return null;
         }
 
-        const context = await this.contextFor(transaction, user.id, membership, requestId);
+        const resolved = await this.sessionContextFor(transaction, user.id, membership, requestId);
         if (
           (await this.userRequiresMfa(transaction, user.id, membership.agencyId, membership.id)) &&
           !hasMfaEvidence(session.authenticationMethods)
@@ -411,7 +426,8 @@ export class AuthService {
           authTime: session.authTime,
           createdAt: session.createdAt,
           expiresAt: session.expiresAt,
-          context,
+          context: resolved.context,
+          display: resolved.display,
         };
       },
     );
@@ -436,122 +452,140 @@ export class AuthService {
     roleCodes: readonly string[],
     requestId: string,
   ): Promise<InvitationResult> {
-    const agencyRecord = { agencyId: context.agencyId };
-    if (!hasPermission(context, 'security.users.invite', agencyRecord)) {
-      throw new AuthServiceError(
-        'The current Membership cannot invite users.',
-        403,
-        'INVITATION_FORBIDDEN',
-      );
-    }
-    if (!hasPermission(context, 'security.users.update_roles', agencyRecord)) {
-      throw new AuthServiceError(
-        'The current Membership cannot assign Agency roles.',
-        403,
-        'ROLE_ASSIGNMENT_FORBIDDEN',
-      );
-    }
-    const normalizedEmail = normalizeEmail(email);
-    const requestedRoleCodes = normalizeRoleCodes(roleCodes);
-    if (requestedRoleCodes.length === 0) {
-      throw new AuthServiceError('At least one Agency role is required.', 400, 'ROLE_REQUIRED');
-    }
-    const activationToken = randomBytes(32).toString('base64url');
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + INVITATION_LIFETIME_MS);
-
-    return withDatabaseContext(context, async (transaction) => {
-      const availableRoles = await transaction.role.findMany({
-        where: {
-          code: { in: requestedRoleCodes },
-          status: 'ACTIVE',
-          OR: [{ agencyId: null }, { agencyId: context.agencyId }],
-        },
-        select: { agencyId: true, code: true },
-      });
-      const roles = selectInvitationRoles(availableRoles, requestedRoleCodes, context.agencyId);
-      if (roles.length !== requestedRoleCodes.length) {
-        throw new AuthServiceError(
-          'One or more requested roles are unavailable.',
-          400,
-          'ROLE_NOT_FOUND',
-        );
-      }
-      const emailOwner = await transaction.user.findUnique({
-        where: { emailNormalized: normalizedEmail },
-        select: { id: true },
-      });
-      const existingMembership = emailOwner
-        ? await transaction.agencyMembership.findFirst({
-            where: { agencyId: context.agencyId, userId: emailOwner.id },
-            select: { status: true },
-          })
-        : null;
-      if (existingMembership && existingMembership.status !== 'INVITED') {
-        throw new AuthServiceError(
-          'The User already has an Agency Membership.',
-          409,
-          'MEMBERSHIP_EXISTS',
-        );
-      }
-      const expiredInvitations = await transaction.invitation.updateManyAndReturn({
-        where: {
+    this.assertInvitationManagementAccess(context);
+    let invitation;
+    try {
+      invitation = await withDatabaseContext(context, (transaction) =>
+        this.invitationIssuer.issueInTransaction(transaction, {
           agencyId: context.agencyId,
-          emailNormalized: normalizedEmail,
-          status: 'PENDING',
-          expiresAt: { lte: now },
-        },
-        data: { status: 'EXPIRED' },
-        select: { id: true },
-      });
-      for (const expiredInvitation of expiredInvitations) {
-        await this.recordSecurityEvent(transaction, context, 'INVITATION_EXPIRED', requestId, {
-          invitationId: expiredInvitation.id,
-        });
-        await this.recordAuditEvent(transaction, context, {
-          action: 'INVITATION_EXPIRED',
-          entityType: 'Invitation',
-          entityId: expiredInvitation.id,
-          previousStatus: 'PENDING',
-          newStatus: 'EXPIRED',
-          requestId,
-          metadata: { email: normalizedEmail },
-        });
-      }
-      const invitation = await transaction.invitation.create({
-        data: {
-          agencyId: context.agencyId,
-          emailNormalized: normalizedEmail,
+          email,
+          roleCodes,
           invitedByMembershipId: context.membershipId,
-          tokenHash: prismaBytes(hashSessionToken(activationToken)),
-          requestedRoleCodes,
-          expiresAt,
-          status: 'PENDING',
-        },
-      });
-      await this.recordSecurityEvent(transaction, context, 'INVITATION_CREATED', requestId, {
-        invitationId: invitation.id,
-        email: normalizedEmail,
-        roleCodes: roles.map(({ code }) => code),
-      });
-      await this.recordAuditEvent(transaction, context, {
-        action: 'INVITATION_CREATED',
-        entityType: 'Invitation',
-        entityId: invitation.id,
-        requestId,
-        metadata: { email: normalizedEmail, roleCodes: roles.map(({ code }) => code) },
-      });
-      return { id: invitation.id, email: normalizedEmail, expiresAt, activationToken };
-    }).catch((error: unknown) => {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          actor: { type: 'USER', userId: context.userId, membershipId: context.membershipId },
+          requestId,
+        }),
+      );
+    } catch (error: unknown) {
+      if (error instanceof InvitationIssueError) {
+        throw new AuthServiceError(error.message, error.statusCode, error.code);
+      }
+      throw error;
+    }
+    try {
+      await this.invitationIssuer.deliver(invitation);
+    } catch (error: unknown) {
+      if (error instanceof InvitationDeliveryError) {
+        try {
+          await withDatabaseContext(context, (transaction) =>
+            this.invitationIssuer.cancelPendingInvitationInTransaction(transaction, {
+              agencyId: context.agencyId,
+              invitationId: invitation.id,
+              requestId,
+              actor: { type: 'USER', userId: context.userId, membershipId: context.membershipId },
+              reason: 'INVITATION_DELIVERY_FAILED',
+            }),
+          );
+        } catch {
+          throw new AuthServiceError(
+            'The invitation could not be delivered or safely cancelled.',
+            502,
+            'INVITATION_DELIVERY_FAILED',
+          );
+        }
         throw new AuthServiceError(
-          'A pending invitation already exists for this email.',
-          409,
-          'INVITATION_PENDING',
+          'The invitation could not be delivered.',
+          502,
+          'INVITATION_DELIVERY_FAILED',
         );
       }
       throw error;
+    }
+    return {
+      id: invitation.id,
+      email: invitation.email,
+      expiresAt: invitation.expiresAt,
+      activationToken: invitation.activationToken,
+    };
+  }
+
+  async createHrmoAdministratorInvitation(
+    context: RequestContext,
+    email: string,
+    roleCodes: readonly string[],
+    requestId: string,
+  ): Promise<InvitationResult> {
+    this.assertInvitationManagementAccess(context);
+    if (
+      roleCodes.length !== 1 ||
+      roleCodes[0]?.trim().toLowerCase() !== HRMO_ADMINISTRATOR_ROLE_CODE
+    ) {
+      throw new AuthServiceError(
+        'This workflow can assign only the HRMO Administrator role.',
+        400,
+        'ROLE_NOT_ALLOWED',
+      );
+    }
+    return this.createInvitation(context, email, [HRMO_ADMINISTRATOR_ROLE_CODE], requestId);
+  }
+
+  async listPendingInvitations(context: RequestContext): Promise<{
+    pendingCount: number;
+    hasMore: boolean;
+    invitations: PendingInvitation[];
+  }> {
+    this.assertInvitationManagementAccess(context);
+    const now = new Date();
+    return withDatabaseContext(context, async (transaction) => {
+      const where = { agencyId: context.agencyId, status: 'PENDING', expiresAt: { gt: now } };
+      const [pendingCount, invitations] = await Promise.all([
+        transaction.invitation.count({ where }),
+        transaction.invitation.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          take: PENDING_INVITATION_PAGE_SIZE,
+          select: {
+            id: true,
+            emailNormalized: true,
+            requestedRoleCodes: true,
+            expiresAt: true,
+            status: true,
+          },
+        }),
+      ]);
+      return {
+        pendingCount,
+        hasMore: pendingCount > invitations.length,
+        invitations: invitations.map((invitation) => ({
+          id: invitation.id,
+          email: invitation.emailNormalized,
+          roleCode: invitation.requestedRoleCodes[0] ?? null,
+          expiresAt: invitation.expiresAt,
+          status: 'PENDING' as const,
+        })),
+      };
     });
+  }
+
+  async inspectInvitationToken(
+    token: string,
+    requestId: string,
+  ): Promise<'VALID' | 'INVALID' | 'EXPIRED'> {
+    const tokenHash = hashSessionToken(token);
+    return withDatabaseContext(
+      { invitationTokenHash: tokenHash.toString('hex') },
+      async (transaction) => {
+        const invitation = await transaction.invitation.findFirst({
+          where: { tokenHash: prismaBytes(tokenHash), status: 'PENDING' },
+          select: { id: true, agencyId: true, expiresAt: true, emailNormalized: true },
+        });
+        if (!invitation) return 'INVALID' as const;
+        if (invitation.expiresAt <= new Date()) {
+          await this.expireInvitation(transaction, invitation, requestId);
+          return 'EXPIRED' as const;
+        }
+        return 'VALID' as const;
+      },
+    );
   }
 
   async revokeSession(
@@ -750,6 +784,75 @@ export class AuthService {
           { providerEventId: identity.eventId },
         );
       }
+    });
+  }
+
+  private assertInvitationManagementAccess(context: RequestContext): void {
+    const agencyRecord = { agencyId: context.agencyId };
+    if (!hasPermission(context, 'security.users.invite', agencyRecord)) {
+      throw new AuthServiceError(
+        'The current Membership cannot invite users.',
+        403,
+        'INVITATION_FORBIDDEN',
+      );
+    }
+    if (!hasPermission(context, 'security.users.update_roles', agencyRecord)) {
+      throw new AuthServiceError(
+        'The current Membership cannot assign Agency roles.',
+        403,
+        'ROLE_ASSIGNMENT_FORBIDDEN',
+      );
+    }
+  }
+
+  private async invitationEmailHint(token: string): Promise<string | null> {
+    const tokenHash = hashSessionToken(token);
+    return withDatabaseContext(
+      { invitationTokenHash: tokenHash.toString('hex') },
+      async (transaction) => {
+        const invitation = await transaction.invitation.findFirst({
+          where: {
+            tokenHash: prismaBytes(tokenHash),
+            status: 'PENDING',
+            expiresAt: { gt: new Date() },
+          },
+          select: { emailNormalized: true },
+        });
+        return invitation?.emailNormalized.toLowerCase() ?? null;
+      },
+    );
+  }
+
+  private async expireInvitation(
+    transaction: Prisma.TransactionClient,
+    invitation: { id: string; agencyId: string },
+    requestId: string,
+  ): Promise<void> {
+    await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
+    await transaction.invitation.update({
+      where: { id: invitation.id },
+      data: { status: 'EXPIRED' },
+    });
+    await transaction.securityEvent.create({
+      data: {
+        agencyId: invitation.agencyId,
+        eventType: 'INVITATION_EXPIRED',
+        requestId,
+        details: { invitationId: invitation.id },
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        agencyId: invitation.agencyId,
+        actorType: 'SYSTEM',
+        action: 'INVITATION_EXPIRED',
+        entityType: 'Invitation',
+        entityId: invitation.id,
+        previousStatus: 'PENDING',
+        newStatus: 'EXPIRED',
+        requestId,
+        metadata: {},
+      },
     });
   }
 
@@ -987,7 +1090,7 @@ export class AuthService {
         expiresAt: previousSession?.expiresAt ?? sessionExpiry(createdAt),
       },
     });
-    const context = await this.contextFor(transaction, userId, membership, requestId);
+    const resolved = await this.sessionContextFor(transaction, userId, membership, requestId);
     await transaction.securityEvent.create({
       data: {
         agencyId: membership.agencyId,
@@ -998,7 +1101,7 @@ export class AuthService {
         details: { provider: identity.issuer || this.config.OIDC_ISSUER },
       },
     });
-    await this.recordAuditEvent(transaction, context, {
+    await this.recordAuditEvent(transaction, resolved.context, {
       action: 'LOGIN_SUCCESS',
       entityType: 'UserSession',
       entityId: session.id,
@@ -1013,7 +1116,8 @@ export class AuthService {
       authTime: session.authTime,
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
-      context,
+      context: resolved.context,
+      display: resolved.display,
     };
   }
 
@@ -1073,33 +1177,50 @@ export class AuthService {
     }
   }
 
-  private async contextFor(
+  private async sessionContextFor(
     transaction: Prisma.TransactionClient,
     userId: string,
     membership: { id: string; agencyId: string; primaryOrganizationUnitId: string | null },
     requestId: string,
-  ): Promise<RequestContext> {
+  ): Promise<{ context: RequestContext; display: SessionDisplay }> {
     const now = new Date();
-    const assignments = await transaction.membershipRole.findMany({
-      where: {
-        agencyId: membership.agencyId,
-        membershipId: membership.id,
-        role: { status: 'ACTIVE' },
-        effectiveFrom: { lte: now },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-      },
-      select: {
-        role: {
-          select: {
-            permissions: {
-              select: { permission: { select: { code: true } }, scopePolicy: true },
+    const [agency, user, assignments] = await Promise.all([
+      transaction.agency.findUniqueOrThrow({
+        where: { id: membership.agencyId },
+        select: { id: true, name: true, acronym: true },
+      }),
+      transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { id: true, displayName: true, emailNormalized: true },
+      }),
+      transaction.membershipRole.findMany({
+        where: {
+          agencyId: membership.agencyId,
+          membershipId: membership.id,
+          role: { status: 'ACTIVE' },
+          effectiveFrom: { lte: now },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+        },
+        select: {
+          role: {
+            select: {
+              code: true,
+              name: true,
+              permissions: {
+                select: { permission: { select: { code: true } }, scopePolicy: true },
+              },
             },
           },
         },
-      },
-    });
+      }),
+    ]);
     const permissions = new Map<string, PermissionGrant>();
+    const roles = new Map<string, { code: string; name: string }>();
     for (const assignment of assignments) {
+      roles.set(assignment.role.code, {
+        code: assignment.role.code,
+        name: assignment.role.name,
+      });
       for (const grant of assignment.role.permissions) {
         if (SCOPE_POLICIES.includes(grant.scopePolicy as (typeof SCOPE_POLICIES)[number])) {
           permissions.set(`${grant.permission.code}:${grant.scopePolicy}`, {
@@ -1110,12 +1231,25 @@ export class AuthService {
       }
     }
     return {
-      requestId,
-      userId,
-      agencyId: membership.agencyId,
-      membershipId: membership.id,
-      primaryOrganizationUnitId: membership.primaryOrganizationUnitId,
-      permissions: [...permissions.values()],
+      context: {
+        requestId,
+        userId,
+        agencyId: membership.agencyId,
+        membershipId: membership.id,
+        primaryOrganizationUnitId: membership.primaryOrganizationUnitId,
+        permissions: [...permissions.values()],
+      },
+      display: {
+        agency,
+        identity: {
+          id: user.id,
+          displayName: user.displayName,
+          email: user.emailNormalized,
+        },
+        effectiveRoles: [...roles.values()].sort((left, right) =>
+          left.name.localeCompare(right.name),
+        ),
+      },
     };
   }
 

@@ -3,9 +3,12 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import type { AuthenticatedRequest } from './auth.types';
 
 export const REQUIRED_PERMISSIONS = 'required_permissions';
+export const REQUIRED_ROLES = 'required_roles';
 
 export const RequirePermission = (...permissions: string[]) =>
   SetMetadata(REQUIRED_PERMISSIONS, permissions);
+
+export const RequireRole = (...roles: string[]) => SetMetadata(REQUIRED_ROLES, roles);
 
 export const CurrentContext = createParamDecorator(
   (_data: unknown, executionContext: ExecutionContext): RequestContext => {

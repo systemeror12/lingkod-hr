@@ -18,6 +18,13 @@ function rolePassword(urlValue: string, role: string): string {
   return decodeURIComponent(url.password);
 }
 
+function developmentOperationalUrl(migratorUrl: string): string {
+  const url = new URL(migratorUrl);
+  url.username = 'hris_operator';
+  url.password = 'local_operator';
+  return url.toString();
+}
+
 function sqlIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
@@ -40,12 +47,18 @@ async function main(): Promise<void> {
   const ownerUrl = required('DATABASE_MIGRATION_OWNER_URL');
   const appUrl = required('DATABASE_URL');
   const migratorUrl = required('DATABASE_DIRECT_URL');
+  const operationalUrl =
+    process.env.DATABASE_OPERATIONAL_URL ??
+    (process.env.APP_ENV === 'production'
+      ? required('DATABASE_OPERATIONAL_URL')
+      : developmentOperationalUrl(migratorUrl));
   const ownerDatabase = new URL(ownerUrl);
   const database = new PrismaClient({ datasources: { db: { url: ownerUrl } } });
 
   try {
     await ensureRole(database, 'hris_migrator', rolePassword(migratorUrl, 'hris_migrator'));
     await ensureRole(database, 'hris_app', rolePassword(appUrl, 'hris_app'));
+    await ensureRole(database, 'hris_operator', rolePassword(operationalUrl, 'hris_operator'));
     const databaseName = decodeURIComponent(ownerDatabase.pathname.slice(1));
     for (const extension of ['pgcrypto', 'btree_gist', 'citext']) {
       await database.$executeRawUnsafe(
@@ -57,10 +70,10 @@ async function main(): Promise<void> {
     }
     await database.$executeRawUnsafe('GRANT hris_migrator TO current_user');
     await database.$executeRawUnsafe(
-      `GRANT CONNECT ON DATABASE ${sqlIdentifier(databaseName)} TO hris_migrator, hris_app`,
+      `GRANT CONNECT ON DATABASE ${sqlIdentifier(databaseName)} TO hris_migrator, hris_app, hris_operator`,
     );
     await database.$executeRawUnsafe('GRANT USAGE, CREATE ON SCHEMA public TO hris_migrator');
-    await database.$executeRawUnsafe('GRANT USAGE ON SCHEMA public TO hris_app');
+    await database.$executeRawUnsafe('GRANT USAGE ON SCHEMA public TO hris_app, hris_operator');
     await database.$executeRawUnsafe(
       'ALTER DEFAULT PRIVILEGES FOR ROLE hris_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO hris_app',
     );

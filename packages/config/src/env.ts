@@ -11,6 +11,7 @@ const localDefaults = {
   API_URL: 'http://localhost:3001',
   DATABASE_URL: 'postgresql://hris_app:local_app@localhost:55432/hris',
   DATABASE_DIRECT_URL: 'postgresql://hris_migrator:local_migrator@localhost:55432/hris',
+  DATABASE_OPERATIONAL_URL: 'postgresql://hris_operator:local_operator@localhost:55432/hris',
   REDIS_URL: 'redis://localhost:6379',
   OIDC_ISSUER: 'https://example.invalid',
   OIDC_CLIENT_ID: 'local-client',
@@ -23,6 +24,9 @@ const localDefaults = {
   S3_ACCESS_KEY_ID: 'lingkod_local',
   S3_SECRET_ACCESS_KEY: 'lingkod_local_secret',
   EMAIL_FROM: 'lingkod-hr@localhost.test',
+  EMAIL_HOST: 'localhost',
+  EMAIL_PORT: '1025',
+  EMAIL_SECURE: 'false',
   EMAIL_PROVIDER_API_KEY: 'local-only',
 };
 
@@ -40,6 +44,7 @@ const configSchema = z.object({
   WORKER_PORT: z.coerce.number().int().positive(),
   DATABASE_URL: z.string().url(),
   DATABASE_DIRECT_URL: z.string().url(),
+  DATABASE_OPERATIONAL_URL: z.string().url().optional(),
   REDIS_URL: z.string().url(),
   OIDC_ISSUER: z.string().url(),
   OIDC_CLIENT_ID: z.string().min(1),
@@ -59,6 +64,12 @@ const configSchema = z.object({
     .default('false')
     .transform((value) => value === 'true'),
   EMAIL_FROM: z.string().email(),
+  EMAIL_HOST: z.string().min(1),
+  EMAIL_PORT: z.coerce.number().int().positive(),
+  EMAIL_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   EMAIL_PROVIDER_API_KEY: z.string().min(1),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
   ERROR_TRACKING_DSN: optionalUrl,

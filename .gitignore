@@ -76,7 +76,11 @@ web_modules/
 
 # Next.js build output
 .next
+.next-*
+.next-e2e
 out
+playwright-report
+test-results
 
 # Nuxt.js build / generate output
 .nuxt
