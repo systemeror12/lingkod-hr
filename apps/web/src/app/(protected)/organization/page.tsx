@@ -5,6 +5,7 @@ import {
   AgencyProfileWorkspace,
   type AgencyProfileResponse,
 } from '../../../components/agency-profile-workspace';
+import { OrganizationHierarchyPrototype } from '../../../components/organization-hierarchy-prototype';
 import { OrganizationWorkspace } from '../../../components/organization-workspace';
 import { ShellState } from '../../../components/shell-state';
 import { getActiveSession, hasPermission } from '../../../lib/session';
@@ -26,7 +27,18 @@ interface OrganizationUnitListResponse {
 
 export const dynamic = 'force-dynamic';
 
-export default async function OrganizationPage() {
+export default async function OrganizationPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ variant?: string | string[] }>;
+}) {
+  const requestedVariant = (await searchParams).variant;
+  const prototypeVariant =
+    process.env.NODE_ENV !== 'production' &&
+    typeof requestedVariant === 'string' &&
+    ['A', 'B', 'C'].includes(requestedVariant)
+      ? requestedVariant
+      : null;
   const session = await getActiveSession();
   const canReadProfile = hasPermission(session, 'organization.agency.read');
   const canReadUnits = hasPermission(session, 'organization.units.read');
@@ -104,8 +116,8 @@ export default async function OrganizationPage() {
   }
 
   return (
-    <div className="grid gap-12">
-      {profile ? (
+    <div className="grid min-w-0 gap-12">
+      {profile && !prototypeVariant ? (
         <AgencyProfileWorkspace
           agencyId={session.agencyId}
           canUpdate={hasPermission(session, 'organization.agency.update')}
@@ -113,12 +125,20 @@ export default async function OrganizationPage() {
         />
       ) : null}
       {initial ? (
-        <section className="grid gap-7 border-t border-line pt-10">
-          <OrganizationWorkspace
-            agencyId={session.agencyId}
-            canCreate={hasPermission(session, 'organization.units.create')}
-            initial={initial}
-          />
+        <section className="grid min-w-0 gap-7 border-t border-line pt-10">
+          {prototypeVariant ? (
+            <OrganizationHierarchyPrototype
+              agencyName={session.agency.name}
+              drafts={initial.units}
+              variant={prototypeVariant}
+            />
+          ) : (
+            <OrganizationWorkspace
+              agencyId={session.agencyId}
+              canCreate={hasPermission(session, 'organization.units.create')}
+              initial={initial}
+            />
+          )}
         </section>
       ) : null}
     </div>
