@@ -8,6 +8,7 @@ import {
 import { OrganizationWorkspace } from '../../../components/organization-workspace';
 import { ShellState } from '../../../components/shell-state';
 import { getActiveSession, hasPermission } from '../../../lib/session';
+import { manilaToday } from '../../../lib/manila-date';
 
 export const metadata: Metadata = { title: 'Organization' };
 
@@ -17,6 +18,10 @@ interface OrganizationUnit {
   officialName: string;
   unitType: 'DEPARTMENT' | 'BUREAU' | 'SERVICE' | 'DIVISION' | 'SECTION' | 'OFFICE' | 'OTHER';
   effectiveDate: string;
+  effectiveTo: string | null;
+  parentUnitId: string | null;
+  versionState: 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'VOIDED';
+  lifecycleStatus: 'ACTIVE' | 'INACTIVE' | 'ABOLISHED';
   status: 'DRAFT' | 'ACTIVE' | 'INACTIVE' | 'ABOLISHED';
 }
 
@@ -24,9 +29,29 @@ interface OrganizationUnitListResponse {
   units: OrganizationUnit[];
 }
 
+interface OrganizationHierarchyResponse {
+  asOf: string;
+  eligibleParentIds: string[];
+  units: Array<{
+    id: string;
+    code: string;
+    officialName: string;
+    unitType: OrganizationUnit['unitType'];
+    parentUnitId: string | null;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    lifecycleStatus: OrganizationUnit['lifecycleStatus'];
+    childCount: number;
+  }>;
+}
+
 export const dynamic = 'force-dynamic';
 
-export default async function OrganizationPage() {
+export default async function OrganizationPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ asOf?: string | string[] }>;
+}) {
   const session = await getActiveSession();
   const canReadProfile = hasPermission(session, 'organization.agency.read');
   const canReadUnits = hasPermission(session, 'organization.units.read');
@@ -76,11 +101,29 @@ export default async function OrganizationPage() {
   }
 
   let initial: OrganizationUnitListResponse | null = null;
+  let initialHierarchy: OrganizationHierarchyResponse | null = null;
   if (canReadUnits) {
-    const response = await fetch(
-      `${config.API_URL}/api/v1/agencies/${session.agencyId}/organization-units`,
-      requestOptions,
-    );
+    const requestedAsOf = (await searchParams).asOf;
+    const parsedAsOf =
+      typeof requestedAsOf === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(requestedAsOf)
+        ? new Date(`${requestedAsOf}T00:00:00.000Z`)
+        : null;
+    const asOf =
+      parsedAsOf &&
+      !Number.isNaN(parsedAsOf.getTime()) &&
+      parsedAsOf.toISOString().slice(0, 10) === requestedAsOf
+        ? requestedAsOf
+        : manilaToday();
+    const [response, hierarchyResponse] = await Promise.all([
+      fetch(
+        `${config.API_URL}/api/v1/agencies/${session.agencyId}/organization-units`,
+        requestOptions,
+      ),
+      fetch(
+        `${config.API_URL}/api/v1/agencies/${session.agencyId}/organization-units/hierarchy?asOf=${asOf}`,
+        requestOptions,
+      ),
+    ]);
     if (response.status === 403) {
       return (
         <ShellState
@@ -100,11 +143,13 @@ export default async function OrganizationPage() {
       );
     }
     if (!response.ok) throw new Error('Organization could not be loaded.');
+    if (!hierarchyResponse.ok) throw new Error('Organization hierarchy could not be loaded.');
     initial = (await response.json()) as OrganizationUnitListResponse;
+    initialHierarchy = (await hierarchyResponse.json()) as OrganizationHierarchyResponse;
   }
 
   return (
-    <div className="grid gap-12">
+    <div className="grid min-w-0 gap-12">
       {profile ? (
         <AgencyProfileWorkspace
           agencyId={session.agencyId}
@@ -112,12 +157,14 @@ export default async function OrganizationPage() {
           initial={profile}
         />
       ) : null}
-      {initial ? (
-        <section className="grid gap-7 border-t border-line pt-10">
+      {initial && initialHierarchy ? (
+        <section className="grid min-w-0 gap-7 border-t border-line pt-10">
           <OrganizationWorkspace
             agencyId={session.agencyId}
+            canActivate={hasPermission(session, 'organization.units.activate')}
             canCreate={hasPermission(session, 'organization.units.create')}
             initial={initial}
+            initialHierarchy={initialHierarchy}
           />
         </section>
       ) : null}

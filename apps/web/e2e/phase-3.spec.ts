@@ -212,7 +212,9 @@ test.describe('Phase 3 acceptance gate', () => {
       expect(foreignRecord.status()).toBe(404);
 
       await hrmoPage.goto('/organization');
-      await expect(hrmoPage.getByRole('heading', { name: 'Organization Units' })).toBeVisible();
+      await expect(
+        hrmoPage.getByRole('heading', { name: 'Organization Units', exact: true }),
+      ).toBeVisible();
       await hrmoPage.getByRole('button', { name: 'Create Organization Unit' }).click();
       const organizationDialog = hrmoPage.getByRole('dialog', {
         name: 'Create Organization Unit',

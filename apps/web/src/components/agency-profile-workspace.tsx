@@ -829,7 +829,7 @@ export function AgencyProfileWorkspace({
   }
 
   return (
-    <div className="grid gap-7">
+    <div className="grid min-w-0 gap-7">
       {notice ? (
         <p
           className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
@@ -951,7 +951,7 @@ export function AgencyProfileWorkspace({
       )}
 
       <section
-        className="rounded-[5px] border border-line bg-paper"
+        className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
         aria-labelledby="profile-history-heading"
       >
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4">

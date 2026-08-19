@@ -6,6 +6,7 @@ import { auditEventCursorSchema } from './audit.schemas';
 
 export const ORGANIZATION_UNIT_AUDIT_ENTITY = 'OrganizationUnit';
 export const ORGANIZATION_UNIT_CREATED_AUDIT_ACTION = 'ORGANIZATION_UNIT_CREATED';
+export const ORGANIZATION_UNIT_ACTIVATED_AUDIT_ACTION = 'ORGANIZATION_UNIT_ACTIVATED';
 const DEFAULT_PAGE_SIZE = 25;
 
 export type AuditActorType = 'USER' | 'SYSTEM' | 'INTEGRATION';
@@ -61,7 +62,23 @@ const ORGANIZATION_UNIT_EVIDENCE_FIELDS = [
   'code',
   'unitType',
   'effectiveDate',
+  'parentUnitId',
+  'versionState',
+  'lifecycleStatus',
 ] as const;
+
+const ORGANIZATION_UNIT_AUDIT_TRANSITIONS: Prisma.AuditEventWhereInput[] = [
+  {
+    action: ORGANIZATION_UNIT_CREATED_AUDIT_ACTION,
+    previousStatus: 'None',
+    newStatus: 'DRAFT',
+  },
+  {
+    action: ORGANIZATION_UNIT_ACTIVATED_AUDIT_ACTION,
+    previousStatus: 'DRAFT',
+    newStatus: 'ACTIVE',
+  },
+];
 
 function isRecord(value: SanitizedAuditValue | null): value is Record<string, SanitizedAuditValue> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -104,7 +121,7 @@ function organizationUnitEvidence(value: SanitizedAuditValue | null): SanitizedA
   if (!isRecord(value)) return null;
   const evidence: Record<string, SanitizedAuditValue> = {};
   for (const field of ORGANIZATION_UNIT_EVIDENCE_FIELDS) {
-    if (typeof value[field] === 'string') evidence[field] = value[field];
+    if (typeof value[field] === 'string' || value[field] === null) evidence[field] = value[field];
   }
   return evidence;
 }
@@ -227,14 +244,16 @@ export class AuditService {
       const where: Prisma.AuditEventWhereInput = {
         agencyId: context.agencyId,
         entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
-        action: ORGANIZATION_UNIT_CREATED_AUDIT_ACTION,
-        previousStatus: 'None',
-        newStatus: 'DRAFT',
+        OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
       };
       if (cursor) {
-        where.OR = [
-          { occurredAt: { lt: cursor.occurredAt } },
-          { occurredAt: cursor.occurredAt, id: { lt: cursor.id } },
+        where.AND = [
+          {
+            OR: [
+              { occurredAt: { lt: cursor.occurredAt } },
+              { occurredAt: cursor.occurredAt, id: { lt: cursor.id } },
+            ],
+          },
         ];
       }
 
@@ -262,9 +281,7 @@ export class AuditService {
           id,
           agencyId: context.agencyId,
           entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
-          action: ORGANIZATION_UNIT_CREATED_AUDIT_ACTION,
-          previousStatus: 'None',
-          newStatus: 'DRAFT',
+          OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
         },
         select: auditEventSelect,
       });

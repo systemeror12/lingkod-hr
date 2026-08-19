@@ -3,11 +3,13 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpException,
   Inject,
   NotFoundException,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
@@ -15,8 +17,18 @@ import { AuthGuard } from '../auth/auth.guard';
 import { PermissionGuard } from '../auth/permission.guard';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { agencyIdSchema } from '../auth/auth.schemas';
-import { OrganizationUnitDto, OrganizationUnitListResponseDto } from './organization.dto';
-import { organizationUnitCreateSchema, organizationUnitIdSchema } from './organization.schemas';
+import {
+  OrganizationHierarchyResponseDto,
+  OrganizationUnitDto,
+  OrganizationUnitListResponseDto,
+} from './organization.dto';
+import {
+  organizationIdempotencyKeySchema,
+  organizationHierarchyQuerySchema,
+  organizationUnitActivationSchema,
+  organizationUnitCreateSchema,
+  organizationUnitIdSchema,
+} from './organization.schemas';
 import { OrganizationService, OrganizationServiceError } from './organization.service';
 
 function translateServiceError(error: unknown, requestId: string): never {
@@ -53,6 +65,37 @@ export class OrganizationController {
     this.assertReadAgency(agencyId, context);
     try {
       return new OrganizationUnitListResponseDto(await this.organizationService.list(context));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/organization-units/hierarchy')
+  async hierarchy(
+    @Param('agencyId') agencyId: string,
+    @Query() query: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OrganizationHierarchyResponseDto> {
+    this.assertReadAgency(agencyId, context);
+    const parsed = organizationHierarchyQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        error: {
+          code: 'INVALID_INPUT',
+          message: 'Choose a valid hierarchy date.',
+          fields: validationFields(parsed.error.issues),
+          requestId: context.requestId,
+        },
+      });
+    }
+    try {
+      return new OrganizationHierarchyResponseDto(
+        await this.organizationService.hierarchy(
+          context,
+          parsed.data.asOf,
+          parsed.data.parentForUnitId,
+        ),
+      );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
@@ -98,6 +141,53 @@ export class OrganizationController {
     }
     try {
       return new OrganizationUnitDto(await this.organizationService.create(context, parsed.data));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/organization-units/:unitId/activate')
+  @RequirePermission('organization.units.activate')
+  async activate(
+    @Param('agencyId') agencyId: string,
+    @Param('unitId') unitId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<OrganizationUnitDto> {
+    this.assertReadAgency(agencyId, context);
+    const parsedUnitId = organizationUnitIdSchema.safeParse(unitId);
+    if (!parsedUnitId.success) throw this.notFound(context);
+    const parsed = organizationUnitActivationSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        error: {
+          code: 'INVALID_INPUT',
+          message: 'Choose an eligible parent and enter an activation reason.',
+          fields: validationFields(parsed.error.issues),
+          requestId: context.requestId,
+        },
+      });
+    }
+    const parsedIdempotencyKey = idempotencyKey
+      ? organizationIdempotencyKeySchema.safeParse(idempotencyKey)
+      : null;
+    if (parsedIdempotencyKey && !parsedIdempotencyKey.success) {
+      throw new BadRequestException({
+        error: {
+          code: 'INVALID_IDEMPOTENCY_KEY',
+          message: 'Enter a valid Idempotency-Key.',
+          requestId: context.requestId,
+        },
+      });
+    }
+    try {
+      return new OrganizationUnitDto(
+        await this.organizationService.activate(context, parsedUnitId.data, {
+          ...parsed.data,
+          ...(parsedIdempotencyKey ? { idempotencyKey: parsedIdempotencyKey.data } : {}),
+        }),
+      );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
