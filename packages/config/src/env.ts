@@ -13,7 +13,7 @@ const localDefaults = {
   DATABASE_DIRECT_URL: 'postgresql://hris_migrator:local_migrator@localhost:55432/hris',
   DATABASE_OPERATIONAL_URL: 'postgresql://hris_operator:local_operator@localhost:55432/hris',
   REDIS_URL: 'redis://localhost:6379',
-  OIDC_ISSUER: 'https://example.invalid',
+  OIDC_ISSUER: 'http://127.0.0.1:4100',
   OIDC_CLIENT_ID: 'local-client',
   OIDC_CLIENT_SECRET: 'local-client-secret',
   OIDC_REDIRECT_URI: 'http://localhost:3001/api/v1/auth/callback',

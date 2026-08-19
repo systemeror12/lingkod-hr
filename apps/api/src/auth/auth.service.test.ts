@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { hashSessionToken, type OidcIdentity, type RequestContext } from '@lingkod-hr/auth';
+import { getConfig } from '@lingkod-hr/config';
 import type { ExecutionContext } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { expect, it, vi } from 'vitest';
@@ -8,10 +9,11 @@ import { AuthGuard } from './auth.guard';
 import { AuthService, AuthServiceError } from './auth.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
+const issuer = getConfig().OIDC_ISSUER;
 
 function identity(subject: string, email: string, authTime: Date | null = null): OidcIdentity {
   return {
-    issuer: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+    issuer,
     subject,
     email,
     displayName: 'E2E User',
@@ -165,7 +167,7 @@ it.skipIf(!enabled)(
     });
     const inviter = await admin.user.create({
       data: {
-        identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+        identityProvider: issuer,
         externalSubject: `inviter-${suffix}`,
         emailNormalized: `inviter-${suffix}@example.test`,
         displayName: 'E2E User',
@@ -245,7 +247,7 @@ it.skipIf(!enabled)('allows a replacement after a pending invitation expires', a
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+      identityProvider: issuer,
       externalSubject: `subject-${suffix}`,
       emailNormalized: `inviter-${suffix}@example.test`,
       displayName: 'E2E User',
@@ -319,7 +321,6 @@ it.skipIf(!enabled)(
   async () => {
     const admin = await createAdminClient();
     const suffix = `${Date.now()}-email-change`;
-    const issuer = process.env.OIDC_ISSUER ?? 'https://example.invalid';
     const newEmail = `updated-${suffix}@example.test`;
     const agency = await admin.agency.create({
       data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
@@ -391,12 +392,15 @@ it.skipIf(!enabled)(
     const subject = `subject-${suffix}`;
     const user = await admin.user.create({
       data: {
-        identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+        identityProvider: issuer,
         externalSubject: subject,
         emailNormalized: `switch-${suffix}@example.test`,
         displayName: 'E2E User',
         globalStatus: 'ACTIVE',
       },
+    });
+    await admin.externalIdentityLink.create({
+      data: { userId: user.id, issuer, subject, status: 'ACTIVE' },
     });
     const memberships = await Promise.all(
       agencies.map(({ id }) =>
@@ -570,7 +574,7 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
   });
   const inviter = await admin.user.create({
     data: {
-      identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+      identityProvider: issuer,
       externalSubject: `inviter-${suffix}`,
       emailNormalized: `inviter-${suffix}@example.test`,
       displayName: 'E2E User',
@@ -591,7 +595,7 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
   const inviteeEmail = `invitee-${suffix}@example.test`;
   const invitee = await admin.user.create({
     data: {
-      identityProvider: process.env.OIDC_ISSUER ?? 'https://example.invalid',
+      identityProvider: issuer,
       externalSubject: `invitee-${suffix}`,
       emailNormalized: inviteeEmail,
       displayName: 'E2E Invitee',
