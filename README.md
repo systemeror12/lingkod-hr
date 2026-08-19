@@ -75,6 +75,7 @@ is not exposed through the web or API runtime.
 | Web              | `http://localhost:3000`               |
 | API health       | `http://localhost:3001/api/v1/health` |
 | Worker health    | `http://localhost:3002/health`        |
+| Local OIDC       | `http://127.0.0.1:4100`               |
 | PostgreSQL       | `localhost:55432`                     |
 | Redis            | `localhost:6379`                      |
 | SeaweedFS S3 API | `http://localhost:8333`               |
@@ -84,17 +85,50 @@ PostgreSQL uses host port `55432` to avoid the conventional host port `5432`,
 which may already be used by another local project. Inside Docker, PostgreSQL
 continues to use port `5432`.
 
-### After pulling changes
+### After pulling changes or switching machines
 
-Update dependencies, ensure infrastructure is healthy, and apply new migrations:
+Use this gate after a `git pull`, branch checkout, worktree handoff, or
+continuation from another machine. Activate the repository's Node version,
+update dependencies, ensure infrastructure is healthy, and apply migrations:
 
 ```bash
+fnm use
+node --version
 pnpm install --frozen-lockfile
 docker compose -f infrastructure/compose.yaml up -d --wait
 pnpm db:migrate
 ```
 
-Then start development with `pnpm run dev`.
+If `.env` does not exist, create it from `.env.example`. If it already exists,
+copy only newly added keys without overwriting local values. Then check that no
+old LingkodHR process owns the normal development ports before starting a new
+stack:
+
+```bash
+ss -ltnp | grep -E ':(3000|3001|3002|4100)([^0-9]|$)' || true
+```
+
+Stop only identified LingkodHR processes from an older run. Leave unrelated
+services alone. Start development and verify the service boundaries:
+
+```bash
+pnpm run dev
+curl -fsS http://localhost:3001/api/v1/health
+curl -fsS http://localhost:3002/health
+curl -fsS http://127.0.0.1:4100/health
+```
+
+For protected browser or admin work, seed the local protected shell before
+opening `/dashboard`:
+
+```bash
+pnpm --filter @lingkod-hr/database e2e:seed:shell
+```
+
+The gate is complete when migrations report no pending work, each health check
+responds successfully, and `/dashboard` completes local OIDC login. Diagnose
+setup failures before changing application code; do not delete the local
+database or migration history as a shortcut.
 
 ### Validation
 
