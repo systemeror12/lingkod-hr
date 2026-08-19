@@ -141,6 +141,9 @@ it.skipIf(!enabled)(
     const initial = await seedProfile(admin, agency.id, agency.name);
     const requestContext = context(agency.id, user.id, membership.id);
     const service = new AgencyProfileService(agencyProfileAuditWriter);
+    const expectedDraftEffectiveFrom = new Date(Date.now() + 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
 
     try {
       const draft = await service.createDraft(requestContext);
@@ -148,7 +151,7 @@ it.skipIf(!enabled)(
         versionNo: 2,
         versionState: 'DRAFT',
         officialName: initial.officialName,
-        effectiveFrom: '2026-08-18',
+        effectiveFrom: expectedDraftEffectiveFrom,
       });
       await expect(service.createDraft(requestContext)).resolves.toMatchObject({ id: draft.id });
 
