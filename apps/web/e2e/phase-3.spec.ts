@@ -220,7 +220,7 @@ test.describe('Phase 3 acceptance gate', () => {
         name: 'Create Organization Unit',
       });
       await expect(organizationDialog).toHaveAccessibleDescription(
-        'Register the unit now. Hierarchy and activation come later.',
+        'Register the unit as a Draft, then place and activate it from the preparation queue.',
       );
       await expect(hrmoPage.getByLabel('Official name')).toBeFocused();
       await hrmoPage.getByLabel('Official name').fill(unitName);
