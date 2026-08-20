@@ -84,7 +84,7 @@ async function seed(): Promise<void> {
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, action: 'ORGANIZATION_UNIT_CREATED' },
+      where: { agencyId: agency.id, entityType: 'OrganizationUnit' },
     });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: agency.id } });

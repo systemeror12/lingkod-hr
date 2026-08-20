@@ -32,8 +32,52 @@ interface OrganizationUnit {
   status: OrganizationUnitStatus;
 }
 
+interface OrganizationUnitVersion {
+  id: string;
+  organizationUnitId: string;
+  versionNo: number;
+  code: string;
+  unitType: OrganizationUnitType;
+  officialName: string;
+  parentUnitId: string | null;
+  costCenterCode: string | null;
+  responsibilityCenterCode: string | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  versionState: 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'VOIDED';
+  lifecycleStatus: 'ACTIVE' | 'INACTIVE' | 'ABOLISHED';
+}
+
+interface OrganizationUnitSuccessor {
+  current: OrganizationUnitVersion;
+  draft: OrganizationUnitVersion;
+}
+
+interface OrganizationUnitHistory {
+  asOf: string;
+  effective: OrganizationUnitVersion | null;
+  current: OrganizationUnitVersion | null;
+  draft: OrganizationUnitVersion | null;
+  versions: OrganizationUnitVersion[];
+  transitions: Array<{
+    id: string;
+    action: string;
+    previousStatus: string;
+    newStatus: string;
+    actorDisplayName: string | null;
+    reason: string | null;
+    effectiveDate: string | null;
+    authorityReference: string | null;
+    migrationPlan: string | null;
+    before: Record<string, unknown> | null;
+    after: Record<string, unknown> | null;
+    occurredAt: string;
+  }>;
+}
+
 interface OrganizationUnitListResponse {
   units: OrganizationUnit[];
+  drafts?: OrganizationUnitVersion[];
 }
 
 interface OrganizationHierarchyUnit {
@@ -69,6 +113,16 @@ interface DraftValues {
   effectiveDate: string;
 }
 
+interface SuccessorValues {
+  officialName: string;
+  parentUnitId: string;
+  costCenterCode: string;
+  responsibilityCenterCode: string;
+  effectiveDate: string;
+}
+
+type TransitionTarget = 'INACTIVE' | 'ACTIVE' | 'ABOLISHED';
+
 const unitTypes: readonly { value: OrganizationUnitType; label: string }[] = [
   { value: 'DEPARTMENT', label: 'Department' },
   { value: 'BUREAU', label: 'Bureau' },
@@ -88,6 +142,12 @@ function emptyDraft(): DraftValues {
   };
 }
 
+function tomorrowManila(): string {
+  const date = new Date(`${manilaToday()}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function unitTypeLabel(value: OrganizationUnitType): string {
   return unitTypes.find((type) => type.value === value)?.label ?? value;
 }
@@ -101,6 +161,15 @@ function dateLabel(value: string): string {
     day: 'numeric',
     timeZone: 'Asia/Manila',
   });
+}
+
+function targetValue(event: { currentTarget: EventTarget }): string {
+  return (event.currentTarget as unknown as { value: string }).value;
+}
+
+function auditField(data: Record<string, unknown> | null, key: string): string | null {
+  const value = data?.[key];
+  return typeof value === 'string' ? value : null;
 }
 
 function errorDetails(
@@ -139,6 +208,30 @@ function isOrganizationUnit(value: unknown): value is OrganizationUnit {
   );
 }
 
+function isOrganizationUnitVersion(value: unknown): value is OrganizationUnitVersion {
+  if (typeof value !== 'object' || value === null) return false;
+  const version = value as Partial<OrganizationUnitVersion>;
+  return (
+    typeof version.id === 'string' &&
+    typeof version.organizationUnitId === 'string' &&
+    typeof version.officialName === 'string' &&
+    typeof version.effectiveFrom === 'string' &&
+    typeof version.versionState === 'string'
+  );
+}
+
+function isOrganizationUnitSuccessor(value: unknown): value is OrganizationUnitSuccessor {
+  if (typeof value !== 'object' || value === null) return false;
+  const successor = value as Partial<OrganizationUnitSuccessor>;
+  return isOrganizationUnitVersion(successor.current) && isOrganizationUnitVersion(successor.draft);
+}
+
+function isOrganizationUnitHistory(value: unknown): value is OrganizationUnitHistory {
+  if (typeof value !== 'object' || value === null) return false;
+  const history = value as Partial<OrganizationUnitHistory>;
+  return Array.isArray(history.versions) && Array.isArray(history.transitions);
+}
+
 function isOrganizationHierarchy(value: unknown): value is OrganizationHierarchyResponse {
   if (typeof value !== 'object' || value === null) return false;
   const hierarchy = value as Partial<OrganizationHierarchyResponse>;
@@ -170,20 +263,29 @@ function hierarchyRows(units: OrganizationHierarchyUnit[]) {
 export function OrganizationWorkspace({
   agencyId,
   canActivate,
+  canAbolish,
   canCreate,
+  canInactivate,
+  canUpdate,
   initial,
   initialHierarchy,
 }: {
   agencyId: string;
   canActivate: boolean;
+  canAbolish: boolean;
   canCreate: boolean;
+  canInactivate: boolean;
+  canUpdate: boolean;
   initial: OrganizationUnitListResponse;
   initialHierarchy: OrganizationHierarchyResponse;
 }) {
   const [units, setUnits] = useState(initial.units);
+  const [successorDrafts, setSuccessorDrafts] = useState(initial.drafts ?? []);
   const [hierarchy, setHierarchy] = useState(initialHierarchy);
   const [asOf, setAsOf] = useState(initialHierarchy.asOf);
-  const [selectedId, setSelectedId] = useState(initialHierarchy.units[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState(
+    initialHierarchy.units[0]?.id ?? initial.units[0]?.id ?? null,
+  );
   const [hierarchyLoading, setHierarchyLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
@@ -201,15 +303,60 @@ export function OrganizationWorkspace({
   const [activationFieldErrors, setActivationFieldErrors] = useState<Record<string, string>>({});
   const [activationSubmitting, setActivationSubmitting] = useState(false);
   const [parentOptions, setParentOptions] = useState<OrganizationHierarchyUnit[]>([]);
+  const [successor, setSuccessor] = useState<OrganizationUnitSuccessor | null>(null);
+  const [successorValues, setSuccessorValues] = useState<SuccessorValues | null>(null);
+  const [successorOpen, setSuccessorOpen] = useState(false);
+  const [successorReason, setSuccessorReason] = useState('');
+  const [successorAuthority, setSuccessorAuthority] = useState('');
+  const [successorMigrationPlan, setSuccessorMigrationPlan] = useState('');
+  const [successorError, setSuccessorError] = useState('');
+  const [successorFieldErrors, setSuccessorFieldErrors] = useState<Record<string, string>>({});
+  const [successorSubmitting, setSuccessorSubmitting] = useState(false);
+  const [successorParentOptions, setSuccessorParentOptions] = useState<OrganizationHierarchyUnit[]>(
+    [],
+  );
+  const [transitionUnit, setTransitionUnit] = useState<OrganizationUnit | null>(null);
+  const [transitionTarget, setTransitionTarget] = useState<TransitionTarget | null>(null);
+  const [transitionOpen, setTransitionOpen] = useState(false);
+  const [transitionDate, setTransitionDate] = useState(tomorrowManila);
+  const [transitionReason, setTransitionReason] = useState('');
+  const [transitionAuthority, setTransitionAuthority] = useState('');
+  const [transitionMigrationPlan, setTransitionMigrationPlan] = useState('');
+  const [transitionError, setTransitionError] = useState('');
+  const [transitionFieldErrors, setTransitionFieldErrors] = useState<Record<string, string>>({});
+  const [transitionSubmitting, setTransitionSubmitting] = useState(false);
+  const [history, setHistory] = useState<OrganizationUnitHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
   const firstFieldRef = useRef<{ focus(): void } | null>(null);
   const codeFieldRef = useRef<{ focus(): void } | null>(null);
   const effectiveDateFieldRef = useRef<{ focus(): void } | null>(null);
   const parentFieldRef = useRef<{ focus(): void } | null>(null);
   const reasonFieldRef = useRef<{ focus(): void } | null>(null);
   const activationTriggerRef = useRef<{ focus(): void } | null>(null);
+  const successorNameRef = useRef<{ focus(): void } | null>(null);
+  const successorDateRef = useRef<{ focus(): void } | null>(null);
+  const successorReasonRef = useRef<{ focus(): void } | null>(null);
+  const transitionDateRef = useRef<{ focus(): void } | null>(null);
+  const transitionReasonRef = useRef<{ focus(): void } | null>(null);
 
   const drafts = units.filter((unit) => unit.status === 'DRAFT');
-  const selected = hierarchy.units.find((unit) => unit.id === selectedId) ?? null;
+  const selectedListUnit = units.find((unit) => unit.id === selectedId) ?? null;
+  const selected =
+    hierarchy.units.find((unit) => unit.id === selectedId) ??
+    (selectedListUnit
+      ? {
+          id: selectedListUnit.id,
+          code: selectedListUnit.code,
+          officialName: selectedListUnit.officialName,
+          unitType: selectedListUnit.unitType,
+          parentUnitId: selectedListUnit.parentUnitId,
+          effectiveFrom: selectedListUnit.effectiveDate,
+          effectiveTo: selectedListUnit.effectiveTo,
+          lifecycleStatus: selectedListUnit.lifecycleStatus,
+          childCount: 0,
+        }
+      : null);
   const parentNames = new Map(hierarchy.units.map((unit) => [unit.id, unit.officialName]));
 
   function handleOpenChange(nextOpen: boolean): void {
@@ -432,7 +579,292 @@ export function OrganizationWorkspace({
     }
   }
 
+  function successorValuesFromVersion(version: OrganizationUnitVersion): SuccessorValues {
+    return {
+      officialName: version.officialName,
+      parentUnitId: version.parentUnitId ?? '',
+      costCenterCode: version.costCenterCode ?? '',
+      responsibilityCenterCode: version.responsibilityCenterCode ?? '',
+      effectiveDate: version.effectiveFrom,
+    };
+  }
+
+  function updateSuccessorValue(field: keyof SuccessorValues, value: string): void {
+    setSuccessorValues((current) => (current ? { ...current, [field]: value } : current));
+    setSuccessorFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
+
+  async function loadHistory(unitId: string, date = asOf): Promise<void> {
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${unitId}/history?asOf=${date}`,
+        { credentials: 'include' },
+      );
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isOrganizationUnitHistory(value)) {
+        throw new Error('The Organization Unit history could not be loaded.');
+      }
+      setHistory(value);
+    } catch (error) {
+      setHistory(null);
+      setHistoryError(error instanceof Error ? error.message : 'The history could not be loaded.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function prepareSuccessor(unitId = selectedListUnit?.id): Promise<void> {
+    if (!unitId) return;
+    setSuccessorError('');
+    setSuccessorFieldErrors({});
+    setSuccessorReason('');
+    setSuccessorAuthority('');
+    setSuccessorMigrationPlan('');
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${unitId}/successor`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+        },
+      );
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setSuccessorError(
+          errorDetails(value, 'The Organization Unit successor could not be prepared.').message,
+        );
+        return;
+      }
+      if (!isOrganizationUnitSuccessor(value)) {
+        setSuccessorError('The proposed successor was not confirmed. Refresh and try again.');
+        return;
+      }
+      setSuccessor(value);
+      setSuccessorValues(successorValuesFromVersion(value.draft));
+      setSuccessorDrafts((current) => [
+        value.draft,
+        ...current.filter((draft) => draft.organizationUnitId !== unitId),
+      ]);
+      setSuccessorOpen(true);
+      try {
+        const eligibleHierarchy = await requestHierarchy(value.draft.effectiveFrom, unitId);
+        const eligibleIds = new Set(eligibleHierarchy.eligibleParentIds);
+        setSuccessorParentOptions(
+          eligibleHierarchy.units.filter((candidate) => eligibleIds.has(candidate.id)),
+        );
+      } catch {
+        setSuccessorParentOptions([]);
+        setSuccessorError(
+          'Eligible parent units could not be loaded. You can still review the draft.',
+        );
+      }
+    } catch {
+      setSuccessorError(
+        'The Organization Unit successor could not be prepared. Check the connection and try again.',
+      );
+    }
+  }
+
+  async function saveSuccessor(): Promise<OrganizationUnitVersion | null> {
+    if (!successor || !successorValues) return null;
+    const errors: Record<string, string> = {};
+    if (!successorValues.officialName.trim()) errors.officialName = 'Enter the official name.';
+    if (!successorValues.effectiveDate) errors.effectiveDate = 'Choose an effective date.';
+    setSuccessorFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      if (errors.officialName) successorNameRef.current?.focus();
+      else successorDateRef.current?.focus();
+      return null;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${successor.draft.organizationUnitId}/draft/${successor.draft.id}`,
+        {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            officialName: successorValues.officialName,
+            parentUnitId: successorValues.parentUnitId || null,
+            costCenterCode: successorValues.costCenterCode || null,
+            responsibilityCenterCode: successorValues.responsibilityCenterCode || null,
+            effectiveDate: successorValues.effectiveDate,
+          }),
+        },
+      );
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok || !isOrganizationUnitVersion(value)) {
+        const details = errorDetails(value, 'The successor draft could not be saved.');
+        setSuccessorFieldErrors(details.fields);
+        setSuccessorError(details.message);
+        return null;
+      }
+      setSuccessor((current) => (current ? { ...current, draft: value } : current));
+      setSuccessorDrafts((current) => [value, ...current.filter((draft) => draft.id !== value.id)]);
+      return value;
+    } catch {
+      setSuccessorError(
+        'The successor draft could not be saved. Check the connection and try again.',
+      );
+      return null;
+    }
+  }
+
+  async function submitSuccessor(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!successor) return;
+    if (!successorReason.trim()) {
+      setSuccessorFieldErrors({ reason: 'Enter the change reason.' });
+      successorReasonRef.current?.focus();
+      return;
+    }
+    setSuccessorSubmitting(true);
+    setSuccessorError('');
+    try {
+      const saved = await saveSuccessor();
+      if (!saved) return;
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${saved.organizationUnitId}/draft/${saved.id}/activate`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            reason: successorReason,
+            authorityReference: successorAuthority || null,
+            migrationPlan: successorMigrationPlan || null,
+          }),
+        },
+      );
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setSuccessorError(
+          errorDetails(value, 'The Organization Unit successor could not be activated.').message,
+        );
+        return;
+      }
+      if (!isOrganizationUnit(value)) {
+        setSuccessorError('The successor activation was not confirmed. Refresh and try again.');
+        return;
+      }
+      if (value.effectiveDate <= manilaToday()) {
+        setUnits((current) => current.map((unit) => (unit.id === value.id ? value : unit)));
+      }
+      setSuccessorDrafts((current) =>
+        current.filter((draft) => draft.organizationUnitId !== saved.organizationUnitId),
+      );
+      setSuccess(
+        `${value.officialName} is scheduled as the new Organization Unit version effective ${dateLabel(value.effectiveDate)}.`,
+      );
+      setSuccessorOpen(false);
+      await loadHierarchy(asOf, value.id);
+      await loadHistory(value.id);
+    } catch {
+      setSuccessorError(
+        'The Organization Unit successor could not be activated. Check the connection and try again.',
+      );
+    } finally {
+      setSuccessorSubmitting(false);
+    }
+  }
+
+  async function submitSavedSuccessor(): Promise<void> {
+    setSuccessorSubmitting(true);
+    setSuccessorError('');
+    try {
+      const saved = await saveSuccessor();
+      if (saved) setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+    } finally {
+      setSuccessorSubmitting(false);
+    }
+  }
+
+  function openTransition(target: TransitionTarget): void {
+    if (!selectedListUnit) return;
+    setTransitionUnit(selectedListUnit);
+    setTransitionTarget(target);
+    setTransitionDate(tomorrowManila());
+    setTransitionReason('');
+    setTransitionAuthority('');
+    setTransitionMigrationPlan('');
+    setTransitionError('');
+    setTransitionFieldErrors({});
+    setTransitionOpen(true);
+  }
+
+  async function submitTransition(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!transitionUnit || !transitionTarget) return;
+    const errors: Record<string, string> = {};
+    if (!transitionDate) errors.effectiveDate = 'Choose an effective date.';
+    if (!transitionReason.trim()) errors.reason = 'Enter the transition reason.';
+    if (transitionTarget !== 'INACTIVE' && !transitionAuthority.trim()) {
+      errors.authorityReference = 'Enter the authority reference.';
+    }
+    setTransitionFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      if (errors.effectiveDate) transitionDateRef.current?.focus();
+      else transitionReasonRef.current?.focus();
+      return;
+    }
+    setTransitionSubmitting(true);
+    setTransitionError('');
+    try {
+      const action = transitionTarget === 'ACTIVE' ? 'reactivate' : transitionTarget.toLowerCase();
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${transitionUnit.id}/${action}`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            effectiveDate: transitionDate,
+            reason: transitionReason,
+            authorityReference: transitionAuthority || null,
+            migrationPlan: transitionMigrationPlan || null,
+          }),
+        },
+      );
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setTransitionError(
+          errorDetails(value, 'The Organization Unit transition could not be recorded.').message,
+        );
+        return;
+      }
+      if (!isOrganizationUnit(value)) {
+        setTransitionError('The transition was not confirmed. Refresh and try again.');
+        return;
+      }
+      if (value.effectiveDate <= manilaToday()) {
+        setUnits((current) => current.map((unit) => (unit.id === value.id ? value : unit)));
+      }
+      setSuccess(
+        `${value.officialName} is scheduled to become ${value.lifecycleStatus.toLowerCase()} effective ${dateLabel(value.effectiveDate)}.`,
+      );
+      setTransitionOpen(false);
+      await loadHierarchy(asOf, value.id);
+      await loadHistory(value.id);
+    } catch {
+      setTransitionError(
+        'The Organization Unit transition could not be recorded. Check the connection and try again.',
+      );
+    } finally {
+      setTransitionSubmitting(false);
+    }
+  }
+
   const rows = hierarchyRows(hierarchy.units);
+  const draftCount = drafts.length + successorDrafts.length;
+  const registeredUnits = units.filter((unit) => unit.status !== 'DRAFT');
 
   return (
     <>
@@ -643,9 +1075,291 @@ export function OrganizationWorkspace({
                           </dd>
                         </div>
                       </dl>
+                      {selectedListUnit ? (
+                        <div className="flex flex-wrap gap-2 border-t border-line pt-5">
+                          {canUpdate && selected.lifecycleStatus !== 'ABOLISHED' ? (
+                            <button
+                              className="min-h-10 rounded-[3px] bg-cobalt px-3 text-xs font-[670] text-white hover:bg-[#365f96]"
+                              type="button"
+                              onClick={() => void prepareSuccessor(selected.id)}
+                            >
+                              Prepare change
+                            </button>
+                          ) : null}
+                          {canInactivate && selected.lifecycleStatus === 'ACTIVE' ? (
+                            <button
+                              className="min-h-10 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              type="button"
+                              onClick={() => openTransition('INACTIVE')}
+                            >
+                              Inactivate
+                            </button>
+                          ) : null}
+                          {canActivate && selected.lifecycleStatus === 'INACTIVE' ? (
+                            <button
+                              className="min-h-10 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              type="button"
+                              onClick={() => openTransition('ACTIVE')}
+                            >
+                              Reactivate
+                            </button>
+                          ) : null}
+                          {canAbolish && selected.lifecycleStatus !== 'ABOLISHED' ? (
+                            <button
+                              className="min-h-10 rounded-[3px] border border-[#d6aeb0] px-3 text-xs font-[670] text-[#7a3036] hover:bg-[#fff7f7]"
+                              type="button"
+                              onClick={() => openTransition('ABOLISHED')}
+                            >
+                              Abolish
+                            </button>
+                          ) : null}
+                          <button
+                            className="min-h-10 rounded-[3px] border border-line px-3 text-xs font-[670] text-ink hover:bg-canvas"
+                            type="button"
+                            onClick={() => void loadHistory(selected.id)}
+                          >
+                            View history
+                          </button>
+                        </div>
+                      ) : null}
                     </>
                   ) : null}
                 </div>
+              </div>
+            )}
+          </section>
+
+          {history || historyLoading || historyError ? (
+            <section
+              className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
+              aria-labelledby="organization-unit-history-heading"
+            >
+              <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
+                <div className="grid gap-1">
+                  <h2
+                    className="m-0 text-sm font-[670] text-midnight"
+                    id="organization-unit-history-heading"
+                  >
+                    Organization Unit history
+                  </h2>
+                  <span className="text-xs text-muted">
+                    Version and transition evidence as of {asOf}
+                  </span>
+                </div>
+                {selected ? (
+                  <button
+                    className="min-h-9 rounded-[3px] border border-line px-3 text-xs font-[670] text-ink hover:bg-canvas"
+                    type="button"
+                    onClick={() => void loadHistory(selected.id)}
+                  >
+                    Refresh history
+                  </button>
+                ) : null}
+              </header>
+              {historyLoading ? (
+                <p className="m-0 px-5 py-8 text-sm text-muted" role="status">
+                  Loading history…
+                </p>
+              ) : historyError ? (
+                <p className="m-0 px-5 py-8 text-sm text-[#7a3036]" role="alert">
+                  {historyError}
+                </p>
+              ) : history ? (
+                <div className="grid gap-6 p-5 sm:p-6">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3">
+                      <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                        Effective on date
+                      </span>
+                      <strong className="text-sm font-[680] text-midnight">
+                        {history.effective?.officialName ?? 'No published version'}
+                      </strong>
+                      <span className="text-xs text-muted">
+                        {history.effective?.lifecycleStatus ?? '—'}
+                      </span>
+                    </div>
+                    <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3">
+                      <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                        Current projection
+                      </span>
+                      <strong className="text-sm font-[680] text-midnight">
+                        {history.current?.officialName ?? 'No current version'}
+                      </strong>
+                      <span className="text-xs text-muted">
+                        {history.current?.lifecycleStatus ?? '—'}
+                      </span>
+                    </div>
+                    <div className="grid gap-1 rounded-[4px] border border-[#9eb6d1] bg-pale-blue px-4 py-3">
+                      <span className="text-[10px] font-bold tracking-[0.08em] text-cobalt uppercase">
+                        Draft successor
+                      </span>
+                      <strong className="text-sm font-[680] text-midnight">
+                        {history.draft?.officialName ?? 'None'}
+                      </strong>
+                      <span className="text-xs text-muted">
+                        {history.draft
+                          ? `Effective ${dateLabel(history.draft.effectiveFrom)}`
+                          : 'No pending draft'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1000px] border-collapse text-left text-xs">
+                      <thead className="bg-[#fafbfd] font-bold tracking-[0.08em] text-muted uppercase">
+                        <tr>
+                          <th className="border-b border-line px-4 py-3">Version</th>
+                          <th className="border-b border-line px-4 py-3">Official name</th>
+                          <th className="border-b border-line px-4 py-3">Parent</th>
+                          <th className="border-b border-line px-4 py-3">Centers</th>
+                          <th className="border-b border-line px-4 py-3">Period</th>
+                          <th className="border-b border-line px-4 py-3">State</th>
+                          <th className="border-b border-line px-4 py-3">Lifecycle</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {history.versions.map((version) => (
+                          <tr className="border-b border-line last:border-b-0" key={version.id}>
+                            <td className="px-4 py-3 font-mono">v{version.versionNo}</td>
+                            <th
+                              className="px-4 py-3 text-left font-[650] text-midnight"
+                              scope="row"
+                            >
+                              {version.officialName}
+                            </th>
+                            <td className="px-4 py-3 text-muted">
+                              {version.parentUnitId
+                                ? (parentNames.get(version.parentUnitId) ?? version.parentUnitId)
+                                : 'Agency root'}
+                            </td>
+                            <td className="px-4 py-3 text-muted">
+                              {version.costCenterCode ?? '—'} ·{' '}
+                              {version.responsibilityCenterCode ?? '—'}
+                            </td>
+                            <td className="px-4 py-3 text-muted">
+                              {dateLabel(version.effectiveFrom)} –{' '}
+                              {version.effectiveTo ? dateLabel(version.effectiveTo) : 'Present'}
+                            </td>
+                            <td className="px-4 py-3">{version.versionState}</td>
+                            <td className="px-4 py-3">{version.lifecycleStatus}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {history.transitions.length > 0 ? (
+                    <div className="grid gap-3">
+                      <h3 className="m-0 text-xs font-bold tracking-[0.08em] text-muted uppercase">
+                        Transition evidence
+                      </h3>
+                      {history.transitions.map((transition) => (
+                        <div
+                          className="grid gap-1 border-l-2 border-[#9eb6d1] pl-3 text-xs"
+                          key={transition.id}
+                        >
+                          <strong className="font-[680] text-midnight">
+                            {transition.action.replaceAll('_', ' ')}
+                          </strong>
+                          <span className="text-muted">
+                            {transition.actorDisplayName
+                              ? `Actor ${transition.actorDisplayName} · `
+                              : ''}
+                            {transition.previousStatus} → {transition.newStatus} ·{' '}
+                            {transition.effectiveDate
+                              ? `Effective ${dateLabel(transition.effectiveDate)} · `
+                              : ''}
+                            {transition.reason ?? 'No reason recorded'}
+                          </span>
+                          {transition.authorityReference ? (
+                            <span className="text-muted">
+                              Authority: {transition.authorityReference}
+                            </span>
+                          ) : null}
+                          {transition.migrationPlan ? (
+                            <span className="text-muted">
+                              Migration plan: {transition.migrationPlan}
+                            </span>
+                          ) : null}
+                          {transition.before || transition.after ? (
+                            <span className="text-muted">
+                              Before: {auditField(transition.before, 'officialName') ?? '—'} ·{' '}
+                              {auditField(transition.before, 'parentUnitId') ?? 'Agency root'} →
+                              After: {auditField(transition.after, 'officialName') ?? '—'} ·{' '}
+                              {auditField(transition.after, 'parentUnitId') ?? 'Agency root'}
+                            </span>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          <section
+            className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
+            aria-labelledby="organization-unit-register-heading"
+          >
+            <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
+              <div className="grid gap-1">
+                <h2
+                  className="m-0 text-sm font-[670] text-midnight"
+                  id="organization-unit-register-heading"
+                >
+                  Organization Unit register
+                </h2>
+                <span className="text-xs text-muted">
+                  All current lifecycle states in this Agency
+                </span>
+              </div>
+              <span className="font-mono text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                {registeredUnits.length} records
+              </span>
+            </header>
+            {registeredUnits.length === 0 ? (
+              <div className="px-5 py-8 text-sm text-muted">
+                No activated Organization Units yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[700px] border-collapse text-left">
+                  <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                    <tr>
+                      <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
+                      <th className="border-b border-line px-5 py-3 font-bold">Code</th>
+                      <th className="border-b border-line px-5 py-3 font-bold">Lifecycle</th>
+                      <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
+                      <th className="border-b border-line px-5 py-3 text-right font-bold">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-[13px] text-ink">
+                    {registeredUnits.map((unit) => (
+                      <tr className="border-b border-line last:border-b-0" key={unit.id}>
+                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
+                          {unit.officialName}
+                        </th>
+                        <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
+                        <td className="px-5 py-4">
+                          <span className="inline-flex rounded-full bg-[#e8f3ed] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#316647] uppercase">
+                            {unit.status}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
+                        <td className="px-5 py-4 text-right">
+                          <button
+                            className="min-h-9 rounded-[3px] border border-line px-3 text-xs font-[670] text-ink hover:bg-canvas"
+                            type="button"
+                            onClick={() => setSelectedId(unit.id)}
+                          >
+                            Inspect record
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </section>
@@ -663,16 +1377,16 @@ export function OrganizationWorkspace({
                   Draft Organization Units
                 </h2>
                 <span className="text-xs text-muted">
-                  {drafts.length === 1
+                  {draftCount === 1
                     ? '1 draft awaiting placement'
-                    : `${drafts.length} drafts awaiting placement`}
+                    : `${draftCount} drafts awaiting placement`}
                 </span>
               </div>
               <span className="rounded-full bg-[#fff3d6] px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] text-[#79531c] uppercase">
                 Preparation queue
               </span>
             </header>
-            {drafts.length === 0 ? (
+            {draftCount === 0 ? (
               <div className="grid min-h-[150px] place-content-center px-6 py-10">
                 <strong className="text-[14px] font-[650] text-midnight">
                   No Draft Organization Units.
@@ -725,6 +1439,32 @@ export function OrganizationWorkspace({
                               }}
                             >
                               Place and activate {unit.officialName}
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                    {successorDrafts.map((draft) => (
+                      <tr className="border-b border-line last:border-b-0" key={draft.id}>
+                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
+                          {draft.officialName}
+                        </th>
+                        <td className="px-5 py-4 font-mono text-xs">{draft.code}</td>
+                        <td className="px-5 py-4">{unitTypeLabel(draft.unitType)}</td>
+                        <td className="px-5 py-4 text-muted">{dateLabel(draft.effectiveFrom)}</td>
+                        <td className="px-5 py-4">
+                          <span className="inline-flex rounded-full bg-[#fff3d6] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#79531c] uppercase">
+                            DRAFT SUCCESSOR
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          {canUpdate || canActivate ? (
+                            <button
+                              className="min-h-9 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              type="button"
+                              onClick={() => void prepareSuccessor(draft.organizationUnitId)}
+                            >
+                              Review successor
                             </button>
                           ) : null}
                         </td>
@@ -1119,6 +1859,520 @@ export function OrganizationWorkspace({
                 }
               >
                 {activationSubmitting ? 'Activating…' : 'Activate Organization Unit'}
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      <Dialog
+        open={successorOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && successorSubmitting) return;
+          setSuccessorOpen(nextOpen);
+        }}
+      >
+        {successor && successorValues ? (
+          <DialogContent
+            aria-busy={successorSubmitting}
+            onEscapeKeyDown={(event) => {
+              if (successorSubmitting) event.preventDefault();
+            }}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              successorNameRef.current?.focus();
+            }}
+          >
+            <DialogHeader>
+              <div className="grid min-w-0 gap-1.5">
+                <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
+                  Organization change / Successor draft
+                </p>
+                <DialogTitle>Review Organization Unit successor</DialogTitle>
+                <DialogDescription>
+                  Edit the proposed values and effective date. The current version remains unchanged
+                  until activation.
+                </DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <button
+                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  type="button"
+                  aria-label="Close successor dialog"
+                  disabled={successorSubmitting}
+                >
+                  ×
+                </button>
+              </DialogClose>
+            </DialogHeader>
+
+            <DialogBody>
+              <form
+                className="grid gap-5"
+                id="organization-successor-form"
+                onSubmit={submitSuccessor}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3">
+                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                      Current version
+                    </span>
+                    <strong className="text-sm font-[680] text-midnight">
+                      {successor.current.officialName}
+                    </strong>
+                    <span className="text-xs text-muted">
+                      Effective {dateLabel(successor.current.effectiveFrom)} ·{' '}
+                      {successor.current.lifecycleStatus}
+                    </span>
+                    <span className="text-xs text-muted">
+                      Parent:{' '}
+                      {successor.current.parentUnitId
+                        ? (parentNames.get(successor.current.parentUnitId) ??
+                          successor.current.parentUnitId)
+                        : 'Agency root'}
+                    </span>
+                    <span className="text-xs text-muted">
+                      Cost center: {successor.current.costCenterCode ?? '—'} · Responsibility:{' '}
+                      {successor.current.responsibilityCenterCode ?? '—'}
+                    </span>
+                  </div>
+                  <div className="grid gap-1 rounded-[4px] border border-[#9eb6d1] bg-pale-blue px-4 py-3">
+                    <span className="text-[10px] font-bold tracking-[0.08em] text-cobalt uppercase">
+                      Proposed successor
+                    </span>
+                    <strong className="text-sm font-[680] text-midnight">
+                      {successorValues.officialName || 'Untitled Organization Unit'}
+                    </strong>
+                    <span className="text-xs text-muted">
+                      Effective {dateLabel(successorValues.effectiveDate)} · successor draft
+                    </span>
+                    <span className="text-xs text-muted">
+                      Parent:{' '}
+                      {successorValues.parentUnitId
+                        ? (parentNames.get(successorValues.parentUnitId) ??
+                          successorValues.parentUnitId)
+                        : 'Agency root'}
+                    </span>
+                    <span className="text-xs text-muted">
+                      Cost center: {successorValues.costCenterCode || '—'} · Responsibility:{' '}
+                      {successorValues.responsibilityCenterCode || '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-[650] text-ink" htmlFor="successor-official-name">
+                    Proposed official name
+                  </label>
+                  <input
+                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
+                    id="successor-official-name"
+                    ref={successorNameRef}
+                    type="text"
+                    value={successorValues.officialName}
+                    disabled={!canUpdate || successorSubmitting}
+                    aria-invalid={Boolean(successorFieldErrors.officialName)}
+                    aria-describedby={
+                      successorFieldErrors.officialName
+                        ? 'successor-official-name-error'
+                        : undefined
+                    }
+                    onChange={(event) => updateSuccessorValue('officialName', targetValue(event))}
+                  />
+                  {successorFieldErrors.officialName ? (
+                    <span
+                      className="text-xs text-[#7a3036]"
+                      id="successor-official-name-error"
+                      role="alert"
+                    >
+                      {successorFieldErrors.officialName}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-[650] text-ink" htmlFor="successor-parent-unit">
+                    Proposed parent Organization Unit
+                  </label>
+                  <select
+                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
+                    id="successor-parent-unit"
+                    value={successorValues.parentUnitId}
+                    disabled={!canUpdate || successorSubmitting}
+                    onChange={(event) => updateSuccessorValue('parentUnitId', targetValue(event))}
+                  >
+                    <option value="">No parent · Agency root</option>
+                    {successorParentOptions.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.officialName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <label className="text-sm font-[650] text-ink" htmlFor="successor-cost-center">
+                      Cost center
+                    </label>
+                    <input
+                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
+                      id="successor-cost-center"
+                      type="text"
+                      value={successorValues.costCenterCode}
+                      disabled={!canUpdate || successorSubmitting}
+                      onChange={(event) =>
+                        updateSuccessorValue('costCenterCode', targetValue(event))
+                      }
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <label
+                      className="text-sm font-[650] text-ink"
+                      htmlFor="successor-responsibility-center"
+                    >
+                      Responsibility center
+                    </label>
+                    <input
+                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
+                      id="successor-responsibility-center"
+                      type="text"
+                      value={successorValues.responsibilityCenterCode}
+                      disabled={!canUpdate || successorSubmitting}
+                      onChange={(event) =>
+                        updateSuccessorValue('responsibilityCenterCode', targetValue(event))
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-sm font-[650] text-ink" htmlFor="successor-effective-date">
+                    Successor effective date
+                  </label>
+                  <input
+                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
+                    id="successor-effective-date"
+                    ref={successorDateRef}
+                    type="date"
+                    value={successorValues.effectiveDate}
+                    disabled={!canUpdate || successorSubmitting}
+                    aria-invalid={Boolean(successorFieldErrors.effectiveDate)}
+                    aria-describedby={
+                      successorFieldErrors.effectiveDate
+                        ? 'successor-effective-date-error'
+                        : undefined
+                    }
+                    onChange={(event) => updateSuccessorValue('effectiveDate', targetValue(event))}
+                  />
+                  {successorFieldErrors.effectiveDate ? (
+                    <span
+                      className="text-xs text-[#7a3036]"
+                      id="successor-effective-date-error"
+                      role="alert"
+                    >
+                      {successorFieldErrors.effectiveDate}
+                    </span>
+                  ) : null}
+                </div>
+
+                {canActivate ? (
+                  <>
+                    <div className="grid gap-2">
+                      <label className="text-sm font-[650] text-ink" htmlFor="successor-reason">
+                        Change reason
+                      </label>
+                      <textarea
+                        className="min-h-[88px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
+                        id="successor-reason"
+                        ref={successorReasonRef}
+                        maxLength={500}
+                        value={successorReason}
+                        aria-invalid={Boolean(successorFieldErrors.reason)}
+                        aria-describedby={
+                          successorFieldErrors.reason ? 'successor-reason-error' : undefined
+                        }
+                        onChange={(event) => setSuccessorReason(targetValue(event))}
+                      />
+                      {successorFieldErrors.reason ? (
+                        <span
+                          className="text-xs text-[#7a3036]"
+                          id="successor-reason-error"
+                          role="alert"
+                        >
+                          {successorFieldErrors.reason}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-2">
+                      <label className="text-sm font-[650] text-ink" htmlFor="successor-authority">
+                        Authority reference{' '}
+                        <span className="font-normal text-muted">(optional)</span>
+                      </label>
+                      <input
+                        className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
+                        id="successor-authority"
+                        type="text"
+                        value={successorAuthority}
+                        disabled={successorSubmitting}
+                        onChange={(event) => setSuccessorAuthority(targetValue(event))}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <label
+                        className="text-sm font-[650] text-ink"
+                        htmlFor="successor-migration-plan"
+                      >
+                        Migration plan <span className="font-normal text-muted">(optional)</span>
+                      </label>
+                      <textarea
+                        className="min-h-[72px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
+                        id="successor-migration-plan"
+                        value={successorMigrationPlan}
+                        disabled={successorSubmitting}
+                        onChange={(event) => setSuccessorMigrationPlan(targetValue(event))}
+                      />
+                    </div>
+                  </>
+                ) : null}
+
+                {successorError ? (
+                  <p
+                    className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
+                    role="alert"
+                  >
+                    {successorError}
+                  </p>
+                ) : null}
+              </form>
+            </DialogBody>
+
+            <DialogFooter>
+              <DialogClose asChild>
+                <button
+                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  type="button"
+                  disabled={successorSubmitting}
+                >
+                  Cancel
+                </button>
+              </DialogClose>
+              {canUpdate ? (
+                <button
+                  className="min-h-11 rounded-[3px] border border-[#9eb6d1] px-4 text-sm font-[650] text-cobalt hover:bg-pale-blue disabled:pointer-events-none disabled:opacity-50"
+                  type="button"
+                  disabled={successorSubmitting}
+                  onClick={() => void submitSavedSuccessor()}
+                >
+                  {successorSubmitting ? 'Saving…' : 'Save Draft'}
+                </button>
+              ) : null}
+              {canActivate ? (
+                <button
+                  className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+                  type="submit"
+                  form="organization-successor-form"
+                  disabled={successorSubmitting}
+                >
+                  {successorSubmitting ? 'Activating…' : 'Activate successor'}
+                </button>
+              ) : null}
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+      <Dialog
+        open={transitionOpen}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && transitionSubmitting) return;
+          setTransitionOpen(nextOpen);
+        }}
+      >
+        {transitionUnit && transitionTarget ? (
+          <DialogContent
+            aria-busy={transitionSubmitting}
+            onEscapeKeyDown={(event) => {
+              if (transitionSubmitting) event.preventDefault();
+            }}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              transitionDateRef.current?.focus();
+            }}
+          >
+            <DialogHeader>
+              <div className="grid min-w-0 gap-1.5">
+                <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
+                  Organization lifecycle / {transitionTarget}
+                </p>
+                <DialogTitle>
+                  {transitionTarget === 'ACTIVE'
+                    ? 'Reactivate'
+                    : transitionTarget === 'INACTIVE'
+                      ? 'Inactivate'
+                      : 'Abolish'}{' '}
+                  {transitionUnit.officialName}
+                </DialogTitle>
+                <DialogDescription>
+                  Record a new effective-dated version. Existing history and assignments are not
+                  rewritten.
+                </DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <button
+                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  type="button"
+                  aria-label="Close lifecycle dialog"
+                  disabled={transitionSubmitting}
+                >
+                  ×
+                </button>
+              </DialogClose>
+            </DialogHeader>
+            <DialogBody>
+              <form
+                className="grid gap-5"
+                id="organization-transition-form"
+                onSubmit={submitTransition}
+              >
+                <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3 text-xs text-muted">
+                  <strong className="text-sm font-[680] text-midnight">
+                    {transitionUnit.officialName}
+                  </strong>
+                  <span>
+                    {transitionUnit.code} · current lifecycle {transitionUnit.lifecycleStatus}
+                  </span>
+                </div>
+                <div className="grid gap-2">
+                  <label
+                    className="text-sm font-[650] text-ink"
+                    htmlFor="transition-effective-date"
+                  >
+                    Effective date
+                  </label>
+                  <input
+                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
+                    id="transition-effective-date"
+                    ref={transitionDateRef}
+                    type="date"
+                    value={transitionDate}
+                    aria-invalid={Boolean(transitionFieldErrors.effectiveDate)}
+                    aria-describedby={
+                      transitionFieldErrors.effectiveDate
+                        ? 'transition-effective-date-error'
+                        : undefined
+                    }
+                    onChange={(event) => setTransitionDate(targetValue(event))}
+                  />
+                  {transitionFieldErrors.effectiveDate ? (
+                    <span
+                      className="text-xs text-[#7a3036]"
+                      id="transition-effective-date-error"
+                      role="alert"
+                    >
+                      {transitionFieldErrors.effectiveDate}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-[650] text-ink" htmlFor="transition-reason">
+                    Reason
+                  </label>
+                  <textarea
+                    className="min-h-[88px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
+                    id="transition-reason"
+                    ref={transitionReasonRef}
+                    maxLength={500}
+                    value={transitionReason}
+                    aria-invalid={Boolean(transitionFieldErrors.reason)}
+                    aria-describedby={
+                      transitionFieldErrors.reason ? 'transition-reason-error' : undefined
+                    }
+                    onChange={(event) => setTransitionReason(targetValue(event))}
+                  />
+                  {transitionFieldErrors.reason ? (
+                    <span
+                      className="text-xs text-[#7a3036]"
+                      id="transition-reason-error"
+                      role="alert"
+                    >
+                      {transitionFieldErrors.reason}
+                    </span>
+                  ) : null}
+                </div>
+                {transitionTarget !== 'INACTIVE' ? (
+                  <div className="grid gap-2">
+                    <label className="text-sm font-[650] text-ink" htmlFor="transition-authority">
+                      Authority reference
+                    </label>
+                    <input
+                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
+                      id="transition-authority"
+                      type="text"
+                      value={transitionAuthority}
+                      aria-invalid={Boolean(transitionFieldErrors.authorityReference)}
+                      aria-describedby={
+                        transitionFieldErrors.authorityReference
+                          ? 'transition-authority-error'
+                          : undefined
+                      }
+                      onChange={(event) => setTransitionAuthority(targetValue(event))}
+                    />
+                    {transitionFieldErrors.authorityReference ? (
+                      <span
+                        className="text-xs text-[#7a3036]"
+                        id="transition-authority-error"
+                        role="alert"
+                      >
+                        {transitionFieldErrors.authorityReference}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {transitionTarget !== 'ACTIVE' ? (
+                  <div className="grid gap-2">
+                    <label
+                      className="text-sm font-[650] text-ink"
+                      htmlFor="transition-migration-plan"
+                    >
+                      Migration plan{' '}
+                      <span className="font-normal text-muted">
+                        (required when dependencies remain)
+                      </span>
+                    </label>
+                    <textarea
+                      className="min-h-[88px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
+                      id="transition-migration-plan"
+                      value={transitionMigrationPlan}
+                      onChange={(event) => setTransitionMigrationPlan(targetValue(event))}
+                    />
+                  </div>
+                ) : null}
+                {transitionError ? (
+                  <p
+                    className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
+                    role="alert"
+                  >
+                    {transitionError}
+                  </p>
+                ) : null}
+              </form>
+            </DialogBody>
+            <DialogFooter>
+              <DialogClose asChild>
+                <button
+                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  type="button"
+                  disabled={transitionSubmitting}
+                >
+                  Cancel
+                </button>
+              </DialogClose>
+              <button
+                className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+                type="submit"
+                form="organization-transition-form"
+                disabled={transitionSubmitting}
+              >
+                {transitionSubmitting ? 'Saving…' : `Record ${transitionTarget.toLowerCase()}`}
               </button>
             </DialogFooter>
           </DialogContent>
