@@ -21,18 +21,26 @@ const unit: OrganizationUnitSummary = {
   officialName: 'Records Management Division',
   unitType: 'DIVISION',
   effectiveDate: '2026-08-15',
+  effectiveTo: null,
+  parentUnitId: null,
+  versionState: 'DRAFT',
+  lifecycleStatus: 'ACTIVE',
   status: 'DRAFT',
 };
 
 function serviceMock(): {
   list: ReturnType<typeof vi.fn>;
+  hierarchy: ReturnType<typeof vi.fn>;
   findById: ReturnType<typeof vi.fn>;
   create: ReturnType<typeof vi.fn>;
+  activate: ReturnType<typeof vi.fn>;
 } {
   return {
     list: vi.fn(),
+    hierarchy: vi.fn(),
     findById: vi.fn(),
     create: vi.fn(),
+    activate: vi.fn(),
   };
 }
 
@@ -129,4 +137,77 @@ it('keeps API validation and service authorization errors in the public envelope
     },
   });
   expect(service.create).toHaveBeenCalledOnce();
+});
+
+it('returns the effective hierarchy for the requested date', async () => {
+  const service = serviceMock();
+  service.hierarchy.mockResolvedValue({
+    asOf: '2026-08-20',
+    eligibleParentIds: [],
+    units: [
+      {
+        id: unitId,
+        code: 'RMD',
+        officialName: 'Records Management Division',
+        unitType: 'DIVISION',
+        parentUnitId: null,
+        effectiveFrom: '2026-08-15',
+        effectiveTo: null,
+        lifecycleStatus: 'ACTIVE',
+        childCount: 0,
+      },
+    ],
+  });
+  const controller = new OrganizationController(service as never);
+
+  await expect(controller.hierarchy(agencyId, { asOf: '2026-08-20' }, context)).resolves.toEqual({
+    asOf: '2026-08-20',
+    eligibleParentIds: [],
+    units: [expect.objectContaining({ id: unitId, lifecycleStatus: 'ACTIVE' })],
+  });
+  expect(service.hierarchy).toHaveBeenCalledWith(context, '2026-08-20', undefined);
+});
+
+it('activates a Draft through the public transition contract', async () => {
+  const service = serviceMock();
+  service.activate.mockResolvedValue({
+    ...unit,
+    status: 'ACTIVE',
+    versionState: 'ACTIVE',
+    parentUnitId: null,
+  });
+  const controller = new OrganizationController(service as never);
+
+  await expect(
+    controller.activate(
+      agencyId,
+      unitId,
+      { parentUnitId: null, reason: 'Approved as an Agency root' },
+      context,
+      'activation-1',
+    ),
+  ).resolves.toMatchObject({ id: unitId, status: 'ACTIVE', versionState: 'ACTIVE' });
+  expect(service.activate).toHaveBeenCalledWith(context, unitId, {
+    parentUnitId: null,
+    reason: 'Approved as an Agency root',
+    idempotencyKey: 'activation-1',
+  });
+});
+
+it('does not disclose an Organization Unit through a foreign activation path', async () => {
+  const service = serviceMock();
+  const controller = new OrganizationController(service as never);
+
+  await expect(
+    controller.activate(
+      otherAgencyId,
+      unitId,
+      { parentUnitId: null, reason: 'Out of context' },
+      context,
+    ),
+  ).rejects.toMatchObject({
+    status: 404,
+    response: { error: { code: 'ORGANIZATION_UNIT_NOT_FOUND' } },
+  });
+  expect(service.activate).not.toHaveBeenCalled();
 });

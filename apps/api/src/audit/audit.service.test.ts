@@ -44,8 +44,8 @@ it('rechecks the read permission at the service boundary', async () => {
 it.skipIf(!enabled)(
   'lists persisted Organization Unit evidence newest first and sanitizes detail data',
   async () => {
-    const adminUrl = process.env.DATABASE_E2E_ADMIN_URL;
-    if (!adminUrl) throw new Error('DATABASE_E2E_ADMIN_URL is required for the integration test.');
+    const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
+    if (!adminUrl) throw new Error('An administrative database URL is required for the test.');
     const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
     const service = new AuditService();
     const suffix = `${Date.now()}`;
@@ -152,6 +152,39 @@ it.skipIf(!enabled)(
         metadata: { officialName: 'Updated Unit' },
       },
     });
+    const activationEvent = await admin.auditEvent.create({
+      data: {
+        agencyId: agency.id,
+        actorUserId: user.id,
+        actorMembershipId: membership.id,
+        actorType: 'USER',
+        action: 'ORGANIZATION_UNIT_ACTIVATED',
+        entityType: 'OrganizationUnit',
+        entityId: '00000000-0000-4000-8000-000000000016',
+        previousStatus: 'DRAFT',
+        newStatus: 'ACTIVE',
+        reason: 'Approved reporting placement',
+        requestId: 'audit-api-activation',
+        occurredAt: new Date('2026-08-15T04:00:00.000Z'),
+        metadata: {
+          before: {
+            officialName: 'Activated Unit',
+            code: 'ACTIVE-UNIT',
+            parentUnitId: null,
+            versionState: 'DRAFT',
+            lifecycleStatus: 'ACTIVE',
+          },
+          after: {
+            officialName: 'Activated Unit',
+            code: 'ACTIVE-UNIT',
+            parentUnitId: entityIds[0],
+            versionState: 'ACTIVE',
+            lifecycleStatus: 'ACTIVE',
+            sessionToken: 'private-token',
+          },
+        },
+      },
+    });
 
     try {
       const requestContext = {
@@ -164,8 +197,8 @@ it.skipIf(!enabled)(
       };
       const firstPage = await service.list(requestContext, { limit: 2 });
       expect(firstPage.events.map(({ entityId }) => entityId)).toEqual([
+        activationEvent.entityId,
         entityIds[2],
-        entityIds[1],
       ]);
       expect(firstPage.hasMore).toBe(true);
       expect(firstPage.nextCursor).toEqual(expect.any(String));
@@ -174,7 +207,10 @@ it.skipIf(!enabled)(
         limit: 2,
         cursor: firstPage.nextCursor ?? undefined,
       });
-      expect(secondPage.events.map(({ entityId }) => entityId)).toEqual([entityIds[0]]);
+      expect(secondPage.events.map(({ entityId }) => entityId)).toEqual([
+        entityIds[1],
+        entityIds[0],
+      ]);
       expect(secondPage.hasMore).toBe(false);
       await expect(service.findById(requestContext, foreignEvent.id)).resolves.toBeNull();
       await expect(service.findById(requestContext, wrongTransitionEvent.id)).resolves.toBeNull();
@@ -192,6 +228,26 @@ it.skipIf(!enabled)(
       expect(JSON.stringify(detail)).not.toContain('Private display name');
       expect(JSON.stringify(detail)).not.toContain('private-token');
       expect(JSON.stringify(detail)).not.toContain('private@example.test');
+
+      await expect(service.findById(requestContext, activationEvent.id)).resolves.toMatchObject({
+        action: 'ORGANIZATION_UNIT_ACTIVATED',
+        previousStatus: 'DRAFT',
+        newStatus: 'ACTIVE',
+        before: {
+          officialName: 'Activated Unit',
+          code: 'ACTIVE-UNIT',
+          parentUnitId: null,
+          versionState: 'DRAFT',
+          lifecycleStatus: 'ACTIVE',
+        },
+        after: {
+          officialName: 'Activated Unit',
+          code: 'ACTIVE-UNIT',
+          parentUnitId: entityIds[0],
+          versionState: 'ACTIVE',
+          lifecycleStatus: 'ACTIVE',
+        },
+      });
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");

@@ -101,6 +101,7 @@ model OrganizationUnitVersion {
   effectiveFrom      DateTime  @map("effective_from") @db.Date
   effectiveTo        DateTime? @map("effective_to") @db.Date
   status             String
+  domainStatus       String    @default("ACTIVE") @map("domain_status")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   agency          Agency          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
@@ -350,6 +351,7 @@ model AuditEvent {
   newStatus           String?   @map("new_status")
   reason              String?
   requestId           String?   @map("request_id")
+  idempotencyKey      String?   @map("idempotency_key")
   occurredAt          DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(6)
   metadata            Json      @default("{}")
 
@@ -358,6 +360,7 @@ model AuditEvent {
   actorMembership AgencyMembership? @relation("AuditEventMembership", fields: [agencyId, actorMembershipId], references: [agencyId, id], onDelete: SetNull)
 
   @@index([agencyId, occurredAt(sort: Desc)])
+  @@unique([agencyId, action, entityId, idempotencyKey])
   @@map("audit_events")
 }
 
