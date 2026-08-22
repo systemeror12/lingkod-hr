@@ -25,8 +25,25 @@ interface OrganizationUnit {
   status: 'DRAFT' | 'ACTIVE' | 'INACTIVE' | 'ABOLISHED';
 }
 
+interface OrganizationUnitVersion {
+  id: string;
+  organizationUnitId: string;
+  versionNo: number;
+  code: string;
+  unitType: OrganizationUnit['unitType'];
+  officialName: string;
+  parentUnitId: string | null;
+  costCenterCode: string | null;
+  responsibilityCenterCode: string | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  versionState: 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'VOIDED';
+  lifecycleStatus: 'ACTIVE' | 'INACTIVE' | 'ABOLISHED';
+}
+
 interface OrganizationUnitListResponse {
   units: OrganizationUnit[];
+  drafts?: OrganizationUnitVersion[];
 }
 
 interface OrganizationHierarchyResponse {
@@ -161,8 +178,11 @@ export default async function OrganizationPage({
         <section className="grid min-w-0 gap-7 border-t border-line pt-10">
           <OrganizationWorkspace
             agencyId={session.agencyId}
+            canAbolish={hasPermission(session, 'organization.units.abolish')}
             canActivate={hasPermission(session, 'organization.units.activate')}
             canCreate={hasPermission(session, 'organization.units.create')}
+            canInactivate={hasPermission(session, 'organization.units.inactivate')}
+            canUpdate={hasPermission(session, 'organization.units.update')}
             initial={initial}
             initialHierarchy={initialHierarchy}
           />

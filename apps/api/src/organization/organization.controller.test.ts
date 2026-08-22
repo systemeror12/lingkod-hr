@@ -34,6 +34,14 @@ function serviceMock(): {
   findById: ReturnType<typeof vi.fn>;
   create: ReturnType<typeof vi.fn>;
   activate: ReturnType<typeof vi.fn>;
+  createSuccessor: ReturnType<typeof vi.fn>;
+  updateDraft: ReturnType<typeof vi.fn>;
+  activateSuccessor: ReturnType<typeof vi.fn>;
+  correct: ReturnType<typeof vi.fn>;
+  history: ReturnType<typeof vi.fn>;
+  inactivate: ReturnType<typeof vi.fn>;
+  reactivate: ReturnType<typeof vi.fn>;
+  abolish: ReturnType<typeof vi.fn>;
 } {
   return {
     list: vi.fn(),
@@ -41,6 +49,14 @@ function serviceMock(): {
     findById: vi.fn(),
     create: vi.fn(),
     activate: vi.fn(),
+    createSuccessor: vi.fn(),
+    updateDraft: vi.fn(),
+    activateSuccessor: vi.fn(),
+    correct: vi.fn(),
+    history: vi.fn(),
+    inactivate: vi.fn(),
+    reactivate: vi.fn(),
+    abolish: vi.fn(),
   };
 }
 
@@ -74,6 +90,38 @@ it('returns a generic missing-record response for an unavailable unit', async ()
       },
     },
   });
+});
+
+it('returns dated Organization Unit history through the public read contract', async () => {
+  const service = serviceMock();
+  service.history.mockResolvedValue({
+    unit: { id: unitId, code: 'RMD', unitType: 'DIVISION' },
+    asOf: '2026-08-20',
+    effective: null,
+    current: null,
+    draft: null,
+    versions: [],
+    transitions: [],
+  });
+  const controller = new OrganizationController(service as never);
+
+  await expect(
+    controller.history(agencyId, unitId, { asOf: '2026-08-20' }, context),
+  ).resolves.toEqual(
+    expect.objectContaining({ asOf: '2026-08-20', versions: [], transitions: [] }),
+  );
+  expect(service.history).toHaveBeenCalledWith(context, unitId, '2026-08-20');
+});
+
+it('does not disclose a foreign Organization Unit through successor preparation', async () => {
+  const service = serviceMock();
+  const controller = new OrganizationController(service as never);
+
+  await expect(controller.createSuccessor(otherAgencyId, unitId, context)).rejects.toMatchObject({
+    status: 404,
+    response: { error: { code: 'ORGANIZATION_UNIT_NOT_FOUND' } },
+  });
+  expect(service.createSuccessor).not.toHaveBeenCalled();
 });
 
 it('returns the explicit list response from the active Agency', async () => {

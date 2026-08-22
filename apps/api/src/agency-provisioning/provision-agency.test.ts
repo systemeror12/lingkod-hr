@@ -187,11 +187,7 @@ it.skipIf(!enabled)(
     const mail = createMailDelivery(config);
     const command = new AgencyProvisioningCommand({
       database,
-      invitationIssuer: new InvitationIssuer(
-        mail,
-        config.API_URL,
-        () => new Date('2026-08-14T00:00:00.000Z'),
-      ),
+      invitationIssuer: new InvitationIssuer(mail, config.API_URL),
       requestId: () => requestId,
     });
     let agencyId: string | undefined;
@@ -410,11 +406,7 @@ it.skipIf(!enabled)('rejects an expired provisioned invitation', async () => {
   const email = `expired-${suffix}@example.test`;
   const command = new AgencyProvisioningCommand({
     database,
-    invitationIssuer: new InvitationIssuer(
-      mail,
-      config.API_URL,
-      () => new Date('2026-08-14T00:00:00.000Z'),
-    ),
+    invitationIssuer: new InvitationIssuer(mail, config.API_URL),
     requestId: () => `provision-expired-${suffix}`,
   });
   let agencyId: string | undefined;
@@ -466,11 +458,7 @@ it.skipIf(!enabled)('cancels the complete provisioning state when delivery fails
   const code = `E2E-I60-MAIL-${suffix}`;
   const command = new AgencyProvisioningCommand({
     database,
-    invitationIssuer: new InvitationIssuer(
-      new FailingMailDelivery(),
-      config.API_URL,
-      () => new Date('2026-08-14T00:00:00.000Z'),
-    ),
+    invitationIssuer: new InvitationIssuer(new FailingMailDelivery(), config.API_URL),
     requestId: () => `provision-mail-${suffix}`,
   });
   let agencyId: string | undefined;

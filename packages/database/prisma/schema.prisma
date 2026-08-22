@@ -83,6 +83,7 @@ model OrganizationUnit {
   currentVersion  OrganizationUnitVersion? @relation("OrganizationUnitCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
   versions        OrganizationUnitVersion[] @relation("OrganizationUnitVersions")
   childVersions   OrganizationUnitVersion[] @relation("OrganizationUnitVersionParent")
+  primaryMemberships AgencyMembership[] @relation("AgencyMembershipPrimaryUnit")
 
   @@unique([agencyId, id])
   @@unique([agencyId, code])
@@ -98,6 +99,7 @@ model OrganizationUnitVersion {
   parentUnitId       String?   @map("parent_unit_id") @db.Uuid
   headPositionId     String?   @map("head_position_id") @db.Uuid
   costCenterCode     String?   @map("cost_center_code")
+  responsibilityCenterCode String? @map("responsibility_center_code")
   effectiveFrom      DateTime  @map("effective_from") @db.Date
   effectiveTo        DateTime? @map("effective_to") @db.Date
   status             String
@@ -168,6 +170,7 @@ model AgencyMembership {
 
   agency              Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   user                User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  primaryOrganizationUnit OrganizationUnit? @relation("AgencyMembershipPrimaryUnit", fields: [agencyId, primaryOrganizationUnitId], references: [agencyId, id], onDelete: Restrict)
   membershipRoles     MembershipRole[] @relation("MembershipRoleMembership")
   assignedRoleChanges  MembershipRole[] @relation("MembershipRoleAssigner")
   invitedUsers        Invitation[]     @relation("InvitationInviter")

@@ -33,6 +33,17 @@ it.skipIf(!enabled)(
     if (!runtimeUrl) throw new Error('DATABASE_URL is required for the integration test.');
     const app = new PrismaClient({ datasources: { db: { url: runtimeUrl } } });
     const admin = await createAdminClient();
+    const auditorReadPermission = await admin.$queryRaw<Array<{ id: string }>>`
+      SELECT rp."permission_id" AS id
+      FROM "role_permissions" rp
+      JOIN "roles" r ON r."id" = rp."role_id"
+      JOIN "permissions" p ON p."id" = rp."permission_id"
+      WHERE r."code" = 'internal_auditor'
+        AND r."agency_id" IS NULL
+        AND p."code" = 'organization.units.read'
+        AND rp."scope_policy" = 'AGENCY'
+    `;
+    expect(auditorReadPermission).toHaveLength(1);
     const suffix = `${Date.now()}`;
     const agencies = await Promise.all(
       ['A', 'B'].map((label) =>
@@ -194,12 +205,36 @@ it.skipIf(!enabled)(
       );
       await expect(
         withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.agencyMembership.update({
+            where: { id: membershipA.id },
+            data: { primaryOrganizationUnitId: ownUnit.id },
+          }),
+        ),
+      ).resolves.toMatchObject({ primaryOrganizationUnitId: ownUnit.id });
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.agencyMembership.update({
+            where: { id: membershipA.id },
+            data: { primaryOrganizationUnitId: foreignUnit.id },
+          }),
+        ),
+      ).rejects.toThrow(/foreign key|row-level security|active Organization Unit/i);
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
           transaction.organizationUnitVersion.update({
             where: { id: ownVersion.id },
             data: { name: 'Silently Rewritten Unit' },
           }),
         ),
       ).rejects.toThrow(/immutable/i);
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.organizationUnitVersion.update({
+            where: { id: ownVersion.id },
+            data: { status: 'VOIDED' },
+          }),
+        ),
+      ).rejects.toThrow(/correction transaction/i);
       await expect(
         withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
           transaction.organizationUnitVersion.create({

@@ -296,3 +296,45 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
     fullPage: true,
   });
 });
+
+test('reviews an effective-dated Organization Unit successor without rewriting the current version', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now();
+  const name = `Records Information Office ${suffix}`;
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/organization');
+  await page.getByRole('button', { name: 'Create Organization Unit' }).click();
+  await page.getByLabel('Official name').fill(name);
+  await page.getByLabel('Agency-unique code').fill(`RIO-${suffix}`);
+  await page.getByLabel('Unit type').selectOption('OFFICE');
+  await page.getByLabel('Effective date').fill('2026-08-15');
+  await page.getByRole('button', { name: 'Create Draft' }).click();
+
+  const row = page.getByRole('row').filter({ hasText: name });
+  await row.getByRole('button', { name: `Place and activate ${name}` }).click();
+  await page.getByLabel('Activation reason').fill('Approved as an Agency root');
+  await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
+  await expect(page.getByRole('status')).toContainText(`${name} is now active.`);
+
+  await page
+    .getByRole('button', { name: new RegExp(name) })
+    .first()
+    .click();
+  await page.getByRole('button', { name: 'Prepare change' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Review Organization Unit successor' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAccessibleDescription(
+    'Edit the proposed values and effective date. The current version remains unchanged until activation.',
+  );
+  await expect(page.getByLabel('Proposed official name')).toBeFocused();
+  await expect(dialog).toContainText(name);
+  await expect(dialog).toContainText('Proposed successor');
+  await page.getByRole('button', { name: 'Save Draft' }).click();
+  await dialog.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText('Draft successor saved');
+});

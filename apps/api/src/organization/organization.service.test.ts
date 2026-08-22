@@ -9,6 +9,19 @@ import {
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
+function manilaDateOffset(days: number): string {
+  const date = new Date(
+    `${new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date())}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 const validInput: CreateOrganizationUnitInput = {
   officialName: 'Records Management Division',
   code: 'RMD',
@@ -24,6 +37,9 @@ function context(
     { code: 'organization.units.read', scopePolicy: 'AGENCY' },
     { code: 'organization.units.create', scopePolicy: 'AGENCY' },
     { code: 'organization.units.activate', scopePolicy: 'AGENCY' },
+    { code: 'organization.units.update', scopePolicy: 'AGENCY' },
+    { code: 'organization.units.inactivate', scopePolicy: 'AGENCY' },
+    { code: 'organization.units.abolish', scopePolicy: 'AGENCY' },
   ],
 ): RequestContext {
   return {
@@ -653,3 +669,335 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)(
+  'preserves successor values and an auditable Organization Unit history',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-successor`;
+    const today = manilaDateOffset(0);
+    const successorDate = manilaDateOffset(1);
+    const backdatedDate = manilaDateOffset(-1);
+    const agency = await admin.agency.create({
+      data: {
+        code: `ORG-E2E-${suffix}`,
+        name: 'Organization Successor Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const user = await admin.user.create({
+      data: {
+        identityProvider: 'organization-e2e',
+        externalSubject: `organization-e2e-${suffix}`,
+        emailNormalized: `organization-e2e-${suffix}@example.test`,
+        displayName: 'Organization Successor User',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const membership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const requestContext = context(agency.id, user.id, membership.id);
+    const service = new OrganizationService(organizationAuditWriter);
+
+    try {
+      const unit = await service.create(requestContext, {
+        ...validInput,
+        code: `RMD-${suffix}`,
+      });
+      await service.activate(requestContext, unit.id, {
+        parentUnitId: null,
+        reason: 'Approved as the Agency root',
+      });
+
+      const parent = await service.create(requestContext, {
+        ...validInput,
+        officialName: 'Records Parent Office',
+        code: `PARENT-${suffix}`,
+        unitType: 'OFFICE',
+      });
+      await service.activate(requestContext, parent.id, {
+        parentUnitId: null,
+        reason: 'Approved as the parent office',
+      });
+
+      const prepared = await service.createSuccessor(requestContext, unit.id);
+      expect(prepared.current).toMatchObject({
+        officialName: validInput.officialName,
+        lifecycleStatus: 'ACTIVE',
+      });
+      expect(prepared.draft).toMatchObject({
+        officialName: validInput.officialName,
+        parentUnitId: null,
+        lifecycleStatus: 'ACTIVE',
+      });
+      await expect(
+        service.hierarchy(requestContext, successorDate, unit.id),
+      ).resolves.toMatchObject({
+        eligibleParentIds: expect.arrayContaining([parent.id]),
+      });
+      await expect(
+        service.updateDraft(requestContext, unit.id, prepared.draft.id, {
+          officialName: 'Backdated successor',
+          parentUnitId: null,
+          costCenterCode: null,
+          responsibilityCenterCode: null,
+          effectiveDate: backdatedDate,
+        }),
+      ).rejects.toMatchObject({
+        code: 'ORGANIZATION_UNIT_EFFECTIVE_DATE_INVALID',
+        statusCode: 409,
+      });
+
+      const updated = await service.updateDraft(requestContext, unit.id, prepared.draft.id, {
+        officialName: 'Records and Information Division',
+        parentUnitId: parent.id,
+        costCenterCode: 'CC-100',
+        responsibilityCenterCode: 'RC-200',
+        effectiveDate: successorDate,
+      });
+      expect(updated).toMatchObject({
+        officialName: 'Records and Information Division',
+        costCenterCode: 'CC-100',
+        responsibilityCenterCode: 'RC-200',
+        versionState: 'DRAFT',
+      });
+
+      await expect(
+        service.activateSuccessor(requestContext, unit.id, updated.id, {
+          reason: 'Approved prospective reorganization',
+          idempotencyKey: `successor-activation-${suffix}`,
+        }),
+      ).resolves.toMatchObject({
+        officialName: 'Records and Information Division',
+        status: 'ACTIVE',
+      });
+      await expect(
+        service.activateSuccessor(requestContext, unit.id, updated.id, {
+          reason: 'Approved prospective reorganization',
+          idempotencyKey: `successor-activation-${suffix}`,
+        }),
+      ).resolves.toMatchObject({
+        officialName: 'Records and Information Division',
+        status: 'ACTIVE',
+      });
+
+      const history = await service.history(requestContext, unit.id, successorDate);
+      expect(history.effective).toMatchObject({
+        officialName: 'Records and Information Division',
+        costCenterCode: 'CC-100',
+        responsibilityCenterCode: 'RC-200',
+      });
+      expect(history.versions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            officialName: validInput.officialName,
+            effectiveTo: today,
+            versionState: 'SUPERSEDED',
+          }),
+          expect.objectContaining({
+            officialName: 'Records and Information Division',
+            effectiveFrom: successorDate,
+            versionState: 'ACTIVE',
+          }),
+        ]),
+      );
+      expect(history.transitions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            action: 'ORGANIZATION_UNIT_CHANGED',
+            reason: 'Approved prospective reorganization',
+          }),
+        ]),
+      );
+
+      const activeVersion = history.versions.find(
+        (version) =>
+          version.officialName === 'Records and Information Division' &&
+          version.versionState === 'ACTIVE',
+      );
+      expect(activeVersion).toBeDefined();
+      if (!activeVersion) throw new Error('The activated successor was not returned in history.');
+      await expect(
+        service.correct(requestContext, unit.id, activeVersion.id, {
+          officialName: 'Records & Information Division',
+          parentUnitId: parent.id,
+          costCenterCode: 'CC-100',
+          responsibilityCenterCode: 'RC-200',
+          reason: 'Corrected the official division name',
+        }),
+      ).resolves.toMatchObject({
+        officialName: 'Records & Information Division',
+        versionState: 'ACTIVE',
+      });
+      const correctedHistory = await service.history(requestContext, unit.id, successorDate);
+      expect(correctedHistory.versions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            officialName: 'Records and Information Division',
+            versionState: 'VOIDED',
+          }),
+          expect.objectContaining({
+            officialName: 'Records & Information Division',
+            versionState: 'ACTIVE',
+          }),
+        ]),
+      );
+      expect(correctedHistory.transitions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            action: 'ORGANIZATION_UNIT_CORRECTED',
+            reason: 'Corrected the official division name',
+          }),
+        ]),
+      );
+    } finally {
+      await cleanup(admin, [agency.id], [user.id]);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle periods', async () => {
+  const admin = await createAdminClient();
+  const suffix = `${Date.now()}-lifecycle`;
+  const inactivationDate = manilaDateOffset(1);
+  const inactivationEndDate = manilaDateOffset(4);
+  const reactivationDate = manilaDateOffset(5);
+  const abolitionDate = manilaDateOffset(6);
+  const agency = await admin.agency.create({
+    data: {
+      code: `ORG-E2E-${suffix}`,
+      name: 'Organization Lifecycle Agency',
+      agencyType: 'NGA',
+      status: 'ACTIVE',
+    },
+  });
+  const user = await admin.user.create({
+    data: {
+      identityProvider: 'organization-e2e',
+      externalSubject: `organization-e2e-${suffix}`,
+      emailNormalized: `organization-e2e-${suffix}@example.test`,
+      displayName: 'Organization Lifecycle User',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  const membership = await admin.agencyMembership.create({
+    data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+  });
+  const requestContext = context(agency.id, user.id, membership.id);
+  const service = new OrganizationService(organizationAuditWriter);
+
+  try {
+    const unit = await service.create(requestContext, {
+      ...validInput,
+      code: `LIFE-${suffix}`,
+    });
+    await service.activate(requestContext, unit.id, {
+      parentUnitId: null,
+      reason: 'Approved as the Agency root',
+    });
+    await admin.agencyMembership.update({
+      where: { id: membership.id },
+      data: { primaryOrganizationUnitId: unit.id },
+    });
+
+    await expect(
+      service.inactivate(requestContext, unit.id, {
+        effectiveDate: inactivationDate,
+        reason: 'Office temporarily closed',
+      }),
+    ).rejects.toMatchObject({
+      code: 'ORGANIZATION_UNIT_DEPENDENCIES_UNRESOLVED',
+      statusCode: 409,
+    });
+
+    await expect(
+      service.inactivate(requestContext, unit.id, {
+        effectiveDate: inactivationDate,
+        reason: 'Office temporarily closed',
+        migrationPlan: 'Reassign active memberships through HRMO review.',
+      }),
+    ).resolves.toMatchObject({ status: 'INACTIVE', lifecycleStatus: 'INACTIVE' });
+
+    await expect(
+      service.reactivate(requestContext, unit.id, {
+        effectiveDate: reactivationDate,
+        reason: 'Office reopened',
+      }),
+    ).rejects.toMatchObject({
+      code: 'ORGANIZATION_UNIT_AUTHORITY_REQUIRED',
+      statusCode: 400,
+    });
+    await expect(
+      service.reactivate(requestContext, unit.id, {
+        effectiveDate: reactivationDate,
+        reason: 'Office reopened',
+        authorityReference: 'AO-2026-25',
+        idempotencyKey: `reactivation-${suffix}`,
+      }),
+    ).resolves.toMatchObject({ status: 'ACTIVE', lifecycleStatus: 'ACTIVE' });
+    await expect(
+      service.reactivate(requestContext, unit.id, {
+        effectiveDate: reactivationDate,
+        reason: 'Office reopened',
+        authorityReference: 'AO-2026-25',
+        idempotencyKey: `reactivation-${suffix}`,
+      }),
+    ).resolves.toMatchObject({ status: 'ACTIVE', lifecycleStatus: 'ACTIVE' });
+
+    await expect(
+      service.abolish(requestContext, unit.id, {
+        effectiveDate: abolitionDate,
+        reason: 'Office legally abolished',
+        authorityReference: 'AO-2026-26',
+        migrationPlan: 'Retain existing membership history; no new assignments.',
+      }),
+    ).resolves.toMatchObject({ status: 'ABOLISHED', lifecycleStatus: 'ABOLISHED' });
+
+    await expect(service.createSuccessor(requestContext, unit.id)).rejects.toMatchObject({
+      code: 'ORGANIZATION_UNIT_SUCCESSOR_NOT_ALLOWED',
+      statusCode: 409,
+    });
+
+    const history = await service.history(requestContext, unit.id, reactivationDate);
+    expect(history.effective).toMatchObject({ lifecycleStatus: 'ACTIVE' });
+    expect(history.versions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          lifecycleStatus: 'INACTIVE',
+          effectiveFrom: inactivationDate,
+          effectiveTo: inactivationEndDate,
+        }),
+        expect.objectContaining({
+          lifecycleStatus: 'ACTIVE',
+          effectiveFrom: reactivationDate,
+        }),
+        expect.objectContaining({
+          lifecycleStatus: 'ABOLISHED',
+          effectiveFrom: abolitionDate,
+        }),
+      ]),
+    );
+    expect(history.transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'ORGANIZATION_UNIT_INACTIVATED',
+          migrationPlan: 'Reassign active memberships through HRMO review.',
+        }),
+        expect.objectContaining({
+          action: 'ORGANIZATION_UNIT_REACTIVATED',
+          authorityReference: 'AO-2026-25',
+        }),
+        expect.objectContaining({
+          action: 'ORGANIZATION_UNIT_ABOLISHED',
+          authorityReference: 'AO-2026-26',
+        }),
+      ]),
+    );
+  } finally {
+    await cleanup(admin, [agency.id], [user.id]);
+    await admin.$disconnect();
+  }
+});
