@@ -86,6 +86,10 @@ async function seed(): Promise<void> {
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'OrganizationUnit' },
     });
+    await transaction.auditEvent.deleteMany({
+      where: { agencyId: agency.id, entityType: 'StaffingAuthority' },
+    });
+    await transaction.staffingAuthority.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: agency.id } });
   });

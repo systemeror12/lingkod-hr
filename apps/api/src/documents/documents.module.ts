@@ -18,5 +18,6 @@ import { S3DocumentStorage } from './documents.storage';
     { provide: DOCUMENT_AUDIT_WRITER, useValue: documentAuditWriter },
     { provide: DOCUMENT_STORAGE, useFactory: () => new S3DocumentStorage(getConfig()) },
   ],
+  exports: [DocumentsService],
 })
 export class DocumentsModule {}

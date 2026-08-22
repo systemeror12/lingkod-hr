@@ -36,6 +36,7 @@ model Agency {
   organizationUnitVersions OrganizationUnitVersion[]
   documents              Document[]
   documentVersions       DocumentVersion[]
+  staffingAuthorities    StaffingAuthority[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -183,6 +184,9 @@ model AgencyMembership {
   createdDocuments    Document[]       @relation("DocumentCreator")
   updatedDocuments    Document[]       @relation("DocumentUpdater")
   createdDocumentVersions DocumentVersion[] @relation("DocumentVersionCreator")
+  createdStaffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityCreator")
+  updatedStaffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityUpdater")
+  validatedStaffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityEvidenceValidator")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -386,6 +390,8 @@ model Document {
   updatedBy       AgencyMembership? @relation("DocumentUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   currentVersion  DocumentVersion? @relation("DocumentCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
   versions        DocumentVersion[] @relation("DocumentVersions")
+  staffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityEvidenceDocument")
+  staffingAuthorityRevocations StaffingAuthority[] @relation("StaffingAuthorityRevocationDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -410,9 +416,52 @@ model DocumentVersion {
   document            Document         @relation("DocumentVersions", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
   currentForDocuments Document[]       @relation("DocumentCurrentVersion")
   createdBy           AgencyMembership @relation("DocumentVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  staffingAuthorityEvidenceVersions   StaffingAuthority[] @relation("StaffingAuthorityEvidenceVersion")
+  staffingAuthorityRevocationVersions StaffingAuthority[] @relation("StaffingAuthorityRevocationVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
+  @@unique([agencyId, documentId, id])
   @@index([agencyId, documentId, versionNo])
   @@map("document_versions")
+}
+
+model StaffingAuthority {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  authorityType              String    @map("authority_type")
+  referenceNo                String    @map("reference_no") @db.Citext
+  issuedDate                 DateTime  @map("issued_date") @db.Date
+  effectiveDate              DateTime  @map("effective_date") @db.Date
+  sourceMetadata             Json      @default("{}") @map("source_metadata")
+  documentId                 String?   @map("document_id") @db.Uuid
+  evidenceVersionId          String?   @map("evidence_version_id") @db.Uuid
+  evidenceValidatedAt        DateTime? @map("evidence_validated_at") @db.Timestamptz(6)
+  evidenceValidatedByMembershipId String? @map("evidence_validated_by_membership_id") @db.Uuid
+  evidenceValidationReason   String?   @map("evidence_validation_reason")
+  status                     String
+  supersededEffectiveDate   DateTime? @map("superseded_effective_date") @db.Date
+  revokedEffectiveDate      DateTime? @map("revoked_effective_date") @db.Date
+  revocationReason          String?   @map("revocation_reason")
+  revocationDocumentId      String?   @map("revocation_document_id") @db.Uuid
+  revocationEvidenceVersionId String?  @map("revocation_evidence_version_id") @db.Uuid
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId     String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
+
+  agency             Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  evidenceDocument   Document?        @relation("StaffingAuthorityEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion    DocumentVersion? @relation("StaffingAuthorityEvidenceVersion", fields: [agencyId, documentId, evidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  revocationDocument Document?        @relation("StaffingAuthorityRevocationDocument", fields: [agencyId, revocationDocumentId], references: [agencyId, id], onDelete: Restrict)
+  revocationEvidenceVersion DocumentVersion? @relation("StaffingAuthorityRevocationVersion", fields: [agencyId, revocationDocumentId, revocationEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  evidenceValidatedBy AgencyMembership? @relation("StaffingAuthorityEvidenceValidator", fields: [agencyId, evidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  createdBy         AgencyMembership @relation("StaffingAuthorityCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy         AgencyMembership @relation("StaffingAuthorityUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, referenceNo])
+  @@index([agencyId, status, effectiveDate])
+  @@map("staffing_authorities")
 }
