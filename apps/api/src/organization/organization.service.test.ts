@@ -9,6 +9,19 @@ import {
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
+function manilaDateOffset(days: number): string {
+  const date = new Date(
+    `${new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date())}T00:00:00.000Z`,
+  );
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 const validInput: CreateOrganizationUnitInput = {
   officialName: 'Records Management Division',
   code: 'RMD',
@@ -662,6 +675,9 @@ it.skipIf(!enabled)(
   async () => {
     const admin = await createAdminClient();
     const suffix = `${Date.now()}-successor`;
+    const today = manilaDateOffset(0);
+    const successorDate = manilaDateOffset(1);
+    const backdatedDate = manilaDateOffset(-1);
     const agency = await admin.agency.create({
       data: {
         code: `ORG-E2E-${suffix}`,
@@ -716,18 +732,18 @@ it.skipIf(!enabled)(
         parentUnitId: null,
         lifecycleStatus: 'ACTIVE',
       });
-      await expect(service.hierarchy(requestContext, '2026-08-21', unit.id)).resolves.toMatchObject(
-        {
-          eligibleParentIds: expect.arrayContaining([parent.id]),
-        },
-      );
+      await expect(
+        service.hierarchy(requestContext, successorDate, unit.id),
+      ).resolves.toMatchObject({
+        eligibleParentIds: expect.arrayContaining([parent.id]),
+      });
       await expect(
         service.updateDraft(requestContext, unit.id, prepared.draft.id, {
           officialName: 'Backdated successor',
           parentUnitId: null,
           costCenterCode: null,
           responsibilityCenterCode: null,
-          effectiveDate: '2026-08-19',
+          effectiveDate: backdatedDate,
         }),
       ).rejects.toMatchObject({
         code: 'ORGANIZATION_UNIT_EFFECTIVE_DATE_INVALID',
@@ -739,7 +755,7 @@ it.skipIf(!enabled)(
         parentUnitId: parent.id,
         costCenterCode: 'CC-100',
         responsibilityCenterCode: 'RC-200',
-        effectiveDate: '2026-08-21',
+        effectiveDate: successorDate,
       });
       expect(updated).toMatchObject({
         officialName: 'Records and Information Division',
@@ -767,7 +783,7 @@ it.skipIf(!enabled)(
         status: 'ACTIVE',
       });
 
-      const history = await service.history(requestContext, unit.id, '2026-08-21');
+      const history = await service.history(requestContext, unit.id, successorDate);
       expect(history.effective).toMatchObject({
         officialName: 'Records and Information Division',
         costCenterCode: 'CC-100',
@@ -777,12 +793,12 @@ it.skipIf(!enabled)(
         expect.arrayContaining([
           expect.objectContaining({
             officialName: validInput.officialName,
-            effectiveTo: '2026-08-20',
+            effectiveTo: today,
             versionState: 'SUPERSEDED',
           }),
           expect.objectContaining({
             officialName: 'Records and Information Division',
-            effectiveFrom: '2026-08-21',
+            effectiveFrom: successorDate,
             versionState: 'ACTIVE',
           }),
         ]),
@@ -815,7 +831,7 @@ it.skipIf(!enabled)(
         officialName: 'Records & Information Division',
         versionState: 'ACTIVE',
       });
-      const correctedHistory = await service.history(requestContext, unit.id, '2026-08-21');
+      const correctedHistory = await service.history(requestContext, unit.id, successorDate);
       expect(correctedHistory.versions).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -846,6 +862,10 @@ it.skipIf(!enabled)(
 it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle periods', async () => {
   const admin = await createAdminClient();
   const suffix = `${Date.now()}-lifecycle`;
+  const inactivationDate = manilaDateOffset(1);
+  const inactivationEndDate = manilaDateOffset(4);
+  const reactivationDate = manilaDateOffset(5);
+  const abolitionDate = manilaDateOffset(6);
   const agency = await admin.agency.create({
     data: {
       code: `ORG-E2E-${suffix}`,
@@ -885,7 +905,7 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
 
     await expect(
       service.inactivate(requestContext, unit.id, {
-        effectiveDate: '2026-08-21',
+        effectiveDate: inactivationDate,
         reason: 'Office temporarily closed',
       }),
     ).rejects.toMatchObject({
@@ -895,7 +915,7 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
 
     await expect(
       service.inactivate(requestContext, unit.id, {
-        effectiveDate: '2026-08-21',
+        effectiveDate: inactivationDate,
         reason: 'Office temporarily closed',
         migrationPlan: 'Reassign active memberships through HRMO review.',
       }),
@@ -903,7 +923,7 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
 
     await expect(
       service.reactivate(requestContext, unit.id, {
-        effectiveDate: '2026-08-25',
+        effectiveDate: reactivationDate,
         reason: 'Office reopened',
       }),
     ).rejects.toMatchObject({
@@ -912,7 +932,7 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
     });
     await expect(
       service.reactivate(requestContext, unit.id, {
-        effectiveDate: '2026-08-25',
+        effectiveDate: reactivationDate,
         reason: 'Office reopened',
         authorityReference: 'AO-2026-25',
         idempotencyKey: `reactivation-${suffix}`,
@@ -920,7 +940,7 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
     ).resolves.toMatchObject({ status: 'ACTIVE', lifecycleStatus: 'ACTIVE' });
     await expect(
       service.reactivate(requestContext, unit.id, {
-        effectiveDate: '2026-08-25',
+        effectiveDate: reactivationDate,
         reason: 'Office reopened',
         authorityReference: 'AO-2026-25',
         idempotencyKey: `reactivation-${suffix}`,
@@ -929,7 +949,7 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
 
     await expect(
       service.abolish(requestContext, unit.id, {
-        effectiveDate: '2026-08-26',
+        effectiveDate: abolitionDate,
         reason: 'Office legally abolished',
         authorityReference: 'AO-2026-26',
         migrationPlan: 'Retain existing membership history; no new assignments.',
@@ -941,22 +961,22 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
       statusCode: 409,
     });
 
-    const history = await service.history(requestContext, unit.id, '2026-08-25');
+    const history = await service.history(requestContext, unit.id, reactivationDate);
     expect(history.effective).toMatchObject({ lifecycleStatus: 'ACTIVE' });
     expect(history.versions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           lifecycleStatus: 'INACTIVE',
-          effectiveFrom: '2026-08-21',
-          effectiveTo: '2026-08-24',
+          effectiveFrom: inactivationDate,
+          effectiveTo: inactivationEndDate,
         }),
         expect.objectContaining({
           lifecycleStatus: 'ACTIVE',
-          effectiveFrom: '2026-08-25',
+          effectiveFrom: reactivationDate,
         }),
         expect.objectContaining({
           lifecycleStatus: 'ABOLISHED',
-          effectiveFrom: '2026-08-26',
+          effectiveFrom: abolitionDate,
         }),
       ]),
     );
