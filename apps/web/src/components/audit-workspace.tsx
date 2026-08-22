@@ -210,7 +210,7 @@ export function AuditWorkspace({
             <div className="divide-y divide-line">
               {events.map((event) => (
                 <button
-                  className="grid w-full gap-4 px-5 py-5 text-left hover:bg-canvas min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-start"
+                  className="grid w-full gap-4 bg-paper px-5 py-5 text-left hover:bg-canvas min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-start"
                   key={event.id}
                   type="button"
                   aria-expanded={selectedId === event.id}
@@ -262,7 +262,7 @@ export function AuditWorkspace({
         ) : null}
         {hasMore ? (
           <button
-            className="min-h-11 justify-self-start rounded-[3px] border border-line bg-paper px-4 text-sm font-[650] text-ink hover:bg-canvas disabled:opacity-60"
+            className="min-h-11 justify-self-start rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:opacity-60"
             type="button"
             disabled={loadingMore}
             onClick={() => void loadMore()}
@@ -295,7 +295,7 @@ export function AuditWorkspace({
           </div>
           <DialogClose asChild>
             <button
-              className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas"
+              className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3]"
               type="button"
               ref={closeRef}
               aria-label="Close audit event detail"
@@ -378,7 +378,7 @@ export function AuditWorkspace({
         <DialogFooter>
           <DialogClose asChild>
             <button
-              className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas"
+              className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
               type="button"
             >
               Close

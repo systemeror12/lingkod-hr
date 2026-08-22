@@ -343,7 +343,7 @@ function ProfileDialog({
           </div>
           <DialogClose asChild>
             <button
-              className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+              className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
               type="button"
               aria-label="Close Agency Profile dialog"
               disabled={submitting}
@@ -619,7 +619,7 @@ function ProfileDialog({
           </span>
           <DialogClose asChild>
             <button
-              className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+              className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
               type="button"
               disabled={submitting}
             >
@@ -866,7 +866,7 @@ export function AgencyProfileWorkspace({
             <div className="grid grid-cols-[repeat(5,minmax(190px,1fr))] gap-2 overflow-x-auto pb-2 lg:grid-cols-1 lg:overflow-visible lg:pb-0">
               {data.versions.map((version) => (
                 <button
-                  className={`relative grid min-h-[84px] gap-1 rounded-[3px] border p-3 text-left before:absolute before:top-0 before:bottom-0 before:left-0 before:w-[3px] before:bg-transparent ${selected.id === version.id ? 'border-[#aebfd6] bg-paper shadow-[0_5px_16px_rgb(23_32_51/8%)] before:bg-cobalt' : 'border-transparent hover:bg-paper'}`}
+                  className={`relative grid min-h-[84px] gap-1 rounded-[3px] border bg-paper p-3 text-left before:absolute before:top-0 before:bottom-0 before:left-0 before:w-[3px] before:bg-transparent ${selected.id === version.id ? 'border-[#aebfd6] shadow-[0_5px_16px_rgb(23_32_51/8%)] before:bg-cobalt' : 'border-transparent hover:bg-[#fafbfd]'}`}
                   key={version.id}
                   type="button"
                   aria-pressed={selected.id === version.id}
@@ -917,7 +917,7 @@ export function AgencyProfileWorkspace({
               {canUpdate && draft && selected.id === draft.id ? (
                 <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-6">
                   <button
-                    className="min-h-10 rounded-[3px] border border-line px-4 text-sm font-[650] text-cobalt hover:bg-pale-blue"
+                    className="min-h-10 rounded-[3px] bg-pale-blue px-4 text-sm font-[650] text-cobalt hover:bg-[#d7e3f4]"
                     type="button"
                     onClick={(event) =>
                       openDialog('edit', event.currentTarget as unknown as FocusableField)
@@ -990,7 +990,7 @@ export function AgencyProfileWorkspace({
                 <tr className="border-t border-line hover:bg-[#fafbfd]" key={version.id}>
                   <th className="px-5 py-4 text-left font-mono text-xs text-cobalt" scope="row">
                     <button
-                      className="font-mono text-xs text-cobalt underline-offset-2 hover:underline"
+                      className="inline-flex rounded-[3px] bg-pale-blue px-2 py-1 font-mono text-xs text-cobalt hover:bg-[#d7e3f4]"
                       type="button"
                       onClick={() => selectVersion(version.id)}
                     >

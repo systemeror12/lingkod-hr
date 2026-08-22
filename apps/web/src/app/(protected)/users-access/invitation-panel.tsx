@@ -235,7 +235,7 @@ export function InvitationPanel({
             </div>
             <DialogClose asChild>
               <button
-                className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                 type="button"
                 aria-label="Close invitation dialog"
                 disabled={submitting}
@@ -295,7 +295,7 @@ export function InvitationPanel({
           <DialogFooter>
             <DialogClose asChild>
               <button
-                className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                 type="button"
                 disabled={submitting}
               >

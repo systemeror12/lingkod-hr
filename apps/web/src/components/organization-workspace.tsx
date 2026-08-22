@@ -971,7 +971,7 @@ export function OrganizationWorkspace({
                   <div className="min-w-[280px] py-2">
                     {rows.map(({ unit, depth }) => (
                       <button
-                        className={`group relative grid w-full grid-cols-[18px_1fr_auto] items-center gap-2 border-l-[3px] py-2.5 pr-4 text-left ${
+                        className={`group relative grid w-full grid-cols-[18px_1fr_auto] items-center gap-2 border-l-[3px] bg-paper py-2.5 pr-4 text-left ${
                           depth === 0
                             ? 'border-midnight bg-midnight text-paper hover:bg-[#273650] aria-pressed:border-midnight aria-pressed:bg-midnight'
                             : 'border-transparent hover:bg-pale-blue aria-pressed:border-cobalt aria-pressed:bg-pale-blue'
@@ -1088,7 +1088,7 @@ export function OrganizationWorkspace({
                           ) : null}
                           {canInactivate && selected.lifecycleStatus === 'ACTIVE' ? (
                             <button
-                              className="min-h-10 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
                               type="button"
                               onClick={() => openTransition('INACTIVE')}
                             >
@@ -1097,7 +1097,7 @@ export function OrganizationWorkspace({
                           ) : null}
                           {canActivate && selected.lifecycleStatus === 'INACTIVE' ? (
                             <button
-                              className="min-h-10 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
                               type="button"
                               onClick={() => openTransition('ACTIVE')}
                             >
@@ -1106,7 +1106,7 @@ export function OrganizationWorkspace({
                           ) : null}
                           {canAbolish && selected.lifecycleStatus !== 'ABOLISHED' ? (
                             <button
-                              className="min-h-10 rounded-[3px] border border-[#d6aeb0] px-3 text-xs font-[670] text-[#7a3036] hover:bg-[#fff7f7]"
+                              className="min-h-10 rounded-[3px] bg-[#f5dfe0] px-3 text-xs font-[670] text-[#7a3036] hover:bg-[#ebcfd1]"
                               type="button"
                               onClick={() => openTransition('ABOLISHED')}
                             >
@@ -1114,7 +1114,7 @@ export function OrganizationWorkspace({
                             </button>
                           ) : null}
                           <button
-                            className="min-h-10 rounded-[3px] border border-line px-3 text-xs font-[670] text-ink hover:bg-canvas"
+                            className="min-h-10 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
                             type="button"
                             onClick={() => void loadHistory(selected.id)}
                           >
@@ -1148,7 +1148,7 @@ export function OrganizationWorkspace({
                 </div>
                 {selected ? (
                   <button
-                    className="min-h-9 rounded-[3px] border border-line px-3 text-xs font-[670] text-ink hover:bg-canvas"
+                    className="min-h-9 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
                     type="button"
                     onClick={() => void loadHistory(selected.id)}
                   >
@@ -1349,7 +1349,7 @@ export function OrganizationWorkspace({
                         <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
                         <td className="px-5 py-4 text-right">
                           <button
-                            className="min-h-9 rounded-[3px] border border-line px-3 text-xs font-[670] text-ink hover:bg-canvas"
+                            className="min-h-9 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
                             type="button"
                             onClick={() => setSelectedId(unit.id)}
                           >
@@ -1428,7 +1428,7 @@ export function OrganizationWorkspace({
                         <td className="px-5 py-4 text-right">
                           {canActivate ? (
                             <button
-                              className="min-h-9 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              className="min-h-9 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
                               type="button"
                               onClick={(event) => {
                                 activationTriggerRef.current = event.currentTarget as unknown as {
@@ -1460,7 +1460,7 @@ export function OrganizationWorkspace({
                         <td className="px-5 py-4 text-right">
                           {canUpdate || canActivate ? (
                             <button
-                              className="min-h-9 rounded-[3px] border border-[#9eb6d1] px-3 text-xs font-[670] text-cobalt hover:bg-pale-blue"
+                              className="min-h-9 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
                               type="button"
                               onClick={() => void prepareSuccessor(draft.organizationUnitId)}
                             >
@@ -1504,7 +1504,7 @@ export function OrganizationWorkspace({
               </div>
               <DialogClose asChild>
                 <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   aria-label="Close Organization Unit dialog"
                   disabled={submitting}
@@ -1676,7 +1676,7 @@ export function OrganizationWorkspace({
               </span>
               <DialogClose asChild>
                 <button
-                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   disabled={submitting}
                 >
@@ -1719,7 +1719,7 @@ export function OrganizationWorkspace({
               </div>
               <DialogClose asChild>
                 <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   aria-label="Close activation dialog"
                   disabled={activationSubmitting}
@@ -1843,7 +1843,7 @@ export function OrganizationWorkspace({
               </span>
               <DialogClose asChild>
                 <button
-                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   disabled={activationSubmitting}
                 >
@@ -1895,7 +1895,7 @@ export function OrganizationWorkspace({
               </div>
               <DialogClose asChild>
                 <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   aria-label="Close successor dialog"
                   disabled={successorSubmitting}
@@ -2149,7 +2149,7 @@ export function OrganizationWorkspace({
             <DialogFooter>
               <DialogClose asChild>
                 <button
-                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   disabled={successorSubmitting}
                 >
@@ -2158,7 +2158,7 @@ export function OrganizationWorkspace({
               </DialogClose>
               {canUpdate ? (
                 <button
-                  className="min-h-11 rounded-[3px] border border-[#9eb6d1] px-4 text-sm font-[650] text-cobalt hover:bg-pale-blue disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-11 rounded-[3px] bg-pale-blue px-4 text-sm font-[650] text-cobalt hover:bg-[#d7e3f4] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   disabled={successorSubmitting}
                   onClick={() => void submitSavedSuccessor()}
@@ -2218,7 +2218,7 @@ export function OrganizationWorkspace({
               </div>
               <DialogClose asChild>
                 <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] text-xl text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   aria-label="Close lifecycle dialog"
                   disabled={transitionSubmitting}
@@ -2359,7 +2359,7 @@ export function OrganizationWorkspace({
             <DialogFooter>
               <DialogClose asChild>
                 <button
-                  className="min-h-11 rounded-[3px] px-4 text-sm font-[650] text-muted hover:bg-canvas disabled:pointer-events-none disabled:opacity-50"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
                   type="button"
                   disabled={transitionSubmitting}
                 >
