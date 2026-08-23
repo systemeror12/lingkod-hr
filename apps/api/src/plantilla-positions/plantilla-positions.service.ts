@@ -2,7 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import { DocumentsService } from '../documents/documents.service';
+import {
+  DocumentsService,
+  LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
+  type DocumentClassification,
+  type DocumentSummary,
+} from '../documents/documents.service';
 
 export const PLANTILLA_POSITION_VERSION_STATES = [
   'DRAFT',
@@ -25,12 +30,23 @@ export const PLANTILLA_POSITION_EMPLOYMENT_CATEGORIES = [
   'CONTRACTUAL',
   'OTHER',
 ] as const;
+export const PLANTILLA_POSITION_EVIDENCE_PURPOSES = [
+  'POSITION_DESCRIPTION',
+  'CREATION',
+  'RECLASSIFICATION',
+  'TRANSFER',
+  'FREEZE',
+  'ABOLITION',
+  'OTHER',
+] as const;
 
 export type PlantillaPositionVersionState = (typeof PLANTILLA_POSITION_VERSION_STATES)[number];
 export type PlantillaPositionLifecycleStatus =
   (typeof PLANTILLA_POSITION_LIFECYCLE_STATUSES)[number];
 export type PlantillaPositionEmploymentCategory =
   (typeof PLANTILLA_POSITION_EMPLOYMENT_CATEGORIES)[number];
+export type PlantillaPositionEvidencePurpose =
+  (typeof PLANTILLA_POSITION_EVIDENCE_PURPOSES)[number];
 
 export interface PlantillaPositionInput {
   title: string;
@@ -112,12 +128,40 @@ export interface PlantillaPositionHistoryEntry {
   occurredAt: string;
 }
 
+export interface PlantillaPositionEvidence {
+  id: string;
+  positionId: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: DocumentClassification;
+  status: string;
+  purpose: PlantillaPositionEvidencePurpose;
+  versionNo: number;
+  mimeType: string;
+  sizeBytes: number;
+  effectiveFrom: string | null;
+  createdAt: string;
+}
+
+export interface PlantillaPositionEvidenceLinkInput {
+  documentId: string;
+  purpose: PlantillaPositionEvidencePurpose;
+  effectiveDate?: string | null | undefined;
+}
+
+export interface PlantillaPositionEvidenceAccess extends PlantillaPositionEvidence {
+  accessUrl: string;
+  expiresAt: string;
+}
+
 export interface PlantillaPositionDetail {
   position: PlantillaPositionSummary;
   asOf: string;
   effective: PlantillaPositionVersionSummary | null;
   versions: PlantillaPositionVersionSummary[];
   history: PlantillaPositionHistoryEntry[];
+  evidence: PlantillaPositionEvidence[];
 }
 
 export interface PlantillaPositionSuccessor {
@@ -196,6 +240,7 @@ const versionSelect = {
 
 const positionVersionStates = ['DRAFT', 'ACTIVE', 'SUPERSEDED', 'VOIDED'];
 const PLANTILLA_POSITION_LIST_LIMIT = 200;
+const PLANTILLA_POSITION_EVIDENCE_LIST_LIMIT = 200;
 const positionVersionOrderBy: Prisma.PlantillaPositionVersionOrderByWithRelationInput[] = [
   { effectiveFrom: 'desc' },
   { versionNo: 'desc' },
@@ -215,8 +260,36 @@ const positionSelect = {
   },
 } as const;
 
+const positionEvidenceSelect = {
+  id: true,
+  positionId: true,
+  documentId: true,
+  documentType: true,
+  effectiveFrom: true,
+  createdAt: true,
+  document: {
+    select: {
+      id: true,
+      documentNo: true,
+      documentType: true,
+      classification: true,
+      status: true,
+      currentVersion: {
+        select: {
+          versionNo: true,
+          mimeType: true,
+          sizeBytes: true,
+        },
+      },
+    },
+  },
+} as const;
+
 type PositionRecord = Prisma.PlantillaPositionGetPayload<{ select: typeof positionSelect }>;
 type VersionRecord = Prisma.PlantillaPositionVersionGetPayload<{ select: typeof versionSelect }>;
+type PositionEvidenceRecord = Prisma.PositionDocumentGetPayload<{
+  select: typeof positionEvidenceSelect;
+}>;
 
 function databaseContext(context: RequestContext, transition = false) {
   return {
@@ -225,6 +298,10 @@ function databaseContext(context: RequestContext, transition = false) {
     membershipId: context.membershipId,
     ...(transition ? { plantillaPositionTransition: true } : {}),
   };
+}
+
+function evidenceDatabaseContext(context: RequestContext) {
+  return { ...databaseContext(context), plantillaPositionEvidenceTransition: true };
 }
 
 function toDatabaseDate(value: string): Date {
@@ -342,6 +419,38 @@ function positionSummary(record: PositionRecord, asOf: Date): PlantillaPositionS
   };
 }
 
+function evidenceSummary(record: PositionEvidenceRecord): PlantillaPositionEvidence | null {
+  const version = record.document.currentVersion;
+  if (!version) return null;
+  return {
+    id: record.id,
+    positionId: record.positionId,
+    documentId: record.documentId,
+    documentNo: record.document.documentNo,
+    documentType: record.document.documentType,
+    classification: record.document.classification as DocumentClassification,
+    status: record.document.status,
+    purpose: record.documentType as PlantillaPositionEvidencePurpose,
+    versionNo: version.versionNo,
+    mimeType: version.mimeType,
+    sizeBytes: Number(version.sizeBytes),
+    effectiveFrom: record.effectiveFrom ? formatDate(record.effectiveFrom) : null,
+    createdAt: formatDateTime(record.createdAt),
+  };
+}
+
+function evidenceAuditMetadata(record: PositionEvidenceRecord): Prisma.InputJsonObject {
+  return {
+    evidenceId: record.id,
+    documentId: record.documentId,
+    evidencePurpose: record.documentType,
+    documentType: record.document.documentType,
+    classification: record.document.classification,
+    effectiveDate: record.effectiveFrom ? formatDate(record.effectiveFrom) : null,
+    versionNo: record.document.currentVersion?.versionNo ?? null,
+  };
+}
+
 function auditVersionData(value: PlantillaPositionVersionSummary): Prisma.InputJsonObject {
   return {
     id: value.id,
@@ -408,6 +517,9 @@ export class PlantillaPositionsService {
     );
     const asOf = toDatabaseDate(asOfValue);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const canReadEvidence = hasPermission(context, 'documents.evidence.read', {
+        agencyId: context.agencyId,
+      });
       const record = await transaction.plantillaPosition.findFirst({
         where: { id: positionId, agencyId: context.agencyId },
         select: positionSelect,
@@ -437,17 +549,161 @@ export class PlantillaPositionsService {
         asOf: asOfValue,
         effective: summary.currentVersion,
         versions: record.versions.map(versionSummary),
-        history: events.map((event) => ({
-          id: event.id,
-          action: event.action,
-          previousStatus: event.previousStatus,
-          newStatus: event.newStatus,
-          reason: event.reason,
-          effectiveDate: this.metadataString(event.metadata, 'effectiveDate'),
-          occurredAt: formatDateTime(event.occurredAt),
-        })),
+        evidence: canReadEvidence
+          ? await this.positionEvidenceRecords(transaction, context, positionId)
+          : [],
+        history: events
+          .filter(
+            (event) => canReadEvidence || !event.action.startsWith('PLANTILLA_POSITION_EVIDENCE_'),
+          )
+          .map((event) => ({
+            id: event.id,
+            action: event.action,
+            previousStatus: event.previousStatus,
+            newStatus: event.newStatus,
+            reason: event.reason,
+            effectiveDate: this.metadataString(event.metadata, 'effectiveDate'),
+            occurredAt: formatDateTime(event.occurredAt),
+          })),
       };
     });
+  }
+
+  async listEvidence(
+    context: RequestContext,
+    positionId: string,
+  ): Promise<PlantillaPositionEvidence[] | null> {
+    this.assertPermission(context, 'positions.items.read', 'PLANTILLA_POSITION_READ_FORBIDDEN');
+    this.assertEvidenceReadPermission(context);
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const position = await transaction.plantillaPosition.findFirst({
+        where: { id: positionId, agencyId: context.agencyId },
+        select: { id: true },
+      });
+      if (!position) return null;
+      return this.positionEvidenceRecords(transaction, context, positionId);
+    });
+  }
+
+  async linkEvidence(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionEvidenceLinkInput,
+  ): Promise<PlantillaPositionEvidence> {
+    this.assertPermission(context, 'positions.items.update', 'PLANTILLA_POSITION_UPDATE_FORBIDDEN');
+    this.assertEvidenceReadPermission(context);
+    if (!PLANTILLA_POSITION_EVIDENCE_PURPOSES.includes(input.purpose)) {
+      throw this.evidencePurposeInvalid();
+    }
+    const effectiveFrom = input.effectiveDate ? this.evidenceDate(input.effectiveDate) : null;
+    try {
+      return await withDatabaseContext(evidenceDatabaseContext(context), async (transaction) => {
+        await this.lockPosition(transaction, context.agencyId, positionId);
+        const document = await this.documentsService.findDocumentForLinkingInTransaction(
+          transaction,
+          context,
+          input.documentId,
+        );
+        this.assertLinkableDocument(context, document);
+        const link = await transaction.positionDocument.create({
+          data: {
+            agencyId: context.agencyId,
+            positionId,
+            documentId: input.documentId,
+            documentType: input.purpose,
+            effectiveFrom,
+          },
+          select: { id: true },
+        });
+        const record = await this.positionEvidenceRecord(
+          transaction,
+          context.agencyId,
+          positionId,
+          link.id,
+        );
+        if (!record) throw this.evidenceNotFound();
+        await this.auditWriter.write(transaction, {
+          agencyId: context.agencyId,
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          actorType: 'USER',
+          action: 'PLANTILLA_POSITION_EVIDENCE_LINKED',
+          entityType: 'PlantillaPosition',
+          entityId: positionId,
+          previousStatus: 'UNLINKED',
+          newStatus: 'LINKED',
+          requestId: context.requestId,
+          occurredAt: new Date(),
+          metadata: evidenceAuditMetadata(record),
+        });
+        const summary = evidenceSummary(record);
+        if (!summary) throw this.evidenceDocumentUnavailable();
+        return summary;
+      });
+    } catch (error: unknown) {
+      if (this.isKnownPrismaError(error, 'P2002')) throw this.evidenceDuplicate();
+      throw error;
+    }
+  }
+
+  async removeEvidence(
+    context: RequestContext,
+    positionId: string,
+    evidenceId: string,
+    reason: string,
+  ): Promise<{ removed: true }> {
+    this.assertPermission(context, 'positions.items.update', 'PLANTILLA_POSITION_UPDATE_FORBIDDEN');
+    this.assertEvidenceReadPermission(context);
+    const normalizedReason = reason.trim();
+    if (!normalizedReason) throw this.evidenceRemovalReasonRequired();
+    return withDatabaseContext(evidenceDatabaseContext(context), async (transaction) => {
+      await this.lockPosition(transaction, context.agencyId, positionId);
+      const record = await transaction.positionDocument.findFirst({
+        where: { id: evidenceId, agencyId: context.agencyId, positionId },
+        select: positionEvidenceSelect,
+      });
+      if (!record) throw this.evidenceNotFound();
+      await transaction.positionDocument.delete({
+        where: { agencyId_id: { agencyId: context.agencyId, id: evidenceId } },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'PLANTILLA_POSITION_EVIDENCE_REMOVED',
+        entityType: 'PlantillaPosition',
+        entityId: positionId,
+        previousStatus: 'LINKED',
+        newStatus: 'UNLINKED',
+        reason: normalizedReason,
+        requestId: context.requestId,
+        occurredAt: new Date(),
+        metadata: evidenceAuditMetadata(record),
+      });
+      return { removed: true as const };
+    });
+  }
+
+  async accessEvidence(
+    context: RequestContext,
+    positionId: string,
+    evidenceId: string,
+  ): Promise<PlantillaPositionEvidenceAccess | null> {
+    this.assertPermission(context, 'positions.items.read', 'PLANTILLA_POSITION_READ_FORBIDDEN');
+    this.assertEvidenceReadPermission(context);
+    const record = await withDatabaseContext(databaseContext(context), (transaction) =>
+      transaction.positionDocument.findFirst({
+        where: { id: evidenceId, agencyId: context.agencyId, positionId },
+        select: positionEvidenceSelect,
+      }),
+    );
+    if (!record) return null;
+    const summary = evidenceSummary(record);
+    if (!summary) throw this.evidenceDocumentUnavailable();
+    const access = await this.documentsService.issueAccessLink(context, record.documentId);
+    if (!access) throw this.evidenceDocumentUnavailable();
+    return { ...summary, accessUrl: access.accessUrl, expiresAt: access.expiresAt };
   }
 
   async create(
@@ -898,7 +1154,7 @@ export class PlantillaPositionsService {
       !authority.evidenceValidationReason
     )
       throw this.staffingAuthorityEvidenceRequired();
-    const evidence = await this.documentsService.findEvidenceForAuthorityInTransaction(
+    const evidence = await this.documentsService.findDocumentForLinkingInTransaction(
       transaction,
       context,
       authority.documentId,
@@ -918,6 +1174,66 @@ export class PlantillaPositionsService {
       where: { id: positionId, agencyId },
       select: positionSelect,
     });
+  }
+
+  private async positionEvidenceRecords(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+  ): Promise<PlantillaPositionEvidence[]> {
+    const records = await transaction.positionDocument.findMany({
+      where: { agencyId: context.agencyId, positionId },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+      take: PLANTILLA_POSITION_EVIDENCE_LIST_LIMIT,
+      select: positionEvidenceSelect,
+    });
+    return records.flatMap((record) => {
+      const summary = evidenceSummary(record);
+      return summary && this.canExposeEvidenceRecord(context, summary) ? [summary] : [];
+    });
+  }
+
+  private async positionEvidenceRecord(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    positionId: string,
+    evidenceId: string,
+  ): Promise<PositionEvidenceRecord | null> {
+    return transaction.positionDocument.findFirst({
+      where: { id: evidenceId, agencyId, positionId },
+      select: positionEvidenceSelect,
+    });
+  }
+
+  private assertLinkableDocument(
+    context: RequestContext,
+    document: DocumentSummary | null,
+  ): asserts document is DocumentSummary {
+    if (!document) throw this.evidenceDocumentNotFound();
+    if (
+      document.classification === 'HIGHLY_SENSITIVE' &&
+      !hasPermission(context, 'documents.evidence.read_sensitive', {
+        agencyId: context.agencyId,
+      })
+    ) {
+      throw this.evidenceSensitiveForbidden();
+    }
+    if (
+      !document.currentVersion ||
+      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
+        document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
+      )
+    ) {
+      throw this.evidenceDocumentIneligible();
+    }
+  }
+
+  private evidenceDate(value: string): Date {
+    try {
+      return toDatabaseDate(value);
+    } catch {
+      throw this.evidenceDateInvalid();
+    }
   }
 
   private async versionRecord(
@@ -972,6 +1288,28 @@ export class PlantillaPositionsService {
         code,
       );
     }
+  }
+
+  private assertEvidenceReadPermission(context: RequestContext): void {
+    if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
+      throw new PlantillaPositionServiceError(
+        'The current Agency Membership lacks permission to inspect External Evidence.',
+        403,
+        'PLANTILLA_POSITION_EVIDENCE_READ_FORBIDDEN',
+      );
+    }
+  }
+
+  private canExposeEvidenceRecord(
+    context: RequestContext,
+    record: PlantillaPositionEvidence,
+  ): boolean {
+    return (
+      record.classification !== 'HIGHLY_SENSITIVE' ||
+      hasPermission(context, 'documents.evidence.read_sensitive', {
+        agencyId: context.agencyId,
+      })
+    );
   }
 
   private isKnownPrismaError(error: unknown, code: string): boolean {
@@ -1085,6 +1423,78 @@ export class PlantillaPositionsService {
       'A reason is required to correct a Plantilla Position version.',
       400,
       'PLANTILLA_POSITION_CORRECTION_REASON_REQUIRED',
+    );
+  }
+
+  private evidencePurposeInvalid(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'Choose a supported Plantilla Position evidence purpose.',
+      400,
+      'PLANTILLA_POSITION_EVIDENCE_PURPOSE_INVALID',
+    );
+  }
+
+  private evidenceDateInvalid(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Plantilla Position evidence effective date is invalid.',
+      400,
+      'PLANTILLA_POSITION_EVIDENCE_DATE_INVALID',
+    );
+  }
+
+  private evidenceDocumentNotFound(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The External Evidence Document could not be found in the active Agency.',
+      404,
+      'PLANTILLA_POSITION_EVIDENCE_DOCUMENT_NOT_FOUND',
+    );
+  }
+
+  private evidenceDocumentIneligible(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'Only approved, issued, or superseded External Evidence with a current version can be linked.',
+      409,
+      'PLANTILLA_POSITION_EVIDENCE_DOCUMENT_INELIGIBLE',
+    );
+  }
+
+  private evidenceSensitiveForbidden(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The current Agency Membership cannot link highly sensitive External Evidence.',
+      403,
+      'PLANTILLA_POSITION_EVIDENCE_SENSITIVE_FORBIDDEN',
+    );
+  }
+
+  private evidenceDuplicate(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'That External Evidence is already linked to this Plantilla Position for the selected purpose.',
+      409,
+      'PLANTILLA_POSITION_EVIDENCE_DUPLICATE',
+    );
+  }
+
+  private evidenceNotFound(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Plantilla Position evidence link could not be found.',
+      404,
+      'PLANTILLA_POSITION_EVIDENCE_NOT_FOUND',
+    );
+  }
+
+  private evidenceRemovalReasonRequired(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'A reason is required when removing a Plantilla Position evidence link.',
+      400,
+      'PLANTILLA_POSITION_EVIDENCE_REMOVAL_REASON_REQUIRED',
+    );
+  }
+
+  private evidenceDocumentUnavailable(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The linked External Evidence version is no longer available.',
+      409,
+      'PLANTILLA_POSITION_EVIDENCE_DOCUMENT_UNAVAILABLE',
     );
   }
 }

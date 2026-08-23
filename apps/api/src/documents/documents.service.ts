@@ -54,6 +54,8 @@ export interface DocumentAccess {
   expiresAt: string;
 }
 
+export const LINKABLE_EXTERNAL_EVIDENCE_STATUSES = ['APPROVED', 'ISSUED', 'SUPERSEDED'] as const;
+
 export interface DocumentAuditWriter {
   write(
     transaction: Prisma.TransactionClient,
@@ -525,8 +527,29 @@ export class DocumentsService {
     return toSummary(record);
   }
 
+  async listForLinking(context: RequestContext): Promise<DocumentSummary[]> {
+    this.assertReadPermission(context);
+    const canReadSensitive = hasPermission(context, 'documents.evidence.read_sensitive', {
+      agencyId: context.agencyId,
+    });
+    const records = await withDatabaseContext(databaseContext(context), (transaction) =>
+      transaction.document.findMany({
+        where: {
+          agencyId: context.agencyId,
+          status: { in: [...LINKABLE_EXTERNAL_EVIDENCE_STATUSES] },
+          currentVersionId: { not: null },
+          ...(canReadSensitive ? {} : { classification: { not: 'HIGHLY_SENSITIVE' } }),
+        },
+        orderBy: [{ createdAt: 'desc' }, { documentNo: 'asc' }],
+        take: 200,
+        select: documentSelect,
+      }),
+    );
+    return records.map(toSummary);
+  }
+
   /** Internal contract: callers own authorization and use this only inside their transaction. */
-  async findEvidenceForAuthorityInTransaction(
+  async findDocumentForLinkingInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     documentId: string,

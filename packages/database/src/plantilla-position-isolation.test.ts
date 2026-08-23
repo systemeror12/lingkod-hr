@@ -77,6 +77,16 @@ it.skipIf(!enabled)(
         updatedByMembershipId: membershipB.id,
       },
     });
+    const foreignDocument = await admin.document.create({
+      data: {
+        agencyId: agencyB.id,
+        documentNo: `POSITION-RLS-DOCUMENT-${suffix}`,
+        documentType: 'POSITION_DESCRIPTION',
+        classification: 'CONFIDENTIAL',
+        status: 'APPROVED',
+        createdByMembershipId: membershipB.id,
+      },
+    });
 
     try {
       await expect(
@@ -131,10 +141,40 @@ it.skipIf(!enabled)(
             }),
         ),
       ).rejects.toThrow(/application service|projection/i);
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agencyA.id, userId: user.id, membershipId: membershipA.id },
+          (transaction) =>
+            transaction.positionDocument.findMany({ where: { documentId: foreignDocument.id } }),
+        ),
+      ).resolves.toHaveLength(0);
+      await expect(
+        withContext(
+          app,
+          { agencyId: agencyA.id, userId: user.id, membershipId: membershipA.id },
+          (transaction) =>
+            transaction.positionDocument.create({
+              data: {
+                agencyId: agencyB.id,
+                positionId: foreign.id,
+                documentId: foreignDocument.id,
+                documentType: 'POSITION_DESCRIPTION',
+              },
+            }),
+        ),
+      ).rejects.toThrow();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.positionDocument.deleteMany({
+          where: { agencyId: { in: agencies.map(({ id }) => id) } },
+        });
         await transaction.plantillaPosition.deleteMany({
+          where: { agencyId: { in: agencies.map(({ id }) => id) } },
+        });
+        await transaction.document.deleteMany({
           where: { agencyId: { in: agencies.map(({ id }) => id) } },
         });
       });

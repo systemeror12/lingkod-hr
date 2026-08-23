@@ -18,6 +18,14 @@ type VersionState = 'ACTIVE' | 'DRAFT' | 'SUPERSEDED' | 'VOIDED';
 type LifecycleStatus =
   'PROPOSED' | 'AUTHORIZED' | 'VACANT' | 'RESERVED' | 'OCCUPIED' | 'FROZEN' | 'ABOLISHED';
 type EmploymentCategory = 'PLANTILLA' | 'CASUAL' | 'CONTRACTUAL' | 'OTHER';
+type EvidencePurpose =
+  | 'POSITION_DESCRIPTION'
+  | 'CREATION'
+  | 'RECLASSIFICATION'
+  | 'TRANSFER'
+  | 'FREEZE'
+  | 'ABOLITION'
+  | 'OTHER';
 
 export interface PlantillaPositionVersion {
   id: string;
@@ -71,6 +79,7 @@ interface PlantillaPositionDetail {
   asOf: string;
   effective: PlantillaPositionVersion | null;
   versions: PlantillaPositionVersion[];
+  evidence: PlantillaPositionEvidence[];
   history: Array<{
     id: string;
     action: string;
@@ -80,6 +89,31 @@ interface PlantillaPositionDetail {
     effectiveDate: string | null;
     occurredAt: string;
   }>;
+}
+
+interface PlantillaPositionEvidence {
+  id: string;
+  positionId: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'HIGHLY_SENSITIVE';
+  status: string;
+  purpose: EvidencePurpose;
+  versionNo: number;
+  mimeType: string;
+  sizeBytes: number;
+  effectiveFrom: string | null;
+  createdAt: string;
+}
+
+interface EvidenceDocumentOption {
+  id: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: 'PUBLIC' | 'INTERNAL' | 'CONFIDENTIAL' | 'HIGHLY_SENSITIVE';
+  status: string;
+  currentVersion: { versionNo: number; mimeType: string; sizeBytes: number } | null;
 }
 
 interface OrganizationUnitOption {
@@ -120,6 +154,16 @@ interface CatalogOptions {
 const inputClass =
   'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
 const labelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
+
+const evidencePurposeLabels: Record<EvidencePurpose, string> = {
+  POSITION_DESCRIPTION: 'Position description',
+  CREATION: 'Creation',
+  RECLASSIFICATION: 'Reclassification',
+  TRANSFER: 'Transfer',
+  FREEZE: 'Freeze',
+  ABOLITION: 'Abolition',
+  OTHER: 'Other position evidence',
+};
 
 function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
@@ -474,16 +518,214 @@ function CreatePositionDialog({
   );
 }
 
+function LinkEvidenceDialog({
+  open,
+  onOpenChange,
+  documents,
+  documentsLoading,
+  busy,
+  error,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  documents: EvidenceDocumentOption[] | null;
+  documentsLoading: boolean;
+  busy: boolean;
+  error: string;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+      <DialogContent aria-describedby="link-evidence-description" size="compact">
+        <form className="contents" onSubmit={onSubmit}>
+          <DialogHeader>
+            <div className="grid gap-1.5">
+              <DialogTitle>Link External Evidence</DialogTitle>
+              <DialogDescription id="link-evidence-description">
+                Attach an accessible Agency Document to this position with the reason it supports
+                the record.
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button aria-label="Close link evidence dialog" disabled={busy} type="button">
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
+              </Button>
+            </DialogClose>
+          </DialogHeader>
+          <DialogBody className="grid gap-5">
+            {error ? <FormError message={error} /> : null}
+            {documentsLoading ? (
+              <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted" role="status">
+                Loading linkable Agency Documents…
+              </p>
+            ) : null}
+            <Field htmlFor="plantilla-evidence-document" label="External Evidence Document">
+              <select
+                autoFocus
+                className={inputClass}
+                id="plantilla-evidence-document"
+                name="documentId"
+                required
+              >
+                <option value="">Select an approved Document</option>
+                {documents?.map((document) => (
+                  <option key={document.id} value={document.id}>
+                    {document.documentNo ?? document.documentType} · {document.documentType} · v
+                    {document.currentVersion?.versionNo ?? '—'}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field htmlFor="plantilla-evidence-purpose" label="Evidence purpose">
+              <select
+                className={inputClass}
+                id="plantilla-evidence-purpose"
+                name="purpose"
+                required
+              >
+                {Object.entries(evidencePurposeLabels).map(([purpose, label]) => (
+                  <option key={purpose} value={purpose}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              htmlFor="plantilla-evidence-effective-date"
+              label={
+                <>
+                  Effectivity <span className="font-normal text-muted">Optional</span>
+                </>
+              }
+            >
+              <input
+                className={inputClass}
+                id="plantilla-evidence-effective-date"
+                name="effectiveDate"
+                type="date"
+              />
+            </Field>
+            <p className="m-0 border-l-2 border-cobalt bg-[#f3f7fc] px-3 py-2.5 text-xs leading-[1.55] text-muted">
+              Purpose describes why the Document supports this position. Its MIME type remains
+              separate file metadata.
+            </p>
+          </DialogBody>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button disabled={busy} size="default" type="button" variant="secondary">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              disabled={busy || documentsLoading || !documents?.length}
+              size="default"
+              type="submit"
+              variant="primary"
+            >
+              {busy ? 'Linking…' : 'Link evidence'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RemoveEvidenceDialog({
+  evidence,
+  open,
+  onOpenChange,
+  busy,
+  error,
+  onSubmit,
+}: {
+  evidence: PlantillaPositionEvidence | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  busy: boolean;
+  error: string;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const documentLabel = evidence?.documentNo ?? evidence?.documentType ?? 'this Document';
+  return (
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+      <DialogContent aria-describedby="remove-evidence-description" size="compact">
+        <form className="contents" onSubmit={onSubmit}>
+          <DialogHeader>
+            <div className="grid gap-1.5">
+              <DialogTitle>Remove evidence link</DialogTitle>
+              <DialogDescription id="remove-evidence-description">
+                Remove {documentLabel} from this position only. The Document, its versions, and
+                audit history stay preserved.
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button aria-label="Close remove evidence dialog" disabled={busy} type="button">
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
+              </Button>
+            </DialogClose>
+          </DialogHeader>
+          <DialogBody className="grid gap-5">
+            {error ? <FormError message={error} /> : null}
+            <div className="grid gap-1 rounded-[4px] border border-line bg-[#f8fafc] px-4 py-3">
+              <span className="text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
+                Attached as
+              </span>
+              <strong className="text-sm text-midnight">
+                {evidence ? evidencePurposeLabels[evidence.purpose] : 'Position evidence'}
+              </strong>
+            </div>
+            <Field htmlFor="plantilla-evidence-removal-reason" label="Reason for removal">
+              <textarea
+                autoFocus
+                className={`${inputClass} min-h-28 resize-y py-3`}
+                id="plantilla-evidence-removal-reason"
+                maxLength={500}
+                name="reason"
+                placeholder="Explain why this link was attached in error."
+                required
+              />
+            </Field>
+          </DialogBody>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button disabled={busy} size="default" type="button" variant="secondary">
+                Keep link
+              </Button>
+            </DialogClose>
+            <Button
+              className="border-[#9a3030] bg-[#9a3030] hover:bg-[#7d2525]"
+              disabled={busy}
+              size="default"
+              type="submit"
+              variant="primary"
+            >
+              {busy ? 'Removing…' : 'Remove link'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PlantillaPositionWorkspace({
   agencyId,
   initial,
   canCreate,
   canUpdate,
+  canReadEvidence,
 }: {
   agencyId: string;
   initial: PlantillaPositionListResponse;
   canCreate: boolean;
   canUpdate: boolean;
+  canReadEvidence: boolean;
 }) {
   const [positions, setPositions] = useState(initial.positions);
   const [selectedId, setSelectedId] = useState(initial.positions[0]?.id ?? '');
@@ -493,10 +735,18 @@ export function PlantillaPositionWorkspace({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [options, setOptions] = useState<CatalogOptions | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(false);
+  const [evidenceDocuments, setEvidenceDocuments] = useState<EvidenceDocumentOption[] | null>(null);
+  const [evidenceDocumentsLoading, setEvidenceDocumentsLoading] = useState(false);
+  const [linkEvidenceOpen, setLinkEvidenceOpen] = useState(false);
+  const [removeEvidenceTarget, setRemoveEvidenceTarget] =
+    useState<PlantillaPositionEvidence | null>(null);
   const [busy, setBusy] = useState(false);
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const returnFocusRef = useRef<{ focus(): void } | null>(null);
+  const evidenceReturnFocusRef = useRef<{ focus(): void } | null>(null);
+  const removeEvidenceReturnFocusRef = useRef<{ focus(): void } | null>(null);
 
   const selected = positions.find((position) => position.id === selectedId) ?? positions[0] ?? null;
   const matches = positions.filter((position) => {
@@ -510,6 +760,7 @@ export function PlantillaPositionWorkspace({
   const effective = selectedDetail?.effective ?? selected?.currentVersion ?? null;
   const versions =
     selectedDetail?.versions ?? (selected?.currentVersion ? [selected.currentVersion] : []);
+  const evidence = selectedDetail?.evidence ?? [];
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(`/api/v1/agencies/${agencyId}/plantilla-positions${path}`, {
@@ -611,6 +862,68 @@ export function PlantillaPositionWorkspace({
     }
   }
 
+  async function loadEvidenceDocuments(): Promise<void> {
+    if (evidenceDocuments || evidenceDocumentsLoading) return;
+    setEvidenceDocumentsLoading(true);
+    try {
+      const response = await fetch(`/api/v1/agencies/${agencyId}/documents`, {
+        credentials: 'include',
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(errorMessage(value, 'Agency Documents could not be loaded.'));
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        !Array.isArray((value as { documents?: unknown }).documents)
+      ) {
+        throw new Error('The Agency Document response was invalid.');
+      }
+      setEvidenceDocuments((value as { documents: EvidenceDocumentOption[] }).documents);
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The Agency Documents could not be loaded.',
+      );
+    } finally {
+      setEvidenceDocumentsLoading(false);
+    }
+  }
+
+  function openLinkEvidence(target: { focus(): void }): void {
+    evidenceReturnFocusRef.current = target;
+    setError('');
+    setSuccess('');
+    setLinkEvidenceOpen(true);
+    void loadEvidenceDocuments();
+  }
+
+  function closeLinkEvidence(next: boolean): void {
+    if (evidenceBusy) return;
+    setLinkEvidenceOpen(next);
+    if (!next) {
+      const target = evidenceReturnFocusRef.current;
+      setTimeout(() => target?.focus(), 0);
+    }
+  }
+
+  function openRemoveEvidence(evidenceItem: PlantillaPositionEvidence, target: { focus(): void }) {
+    removeEvidenceReturnFocusRef.current = target;
+    setError('');
+    setSuccess('');
+    setRemoveEvidenceTarget(evidenceItem);
+  }
+
+  function closeRemoveEvidence(next: boolean): void {
+    if (evidenceBusy) return;
+    setRemoveEvidenceTarget(next ? removeEvidenceTarget : null);
+    if (!next) {
+      const target = removeEvidenceReturnFocusRef.current;
+      setTimeout(() => target?.focus(), 0);
+    }
+  }
+
   async function changeAsOf(value: string): Promise<void> {
     setAsOf(value);
     setError('');
@@ -693,6 +1006,101 @@ export function PlantillaPositionWorkspace({
     }
   }
 
+  async function submitLinkEvidence(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!selected || evidenceBusy || !canUpdate || !canReadEvidence) return;
+    const BrowserFormData = FormData as unknown as new (form: EventTarget) => FormData;
+    const form = new BrowserFormData(event.currentTarget);
+    const position = selected;
+    setEvidenceBusy(true);
+    setError('');
+    try {
+      const documentId = String(form.get('documentId') ?? '');
+      const document = evidenceDocuments?.find((item) => item.id === documentId);
+      await request(`/${position.id}/evidence`, {
+        method: 'POST',
+        body: JSON.stringify({
+          documentId,
+          purpose: String(form.get('purpose') ?? '') as EvidencePurpose,
+          effectiveDate: String(form.get('effectiveDate') ?? '') || null,
+        }),
+      });
+      await loadDetail(position.id);
+      setSuccess(
+        `External Evidence ${document?.documentNo ?? document?.documentType ?? 'Document'} was linked to “${position.itemNumber}”.`,
+      );
+      setLinkEvidenceOpen(false);
+      const target = evidenceReturnFocusRef.current;
+      setTimeout(() => target?.focus(), 0);
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The External Evidence could not be linked.',
+      );
+    } finally {
+      setEvidenceBusy(false);
+    }
+  }
+
+  async function submitRemoveEvidence(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!selected || !removeEvidenceTarget || evidenceBusy || !canUpdate || !canReadEvidence)
+      return;
+    const BrowserFormData = FormData as unknown as new (form: EventTarget) => FormData;
+    const form = new BrowserFormData(event.currentTarget);
+    const position = selected;
+    const evidenceItem = removeEvidenceTarget;
+    setEvidenceBusy(true);
+    setError('');
+    try {
+      await request(`/${position.id}/evidence/${evidenceItem.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ reason: String(form.get('reason') ?? '') }),
+      });
+      await loadDetail(position.id);
+      setSuccess(
+        `The ${evidencePurposeLabels[evidenceItem.purpose].toLowerCase()} link was removed from “${position.itemNumber}”.`,
+      );
+      setRemoveEvidenceTarget(null);
+      const target = evidenceReturnFocusRef.current ?? removeEvidenceReturnFocusRef.current;
+      setTimeout(() => target?.focus(), 0);
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The External Evidence link could not be removed.',
+      );
+    } finally {
+      setEvidenceBusy(false);
+    }
+  }
+
+  async function inspectEvidence(evidenceItem: PlantillaPositionEvidence): Promise<void> {
+    if (!selected || !canReadEvidence || evidenceBusy) return;
+    setError('');
+    try {
+      const value = await request(`/${selected.id}/evidence/${evidenceItem.id}/access`);
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        typeof (value as { accessUrl?: unknown }).accessUrl !== 'string'
+      ) {
+        throw new Error('The External Evidence access response was invalid.');
+      }
+      const browser = globalThis as unknown as {
+        open(url: string, target?: string, features?: string): unknown;
+      };
+      browser.open((value as { accessUrl: string }).accessUrl, '_blank', 'noopener,noreferrer');
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The External Evidence could not be opened.',
+      );
+    }
+  }
+
   return (
     <div className="grid gap-5">
       <header className="flex flex-col gap-4 border-b border-[#aeb9c8] pb-5 min-[761px]:flex-row min-[761px]:items-end min-[761px]:justify-between">
@@ -729,7 +1137,9 @@ export function PlantillaPositionWorkspace({
           {success}
         </p>
       ) : null}
-      {error && !dialogOpen ? <FormError message={error} /> : null}
+      {error && !dialogOpen && !linkEvidenceOpen && !removeEvidenceTarget ? (
+        <FormError message={error} />
+      ) : null}
 
       <section className="overflow-hidden rounded-[5px] border border-[#cbd3df] bg-paper shadow-[0_1px_2px_rgb(23_32_51/4%)]">
         <div className="grid gap-3 border-b border-line bg-[#f8fafc] p-4 min-[761px]:grid-cols-[minmax(0,1fr)_auto] min-[761px]:items-end">
@@ -936,6 +1346,107 @@ export function PlantillaPositionWorkspace({
                       </div>
                     </div>
                   </section>
+                  <section aria-labelledby="plantilla-evidence-heading" className="grid gap-3">
+                    <div className="flex flex-col gap-3 min-[1440px]:flex-row min-[1440px]:items-center min-[1440px]:justify-between">
+                      <div className="grid gap-1">
+                        <h3
+                          className="m-0 text-xs font-bold text-midnight"
+                          id="plantilla-evidence-heading"
+                        >
+                          Position evidence
+                        </h3>
+                        <p className="m-0 text-xs text-muted">
+                          Purpose-tagged Documents retained against the permanent Item Number.
+                        </p>
+                      </div>
+                      {canUpdate && canReadEvidence ? (
+                        <Button
+                          className="shrink-0 whitespace-nowrap"
+                          size="default"
+                          type="button"
+                          variant="secondary"
+                          onClick={(event) =>
+                            openLinkEvidence(event.currentTarget as unknown as { focus(): void })
+                          }
+                        >
+                          Link External Evidence
+                        </Button>
+                      ) : null}
+                    </div>
+                    {!canReadEvidence ? (
+                      <p className="m-0 rounded-[4px] border border-line bg-[#f8fafc] px-4 py-3 text-xs leading-[1.55] text-muted">
+                        Evidence inspection is restricted by the active Document permission.
+                      </p>
+                    ) : !selectedDetail ? (
+                      <p className="m-0 rounded-[4px] border border-line bg-[#f8fafc] px-4 py-3 text-xs leading-[1.55] text-muted">
+                        Select this position to inspect its linked evidence.
+                      </p>
+                    ) : evidence.length ? (
+                      <div className="grid gap-2">
+                        {evidence.map((evidenceItem) => (
+                          <article
+                            className="grid gap-3 rounded-[4px] border border-line bg-[#f8fafc] p-4 min-[1440px]:grid-cols-[minmax(0,1fr)_auto] min-[1440px]:items-center"
+                            key={evidenceItem.id}
+                          >
+                            <div className="grid min-w-0 gap-1.5">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <StateBadge tone="blue">
+                                  {evidencePurposeLabels[evidenceItem.purpose]}
+                                </StateBadge>
+                                <span className="text-[11px] text-muted">
+                                  {evidenceItem.status}
+                                </span>
+                              </div>
+                              <strong className="truncate text-sm text-midnight">
+                                {evidenceItem.documentNo ?? evidenceItem.documentType}
+                              </strong>
+                              <span className="text-xs text-muted">
+                                {evidenceItem.documentType} · v{evidenceItem.versionNo} ·{' '}
+                                {evidenceItem.mimeType}
+                              </span>
+                              <span className="text-xs text-muted">
+                                {evidenceItem.effectiveFrom
+                                  ? `Effective ${dateLabel(evidenceItem.effectiveFrom)}`
+                                  : 'No effectivity recorded'}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2 min-[1440px]:justify-end">
+                              <Button
+                                className="whitespace-nowrap"
+                                size="default"
+                                type="button"
+                                variant="secondary"
+                                onClick={() => void inspectEvidence(evidenceItem)}
+                              >
+                                Inspect document
+                              </Button>
+                              {canUpdate ? (
+                                <Button
+                                  className="whitespace-nowrap text-[#8b2f2f] hover:bg-[#fff1f1]"
+                                  size="default"
+                                  type="button"
+                                  variant="secondary"
+                                  onClick={(event) =>
+                                    openRemoveEvidence(
+                                      evidenceItem,
+                                      event.currentTarget as unknown as { focus(): void },
+                                    )
+                                  }
+                                >
+                                  Remove link
+                                </Button>
+                              ) : null}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="m-0 rounded-[4px] border border-dashed border-[#9cabc0] bg-[#fbfcfe] px-4 py-4 text-xs leading-[1.55] text-muted">
+                        No evidence is linked to this position yet. Link the Document that supports
+                        its description, creation, or another controlled purpose.
+                      </p>
+                    )}
+                  </section>
                 </div>
                 <aside className="grid content-start gap-4 border-t border-line bg-[#f8fafc] p-5 min-[1040px]:border-t-0 min-[1040px]:border-l">
                   <div className="flex items-center justify-between gap-2">
@@ -984,6 +1495,23 @@ export function PlantillaPositionWorkspace({
         busy={busy}
         error={error}
         onSubmit={(event) => void submitCreate(event)}
+      />
+      <LinkEvidenceDialog
+        open={linkEvidenceOpen}
+        onOpenChange={closeLinkEvidence}
+        documents={evidenceDocuments}
+        documentsLoading={evidenceDocumentsLoading}
+        busy={evidenceBusy}
+        error={error}
+        onSubmit={(event) => void submitLinkEvidence(event)}
+      />
+      <RemoveEvidenceDialog
+        evidence={removeEvidenceTarget}
+        open={removeEvidenceTarget !== null}
+        onOpenChange={closeRemoveEvidence}
+        busy={evidenceBusy}
+        error={error}
+        onSubmit={(event) => void submitRemoveEvidence(event)}
       />
     </div>
   );

@@ -1,10 +1,71 @@
 import type {
   PlantillaPositionDetail,
+  PlantillaPositionEvidence,
+  PlantillaPositionEvidenceAccess,
   PlantillaPositionHistoryEntry,
   PlantillaPositionSummary,
   PlantillaPositionSuccessor,
   PlantillaPositionVersionSummary,
 } from './plantilla-positions.service';
+
+export class PlantillaPositionEvidenceDto {
+  readonly id: string;
+  readonly positionId: string;
+  readonly documentId: string;
+  readonly documentNo: string | null;
+  readonly documentType: string;
+  readonly classification: PlantillaPositionEvidence['classification'];
+  readonly status: string;
+  readonly purpose: PlantillaPositionEvidence['purpose'];
+  readonly versionNo: number;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly effectiveFrom: string | null;
+  readonly createdAt: string;
+
+  constructor(evidence: PlantillaPositionEvidence) {
+    this.id = evidence.id;
+    this.positionId = evidence.positionId;
+    this.documentId = evidence.documentId;
+    this.documentNo = evidence.documentNo;
+    this.documentType = evidence.documentType;
+    this.classification = evidence.classification;
+    this.status = evidence.status;
+    this.purpose = evidence.purpose;
+    this.versionNo = evidence.versionNo;
+    this.mimeType = evidence.mimeType;
+    this.sizeBytes = evidence.sizeBytes;
+    this.effectiveFrom = evidence.effectiveFrom;
+    this.createdAt = evidence.createdAt;
+  }
+}
+
+export class PlantillaPositionEvidenceListResponseDto {
+  readonly evidence: PlantillaPositionEvidenceDto[];
+
+  constructor(evidence: PlantillaPositionEvidence[]) {
+    this.evidence = evidence.map((item) => new PlantillaPositionEvidenceDto(item));
+  }
+}
+
+export class PlantillaPositionEvidenceAccessDto extends PlantillaPositionEvidenceDto {
+  readonly accessUrl: string;
+  readonly expiresAt: string;
+
+  constructor(evidence: PlantillaPositionEvidenceAccess) {
+    super(evidence);
+    this.accessUrl = evidence.accessUrl;
+    this.expiresAt = evidence.expiresAt;
+  }
+}
+
+export class PlantillaPositionEvidenceRemovalDto {
+  readonly removed: true;
+
+  constructor() {
+    this.removed = true;
+  }
+}
 
 export class PlantillaPositionVersionDto {
   readonly id: string;
@@ -103,6 +164,7 @@ export class PlantillaPositionDetailDto {
   readonly asOf: string;
   readonly effective: PlantillaPositionVersionDto | null;
   readonly versions: PlantillaPositionVersionDto[];
+  readonly evidence: PlantillaPositionEvidenceDto[];
   readonly history: PlantillaPositionHistoryEntryDto[];
 
   constructor(detail: PlantillaPositionDetail) {
@@ -110,6 +172,7 @@ export class PlantillaPositionDetailDto {
     this.asOf = detail.asOf;
     this.effective = detail.effective ? new PlantillaPositionVersionDto(detail.effective) : null;
     this.versions = detail.versions.map((version) => new PlantillaPositionVersionDto(version));
+    this.evidence = detail.evidence.map((evidence) => new PlantillaPositionEvidenceDto(evidence));
     this.history = detail.history.map((entry) => new PlantillaPositionHistoryEntryDto(entry));
   }
 }

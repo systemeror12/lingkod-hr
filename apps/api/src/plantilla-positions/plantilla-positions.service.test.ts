@@ -66,3 +66,40 @@ it('requires the separate history permission for version inspection', async () =
 it('uses a typed error for catalog workflow failures', () => {
   expect(new PlantillaPositionServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);
 });
+
+it('rechecks External Evidence permission before linking a document', async () => {
+  const service = new PlantillaPositionsService(plantillaPositionAuditWriter, documentsService);
+
+  await expect(
+    service.linkEvidence(
+      context([{ code: 'positions.items.update', scopePolicy: 'AGENCY' }]),
+      agencyId,
+      {
+        documentId: '00000000-0000-4000-8000-000000000007',
+        purpose: 'POSITION_DESCRIPTION',
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: 'PLANTILLA_POSITION_EVIDENCE_READ_FORBIDDEN',
+    statusCode: 403,
+  });
+});
+
+it('requires a reason before removing a Plantilla Position evidence link', async () => {
+  const service = new PlantillaPositionsService(plantillaPositionAuditWriter, documentsService);
+
+  await expect(
+    service.removeEvidence(
+      context([
+        { code: 'positions.items.update', scopePolicy: 'AGENCY' },
+        { code: 'documents.evidence.read', scopePolicy: 'AGENCY' },
+      ]),
+      agencyId,
+      '00000000-0000-4000-8000-000000000008',
+      '   ',
+    ),
+  ).rejects.toMatchObject({
+    code: 'PLANTILLA_POSITION_EVIDENCE_REMOVAL_REASON_REQUIRED',
+    statusCode: 400,
+  });
+});

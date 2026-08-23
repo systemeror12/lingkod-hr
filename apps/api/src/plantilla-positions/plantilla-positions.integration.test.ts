@@ -81,7 +81,10 @@ it.skipIf(!enabled)(
     const context = createContext(agency.id, user.id, membership.id);
     const service = new PlantillaPositionsService(
       plantillaPositionAuditWriter,
-      new DocumentsService({} as never, documentAuditWriter),
+      new DocumentsService(
+        { signedReadUrl: async () => 'https://storage.example/position-evidence' } as never,
+        documentAuditWriter,
+      ),
     );
     const organizationService = new OrganizationService(organizationAuditWriter);
 
@@ -89,6 +92,7 @@ it.skipIf(!enabled)(
     let unitVersionId = '';
     let qualificationStandardVersionId = '';
     let staffingAuthorityId = '';
+    let authorityDocumentId = '';
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
 
@@ -154,6 +158,7 @@ it.skipIf(!enabled)(
         `POSITION-${suffix}-AUTHORITY`,
         'STAFFING_AUTHORITY',
       );
+      authorityDocumentId = authorityEvidence.documentId;
       const standard = await transaction.qualificationStandard.create({
         data: {
           agencyId: agency.id,
@@ -232,6 +237,31 @@ it.skipIf(!enabled)(
       positionIdForCleanup.id = created.id;
       expect(created.currentVersion).toMatchObject({ versionNo: 1, versionState: 'ACTIVE' });
 
+      const linkedEvidence = await service.linkEvidence(context, created.id, {
+        documentId: authorityDocumentId,
+        purpose: 'CREATION',
+        effectiveDate: '2026-01-01',
+      });
+      expect(linkedEvidence).toMatchObject({
+        purpose: 'CREATION',
+        documentNo: `POSITION-${suffix}-AUTHORITY`,
+        documentType: 'STAFFING_AUTHORITY',
+        mimeType: 'application/pdf',
+        effectiveFrom: '2026-01-01',
+      });
+      await expect(
+        service.accessEvidence(context, created.id, linkedEvidence.id),
+      ).resolves.toMatchObject({
+        accessUrl: 'https://storage.example/position-evidence',
+        documentId: authorityDocumentId,
+      });
+      await expect(
+        service.linkEvidence(context, created.id, {
+          documentId: authorityDocumentId,
+          purpose: 'CREATION',
+        }),
+      ).rejects.toMatchObject({ code: 'PLANTILLA_POSITION_EVIDENCE_DUPLICATE' });
+
       const organizationSuccessor = await organizationService.createSuccessor(context, unitId);
       const updatedOrganizationDraft = await organizationService.updateDraft(
         context,
@@ -300,6 +330,9 @@ it.skipIf(!enabled)(
         'The successor was approved for the next effective period.',
       );
       expect(activated.currentVersion).toMatchObject({ versionNo: 1, versionState: 'SUPERSEDED' });
+      await expect(service.findById(context, created.id)).resolves.toMatchObject({
+        evidence: [expect.objectContaining({ id: linkedEvidence.id, purpose: 'CREATION' })],
+      });
 
       const oldDetail = await service.findById(context, created.id, '2026-08-22');
       expect(oldDetail?.effective).toMatchObject({ versionNo: 1, versionState: 'SUPERSEDED' });
@@ -330,6 +363,37 @@ it.skipIf(!enabled)(
           'PLANTILLA_POSITION_VERSION_CORRECTED',
         ]),
       );
+
+      await expect(
+        service.removeEvidence(
+          context,
+          created.id,
+          linkedEvidence.id,
+          'The authority document was attached to the wrong evidence purpose.',
+        ),
+      ).resolves.toEqual({ removed: true });
+      await expect(service.findById(context, created.id)).resolves.toMatchObject({ evidence: [] });
+      await expect(
+        admin.document.findUnique({ where: { id: authorityDocumentId } }),
+      ).resolves.toMatchObject({ status: 'APPROVED' });
+      await expect(
+        admin.auditEvent.findMany({
+          where: {
+            agencyId: agency.id,
+            entityId: created.id,
+            action: {
+              in: ['PLANTILLA_POSITION_EVIDENCE_LINKED', 'PLANTILLA_POSITION_EVIDENCE_REMOVED'],
+            },
+          },
+          orderBy: { occurredAt: 'asc' },
+        }),
+      ).resolves.toEqual([
+        expect.objectContaining({ action: 'PLANTILLA_POSITION_EVIDENCE_LINKED' }),
+        expect.objectContaining({
+          action: 'PLANTILLA_POSITION_EVIDENCE_REMOVED',
+          reason: 'The authority document was attached to the wrong evidence purpose.',
+        }),
+      ]);
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
@@ -345,6 +409,7 @@ it.skipIf(!enabled)(
           where: { agencyId: agency.id },
           data: { currentVersionId: null },
         });
+        await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
         await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
         await transaction.plantillaPositionVersion.deleteMany({ where: { agencyId: agency.id } });
         await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });

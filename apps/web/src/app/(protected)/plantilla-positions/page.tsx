@@ -65,6 +65,7 @@ export default async function PlantillaPositionsPage() {
       initial={value as PlantillaPositionListResponse}
       canCreate={hasPermission(session, 'positions.items.create')}
       canUpdate={hasPermission(session, 'positions.items.update')}
+      canReadEvidence={hasPermission(session, 'documents.evidence.read')}
     />
   );
 }

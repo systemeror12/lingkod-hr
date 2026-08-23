@@ -1263,7 +1263,7 @@ export class QualificationStandardsService {
     validationReason: string | null,
   ): Promise<DocumentSummary | null> {
     if (!documentId || !versionId || !validatedAt || !validationReason) return null;
-    const document = await this.documentsService.findEvidenceForAuthorityInTransaction(
+    const document = await this.documentsService.findDocumentForLinkingInTransaction(
       transaction,
       context,
       documentId,
@@ -1277,7 +1277,7 @@ export class QualificationStandardsService {
     context: RequestContext,
     documentId: string,
   ): Promise<DocumentSummary | null> {
-    const document = await this.documentsService.findEvidenceForAuthorityInTransaction(
+    const document = await this.documentsService.findDocumentForLinkingInTransaction(
       transaction,
       context,
       documentId,

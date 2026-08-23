@@ -42,6 +42,14 @@ export class DocumentDto {
   }
 }
 
+export class DocumentListResponseDto {
+  readonly documents: DocumentDto[];
+
+  constructor(documents: DocumentSummary[]) {
+    this.documents = documents.map((document) => new DocumentDto(document));
+  }
+}
+
 export class DocumentAccessDto extends DocumentDto {
   readonly accessUrl: string;
   readonly expiresAt: string;

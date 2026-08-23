@@ -13,6 +13,7 @@ export interface DatabaseContext {
   staffingAuthorityTransition?: boolean;
   qualificationStandardTransition?: boolean;
   plantillaPositionTransition?: boolean;
+  plantillaPositionEvidenceTransition?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -56,6 +57,11 @@ export async function setDatabaseContext(
       set_config(
         'app.plantilla_position_transition',
         ${context.plantillaPositionTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.plantilla_position_evidence_transition',
+        ${context.plantillaPositionEvidenceTransition ? 'on' : ''},
         true
       )
   `;

@@ -195,7 +195,7 @@ Effective-dated minimum qualification requirements.
 **Deletion behavior:** Supersede.
 ## `position_documents`
 
-Links position and authority documents.
+Links a stable Plantilla Position to supporting External Evidence Documents.
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
@@ -203,8 +203,9 @@ Links position and authority documents.
 | agency_id | uuid | No | FK agencies | Tenant |
 | position_id | uuid | No | FK plantilla_positions | Position |
 | document_id | uuid | No | FK documents | Document |
-| document_type | enum | No |  | PDF, AUTHORITY, RECLASSIFICATION, ABOLITION, OTHER |
+| document_type | enum | No |  | POSITION_DESCRIPTION, CREATION, RECLASSIFICATION, TRANSFER, FREEZE, ABOLITION, OTHER; controlled evidence purpose, distinct from the Document business type and MIME type |
 | effective_from | date | Yes |  | Effectivity |
+| created_at | timestamp | No |  | Link creation time |
 
 **Constraints and indexes**
 
