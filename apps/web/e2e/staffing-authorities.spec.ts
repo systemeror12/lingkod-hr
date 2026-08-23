@@ -36,6 +36,13 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   const createButton = dialog.getByRole('button', { name: 'Create Draft' });
   await expect(cancelButton).toHaveCSS('min-height', '44px');
   await expect(createButton).toHaveCSS('min-height', '44px');
+  const cancelBox = await cancelButton.boundingBox();
+  const createBox = await createButton.boundingBox();
+  expect(cancelBox).not.toBeNull();
+  expect(createBox).not.toBeNull();
+  if (!cancelBox || !createBox) throw new Error('Dialog action geometry was unavailable.');
+  expect(cancelBox.width).toBeGreaterThan(60);
+  expect(cancelBox.height).toBe(createBox.height);
 
   await page.mouse.click(1, 1);
   await expect(dialog).toBeVisible();

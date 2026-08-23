@@ -835,7 +835,10 @@ export function StaffingAuthorityWorkspace({
             ) : null}
           </DialogBody>
         ) : dialog === 'create' || dialog === 'edit' ? (
-          <form onSubmit={(event) => void submitDraft(event)}>
+          <form
+            className="flex min-h-0 flex-1 flex-col"
+            onSubmit={(event) => void submitDraft(event)}
+          >
             <DialogBody className="grid gap-5">
               <div className="grid gap-5 min-[621px]:grid-cols-2">
                 <Field label="Authority type">
@@ -924,8 +927,9 @@ export function StaffingAuthorityWorkspace({
               </span>
               <DialogClose asChild>
                 <Button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
+                  className="min-h-11 rounded-[3px] border border-line bg-paper px-4 text-sm font-[650] text-ink hover:border-[#b7c2d1] hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cobalt"
                   disabled={busy}
+                  size="default"
                   type="button"
                 >
                   Cancel
