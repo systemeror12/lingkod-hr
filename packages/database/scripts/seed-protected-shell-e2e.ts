@@ -89,9 +89,18 @@ async function seed(): Promise<void> {
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'StaffingAuthority' },
     });
+    await transaction.auditEvent.deleteMany({
+      where: { agencyId: agency.id, entityType: 'QualificationStandard' },
+    });
     await transaction.staffingAuthority.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.qualificationStandard.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentVersionId: null },
+    });
+    await transaction.qualificationStandardVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.qualificationStandard.deleteMany({ where: { agencyId: agency.id } });
   });
   const user = await prisma.user.upsert({
     where: { emailNormalized: 'marisol.santos@example.test' },

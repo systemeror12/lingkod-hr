@@ -37,6 +37,8 @@ model Agency {
   documents              Document[]
   documentVersions       DocumentVersion[]
   staffingAuthorities    StaffingAuthority[]
+  qualificationStandards QualificationStandard[]
+  qualificationStandardVersions QualificationStandardVersion[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -187,6 +189,12 @@ model AgencyMembership {
   createdStaffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityCreator")
   updatedStaffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityUpdater")
   validatedStaffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityEvidenceValidator")
+  createdQualificationStandards QualificationStandard[] @relation("QualificationStandardCreator")
+  updatedQualificationStandards QualificationStandard[] @relation("QualificationStandardUpdater")
+  createdQualificationStandardVersions QualificationStandardVersion[] @relation("QualificationStandardVersionCreator")
+  updatedQualificationStandardVersions QualificationStandardVersion[] @relation("QualificationStandardVersionUpdater")
+  validatedQualificationSourceVersions QualificationStandardVersion[] @relation("QualificationStandardSourceValidator")
+  validatedQualificationApprovalVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalValidator")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -392,6 +400,8 @@ model Document {
   versions        DocumentVersion[] @relation("DocumentVersions")
   staffingAuthorities StaffingAuthority[] @relation("StaffingAuthorityEvidenceDocument")
   staffingAuthorityRevocations StaffingAuthority[] @relation("StaffingAuthorityRevocationDocument")
+  qualificationStandardSourceVersions QualificationStandardVersion[] @relation("QualificationStandardSourceDocument")
+  qualificationStandardApprovalVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -418,6 +428,8 @@ model DocumentVersion {
   createdBy           AgencyMembership @relation("DocumentVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   staffingAuthorityEvidenceVersions   StaffingAuthority[] @relation("StaffingAuthorityEvidenceVersion")
   staffingAuthorityRevocationVersions StaffingAuthority[] @relation("StaffingAuthorityRevocationVersion")
+  qualificationStandardSourceEvidenceVersions QualificationStandardVersion[] @relation("QualificationStandardSourceVersion")
+  qualificationStandardApprovalEvidenceVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -464,4 +476,80 @@ model StaffingAuthority {
   @@unique([agencyId, referenceNo])
   @@index([agencyId, status, effectiveDate])
   @@map("staffing_authorities")
+}
+
+model QualificationStandard {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  code                  String   @db.Citext
+  name                  String   @db.Citext
+  status                String
+  currentVersionId      String?  @map("current_version_id") @db.Uuid
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int      @default(1) @map("row_version")
+
+  agency       Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  currentVersion QualificationStandardVersion? @relation("QualificationStandardCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
+  versions     QualificationStandardVersion[] @relation("QualificationStandardVersions")
+  createdBy    AgencyMembership           @relation("QualificationStandardCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy    AgencyMembership           @relation("QualificationStandardUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, code])
+  @@unique([agencyId, name])
+  @@map("qualification_standards")
+}
+
+model QualificationStandardVersion {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  qualificationStandardId String @map("qualification_standard_id") @db.Uuid
+  versionNo             Int      @map("version_no")
+  educationRequirement  String?  @map("education_requirement")
+  trainingHoursRequired Decimal? @map("training_hours_required") @db.Decimal(12, 4)
+  experienceMonthsRequired Int?  @map("experience_months_required")
+  eligibilityRequirement String? @map("eligibility_requirement")
+  competencyRequirements Json    @default("[]") @map("competency_requirements")
+  licenseRequirements    Json    @default("[]") @map("license_requirements")
+  specialRequirements    String? @map("special_requirements")
+  sourceDocumentId       String? @map("source_document_id") @db.Uuid
+  sourceEvidenceVersionId String? @map("source_evidence_version_id") @db.Uuid
+  sourceEvidenceValidatedAt DateTime? @map("source_evidence_validated_at") @db.Timestamptz(6)
+  sourceEvidenceValidatedByMembershipId String? @map("source_evidence_validated_by_membership_id") @db.Uuid
+  sourceEvidenceValidationReason String? @map("source_evidence_validation_reason")
+  approvalDocumentId     String? @map("approval_document_id") @db.Uuid
+  approvalEvidenceVersionId String? @map("approval_evidence_version_id") @db.Uuid
+  approvalEvidenceValidatedAt DateTime? @map("approval_evidence_validated_at") @db.Timestamptz(6)
+  approvalEvidenceValidatedByMembershipId String? @map("approval_evidence_validated_by_membership_id") @db.Uuid
+  approvalEvidenceValidationReason String? @map("approval_evidence_validation_reason")
+  effectiveFrom          DateTime @map("effective_from") @db.Date
+  effectiveTo            DateTime? @map("effective_to") @db.Date
+  status                 String
+  domainStatus           String   @default("INACTIVE") @map("domain_status")
+  createdByMembershipId  String   @map("created_by_membership_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId  String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion             Int      @default(1) @map("row_version")
+
+  agency       Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  qualificationStandard QualificationStandard @relation("QualificationStandardVersions", fields: [agencyId, qualificationStandardId], references: [agencyId, id], onDelete: Restrict)
+  currentForStandards QualificationStandard[] @relation("QualificationStandardCurrentVersion")
+  sourceDocument Document? @relation("QualificationStandardSourceDocument", fields: [agencyId, sourceDocumentId], references: [agencyId, id], onDelete: Restrict, map: "qualification_standard_versions_source_document_fkey")
+  sourceEvidenceVersion DocumentVersion? @relation("QualificationStandardSourceVersion", fields: [agencyId, sourceDocumentId, sourceEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "qualification_standard_versions_source_version_fkey")
+  sourceEvidenceValidatedBy AgencyMembership? @relation("QualificationStandardSourceValidator", fields: [agencyId, sourceEvidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvalDocument Document? @relation("QualificationStandardApprovalDocument", fields: [agencyId, approvalDocumentId], references: [agencyId, id], onDelete: Restrict, map: "qualification_standard_versions_approval_document_fkey")
+  approvalEvidenceVersion DocumentVersion? @relation("QualificationStandardApprovalVersion", fields: [agencyId, approvalDocumentId, approvalEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "qualification_standard_versions_approval_version_fkey")
+  approvalEvidenceValidatedBy AgencyMembership? @relation("QualificationStandardApprovalValidator", fields: [agencyId, approvalEvidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  createdBy AgencyMembership @relation("QualificationStandardVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy AgencyMembership @relation("QualificationStandardVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([qualificationStandardId, versionNo])
+  @@unique([agencyId, id])
+  @@unique([agencyId, qualificationStandardId, id])
+  @@index([agencyId, qualificationStandardId, effectiveFrom])
+  @@map("qualification_standard_versions")
 }

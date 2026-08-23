@@ -164,7 +164,7 @@ Stable qualification-standard identity.
 
 **Constraints and indexes**
 
-- Unique `(agency_id, code)`.
+- Unique `(agency_id, code)` and `(agency_id, name)`.
 
 **Deletion behavior:** Inactivate.
 ## `qualification_standard_versions`
@@ -182,9 +182,11 @@ Effective-dated minimum qualification requirements.
 | eligibility_requirement | string | Yes |  | Civil service eligibility |
 | competency_requirements | json | No |  | Structured competency requirements |
 | license_requirements | json | No |  | Professional licenses |
+| special_requirements | string | Yes |  | Other minimum requirements |
 | effective_from | date | No |  | Start |
 | effective_to | date | Yes |  | End |
 | version_no | integer | No |  | Version |
+| domain_status | enum | No |  | ACTIVE, INACTIVE during the effective period |
 
 **Constraints and indexes**
 
