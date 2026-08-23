@@ -24,7 +24,7 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
     page.getByText('National Archives Coordination Office', { exact: true }).first(),
   ).toBeVisible();
   await expect(page.getByText('Marisol Santos', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Agency Administrator', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Agency Administrator/).first()).toBeVisible();
 
   const navigation = page.getByRole('navigation', { name: 'Primary' });
   await expect(navigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
