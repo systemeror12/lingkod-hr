@@ -86,6 +86,7 @@ interface OrganizationUnitOption {
   id: string;
   code: string;
   officialName: string;
+  versionState: string;
   lifecycleStatus: string;
 }
 
@@ -360,7 +361,10 @@ function CreatePositionDialog({
                   >
                     <option value="">Select active unit</option>
                     {options?.units
-                      .filter((unit) => unit.lifecycleStatus === 'ACTIVE')
+                      .filter(
+                        (unit) =>
+                          unit.versionState === 'ACTIVE' && unit.lifecycleStatus === 'ACTIVE',
+                      )
                       .map((unit) => (
                         <option key={unit.id} value={unit.id}>
                           {unit.officialName} · {unit.code}
