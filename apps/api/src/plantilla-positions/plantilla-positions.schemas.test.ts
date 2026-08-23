@@ -3,6 +3,8 @@ import {
   plantillaPositionCorrectionSchema,
   plantillaPositionCreateSchema,
   plantillaPositionDraftUpdateSchema,
+  plantillaPositionEvidenceLinkSchema,
+  plantillaPositionEvidenceRemovalSchema,
 } from './plantilla-positions.schemas';
 
 const organizationUnitId = '00000000-0000-4000-8000-000000000001';
@@ -64,4 +66,21 @@ it('keeps draft updates and factual corrections reasoned at the API boundary', (
       reason: ' ',
     }).success,
   ).toBe(false);
+});
+
+it('keeps evidence purpose separate from Document file metadata', () => {
+  expect(
+    plantillaPositionEvidenceLinkSchema.parse({
+      documentId: '00000000-0000-4000-8000-000000000004',
+      purpose: 'RECLASSIFICATION',
+      effectiveDate: '2026-09-01',
+    }),
+  ).toMatchObject({ purpose: 'RECLASSIFICATION' });
+  expect(
+    plantillaPositionEvidenceLinkSchema.safeParse({
+      documentId: '00000000-0000-4000-8000-000000000004',
+      purpose: 'application/pdf',
+    }).success,
+  ).toBe(false);
+  expect(plantillaPositionEvidenceRemovalSchema.safeParse({ reason: ' ' }).success).toBe(false);
 });

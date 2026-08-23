@@ -37,6 +37,10 @@ function serviceMock() {
   return {
     list: vi.fn(),
     findById: vi.fn(),
+    listEvidence: vi.fn(),
+    linkEvidence: vi.fn(),
+    removeEvidence: vi.fn(),
+    accessEvidence: vi.fn(),
     create: vi.fn(),
     createSuccessor: vi.fn(),
     updateDraft: vi.fn(),
@@ -111,4 +115,71 @@ it('rejects malformed IDs and forwards successor requests', async () => {
     status: 404,
   });
   expect(service.createSuccessor).not.toHaveBeenCalled();
+});
+
+it('validates and forwards the controlled evidence-link workflow', async () => {
+  const service = serviceMock();
+  service.listEvidence.mockResolvedValue([]);
+  service.linkEvidence.mockResolvedValue({
+    id: '00000000-0000-4000-8000-000000000006',
+    positionId,
+    documentId: '00000000-0000-4000-8000-000000000007',
+    documentNo: 'EVIDENCE-001',
+    documentType: 'POSITION_DESCRIPTION',
+    classification: 'CONFIDENTIAL',
+    status: 'APPROVED',
+    purpose: 'POSITION_DESCRIPTION',
+    versionNo: 1,
+    mimeType: 'application/pdf',
+    sizeBytes: 12,
+    effectiveFrom: '2026-08-23',
+    createdAt: '2026-08-23T00:00:00.000Z',
+  });
+  service.removeEvidence.mockResolvedValue({ removed: true });
+  const controller = new PlantillaPositionsController(service as never);
+
+  await expect(controller.listEvidence(agencyId, positionId, context)).resolves.toEqual({
+    evidence: [],
+  });
+  await expect(
+    controller.linkEvidence(
+      agencyId,
+      positionId,
+      {
+        documentId: '00000000-0000-4000-8000-000000000007',
+        purpose: 'POSITION_DESCRIPTION',
+        effectiveDate: '2026-08-23',
+      },
+      context,
+    ),
+  ).resolves.toMatchObject({ purpose: 'POSITION_DESCRIPTION' });
+  expect(service.linkEvidence).toHaveBeenCalledWith(context, positionId, {
+    documentId: '00000000-0000-4000-8000-000000000007',
+    purpose: 'POSITION_DESCRIPTION',
+    effectiveDate: '2026-08-23',
+  });
+  await expect(
+    controller.removeEvidence(
+      agencyId,
+      positionId,
+      '00000000-0000-4000-8000-000000000006',
+      { reason: 'Attached in error.' },
+      context,
+    ),
+  ).resolves.toEqual({ removed: true });
+  expect(service.removeEvidence).toHaveBeenCalledWith(
+    context,
+    positionId,
+    '00000000-0000-4000-8000-000000000006',
+    'Attached in error.',
+  );
+  await expect(
+    controller.linkEvidence(
+      agencyId,
+      positionId,
+      { documentId: 'not-a-uuid', purpose: 'MIME_TYPE' },
+      context,
+    ),
+  ).rejects.toMatchObject({ status: 400 });
+  expect(service.linkEvidence).toHaveBeenCalledTimes(1);
 });

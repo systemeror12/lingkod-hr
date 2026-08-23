@@ -959,7 +959,7 @@ export class StaffingAuthorityService {
     ) {
       return null;
     }
-    const document = await this.documentsService.findEvidenceForAuthorityInTransaction(
+    const document = await this.documentsService.findDocumentForLinkingInTransaction(
       transaction,
       context,
       authority.documentId,
@@ -973,7 +973,7 @@ export class StaffingAuthorityService {
     context: RequestContext,
     documentId: string,
   ): Promise<EvidenceDocument | null> {
-    const document = await this.documentsService.findEvidenceForAuthorityInTransaction(
+    const document = await this.documentsService.findDocumentForLinkingInTransaction(
       transaction,
       context,
       documentId,

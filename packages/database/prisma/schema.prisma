@@ -41,6 +41,7 @@ model Agency {
   qualificationStandardVersions QualificationStandardVersion[]
   plantillaPositions            PlantillaPosition[]
   plantillaPositionVersions     PlantillaPositionVersion[]
+  positionDocuments             PositionDocument[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -410,6 +411,7 @@ model Document {
   staffingAuthorityRevocations          StaffingAuthority[]            @relation("StaffingAuthorityRevocationDocument")
   qualificationStandardSourceVersions   QualificationStandardVersion[] @relation("QualificationStandardSourceDocument")
   qualificationStandardApprovalVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalDocument")
+  positionDocuments                     PositionDocument[]             @relation("PositionDocumentDocuments")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -585,11 +587,31 @@ model PlantillaPosition {
   createdBy               AgencyMembership           @relation("PlantillaPositionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy               AgencyMembership           @relation("PlantillaPositionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   headOfOrganizationUnits OrganizationUnitVersion[]  @relation("OrganizationUnitHead")
+  documents               PositionDocument[]          @relation("PositionDocumentPositions")
 
   @@unique([agencyId, id])
   @@unique([agencyId, itemNumber])
   @@index([agencyId, status, itemNumber])
   @@map("plantilla_positions")
+}
+
+model PositionDocument {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId      String    @map("agency_id") @db.Uuid
+  positionId    String    @map("position_id") @db.Uuid
+  documentId    String    @map("document_id") @db.Uuid
+  documentType  String    @map("document_type")
+  effectiveFrom DateTime? @map("effective_from") @db.Date
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency   Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  position PlantillaPosition @relation("PositionDocumentPositions", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  document Document         @relation("PositionDocumentDocuments", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([positionId, documentId, documentType])
+  @@index([agencyId, positionId, effectiveFrom])
+  @@map("position_documents")
 }
 
 model PlantillaPositionVersion {

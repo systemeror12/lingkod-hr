@@ -65,6 +65,20 @@ it('rejects an upload without an idempotency key before reaching the service', a
   expect(service.create).not.toHaveBeenCalled();
 });
 
+it('lists linkable document metadata for the active Agency', async () => {
+  const service = { listForLinking: vi.fn().mockResolvedValue([document]) };
+  const controller = new DocumentsController(service as never);
+  const readContext = {
+    ...context,
+    permissions: [{ code: 'documents.evidence.read', scopePolicy: 'AGENCY' as const }],
+  };
+
+  await expect(controller.list(agencyId, readContext)).resolves.toEqual({
+    documents: [expect.objectContaining({ id: documentId, currentVersion: null })],
+  });
+  expect(service.listForLinking).toHaveBeenCalledWith(readContext);
+});
+
 it('treats a foreign Agency document as absent at the API boundary', async () => {
   const service = { findById: vi.fn() };
   const controller = new DocumentsController(service as never);

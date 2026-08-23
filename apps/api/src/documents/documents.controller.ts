@@ -5,6 +5,7 @@ import {
   Get,
   Headers,
   HttpException,
+  Inject,
   Param,
   Post,
   UploadedFile,
@@ -19,7 +20,7 @@ import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
-import { DocumentAccessDto, DocumentDto } from './documents.dto';
+import { DocumentAccessDto, DocumentDto, DocumentListResponseDto } from './documents.dto';
 import {
   documentCreateSchema,
   documentIdSchema,
@@ -34,7 +35,7 @@ import {
 @Controller('agencies')
 @UseGuards(AuthGuard, PermissionGuard)
 export class DocumentsController {
-  constructor(private readonly documentsService: DocumentsService) {}
+  constructor(@Inject(DocumentsService) private readonly documentsService: DocumentsService) {}
 
   @Post(':agencyId/documents')
   @RequirePermission('documents.evidence.create')
@@ -65,6 +66,20 @@ export class DocumentsController {
           file,
         }),
       );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/documents')
+  @RequirePermission('documents.evidence.read')
+  async list(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<DocumentListResponseDto> {
+    this.assertReadAgency(agencyId, context);
+    try {
+      return new DocumentListResponseDto(await this.documentsService.listForLinking(context));
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { PLANTILLA_POSITION_EMPLOYMENT_CATEGORIES } from './plantilla-positions.service';
+import {
+  PLANTILLA_POSITION_EMPLOYMENT_CATEGORIES,
+  PLANTILLA_POSITION_EVIDENCE_PURPOSES,
+} from './plantilla-positions.service';
 
 const positionFields = {
   title: z.string().trim().min(1).max(200),
@@ -22,6 +25,7 @@ export const plantillaPositionCreateSchema = z
 
 export const plantillaPositionIdSchema = z.string().uuid();
 export const plantillaPositionVersionIdSchema = z.string().uuid();
+export const plantillaPositionEvidenceIdSchema = z.string().uuid();
 export const plantillaPositionAsOfSchema = z.string().date().optional();
 export const plantillaPositionActivationSchema = z
   .object({ reason: z.string().trim().min(1).max(500) })
@@ -46,4 +50,16 @@ export const plantillaPositionCorrectionSchema = z
     staffingAuthorityId: positionFields.staffingAuthorityId,
     reason: z.string().trim().min(1).max(500),
   })
+  .strict();
+
+export const plantillaPositionEvidenceLinkSchema = z
+  .object({
+    documentId: z.string().uuid(),
+    purpose: z.enum(PLANTILLA_POSITION_EVIDENCE_PURPOSES),
+    effectiveDate: z.string().date().nullable().optional(),
+  })
+  .strict();
+
+export const plantillaPositionEvidenceRemovalSchema = z
+  .object({ reason: z.string().trim().min(1).max(500) })
   .strict();

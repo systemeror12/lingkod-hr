@@ -253,7 +253,10 @@ CREATE TABLE position_documents (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   position_id uuid NOT NULL,
   document_id uuid NOT NULL,
-  document_type text NOT NULL,
+  document_type text NOT NULL CHECK (document_type IN (
+    'POSITION_DESCRIPTION', 'CREATION', 'RECLASSIFICATION', 'TRANSFER',
+    'FREEZE', 'ABOLITION', 'OTHER'
+  )),
   effective_from date,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (agency_id, position_id)
