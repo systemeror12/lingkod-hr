@@ -638,9 +638,9 @@ export function QualificationStandardWorkspace({
                       <td className="px-5 py-4 align-top">
                         <div className="flex flex-wrap justify-end gap-2">
                           <Button
-                            className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                             size="default"
                             type="button"
+                            variant="secondary"
                             onClick={(event) =>
                               void openDetail(
                                 standard,
@@ -652,9 +652,9 @@ export function QualificationStandardWorkspace({
                           </Button>
                           {standard.draft && canUpdate ? (
                             <Button
-                              className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                               size="default"
                               type="button"
+                              variant="secondary"
                               onClick={(event) => {
                                 setValues(
                                   versionValues(
@@ -674,9 +674,9 @@ export function QualificationStandardWorkspace({
                           ) : null}
                           {standard.draft && canValidateEvidence ? (
                             <Button
-                              className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                               size="default"
                               type="button"
+                              variant="secondary"
                               onClick={(event) =>
                                 openDialog(
                                   'evidence',
@@ -707,9 +707,9 @@ export function QualificationStandardWorkspace({
                           ) : null}
                           {standard.currentVersion && !standard.draft && canUpdate ? (
                             <Button
-                              className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                               size="default"
                               type="button"
+                              variant="secondary"
                               onClick={(event) =>
                                 openDialog(
                                   'successor',
@@ -748,7 +748,10 @@ export function QualificationStandardWorkspace({
         </section>
       </div>
 
-      <DialogContent aria-describedby={dialogDescriptionId}>
+      <DialogContent
+        aria-describedby={dialogDescriptionId}
+        className={dialog === 'create' || dialog === 'edit' ? 'max-w-[980px]' : undefined}
+      >
         <DialogHeader>
           <div className="grid min-w-0 gap-1.5">
             <p className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase">
@@ -848,23 +851,50 @@ export function QualificationStandardWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} type="button">
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} type="submit" variant="primary">
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Recording…' : 'Void and Replace'}
               </Button>
             </DialogFooter>
           </form>
         ) : dialog === 'create' || dialog === 'edit' ? (
-          <form onSubmit={(event) => void submitDraft(event)}>
-            <DialogBody className="grid gap-5">
+          <form
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            onSubmit={(event) => void submitDraft(event)}
+          >
+            <DialogBody className="grid auto-rows-max content-start gap-6">
               {error ? <FormError message={error} /> : null}
-              {dialog === 'create' ? (
-                <fieldset className="grid gap-4">
-                  <legend className="mb-1 text-sm font-[670] text-midnight">Stable identity</legend>
-                  <div className="grid gap-4 min-[621px]:grid-cols-2">
+              <section className="grid gap-4" aria-labelledby="qualification-matrix-record">
+                <div className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-midnight pb-3">
+                  <div>
+                    <p className="m-0 text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
+                      Qualification record
+                    </p>
+                    <h3
+                      className="m-0 mt-1 text-base font-[700] text-midnight"
+                      id="qualification-matrix-record"
+                    >
+                      Minimum qualification matrix
+                    </h3>
+                  </div>
+                  <div className="w-full max-w-[280px]">
+                    <Field htmlFor="qualification-standard-effective-date" label="Effective date">
+                      <input
+                        className={inputClass}
+                        id="qualification-standard-effective-date"
+                        onChange={(event) => setValue('effectiveDate', targetValue(event))}
+                        required
+                        type="date"
+                        value={values.effectiveDate}
+                      />
+                    </Field>
+                  </div>
+                </div>
+                {dialog === 'create' ? (
+                  <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
                     <Field
                       htmlFor="qualification-standard-code"
                       label="Qualification Standard code"
@@ -893,17 +923,17 @@ export function QualificationStandardWorkspace({
                       />
                     </Field>
                   </div>
-                </fieldset>
-              ) : null}
-              {requirementsForm(values, setValue, true)}
+                ) : null}
+              </section>
+              {qualificationMatrixForm(values, setValue)}
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} type="button">
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} type="submit" variant="primary">
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Saving…' : dialog === 'create' ? 'Create Draft' : 'Save Draft'}
               </Button>
             </DialogFooter>
@@ -917,13 +947,14 @@ export function QualificationStandardWorkspace({
             </p>
             <DialogFooter className="-mx-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
               <DialogClose asChild>
-                <Button disabled={busy} type="button">
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
               <Button
                 disabled={busy}
                 onClick={() => void submitSuccessor()}
+                size="default"
                 type="button"
                 variant="primary"
               >
@@ -937,9 +968,219 @@ export function QualificationStandardWorkspace({
   );
 }
 
+type FormValueSetter = <K extends keyof FormValues>(field: K, value: FormValues[K]) => void;
+
+function NumberRequirementInput({
+  field,
+  id,
+  label,
+  setValue,
+  step,
+  unit,
+  values,
+}: {
+  field: 'trainingHoursRequired' | 'experienceMonthsRequired';
+  id: string;
+  label: string;
+  setValue: FormValueSetter;
+  step: string;
+  unit: 'hours' | 'months';
+  values: FormValues;
+}) {
+  return (
+    <div className="flex w-full max-w-[280px] overflow-hidden rounded-[3px] border border-line bg-paper focus-within:border-cobalt focus-within:ring-2 focus-within:ring-cobalt/15">
+      <input
+        aria-describedby={`${id}-unit`}
+        aria-label={label}
+        className="min-h-11 min-w-0 flex-1 bg-paper px-3 text-sm text-ink outline-none"
+        id={id}
+        min="0"
+        onChange={(event) => setValue(field, targetValue(event))}
+        step={step}
+        type="number"
+        value={values[field]}
+      />
+      <span
+        className="inline-flex min-w-[78px] items-center justify-center border-l border-line bg-canvas px-3 text-xs font-[650] text-muted"
+        id={`${id}-unit`}
+      >
+        {unit}
+      </span>
+    </div>
+  );
+}
+
+function listText(value: string): string {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return '';
+    return parsed
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (typeof item !== 'object' || item === null) return String(item);
+        const record = item as { code?: unknown; name?: unknown; level?: unknown };
+        const label =
+          typeof record.name === 'string'
+            ? record.name
+            : typeof record.code === 'string'
+              ? record.code
+              : JSON.stringify(item);
+        return record.level === undefined ? label : label + ' — level ' + String(record.level);
+      })
+      .join('\n');
+  } catch {
+    return value;
+  }
+}
+
+function ListRequirementField({
+  field,
+  id,
+  label,
+  setValue,
+  values,
+}: {
+  field: 'competencyRequirements' | 'licenseRequirements';
+  id: string;
+  label: string;
+  setValue: FormValueSetter;
+  values: FormValues;
+}) {
+  return (
+    <Field htmlFor={id} label={label}>
+      <textarea
+        className={inputClass}
+        id={id}
+        onChange={(event) =>
+          setValue(
+            field,
+            JSON.stringify(
+              targetValue(event)
+                .split('\n')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            ),
+          )
+        }
+        placeholder="Add one requirement per line"
+        rows={4}
+        value={listText(values[field])}
+      />
+      <span className="text-xs leading-5 font-normal text-muted">One requirement per line.</span>
+    </Field>
+  );
+}
+
+function MatrixRow({
+  children,
+  htmlFor,
+  label,
+}: {
+  children: ReactNode;
+  htmlFor: string;
+  label: string;
+}) {
+  return (
+    <div className="grid border-b border-line last:border-b-0 min-[700px]:grid-cols-[150px_minmax(0,1fr)]">
+      <label className="bg-canvas px-4 py-4 text-xs font-[680] text-midnight" htmlFor={htmlFor}>
+        {label}
+      </label>
+      <div className="px-4 py-3">{children}</div>
+    </div>
+  );
+}
+
+function qualificationMatrixForm(values: FormValues, setValue: FormValueSetter): ReactNode {
+  return (
+    <>
+      <section
+        className="overflow-hidden rounded-[3px] border border-line"
+        aria-label="Core minimum requirements"
+      >
+        <div className="hidden grid-cols-[150px_minmax(0,1fr)] bg-midnight text-[10px] font-bold tracking-[0.08em] text-paper uppercase min-[700px]:grid">
+          <span className="px-4 py-2.5">Criterion</span>
+          <span className="px-4 py-2.5">Minimum requirement</span>
+        </div>
+        <MatrixRow htmlFor="qualification-education" label="Education">
+          <textarea
+            aria-label="Education requirement"
+            className={inputClass}
+            id="qualification-education"
+            onChange={(event) => setValue('educationRequirement', targetValue(event))}
+            rows={2}
+            value={values.educationRequirement}
+          />
+        </MatrixRow>
+        <MatrixRow htmlFor="qualification-training-hours" label="Training">
+          <NumberRequirementInput
+            field="trainingHoursRequired"
+            id="qualification-training-hours"
+            label="Training hours required"
+            setValue={setValue}
+            step="0.25"
+            unit="hours"
+            values={values}
+          />
+        </MatrixRow>
+        <MatrixRow htmlFor="qualification-experience-months" label="Experience">
+          <NumberRequirementInput
+            field="experienceMonthsRequired"
+            id="qualification-experience-months"
+            label="Experience months required"
+            setValue={setValue}
+            step="1"
+            unit="months"
+            values={values}
+          />
+        </MatrixRow>
+        <MatrixRow htmlFor="qualification-eligibility" label="Eligibility">
+          <textarea
+            aria-label="Civil-service eligibility"
+            className={inputClass}
+            id="qualification-eligibility"
+            onChange={(event) => setValue('eligibilityRequirement', targetValue(event))}
+            rows={2}
+            value={values.eligibilityRequirement}
+          />
+        </MatrixRow>
+      </section>
+      <section className="grid gap-4">
+        <h3 className="m-0 text-sm font-[680] text-midnight">Additional requirements</h3>
+        <div className="grid gap-4 min-[760px]:grid-cols-2">
+          <ListRequirementField
+            field="competencyRequirements"
+            id="qualification-competencies"
+            label="Competencies"
+            setValue={setValue}
+            values={values}
+          />
+          <ListRequirementField
+            field="licenseRequirements"
+            id="qualification-licenses"
+            label="Licenses"
+            setValue={setValue}
+            values={values}
+          />
+          <div className="min-[760px]:col-span-2">
+            <Field htmlFor="qualification-special-requirements" label="Special requirements">
+              <textarea
+                className={inputClass}
+                id="qualification-special-requirements"
+                onChange={(event) => setValue('specialRequirements', targetValue(event))}
+                rows={3}
+                value={values.specialRequirements}
+              />
+            </Field>
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
 function requirementsForm(
   values: FormValues,
-  setValue: <K extends keyof FormValues>(field: K, value: FormValues[K]) => void,
+  setValue: FormValueSetter,
   includeEffectiveDate: boolean,
 ): ReactNode {
   return (
@@ -1102,11 +1343,11 @@ function EvidenceForm({
       </DialogBody>
       <DialogFooter>
         <DialogClose asChild>
-          <Button disabled={busy} type="button">
+          <Button disabled={busy} size="default" type="button" variant="secondary">
             Cancel
           </Button>
         </DialogClose>
-        <Button disabled={busy} type="submit" variant="primary">
+        <Button disabled={busy} size="default" type="submit" variant="primary">
           {busy ? 'Validating…' : 'Validate Evidence'}
         </Button>
       </DialogFooter>
@@ -1154,11 +1395,11 @@ function ReasonForm({
       </DialogBody>
       <DialogFooter>
         <DialogClose asChild>
-          <Button disabled={busy} type="button">
+          <Button disabled={busy} size="default" type="button" variant="secondary">
             Cancel
           </Button>
         </DialogClose>
-        <Button disabled={busy} type="submit" variant="primary">
+        <Button disabled={busy} size="default" type="submit" variant="primary">
           {busy ? 'Working…' : buttonLabel}
         </Button>
       </DialogFooter>
@@ -1355,7 +1596,9 @@ function DetailBody({
       ) : null}
       <DialogFooter className="-mx-6 mt-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
         <DialogClose asChild>
-          <Button type="button">Close</Button>
+          <Button size="default" type="button" variant="secondary">
+            Close
+          </Button>
         </DialogClose>
       </DialogFooter>
     </DialogBody>

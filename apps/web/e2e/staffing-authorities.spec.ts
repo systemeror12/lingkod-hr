@@ -35,6 +35,7 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   const cancelButton = dialog.getByRole('button', { name: 'Cancel' });
   const createButton = dialog.getByRole('button', { name: 'Create Draft' });
   await expect(cancelButton).toHaveCSS('min-height', '44px');
+  await expect(cancelButton).toHaveClass(/bg-canvas/);
   await expect(createButton).toHaveCSS('min-height', '44px');
   const cancelBox = await cancelButton.boundingBox();
   const createBox = await createButton.boundingBox();

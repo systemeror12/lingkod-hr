@@ -13,6 +13,13 @@ async function expectFocusInside(dialog: Locator): Promise<void> {
   expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
 }
 
+async function expectMinimumWidth(button: Locator, minimum: number): Promise<void> {
+  const box = await button.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) throw new Error('The action button geometry was unavailable.');
+  expect(box.width).toBeGreaterThan(minimum);
+}
+
 test('creates a Draft Qualification Standard through the shared modal contract', async ({
   page,
 }) => {
@@ -32,6 +39,17 @@ test('creates a Draft Qualification Standard through the shared modal contract',
   await expect(dialog).toHaveAccessibleDescription(
     'Record the requirements for one Draft version. The stable Standard remains inactive until both source and approval External Evidence are validated.',
   );
+  await expect(dialog.getByText('Criterion', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Minimum requirement', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Measure', { exact: true })).toHaveCount(0);
+  await expect(page.locator('#qualification-training-hours')).toHaveAttribute(
+    'aria-describedby',
+    'qualification-training-hours-unit',
+  );
+  await expect(page.locator('#qualification-training-hours').locator('..')).toContainText('hours');
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveClass(/bg-canvas/);
+  await expectMinimumWidth(page.getByRole('button', { name: 'Cancel', exact: true }), 64);
+  await expectMinimumWidth(page.getByRole('button', { name: 'Create Draft', exact: true }), 96);
   await expect(page.getByLabel('Qualification Standard code')).toBeFocused();
   await expectCenteredDialog(dialog, page.viewportSize()?.width ?? 1280);
 
@@ -53,6 +71,9 @@ test('creates a Draft Qualification Standard through the shared modal contract',
   const row = page.getByRole('row').filter({ hasText: code });
   await expect(row).toContainText('INACTIVE');
   await expect(row).toContainText('v1');
+  for (const label of ['Details', 'Edit Draft', 'Validate Evidence']) {
+    await expect(row.getByRole('button', { name: label })).toHaveClass(/bg-canvas/);
+  }
   await expect(trigger).toBeFocused();
 
   await row.getByRole('button', { name: code }).click();
@@ -62,6 +83,15 @@ test('creates a Draft Qualification Standard through the shared modal contract',
   await expect(detailDialog).toContainText('Source External Evidence');
   await detailDialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(row.getByRole('button', { name: code })).toBeFocused();
+
+  await row.getByRole('button', { name: 'Edit Draft' }).click();
+  const editDialog = page.getByRole('dialog', { name: 'Edit Draft Qualification Standard' });
+  await expect(editDialog).toBeVisible();
+  await expect(editDialog.getByText('Criterion', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Qualification Standard code')).toHaveCount(0);
+  await expect(page.getByLabel('Effective date')).toHaveValue(/\d{4}-\d{2}-\d{2}/);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(editDialog).toBeHidden();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await trigger.click();
