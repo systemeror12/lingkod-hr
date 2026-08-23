@@ -1347,7 +1347,7 @@ export function PlantillaPositionWorkspace({
                     </div>
                   </section>
                   <section aria-labelledby="plantilla-evidence-heading" className="grid gap-3">
-                    <div className="flex flex-col gap-3 min-[621px]:flex-row min-[621px]:items-center min-[621px]:justify-between">
+                    <div className="flex flex-col gap-3 min-[1440px]:flex-row min-[1440px]:items-center min-[1440px]:justify-between">
                       <div className="grid gap-1">
                         <h3
                           className="m-0 text-xs font-bold text-midnight"
@@ -1361,6 +1361,7 @@ export function PlantillaPositionWorkspace({
                       </div>
                       {canUpdate && canReadEvidence ? (
                         <Button
+                          className="shrink-0 whitespace-nowrap"
                           size="default"
                           type="button"
                           variant="secondary"
@@ -1384,7 +1385,7 @@ export function PlantillaPositionWorkspace({
                       <div className="grid gap-2">
                         {evidence.map((evidenceItem) => (
                           <article
-                            className="grid gap-3 rounded-[4px] border border-line bg-[#f8fafc] p-4 min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-center"
+                            className="grid gap-3 rounded-[4px] border border-line bg-[#f8fafc] p-4 min-[1440px]:grid-cols-[minmax(0,1fr)_auto] min-[1440px]:items-center"
                             key={evidenceItem.id}
                           >
                             <div className="grid min-w-0 gap-1.5">
@@ -1409,8 +1410,9 @@ export function PlantillaPositionWorkspace({
                                   : 'No effectivity recorded'}
                               </span>
                             </div>
-                            <div className="flex flex-wrap gap-2 min-[621px]:justify-end">
+                            <div className="flex flex-wrap gap-2 min-[1440px]:justify-end">
                               <Button
+                                className="whitespace-nowrap"
                                 size="default"
                                 type="button"
                                 variant="secondary"
@@ -1420,7 +1422,7 @@ export function PlantillaPositionWorkspace({
                               </Button>
                               {canUpdate ? (
                                 <Button
-                                  className="text-[#8b2f2f] hover:bg-[#fff1f1]"
+                                  className="whitespace-nowrap text-[#8b2f2f] hover:bg-[#fff1f1]"
                                   size="default"
                                   type="button"
                                   variant="secondary"

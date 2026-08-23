@@ -12,6 +12,7 @@ async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Pro
 test('creates a proposed Plantilla Position and prepares one successor', async ({ page }) => {
   const itemNumber = 'E2E-' + Date.now();
 
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/plantilla-positions');
@@ -87,7 +88,21 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await expect(page.getByRole('status')).toContainText(
     'External Evidence E2E-PLANTILLA-AUTHORITY was linked',
   );
-  await expect(page.getByText('E2E-PLANTILLA-AUTHORITY', { exact: true })).toBeVisible();
+  const evidenceDocument = page.getByText('E2E-PLANTILLA-AUTHORITY', { exact: true });
+  await expect(evidenceDocument).toBeVisible();
+  const evidenceDocumentBox = await evidenceDocument.boundingBox();
+  const inspectEvidence = page.getByRole('button', { name: 'Inspect document' });
+  const inspectEvidenceBox = await inspectEvidence.boundingBox();
+  expect(evidenceDocumentBox).not.toBeNull();
+  expect(inspectEvidenceBox).not.toBeNull();
+  if (!evidenceDocumentBox || !inspectEvidenceBox) {
+    throw new Error('Evidence layout geometry was unavailable.');
+  }
+  expect(inspectEvidenceBox.y).toBeGreaterThan(evidenceDocumentBox.y);
+  const linkButtonBox = await linkTrigger.boundingBox();
+  expect(linkButtonBox).not.toBeNull();
+  if (!linkButtonBox) throw new Error('Evidence link trigger geometry was unavailable.');
+  expect(linkButtonBox.height).toBe(44);
 
   const removeTrigger = page.getByRole('button', { name: 'Remove link' }).first();
   await removeTrigger.click();
