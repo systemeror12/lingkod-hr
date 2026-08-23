@@ -37,6 +37,12 @@ function createContext(agencyId: string, userId: string, membershipId: string): 
       { code: 'positions.history.read', scopePolicy: 'AGENCY' },
       { code: 'positions.items.create', scopePolicy: 'AGENCY' },
       { code: 'positions.items.update', scopePolicy: 'AGENCY' },
+      { code: 'positions.items.authorize', scopePolicy: 'AGENCY' },
+      { code: 'positions.items.declare_vacant', scopePolicy: 'AGENCY' },
+      { code: 'positions.items.freeze', scopePolicy: 'AGENCY' },
+      { code: 'positions.items.unfreeze', scopePolicy: 'AGENCY' },
+      { code: 'positions.items.cancel', scopePolicy: 'AGENCY' },
+      { code: 'positions.items.abolish', scopePolicy: 'AGENCY' },
       { code: 'organization.units.read', scopePolicy: 'AGENCY' },
       { code: 'organization.units.update', scopePolicy: 'AGENCY' },
       { code: 'organization.units.activate', scopePolicy: 'AGENCY' },
@@ -261,6 +267,125 @@ it.skipIf(!enabled)(
           purpose: 'CREATION',
         }),
       ).rejects.toMatchObject({ code: 'PLANTILLA_POSITION_EVIDENCE_DUPLICATE' });
+
+      const lifecycleInput = { ...input, itemNumber: `LIFECYCLE-${suffix}` };
+      const lifecyclePosition = await service.create(context, lifecycleInput);
+      const authorizationDate = addDays(today(), 1);
+      await expect(
+        service.authorize(context, lifecyclePosition.id, {
+          effectiveDate: authorizationDate,
+          reason: 'The proposed position is complete and ready for authorization.',
+        }),
+      ).rejects.toMatchObject({ code: 'PLANTILLA_POSITION_EVIDENCE_REQUIRED' });
+      await expect(
+        service.findById(context, lifecyclePosition.id, authorizationDate),
+      ).resolves.toMatchObject({ effective: { lifecycleStatus: 'PROPOSED' } });
+      await service.linkEvidence(context, lifecyclePosition.id, {
+        documentId: authorityDocumentId,
+        purpose: 'CREATION',
+        effectiveDate: lifecycleInput.effectiveDate,
+      });
+      const authorizationInput = {
+        effectiveDate: authorizationDate,
+        reason: 'The proposed position is complete and ready for authorization.',
+      };
+      await service.authorize(
+        context,
+        lifecyclePosition.id,
+        authorizationInput,
+        'authorize-lifecycle',
+      );
+      await expect(
+        service.authorize(context, lifecyclePosition.id, authorizationInput, 'authorize-lifecycle'),
+      ).resolves.toBeDefined();
+      await expect(
+        service.findById(context, lifecyclePosition.id, authorizationDate),
+      ).resolves.toMatchObject({ effective: { lifecycleStatus: 'AUTHORIZED' } });
+
+      const vacantDate = addDays(today(), 2);
+      await service.declareVacant(context, lifecyclePosition.id, {
+        effectiveDate: vacantDate,
+        reason: 'No incumbent workflow is in scope for this phase.',
+      });
+      await expect(
+        service.findById(context, lifecyclePosition.id, vacantDate),
+      ).resolves.toMatchObject({
+        effective: { lifecycleStatus: 'VACANT' },
+      });
+
+      const freezeDate = addDays(today(), 3);
+      await service.linkEvidence(context, lifecyclePosition.id, {
+        documentId: authorityDocumentId,
+        purpose: 'FREEZE',
+        effectiveDate: freezeDate,
+      });
+      await service.freeze(context, lifecyclePosition.id, {
+        effectiveDate: freezeDate,
+        reason: 'The position is temporarily frozen under the staffing authority.',
+      });
+      await expect(
+        service.findById(context, lifecyclePosition.id, freezeDate),
+      ).resolves.toMatchObject({
+        effective: { lifecycleStatus: 'FROZEN' },
+      });
+
+      const unfreezeDate = addDays(today(), 4);
+      await service.unfreeze(context, lifecyclePosition.id, {
+        effectiveDate: unfreezeDate,
+        reason: 'The position is eligible to return to vacancy control.',
+      });
+      await expect(
+        service.findById(context, lifecyclePosition.id, unfreezeDate),
+      ).resolves.toMatchObject({ effective: { lifecycleStatus: 'VACANT' } });
+
+      const abolitionDate = addDays(today(), 5);
+      await service.linkEvidence(context, lifecyclePosition.id, {
+        documentId: authorityDocumentId,
+        purpose: 'ABOLITION',
+        effectiveDate: abolitionDate,
+      });
+      await service.abolish(context, lifecyclePosition.id, {
+        effectiveDate: abolitionDate,
+        reason: 'The authorized position is abolished prospectively under the authority.',
+      });
+      const lifecycleHistory = await service.findById(context, lifecyclePosition.id, abolitionDate);
+      expect(lifecycleHistory?.effective).toMatchObject({ lifecycleStatus: 'ABOLISHED' });
+      expect(lifecycleHistory?.history.map(({ action }) => action)).toEqual(
+        expect.arrayContaining([
+          'PLANTILLA_POSITION_AUTHORIZED',
+          'PLANTILLA_POSITION_DECLARED_VACANT',
+          'PLANTILLA_POSITION_FROZEN',
+          'PLANTILLA_POSITION_UNFROZEN',
+          'PLANTILLA_POSITION_ABOLISHED',
+        ]),
+      );
+      await expect(
+        admin.auditEvent.findFirst({
+          where: {
+            agencyId: agency.id,
+            entityId: lifecyclePosition.id,
+            action: 'PLANTILLA_POSITION_AUTHORIZED',
+          },
+          select: { metadata: true },
+        }),
+      ).resolves.toMatchObject({
+        metadata: {
+          before: { lifecycleStatus: 'PROPOSED', versionState: 'ACTIVE' },
+          after: { lifecycleStatus: 'AUTHORIZED', versionState: 'ACTIVE' },
+        },
+      });
+
+      const cancelled = await service.create(context, {
+        ...input,
+        itemNumber: `CANCELLED-${suffix}`,
+      });
+      await service.cancel(context, cancelled.id, {
+        effectiveDate: addDays(today(), 1),
+        reason: 'The proposed position was not approved for continuation.',
+      });
+      await expect(
+        service.findById(context, cancelled.id, addDays(today(), 1)),
+      ).resolves.toMatchObject({ effective: { lifecycleStatus: 'ABOLISHED' } });
 
       const organizationSuccessor = await organizationService.createSuccessor(context, unitId);
       const updatedOrganizationDraft = await organizationService.updateDraft(

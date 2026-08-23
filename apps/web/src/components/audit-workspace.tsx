@@ -174,7 +174,7 @@ export function AuditWorkspace({
             Audit Log
           </h1>
           <p className="m-0 text-sm leading-[1.65] text-muted">
-            Read-only Organization Unit evidence from the active Agency Context.
+            Read-only business evidence from the active Agency Context.
           </p>
         </header>
 
@@ -185,7 +185,7 @@ export function AuditWorkspace({
           <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
             <div className="grid gap-1">
               <h2 className="m-0 text-sm font-[670] text-midnight" id="audit-events-heading">
-                Organization Unit events
+                Agency events
               </h2>
               <span className="text-xs text-muted">
                 {events.length === 1 ? '1 event' : `${events.length} events`}
@@ -199,11 +199,11 @@ export function AuditWorkspace({
           {events.length === 0 ? (
             <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12 text-left">
               <strong className="text-[15px] font-[650] text-midnight">
-                No Organization Unit audit events yet.
+                No Agency audit events yet.
               </strong>
               <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
-                Persisted Organization Unit creation evidence will appear here after a Draft is
-                created in this Agency.
+                Persisted business transitions will appear here after a controlled action is
+                recorded in this Agency.
               </p>
             </div>
           ) : (

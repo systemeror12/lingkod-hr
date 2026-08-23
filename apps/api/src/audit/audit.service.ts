@@ -7,6 +7,7 @@ import { auditEventCursorSchema } from './audit.schemas';
 export const ORGANIZATION_UNIT_AUDIT_ENTITY = 'OrganizationUnit';
 export const ORGANIZATION_UNIT_CREATED_AUDIT_ACTION = 'ORGANIZATION_UNIT_CREATED';
 export const ORGANIZATION_UNIT_ACTIVATED_AUDIT_ACTION = 'ORGANIZATION_UNIT_ACTIVATED';
+export const PLANTILLA_POSITION_AUDIT_ENTITY = 'PlantillaPosition';
 const DEFAULT_PAGE_SIZE = 25;
 
 export type AuditActorType = 'USER' | 'SYSTEM' | 'INTEGRATION';
@@ -126,7 +127,17 @@ function organizationUnitEvidence(value: SanitizedAuditValue | null): SanitizedA
   return evidence;
 }
 
-function changeData(metadata: unknown): {
+function entityEvidence(
+  entityType: string,
+  value: SanitizedAuditValue | null,
+): SanitizedAuditValue | null {
+  return entityType === ORGANIZATION_UNIT_AUDIT_ENTITY ? organizationUnitEvidence(value) : value;
+}
+
+function changeData(
+  entityType: string,
+  metadata: unknown,
+): {
   before: SanitizedAuditValue | null;
   after: SanitizedAuditValue | null;
 } {
@@ -135,11 +146,27 @@ function changeData(metadata: unknown): {
 
   const hasBefore = Object.prototype.hasOwnProperty.call(sanitized, 'before');
   const hasAfter = Object.prototype.hasOwnProperty.call(sanitized, 'after');
-  if (!hasBefore && !hasAfter) return { before: null, after: organizationUnitEvidence(sanitized) };
+  if (!hasBefore && !hasAfter)
+    return { before: null, after: entityEvidence(entityType, sanitized) };
 
   return {
-    before: organizationUnitEvidence(sanitized.before ?? null),
-    after: organizationUnitEvidence(sanitized.after ?? null),
+    before: entityEvidence(entityType, sanitized.before ?? null),
+    after: entityEvidence(entityType, sanitized.after ?? null),
+  };
+}
+
+function auditEventFilter(): Prisma.AuditEventWhereInput {
+  return {
+    OR: [
+      {
+        entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
+        OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
+      },
+      {
+        entityType: PLANTILLA_POSITION_AUDIT_ENTITY,
+        action: { startsWith: 'PLANTILLA_POSITION_' },
+      },
+    ],
   };
 }
 
@@ -243,8 +270,7 @@ export class AuditService {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const where: Prisma.AuditEventWhereInput = {
         agencyId: context.agencyId,
-        entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
-        OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
+        ...auditEventFilter(),
       };
       if (cursor) {
         where.AND = [
@@ -280,14 +306,13 @@ export class AuditService {
         where: {
           id,
           agencyId: context.agencyId,
-          entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
-          OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
+          ...auditEventFilter(),
         },
         select: auditEventSelect,
       });
       if (!record) return null;
       const item = listItemFromRecord(record);
-      const changes = changeData(record.metadata);
+      const changes = changeData(record.entityType, record.metadata);
       return {
         ...item,
         requestId: record.requestId,

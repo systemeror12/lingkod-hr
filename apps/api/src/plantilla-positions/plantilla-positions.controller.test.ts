@@ -46,6 +46,12 @@ function serviceMock() {
     updateDraft: vi.fn(),
     activate: vi.fn(),
     correct: vi.fn(),
+    authorize: vi.fn(),
+    declareVacant: vi.fn(),
+    freeze: vi.fn(),
+    unfreeze: vi.fn(),
+    cancel: vi.fn(),
+    abolish: vi.fn(),
   };
 }
 
@@ -115,6 +121,25 @@ it('rejects malformed IDs and forwards successor requests', async () => {
     status: 404,
   });
   expect(service.createSuccessor).not.toHaveBeenCalled();
+});
+
+it('validates and forwards a controlled lifecycle transition', async () => {
+  const service = serviceMock();
+  service.authorize.mockResolvedValue(position);
+  const controller = new PlantillaPositionsController(service as never);
+  const body = {
+    effectiveDate: '2026-08-24',
+    reason: 'The complete position is approved for authorization.',
+  };
+
+  await expect(
+    controller.authorize(agencyId, positionId, body, context, 'authorize-key'),
+  ).resolves.toMatchObject({ id: positionId });
+  expect(service.authorize).toHaveBeenCalledWith(context, positionId, body, 'authorize-key');
+  await expect(
+    controller.authorize(agencyId, positionId, { ...body, reason: ' ' }, context),
+  ).rejects.toMatchObject({ status: 400 });
+  expect(service.authorize).toHaveBeenCalledTimes(1);
 });
 
 it('validates and forwards the controlled evidence-link workflow', async () => {

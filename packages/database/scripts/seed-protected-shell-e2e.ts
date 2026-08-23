@@ -310,23 +310,31 @@ async function seed(): Promise<void> {
       data: { currentVersionId: positionVersion.id },
     });
   });
-  const role = await prisma.role.findFirstOrThrow({
-    where: { agencyId: null, code: 'agency_administrator', status: 'ACTIVE' },
-  });
-  const assignment = await prisma.membershipRole.findFirst({
-    where: { agencyId: agency.id, membershipId: membership.id, roleId: role.id },
-  });
-  if (!assignment) {
-    await prisma.membershipRole.create({
-      data: {
-        agencyId: agency.id,
-        membershipId: membership.id,
-        roleId: role.id,
-        effectiveFrom: new Date(),
-        assignedByMembershipId: membership.id,
-        reason: 'Protected shell E2E fixture',
-      },
+  // One protected-shell identity exercises the browser critical path; production role grants remain distinct.
+  for (const roleCode of [
+    'agency_administrator',
+    'hrmo_administrator',
+    'plantilla_officer',
+    'budget_officer',
+  ]) {
+    const role = await prisma.role.findFirstOrThrow({
+      where: { agencyId: null, code: roleCode, status: 'ACTIVE' },
     });
+    const assignment = await prisma.membershipRole.findFirst({
+      where: { agencyId: agency.id, membershipId: membership.id, roleId: role.id },
+    });
+    if (!assignment) {
+      await prisma.membershipRole.create({
+        data: {
+          agencyId: agency.id,
+          membershipId: membership.id,
+          roleId: role.id,
+          effectiveFrom: new Date(),
+          assignedByMembershipId: membership.id,
+          reason: 'Protected shell E2E fixture',
+        },
+      });
+    }
   }
 
   const foreignAgency = await prisma.agency.upsert({

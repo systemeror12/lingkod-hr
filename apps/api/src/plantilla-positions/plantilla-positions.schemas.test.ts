@@ -5,6 +5,8 @@ import {
   plantillaPositionDraftUpdateSchema,
   plantillaPositionEvidenceLinkSchema,
   plantillaPositionEvidenceRemovalSchema,
+  plantillaPositionIdempotencyKeySchema,
+  plantillaPositionTransitionSchema,
 } from './plantilla-positions.schemas';
 
 const organizationUnitId = '00000000-0000-4000-8000-000000000001';
@@ -83,4 +85,27 @@ it('keeps evidence purpose separate from Document file metadata', () => {
     }).success,
   ).toBe(false);
   expect(plantillaPositionEvidenceRemovalSchema.safeParse({ reason: ' ' }).success).toBe(false);
+});
+
+it('requires a dated reason for lifecycle transitions', () => {
+  expect(
+    plantillaPositionTransitionSchema.parse({
+      effectiveDate: '2026-09-01',
+      reason: 'The approved lifecycle decision is effective.',
+    }),
+  ).toEqual({
+    effectiveDate: '2026-09-01',
+    reason: 'The approved lifecycle decision is effective.',
+  });
+  expect(
+    plantillaPositionTransitionSchema.safeParse({
+      effectiveDate: '2026-09-01',
+      reason: ' ',
+    }).success,
+  ).toBe(false);
+});
+
+it('bounds optional lifecycle idempotency keys', () => {
+  expect(plantillaPositionIdempotencyKeySchema.parse(' transition-1 ')).toBe('transition-1');
+  expect(plantillaPositionIdempotencyKeySchema.safeParse(' ').success).toBe(false);
 });

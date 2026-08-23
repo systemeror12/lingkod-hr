@@ -8,6 +8,7 @@ import {
 
 const documentsService = {} as ConstructorParameters<typeof PlantillaPositionsService>[1];
 const agencyId = '00000000-0000-4000-8000-000000000001';
+const positionId = '00000000-0000-4000-8000-000000000009';
 
 function context(permissions: RequestContext['permissions']): RequestContext {
   return {
@@ -30,6 +31,11 @@ const createInput = {
   qualificationStandardVersionId: '00000000-0000-4000-8000-000000000005',
   staffingAuthorityId: '00000000-0000-4000-8000-000000000006',
   effectiveDate: '2026-08-23',
+};
+
+const transitionInput = {
+  effectiveDate: '2026-08-24',
+  reason: 'The approved staffing action is now effective.',
 };
 
 it('rechecks the create permission before opening a Plantilla Position workflow', async () => {
@@ -101,5 +107,25 @@ it('requires a reason before removing a Plantilla Position evidence link', async
   ).rejects.toMatchObject({
     code: 'PLANTILLA_POSITION_EVIDENCE_REMOVAL_REASON_REQUIRED',
     statusCode: 400,
+  });
+});
+
+it.each([
+  ['authorize', 'positions.items.authorize', 'PLANTILLA_POSITION_AUTHORIZE_FORBIDDEN'],
+  [
+    'declareVacant',
+    'positions.items.declare_vacant',
+    'PLANTILLA_POSITION_DECLARE_VACANT_FORBIDDEN',
+  ],
+  ['freeze', 'positions.items.freeze', 'PLANTILLA_POSITION_FREEZE_FORBIDDEN'],
+  ['unfreeze', 'positions.items.unfreeze', 'PLANTILLA_POSITION_UNFREEZE_FORBIDDEN'],
+  ['cancel', 'positions.items.cancel', 'PLANTILLA_POSITION_CANCEL_FORBIDDEN'],
+  ['abolish', 'positions.items.abolish', 'PLANTILLA_POSITION_ABOLISH_FORBIDDEN'],
+] as const)('rechecks the %s permission before a lifecycle transition', async (method, _, code) => {
+  const service = new PlantillaPositionsService(plantillaPositionAuditWriter, documentsService);
+
+  await expect(service[method](context([]), positionId, transitionInput)).rejects.toMatchObject({
+    code,
+    statusCode: 403,
   });
 });
