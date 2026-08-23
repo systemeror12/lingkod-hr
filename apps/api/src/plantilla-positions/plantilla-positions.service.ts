@@ -75,6 +75,11 @@ export interface PlantillaPositionCorrectionInput extends Omit<
   reason: string;
 }
 
+export interface PlantillaPositionTransitionInput {
+  effectiveDate: string;
+  reason: string;
+}
+
 export interface PlantillaPositionVersionSummary {
   id: string;
   positionId: string;
@@ -476,6 +481,11 @@ function dateInvalid(): PlantillaPositionServiceError {
     400,
     'PLANTILLA_POSITION_DATE_INVALID',
   );
+}
+
+function normalizeIdempotencyKey(value: string | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
 }
 
 @Injectable()
@@ -1030,6 +1040,280 @@ export class PlantillaPositionsService {
     });
   }
 
+  async authorize(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    this.assertPermission(
+      context,
+      'positions.items.authorize',
+      'PLANTILLA_POSITION_AUTHORIZE_FORBIDDEN',
+    );
+    return this.transition(
+      context,
+      positionId,
+      input,
+      {
+        action: 'PLANTILLA_POSITION_AUTHORIZED',
+        from: ['PROPOSED'],
+        to: 'AUTHORIZED',
+        evidencePurpose: 'CREATION',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  async declareVacant(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    this.assertPermission(
+      context,
+      'positions.items.declare_vacant',
+      'PLANTILLA_POSITION_DECLARE_VACANT_FORBIDDEN',
+    );
+    return this.transition(
+      context,
+      positionId,
+      input,
+      {
+        action: 'PLANTILLA_POSITION_DECLARED_VACANT',
+        from: ['AUTHORIZED'],
+        to: 'VACANT',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  async freeze(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    this.assertPermission(context, 'positions.items.freeze', 'PLANTILLA_POSITION_FREEZE_FORBIDDEN');
+    return this.transition(
+      context,
+      positionId,
+      input,
+      {
+        action: 'PLANTILLA_POSITION_FROZEN',
+        from: ['AUTHORIZED', 'VACANT'],
+        to: 'FROZEN',
+        evidencePurpose: 'FREEZE',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  async unfreeze(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    this.assertPermission(
+      context,
+      'positions.items.unfreeze',
+      'PLANTILLA_POSITION_UNFREEZE_FORBIDDEN',
+    );
+    return this.transition(
+      context,
+      positionId,
+      input,
+      {
+        action: 'PLANTILLA_POSITION_UNFROZEN',
+        from: ['FROZEN'],
+        to: 'VACANT',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  async cancel(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    this.assertPermission(context, 'positions.items.cancel', 'PLANTILLA_POSITION_CANCEL_FORBIDDEN');
+    return this.transition(
+      context,
+      positionId,
+      input,
+      {
+        action: 'PLANTILLA_POSITION_CANCELLED',
+        from: ['PROPOSED'],
+        to: 'ABOLISHED',
+        skipReferenceValidation: true,
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  async abolish(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    this.assertPermission(
+      context,
+      'positions.items.abolish',
+      'PLANTILLA_POSITION_ABOLISH_FORBIDDEN',
+    );
+    return this.transition(
+      context,
+      positionId,
+      input,
+      {
+        action: 'PLANTILLA_POSITION_ABOLISHED',
+        from: ['AUTHORIZED', 'VACANT'],
+        to: 'ABOLISHED',
+        evidencePurpose: 'ABOLITION',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  private async transition(
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    options: {
+      action: string;
+      from: readonly PlantillaPositionLifecycleStatus[];
+      to: PlantillaPositionLifecycleStatus;
+      evidencePurpose?: PlantillaPositionEvidencePurpose;
+      skipReferenceValidation?: boolean;
+    },
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    const reason = input.reason.trim();
+    if (!reason) throw this.transitionReasonRequired();
+    const effectiveFrom = toDatabaseDate(input.effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      await this.lockPosition(transaction, context.agencyId, positionId);
+      const record = await this.positionRecord(transaction, context.agencyId, positionId);
+      if (!record) throw this.notFound();
+      if (idempotencyKey) {
+        const completed = await transaction.auditEvent.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            action: options.action,
+            entityId: positionId,
+            idempotencyKey,
+          },
+          select: { reason: true, metadata: true },
+        });
+        if (completed) {
+          if (
+            completed.reason !== reason ||
+            this.metadataString(completed.metadata, 'effectiveDate') !== input.effectiveDate
+          ) {
+            throw this.idempotencyConflict();
+          }
+          return positionSummary(record, toDatabaseDate(manilaToday()));
+        }
+      }
+      if (draftVersion(record.versions)) throw this.transitionDraftConflict();
+
+      const current = effectiveVersion(record.versions, effectiveFrom);
+      if (
+        !current ||
+        current.status !== 'ACTIVE' ||
+        !options.from.includes(current.domainStatus as PlantillaPositionLifecycleStatus)
+      ) {
+        throw this.transitionNotAllowed(current?.domainStatus ?? null);
+      }
+      if (effectiveFrom <= current.effectiveFrom) throw this.transitionDateInvalid();
+
+      if (!options.skipReferenceValidation) {
+        const versionInput = this.inputFromVersion(current, effectiveFrom);
+        await this.validateReferences(transaction, context, versionInput, effectiveFrom, {
+          requireActiveAuthority: true,
+        });
+      }
+
+      const evidence = options.evidencePurpose
+        ? await this.requiredEvidence(
+            transaction,
+            context,
+            positionId,
+            options.evidencePurpose,
+            effectiveFrom,
+          )
+        : null;
+      const latest = record.versions.reduce(
+        (maxVersion, version) => Math.max(maxVersion, version.versionNo),
+        current.versionNo,
+      );
+
+      await transaction.plantillaPositionVersion.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+        data: { status: 'SUPERSEDED', effectiveTo: addDays(effectiveFrom, -1) },
+      });
+      const next = await transaction.plantillaPositionVersion.create({
+        data: this.versionData(
+          context,
+          positionId,
+          this.inputFromVersion(current, effectiveFrom),
+          effectiveFrom,
+          {
+            versionNo: latest + 1,
+            status: 'ACTIVE',
+            domainStatus: options.to,
+          },
+        ),
+        select: { id: true },
+      });
+      const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+      if (!refreshed) throw this.notFound();
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: options.action,
+        entityType: 'PlantillaPosition',
+        entityId: positionId,
+        previousStatus: current.domainStatus,
+        newStatus: options.to,
+        reason,
+        requestId: context.requestId,
+        occurredAt: new Date(),
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          before: {
+            lifecycleStatus: current.domainStatus,
+            versionState: current.status,
+            versionId: current.id,
+            effectiveDate: formatDate(current.effectiveFrom),
+          },
+          after: {
+            lifecycleStatus: options.to,
+            versionState: 'ACTIVE',
+            versionId: next.id,
+            effectiveDate: formatDate(effectiveFrom),
+          },
+          predecessorId: current.id,
+          versionId: next.id,
+          effectiveDate: formatDate(effectiveFrom),
+          staffingAuthorityId: current.staffingAuthority.id,
+          authorityReference: current.staffingAuthority.referenceNo,
+          ...(evidence ? { evidence: evidenceAuditMetadata(evidence) } : {}),
+        },
+      });
+      return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+    });
+  }
+
   private versionData(
     context: RequestContext,
     positionId: string,
@@ -1095,6 +1379,7 @@ export class PlantillaPositionsService {
     context: RequestContext,
     input: PlantillaPositionInput,
     effectiveDate: Date,
+    options: { requireActiveAuthority?: boolean } = {},
   ): Promise<void> {
     const unitVersion = await transaction.organizationUnitVersion.findFirst({
       where: {
@@ -1140,6 +1425,7 @@ export class PlantillaPositionsService {
       !authority ||
       authority.status === 'DRAFT' ||
       authority.status === 'REVOKED' ||
+      (options.requireActiveAuthority && authority.status !== 'ACTIVE') ||
       authority.effectiveDate > effectiveDate ||
       (authority.supersededEffectiveDate !== null &&
         authority.supersededEffectiveDate <= effectiveDate) ||
@@ -1163,6 +1449,43 @@ export class PlantillaPositionsService {
     if (!evidence || evidence.status === 'VOIDED' || !evidence.currentVersion) {
       throw this.staffingAuthorityEvidenceRequired();
     }
+  }
+
+  private async requiredEvidence(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    purpose: PlantillaPositionEvidencePurpose,
+    effectiveDate: Date,
+  ): Promise<PositionEvidenceRecord> {
+    this.assertEvidenceReadPermission(context);
+    const record = await transaction.positionDocument.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        positionId,
+        documentType: purpose,
+        OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: effectiveDate } }],
+      },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+      select: positionEvidenceSelect,
+    });
+    if (!record || !record.document.currentVersion) throw this.positionEvidenceRequired(purpose);
+    if (
+      record.document.classification === 'HIGHLY_SENSITIVE' &&
+      !hasPermission(context, 'documents.evidence.read_sensitive', {
+        agencyId: context.agencyId,
+      })
+    ) {
+      throw this.evidenceSensitiveForbidden();
+    }
+    if (
+      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
+        record.document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
+      )
+    ) {
+      throw this.positionEvidenceRequired(purpose);
+    }
+    return record;
   }
 
   private async positionRecord(
@@ -1423,6 +1746,58 @@ export class PlantillaPositionsService {
       'A reason is required to correct a Plantilla Position version.',
       400,
       'PLANTILLA_POSITION_CORRECTION_REASON_REQUIRED',
+    );
+  }
+
+  private transitionReasonRequired(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'A reason is required for a Plantilla Position lifecycle transition.',
+      400,
+      'PLANTILLA_POSITION_TRANSITION_REASON_REQUIRED',
+    );
+  }
+
+  private transitionDateInvalid(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'A lifecycle transition must take effect after the current effective version.',
+      409,
+      'PLANTILLA_POSITION_TRANSITION_DATE_INVALID',
+    );
+  }
+
+  private transitionNotAllowed(currentStatus: string | null): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      currentStatus
+        ? `The Plantilla Position cannot transition from ${currentStatus}.`
+        : 'The Plantilla Position has no effective version for the requested date.',
+      409,
+      'PLANTILLA_POSITION_TRANSITION_NOT_ALLOWED',
+    );
+  }
+
+  private transitionDraftConflict(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'Complete or discard the existing Draft successor before changing lifecycle state.',
+      409,
+      'PLANTILLA_POSITION_TRANSITION_DRAFT_CONFLICT',
+    );
+  }
+
+  private idempotencyConflict(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Idempotency-Key was already used for a different Plantilla Position transition.',
+      409,
+      'PLANTILLA_POSITION_IDEMPOTENCY_CONFLICT',
+    );
+  }
+
+  private positionEvidenceRequired(
+    purpose: PlantillaPositionEvidencePurpose,
+  ): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      `Link approved External Evidence for the ${purpose.toLowerCase().replaceAll('_', ' ')} action before continuing.`,
+      409,
+      'PLANTILLA_POSITION_EVIDENCE_REQUIRED',
     );
   }
 

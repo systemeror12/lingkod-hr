@@ -144,3 +144,157 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 });
+
+test('authorizes and controls a Plantilla Position lifecycle with evidence', async ({ page }) => {
+  const itemNumber = 'LIFE-E2E-' + Date.now();
+
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/plantilla-positions');
+  await expect(
+    page.getByRole('heading', { name: 'Plantilla positions', exact: true }),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Create proposed position' }).click();
+  const createDialog = page.getByRole('dialog', { name: 'Create proposed position' });
+  await createDialog.getByLabel('Permanent Item Number').fill(itemNumber);
+  await createDialog.getByLabel('Position title').fill('Lifecycle Test Position');
+  await createDialog.getByLabel('Salary grade').fill('18');
+  await createDialog.getByLabel('Organization unit').selectOption({ index: 1 });
+  await createDialog.getByLabel('Funding source').fill('General Appropriations Act');
+  await createDialog.getByLabel('Exact Qualification Standard version').selectOption({ index: 1 });
+  await createDialog.getByLabel('Applicable Staffing Authority').selectOption({ index: 1 });
+  await createDialog.getByRole('button', { name: 'Create proposed position' }).click();
+
+  await expect(page.getByRole('status')).toContainText(
+    `Proposed position “${itemNumber}” was created.`,
+  );
+  await page.getByRole('button', { name: new RegExp(itemNumber) }).click();
+  await expect(page.getByRole('button', { name: 'Authorize position' })).toBeVisible();
+
+  async function linkEvidence(purpose: 'CREATION' | 'FREEZE' | 'ABOLITION'): Promise<void> {
+    await page.getByRole('button', { name: 'Link External Evidence' }).click();
+    const linkDialog = page.getByRole('dialog', { name: 'Link External Evidence' });
+    await linkDialog.getByLabel('External Evidence Document').selectOption({
+      label: 'E2E-PLANTILLA-AUTHORITY · STAFFING_AUTHORITY · v1',
+    });
+    await linkDialog.getByLabel('Evidence purpose').selectOption(purpose);
+    await linkDialog.getByRole('button', { name: 'Link evidence', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText(
+      'External Evidence E2E-PLANTILLA-AUTHORITY was linked',
+    );
+  }
+
+  async function completeTransition(
+    button: string,
+    dialogName: string,
+    submitButton: string,
+    reason: string,
+    successText: string,
+  ): Promise<void> {
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const transitionDialog = page.getByRole('dialog', { name: dialogName });
+    await expect(transitionDialog.getByLabel('Effective date')).toBeFocused();
+    await transitionDialog.getByLabel('Reason').fill(reason);
+    await transitionDialog.getByRole('button', { name: submitButton, exact: true }).click();
+    await expect(page.getByRole('status')).toContainText(successText);
+    await expect(page.locator('[aria-label="Position lifecycle actions"]')).toBeFocused();
+  }
+
+  await linkEvidence('CREATION');
+  const authorizeButton = page.getByRole('button', { name: 'Authorize position', exact: true });
+  await authorizeButton.click();
+  const authorizeDialog = page.getByRole('dialog', { name: 'Authorize Plantilla Position' });
+  await expect(authorizeDialog).toHaveAccessibleDescription(
+    'Authorize this complete proposed position with its active Staffing Authority and creation evidence.',
+  );
+  await expectCenteredDialog(authorizeDialog, page.viewportSize()?.width ?? 1280);
+  await page.keyboard.press('Escape');
+  await expect(authorizeDialog).toBeHidden();
+  await expect(authorizeButton).toBeFocused();
+  await completeTransition(
+    'Authorize position',
+    'Authorize Plantilla Position',
+    'Authorize position',
+    'The complete proposed position is authorized for the Agency.',
+    `“${itemNumber}” was authorized`,
+  );
+  await expect(
+    page.getByRole('region', { name: 'Effective definition' }).getByText('AUTHORIZED', {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await completeTransition(
+    'Declare vacant',
+    'Declare position vacant',
+    'Declare vacant',
+    'The authorized item has no incumbent.',
+    `“${itemNumber}” was declared vacant`,
+  );
+  await expect(
+    page.getByRole('region', { name: 'Effective definition' }).getByText('VACANT', {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await linkEvidence('FREEZE');
+  await completeTransition(
+    'Freeze position',
+    'Freeze Plantilla Position',
+    'Freeze position',
+    'The item is frozen pending the approved control.',
+    `“${itemNumber}” was frozen`,
+  );
+  await expect(
+    page.getByRole('region', { name: 'Effective definition' }).getByText('FROZEN', {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await completeTransition(
+    'Restore vacancy',
+    'Restore position to vacant',
+    'Restore vacancy',
+    'The freeze control has been cleared.',
+    `“${itemNumber}” was restored to vacant`,
+  );
+  await expect(
+    page.getByRole('region', { name: 'Effective definition' }).getByText('VACANT', {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  await linkEvidence('ABOLITION');
+  await completeTransition(
+    'Abolish position',
+    'Abolish Plantilla Position',
+    'Abolish position',
+    'The authorized item is abolished prospectively.',
+    `“${itemNumber}” was abolished`,
+  );
+  await expect(
+    page.getByRole('region', { name: 'Effective definition' }).getByText('ABOLISHED', {
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  const history = page.getByRole('region', { name: 'Transition history' });
+  await expect(history).toContainText('AUTHORIZED');
+  await expect(history).toContainText('VACANT');
+  await expect(history).toContainText('FROZEN');
+  await expect(history).toContainText('ABOLISHED');
+
+  await page.goto('/audit');
+  await expect(page.getByRole('heading', { name: 'Audit Log' })).toBeVisible();
+  const auditEvent = page
+    .getByRole('button')
+    .filter({ hasText: 'PLANTILLA_POSITION_ABOLISHED' })
+    .first();
+  await expect(auditEvent).toContainText('VACANT → ABOLISHED');
+  await auditEvent.click();
+  const auditDialog = page.getByRole('dialog', { name: 'Audit Event detail' });
+  await expect(auditDialog).toContainText('PLANTILLA_POSITION_ABOLISHED');
+  await expect(auditDialog).toContainText('ABOLISHED');
+});

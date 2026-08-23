@@ -13,7 +13,7 @@ async function expectFocusInside(dialog: Locator): Promise<void> {
   expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
 }
 
-test('reads persisted Organization Unit evidence in a keyboard-safe detail dialog', async ({
+test('reads persisted Agency evidence in a keyboard-safe detail dialog', async ({
   page,
 }, testInfo) => {
   const code = `AUDIT-${Date.now()}`;
@@ -21,9 +21,7 @@ test('reads persisted Organization Unit evidence in a keyboard-safe detail dialo
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/audit');
-  await expect(
-    page.getByText('No Organization Unit audit events yet.', { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText('No Agency audit events yet.', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('empty.png'), fullPage: true });
 
   await page.goto('/organization');

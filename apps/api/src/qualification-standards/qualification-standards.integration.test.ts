@@ -29,6 +29,18 @@ function createContext(agencyId: string, userId: string, membershipId: string): 
   };
 }
 
+function manilaDate(offsetDays = 0): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const date = new Date(`${today}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 async function createAdminClient(): Promise<PrismaClient> {
   const databaseUrl =
     process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
@@ -75,6 +87,8 @@ it.skipIf(!enabled)(
   async () => {
     const admin = await createAdminClient();
     const suffix = `${Date.now()}-qualification-standard-service`;
+    const initialEffectiveDate = manilaDate(-9);
+    const successorEffectiveDate = manilaDate(1);
     const agency = await admin.agency.create({
       data: {
         code: `QS-${suffix}`,
@@ -129,7 +143,7 @@ it.skipIf(!enabled)(
       const created = await service.create(context, {
         code: `QS-${suffix}`,
         name: 'Qualification Standard Integration',
-        effectiveDate: '2026-08-15',
+        effectiveDate: initialEffectiveDate,
         trainingHoursRequired: 40,
         experienceMonthsRequired: 12,
         competencyRequirements: [{ code: 'LEADERSHIP' }],
@@ -248,10 +262,10 @@ it.skipIf(!enabled)(
       expect(corrected.versionState).toBe('ACTIVE');
       expect(corrected.id).not.toBe(successor.draft.id);
       await expect(
-        service.assertUsableForAction(context, corrected.id, '2026-08-24'),
+        service.assertUsableForAction(context, corrected.id, successorEffectiveDate),
       ).resolves.toMatchObject({ id: corrected.id });
       await expect(
-        service.assertUsableForAction(context, active.currentVersion.id, '2026-08-24'),
+        service.assertUsableForAction(context, active.currentVersion.id, successorEffectiveDate),
       ).rejects.toMatchObject({ code: 'QUALIFICATION_STANDARD_NOT_EFFECTIVE' });
 
       const detail = await service.findById(context, created.id);

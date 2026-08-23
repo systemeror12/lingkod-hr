@@ -112,7 +112,13 @@ function toDatabaseDate(value: string): Date {
 }
 
 function today(): Date {
-  return new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const value = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  return new Date(`${value}T00:00:00.000Z`);
 }
 
 function addDays(value: Date, days: number): Date {

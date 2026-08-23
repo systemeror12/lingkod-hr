@@ -69,7 +69,7 @@ test.describe('Phase 3 acceptance gate', () => {
     await expect(
       page.getByText('National Archives Coordination Office', { exact: true }).first(),
     ).toBeVisible();
-    await expect(page.getByText('Agency Administrator', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(/Agency Administrator/).first()).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath('phase3-admin-dashboard.png'),
       fullPage: true,

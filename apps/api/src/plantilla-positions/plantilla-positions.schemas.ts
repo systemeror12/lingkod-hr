@@ -24,11 +24,19 @@ export const plantillaPositionCreateSchema = z
   .strict();
 
 export const plantillaPositionIdSchema = z.string().uuid();
+export const plantillaPositionIdempotencyKeySchema = z.string().trim().min(1).max(200);
 export const plantillaPositionVersionIdSchema = z.string().uuid();
 export const plantillaPositionEvidenceIdSchema = z.string().uuid();
 export const plantillaPositionAsOfSchema = z.string().date().optional();
 export const plantillaPositionActivationSchema = z
   .object({ reason: z.string().trim().min(1).max(500) })
+  .strict();
+
+export const plantillaPositionTransitionSchema = z
+  .object({
+    effectiveDate: z.string().date(),
+    reason: z.string().trim().min(1).max(500),
+  })
   .strict();
 
 export const plantillaPositionDraftUpdateSchema = z

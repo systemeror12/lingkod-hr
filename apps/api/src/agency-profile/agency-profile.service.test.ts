@@ -10,6 +10,18 @@ import {
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
+function manilaDate(offsetDays = 0): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const date = new Date(`${today}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 const draftInput: AgencyProfileDraftInput = {
   officialName: 'Department of Public Service and Digital Innovation',
   acronym: 'DPSDI',
@@ -141,9 +153,7 @@ it.skipIf(!enabled)(
     const initial = await seedProfile(admin, agency.id, agency.name);
     const requestContext = context(agency.id, user.id, membership.id);
     const service = new AgencyProfileService(agencyProfileAuditWriter);
-    const expectedDraftEffectiveFrom = new Date(Date.now() + 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10);
+    const expectedDraftEffectiveFrom = manilaDate(1);
 
     try {
       const draft = await service.createDraft(requestContext);

@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpException,
   Inject,
   Param,
@@ -39,6 +40,8 @@ import {
   plantillaPositionEvidenceLinkSchema,
   plantillaPositionEvidenceRemovalSchema,
   plantillaPositionIdSchema,
+  plantillaPositionIdempotencyKeySchema,
+  plantillaPositionTransitionSchema,
   plantillaPositionVersionIdSchema,
 } from './plantilla-positions.schemas';
 import {
@@ -343,6 +346,149 @@ export class PlantillaPositionsController {
     }
   }
 
+  @Post(':agencyId/plantilla-positions/:positionId/authorize')
+  @RequirePermission('positions.items.authorize')
+  async authorize(
+    @Param('agencyId') agencyId: string,
+    @Param('positionId') positionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<PlantillaPositionDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedPositionId = plantillaPositionIdSchema.safeParse(positionId);
+    if (!parsedPositionId.success) throw this.notFound(context);
+    const parsed = this.parseTransitionBody(body, context);
+    const parsedIdempotencyKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new PlantillaPositionDto(
+        await this.service.authorize(context, parsedPositionId.data, parsed, parsedIdempotencyKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/plantilla-positions/:positionId/declare-vacant')
+  @RequirePermission('positions.items.declare_vacant')
+  async declareVacant(
+    @Param('agencyId') agencyId: string,
+    @Param('positionId') positionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<PlantillaPositionDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedPositionId = plantillaPositionIdSchema.safeParse(positionId);
+    if (!parsedPositionId.success) throw this.notFound(context);
+    const parsed = this.parseTransitionBody(body, context);
+    const parsedIdempotencyKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new PlantillaPositionDto(
+        await this.service.declareVacant(
+          context,
+          parsedPositionId.data,
+          parsed,
+          parsedIdempotencyKey,
+        ),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/plantilla-positions/:positionId/freeze')
+  @RequirePermission('positions.items.freeze')
+  async freeze(
+    @Param('agencyId') agencyId: string,
+    @Param('positionId') positionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<PlantillaPositionDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedPositionId = plantillaPositionIdSchema.safeParse(positionId);
+    if (!parsedPositionId.success) throw this.notFound(context);
+    const parsed = this.parseTransitionBody(body, context);
+    const parsedIdempotencyKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new PlantillaPositionDto(
+        await this.service.freeze(context, parsedPositionId.data, parsed, parsedIdempotencyKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/plantilla-positions/:positionId/unfreeze')
+  @RequirePermission('positions.items.unfreeze')
+  async unfreeze(
+    @Param('agencyId') agencyId: string,
+    @Param('positionId') positionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<PlantillaPositionDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedPositionId = plantillaPositionIdSchema.safeParse(positionId);
+    if (!parsedPositionId.success) throw this.notFound(context);
+    const parsed = this.parseTransitionBody(body, context);
+    const parsedIdempotencyKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new PlantillaPositionDto(
+        await this.service.unfreeze(context, parsedPositionId.data, parsed, parsedIdempotencyKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/plantilla-positions/:positionId/cancel')
+  @RequirePermission('positions.items.cancel')
+  async cancel(
+    @Param('agencyId') agencyId: string,
+    @Param('positionId') positionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<PlantillaPositionDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedPositionId = plantillaPositionIdSchema.safeParse(positionId);
+    if (!parsedPositionId.success) throw this.notFound(context);
+    const parsed = this.parseTransitionBody(body, context);
+    const parsedIdempotencyKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new PlantillaPositionDto(
+        await this.service.cancel(context, parsedPositionId.data, parsed, parsedIdempotencyKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/plantilla-positions/:positionId/abolish')
+  @RequirePermission('positions.items.abolish')
+  async abolish(
+    @Param('agencyId') agencyId: string,
+    @Param('positionId') positionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<PlantillaPositionDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedPositionId = plantillaPositionIdSchema.safeParse(positionId);
+    if (!parsedPositionId.success) throw this.notFound(context);
+    const parsed = this.parseTransitionBody(body, context);
+    const parsedIdempotencyKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new PlantillaPositionDto(
+        await this.service.abolish(context, parsedPositionId.data, parsed, parsedIdempotencyKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   private assertReadAgency(agencyId: string, context: RequestContext): void {
     const parsed = agencyIdSchema.safeParse(agencyId);
     if (!parsed.success || parsed.data !== context.agencyId) throw this.notFound(context);
@@ -377,6 +523,33 @@ export class PlantillaPositionsController {
         requestId: context.requestId,
       },
     });
+  }
+
+  private parseTransitionBody(body: unknown, context: RequestContext) {
+    const parsed = plantillaPositionTransitionSchema.safeParse(body);
+    if (!parsed.success) {
+      throw this.invalidInput(
+        parsed.error.issues,
+        context,
+        'Enter an effective date and reason for the Plantilla Position transition.',
+      );
+    }
+    return parsed.data;
+  }
+
+  private parseIdempotencyKey(value: string | undefined, requestId: string): string | undefined {
+    if (value === undefined) return undefined;
+    const parsed = plantillaPositionIdempotencyKeySchema.safeParse(value);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        error: {
+          code: 'INVALID_IDEMPOTENCY_KEY',
+          message: 'Enter a valid Idempotency-Key.',
+          requestId,
+        },
+      });
+    }
+    return parsed.data;
   }
 
   private notFound(context: RequestContext): HttpException {

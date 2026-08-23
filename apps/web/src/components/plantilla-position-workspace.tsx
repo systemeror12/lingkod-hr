@@ -26,6 +26,8 @@ type EvidencePurpose =
   | 'FREEZE'
   | 'ABOLITION'
   | 'OTHER';
+type TransitionTarget =
+  'authorize' | 'declareVacant' | 'freeze' | 'unfreeze' | 'cancel' | 'abolish';
 
 export interface PlantillaPositionVersion {
   id: string;
@@ -165,6 +167,64 @@ const evidencePurposeLabels: Record<EvidencePurpose, string> = {
   OTHER: 'Other position evidence',
 };
 
+const transitionConfig: Record<
+  TransitionTarget,
+  {
+    path: string;
+    title: string;
+    description: string;
+    submitLabel: string;
+    pastTense: string;
+  }
+> = {
+  authorize: {
+    path: 'authorize',
+    title: 'Authorize Plantilla Position',
+    description:
+      'Authorize this complete proposed position with its active Staffing Authority and creation evidence.',
+    submitLabel: 'Authorize position',
+    pastTense: 'authorized',
+  },
+  declareVacant: {
+    path: 'declare-vacant',
+    title: 'Declare position vacant',
+    description:
+      'Record the position as VACANT. This does not create an incumbent or a Recruitable Vacancy.',
+    submitLabel: 'Declare vacant',
+    pastTense: 'declared vacant',
+  },
+  freeze: {
+    path: 'freeze',
+    title: 'Freeze Plantilla Position',
+    description:
+      'Freeze this authorized or vacant position with its authority and freeze evidence.',
+    submitLabel: 'Freeze position',
+    pastTense: 'frozen',
+  },
+  unfreeze: {
+    path: 'unfreeze',
+    title: 'Restore position to vacant',
+    description: 'Restore this frozen position to VACANT without creating an incumbent.',
+    submitLabel: 'Restore vacancy',
+    pastTense: 'restored to vacant',
+  },
+  cancel: {
+    path: 'cancel',
+    title: 'Cancel proposed position',
+    description: 'Cancel this proposal as ABOLISHED while preserving its Item Number and history.',
+    submitLabel: 'Cancel proposal',
+    pastTense: 'cancelled',
+  },
+  abolish: {
+    path: 'abolish',
+    title: 'Abolish Plantilla Position',
+    description:
+      'Abolish this authorized or vacant position prospectively with its authority and abolition evidence.',
+    submitLabel: 'Abolish position',
+    pastTense: 'abolished',
+  },
+};
+
 function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
 }
@@ -184,6 +244,16 @@ function dateLabel(value: string): string {
     day: 'numeric',
     timeZone: 'Asia/Manila',
   });
+}
+
+function nextDate(value: string): string {
+  const date = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function transitionActionLabel(action: string): string {
+  return action.replace(/^PLANTILLA_POSITION_/, '').replaceAll('_', ' ');
 }
 
 function statusTone(status: VersionState | LifecycleStatus): 'blue' | 'gray' | 'amber' {
@@ -714,18 +784,113 @@ function RemoveEvidenceDialog({
   );
 }
 
+function TransitionDialog({
+  target,
+  open,
+  defaultDate,
+  busy,
+  error,
+  onOpenChange,
+  onSubmit,
+}: {
+  target: TransitionTarget | null;
+  open: boolean;
+  defaultDate: string;
+  busy: boolean;
+  error: string;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  if (!target) return null;
+  const config = transitionConfig[target];
+  return (
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+      <DialogContent
+        aria-describedby="plantilla-transition-description"
+        onCloseAutoFocus={(event) => event.preventDefault()}
+        size="compact"
+      >
+        <form className="contents" onSubmit={onSubmit}>
+          <DialogHeader>
+            <div className="grid gap-1.5">
+              <DialogTitle>{config.title}</DialogTitle>
+              <DialogDescription id="plantilla-transition-description">
+                {config.description}
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button aria-label={`Close ${config.title} dialog`} disabled={busy} type="button">
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
+              </Button>
+            </DialogClose>
+          </DialogHeader>
+          <DialogBody className="grid gap-5">
+            {error ? <FormError message={error} /> : null}
+            <Field htmlFor="plantilla-transition-effective-date" label="Effective date">
+              <input
+                autoFocus
+                className={inputClass}
+                defaultValue={defaultDate}
+                id="plantilla-transition-effective-date"
+                min={defaultDate}
+                name="effectiveDate"
+                required
+                type="date"
+              />
+            </Field>
+            <Field htmlFor="plantilla-transition-reason" label="Reason">
+              <textarea
+                className={`${inputClass} min-h-28 resize-y py-3`}
+                id="plantilla-transition-reason"
+                maxLength={500}
+                name="reason"
+                placeholder="Explain the controlled lifecycle decision."
+                required
+              />
+            </Field>
+          </DialogBody>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button disabled={busy} size="default" type="button" variant="secondary">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button disabled={busy} size="default" type="submit" variant="primary">
+              {busy ? `${config.submitLabel}…` : config.submitLabel}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PlantillaPositionWorkspace({
   agencyId,
   initial,
   canCreate,
   canUpdate,
   canReadEvidence,
+  canAuthorize,
+  canDeclareVacant,
+  canFreeze,
+  canUnfreeze,
+  canCancel,
+  canAbolish,
 }: {
   agencyId: string;
   initial: PlantillaPositionListResponse;
   canCreate: boolean;
   canUpdate: boolean;
   canReadEvidence: boolean;
+  canAuthorize: boolean;
+  canDeclareVacant: boolean;
+  canFreeze: boolean;
+  canUnfreeze: boolean;
+  canCancel: boolean;
+  canAbolish: boolean;
 }) {
   const [positions, setPositions] = useState(initial.positions);
   const [selectedId, setSelectedId] = useState(initial.positions[0]?.id ?? '');
@@ -742,11 +907,16 @@ export function PlantillaPositionWorkspace({
     useState<PlantillaPositionEvidence | null>(null);
   const [busy, setBusy] = useState(false);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const [transitionTarget, setTransitionTarget] = useState<TransitionTarget | null>(null);
+  const [transitionBusy, setTransitionBusy] = useState(false);
+  const [transitionError, setTransitionError] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const returnFocusRef = useRef<{ focus(): void } | null>(null);
   const evidenceReturnFocusRef = useRef<{ focus(): void } | null>(null);
   const removeEvidenceReturnFocusRef = useRef<{ focus(): void } | null>(null);
+  const transitionReturnFocusRef = useRef<{ focus(): void } | null>(null);
+  const transitionActionsRef = useRef<HTMLDivElement | null>(null);
 
   const selected = positions.find((position) => position.id === selectedId) ?? positions[0] ?? null;
   const matches = positions.filter((position) => {
@@ -761,6 +931,7 @@ export function PlantillaPositionWorkspace({
   const versions =
     selectedDetail?.versions ?? (selected?.currentVersion ? [selected.currentVersion] : []);
   const evidence = selectedDetail?.evidence ?? [];
+  const transitionDefaultDate = nextDate(effective?.effectiveFrom ?? asOf);
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(`/api/v1/agencies/${agencyId}/plantilla-positions${path}`, {
@@ -924,6 +1095,23 @@ export function PlantillaPositionWorkspace({
     }
   }
 
+  function openTransition(target: TransitionTarget, trigger: { focus(): void }): void {
+    transitionReturnFocusRef.current = trigger;
+    setError('');
+    setSuccess('');
+    setTransitionError('');
+    setTransitionTarget(target);
+  }
+
+  function closeTransition(next: boolean): void {
+    if (transitionBusy) return;
+    if (next) return;
+    setTransitionTarget(null);
+    setTransitionError('');
+    const target = transitionReturnFocusRef.current;
+    setTimeout(() => target?.focus(), 0);
+  }
+
   async function changeAsOf(value: string): Promise<void> {
     setAsOf(value);
     setError('');
@@ -1003,6 +1191,46 @@ export function PlantillaPositionWorkspace({
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitTransition(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (!selected || !transitionTarget || transitionBusy) return;
+    const BrowserFormData = FormData as unknown as new (form: EventTarget) => FormData;
+    const form = new BrowserFormData(event.currentTarget);
+    const position = selected;
+    const target = transitionTarget;
+    const config = transitionConfig[target];
+    const effectiveDate = String(form.get('effectiveDate') ?? '');
+    const reason = String(form.get('reason') ?? '');
+    setTransitionBusy(true);
+    setError('');
+    setTransitionError('');
+    try {
+      await request(`/${position.id}/${config.path}`, {
+        method: 'POST',
+        body: JSON.stringify({ effectiveDate, reason }),
+      });
+      await refresh(effectiveDate);
+      setAsOf(effectiveDate);
+      await loadDetail(position.id, effectiveDate);
+      setSuccess(
+        `“${position.itemNumber}” was ${config.pastTense} effective ${dateLabel(effectiveDate)}.`,
+      );
+      setTransitionTarget(null);
+      setTimeout(() => {
+        const target = transitionActionsRef.current as unknown as { focus(): void } | null;
+        target?.focus();
+      }, 0);
+    } catch (requestError: unknown) {
+      setTransitionError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The lifecycle transition could not be completed.',
+      );
+    } finally {
+      setTransitionBusy(false);
     }
   }
 
@@ -1137,7 +1365,7 @@ export function PlantillaPositionWorkspace({
           {success}
         </p>
       ) : null}
-      {error && !dialogOpen && !linkEvidenceOpen && !removeEvidenceTarget ? (
+      {error && !dialogOpen && !linkEvidenceOpen && !removeEvidenceTarget && !transitionTarget ? (
         <FormError message={error} />
       ) : null}
 
@@ -1277,6 +1505,113 @@ export function PlantillaPositionWorkspace({
                   ) : null}
                 </h2>
                 <p className="m-0 text-sm text-[#bdc8d8]">{effective.organizationUnit.name}</p>
+                <div
+                  ref={transitionActionsRef}
+                  aria-label="Position lifecycle actions"
+                  className="mt-5 flex flex-wrap gap-2 outline-none"
+                  tabIndex={-1}
+                >
+                  {canAuthorize && effective.lifecycleStatus === 'PROPOSED' ? (
+                    <Button
+                      disabled={busy || transitionBusy}
+                      size="default"
+                      type="button"
+                      variant="secondary"
+                      onClick={(event) =>
+                        openTransition(
+                          'authorize',
+                          event.currentTarget as unknown as { focus(): void },
+                        )
+                      }
+                    >
+                      Authorize position
+                    </Button>
+                  ) : null}
+                  {canDeclareVacant && effective.lifecycleStatus === 'AUTHORIZED' ? (
+                    <Button
+                      disabled={busy || transitionBusy}
+                      size="default"
+                      type="button"
+                      variant="secondary"
+                      onClick={(event) =>
+                        openTransition(
+                          'declareVacant',
+                          event.currentTarget as unknown as { focus(): void },
+                        )
+                      }
+                    >
+                      Declare vacant
+                    </Button>
+                  ) : null}
+                  {canFreeze &&
+                  (effective.lifecycleStatus === 'AUTHORIZED' ||
+                    effective.lifecycleStatus === 'VACANT') ? (
+                    <Button
+                      disabled={busy || transitionBusy}
+                      size="default"
+                      type="button"
+                      variant="secondary"
+                      onClick={(event) =>
+                        openTransition(
+                          'freeze',
+                          event.currentTarget as unknown as { focus(): void },
+                        )
+                      }
+                    >
+                      Freeze position
+                    </Button>
+                  ) : null}
+                  {canUnfreeze && effective.lifecycleStatus === 'FROZEN' ? (
+                    <Button
+                      disabled={busy || transitionBusy}
+                      size="default"
+                      type="button"
+                      variant="secondary"
+                      onClick={(event) =>
+                        openTransition(
+                          'unfreeze',
+                          event.currentTarget as unknown as { focus(): void },
+                        )
+                      }
+                    >
+                      Restore vacancy
+                    </Button>
+                  ) : null}
+                  {canCancel && effective.lifecycleStatus === 'PROPOSED' ? (
+                    <Button
+                      disabled={busy || transitionBusy}
+                      size="default"
+                      type="button"
+                      variant="secondary"
+                      onClick={(event) =>
+                        openTransition(
+                          'cancel',
+                          event.currentTarget as unknown as { focus(): void },
+                        )
+                      }
+                    >
+                      Cancel proposal
+                    </Button>
+                  ) : null}
+                  {canAbolish &&
+                  (effective.lifecycleStatus === 'AUTHORIZED' ||
+                    effective.lifecycleStatus === 'VACANT') ? (
+                    <Button
+                      disabled={busy || transitionBusy}
+                      size="default"
+                      type="button"
+                      variant="secondary"
+                      onClick={(event) =>
+                        openTransition(
+                          'abolish',
+                          event.currentTarget as unknown as { focus(): void },
+                        )
+                      }
+                    >
+                      Abolish position
+                    </Button>
+                  ) : null}
+                </div>
               </header>
               <div className="grid min-[1040px]:grid-cols-[minmax(0,1fr)_245px]">
                 <div className="grid content-start gap-6 p-5 min-[621px]:p-7">
@@ -1447,6 +1782,52 @@ export function PlantillaPositionWorkspace({
                       </p>
                     )}
                   </section>
+                  <section
+                    aria-labelledby="plantilla-transition-history-heading"
+                    className="grid gap-3"
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <h3
+                        className="m-0 text-xs font-bold text-midnight"
+                        id="plantilla-transition-history-heading"
+                      >
+                        Transition history
+                      </h3>
+                      <span className="font-mono text-[10px] text-muted">
+                        {selectedDetail?.history.length ?? 0}{' '}
+                        {selectedDetail?.history.length === 1 ? 'event' : 'events'}
+                      </span>
+                    </div>
+                    {selectedDetail?.history.length ? (
+                      <ol className="m-0 grid list-none gap-2 p-0">
+                        {selectedDetail.history.map((event) => (
+                          <li
+                            className="grid gap-1 rounded-[4px] border border-line bg-[#f8fafc] p-3"
+                            key={event.id}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <strong className="text-xs text-midnight">
+                                {transitionActionLabel(event.action)}
+                              </strong>
+                              <span className="font-mono text-[10px] text-muted">
+                                {event.effectiveDate ? dateLabel(event.effectiveDate) : '—'}
+                              </span>
+                            </div>
+                            <span className="text-xs text-muted">
+                              {event.previousStatus ?? '—'} → {event.newStatus ?? '—'}
+                            </span>
+                            {event.reason ? (
+                              <span className="text-xs leading-[1.5] text-ink">{event.reason}</span>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="m-0 rounded-[4px] border border-dashed border-[#9cabc0] bg-[#fbfcfe] px-4 py-4 text-xs leading-[1.55] text-muted">
+                        No lifecycle transitions recorded for this position.
+                      </p>
+                    )}
+                  </section>
                 </div>
                 <aside className="grid content-start gap-4 border-t border-line bg-[#f8fafc] p-5 min-[1040px]:border-t-0 min-[1040px]:border-l">
                   <div className="flex items-center justify-between gap-2">
@@ -1512,6 +1893,15 @@ export function PlantillaPositionWorkspace({
         busy={evidenceBusy}
         error={error}
         onSubmit={(event) => void submitRemoveEvidence(event)}
+      />
+      <TransitionDialog
+        target={transitionTarget}
+        open={transitionTarget !== null}
+        defaultDate={transitionDefaultDate}
+        busy={transitionBusy}
+        error={transitionError}
+        onOpenChange={closeTransition}
+        onSubmit={(event) => void submitTransition(event)}
       />
     </div>
   );

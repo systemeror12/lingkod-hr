@@ -66,6 +66,12 @@ export default async function PlantillaPositionsPage() {
       canCreate={hasPermission(session, 'positions.items.create')}
       canUpdate={hasPermission(session, 'positions.items.update')}
       canReadEvidence={hasPermission(session, 'documents.evidence.read')}
+      canAuthorize={hasPermission(session, 'positions.items.authorize')}
+      canDeclareVacant={hasPermission(session, 'positions.items.declare_vacant')}
+      canFreeze={hasPermission(session, 'positions.items.freeze')}
+      canUnfreeze={hasPermission(session, 'positions.items.unfreeze')}
+      canCancel={hasPermission(session, 'positions.items.cancel')}
+      canAbolish={hasPermission(session, 'positions.items.abolish')}
     />
   );
 }

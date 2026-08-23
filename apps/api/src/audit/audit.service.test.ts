@@ -216,6 +216,32 @@ it.skipIf(!enabled)(
       await expect(service.findById(requestContext, wrongTransitionEvent.id)).resolves.toBeNull();
       await expect(service.findById(requestContext, otherActionEvent.id)).resolves.toBeNull();
 
+      const plantillaEvent = await admin.auditEvent.create({
+        data: {
+          agencyId: agency.id,
+          actorUserId: user.id,
+          actorMembershipId: membership.id,
+          actorType: 'USER',
+          action: 'PLANTILLA_POSITION_AUTHORIZED',
+          entityType: 'PlantillaPosition',
+          entityId: '00000000-0000-4000-8000-000000000017',
+          previousStatus: 'PROPOSED',
+          newStatus: 'AUTHORIZED',
+          reason: 'Complete position authorization.',
+          requestId: 'audit-api-plantilla',
+          occurredAt: new Date('2026-08-14T00:30:00.000Z'),
+          metadata: {
+            before: { lifecycleStatus: 'PROPOSED', versionState: 'ACTIVE' },
+            after: { lifecycleStatus: 'AUTHORIZED', versionState: 'ACTIVE' },
+          },
+        },
+      });
+      await expect(service.list(requestContext, { limit: 10 })).resolves.toMatchObject({
+        events: expect.arrayContaining([
+          expect.objectContaining({ action: 'PLANTILLA_POSITION_AUTHORIZED' }),
+        ]),
+      });
+
       const detail = await service.findById(requestContext, events[2]!.id);
       expect(detail).toMatchObject({
         action: 'ORGANIZATION_UNIT_CREATED',
@@ -247,6 +273,11 @@ it.skipIf(!enabled)(
           versionState: 'ACTIVE',
           lifecycleStatus: 'ACTIVE',
         },
+      });
+      await expect(service.findById(requestContext, plantillaEvent.id)).resolves.toMatchObject({
+        action: 'PLANTILLA_POSITION_AUTHORIZED',
+        before: { lifecycleStatus: 'PROPOSED', versionState: 'ACTIVE' },
+        after: { lifecycleStatus: 'AUTHORIZED', versionState: 'ACTIVE' },
       });
     } finally {
       await admin.$transaction(async (transaction) => {
