@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Organization Structure
 
 ```sql
@@ -102,11 +101,12 @@ CREATE TABLE qualification_standards (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   code citext NOT NULL,
-  name text NOT NULL,
+  name citext NOT NULL,
   status text NOT NULL CHECK (status IN ('ACTIVE','INACTIVE')),
   current_version_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (agency_id, code),
+  UNIQUE (agency_id, name),
   UNIQUE (agency_id, id)
 );
 
@@ -123,10 +123,13 @@ CREATE TABLE qualification_standard_versions (
   eligibility_requirement text,
   competency_requirements jsonb NOT NULL DEFAULT '[]'::jsonb,
   license_requirements jsonb NOT NULL DEFAULT '[]'::jsonb,
+  special_requirements text,
   effective_from date NOT NULL,
   effective_to date,
   status text NOT NULL
-    CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED')),
+    CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED','VOIDED')),
+  domain_status text NOT NULL DEFAULT 'INACTIVE'
+    CHECK (domain_status IN ('ACTIVE','INACTIVE')),
   CHECK (effective_to IS NULL OR effective_to >= effective_from),
   FOREIGN KEY (agency_id, qualification_standard_id)
     REFERENCES qualification_standards (agency_id, id),

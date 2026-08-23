@@ -571,9 +571,9 @@ export function StaffingAuthorityWorkspace({
                       <td className="px-5 py-4 align-top">
                         <div className="flex flex-wrap justify-end gap-2">
                           <Button
-                            className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                             size="default"
                             type="button"
+                            variant="secondary"
                             onClick={(event) =>
                               void openDetail(
                                 authority,
@@ -585,9 +585,9 @@ export function StaffingAuthorityWorkspace({
                           </Button>
                           {authority.status === 'DRAFT' && canUpdate ? (
                             <Button
-                              className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                               size="default"
                               type="button"
+                              variant="secondary"
                               onClick={(event) => {
                                 setDraft(draftValues(authority));
                                 openDialog(
@@ -602,9 +602,9 @@ export function StaffingAuthorityWorkspace({
                           ) : null}
                           {authority.status === 'DRAFT' && canValidateEvidence ? (
                             <Button
-                              className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                               size="default"
                               type="button"
+                              variant="secondary"
                               onClick={(event) =>
                                 openDialog(
                                   'evidence',
@@ -635,9 +635,9 @@ export function StaffingAuthorityWorkspace({
                           ) : null}
                           {authority.status === 'ACTIVE' && canSupersede ? (
                             <Button
-                              className="border border-line bg-paper px-3 py-2 text-xs font-[650] text-ink hover:bg-canvas"
                               size="default"
                               type="button"
+                              variant="secondary"
                               onClick={(event) =>
                                 openDialog(
                                   'supersede',
@@ -926,12 +926,7 @@ export function StaffingAuthorityWorkspace({
                 Draft only · External Evidence is required before activation.
               </span>
               <DialogClose asChild>
-                <Button
-                  className="min-h-11 rounded-[3px] border border-line bg-paper px-4 text-sm font-[650] text-ink hover:border-[#b7c2d1] hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cobalt"
-                  disabled={busy}
-                  size="default"
-                  type="button"
-                >
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
@@ -972,11 +967,7 @@ export function StaffingAuthorityWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
-                  disabled={busy}
-                  type="button"
-                >
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
@@ -1008,11 +999,7 @@ export function StaffingAuthorityWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
-                  disabled={busy}
-                  type="button"
-                >
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
@@ -1053,11 +1040,7 @@ export function StaffingAuthorityWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
-                  disabled={busy}
-                  type="button"
-                >
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
@@ -1107,11 +1090,7 @@ export function StaffingAuthorityWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
-                  disabled={busy}
-                  type="button"
-                >
+                <Button disabled={busy} size="default" type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>

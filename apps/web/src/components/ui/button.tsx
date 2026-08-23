@@ -10,6 +10,7 @@ export const buttonVariants = cva(
         ghost: 'bg-white/8 text-[#b9c4d5] hover:bg-white/14 hover:text-paper',
         primary:
           'border border-cobalt bg-cobalt px-[14px] py-[9px] text-[13px] font-[640] text-paper hover:bg-[#345f99]',
+        secondary: 'min-h-11 bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]',
       },
       size: {
         icon: 'size-[30px]',

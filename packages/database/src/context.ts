@@ -11,6 +11,7 @@ export interface DatabaseContext {
   platformSecurity?: boolean;
   operationalProvisioning?: boolean;
   staffingAuthorityTransition?: boolean;
+  qualificationStandardTransition?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -44,6 +45,11 @@ export async function setDatabaseContext(
       set_config(
         'app.staffing_authority_transition',
         ${context.staffingAuthorityTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.qualification_standard_transition',
+        ${context.qualificationStandardTransition ? 'on' : ''},
         true
       )
   `;
