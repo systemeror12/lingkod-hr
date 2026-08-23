@@ -1,7 +1,7 @@
 import type { ActiveSession } from './session';
 import { hasPermission } from './session';
 
-export type DestinationIcon = 'dashboard' | 'users' | 'organization' | 'audit';
+export type DestinationIcon = 'dashboard' | 'users' | 'organization' | 'authority' | 'audit';
 
 export interface Destination {
   href: string;
@@ -33,6 +33,12 @@ const destinations: readonly (Destination & {
     label: 'Organization',
     icon: 'organization',
     permission: 'organization.units.read',
+  },
+  {
+    href: '/staffing-authorities',
+    label: 'Staffing Authorities',
+    icon: 'authority',
+    permission: 'staffing.authorities.read',
   },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];

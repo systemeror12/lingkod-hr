@@ -10,6 +10,7 @@ export interface DatabaseContext {
   providerSid?: string;
   platformSecurity?: boolean;
   operationalProvisioning?: boolean;
+  staffingAuthorityTransition?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -38,6 +39,11 @@ export async function setDatabaseContext(
       set_config(
         'app.operational_provisioning',
         ${context.operationalProvisioning ? 'true' : ''},
+        true
+      ),
+      set_config(
+        'app.staffing_authority_transition',
+        ${context.staffingAuthorityTransition ? 'on' : ''},
         true
       )
   `;

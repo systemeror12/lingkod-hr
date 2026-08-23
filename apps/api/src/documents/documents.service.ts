@@ -525,6 +525,45 @@ export class DocumentsService {
     return toSummary(record);
   }
 
+  /** Internal contract: callers own authorization and use this only inside their transaction. */
+  async findEvidenceForAuthorityInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    documentId: string,
+    versionId?: string,
+  ): Promise<DocumentSummary | null> {
+    if (versionId) {
+      const record = await transaction.document.findFirst({
+        where: { id: documentId, agencyId: context.agencyId },
+        select: {
+          ...documentFields,
+          versions: {
+            where: { id: versionId, agencyId: context.agencyId },
+            take: 1,
+            select: versionSelect,
+          },
+        },
+      });
+      if (!record) return null;
+      const version = record.versions[0] ?? null;
+      return {
+        id: record.id,
+        documentNo: record.documentNo,
+        documentType: record.documentType,
+        classification: record.classification as DocumentClassification,
+        status: record.status,
+        createdAt: formatDateTime(record.createdAt),
+        currentVersion: version ? toVersionSummary(version) : null,
+      };
+    }
+    const record = await transaction.document.findFirst({
+      where: { id: documentId, agencyId: context.agencyId },
+      select: documentSelect,
+    });
+    if (!record) return null;
+    return toSummary(record);
+  }
+
   async issueAccessLink(
     context: RequestContext,
     documentId: string,
