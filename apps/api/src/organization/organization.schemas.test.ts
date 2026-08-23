@@ -93,6 +93,7 @@ it('rejects invalid hierarchy dates and incomplete activation input', () => {
 
 it('accepts effective-dated changes, lifecycle transitions, and correction evidence', () => {
   const parentUnitId = '00000000-0000-4000-8000-000000000001';
+  const headPositionId = '00000000-0000-4000-8000-000000000002';
   expect(organizationHistoryQuerySchema.parse({ asOf: '2026-08-21' })).toEqual({
     asOf: '2026-08-21',
   });
@@ -100,11 +101,12 @@ it('accepts effective-dated changes, lifecycle transitions, and correction evide
     organizationUnitDraftUpdateSchema.parse({
       officialName: 'Records and Information Division',
       parentUnitId,
+      headPositionId,
       costCenterCode: 'CC-100',
       responsibilityCenterCode: 'RC-200',
       effectiveDate: '2026-08-21',
     }),
-  ).toMatchObject({ effectiveDate: '2026-08-21' });
+  ).toMatchObject({ effectiveDate: '2026-08-21', headPositionId });
   expect(
     organizationUnitSuccessorActivationSchema.parse({
       reason: 'Approved prospective reorganization',

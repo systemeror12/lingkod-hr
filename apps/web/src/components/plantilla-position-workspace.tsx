@@ -1,0 +1,990 @@
+'use client';
+
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { manilaToday } from '../lib/manila-date';
+import { Button } from './ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+
+type VersionState = 'ACTIVE' | 'DRAFT' | 'SUPERSEDED' | 'VOIDED';
+type LifecycleStatus =
+  'PROPOSED' | 'AUTHORIZED' | 'VACANT' | 'RESERVED' | 'OCCUPIED' | 'FROZEN' | 'ABOLISHED';
+type EmploymentCategory = 'PLANTILLA' | 'CASUAL' | 'CONTRACTUAL' | 'OTHER';
+
+export interface PlantillaPositionVersion {
+  id: string;
+  positionId: string;
+  versionNo: number;
+  title: string;
+  parentheticalTitle: string | null;
+  salaryGrade: number;
+  organizationUnit: { id: string; code: string; name: string };
+  fundingSource: string;
+  employmentCategory: EmploymentCategory;
+  qualificationStandard: {
+    id: string;
+    versionNo: number;
+    code: string;
+    name: string;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+  };
+  staffingAuthority: {
+    id: string;
+    referenceNo: string;
+    authorityType: string;
+    effectiveDate: string;
+  };
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  versionState: VersionState;
+  lifecycleStatus: LifecycleStatus;
+  rowVersion: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlantillaPosition {
+  id: string;
+  itemNumber: string;
+  status: LifecycleStatus;
+  currentVersion: PlantillaPositionVersion | null;
+  draft: PlantillaPositionVersion | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlantillaPositionListResponse {
+  positions: PlantillaPosition[];
+}
+
+interface PlantillaPositionDetail {
+  position: PlantillaPosition;
+  asOf: string;
+  effective: PlantillaPositionVersion | null;
+  versions: PlantillaPositionVersion[];
+  history: Array<{
+    id: string;
+    action: string;
+    previousStatus: string | null;
+    newStatus: string | null;
+    reason: string | null;
+    effectiveDate: string | null;
+    occurredAt: string;
+  }>;
+}
+
+interface OrganizationUnitOption {
+  id: string;
+  code: string;
+  officialName: string;
+  versionState: string;
+  lifecycleStatus: string;
+}
+
+interface QualificationStandardOption {
+  id: string;
+  code: string;
+  name: string;
+  currentVersion: {
+    id: string;
+    versionNo: number;
+    effectiveFrom: string;
+    effectiveTo: string | null;
+    lifecycleStatus: string;
+  } | null;
+}
+
+interface StaffingAuthorityOption {
+  id: string;
+  referenceNo: string;
+  authorityType: string;
+  effectiveDate: string;
+  status: string;
+}
+
+interface CatalogOptions {
+  units: OrganizationUnitOption[];
+  standards: QualificationStandardOption[];
+  authorities: StaffingAuthorityOption[];
+}
+
+const inputClass =
+  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
+const labelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
+
+function targetValue(event: { currentTarget: EventTarget }): string {
+  return (event.currentTarget as unknown as { value: string }).value;
+}
+
+function errorMessage(value: unknown, fallback: string): string {
+  if (typeof value !== 'object' || value === null) return fallback;
+  const error = (value as { error?: { message?: unknown } }).error;
+  return typeof error?.message === 'string' ? error.message : fallback;
+}
+
+function dateLabel(value: string): string {
+  const date = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-PH', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'Asia/Manila',
+  });
+}
+
+function statusTone(status: VersionState | LifecycleStatus): 'blue' | 'gray' | 'amber' {
+  if (status === 'ACTIVE' || status === 'PROPOSED') return 'blue';
+  if (status === 'DRAFT') return 'amber';
+  return 'gray';
+}
+
+function StateBadge({ children, tone }: { children: ReactNode; tone: 'blue' | 'gray' | 'amber' }) {
+  const tones = {
+    blue: 'border-[#b9cce5] bg-[#edf2f9] text-[#315d98]',
+    gray: 'border-line bg-canvas text-muted',
+    amber: 'border-[#decba7] bg-[#fff8e9] text-[#755421]',
+  };
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.06em] uppercase ${tones[tone]}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function FormError({ message }: { message: string }) {
+  return message ? (
+    <p
+      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] leading-[1.5] text-[#9a3030]"
+      role="alert"
+    >
+      {message}
+    </p>
+  ) : null;
+}
+
+function VersionHistory({ versions }: { versions: PlantillaPositionVersion[] }) {
+  return (
+    <ol className="m-0 grid list-none gap-0 p-0">
+      {versions.map((version, index) => (
+        <li className="relative grid grid-cols-[20px_1fr] gap-3 pb-5 last:pb-0" key={version.id}>
+          <span
+            className="z-1 mt-1.5 size-2.5 rounded-full border-2 border-paper bg-cobalt ring-1 ring-cobalt"
+            aria-hidden="true"
+          />
+          {index < versions.length - 1 ? (
+            <span className="absolute top-4 bottom-0 left-[4px] w-px bg-line" aria-hidden="true" />
+          ) : null}
+          <div className="grid gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <strong className="text-xs text-midnight">Version {version.versionNo}</strong>
+              <StateBadge tone={statusTone(version.versionState)}>
+                {version.versionState}
+              </StateBadge>
+            </div>
+            <span className="text-xs text-muted">
+              {dateLabel(version.effectiveFrom)}{' '}
+              {version.effectiveTo ? `— ${dateLabel(version.effectiveTo)}` : 'onward'}
+            </span>
+            <span className="text-xs leading-[1.55] text-ink">
+              {version.versionState === 'VOIDED'
+                ? 'Incorrect activated definition retained for audit.'
+                : version.versionState === 'DRAFT'
+                  ? 'Draft successor ready for review.'
+                  : version.versionNo === 1
+                    ? 'Initial proposed definition.'
+                    : 'Activated effective definition.'}
+            </span>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Field({
+  label,
+  children,
+  htmlFor,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+  htmlFor?: string;
+}) {
+  return (
+    <label className={labelClass} htmlFor={htmlFor}>
+      {label}
+      {children}
+    </label>
+  );
+}
+
+function CreatePositionDialog({
+  open,
+  onOpenChange,
+  options,
+  optionsLoading,
+  busy,
+  error,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  options: CatalogOptions | null;
+  optionsLoading: boolean;
+  busy: boolean;
+  error: string;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+      <DialogContent aria-describedby="create-position-description" className="max-w-[980px]">
+        <form className="contents" onSubmit={onSubmit}>
+          <DialogHeader>
+            <div className="grid gap-1.5">
+              <DialogTitle>Create proposed position</DialogTitle>
+              <DialogDescription id="create-position-description">
+                Reserve the permanent Item Number and record its first effective definition against
+                active Agency references.
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button aria-label="Close create position dialog" disabled={busy} type="button">
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
+              </Button>
+            </DialogClose>
+          </DialogHeader>
+          <DialogBody className="grid gap-6">
+            {error ? <FormError message={error} /> : null}
+            {optionsLoading ? (
+              <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted" role="status">
+                Loading active Organization Units, Qualification Standards, and Staffing
+                Authorities…
+              </p>
+            ) : null}
+            <section className="grid gap-4" aria-labelledby="position-identity-fields">
+              <h3
+                className="m-0 text-xs font-bold tracking-[0.07em] text-cobalt uppercase"
+                id="position-identity-fields"
+              >
+                Stable identity
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field htmlFor="plantilla-item-number" label="Permanent Item Number">
+                  <input
+                    autoFocus
+                    className={inputClass}
+                    id="plantilla-item-number"
+                    maxLength={80}
+                    name="itemNumber"
+                    placeholder="e.g. HRM-000143"
+                    required
+                  />
+                </Field>
+                <Field htmlFor="plantilla-effective-date" label="Initial effectivity">
+                  <input
+                    className={inputClass}
+                    defaultValue={manilaToday()}
+                    id="plantilla-effective-date"
+                    name="effectiveDate"
+                    required
+                    type="date"
+                  />
+                </Field>
+              </div>
+            </section>
+            <section className="grid gap-4" aria-labelledby="position-definition-fields">
+              <h3
+                className="m-0 text-xs font-bold tracking-[0.07em] text-cobalt uppercase"
+                id="position-definition-fields"
+              >
+                Initial definition
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field htmlFor="plantilla-position-title" label="Position title">
+                  <input
+                    className={inputClass}
+                    id="plantilla-position-title"
+                    maxLength={200}
+                    name="title"
+                    required
+                  />
+                </Field>
+                <Field
+                  htmlFor="plantilla-parenthetical-title"
+                  label={
+                    <>
+                      <span>
+                        Parenthetical title <span className="font-normal text-muted">Optional</span>
+                      </span>
+                    </>
+                  }
+                >
+                  <input
+                    className={inputClass}
+                    id="plantilla-parenthetical-title"
+                    maxLength={200}
+                    name="parentheticalTitle"
+                  />
+                </Field>
+                <Field htmlFor="plantilla-salary-grade" label="Salary grade">
+                  <input
+                    className={inputClass}
+                    id="plantilla-salary-grade"
+                    max="33"
+                    min="1"
+                    name="salaryGrade"
+                    required
+                    type="number"
+                  />
+                </Field>
+                <Field htmlFor="plantilla-organization-unit" label="Organization unit">
+                  <select
+                    className={inputClass}
+                    disabled={!options}
+                    id="plantilla-organization-unit"
+                    name="organizationUnitId"
+                    required
+                  >
+                    <option value="">Select active unit</option>
+                    {options?.units
+                      .filter(
+                        (unit) =>
+                          unit.versionState === 'ACTIVE' && unit.lifecycleStatus === 'ACTIVE',
+                      )
+                      .map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {unit.officialName} · {unit.code}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+                <Field htmlFor="plantilla-funding-source" label="Funding source">
+                  <input
+                    className={inputClass}
+                    id="plantilla-funding-source"
+                    maxLength={200}
+                    name="fundingSource"
+                    placeholder="General Appropriations Act"
+                    required
+                  />
+                </Field>
+                <Field htmlFor="plantilla-employment-category" label="Employment category">
+                  <select
+                    className={inputClass}
+                    id="plantilla-employment-category"
+                    name="employmentCategory"
+                    required
+                  >
+                    <option value="PLANTILLA">Plantilla</option>
+                    <option value="CASUAL">Casual</option>
+                    <option value="CONTRACTUAL">Contractual</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </Field>
+              </div>
+            </section>
+            <section className="grid gap-4" aria-labelledby="position-reference-fields">
+              <h3
+                className="m-0 text-xs font-bold tracking-[0.07em] text-cobalt uppercase"
+                id="position-reference-fields"
+              >
+                Effective references
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field
+                  htmlFor="plantilla-qualification-standard"
+                  label="Exact Qualification Standard version"
+                >
+                  <select
+                    className={inputClass}
+                    disabled={!options}
+                    id="plantilla-qualification-standard"
+                    name="qualificationStandardVersionId"
+                    required
+                  >
+                    <option value="">Select active QS version</option>
+                    {options?.standards
+                      .filter((standard) => standard.currentVersion?.lifecycleStatus === 'ACTIVE')
+                      .map((standard) => (
+                        <option
+                          key={standard.currentVersion?.id}
+                          value={standard.currentVersion?.id}
+                        >
+                          {standard.code} · v{standard.currentVersion?.versionNo} · {standard.name}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+                <Field htmlFor="plantilla-staffing-authority" label="Applicable Staffing Authority">
+                  <select
+                    className={inputClass}
+                    disabled={!options}
+                    id="plantilla-staffing-authority"
+                    name="staffingAuthorityId"
+                    required
+                  >
+                    <option value="">Select active authority</option>
+                    {options?.authorities
+                      .filter(
+                        (authority) =>
+                          authority.status === 'ACTIVE' || authority.status === 'SUPERSEDED',
+                      )
+                      .map((authority) => (
+                        <option key={authority.id} value={authority.id}>
+                          {authority.referenceNo} · {authority.authorityType}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+              </div>
+            </section>
+          </DialogBody>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button disabled={busy} size="default" type="button" variant="secondary">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              disabled={busy || optionsLoading || !options}
+              size="default"
+              type="submit"
+              variant="primary"
+            >
+              {busy ? 'Creating…' : 'Create proposed position'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function PlantillaPositionWorkspace({
+  agencyId,
+  initial,
+  canCreate,
+  canUpdate,
+}: {
+  agencyId: string;
+  initial: PlantillaPositionListResponse;
+  canCreate: boolean;
+  canUpdate: boolean;
+}) {
+  const [positions, setPositions] = useState(initial.positions);
+  const [selectedId, setSelectedId] = useState(initial.positions[0]?.id ?? '');
+  const [asOf, setAsOf] = useState(manilaToday());
+  const [query, setQuery] = useState('');
+  const [detail, setDetail] = useState<PlantillaPositionDetail | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [options, setOptions] = useState<CatalogOptions | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const returnFocusRef = useRef<{ focus(): void } | null>(null);
+
+  const selected = positions.find((position) => position.id === selectedId) ?? positions[0] ?? null;
+  const matches = positions.filter((position) => {
+    const version = position.currentVersion;
+    return `${position.itemNumber} ${version?.title ?? ''} ${version?.organizationUnit.name ?? ''} ${version?.salaryGrade ?? ''}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase());
+  });
+  const selectedDetail =
+    detail && detail.position.id === selected?.id && detail.asOf === asOf ? detail : null;
+  const effective = selectedDetail?.effective ?? selected?.currentVersion ?? null;
+  const versions =
+    selectedDetail?.versions ?? (selected?.currentVersion ? [selected.currentVersion] : []);
+
+  async function request(path: string, init: RequestInit = {}): Promise<unknown> {
+    const response = await fetch(`/api/v1/agencies/${agencyId}/plantilla-positions${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...init.headers },
+    });
+    const value: unknown = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(errorMessage(value, 'The Plantilla Position action failed.'));
+    return value;
+  }
+
+  async function refresh(nextAsOf = asOf): Promise<PlantillaPosition[]> {
+    const value = await request(`?asOf=${encodeURIComponent(nextAsOf)}`);
+    if (
+      typeof value !== 'object' ||
+      value === null ||
+      !Array.isArray((value as { positions?: unknown }).positions)
+    ) {
+      throw new Error('The Plantilla Position list response was invalid.');
+    }
+    const next = (value as PlantillaPositionListResponse).positions;
+    setPositions(next);
+    return next;
+  }
+
+  async function loadDetail(positionId: string, nextAsOf = asOf): Promise<void> {
+    try {
+      setDetail(
+        (await request(
+          `/${positionId}?asOf=${encodeURIComponent(nextAsOf)}`,
+        )) as PlantillaPositionDetail,
+      );
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The position detail could not be loaded.',
+      );
+    }
+  }
+
+  async function openCreate(target: { focus(): void }): Promise<void> {
+    returnFocusRef.current = target;
+    setError('');
+    setSuccess('');
+    setDialogOpen(true);
+    if (options || optionsLoading) return;
+    setOptionsLoading(true);
+    try {
+      const [unitsValue, standardsValue, authoritiesValue] = await Promise.all([
+        fetch(`/api/v1/agencies/${agencyId}/organization-units`, { credentials: 'include' }).then(
+          async (response) => {
+            const value: unknown = await response.json().catch(() => null);
+            if (!response.ok)
+              throw new Error(errorMessage(value, 'Organization Units could not be loaded.'));
+            return value as { units: OrganizationUnitOption[] };
+          },
+        ),
+        fetch(`/api/v1/agencies/${agencyId}/qualification-standards`, {
+          credentials: 'include',
+        }).then(async (response) => {
+          const value: unknown = await response.json().catch(() => null);
+          if (!response.ok)
+            throw new Error(errorMessage(value, 'Qualification Standards could not be loaded.'));
+          return value as { standards: QualificationStandardOption[] };
+        }),
+        fetch(`/api/v1/agencies/${agencyId}/staffing-authorities`, { credentials: 'include' }).then(
+          async (response) => {
+            const value: unknown = await response.json().catch(() => null);
+            if (!response.ok)
+              throw new Error(errorMessage(value, 'Staffing Authorities could not be loaded.'));
+            return value as { authorities: StaffingAuthorityOption[] };
+          },
+        ),
+      ]);
+      setOptions({
+        units: unitsValue.units,
+        standards: standardsValue.standards,
+        authorities: authoritiesValue.authorities,
+      });
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The catalog references could not be loaded.',
+      );
+    } finally {
+      setOptionsLoading(false);
+    }
+  }
+
+  function closeCreate(next: boolean): void {
+    if (busy) return;
+    setDialogOpen(next);
+    if (!next) {
+      const target = returnFocusRef.current;
+      setTimeout(() => target?.focus(), 0);
+    }
+  }
+
+  async function changeAsOf(value: string): Promise<void> {
+    setAsOf(value);
+    setError('');
+    try {
+      await refresh(value);
+      if (selected) await loadDetail(selected.id, value);
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The effective catalog could not be loaded.',
+      );
+    }
+  }
+
+  async function selectPosition(positionId: string): Promise<void> {
+    setSelectedId(positionId);
+    setError('');
+    await loadDetail(positionId);
+  }
+
+  async function submitCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (busy) return;
+    const BrowserFormData = FormData as unknown as new (form: EventTarget) => FormData;
+    const form = new BrowserFormData(event.currentTarget);
+    setBusy(true);
+    setError('');
+    try {
+      const value = (await request('', {
+        method: 'POST',
+        body: JSON.stringify({
+          itemNumber: String(form.get('itemNumber') ?? ''),
+          title: String(form.get('title') ?? ''),
+          parentheticalTitle: String(form.get('parentheticalTitle') ?? ''),
+          salaryGrade: Number(form.get('salaryGrade')),
+          organizationUnitId: String(form.get('organizationUnitId') ?? ''),
+          fundingSource: String(form.get('fundingSource') ?? ''),
+          employmentCategory: String(form.get('employmentCategory') ?? ''),
+          qualificationStandardVersionId: String(form.get('qualificationStandardVersionId') ?? ''),
+          staffingAuthorityId: String(form.get('staffingAuthorityId') ?? ''),
+          effectiveDate: String(form.get('effectiveDate') ?? ''),
+        }),
+      })) as PlantillaPosition;
+      await refresh();
+      setSelectedId(value.id);
+      await loadDetail(value.id);
+      setSuccess(`Proposed position “${value.itemNumber}” was created.`);
+      setDialogOpen(false);
+      const target = returnFocusRef.current;
+      setTimeout(() => target?.focus(), 0);
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The proposed position could not be created.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function prepareSuccessor(): Promise<void> {
+    if (!selected || selected.draft || busy || !canUpdate) return;
+    setBusy(true);
+    setError('');
+    try {
+      await request(`/${selected.id}/successor`, { method: 'POST' });
+      await refresh();
+      await loadDetail(selected.id);
+      setSuccess(`Draft successor prepared for “${selected.itemNumber}”.`);
+    } catch (requestError: unknown) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'The successor could not be prepared.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-5">
+      <header className="flex flex-col gap-4 border-b border-[#aeb9c8] pb-5 min-[761px]:flex-row min-[761px]:items-end min-[761px]:justify-between">
+        <div className="grid gap-1.5">
+          <p className="m-0 text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
+            Organization and Plantilla
+          </p>
+          <h1 className="m-0 text-[clamp(27px,3vw,38px)] leading-none font-[690] tracking-[-0.035em] text-midnight">
+            Plantilla positions
+          </h1>
+          <p className="m-0 text-sm text-muted">
+            Find a permanent Item Number and inspect its effective definition.
+          </p>
+        </div>
+        {canCreate ? (
+          <Button
+            size="default"
+            type="button"
+            variant="primary"
+            onClick={(event) =>
+              void openCreate(event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Create proposed position
+          </Button>
+        ) : null}
+      </header>
+
+      {success ? (
+        <p
+          className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
+          role="status"
+        >
+          {success}
+        </p>
+      ) : null}
+      {error && !dialogOpen ? <FormError message={error} /> : null}
+
+      <section className="overflow-hidden rounded-[5px] border border-[#cbd3df] bg-paper shadow-[0_1px_2px_rgb(23_32_51/4%)]">
+        <div className="grid gap-3 border-b border-line bg-[#f8fafc] p-4 min-[761px]:grid-cols-[minmax(0,1fr)_auto] min-[761px]:items-end">
+          <label className="grid gap-1.5" htmlFor="plantilla-catalog-search">
+            <span className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+              Search the catalog
+            </span>
+            <span className="relative block">
+              <svg
+                className="pointer-events-none absolute top-1/2 left-3.5 w-[18px] -translate-y-1/2 fill-none stroke-cobalt stroke-2"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="11" cy="11" r="6.5" />
+                <path d="m16 16 4 4" />
+              </svg>
+              <input
+                className="min-h-11 w-full rounded-[4px] border border-[#9cabc0] bg-paper pr-4 pl-11 text-sm font-[560] text-midnight placeholder:font-normal placeholder:text-[#7b8698]"
+                id="plantilla-catalog-search"
+                placeholder="Item Number, title, unit, or salary grade"
+                value={query}
+                onChange={(event) => setQuery(targetValue(event))}
+              />
+            </span>
+          </label>
+          <label className="grid gap-1.5" htmlFor="plantilla-effective-on">
+            <span className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+              Effective on
+            </span>
+            <input
+              className={`${inputClass} min-h-11 w-full min-[761px]:w-[158px]`}
+              id="plantilla-effective-on"
+              type="date"
+              value={asOf}
+              onChange={(event) => void changeAsOf(targetValue(event))}
+            />
+          </label>
+        </div>
+
+        <div className="grid min-[900px]:grid-cols-[330px_minmax(0,1fr)]">
+          <section
+            className="border-b border-line min-[900px]:border-r min-[900px]:border-b-0"
+            aria-label="Plantilla Position search results"
+          >
+            <header className="flex min-h-11 items-center justify-between border-b border-line px-4">
+              <strong className="text-xs text-midnight">
+                {query ? 'Matching positions' : 'All positions'}
+              </strong>
+              <span className="font-mono text-[11px] text-muted">
+                {matches.length} {matches.length === 1 ? 'item' : 'items'}
+              </span>
+            </header>
+            <div className="max-h-[610px] overflow-y-auto">
+              {matches.length ? (
+                matches.map((position) => {
+                  const version = position.currentVersion;
+                  const isSelected = position.id === selected?.id;
+                  return (
+                    <button
+                      className={`relative grid w-full cursor-pointer gap-1.5 border-0 border-b border-line px-4 py-4 text-left last:border-b-0 ${isSelected ? "bg-[#edf3fb] before:absolute before:top-0 before:bottom-0 before:left-0 before:w-[3px] before:bg-cobalt before:content-['']" : 'bg-paper hover:bg-[#f8fafc]'}`}
+                      type="button"
+                      key={position.id}
+                      aria-pressed={isSelected}
+                      onClick={() => void selectPosition(position.id)}
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <strong className="font-mono text-[11px] tracking-[0.02em] text-cobalt">
+                          {position.itemNumber}
+                        </strong>
+                        <span className="font-mono text-[11px] font-bold text-ink">
+                          SG {version?.salaryGrade ?? '—'}
+                        </span>
+                      </span>
+                      <strong className="text-[13px] leading-[1.4] font-[650] text-midnight">
+                        {version?.title ?? 'No effective definition'}
+                      </strong>
+                      <span className="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-muted">
+                        {version?.organizationUnit.name ?? 'Pending effectivity'}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="grid min-h-[180px] place-content-center gap-1 px-5 text-center">
+                  <strong className="text-sm text-midnight">No position found</strong>
+                  <span className="text-xs text-muted">
+                    Try an Item Number, title, unit, or grade.
+                  </span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {selected && effective ? (
+            <article className="min-w-0" aria-labelledby="selected-position-title">
+              <header className="border-b border-line bg-midnight px-5 py-5 text-paper min-[621px]:px-7 min-[621px]:py-6">
+                <div className="flex flex-col gap-5 min-[621px]:flex-row min-[621px]:items-start min-[621px]:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold tracking-[0.09em] text-[#9fbbe1] uppercase">
+                        Permanent Item Number
+                      </span>
+                      <StateBadge tone={statusTone(effective.lifecycleStatus)}>
+                        {effective.lifecycleStatus}
+                      </StateBadge>
+                    </div>
+                    <p className="mt-2 mb-0 font-mono text-[clamp(22px,3vw,31px)] leading-none font-[730] tracking-[-0.035em] text-paper">
+                      {selected.itemNumber}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-7 gap-y-1 min-[621px]:text-right">
+                    <span className="text-[10px] font-bold tracking-[0.07em] text-[#9fabbc] uppercase">
+                      Salary grade
+                    </span>
+                    <span className="text-[10px] font-bold tracking-[0.07em] text-[#9fabbc] uppercase">
+                      Effective from
+                    </span>
+                    <strong className="font-mono text-lg text-paper">
+                      SG {effective.salaryGrade}
+                    </strong>
+                    <strong className="font-mono text-sm text-paper">
+                      {dateLabel(effective.effectiveFrom)}
+                    </strong>
+                  </div>
+                </div>
+                <h2
+                  className="mt-6 mb-1 text-[clamp(20px,2.5vw,28px)] leading-[1.15] font-[680] tracking-[-0.025em]"
+                  id="selected-position-title"
+                >
+                  {effective.title}
+                  {effective.parentheticalTitle ? (
+                    <span className="mt-1 block text-sm font-[520] text-[#bdc8d8]">
+                      ({effective.parentheticalTitle})
+                    </span>
+                  ) : null}
+                </h2>
+                <p className="m-0 text-sm text-[#bdc8d8]">{effective.organizationUnit.name}</p>
+              </header>
+              <div className="grid min-[1040px]:grid-cols-[minmax(0,1fr)_245px]">
+                <div className="grid content-start gap-6 p-5 min-[621px]:p-7">
+                  <section aria-labelledby="plantilla-definition-heading">
+                    <div className="mb-3 flex items-center justify-between gap-4">
+                      <h3
+                        className="m-0 text-xs font-bold text-midnight"
+                        id="plantilla-definition-heading"
+                      >
+                        Effective definition
+                      </h3>
+                      <span className="font-mono text-[10px] text-muted">
+                        Version {effective.versionNo}
+                      </span>
+                    </div>
+                    <dl className="m-0 grid border-t border-l border-line sm:grid-cols-2">
+                      {[
+                        ['Funding source', effective.fundingSource],
+                        ['Employment category', effective.employmentCategory],
+                        ['Organization unit', effective.organizationUnit.name],
+                        ['Lifecycle status', effective.lifecycleStatus],
+                      ].map(([label, value]) => (
+                        <div
+                          className="grid gap-1.5 border-r border-b border-line p-3.5"
+                          key={label}
+                        >
+                          <dt className="text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
+                            {label}
+                          </dt>
+                          <dd className="m-0 text-xs leading-[1.45] font-[620] text-midnight">
+                            {value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+                  <section aria-labelledby="plantilla-references-heading">
+                    <h3
+                      className="mt-0 mb-3 text-xs font-bold text-midnight"
+                      id="plantilla-references-heading"
+                    >
+                      Effective references
+                    </h3>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="grid gap-1 rounded-[4px] border border-line bg-[#f8fafc] p-4">
+                        <span className="text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
+                          Qualification standard
+                        </span>
+                        <strong className="text-sm text-midnight">
+                          {effective.qualificationStandard.code} · v
+                          {effective.qualificationStandard.versionNo}
+                        </strong>
+                        <span className="text-xs leading-[1.45] text-muted">
+                          {effective.qualificationStandard.name}
+                        </span>
+                      </div>
+                      <div className="grid gap-1 rounded-[4px] border border-line bg-[#f8fafc] p-4">
+                        <span className="text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
+                          Staffing authority
+                        </span>
+                        <strong className="text-sm leading-[1.45] text-midnight">
+                          {effective.staffingAuthority.referenceNo}
+                        </strong>
+                        <span className="text-xs text-muted">
+                          Applicable on {dateLabel(effective.effectiveFrom)}
+                        </span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+                <aside className="grid content-start gap-4 border-t border-line bg-[#f8fafc] p-5 min-[1040px]:border-t-0 min-[1040px]:border-l">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="m-0 text-xs font-bold text-midnight">Version history</h3>
+                    <span className="font-mono text-[10px] text-muted">
+                      {versions.length} {versions.length === 1 ? 'version' : 'versions'}
+                    </span>
+                  </div>
+                  <VersionHistory versions={versions} />
+                  <Button
+                    disabled={Boolean(selected.draft) || busy || !canUpdate}
+                    size="default"
+                    type="button"
+                    variant="secondary"
+                    onClick={() => void prepareSuccessor()}
+                  >
+                    {selected.draft
+                      ? 'Draft successor exists'
+                      : busy
+                        ? 'Preparing…'
+                        : 'Prepare successor'}
+                  </Button>
+                  <p className="m-0 text-[11px] leading-[1.5] text-muted">
+                    Activated versions stay unchanged. Structural updates create one Draft
+                    successor.
+                  </p>
+                </aside>
+              </div>
+            </article>
+          ) : (
+            <div className="grid min-h-[420px] place-content-center gap-2 p-8 text-center">
+              <strong className="text-sm text-midnight">No effective position selected</strong>
+              <p className="m-0 max-w-[360px] text-xs leading-[1.6] text-muted">
+                Create a proposed position or choose a different effective date.
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <CreatePositionDialog
+        open={dialogOpen}
+        onOpenChange={closeCreate}
+        options={options}
+        optionsLoading={optionsLoading}
+        busy={busy}
+        error={error}
+        onSubmit={(event) => void submitCreate(event)}
+      />
+    </div>
+  );
+}

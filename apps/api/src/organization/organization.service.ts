@@ -38,6 +38,7 @@ export interface ActivateOrganizationUnitInput {
 export interface UpdateOrganizationUnitDraftInput {
   officialName: string;
   parentUnitId: string | null;
+  headPositionId?: string | null | undefined;
   costCenterCode: string | null;
   responsibilityCenterCode: string | null;
   effectiveDate: string;
@@ -52,7 +53,7 @@ export interface ActivateOrganizationUnitSuccessorInput {
 
 export interface OrganizationUnitCorrectionInput extends Omit<
   UpdateOrganizationUnitDraftInput,
-  'effectiveDate'
+  'effectiveDate' | 'headPositionId'
 > {
   reason: string;
 }
@@ -94,6 +95,7 @@ export interface OrganizationUnitVersionSummary {
   unitType: OrganizationUnitType;
   officialName: string;
   parentUnitId: string | null;
+  headPositionId: string | null;
   costCenterCode: string | null;
   responsibilityCenterCode: string | null;
   effectiveFrom: string;
@@ -323,6 +325,7 @@ function versionAuditData(version: OrganizationUnitVersionSummary) {
     code: version.code,
     unitType: version.unitType,
     parentUnitId: version.parentUnitId,
+    headPositionId: version.headPositionId,
     costCenterCode: version.costCenterCode,
     responsibilityCenterCode: version.responsibilityCenterCode,
     effectiveFrom: version.effectiveFrom,
@@ -343,6 +346,7 @@ function versionSummaryFromRecord(
     unitType: record.organizationUnit.unitType as OrganizationUnitType,
     officialName: record.name,
     parentUnitId: record.parentUnitId,
+    headPositionId: record.headPositionId,
     costCenterCode: record.costCenterCode,
     responsibilityCenterCode: record.responsibilityCenterCode,
     effectiveFrom: formatDate(record.effectiveFrom),
@@ -1104,6 +1108,9 @@ export class OrganizationService {
         effectiveFrom,
         null,
       );
+      const headPositionId =
+        input.headPositionId === undefined ? draft.headPositionId : input.headPositionId;
+      await this.validateHeadPosition(transaction, context.agencyId, headPositionId, effectiveFrom);
 
       const before = versionSummaryFromRecord(draft);
       const updated = await transaction.organizationUnitVersion.update({
@@ -1111,6 +1118,7 @@ export class OrganizationService {
         data: {
           name: officialName,
           parentUnitId: input.parentUnitId,
+          headPositionId,
           costCenterCode,
           responsibilityCenterCode,
           effectiveFrom,
@@ -1584,6 +1592,12 @@ export class OrganizationService {
       draft.effectiveFrom,
       draft.effectiveTo,
     );
+    await this.validateHeadPosition(
+      transaction,
+      context.agencyId,
+      draft.headPositionId,
+      draft.effectiveFrom,
+    );
     const published = await transaction.organizationUnitVersion.findMany({
       where: {
         agencyId: context.agencyId,
@@ -1768,6 +1782,33 @@ export class OrganizationService {
         'This parent would create a cycle in the effective Organization hierarchy.',
         409,
         'ORGANIZATION_UNIT_HIERARCHY_CYCLE',
+      );
+    }
+  }
+
+  private async validateHeadPosition(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    headPositionId: string | null,
+    effectiveFrom: Date,
+  ): Promise<void> {
+    if (!headPositionId) return;
+    const position = await transaction.plantillaPositionVersion.findFirst({
+      where: {
+        agencyId,
+        positionId: headPositionId,
+        status: { in: [...PUBLISHED_STATES] },
+        domainStatus: { not: 'ABOLISHED' },
+        effectiveFrom: { lte: effectiveFrom },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: effectiveFrom } }],
+      },
+      select: { id: true },
+    });
+    if (!position) {
+      throw new OrganizationServiceError(
+        'Choose a same-agency Plantilla Position that is effective for the Organization Unit change.',
+        409,
+        'ORGANIZATION_UNIT_HEAD_POSITION_INVALID',
       );
     }
   }

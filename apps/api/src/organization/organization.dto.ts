@@ -78,6 +78,7 @@ export class OrganizationUnitVersionDto {
   readonly unitType: OrganizationUnitVersionSummary['unitType'];
   readonly officialName: string;
   readonly parentUnitId: string | null;
+  readonly headPositionId: string | null;
   readonly costCenterCode: string | null;
   readonly responsibilityCenterCode: string | null;
   readonly effectiveFrom: string;
@@ -93,6 +94,7 @@ export class OrganizationUnitVersionDto {
     this.unitType = version.unitType;
     this.officialName = version.officialName;
     this.parentUnitId = version.parentUnitId;
+    this.headPositionId = version.headPositionId;
     this.costCenterCode = version.costCenterCode;
     this.responsibilityCenterCode = version.responsibilityCenterCode;
     this.effectiveFrom = version.effectiveFrom;
