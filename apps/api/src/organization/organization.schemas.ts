@@ -36,6 +36,7 @@ export const organizationUnitDraftUpdateSchema = z
   .object({
     officialName: z.string().trim().min(1).max(200),
     parentUnitId: z.string().uuid().nullable(),
+    headPositionId: z.string().uuid().nullable().optional(),
     costCenterCode: z.string().trim().max(100).nullable(),
     responsibilityCenterCode: z.string().trim().max(100).nullable(),
     effectiveDate: z.string().date(),

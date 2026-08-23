@@ -7,6 +7,7 @@ import { OrganizationModule } from './organization/organization.module';
 import { DocumentsModule } from './documents/documents.module';
 import { StaffingAuthoritiesModule } from './staffing-authorities/staffing-authorities.module';
 import { QualificationStandardsModule } from './qualification-standards/qualification-standards.module';
+import { PlantillaPositionsModule } from './plantilla-positions/plantilla-positions.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { QualificationStandardsModule } from './qualification-standards/qualific
     DocumentsModule,
     StaffingAuthoritiesModule,
     QualificationStandardsModule,
+    PlantillaPositionsModule,
   ],
   controllers: [HealthController],
 })

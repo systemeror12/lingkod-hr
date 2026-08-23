@@ -63,6 +63,15 @@ function Icon({ name }: { name: DestinationIcon }) {
       </svg>
     );
   }
+  if (name === 'position') {
+    return (
+      <svg {...common}>
+        <path d="M4 5h16v14H4z" />
+        <path d="M8 9h8M8 13h5M8 17h7" />
+        <path d="M17 3v4" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <path d="M7 3h10v4H7zM5 7h14v14H5zM9 12h6M9 16h4" />
