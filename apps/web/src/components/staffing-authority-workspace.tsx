@@ -919,16 +919,25 @@ export function StaffingAuthorityWorkspace({
               {error ? <FormError message={error} /> : null}
             </DialogBody>
             <DialogFooter>
+              <span className="mr-auto hidden text-[11px] text-muted min-[621px]:block">
+                Draft only · External Evidence is required before activation.
+              </span>
               <DialogClose asChild>
                 <Button
-                  className="border border-line bg-paper px-4 py-2 text-sm font-[650] text-ink hover:bg-canvas"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
                   disabled={busy}
                   type="button"
                 >
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button
+                className="min-h-11"
+                disabled={busy}
+                size="default"
+                type="submit"
+                variant="primary"
+              >
                 {busy ? 'Saving…' : dialog === 'edit' ? 'Save Draft' : 'Create Draft'}
               </Button>
             </DialogFooter>
@@ -960,14 +969,20 @@ export function StaffingAuthorityWorkspace({
             <DialogFooter>
               <DialogClose asChild>
                 <Button
-                  className="border border-line bg-paper px-4 py-2 text-sm font-[650] text-ink hover:bg-canvas"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
                   disabled={busy}
                   type="button"
                 >
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button
+                className="min-h-11"
+                disabled={busy}
+                size="default"
+                type="submit"
+                variant="primary"
+              >
                 {busy ? 'Validating…' : 'Validate Evidence'}
               </Button>
             </DialogFooter>
@@ -990,14 +1005,20 @@ export function StaffingAuthorityWorkspace({
             <DialogFooter>
               <DialogClose asChild>
                 <Button
-                  className="border border-line bg-paper px-4 py-2 text-sm font-[650] text-ink hover:bg-canvas"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
                   disabled={busy}
                   type="button"
                 >
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button
+                className="min-h-11"
+                disabled={busy}
+                size="default"
+                type="submit"
+                variant="primary"
+              >
                 {busy ? 'Activating…' : 'Activate Staffing Authority'}
               </Button>
             </DialogFooter>
@@ -1029,14 +1050,20 @@ export function StaffingAuthorityWorkspace({
             <DialogFooter>
               <DialogClose asChild>
                 <Button
-                  className="border border-line bg-paper px-4 py-2 text-sm font-[650] text-ink hover:bg-canvas"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
                   disabled={busy}
                   type="button"
                 >
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button
+                className="min-h-11"
+                disabled={busy}
+                size="default"
+                type="submit"
+                variant="primary"
+              >
                 {busy ? 'Superseding…' : 'Supersede Staffing Authority'}
               </Button>
             </DialogFooter>
@@ -1077,14 +1104,20 @@ export function StaffingAuthorityWorkspace({
             <DialogFooter>
               <DialogClose asChild>
                 <Button
-                  className="border border-line bg-paper px-4 py-2 text-sm font-[650] text-ink hover:bg-canvas"
+                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
                   disabled={busy}
                   type="button"
                 >
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button
+                className="min-h-11"
+                disabled={busy}
+                size="default"
+                type="submit"
+                variant="primary"
+              >
                 {busy ? 'Revoking…' : 'Record Revocation'}
               </Button>
             </DialogFooter>

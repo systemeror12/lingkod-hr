@@ -32,6 +32,10 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   );
   await expect(page.getByLabel('Official reference')).toBeFocused();
   await expectCenteredDialog(dialog, page.viewportSize()?.width ?? 1280);
+  const cancelButton = dialog.getByRole('button', { name: 'Cancel' });
+  const createButton = dialog.getByRole('button', { name: 'Create Draft' });
+  await expect(cancelButton).toHaveCSS('min-height', '44px');
+  await expect(createButton).toHaveCSS('min-height', '44px');
 
   await page.mouse.click(1, 1);
   await expect(dialog).toBeVisible();
@@ -40,7 +44,7 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
     await expectFocusInside(dialog);
   }
 
-  await page.getByRole('button', { name: 'Create Draft' }).click();
+  await createButton.click();
   await expect(dialog).toBeVisible();
   await expect(page.getByLabel('Official reference')).toBeFocused();
 
@@ -48,7 +52,7 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await page.getByLabel('Issue date').fill('2026-08-01');
   await page.getByLabel('Effective date').fill('2026-08-15');
   await page.getByLabel('Source issuer').fill('E2E source');
-  await page.getByRole('button', { name: 'Create Draft' }).click();
+  await createButton.click();
 
   await expect(page.getByRole('status')).toContainText(
     `Draft Staffing Authority “${reference}” was created.`,
@@ -61,7 +65,7 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await page.setViewportSize({ width: 390, height: 844 });
   await trigger.click();
   await expectCenteredDialog(dialog, 390);
-  await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(cancelButton).toBeVisible();
+  await cancelButton.click();
   await expect(dialog).toBeHidden();
 });
