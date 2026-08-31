@@ -59,6 +59,12 @@ const destinations: readonly (Destination & {
     icon: 'users',
     permission: 'personnel.employees.read',
   },
+  {
+    href: '/personnel-baselines',
+    label: 'Personnel Baselines',
+    icon: 'position',
+    permission: 'personnel.baselines.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 
