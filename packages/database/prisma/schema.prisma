@@ -43,6 +43,9 @@ model Agency {
   plantillaPositionVersions     PlantillaPositionVersion[]
   positionDocuments             PositionDocument[]
   employees                     Employee[]
+  pdsVersions                   PdsVersion[]
+  pdsPersonalDetails            PdsPersonalDetails[]
+  pdsFamilyRecords              PdsFamilyRecord[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -208,6 +211,8 @@ model AgencyMembership {
   employee                               Employee?                      @relation("AgencyMembershipEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
   createdEmployees                       Employee[]                     @relation("EmployeeCreator")
   updatedEmployees                       Employee[]                     @relation("EmployeeUpdater")
+  createdPdsVersions                     PdsVersion[]                   @relation("PdsVersionCreator")
+  updatedPdsVersions                     PdsVersion[]                   @relation("PdsVersionUpdater")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -677,9 +682,105 @@ model Employee {
   createdBy   AgencyMembership   @relation("EmployeeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy   AgencyMembership   @relation("EmployeeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   memberships AgencyMembership[] @relation("AgencyMembershipEmployee")
+  pdsVersions PdsVersion[]
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
   @@unique([agencyId, legalName, birthDate])
   @@map("employees")
+}
+
+model PdsVersion {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  employeeId            String    @map("employee_id") @db.Uuid
+  versionNo             Int       @map("version_no")
+  formVersion           String    @map("form_version")
+  asOfDate              DateTime  @map("as_of_date") @db.Date
+  status                String
+  supersedesVersionId   String?   @map("supersedes_version_id") @db.Uuid
+  correctionReason      String?   @map("correction_reason")
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int       @default(1) @map("row_version")
+
+  agency            Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee          Employee           @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  supersedes        PdsVersion?        @relation("PdsVersionSupersession", fields: [agencyId, supersedesVersionId], references: [agencyId, id], onDelete: Restrict)
+  successorVersions PdsVersion[]       @relation("PdsVersionSupersession")
+  createdBy         AgencyMembership   @relation("PdsVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy         AgencyMembership   @relation("PdsVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  personalDetails   PdsPersonalDetails?
+  familyRecords     PdsFamilyRecord[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeId, versionNo])
+  @@index([agencyId, employeeId, status])
+  @@index([agencyId, supersedesVersionId])
+  @@map("pds_versions")
+}
+
+model PdsPersonalDetails {
+  agencyId               String    @map("agency_id") @db.Uuid
+  pdsVersionId           String    @id @map("pds_version_id") @db.Uuid
+  surname                String?
+  firstName              String?   @map("first_name")
+  nameExtension          String?   @map("name_extension")
+  middleName             String?   @map("middle_name")
+  birthDate              DateTime? @map("birth_date") @db.Date
+  birthPlace             String?   @map("birth_place")
+  sex                    String?
+  civilStatus            String?   @map("civil_status")
+  civilStatusDetail      String?   @map("civil_status_detail")
+  heightMeters           Decimal?  @map("height_meters") @db.Decimal(8, 3)
+  weightKilograms        Decimal?  @map("weight_kilograms") @db.Decimal(8, 3)
+  bloodType              String?   @map("blood_type")
+  umidIdNumber           String?   @map("umid_id_number")
+  pagibigIdNumber        String?   @map("pagibig_id_number")
+  philhealthNumber       String?   @map("philhealth_number")
+  philSysCardNumber      String?   @map("phil_sys_card_number")
+  tinNumber              String?   @map("tin_number")
+  agencyEmployeeNumber   String?   @map("agency_employee_number")
+  citizenship            String?
+  dualCitizenshipType    String?   @map("dual_citizenship_type")
+  dualCitizenshipCountry String?   @map("dual_citizenship_country")
+  residentialAddress     Json?     @map("residential_address")
+  permanentAddress       Json?     @map("permanent_address")
+  telephoneNumber        String?   @map("telephone_number")
+  mobileNumber           String?   @map("mobile_number")
+  emailAddress           String?   @map("email_address")
+
+  agency    Agency    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_personal_details")
+}
+
+model PdsFamilyRecord {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String    @map("agency_id") @db.Uuid
+  pdsVersionId         String    @map("pds_version_id") @db.Uuid
+  relationshipType     String    @map("relationship_type")
+  sequenceNo           Int       @map("sequence_no")
+  fullName             String?   @map("full_name")
+  surname              String?
+  firstName            String?   @map("first_name")
+  middleName           String?   @map("middle_name")
+  nameExtension        String?   @map("name_extension")
+  birthDate            DateTime? @map("birth_date") @db.Date
+  occupation           String?
+  employerBusinessName String?   @map("employer_business_name")
+  businessAddress      Json?     @map("business_address")
+  telephoneNumber      String?   @map("telephone_number")
+
+  agency     Agency    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([pdsVersionId, relationshipType, sequenceNo])
+  @@index([agencyId, pdsVersionId, relationshipType, sequenceNo])
+  @@map("pds_family_records")
 }

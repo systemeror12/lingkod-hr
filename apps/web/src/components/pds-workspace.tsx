@@ -1,0 +1,1336 @@
+'use client';
+
+import Link from 'next/link';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Button } from './ui/button';
+import {
+  Dialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from './ui/dialog';
+import {
+  EmployeeInitials,
+  EmployeePageTitle,
+  employeeInputClass,
+  employeeLabelClass,
+  formatEmployeeDate,
+  titleCase,
+} from './employee-directory';
+
+export interface PdsVersionSummaryData {
+  id: string;
+  employeeId: string;
+  versionNo: number;
+  formVersion: string;
+  asOfDate: string;
+  status: string;
+  supersedesVersionId: string | null;
+  correctionReason: string | null;
+  createdByMembershipId: string;
+  createdAt: string;
+  updatedByMembershipId: string;
+  updatedAt: string;
+  rowVersion: number;
+  fieldScope: 'FULL' | 'REDACTED';
+}
+
+export interface PdsVersionListData {
+  employeeId: string;
+  citizenshipCountries: readonly string[];
+  current: PdsVersionSummaryData | null;
+  draft: PdsVersionSummaryData | null;
+  versions: PdsVersionSummaryData[];
+}
+
+interface PdsAddressData {
+  houseBlockLotNo: string | null;
+  street: string | null;
+  subdivisionVillage: string | null;
+  barangay: string | null;
+  cityMunicipality: string | null;
+  province: string | null;
+  zipCode: string | null;
+}
+
+interface PdsPersonalData {
+  surname: string | null;
+  firstName: string | null;
+  nameExtension: string | null;
+  middleName: string | null;
+  birthDate: string | null;
+  birthPlace: string | null;
+  sex: string | null;
+  civilStatus: string | null;
+  civilStatusDetail: string | null;
+  heightMeters: number | null;
+  weightKilograms: number | null;
+  bloodType: string | null;
+  umidIdNumber: string | null;
+  pagibigIdNumber: string | null;
+  philhealthNumber: string | null;
+  philSysCardNumber: string | null;
+  tinNumber: string | null;
+  agencyEmployeeNumber: string | null;
+  citizenship: string | null;
+  dualCitizenshipType: string | null;
+  dualCitizenshipCountry: string | null;
+  residentialAddress: PdsAddressData | null;
+  permanentAddress: PdsAddressData | null;
+  telephoneNumber: string | null;
+  mobileNumber: string | null;
+  emailAddress: string | null;
+}
+
+interface PdsFamilyRecordData {
+  id: string;
+  relationshipType: 'SPOUSE' | 'CHILD' | 'FATHER' | 'MOTHER';
+  sequenceNo: number;
+  fullName: string | null;
+  surname: string | null;
+  firstName: string | null;
+  middleName: string | null;
+  nameExtension: string | null;
+  birthDate: string | null;
+  occupation: string | null;
+  employerBusinessName: string | null;
+  businessAddress: PdsAddressData | null;
+  telephoneNumber: string | null;
+}
+
+interface PdsFamilyData {
+  spouse: PdsFamilyRecordData | null;
+  children: PdsFamilyRecordData[];
+  father: PdsFamilyRecordData | null;
+  mother: PdsFamilyRecordData | null;
+}
+
+export interface PdsDetailData extends PdsVersionSummaryData {
+  personal: PdsPersonalData | null;
+  family: PdsFamilyData;
+}
+
+interface AddressForm {
+  houseBlockLotNo: string;
+  street: string;
+  subdivisionVillage: string;
+  barangay: string;
+  cityMunicipality: string;
+  province: string;
+  zipCode: string;
+}
+
+interface NameForm {
+  surname: string;
+  firstName: string;
+  middleName: string;
+  nameExtension: string;
+}
+
+interface SpouseForm extends NameForm {
+  occupation: string;
+  employerBusinessName: string;
+  businessAddress: AddressForm;
+  telephoneNumber: string;
+}
+
+interface ChildForm {
+  fullName: string;
+  birthDate: string;
+}
+
+interface PersonalForm {
+  surname: string;
+  firstName: string;
+  nameExtension: string;
+  middleName: string;
+  birthDate: string;
+  birthPlace: string;
+  sex: string;
+  civilStatus: string;
+  civilStatusDetail: string;
+  heightMeters: string;
+  weightKilograms: string;
+  bloodType: string;
+  umidIdNumber: string;
+  pagibigIdNumber: string;
+  philhealthNumber: string;
+  philSysCardNumber: string;
+  tinNumber: string;
+  agencyEmployeeNumber: string;
+  citizenship: string;
+  dualCitizenshipType: string;
+  dualCitizenshipCountry: string;
+  residentialAddress: AddressForm;
+  permanentAddress: AddressForm;
+  telephoneNumber: string;
+  mobileNumber: string;
+  emailAddress: string;
+}
+
+interface PdsForm {
+  asOfDate: string;
+  personal: PersonalForm;
+  spouse: SpouseForm;
+  children: ChildForm[];
+  father: NameForm;
+  mother: NameForm;
+}
+
+interface ErrorEnvelope {
+  error?: { message?: string; fields?: Record<string, string> };
+}
+
+const addressFields = [
+  ['houseBlockLotNo', 'House / block / lot no.'],
+  ['street', 'Street'],
+  ['subdivisionVillage', 'Subdivision / village'],
+  ['barangay', 'Barangay'],
+  ['cityMunicipality', 'City / municipality'],
+  ['province', 'Province'],
+  ['zipCode', 'ZIP code'],
+] as const satisfies readonly [keyof AddressForm, string][];
+
+const nameFields = [
+  ['surname', 'Surname'],
+  ['firstName', 'First name'],
+  ['middleName', 'Middle name'],
+  ['nameExtension', 'Name extension'],
+] as const satisfies readonly [keyof NameForm, string][];
+
+const personalTextFields = [
+  ['surname', 'Surname'],
+  ['firstName', 'First name'],
+  ['middleName', 'Middle name'],
+  ['nameExtension', 'Name extension'],
+  ['birthPlace', 'Place of birth'],
+  ['bloodType', 'Blood type'],
+  ['umidIdNumber', 'UMID ID no.'],
+  ['pagibigIdNumber', 'Pag-IBIG ID no.'],
+  ['philhealthNumber', 'PhilHealth no.'],
+  ['philSysCardNumber', 'PhilSys PCN'],
+  ['tinNumber', 'TIN'],
+  ['agencyEmployeeNumber', 'Agency employee no.'],
+  ['telephoneNumber', 'Telephone'],
+  ['mobileNumber', 'Mobile'],
+  ['emailAddress', 'Email address'],
+] as const satisfies readonly [keyof PersonalForm, string][];
+
+function today(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function stringValue(value: string | number | null | undefined): string {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+function addressForm(value: PdsAddressData | null | undefined): AddressForm {
+  return {
+    houseBlockLotNo: stringValue(value?.houseBlockLotNo),
+    street: stringValue(value?.street),
+    subdivisionVillage: stringValue(value?.subdivisionVillage),
+    barangay: stringValue(value?.barangay),
+    cityMunicipality: stringValue(value?.cityMunicipality),
+    province: stringValue(value?.province),
+    zipCode: stringValue(value?.zipCode),
+  };
+}
+
+function blankAddress(): AddressForm {
+  return {
+    houseBlockLotNo: '',
+    street: '',
+    subdivisionVillage: '',
+    barangay: '',
+    cityMunicipality: '',
+    province: '',
+    zipCode: '',
+  };
+}
+
+function blankName(): NameForm {
+  return { surname: '', firstName: '', middleName: '', nameExtension: '' };
+}
+
+function blankSpouse(): SpouseForm {
+  return {
+    ...blankName(),
+    occupation: '',
+    employerBusinessName: '',
+    businessAddress: blankAddress(),
+    telephoneNumber: '',
+  };
+}
+
+function blankPersonal(): PersonalForm {
+  return {
+    surname: '',
+    firstName: '',
+    nameExtension: '',
+    middleName: '',
+    birthDate: '',
+    birthPlace: '',
+    sex: '',
+    civilStatus: '',
+    civilStatusDetail: '',
+    heightMeters: '',
+    weightKilograms: '',
+    bloodType: '',
+    umidIdNumber: '',
+    pagibigIdNumber: '',
+    philhealthNumber: '',
+    philSysCardNumber: '',
+    tinNumber: '',
+    agencyEmployeeNumber: '',
+    citizenship: '',
+    dualCitizenshipType: '',
+    dualCitizenshipCountry: '',
+    residentialAddress: blankAddress(),
+    permanentAddress: blankAddress(),
+    telephoneNumber: '',
+    mobileNumber: '',
+    emailAddress: '',
+  };
+}
+
+function formFromDetail(detail: PdsDetailData | null): PdsForm {
+  const personal = detail?.personal;
+  return {
+    asOfDate: detail?.asOfDate ?? today(),
+    personal: {
+      ...blankPersonal(),
+      surname: stringValue(personal?.surname),
+      firstName: stringValue(personal?.firstName),
+      nameExtension: stringValue(personal?.nameExtension),
+      middleName: stringValue(personal?.middleName),
+      birthDate: stringValue(personal?.birthDate),
+      birthPlace: stringValue(personal?.birthPlace),
+      sex: stringValue(personal?.sex),
+      civilStatus: stringValue(personal?.civilStatus),
+      civilStatusDetail: stringValue(personal?.civilStatusDetail),
+      heightMeters: stringValue(personal?.heightMeters),
+      weightKilograms: stringValue(personal?.weightKilograms),
+      bloodType: stringValue(personal?.bloodType),
+      umidIdNumber: stringValue(personal?.umidIdNumber),
+      pagibigIdNumber: stringValue(personal?.pagibigIdNumber),
+      philhealthNumber: stringValue(personal?.philhealthNumber),
+      philSysCardNumber: stringValue(personal?.philSysCardNumber),
+      tinNumber: stringValue(personal?.tinNumber),
+      agencyEmployeeNumber: stringValue(personal?.agencyEmployeeNumber),
+      citizenship: stringValue(personal?.citizenship),
+      dualCitizenshipType: stringValue(personal?.dualCitizenshipType),
+      dualCitizenshipCountry: stringValue(personal?.dualCitizenshipCountry),
+      residentialAddress: addressForm(personal?.residentialAddress),
+      permanentAddress: addressForm(personal?.permanentAddress),
+      telephoneNumber: stringValue(personal?.telephoneNumber),
+      mobileNumber: stringValue(personal?.mobileNumber),
+      emailAddress: stringValue(personal?.emailAddress),
+    },
+    spouse:
+      personal && detail?.family.spouse
+        ? {
+            ...blankSpouse(),
+            surname: stringValue(detail.family.spouse.surname),
+            firstName: stringValue(detail.family.spouse.firstName),
+            middleName: stringValue(detail.family.spouse.middleName),
+            nameExtension: stringValue(detail.family.spouse.nameExtension),
+            occupation: stringValue(detail.family.spouse.occupation),
+            employerBusinessName: stringValue(detail.family.spouse.employerBusinessName),
+            businessAddress: addressForm(detail.family.spouse.businessAddress),
+            telephoneNumber: stringValue(detail.family.spouse.telephoneNumber),
+          }
+        : blankSpouse(),
+    children:
+      detail?.family.children.map((child) => ({
+        fullName: stringValue(child.fullName),
+        birthDate: stringValue(child.birthDate),
+      })) ?? [],
+    father: detail?.family.father
+      ? {
+          surname: stringValue(detail.family.father.surname),
+          firstName: stringValue(detail.family.father.firstName),
+          middleName: stringValue(detail.family.father.middleName),
+          nameExtension: stringValue(detail.family.father.nameExtension),
+        }
+      : blankName(),
+    mother: detail?.family.mother
+      ? {
+          surname: stringValue(detail.family.mother.surname),
+          firstName: stringValue(detail.family.mother.firstName),
+          middleName: stringValue(detail.family.mother.middleName),
+          nameExtension: stringValue(detail.family.mother.nameExtension),
+        }
+      : blankName(),
+  };
+}
+
+function nullable(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function numberValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function addressPayload(value: AddressForm): PdsAddressData {
+  return Object.fromEntries(
+    addressFields.map(([key]) => [key, nullable(value[key])]),
+  ) as unknown as PdsAddressData;
+}
+
+function namePayload(value: NameForm, includeNameExtension = true) {
+  return {
+    surname: nullable(value.surname),
+    firstName: nullable(value.firstName),
+    middleName: nullable(value.middleName),
+    ...(includeNameExtension ? { nameExtension: nullable(value.nameExtension) } : {}),
+  };
+}
+
+function formPayload(form: PdsForm) {
+  const personal = form.personal;
+  const spouseHasValue = Object.values(form.spouse).some((value) =>
+    typeof value === 'string' ? value.trim() : Object.values(value).some(Boolean),
+  );
+  const fatherHasValue = Object.values(form.father).some((value) => value.trim());
+  const motherHasValue = Object.values(form.mother).some((value) => value.trim());
+  return {
+    asOfDate: form.asOfDate,
+    personal: {
+      surname: nullable(personal.surname),
+      firstName: nullable(personal.firstName),
+      nameExtension: nullable(personal.nameExtension),
+      middleName: nullable(personal.middleName),
+      birthDate: nullable(personal.birthDate),
+      birthPlace: nullable(personal.birthPlace),
+      sex: personal.sex || null,
+      civilStatus: personal.civilStatus || null,
+      civilStatusDetail: nullable(personal.civilStatusDetail),
+      heightMeters: numberValue(personal.heightMeters),
+      weightKilograms: numberValue(personal.weightKilograms),
+      bloodType: nullable(personal.bloodType),
+      umidIdNumber: nullable(personal.umidIdNumber),
+      pagibigIdNumber: nullable(personal.pagibigIdNumber),
+      philhealthNumber: nullable(personal.philhealthNumber),
+      philSysCardNumber: nullable(personal.philSysCardNumber),
+      tinNumber: nullable(personal.tinNumber),
+      agencyEmployeeNumber: nullable(personal.agencyEmployeeNumber),
+      citizenship: personal.citizenship || null,
+      dualCitizenshipType: personal.dualCitizenshipType || null,
+      dualCitizenshipCountry: nullable(personal.dualCitizenshipCountry),
+      residentialAddress: addressPayload(personal.residentialAddress),
+      permanentAddress: addressPayload(personal.permanentAddress),
+      telephoneNumber: nullable(personal.telephoneNumber),
+      mobileNumber: nullable(personal.mobileNumber),
+      emailAddress: nullable(personal.emailAddress),
+    },
+    family: {
+      spouse: spouseHasValue
+        ? {
+            ...namePayload(form.spouse),
+            occupation: nullable(form.spouse.occupation),
+            employerBusinessName: nullable(form.spouse.employerBusinessName),
+            businessAddress: addressPayload(form.spouse.businessAddress),
+            telephoneNumber: nullable(form.spouse.telephoneNumber),
+          }
+        : null,
+      children: form.children.map((child, index) => ({
+        sequenceNo: index + 1,
+        fullName: nullable(child.fullName),
+        birthDate: nullable(child.birthDate),
+      })),
+      father: fatherHasValue ? namePayload(form.father) : null,
+      mother: motherHasValue ? namePayload(form.mother, false) : null,
+    },
+  };
+}
+
+function summaryFromDetail(detail: PdsDetailData): PdsVersionSummaryData {
+  return {
+    id: detail.id,
+    employeeId: detail.employeeId,
+    versionNo: detail.versionNo,
+    formVersion: detail.formVersion,
+    asOfDate: detail.asOfDate,
+    status: detail.status,
+    supersedesVersionId: detail.supersedesVersionId,
+    correctionReason: detail.correctionReason,
+    createdByMembershipId: detail.createdByMembershipId,
+    createdAt: detail.createdAt,
+    updatedByMembershipId: detail.updatedByMembershipId,
+    updatedAt: detail.updatedAt,
+    rowVersion: detail.rowVersion,
+    fieldScope: detail.fieldScope,
+  };
+}
+
+function listAfterSave(list: PdsVersionListData, detail: PdsDetailData): PdsVersionListData {
+  const next = summaryFromDetail(detail);
+  const versions = [next, ...list.versions.filter((version) => version.id !== next.id)].sort(
+    (left, right) => right.versionNo - left.versionNo,
+  );
+  return {
+    employeeId: detail.employeeId,
+    citizenshipCountries: list.citizenshipCountries,
+    current:
+      versions.find((version) => version.status === 'CERTIFIED') ??
+      versions.find((version) => version.status !== 'SUPERSEDED') ??
+      versions[0] ??
+      null,
+    draft: versions.find((version) => ['DRAFT', 'RETURNED'].includes(version.status)) ?? null,
+    versions,
+  };
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  required = false,
+  min,
+  step,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: 'text' | 'date' | 'email' | 'number';
+  required?: boolean;
+  min?: string;
+  step?: string;
+}) {
+  return (
+    <label className={employeeLabelClass}>
+      {label}
+      <input
+        className={employeeInputClass}
+        type={type}
+        value={value}
+        onChange={(event) => onChange((event.target as unknown as { value: string }).value)}
+        required={required}
+        min={min}
+        step={step}
+      />
+    </label>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: readonly (readonly [string, string])[];
+  required?: boolean;
+}) {
+  return (
+    <label className={employeeLabelClass}>
+      {label}
+      <select
+        className={employeeInputClass}
+        value={value}
+        onChange={(event) => onChange((event.target as unknown as { value: string }).value)}
+        required={required}
+      >
+        <option value="">Not provided</option>
+        {options.map(([option, text]) => (
+          <option key={option} value={option}>
+            {text}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function AddressFields({
+  value,
+  onChange,
+}: {
+  value: AddressForm;
+  onChange: (key: keyof AddressForm, value: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 min-[620px]:grid-cols-2">
+      {addressFields.map(([key, label]) => (
+        <TextField
+          key={key}
+          label={label}
+          value={value[key]}
+          onChange={(next) => onChange(key, next)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function NameFields({
+  value,
+  onChange,
+  includeNameExtension = true,
+}: {
+  value: NameForm;
+  onChange: (key: keyof NameForm, value: string) => void;
+  includeNameExtension?: boolean;
+}) {
+  const fields = includeNameExtension
+    ? nameFields
+    : nameFields.filter(([key]) => key !== 'nameExtension');
+  return (
+    <div className="grid gap-4 min-[620px]:grid-cols-2">
+      {fields.map(([key, label]) => (
+        <TextField
+          key={key}
+          label={label}
+          value={value[key]}
+          onChange={(next) => onChange(key, next)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FormSection({
+  item,
+  title,
+  children,
+}: {
+  item: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <fieldset className="m-0 grid gap-4 border-0 border-t border-line p-0 pt-5 first:border-t-0 first:pt-0">
+      <legend className="m-0 flex items-baseline gap-3 p-0">
+        <span className="font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">{item}</span>
+        <span className="text-sm font-[680] text-midnight">{title}</span>
+      </legend>
+      {children}
+    </fieldset>
+  );
+}
+
+function display(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === '' ? 'Not provided' : String(value);
+}
+
+function DetailValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+}) {
+  return (
+    <div>
+      <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">{label}</dt>
+      <dd className="mt-1 break-words text-sm font-[560] text-ink">{display(value)}</dd>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const colors =
+    status === 'DRAFT' || status === 'RETURNED'
+      ? 'bg-[#fff2d9] text-[#82520d]'
+      : status === 'CERTIFIED'
+        ? 'bg-[#e7f4eb] text-[#27633b]'
+        : 'bg-pale-blue text-cobalt';
+  return (
+    <span
+      className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${colors}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+export function PdsWorkspace({
+  agencyId,
+  employeeName,
+  initialList,
+  initialDetail,
+  canUpdate,
+  createUrl,
+  backHref,
+}: {
+  agencyId: string;
+  employeeName?: string;
+  initialList: PdsVersionListData;
+  initialDetail: PdsDetailData | null;
+  canUpdate: boolean;
+  createUrl: string;
+  backHref: string;
+}) {
+  const [list, setList] = useState(initialList);
+  const [detail, setDetail] = useState(initialDetail);
+  const [form, setForm] = useState(() => formFromDetail(initialDetail));
+  const [open, setOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<'ok' | 'error'>('ok');
+  const [error, setError] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const editable = detail?.fieldScope === 'FULL' && ['DRAFT', 'RETURNED'].includes(detail.status);
+  const canCreate = canUpdate && (!detail || (detail.fieldScope === 'FULL' && !list.draft));
+
+  useEffect(() => {
+    if (error) (errorRef.current as unknown as { focus: () => void } | null)?.focus();
+  }, [error]);
+
+  function openForm() {
+    setForm(formFromDetail(detail));
+    setError(null);
+    setOpen(true);
+  }
+
+  function changePersonal(key: keyof PersonalForm, value: string) {
+    setForm((current) => ({
+      ...current,
+      personal: {
+        ...current.personal,
+        [key]: value,
+        ...(key === 'civilStatus' && value !== 'OTHER' ? { civilStatusDetail: '' } : {}),
+        ...(key === 'citizenship' && value !== 'DUAL_CITIZENSHIP'
+          ? { dualCitizenshipType: '', dualCitizenshipCountry: '' }
+          : {}),
+      },
+    }));
+  }
+
+  function changeAddress(
+    section: 'residentialAddress' | 'permanentAddress',
+    key: keyof AddressForm,
+    value: string,
+  ) {
+    setForm((current) => ({
+      ...current,
+      personal: {
+        ...current.personal,
+        [section]: { ...current.personal[section], [key]: value },
+      },
+    }));
+  }
+
+  function changeSpouse(key: keyof SpouseForm, value: string) {
+    setForm((current) => ({ ...current, spouse: { ...current.spouse, [key]: value } }));
+  }
+
+  function changeSpouseAddress(key: keyof AddressForm, value: string) {
+    setForm((current) => ({
+      ...current,
+      spouse: {
+        ...current.spouse,
+        businessAddress: { ...current.spouse.businessAddress, [key]: value },
+      },
+    }));
+  }
+
+  function changeName(section: 'father' | 'mother', key: keyof NameForm, value: string) {
+    setForm((current) => ({ ...current, [section]: { ...current[section], [key]: value } }));
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void save();
+  }
+
+  async function save(): Promise<void> {
+    setSubmitting(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload = formPayload(form);
+      const updating = editable && detail !== null;
+      const response = await fetch(
+        updating ? `/api/v1/agencies/${agencyId}/pds/${detail.id}` : createUrl,
+        {
+          method: updating ? 'PATCH' : 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(updating ? { ...payload, rowVersion: detail.rowVersion } : payload),
+        },
+      );
+      const value: unknown = await response.json().catch(() => null);
+      if (
+        response.ok &&
+        value &&
+        typeof value === 'object' &&
+        typeof (value as PdsDetailData).id === 'string'
+      ) {
+        const saved = value as PdsDetailData;
+        setDetail(saved);
+        setList((current) => listAfterSave(current, saved));
+        setOpen(false);
+        setMessageTone('ok');
+        setMessage(updating ? 'PDS Draft saved.' : 'PDS Draft created.');
+        return;
+      }
+      const envelope = (value ?? {}) as ErrorEnvelope;
+      setError(envelope.error?.message ?? 'The PDS Draft could not be saved.');
+    } catch {
+      setError('The PDS Draft could not be saved. Check the connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const personal = detail?.personal;
+  const family = detail?.family;
+
+  return (
+    <>
+      <Link
+        href={backHref}
+        className="mb-6 inline-block text-xs font-[650] text-cobalt no-underline"
+      >
+        ← {employeeName ? 'Employee record' : 'Dashboard'}
+      </Link>
+      <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
+        <div className="flex items-center gap-4">
+          {employeeName && <EmployeeInitials name={employeeName} large />}
+          <EmployeePageTitle
+            eyebrow="CS Form No. 212 · Revised 2026 Draft"
+            title={employeeName ? `${employeeName} · PDS` : 'My Personal Data Sheet'}
+            description="Maintain personal and family information in the protected Draft PDS record."
+          />
+        </div>
+        {canUpdate && (editable || canCreate) && (
+          <Dialog open={open} onOpenChange={(next) => !submitting && setOpen(next)}>
+            <DialogTrigger asChild>
+              <Button variant="primary" size="default" onClick={openForm}>
+                {editable ? 'Edit personal and family information' : 'Create Draft PDS'}
+              </Button>
+            </DialogTrigger>
+            <DialogContent size="compact" aria-describedby="pds-dialog-description">
+              <DialogHeader>
+                <div className="grid gap-1.5">
+                  <DialogTitle>{editable ? 'Edit Draft PDS' : 'Create Draft PDS'}</DialogTitle>
+                  <DialogDescription id="pds-dialog-description">
+                    Items 1–25 are saved as one protected Draft. Empty fields remain available for
+                    later completion.
+                  </DialogDescription>
+                </div>
+              </DialogHeader>
+              <DialogBody>
+                <form id="pds-form" className="grid gap-6" onSubmit={submit}>
+                  {error && (
+                    <div
+                      ref={errorRef}
+                      tabIndex={-1}
+                      role="alert"
+                      className="rounded-[3px] border-l-2 border-[#b64040] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d] outline-none"
+                    >
+                      {error}
+                    </div>
+                  )}
+                  <div className="grid gap-3 border-l-2 border-cobalt bg-pale-blue px-4 py-3 text-xs leading-5 text-[#34557e]">
+                    <strong className="font-[680] text-midnight">Draft record</strong>
+                    <span>
+                      This record can be changed while it is Draft or Returned. Submission and
+                      certification are separate workflows.
+                    </span>
+                  </div>
+                  <TextField
+                    label="As-of date"
+                    type="date"
+                    value={form.asOfDate}
+                    onChange={(value) => setForm((current) => ({ ...current, asOfDate: value }))}
+                    required
+                  />
+                  <FormSection item="01–09" title="Personal identity and physical information">
+                    <div className="grid gap-4 min-[620px]:grid-cols-2">
+                      <TextField
+                        label="Surname"
+                        value={form.personal.surname}
+                        onChange={(value) => changePersonal('surname', value)}
+                      />
+                      <TextField
+                        label="First name"
+                        value={form.personal.firstName}
+                        onChange={(value) => changePersonal('firstName', value)}
+                      />
+                      <TextField
+                        label="Name extension"
+                        value={form.personal.nameExtension}
+                        onChange={(value) => changePersonal('nameExtension', value)}
+                      />
+                      <TextField
+                        label="Middle name"
+                        value={form.personal.middleName}
+                        onChange={(value) => changePersonal('middleName', value)}
+                      />
+                      <TextField
+                        label="Birth date"
+                        type="date"
+                        value={form.personal.birthDate}
+                        onChange={(value) => changePersonal('birthDate', value)}
+                      />
+                      <TextField
+                        label="Place of birth"
+                        value={form.personal.birthPlace}
+                        onChange={(value) => changePersonal('birthPlace', value)}
+                      />
+                      <SelectField
+                        label="Sex at birth"
+                        value={form.personal.sex}
+                        onChange={(value) => changePersonal('sex', value)}
+                        options={[
+                          ['FEMALE', 'Female'],
+                          ['MALE', 'Male'],
+                        ]}
+                      />
+                      <SelectField
+                        label="Civil status"
+                        value={form.personal.civilStatus}
+                        onChange={(value) => changePersonal('civilStatus', value)}
+                        options={[
+                          ['SINGLE', 'Single'],
+                          ['MARRIED', 'Married'],
+                          ['WIDOWED', 'Widowed'],
+                          ['SEPARATED', 'Separated'],
+                          ['OTHER', 'Other/s'],
+                        ]}
+                      />
+                      {form.personal.civilStatus === 'OTHER' && (
+                        <TextField
+                          label="Other/s civil status"
+                          value={form.personal.civilStatusDetail}
+                          onChange={(value) => changePersonal('civilStatusDetail', value)}
+                          required
+                        />
+                      )}
+                      <TextField
+                        label="Height (metres)"
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={form.personal.heightMeters}
+                        onChange={(value) => changePersonal('heightMeters', value)}
+                      />
+                      <TextField
+                        label="Weight (kilograms)"
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={form.personal.weightKilograms}
+                        onChange={(value) => changePersonal('weightKilograms', value)}
+                      />
+                      <TextField
+                        label="Blood type"
+                        value={form.personal.bloodType}
+                        onChange={(value) => changePersonal('bloodType', value)}
+                      />
+                    </div>
+                  </FormSection>
+                  <FormSection item="10–15" title="Government and Agency identifiers">
+                    <div className="grid gap-4 min-[620px]:grid-cols-2">
+                      {personalTextFields.slice(6, 12).map(([key, label]) => (
+                        <TextField
+                          key={key}
+                          label={label}
+                          value={form.personal[key]}
+                          onChange={(value) => changePersonal(key, value)}
+                        />
+                      ))}
+                    </div>
+                  </FormSection>
+                  <FormSection item="16" title="Citizenship">
+                    <div className="grid gap-4 min-[620px]:grid-cols-2">
+                      <SelectField
+                        label="Citizenship"
+                        value={form.personal.citizenship}
+                        onChange={(value) => changePersonal('citizenship', value)}
+                        options={[
+                          ['FILIPINO', 'Filipino'],
+                          ['DUAL_CITIZENSHIP', 'Dual citizenship'],
+                        ]}
+                      />
+                      {form.personal.citizenship === 'DUAL_CITIZENSHIP' && (
+                        <>
+                          <SelectField
+                            label="Dual citizenship by"
+                            value={form.personal.dualCitizenshipType}
+                            onChange={(value) => changePersonal('dualCitizenshipType', value)}
+                            options={[
+                              ['BY_BIRTH', 'Birth'],
+                              ['BY_NATURALIZATION', 'Naturalization'],
+                            ]}
+                          />
+                          <SelectField
+                            label="Other citizenship country"
+                            value={form.personal.dualCitizenshipCountry}
+                            onChange={(value) => changePersonal('dualCitizenshipCountry', value)}
+                            options={list.citizenshipCountries.map(
+                              (country) => [country, country] as const,
+                            )}
+                            required
+                          />
+                        </>
+                      )}
+                    </div>
+                  </FormSection>
+                  <FormSection item="17–18" title="Residential and permanent address">
+                    <div className="grid gap-5">
+                      <div className="grid gap-3">
+                        <h3 className="m-0 text-xs font-[680] text-ink">Residential address</h3>
+                        <AddressFields
+                          value={form.personal.residentialAddress}
+                          onChange={(key, value) => changeAddress('residentialAddress', key, value)}
+                        />
+                      </div>
+                      <div className="grid gap-3">
+                        <h3 className="m-0 text-xs font-[680] text-ink">Permanent address</h3>
+                        <AddressFields
+                          value={form.personal.permanentAddress}
+                          onChange={(key, value) => changeAddress('permanentAddress', key, value)}
+                        />
+                      </div>
+                    </div>
+                  </FormSection>
+                  <FormSection item="19–21" title="Contact information">
+                    <div className="grid gap-4 min-[620px]:grid-cols-2">
+                      {personalTextFields.slice(12).map(([key, label]) => (
+                        <TextField
+                          key={key}
+                          label={label}
+                          type={key === 'emailAddress' ? 'email' : 'text'}
+                          value={form.personal[key]}
+                          onChange={(value) => changePersonal(key, value)}
+                        />
+                      ))}
+                    </div>
+                  </FormSection>
+                  <FormSection item="22" title="Spouse">
+                    <div className="grid gap-4">
+                      <NameFields value={form.spouse} onChange={changeSpouse} />
+                      <div className="grid gap-4 min-[620px]:grid-cols-2">
+                        <TextField
+                          label="Occupation"
+                          value={form.spouse.occupation}
+                          onChange={(value) => changeSpouse('occupation', value)}
+                        />
+                        <TextField
+                          label="Employer / business name"
+                          value={form.spouse.employerBusinessName}
+                          onChange={(value) => changeSpouse('employerBusinessName', value)}
+                        />
+                        <TextField
+                          label="Telephone"
+                          value={form.spouse.telephoneNumber}
+                          onChange={(value) => changeSpouse('telephoneNumber', value)}
+                        />
+                      </div>
+                      <h3 className="m-0 text-xs font-[680] text-ink">Spouse business address</h3>
+                      <AddressFields
+                        value={form.spouse.businessAddress}
+                        onChange={changeSpouseAddress}
+                      />
+                    </div>
+                  </FormSection>
+                  <FormSection item="23" title="Children">
+                    <div className="grid gap-4">
+                      {form.children.map((child, index) => (
+                        <div
+                          key={index}
+                          className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <strong className="text-xs font-[680] text-ink">
+                              Child {index + 1}
+                            </strong>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="default"
+                              onClick={() =>
+                                setForm((current) => ({
+                                  ...current,
+                                  children: current.children.filter(
+                                    (_, childIndex) => childIndex !== index,
+                                  ),
+                                }))
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                          <div className="grid gap-4 min-[620px]:grid-cols-2">
+                            <TextField
+                              label="Full name"
+                              value={child.fullName}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  children: current.children.map((item, childIndex) =>
+                                    childIndex === index ? { ...item, fullName: value } : item,
+                                  ),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Date of birth"
+                              type="date"
+                              value={child.birthDate}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  children: current.children.map((item, childIndex) =>
+                                    childIndex === index ? { ...item, birthDate: value } : item,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            children: [...current.children, { fullName: '', birthDate: '' }],
+                          }))
+                        }
+                      >
+                        Add child
+                      </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="24" title="Father">
+                    <NameFields
+                      value={form.father}
+                      onChange={(key, value) => changeName('father', key, value)}
+                    />
+                  </FormSection>
+                  <FormSection item="25" title="Mother’s maiden name">
+                    <NameFields
+                      value={form.mother}
+                      onChange={(key, value) => changeName('mother', key, value)}
+                      includeNameExtension={false}
+                    />
+                  </FormSection>
+                </form>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button type="button" variant="secondary" size="default" disabled={submitting}>
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  type="submit"
+                  form="pds-form"
+                  variant="primary"
+                  size="default"
+                  disabled={submitting}
+                >
+                  {submitting ? 'Saving…' : 'Save Draft'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+      </header>
+
+      {message && (
+        <p
+          role="status"
+          className={`mb-5 text-xs ${messageTone === 'ok' ? 'text-[#27633b]' : 'text-[#8f2d2d]'}`}
+        >
+          {message}
+        </p>
+      )}
+
+      <div className="mb-5 grid gap-4 min-[761px]:grid-cols-[minmax(0,1.5fr)_minmax(220px,.7fr)]">
+        <section
+          className="rounded-[5px] border border-line bg-paper"
+          aria-labelledby="pds-record-heading"
+        >
+          <header className="flex min-h-[58px] items-center justify-between gap-4 border-b border-line px-5">
+            <div>
+              <p className="m-0 font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">C1</p>
+              <h2 id="pds-record-heading" className="mt-1 mb-0 text-sm font-[680] text-midnight">
+                Personal and family information
+              </h2>
+            </div>
+            {detail && <StatusBadge status={detail.status} />}
+          </header>
+          {!detail ? (
+            <div className="grid gap-2 px-5 py-8">
+              <strong className="text-sm font-[650] text-midnight">No Draft PDS yet.</strong>
+              <p className="m-0 max-w-[560px] text-sm leading-6 text-muted">
+                Create the first Draft to begin recording Items 1–25. A single Draft successor is
+                allowed for this Employee.
+              </p>
+            </div>
+          ) : detail.fieldScope === 'REDACTED' ? (
+            <div className="border-l-2 border-[#d99a32] bg-[#fff9ec] px-5 py-5 text-sm leading-6 text-[#70490f]">
+              Personal and family fields are withheld for this access scope. Version metadata is
+              visible for Agency-safe record history.
+            </div>
+          ) : (
+            <div className="grid gap-7 px-5 py-6 min-[700px]:px-8">
+              <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-3">
+                <DetailValue label="Version" value={`v${detail.versionNo}`} />
+                <DetailValue label="As of" value={formatEmployeeDate(detail.asOfDate)} />
+                <DetailValue label="Form contract" value={detail.formVersion} />
+              </dl>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Items 1–16
+                </h3>
+                <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-3">
+                  <DetailValue
+                    label="Name"
+                    value={
+                      personal
+                        ? [
+                            personal.firstName,
+                            personal.middleName,
+                            personal.surname,
+                            personal.nameExtension,
+                          ]
+                            .filter(Boolean)
+                            .join(' ')
+                        : null
+                    }
+                  />
+                  <DetailValue
+                    label="Birth date"
+                    value={personal?.birthDate ? formatEmployeeDate(personal.birthDate) : null}
+                  />
+                  <DetailValue label="Birth place" value={personal?.birthPlace} />
+                  <DetailValue
+                    label="Sex at birth"
+                    value={personal?.sex ? titleCase(personal.sex) : null}
+                  />
+                  <DetailValue
+                    label="Civil status"
+                    value={personal?.civilStatus ? titleCase(personal.civilStatus) : null}
+                  />
+                  <DetailValue label="Citizenship" value={personal?.citizenship} />
+                  <DetailValue label="Height (m)" value={personal?.heightMeters} />
+                  <DetailValue label="Weight (kg)" value={personal?.weightKilograms} />
+                  <DetailValue label="Blood type" value={personal?.bloodType} />
+                  <DetailValue label="Agency employee no." value={personal?.agencyEmployeeNumber} />
+                </dl>
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Items 17–21
+                </h3>
+                <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                  <DetailValue
+                    label="Residential address"
+                    value={
+                      personal?.residentialAddress
+                        ? Object.values(personal.residentialAddress).filter(Boolean).join(', ')
+                        : null
+                    }
+                  />
+                  <DetailValue
+                    label="Permanent address"
+                    value={
+                      personal?.permanentAddress
+                        ? Object.values(personal.permanentAddress).filter(Boolean).join(', ')
+                        : null
+                    }
+                  />
+                  <DetailValue label="Telephone" value={personal?.telephoneNumber} />
+                  <DetailValue label="Mobile" value={personal?.mobileNumber} />
+                  <DetailValue label="Email" value={personal?.emailAddress} />
+                </dl>
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Items 22–25 · Family
+                </h3>
+                <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                  <DetailValue label="Spouse" value={family?.spouse?.fullName} />
+                  <DetailValue
+                    label="Children"
+                    value={
+                      family
+                        ? family.children
+                            .map((child) => child.fullName)
+                            .filter(Boolean)
+                            .join(', ') || null
+                        : null
+                    }
+                  />
+                  <DetailValue label="Father" value={family?.father?.fullName} />
+                  <DetailValue label="Mother’s maiden name" value={family?.mother?.fullName} />
+                </dl>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section
+          className="rounded-[5px] border border-line bg-paper"
+          aria-labelledby="pds-history-heading"
+        >
+          <header className="flex min-h-[58px] items-center border-b border-line px-5">
+            <div>
+              <p className="m-0 font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">
+                RECORD HISTORY
+              </p>
+              <h2 id="pds-history-heading" className="mt-1 mb-0 text-sm font-[680] text-midnight">
+                Versions
+              </h2>
+            </div>
+          </header>
+          {list.versions.length === 0 ? (
+            <p className="m-0 px-5 py-6 text-sm text-muted">No versions recorded.</p>
+          ) : (
+            <ul className="m-0 list-none p-0">
+              {list.versions.map((version) => (
+                <li
+                  key={version.id}
+                  className="flex items-center justify-between gap-3 border-b border-line px-5 py-4 last:border-b-0"
+                >
+                  <div className="grid gap-1">
+                    <strong className="font-mono text-xs text-midnight">
+                      v{version.versionNo}
+                    </strong>
+                    <span className="text-xs text-muted">
+                      As of {formatEmployeeDate(version.asOfDate)}
+                    </span>
+                  </div>
+                  <StatusBadge status={version.status} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+      <p className="m-0 border-l-2 border-[#d99a32] bg-[#fff9ec] px-4 py-3 text-xs leading-5 text-[#70490f]">
+        Submission, verification, certification, generated output, and later PDS correction are
+        separate workflows and are not available in this Draft maintenance slice.
+      </p>
+    </>
+  );
+}
