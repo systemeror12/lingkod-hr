@@ -53,6 +53,12 @@ const destinations: readonly (Destination & {
     icon: 'position',
     permission: 'positions.items.read',
   },
+  {
+    href: '/employees',
+    label: 'Employees',
+    icon: 'users',
+    permission: 'personnel.employees.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 

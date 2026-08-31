@@ -42,6 +42,7 @@ model Agency {
   plantillaPositions            PlantillaPosition[]
   plantillaPositionVersions     PlantillaPositionVersion[]
   positionDocuments             PositionDocument[]
+  employees                     Employee[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -204,6 +205,9 @@ model AgencyMembership {
   updatedPlantillaPositions              PlantillaPosition[]            @relation("PlantillaPositionUpdater")
   createdPlantillaPositionVersions       PlantillaPositionVersion[]     @relation("PlantillaPositionVersionCreator")
   updatedPlantillaPositionVersions       PlantillaPositionVersion[]     @relation("PlantillaPositionVersionUpdater")
+  employee                               Employee?                      @relation("AgencyMembershipEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  createdEmployees                       Employee[]                     @relation("EmployeeCreator")
+  updatedEmployees                       Employee[]                     @relation("EmployeeUpdater")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -651,4 +655,31 @@ model PlantillaPositionVersion {
   @@unique([agencyId, positionId, id])
   @@index([agencyId, positionId, effectiveFrom])
   @@map("plantilla_position_versions")
+}
+
+model Employee {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  employeeNumber        String   @map("employee_number") @db.Citext
+  legalName             String   @map("legal_name") @db.Citext
+  birthDate             DateTime @map("birth_date") @db.Date
+  sex                   String
+  civilStatus           String   @map("civil_status")
+  contactEmail          String   @map("contact_email") @db.Citext
+  serviceStatus         String   @default("PREBOARDING") @map("service_status")
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int      @default(1) @map("row_version")
+
+  agency      Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy   AgencyMembership   @relation("EmployeeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy   AgencyMembership   @relation("EmployeeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  memberships AgencyMembership[] @relation("AgencyMembershipEmployee")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeNumber])
+  @@unique([agencyId, legalName, birthDate])
+  @@map("employees")
 }
