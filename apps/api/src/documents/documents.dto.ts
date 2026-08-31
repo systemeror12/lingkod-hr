@@ -1,4 +1,9 @@
-import type { DocumentAccess, DocumentSummary, DocumentVersionSummary } from './documents.service';
+import type {
+  DocumentAccess,
+  DocumentSummary,
+  DocumentVersionSummary,
+  LinkableDocumentVersionSummary,
+} from './documents.service';
 
 export class DocumentVersionDto {
   readonly id: string;
@@ -47,6 +52,32 @@ export class DocumentListResponseDto {
 
   constructor(documents: DocumentSummary[]) {
     this.documents = documents.map((document) => new DocumentDto(document));
+  }
+}
+
+export class LinkableDocumentVersionDto {
+  readonly documentId: string;
+  readonly documentNo: string | null;
+  readonly documentType: string;
+  readonly classification: LinkableDocumentVersionSummary['classification'];
+  readonly status: string;
+  readonly version: DocumentVersionDto;
+
+  constructor(document: LinkableDocumentVersionSummary) {
+    this.documentId = document.documentId;
+    this.documentNo = document.documentNo;
+    this.documentType = document.documentType;
+    this.classification = document.classification;
+    this.status = document.status;
+    this.version = new DocumentVersionDto(document.version);
+  }
+}
+
+export class LinkableDocumentVersionListResponseDto {
+  readonly documents: LinkableDocumentVersionDto[];
+
+  constructor(documents: LinkableDocumentVersionSummary[]) {
+    this.documents = documents.map((document) => new LinkableDocumentVersionDto(document));
   }
 }
 

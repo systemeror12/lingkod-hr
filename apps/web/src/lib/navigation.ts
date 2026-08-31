@@ -59,6 +59,15 @@ const destinations: readonly (Destination & {
     icon: 'users',
     permission: 'personnel.employees.read',
   },
+  {
+    href: '/my-documents',
+    label: 'My Documents',
+    icon: 'users',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) => code === 'personnel.documents.read' && scopePolicy === 'OWN',
+      ),
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 

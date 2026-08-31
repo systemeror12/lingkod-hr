@@ -181,6 +181,26 @@ export class EmployeesService {
     });
   }
 
+  async findOwn(context: RequestContext): Promise<EmployeeSummary | null> {
+    this.assertAnyPermission(
+      context,
+      'personnel.documents.read',
+      'EMPLOYEE_DOCUMENT_READ_FORBIDDEN',
+    );
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const record = await transaction.employee.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          memberships: {
+            some: { id: context.membershipId, userId: context.userId },
+          },
+        },
+        select: employeeSelect,
+      });
+      return record ? employeeSummary(record) : null;
+    });
+  }
+
   async create(context: RequestContext, input: EmployeeInput): Promise<EmployeeSummary> {
     this.assertPermission(context, 'personnel.employees.create', 'EMPLOYEE_CREATE_FORBIDDEN');
     const employeeNumber = input.employeeNumber.trim();
@@ -369,6 +389,21 @@ export class EmployeesService {
       !context.userId ||
       !context.membershipId ||
       !hasPermission(context, permission, { agencyId: context.agencyId })
+    ) {
+      throw new EmployeeServiceError(
+        'The current Agency Membership lacks the required permission.',
+        403,
+        code,
+      );
+    }
+  }
+
+  private assertAnyPermission(context: RequestContext, permission: string, code: string): void {
+    if (
+      !context.agencyId ||
+      !context.userId ||
+      !context.membershipId ||
+      !context.permissions.some((grant) => grant.code === permission)
     ) {
       throw new EmployeeServiceError(
         'The current Agency Membership lacks the required permission.',

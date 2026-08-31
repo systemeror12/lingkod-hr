@@ -47,12 +47,28 @@ const createBody = {
 function serviceMock() {
   return {
     list: vi.fn(),
+    findOwn: vi.fn(),
     findById: vi.fn(),
     create: vi.fn(),
     linkMembership: vi.fn(),
     unlinkMembership: vi.fn(),
   };
 }
+
+it('returns only the Employee linked to the active Membership for self-service', async () => {
+  const service = serviceMock();
+  service.findOwn.mockResolvedValue(employee);
+  const controller = new EmployeesController(service as never);
+  const ownContext = {
+    ...context,
+    permissions: [{ code: 'personnel.documents.read', scopePolicy: 'OWN' as const }],
+  };
+
+  await expect(controller.findOwn(agencyId, ownContext)).resolves.toEqual(
+    expect.objectContaining({ id: employeeId }),
+  );
+  expect(service.findOwn).toHaveBeenCalledWith(ownContext);
+});
 
 it('does not disclose the directory outside the active Agency', async () => {
   const service = serviceMock();

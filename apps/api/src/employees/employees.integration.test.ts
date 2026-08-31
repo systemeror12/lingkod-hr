@@ -125,6 +125,14 @@ it.skipIf(!enabled)(
       const linked = await service.linkMembership(context, created.id, linkMembership.id);
       expect(linked.membershipId).toBe(linkMembership.id);
       await expect(
+        service.findOwn({
+          ...context,
+          userId: linkUser.id,
+          membershipId: linkMembership.id,
+          permissions: [{ code: 'personnel.documents.read', scopePolicy: 'OWN' }],
+        }),
+      ).resolves.toMatchObject({ id: created.id });
+      await expect(
         admin.auditEvent.findFirst({
           where: {
             agencyId: agency.id,
