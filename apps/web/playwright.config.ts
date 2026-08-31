@@ -35,7 +35,7 @@ export default defineConfig({
       },
     },
     {
-      command: 'pnpm --filter @lingkod-hr/api dev',
+      command: 'pnpm exec turbo run dev --filter=@lingkod-hr/api',
       url: `${apiUrl}/api/v1/health`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
