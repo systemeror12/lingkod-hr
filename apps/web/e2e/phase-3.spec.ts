@@ -69,7 +69,7 @@ test.describe('Phase 3 acceptance gate', () => {
     await expect(
       page.getByText('National Archives Coordination Office', { exact: true }).first(),
     ).toBeVisible();
-    await expect(page.getByText('Agency Administrator', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(/Agency Administrator/).first()).toBeVisible();
     await page.screenshot({
       path: testInfo.outputPath('phase3-admin-dashboard.png'),
       fullPage: true,
@@ -212,13 +212,15 @@ test.describe('Phase 3 acceptance gate', () => {
       expect(foreignRecord.status()).toBe(404);
 
       await hrmoPage.goto('/organization');
-      await expect(hrmoPage.getByRole('heading', { name: 'Organization Units' })).toBeVisible();
+      await expect(
+        hrmoPage.getByRole('heading', { name: 'Organization Units', exact: true }),
+      ).toBeVisible();
       await hrmoPage.getByRole('button', { name: 'Create Organization Unit' }).click();
       const organizationDialog = hrmoPage.getByRole('dialog', {
         name: 'Create Organization Unit',
       });
       await expect(organizationDialog).toHaveAccessibleDescription(
-        'Register the unit now. Hierarchy and activation come later.',
+        'Register the unit as a Draft, then place and activate it from the preparation queue.',
       );
       await expect(hrmoPage.getByLabel('Official name')).toBeFocused();
       await hrmoPage.getByLabel('Official name').fill(unitName);

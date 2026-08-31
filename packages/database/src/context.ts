@@ -10,6 +10,10 @@ export interface DatabaseContext {
   providerSid?: string;
   platformSecurity?: boolean;
   operationalProvisioning?: boolean;
+  staffingAuthorityTransition?: boolean;
+  qualificationStandardTransition?: boolean;
+  plantillaPositionTransition?: boolean;
+  plantillaPositionEvidenceTransition?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -38,6 +42,26 @@ export async function setDatabaseContext(
       set_config(
         'app.operational_provisioning',
         ${context.operationalProvisioning ? 'true' : ''},
+        true
+      ),
+      set_config(
+        'app.staffing_authority_transition',
+        ${context.staffingAuthorityTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.qualification_standard_transition',
+        ${context.qualificationStandardTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.plantilla_position_transition',
+        ${context.plantillaPositionTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.plantilla_position_evidence_transition',
+        ${context.plantillaPositionEvidenceTransition ? 'on' : ''},
         true
       )
   `;

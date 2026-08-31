@@ -29,6 +29,10 @@ export default defineConfig({
       command: 'pnpm exec tsx e2e/local-oidc.ts',
       url: `${oidcIssuer}/health`,
       reuseExistingServer: !process.env.CI,
+      env: {
+        ...process.env,
+        OIDC_REDIRECT_URI: `${apiUrl}/api/v1/auth/callback`,
+      },
     },
     {
       command: 'pnpm exec turbo run dev --filter=@lingkod-hr/api',

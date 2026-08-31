@@ -21,7 +21,9 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
-  await expect(page.getByRole('heading', { name: 'Organization Units' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Organization Units', exact: true }),
+  ).toBeVisible();
   const emptyState = page.getByText('No Organization Units yet.', { exact: true });
   if (await emptyState.count()) {
     await expect(emptyState).toBeVisible();
@@ -33,7 +35,7 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
   const dialog = page.getByRole('dialog', { name: 'Create Organization Unit' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAccessibleDescription(
-    'Register the unit now. Hierarchy and activation come later.',
+    'Register the unit as a Draft, then place and activate it from the preparation queue.',
   );
   await expect(page.getByLabel('Official name')).toBeFocused();
   await expectCenteredDialog(dialog, page.viewportSize()?.width ?? 1280);
@@ -160,4 +162,179 @@ test('guards every Organization Unit dismissal path during submission', async ({
   releaseResponse();
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
+});
+
+test('places Draft units into the effective hierarchy and inspects the dated tree', async ({
+  page,
+}, testInfo) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now();
+  const rootName = `Administrative Services Office ${suffix}`;
+  const childName = `Records Division ${suffix}`;
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/organization');
+  const createTrigger = page.getByRole('button', { name: 'Create Organization Unit' });
+
+  await createTrigger.click();
+  await page.getByLabel('Official name').fill(rootName);
+  await page.getByLabel('Agency-unique code').fill(`ASO-${suffix}`);
+  await page.getByLabel('Unit type').selectOption('OFFICE');
+  await page.getByLabel('Effective date').fill('2026-08-15');
+  await page.getByRole('button', { name: 'Create Draft' }).click();
+
+  const rootRow = page.getByRole('row').filter({ hasText: rootName });
+  const rootActivationTrigger = rootRow.getByRole('button', {
+    name: `Place and activate ${rootName}`,
+  });
+  await rootActivationTrigger.click();
+  const activationDialog = page.getByRole('dialog', { name: `Activate ${rootName}` });
+  await expect(activationDialog).toBeVisible();
+  const activationCode = activationDialog.getByText(`ASO-${suffix}`, { exact: true });
+  await expect(activationCode).toBeVisible();
+  expect(
+    await activationCode.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+  await expect(activationDialog).toHaveAccessibleDescription(
+    'Choose where this unit reports, then activate its effective-dated version.',
+  );
+  await expect(page.getByLabel('Parent Organization Unit')).toBeFocused();
+  await expectCenteredDialog(activationDialog, page.viewportSize()?.width ?? 1280);
+  for (let index = 0; index < 8; index += 1) {
+    await page.keyboard.press('Tab');
+    await expectFocusInside(activationDialog);
+  }
+  await page.mouse.click(1, 1);
+  await expect(activationDialog).toBeVisible();
+  await activationDialog.press('Escape');
+  await expect(activationDialog).toBeHidden();
+  await expect(rootActivationTrigger).toBeFocused();
+  await rootActivationTrigger.click();
+  await expect(activationDialog).toBeVisible();
+  await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
+  await expect(page.getByText('Enter the activation reason.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Activation reason')).toBeFocused();
+  await page.getByLabel('Activation reason').fill('Approved as the Agency root');
+
+  let releaseActivation!: () => void;
+  const activationReleased = new Promise<void>((resolve) => {
+    releaseActivation = resolve;
+  });
+  await page.route(
+    '**/api/v1/agencies/*/organization-units/*/activate',
+    async (route) => {
+      await activationReleased;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
+  await expect(page.getByRole('button', { name: 'Activating…' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Close activation dialog' })).toBeDisabled();
+  await expect(activationDialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  await activationDialog.press('Escape');
+  await page.mouse.click(1, 1);
+  await expect(activationDialog).toBeVisible();
+  releaseActivation();
+
+  await expect(page.getByRole('status')).toContainText(`${rootName} is now active.`);
+  await expect(page.getByRole('heading', { name: 'Effective hierarchy' })).toBeVisible();
+  await page.getByRole('button', { name: new RegExp(rootName) }).click();
+  await expect(page.getByRole('button', { name: new RegExp(rootName) })).toHaveCSS(
+    'background-color',
+    'rgb(23, 32, 51)',
+  );
+  const selectedRecord = page.getByRole('region', { name: 'Selected Organization Unit' });
+  await expect(selectedRecord).toContainText(rootName);
+  await expect(selectedRecord).toContainText('No parent · Agency root');
+  await expect(selectedRecord).toContainText('ACTIVE');
+
+  await createTrigger.click();
+  await page.getByLabel('Official name').fill(childName);
+  await page.getByLabel('Agency-unique code').fill(`RD-${suffix}`);
+  await page.getByLabel('Unit type').selectOption('DIVISION');
+  await page.getByLabel('Effective date').fill('2026-08-15');
+  await page.getByRole('button', { name: 'Create Draft' }).click();
+  const childRow = page.getByRole('row').filter({ hasText: childName });
+  await childRow.getByRole('button', { name: `Place and activate ${childName}` }).click();
+  await page.getByLabel('Parent Organization Unit').selectOption({ label: rootName });
+  await page.getByLabel('Activation reason').fill('Approved reporting placement');
+  await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
+
+  await expect(page.getByRole('status')).toContainText(`${childName} is now active.`);
+  await page.getByRole('button', { name: new RegExp(childName) }).click();
+  await expect(selectedRecord).toContainText(rootName);
+  await expect(selectedRecord).toContainText('0 children');
+  const verticalConnector = page.locator('[data-tree-connector="vertical"]');
+  await expect(verticalConnector.first()).toBeVisible();
+  await expect(verticalConnector.first()).toHaveCSS('width', '1px');
+  await expect(verticalConnector.first()).toHaveCSS('background-color', 'rgb(174, 184, 199)');
+  const childHierarchyButton = page
+    .getByRole('navigation', { name: 'Organization hierarchy' })
+    .getByRole('button', { name: new RegExp(childName) });
+  const verticalBox = await verticalConnector.first().boundingBox();
+  const childButtonBox = await childHierarchyButton.boundingBox();
+  const horizontalBox = await childHierarchyButton.locator('span').first().boundingBox();
+  expect(verticalBox).not.toBeNull();
+  expect(childButtonBox).not.toBeNull();
+  expect(horizontalBox).not.toBeNull();
+  if (verticalBox && horizontalBox) {
+    expect(Math.abs(verticalBox.x - horizontalBox.x)).toBeLessThanOrEqual(1);
+  }
+  if (verticalBox && childButtonBox) {
+    expect(Math.abs(verticalBox.y - childButtonBox.y)).toBeLessThanOrEqual(1);
+  }
+  await page.screenshot({ path: testInfo.outputPath('effective-hierarchy.png'), fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByLabel('Hierarchy as of')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Effective hierarchy' })).toBeVisible();
+  await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390);
+  await page.screenshot({
+    path: testInfo.outputPath('effective-hierarchy-narrow.png'),
+    fullPage: true,
+  });
+});
+
+test('reviews an effective-dated Organization Unit successor without rewriting the current version', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now();
+  const name = `Records Information Office ${suffix}`;
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/organization');
+  await page.getByRole('button', { name: 'Create Organization Unit' }).click();
+  await page.getByLabel('Official name').fill(name);
+  await page.getByLabel('Agency-unique code').fill(`RIO-${suffix}`);
+  await page.getByLabel('Unit type').selectOption('OFFICE');
+  await page.getByLabel('Effective date').fill('2026-08-15');
+  await page.getByRole('button', { name: 'Create Draft' }).click();
+
+  const row = page.getByRole('row').filter({ hasText: name });
+  await row.getByRole('button', { name: `Place and activate ${name}` }).click();
+  await page.getByLabel('Activation reason').fill('Approved as an Agency root');
+  await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
+  await expect(page.getByRole('status')).toContainText(`${name} is now active.`);
+
+  await page
+    .getByRole('button', { name: new RegExp(name) })
+    .first()
+    .click();
+  await page.getByRole('button', { name: 'Prepare change' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Review Organization Unit successor' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAccessibleDescription(
+    'Edit the proposed values and effective date. The current version remains unchanged until activation.',
+  );
+  await expect(page.getByLabel('Proposed official name')).toBeFocused();
+  await expect(dialog).toContainText(name);
+  await expect(dialog).toContainText('Proposed successor');
+  await page.getByRole('button', { name: 'Save Draft' }).click();
+  await dialog.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('status')).toContainText('Draft successor saved');
 });

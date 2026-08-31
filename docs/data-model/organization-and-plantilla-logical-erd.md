@@ -164,7 +164,7 @@ Stable qualification-standard identity.
 
 **Constraints and indexes**
 
-- Unique `(agency_id, code)`.
+- Unique `(agency_id, code)` and `(agency_id, name)`.
 
 **Deletion behavior:** Inactivate.
 ## `qualification_standard_versions`
@@ -182,9 +182,11 @@ Effective-dated minimum qualification requirements.
 | eligibility_requirement | string | Yes |  | Civil service eligibility |
 | competency_requirements | json | No |  | Structured competency requirements |
 | license_requirements | json | No |  | Professional licenses |
+| special_requirements | string | Yes |  | Other minimum requirements |
 | effective_from | date | No |  | Start |
 | effective_to | date | Yes |  | End |
 | version_no | integer | No |  | Version |
+| domain_status | enum | No |  | ACTIVE, INACTIVE during the effective period |
 
 **Constraints and indexes**
 
@@ -193,7 +195,7 @@ Effective-dated minimum qualification requirements.
 **Deletion behavior:** Supersede.
 ## `position_documents`
 
-Links position and authority documents.
+Links a stable Plantilla Position to supporting External Evidence Documents.
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
@@ -201,8 +203,9 @@ Links position and authority documents.
 | agency_id | uuid | No | FK agencies | Tenant |
 | position_id | uuid | No | FK plantilla_positions | Position |
 | document_id | uuid | No | FK documents | Document |
-| document_type | enum | No |  | PDF, AUTHORITY, RECLASSIFICATION, ABOLITION, OTHER |
+| document_type | enum | No |  | POSITION_DESCRIPTION, CREATION, RECLASSIFICATION, TRANSFER, FREEZE, ABOLITION, OTHER; controlled evidence purpose, distinct from the Document business type and MIME type |
 | effective_from | date | Yes |  | Effectivity |
+| created_at | timestamp | No |  | Link creation time |
 
 **Constraints and indexes**
 

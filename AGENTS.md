@@ -27,6 +27,31 @@ Do not invent public-sector business rules.
 Use `docs/development-workflow.md` for routing gates, GitHub ticket gates,
 implementation, pull requests, GitHub Actions, and continuity.
 
+## Cross-machine setup gate
+
+After any `git pull`, branch checkout, worktree handoff, or continuation from
+another machine, complete the `After pulling changes` procedure in `README.md`
+before investigating or changing application code. Treat a setup failure as
+the first task.
+
+The gate is complete only when all of these are true:
+
+- the repository runtime is Node 24 from `.node-version` and dependencies match
+  `pnpm-lock.yaml`;
+- `.env` exists and contains every current key from `.env.example` without
+  replacing existing local secrets;
+- Docker Compose infrastructure is healthy;
+- `pnpm db:migrate` succeeds and reports no pending migrations;
+- no old LingkodHR process owns ports `3000`, `3001`, `3002`, or `4100` before
+  starting a new dev stack;
+- API, worker, and local OIDC health checks respond successfully;
+- for protected browser or admin work, the protected-shell fixture has been
+  seeded and `/dashboard` completes local OIDC login.
+
+Do not work around a failed migration by deleting the database or migration
+history. Diagnose ownership, environment, schema drift, or stale processes
+first, then leave the setup reproducible for the next machine.
+
 Use `$ask-matt` for Matt Pocock skill routing.
 
 ## Pull requests

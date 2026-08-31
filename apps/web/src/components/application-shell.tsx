@@ -47,6 +47,31 @@ function Icon({ name }: { name: DestinationIcon }) {
       </svg>
     );
   }
+  if (name === 'authority') {
+    return (
+      <svg {...common}>
+        <path d="M12 3 19 6v5c0 4.5-2.9 8-7 10-4.1-2-7-5.5-7-10V6l7-3Z" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+    );
+  }
+  if (name === 'qualification') {
+    return (
+      <svg {...common}>
+        <path d="M4 5h16v14H4z" />
+        <path d="M8 9h8M8 13h5M8 17h7" />
+      </svg>
+    );
+  }
+  if (name === 'position') {
+    return (
+      <svg {...common}>
+        <path d="M4 5h16v14H4z" />
+        <path d="M8 9h8M8 13h5M8 17h7" />
+        <path d="M17 3v4" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <path d="M7 3h10v4H7zM5 7h14v14H5zM9 12h6M9 16h4" />

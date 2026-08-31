@@ -33,6 +33,17 @@ it.skipIf(!enabled)(
     if (!runtimeUrl) throw new Error('DATABASE_URL is required for the integration test.');
     const app = new PrismaClient({ datasources: { db: { url: runtimeUrl } } });
     const admin = await createAdminClient();
+    const auditorReadPermission = await admin.$queryRaw<Array<{ id: string }>>`
+      SELECT rp."permission_id" AS id
+      FROM "role_permissions" rp
+      JOIN "roles" r ON r."id" = rp."role_id"
+      JOIN "permissions" p ON p."id" = rp."permission_id"
+      WHERE r."code" = 'internal_auditor'
+        AND r."agency_id" IS NULL
+        AND p."code" = 'organization.units.read'
+        AND rp."scope_policy" = 'AGENCY'
+    `;
+    expect(auditorReadPermission).toHaveLength(1);
     const suffix = `${Date.now()}`;
     const agencies = await Promise.all(
       ['A', 'B'].map((label) =>
@@ -123,12 +134,131 @@ it.skipIf(!enabled)(
           }),
         ),
       ).rejects.toThrow(/foreign key|row-level security/i);
+
+      const ownVersion = await withContext(
+        app,
+        { agencyId: agencyA.id, userId: user.id },
+        (transaction) =>
+          transaction.organizationUnitVersion.create({
+            data: {
+              agencyId: agencyA.id,
+              organizationUnitId: ownUnit.id,
+              versionNo: 1,
+              name: 'Own Unit',
+              effectiveFrom: new Date('2026-08-15'),
+              status: 'DRAFT',
+              domainStatus: 'ACTIVE',
+            },
+          }),
+      );
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.organizationUnitVersion.create({
+            data: {
+              agencyId: agencyA.id,
+              organizationUnitId: ownUnit.id,
+              versionNo: 2,
+              name: 'Second Draft',
+              effectiveFrom: new Date('2026-09-01'),
+              status: 'DRAFT',
+              domainStatus: 'ACTIVE',
+            },
+          }),
+        ),
+      ).rejects.toThrow(/unique/i);
+
+      const selfParentUnit = await withContext(
+        app,
+        { agencyId: agencyA.id, userId: user.id },
+        (transaction) =>
+          transaction.organizationUnit.create({
+            data: {
+              agencyId: agencyA.id,
+              code: 'SELF-PARENT',
+              unitType: 'OFFICE',
+              status: 'DRAFT',
+            },
+          }),
+      );
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.organizationUnitVersion.create({
+            data: {
+              agencyId: agencyA.id,
+              organizationUnitId: selfParentUnit.id,
+              versionNo: 1,
+              name: 'Self Parent',
+              parentUnitId: selfParentUnit.id,
+              effectiveFrom: new Date('2026-08-15'),
+              status: 'DRAFT',
+              domainStatus: 'ACTIVE',
+            },
+          }),
+        ),
+      ).rejects.toThrow(/check constraint/i);
+
+      await withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+        transaction.organizationUnitVersion.update({
+          where: { id: ownVersion.id },
+          data: { status: 'ACTIVE' },
+        }),
+      );
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.agencyMembership.update({
+            where: { id: membershipA.id },
+            data: { primaryOrganizationUnitId: ownUnit.id },
+          }),
+        ),
+      ).resolves.toMatchObject({ primaryOrganizationUnitId: ownUnit.id });
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.agencyMembership.update({
+            where: { id: membershipA.id },
+            data: { primaryOrganizationUnitId: foreignUnit.id },
+          }),
+        ),
+      ).rejects.toThrow(/foreign key|row-level security|active Organization Unit/i);
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.organizationUnitVersion.update({
+            where: { id: ownVersion.id },
+            data: { name: 'Silently Rewritten Unit' },
+          }),
+        ),
+      ).rejects.toThrow(/immutable/i);
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.organizationUnitVersion.update({
+            where: { id: ownVersion.id },
+            data: { status: 'VOIDED' },
+          }),
+        ),
+      ).rejects.toThrow(/correction transaction/i);
+      await expect(
+        withContext(app, { agencyId: agencyA.id, userId: user.id }, (transaction) =>
+          transaction.organizationUnitVersion.create({
+            data: {
+              agencyId: agencyA.id,
+              organizationUnitId: ownUnit.id,
+              versionNo: 2,
+              name: 'Overlapping Unit',
+              effectiveFrom: new Date('2026-08-20'),
+              status: 'ACTIVE',
+              domainStatus: 'ACTIVE',
+            },
+          }),
+        ),
+      ).rejects.toThrow(/exclusion|overlap/i);
     } finally {
-      await admin.organizationUnitVersion.deleteMany({
-        where: { agencyId: { in: agencies.map(({ id }) => id) } },
-      });
-      await admin.organizationUnit.deleteMany({
-        where: { agencyId: { in: agencies.map(({ id }) => id) } },
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.organizationUnitVersion.deleteMany({
+          where: { agencyId: { in: agencies.map(({ id }) => id) } },
+        });
+        await transaction.organizationUnit.deleteMany({
+          where: { agencyId: { in: agencies.map(({ id }) => id) } },
+        });
       });
       await admin.agencyMembership.deleteMany({
         where: { id: { in: memberships.map(({ id }) => id) } },
