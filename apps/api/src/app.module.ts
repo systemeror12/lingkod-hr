@@ -8,6 +8,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { StaffingAuthoritiesModule } from './staffing-authorities/staffing-authorities.module';
 import { QualificationStandardsModule } from './qualification-standards/qualification-standards.module';
 import { PlantillaPositionsModule } from './plantilla-positions/plantilla-positions.module';
+import { EmployeesModule } from './employees/employees.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { PlantillaPositionsModule } from './plantilla-positions/plantilla-positi
     StaffingAuthoritiesModule,
     QualificationStandardsModule,
     PlantillaPositionsModule,
+    EmployeesModule,
   ],
   controllers: [HealthController],
 })

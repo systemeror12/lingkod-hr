@@ -14,6 +14,7 @@ export interface DatabaseContext {
   qualificationStandardTransition?: boolean;
   plantillaPositionTransition?: boolean;
   plantillaPositionEvidenceTransition?: boolean;
+  employeeMembershipLink?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -62,6 +63,11 @@ export async function setDatabaseContext(
       set_config(
         'app.plantilla_position_evidence_transition',
         ${context.plantillaPositionEvidenceTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.employee_membership_link',
+        ${context.employeeMembershipLink ? 'on' : ''},
         true
       )
   `;
