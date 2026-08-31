@@ -79,7 +79,7 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await dialog.getByRole('button', { name: 'Add child' }).click();
   await dialog.getByLabel('Full name').fill('Mara Santos Jr.');
   await dialog.getByLabel('Date of birth').fill('2020-04-20');
-  const routePattern = '**/api/v1/agencies/*/employees/*/pds';
+  const routePattern = '**/api/v1/agencies/**/pds**';
   let releaseCreate: () => void = () => {};
   const createHeld = new Promise<void>((resolve) => {
     releaseCreate = resolve;
@@ -88,7 +88,7 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
     if (route.request().method() === 'POST') await createHeld;
     await route.continue();
   });
-  const saveButton = dialog.getByRole('button', { name: 'Save Draft' });
+  const saveButton = dialog.locator('button[type="submit"]');
   const saveRequest = saveButton.click();
   await expect(saveButton).toBeDisabled();
   await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeDisabled();
