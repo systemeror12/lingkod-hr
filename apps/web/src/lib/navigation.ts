@@ -69,6 +69,21 @@ const destinations: readonly (Destination & {
         ({ code, scopePolicy }) => code === 'personnel.pds.read' && scopePolicy === 'OWN',
       ),
   },
+  {
+    href: '/my-documents',
+    label: 'My Documents',
+    icon: 'users',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) => code === 'personnel.documents.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
+    href: '/personnel-baselines',
+    label: 'Personnel Baselines',
+    icon: 'position',
+    permission: 'personnel.baselines.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 

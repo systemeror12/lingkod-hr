@@ -27,9 +27,23 @@ export interface EmployeeSummary {
   civilStatus: string;
   contactEmail: string;
   serviceStatus: string;
+  firstGovernmentServiceDate: string | null;
+  agencyServiceStartDate: string | null;
+  currentServiceSegment: EmployeeServiceProjection | null;
   membershipId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface EmployeeServiceProjection {
+  id: string;
+  positionId: string | null;
+  organizationUnitId: string;
+  appointmentStatus: string;
+  salaryGrade: number | null;
+  salaryStep: number | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
 }
 
 export interface EmployeeDetail extends EmployeeSummary {
@@ -75,6 +89,20 @@ const employeeSelect = {
   civilStatus: true,
   contactEmail: true,
   serviceStatus: true,
+  firstGovernmentServiceDate: true,
+  agencyServiceStartDate: true,
+  currentServiceSegment: {
+    select: {
+      id: true,
+      positionId: true,
+      organizationUnitId: true,
+      appointmentStatus: true,
+      salaryGrade: true,
+      salaryStep: true,
+      effectiveFrom: true,
+      effectiveTo: true,
+    },
+  },
   rowVersion: true,
   createdAt: true,
   updatedAt: true,
@@ -135,6 +163,26 @@ function employeeSummary(record: EmployeeRecord): EmployeeSummary {
     civilStatus: record.civilStatus,
     contactEmail: record.contactEmail,
     serviceStatus: record.serviceStatus,
+    firstGovernmentServiceDate: record.firstGovernmentServiceDate
+      ? formatDate(record.firstGovernmentServiceDate)
+      : null,
+    agencyServiceStartDate: record.agencyServiceStartDate
+      ? formatDate(record.agencyServiceStartDate)
+      : null,
+    currentServiceSegment: record.currentServiceSegment
+      ? {
+          id: record.currentServiceSegment.id,
+          positionId: record.currentServiceSegment.positionId,
+          organizationUnitId: record.currentServiceSegment.organizationUnitId,
+          appointmentStatus: record.currentServiceSegment.appointmentStatus,
+          salaryGrade: record.currentServiceSegment.salaryGrade,
+          salaryStep: record.currentServiceSegment.salaryStep,
+          effectiveFrom: formatDate(record.currentServiceSegment.effectiveFrom),
+          effectiveTo: record.currentServiceSegment.effectiveTo
+            ? formatDate(record.currentServiceSegment.effectiveTo)
+            : null,
+        }
+      : null,
     membershipId: record.memberships[0]?.id ?? null,
     createdAt: formatDateTime(record.createdAt),
     updatedAt: formatDateTime(record.updatedAt),

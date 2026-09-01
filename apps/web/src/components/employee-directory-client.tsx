@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Button, buttonVariants } from './ui/button';
+import { EmployeeDocumentsSection } from './employee-documents-client';
 import {
   EmployeeInitials,
   EmployeePageTitle,
@@ -244,11 +245,19 @@ export function EmployeeDetailView({
   initial,
   canUpdate,
   canReadPds,
+  canReadDocuments,
+  canManageDocuments,
+  canUploadOwnDocuments,
+  canBrowseSourceDocuments,
 }: {
   agencyId: string;
   initial: EmployeeDetailData;
   canUpdate: boolean;
   canReadPds: boolean;
+  canReadDocuments: boolean;
+  canManageDocuments: boolean;
+  canUploadOwnDocuments: boolean;
+  canBrowseSourceDocuments: boolean;
 }) {
   const [detail, setDetail] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -414,6 +423,15 @@ export function EmployeeDetailView({
             {message}
           </p>
         </div>
+        <EmployeeDocumentsSection
+          agencyId={agencyId}
+          employeeId={detail.id}
+          canRead={canReadDocuments}
+          canManage={canManageDocuments}
+          canUploadOwn={canUploadOwnDocuments}
+          canBrowseSource={canBrowseSourceDocuments}
+          canRemoveOwn={canUploadOwnDocuments}
+        />
         <div className="border-t border-line bg-pale-blue px-6 py-4 text-xs leading-5 text-[#34557e] min-[700px]:px-8">
           Appointments, positions, salary, supervisors, separation, and retirement remain outside
           this record.

@@ -16,6 +16,8 @@ export interface DatabaseContext {
   plantillaPositionEvidenceTransition?: boolean;
   employeeMembershipLink?: boolean;
   pdsMutation?: boolean;
+  employeeDocumentTransition?: boolean;
+  personnelBaselineTransition?: boolean;
 }
 
 export async function withDatabaseContext<T>(
@@ -74,6 +76,16 @@ export async function setDatabaseContext(
       set_config(
         'app.pds_mutation',
         ${context.pdsMutation ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.employee_document_transition',
+        ${context.employeeDocumentTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.personnel_baseline_transition',
+        ${context.personnelBaselineTransition ? 'on' : ''},
         true
       )
   `;
