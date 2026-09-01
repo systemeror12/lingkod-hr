@@ -75,6 +75,9 @@ export async function setDatabaseContext(
       set_config(
         'app.employee_document_transition',
         ${context.employeeDocumentTransition ? 'on' : ''},
+        true
+      ),
+      set_config(
         'app.personnel_baseline_transition',
         ${context.personnelBaselineTransition ? 'on' : ''},
         true
