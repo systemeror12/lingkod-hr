@@ -64,6 +64,22 @@ export class EmployeesController {
     }
   }
 
+  @Get(':agencyId/employees/me')
+  @RequirePermission('personnel.documents.read')
+  async findOwn(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<EmployeeDto> {
+    this.assertReadAgency(agencyId, context);
+    try {
+      const employee = await this.service.findOwn(context);
+      if (!employee) throw this.notFound(context);
+      return new EmployeeDto(employee);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   @Post(':agencyId/employees')
   @RequirePermission('personnel.employees.create')
   async create(
