@@ -48,6 +48,15 @@ export interface DocumentSummary {
   currentVersion: DocumentVersionSummary | null;
 }
 
+export interface LinkableDocumentVersionSummary {
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: DocumentClassification;
+  status: string;
+  version: DocumentVersionSummary;
+}
+
 export interface DocumentAccess {
   document: DocumentSummary;
   accessUrl: string;
@@ -129,7 +138,15 @@ const documentSelect = {
   },
 } as const;
 
+const linkableVersionSelect = {
+  ...versionSelect,
+  document: { select: documentFields },
+} as const;
+
 type DocumentRecord = Prisma.DocumentGetPayload<{ select: typeof documentSelect }>;
+type LinkableVersionRecord = Prisma.DocumentVersionGetPayload<{
+  select: typeof linkableVersionSelect;
+}>;
 
 function databaseContext(context: RequestContext) {
   return {
@@ -166,6 +183,17 @@ function toSummary(record: DocumentRecord): DocumentSummary {
     status: record.status,
     createdAt: formatDateTime(record.createdAt),
     currentVersion: record.currentVersion ? toVersionSummary(record.currentVersion) : null,
+  };
+}
+
+function toLinkableVersionSummary(record: LinkableVersionRecord): LinkableDocumentVersionSummary {
+  return {
+    documentId: record.document.id,
+    documentNo: record.document.documentNo,
+    documentType: record.document.documentType,
+    classification: record.document.classification as DocumentClassification,
+    status: record.document.status,
+    version: toVersionSummary(record),
   };
 }
 
@@ -210,6 +238,22 @@ export class DocumentsService {
 
   async create(context: RequestContext, input: CreateDocumentInput): Promise<DocumentSummary> {
     this.assertPermission(context, 'documents.evidence.create', 'DOCUMENT_CREATE_FORBIDDEN');
+    return this.createStoredDocument(context, input);
+  }
+
+  /** Internal contract: personnel authorization is checked by the owning link service. */
+  async createForPersonnel(
+    context: RequestContext,
+    input: CreateDocumentInput,
+  ): Promise<DocumentSummary> {
+    this.assertContext(context);
+    return this.createStoredDocument(context, input);
+  }
+
+  private async createStoredDocument(
+    context: RequestContext,
+    input: CreateDocumentInput,
+  ): Promise<DocumentSummary> {
     const file = this.validateFile(input.file);
     const documentType = input.documentType.trim();
     const documentNo = this.normalizeDocumentNo(input.documentNo);
@@ -548,6 +592,41 @@ export class DocumentsService {
     return records.map(toSummary);
   }
 
+  async listFinalizedVersionsForLinking(
+    context: RequestContext,
+  ): Promise<LinkableDocumentVersionSummary[]> {
+    this.assertReadPermission(context);
+    const canReadSensitive = hasPermission(context, 'documents.evidence.read_sensitive', {
+      agencyId: context.agencyId,
+    });
+    const records = await withDatabaseContext(databaseContext(context), (transaction) =>
+      transaction.documentVersion.findMany({
+        where: {
+          agencyId: context.agencyId,
+          OR: [
+            { issuedAt: { not: null } },
+            {
+              currentForDocuments: {
+                some: {
+                  agencyId: context.agencyId,
+                  status: { in: [...LINKABLE_EXTERNAL_EVIDENCE_STATUSES] },
+                },
+              },
+            },
+          ],
+          document: {
+            status: { not: 'VOIDED' },
+            ...(canReadSensitive ? {} : { classification: { not: 'HIGHLY_SENSITIVE' } }),
+          },
+        },
+        orderBy: [{ createdAt: 'desc' }, { versionNo: 'desc' }],
+        take: 200,
+        select: linkableVersionSelect,
+      }),
+    );
+    return records.map(toLinkableVersionSummary);
+  }
+
   /** Internal contract: callers own authorization and use this only inside their transaction. */
   async findDocumentForLinkingInTransaction(
     transaction: Prisma.TransactionClient,
@@ -561,7 +640,7 @@ export class DocumentsService {
         select: {
           ...documentFields,
           versions: {
-            where: { id: versionId, agencyId: context.agencyId },
+            where: { id: versionId, agencyId: context.agencyId, documentId },
             take: 1,
             select: versionSelect,
           },
@@ -587,14 +666,57 @@ export class DocumentsService {
     return toSummary(record);
   }
 
+  /** Internal contract: personnel own-record links may use only their uploaded version. */
+  async isVersionCreatedByMembershipInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    documentId: string,
+    versionId: string,
+    membershipId: string,
+  ): Promise<boolean> {
+    const version = await transaction.documentVersion.findFirst({
+      where: {
+        id: versionId,
+        documentId,
+        agencyId: context.agencyId,
+        createdByMembershipId: membershipId,
+      },
+      select: { id: true },
+    });
+    return Boolean(version);
+  }
+
   async issueAccessLink(
     context: RequestContext,
     documentId: string,
     versionId?: string,
   ): Promise<DocumentAccess | null> {
     this.assertReadPermission(context);
+    return this.issueAccessLinkInternal(context, documentId, versionId);
+  }
+
+  /** Internal contract: the owning personnel service has already checked record scope. */
+  async issueAccessLinkForPersonnel(
+    context: RequestContext,
+    documentId: string,
+    versionId: string,
+    allowSensitive = false,
+  ): Promise<DocumentAccess | null> {
+    this.assertContext(context);
+    return this.issueAccessLinkInternal(context, documentId, versionId, allowSensitive);
+  }
+
+  private async issueAccessLinkInternal(
+    context: RequestContext,
+    documentId: string,
+    versionId: string | undefined,
+    allowSensitive = false,
+  ): Promise<DocumentAccess | null> {
     const versionArgs = versionId
-      ? { where: { id: versionId, agencyId: context.agencyId }, select: versionSelect }
+      ? {
+          where: { id: versionId, agencyId: context.agencyId, documentId },
+          select: versionSelect,
+        }
       : { orderBy: { versionNo: 'desc' as const }, take: 1, select: versionSelect };
     const record = await withDatabaseContext(databaseContext(context), (transaction) =>
       transaction.document.findFirst({
@@ -606,7 +728,7 @@ export class DocumentsService {
       }),
     );
     if (!record) return null;
-    this.assertClassificationPermission(context, record.classification);
+    this.assertClassificationPermission(context, record.classification, allowSensitive);
     const version = record.versions[0];
     if (!version) return null;
 
@@ -794,15 +916,30 @@ export class DocumentsService {
     this.assertPermission(context, 'documents.evidence.read', 'DOCUMENT_READ_FORBIDDEN');
   }
 
-  private assertClassificationPermission(context: RequestContext, classification: string): void {
+  private assertClassificationPermission(
+    context: RequestContext,
+    classification: string,
+    allowSensitive = false,
+  ): void {
     if (
       classification === 'HIGHLY_SENSITIVE' &&
+      !allowSensitive &&
       !hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId })
     ) {
       throw new DocumentsServiceError(
         'The current Agency Membership lacks the required permission.',
         403,
         'DOCUMENT_SENSITIVE_READ_FORBIDDEN',
+      );
+    }
+  }
+
+  private assertContext(context: RequestContext): void {
+    if (!context.agencyId || !context.userId || !context.membershipId) {
+      throw new DocumentsServiceError(
+        'The active Agency Context is required.',
+        403,
+        'DOCUMENT_CONTEXT_INVALID',
       );
     }
   }

@@ -20,7 +20,12 @@ import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
-import { DocumentAccessDto, DocumentDto, DocumentListResponseDto } from './documents.dto';
+import {
+  DocumentAccessDto,
+  DocumentDto,
+  DocumentListResponseDto,
+  LinkableDocumentVersionListResponseDto,
+} from './documents.dto';
 import {
   documentCreateSchema,
   documentIdSchema,
@@ -80,6 +85,22 @@ export class DocumentsController {
     this.assertReadAgency(agencyId, context);
     try {
       return new DocumentListResponseDto(await this.documentsService.listForLinking(context));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/documents/versions')
+  @RequirePermission('documents.evidence.read')
+  async listFinalizedVersions(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LinkableDocumentVersionListResponseDto> {
+    this.assertReadAgency(agencyId, context);
+    try {
+      return new LinkableDocumentVersionListResponseDto(
+        await this.documentsService.listFinalizedVersionsForLinking(context),
+      );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

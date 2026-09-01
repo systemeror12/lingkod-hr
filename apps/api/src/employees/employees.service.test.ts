@@ -44,6 +44,15 @@ it('rechecks the read permission before listing Employees', async () => {
   });
 });
 
+it('rechecks the Personnel Document permission before resolving the own Employee', async () => {
+  const service = new EmployeesService(employeeAuditWriter);
+
+  await expect(service.findOwn(context([]))).rejects.toMatchObject({
+    code: 'EMPLOYEE_DOCUMENT_READ_FORBIDDEN',
+    statusCode: 403,
+  });
+});
+
 it('rechecks the update permission before changing Membership links', async () => {
   const service = new EmployeesService(employeeAuditWriter);
 

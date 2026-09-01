@@ -60,6 +60,15 @@ const destinations: readonly (Destination & {
     permission: 'personnel.employees.read',
   },
   {
+    href: '/my-documents',
+    label: 'My Documents',
+    icon: 'users',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) => code === 'personnel.documents.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
     href: '/personnel-baselines',
     label: 'Personnel Baselines',
     icon: 'position',
