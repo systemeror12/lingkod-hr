@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import {
   EmployeeInitials,
@@ -244,6 +244,7 @@ export function EmployeeDetailView({
   agencyId,
   initial,
   canUpdate,
+  canReadPds,
   canReadDocuments,
   canManageDocuments,
   canUploadOwnDocuments,
@@ -252,6 +253,7 @@ export function EmployeeDetailView({
   agencyId: string;
   initial: EmployeeDetailData;
   canUpdate: boolean;
+  canReadPds: boolean;
   canReadDocuments: boolean;
   canManageDocuments: boolean;
   canUploadOwnDocuments: boolean;
@@ -324,7 +326,17 @@ export function EmployeeDetailView({
           title={detail.legalName}
           description={`Stable identity record · ${detail.employeeNumber}`}
         />
-        <EmployeeStatus linked={Boolean(detail.membershipId)} />
+        <div className="flex flex-wrap items-center gap-3">
+          <EmployeeStatus linked={Boolean(detail.membershipId)} />
+          {canReadPds && (
+            <Link
+              href={`/employees/${detail.id}/pds`}
+              className={buttonVariants({ variant: 'secondary', size: 'default' })}
+            >
+              Maintain PDS
+            </Link>
+          )}
+        </div>
       </header>
       <article className="overflow-hidden rounded-[4px] border border-line bg-paper">
         <div className="flex items-center gap-5 border-b border-line px-6 py-6 min-[700px]:px-8">

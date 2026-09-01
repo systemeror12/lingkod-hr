@@ -15,6 +15,7 @@ export interface DatabaseContext {
   plantillaPositionTransition?: boolean;
   plantillaPositionEvidenceTransition?: boolean;
   employeeMembershipLink?: boolean;
+  pdsMutation?: boolean;
   employeeDocumentTransition?: boolean;
   personnelBaselineTransition?: boolean;
 }
@@ -70,6 +71,11 @@ export async function setDatabaseContext(
       set_config(
         'app.employee_membership_link',
         ${context.employeeMembershipLink ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.pds_mutation',
+        ${context.pdsMutation ? 'on' : ''},
         true
       ),
       set_config(

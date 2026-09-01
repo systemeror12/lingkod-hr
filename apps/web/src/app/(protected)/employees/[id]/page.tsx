@@ -65,6 +65,7 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
       agencyId={session.agencyId}
       initial={value as EmployeeDetailData}
       canUpdate={hasPermission(session, 'personnel.employees.update')}
+      canReadPds={hasPermission(session, 'personnel.pds.read')}
       canReadDocuments={hasPermission(session, 'personnel.documents.read')}
       canManageDocuments={hasPermission(session, 'personnel.documents.classify')}
       canUploadOwnDocuments={session.permissions.some(
