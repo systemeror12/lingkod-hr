@@ -10,6 +10,7 @@ import { QualificationStandardsModule } from './qualification-standards/qualific
 import { PlantillaPositionsModule } from './plantilla-positions/plantilla-positions.module';
 import { EmployeesModule } from './employees/employees.module';
 import { EmployeeDocumentsModule } from './employee-documents/employee-documents.module';
+import { PersonnelBaselinesModule } from './personnel-baselines/personnel-baselines.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { EmployeeDocumentsModule } from './employee-documents/employee-documents
     PlantillaPositionsModule,
     EmployeesModule,
     EmployeeDocumentsModule,
+    PersonnelBaselinesModule,
   ],
   controllers: [HealthController],
 })

@@ -68,6 +68,12 @@ const destinations: readonly (Destination & {
         ({ code, scopePolicy }) => code === 'personnel.documents.read' && scopePolicy === 'OWN',
       ),
   },
+  {
+    href: '/personnel-baselines',
+    label: 'Personnel Baselines',
+    icon: 'position',
+    permission: 'personnel.baselines.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 

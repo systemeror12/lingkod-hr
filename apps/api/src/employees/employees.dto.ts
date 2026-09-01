@@ -13,6 +13,9 @@ export class EmployeeDto {
   readonly civilStatus: string;
   readonly contactEmail: string;
   readonly serviceStatus: string;
+  readonly firstGovernmentServiceDate: string | null;
+  readonly agencyServiceStartDate: string | null;
+  readonly currentServiceSegment: EmployeeSummary['currentServiceSegment'];
   readonly membershipId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -26,6 +29,9 @@ export class EmployeeDto {
     this.civilStatus = employee.civilStatus;
     this.contactEmail = employee.contactEmail;
     this.serviceStatus = employee.serviceStatus;
+    this.firstGovernmentServiceDate = employee.firstGovernmentServiceDate;
+    this.agencyServiceStartDate = employee.agencyServiceStartDate;
+    this.currentServiceSegment = employee.currentServiceSegment;
     this.membershipId = employee.membershipId;
     this.createdAt = employee.createdAt;
     this.updatedAt = employee.updatedAt;
