@@ -95,9 +95,6 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await expect(dialog.getByLabel('Education level').nth(0)).toHaveValue('ELEMENTARY');
   await expect(dialog.getByLabel('Education level').nth(1)).toHaveValue('COLLEGE');
   await educationSection.getByRole('button', { name: 'Remove' }).first().click();
-  const eligibilitySection = dialog
-    .locator('fieldset')
-    .filter({ hasText: 'Civil-service eligibility' });
   await dialog.getByRole('button', { name: 'Add eligibility row' }).click();
   await dialog.getByLabel('Eligibility name / category').fill('Career Service Professional');
   await dialog.getByLabel('Rating').fill('Passed');
