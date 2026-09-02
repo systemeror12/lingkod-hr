@@ -107,6 +107,7 @@ export default async function EmployeePdsPage({ params }: { params: Promise<{ id
       initialList={list}
       initialDetail={detail}
       canUpdate={canWritePds(session)}
+      canBrowseEvidence={hasPermission(session, 'documents.evidence.read')}
       createUrl={`/api/v1/agencies/${session.agencyId}/employees/${id}/pds`}
       backHref={`/employees/${id}`}
     />

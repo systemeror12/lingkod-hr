@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -110,6 +110,18 @@ interface PdsFamilyData {
   mother: PdsFamilyRecordData | null;
 }
 
+interface PdsEvidenceData {
+  documentId: string | null;
+  documentVersionId: string | null;
+}
+
+interface PdsEvidenceOption {
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  version: { id: string; versionNo: number };
+}
+
 interface PdsEducationRecordData {
   id?: string;
   sequenceNo: number;
@@ -137,11 +149,77 @@ interface PdsEligibilityRecordData {
   documentVersionId: string | null;
 }
 
+interface PdsWorkExperienceData extends PdsEvidenceData {
+  id?: string;
+  sequenceNo: number;
+  inclusiveFrom: string | null;
+  inclusiveTo: string | null;
+  positionTitle: string | null;
+  departmentAgencyOfficeCompany: string | null;
+  monthlySalary: number | null;
+  salaryGradeStep: string | null;
+  appointmentStatus: string | null;
+  governmentService: 'Y' | 'N' | null;
+  isCurrent?: boolean;
+}
+
+interface PdsVoluntaryWorkData extends PdsEvidenceData {
+  id?: string;
+  sequenceNo: number;
+  organizationNameAddress: string | null;
+  inclusiveFrom: string | null;
+  inclusiveTo: string | null;
+  hours: number | null;
+  positionNatureOfWork: string | null;
+}
+
+interface PdsLearningDevelopmentData extends PdsEvidenceData {
+  id?: string;
+  sequenceNo: number;
+  interventionTitle: string | null;
+  attendanceFrom: string | null;
+  attendanceTo: string | null;
+  hours: number | null;
+  type: string | null;
+  conductedSponsoredBy: string | null;
+}
+
+interface PdsWesEntryData {
+  id?: string;
+  workExperienceId?: string;
+  workExperienceSequenceNo?: number;
+  sequenceNo: number;
+  durationText: string;
+  position: string | null;
+  officeUnit: string | null;
+  immediateSupervisor: string | null;
+  agencyOrganizationLocation: string | null;
+  accomplishments: string | null;
+  actualDuties: string | null;
+}
+
+interface PdsWesData extends PdsEvidenceData {
+  id?: string;
+  contextKey: string | null;
+  entries: PdsWesEntryData[];
+}
+
 export interface PdsDetailData extends PdsVersionSummaryData {
   personal: PdsPersonalData | null;
   family: PdsFamilyData;
   education?: PdsEducationRecordData[];
   eligibility?: PdsEligibilityRecordData[];
+  workExperience?: PdsWorkExperienceData[];
+  voluntaryWork?: PdsVoluntaryWorkData[];
+  learningAndDevelopment?: PdsLearningDevelopmentData[];
+  wes?: PdsWesData[] | null;
+}
+
+interface PdsDetailSections {
+  workExperience: PdsWorkExperienceData[];
+  voluntaryWork: PdsVoluntaryWorkData[];
+  learningAndDevelopment: PdsLearningDevelopmentData[];
+  wes: PdsWesData[];
 }
 
 interface AddressForm {
@@ -161,6 +239,11 @@ interface NameForm {
   nameExtension: string;
 }
 
+interface EvidenceForm {
+  documentId: string;
+  documentVersionId: string;
+}
+
 interface SpouseForm extends NameForm {
   occupation: string;
   employerBusinessName: string;
@@ -169,8 +252,64 @@ interface SpouseForm extends NameForm {
 }
 
 interface ChildForm {
+  uiKey: string;
   fullName: string;
   birthDate: string;
+}
+
+interface WorkExperienceForm extends EvidenceForm {
+  uiKey: string;
+  id: string;
+  inclusiveFrom: string;
+  inclusiveTo: string;
+  positionTitle: string;
+  departmentAgencyOfficeCompany: string;
+  monthlySalary: string;
+  salaryGradeStep: string;
+  appointmentStatus: string;
+  governmentService: string;
+  isCurrent: boolean;
+}
+
+interface VoluntaryWorkForm extends EvidenceForm {
+  uiKey: string;
+  id: string;
+  organizationNameAddress: string;
+  inclusiveFrom: string;
+  inclusiveTo: string;
+  hours: string;
+  positionNatureOfWork: string;
+}
+
+interface LearningDevelopmentForm extends EvidenceForm {
+  uiKey: string;
+  id: string;
+  interventionTitle: string;
+  attendanceFrom: string;
+  attendanceTo: string;
+  hours: string;
+  type: string;
+  conductedSponsoredBy: string;
+}
+
+interface WesEntryForm {
+  uiKey: string;
+  id: string;
+  workExperienceKey: string;
+  durationText: string;
+  position: string;
+  officeUnit: string;
+  immediateSupervisor: string;
+  agencyOrganizationLocation: string;
+  accomplishments: string;
+  actualDuties: string;
+}
+
+interface WesForm extends EvidenceForm {
+  uiKey: string;
+  id: string;
+  contextKey: string;
+  entries: WesEntryForm[];
 }
 
 interface EducationForm {
@@ -234,6 +373,10 @@ interface PdsForm {
   mother: NameForm;
   education: EducationForm[];
   eligibility: EligibilityForm[];
+  workExperience: WorkExperienceForm[];
+  voluntaryWork: VoluntaryWorkForm[];
+  learningAndDevelopment: LearningDevelopmentForm[];
+  wes: WesForm[];
 }
 
 interface ErrorEnvelope {
@@ -275,6 +418,18 @@ const personalTextFields = [
   ['emailAddress', 'Email address'],
 ] as const satisfies readonly [keyof PersonalForm, string][];
 
+const workExperienceOptions = [
+  ['Y', 'Yes'],
+  ['N', 'No'],
+] as const satisfies readonly (readonly [string, string])[];
+
+let rowKeySeed = 0;
+
+function createRowKey(prefix: string): string {
+  rowKeySeed += 1;
+  return `${prefix}-${rowKeySeed}`;
+}
+
 const educationLevelOptions = [
   ['ELEMENTARY', 'Elementary'],
   ['SECONDARY', 'Secondary'],
@@ -305,6 +460,39 @@ function stringValue(value: string | number | null | undefined): string {
   return value === null || value === undefined ? '' : String(value);
 }
 
+function nullable(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function parsePdsEvidenceOptions(value: unknown): PdsEvidenceOption[] {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !Array.isArray((value as { documents?: unknown }).documents)
+  ) {
+    throw new Error('The Agency Document response was invalid.');
+  }
+  return (value as { documents: PdsEvidenceOption[] }).documents;
+}
+
+function optionalId(value: string): string | undefined {
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function optionalIdPayload(value: string): { id?: string } {
+  const id = optionalId(value);
+  return id ? { id } : {};
+}
+
+function numberValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function addressForm(value: PdsAddressData | null | undefined): AddressForm {
   return {
     houseBlockLotNo: stringValue(value?.houseBlockLotNo),
@@ -331,6 +519,10 @@ function blankAddress(): AddressForm {
 
 function blankName(): NameForm {
   return { surname: '', firstName: '', middleName: '', nameExtension: '' };
+}
+
+function blankEvidence(): EvidenceForm {
+  return { documentId: '', documentVersionId: '' };
 }
 
 function blankSpouse(): SpouseForm {
@@ -374,6 +566,154 @@ function blankPersonal(): PersonalForm {
   };
 }
 
+function blankChild(): ChildForm {
+  return { uiKey: createRowKey('child'), fullName: '', birthDate: '' };
+}
+
+function blankWorkExperience(): WorkExperienceForm {
+  return {
+    uiKey: createRowKey('work'),
+    id: '',
+    inclusiveFrom: '',
+    inclusiveTo: '',
+    positionTitle: '',
+    departmentAgencyOfficeCompany: '',
+    monthlySalary: '',
+    salaryGradeStep: '',
+    appointmentStatus: '',
+    governmentService: '',
+    isCurrent: false,
+    ...blankEvidence(),
+  };
+}
+
+function blankVoluntaryWork(): VoluntaryWorkForm {
+  return {
+    uiKey: createRowKey('voluntary'),
+    id: '',
+    organizationNameAddress: '',
+    inclusiveFrom: '',
+    inclusiveTo: '',
+    hours: '',
+    positionNatureOfWork: '',
+    ...blankEvidence(),
+  };
+}
+
+function blankLearningDevelopment(): LearningDevelopmentForm {
+  return {
+    uiKey: createRowKey('learning'),
+    id: '',
+    interventionTitle: '',
+    attendanceFrom: '',
+    attendanceTo: '',
+    hours: '',
+    type: '',
+    conductedSponsoredBy: '',
+    ...blankEvidence(),
+  };
+}
+
+function blankWesEntry(): WesEntryForm {
+  return {
+    uiKey: createRowKey('wes-entry'),
+    id: '',
+    workExperienceKey: '',
+    durationText: '',
+    position: '',
+    officeUnit: '',
+    immediateSupervisor: '',
+    agencyOrganizationLocation: '',
+    accomplishments: '',
+    actualDuties: '',
+  };
+}
+
+function blankWes(): WesForm {
+  return {
+    uiKey: createRowKey('wes'),
+    id: '',
+    contextKey: '',
+    entries: [blankWesEntry()],
+    ...blankEvidence(),
+  };
+}
+
+function evidencePayload(value: EvidenceForm) {
+  return {
+    documentId: nullable(value.documentId),
+    documentVersionId: nullable(value.documentVersionId),
+  };
+}
+
+function addressPayload(value: AddressForm): PdsAddressData {
+  return Object.fromEntries(
+    addressFields.map(([key]) => [key, nullable(value[key])]),
+  ) as unknown as PdsAddressData;
+}
+
+function namePayload(value: NameForm, includeNameExtension = true) {
+  return {
+    surname: nullable(value.surname),
+    firstName: nullable(value.firstName),
+    middleName: nullable(value.middleName),
+    ...(includeNameExtension ? { nameExtension: nullable(value.nameExtension) } : {}),
+  };
+}
+
+function updateAt<T>(items: readonly T[], index: number, updater: (item: T) => T): T[] {
+  return items.map((item, itemIndex) => (itemIndex === index ? updater(item) : item));
+}
+
+function removeAt<T>(items: readonly T[], index: number): T[] {
+  return items.filter((_, itemIndex) => itemIndex !== index);
+}
+
+function moveAt<T>(items: readonly T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction;
+  if (target < 0 || target >= items.length) return [...items];
+  const next = [...items];
+  const [item] = next.splice(index, 1);
+  if (!item) return [...items];
+  next.splice(target, 0, item);
+  return next;
+}
+
+function sequenceLabel(from: string, to: string, isCurrent = false): string {
+  if (isCurrent) {
+    if (from) return `${formatEmployeeDate(from)} to Present`;
+    return 'Present';
+  }
+  if (from && to) return `${formatEmployeeDate(from)} to ${formatEmployeeDate(to)}`;
+  if (from) return formatEmployeeDate(from);
+  if (to) return formatEmployeeDate(to);
+  return 'Not provided';
+}
+
+function workExperienceLabel(row: WorkExperienceForm, index: number): string {
+  const position = nullable(row.positionTitle);
+  const office = nullable(row.departmentAgencyOfficeCompany);
+  const duration =
+    row.inclusiveFrom || row.inclusiveTo || row.isCurrent
+      ? sequenceLabel(row.inclusiveFrom, row.inclusiveTo, row.isCurrent)
+      : null;
+  return [position, office, duration].filter(Boolean).join(' · ') || `Work experience ${index + 1}`;
+}
+
+function workKeyMaps(
+  rows: readonly WorkExperienceForm[],
+  sourceRows: readonly PdsWorkExperienceData[] = [],
+) {
+  const byId = new Map<string, string>();
+  const bySequence = new Map<number, string>();
+  rows.forEach((row, index) => {
+    const id = optionalId(row.id);
+    if (id) byId.set(id, row.uiKey);
+    bySequence.set(sourceRows[index]?.sequenceNo ?? index + 1, row.uiKey);
+  });
+  return { byId, bySequence };
+}
+
 function blankEducation(): EducationForm {
   return {
     level: '',
@@ -412,7 +752,24 @@ function moveRow<T>(rows: T[], index: number, offset: -1 | 1): T[] {
 }
 
 function formFromDetail(detail: PdsDetailData | null): PdsForm {
+  const workExperience = (detail?.workExperience ?? []).map((row) => ({
+    uiKey: createRowKey('work'),
+    id: row.id ?? '',
+    inclusiveFrom: stringValue(row.inclusiveFrom),
+    inclusiveTo: stringValue(row.inclusiveTo),
+    positionTitle: stringValue(row.positionTitle),
+    departmentAgencyOfficeCompany: stringValue(row.departmentAgencyOfficeCompany),
+    monthlySalary: stringValue(row.monthlySalary),
+    salaryGradeStep: stringValue(row.salaryGradeStep),
+    appointmentStatus: stringValue(row.appointmentStatus),
+    governmentService: stringValue(row.governmentService),
+    isCurrent: Boolean(row.isCurrent),
+    documentId: stringValue(row.documentId),
+    documentVersionId: stringValue(row.documentVersionId),
+  }));
+  const workKeys = workKeyMaps(workExperience, detail?.workExperience ?? []);
   const personal = detail?.personal;
+
   return {
     asOfDate: detail?.asOfDate ?? today(),
     personal: {
@@ -444,22 +801,22 @@ function formFromDetail(detail: PdsDetailData | null): PdsForm {
       mobileNumber: stringValue(personal?.mobileNumber),
       emailAddress: stringValue(personal?.emailAddress),
     },
-    spouse:
-      personal && detail?.family.spouse
-        ? {
-            ...blankSpouse(),
-            surname: stringValue(detail.family.spouse.surname),
-            firstName: stringValue(detail.family.spouse.firstName),
-            middleName: stringValue(detail.family.spouse.middleName),
-            nameExtension: stringValue(detail.family.spouse.nameExtension),
-            occupation: stringValue(detail.family.spouse.occupation),
-            employerBusinessName: stringValue(detail.family.spouse.employerBusinessName),
-            businessAddress: addressForm(detail.family.spouse.businessAddress),
-            telephoneNumber: stringValue(detail.family.spouse.telephoneNumber),
-          }
-        : blankSpouse(),
+    spouse: detail?.family.spouse
+      ? {
+          ...blankSpouse(),
+          surname: stringValue(detail.family.spouse.surname),
+          firstName: stringValue(detail.family.spouse.firstName),
+          middleName: stringValue(detail.family.spouse.middleName),
+          nameExtension: stringValue(detail.family.spouse.nameExtension),
+          occupation: stringValue(detail.family.spouse.occupation),
+          employerBusinessName: stringValue(detail.family.spouse.employerBusinessName),
+          businessAddress: addressForm(detail.family.spouse.businessAddress),
+          telephoneNumber: stringValue(detail.family.spouse.telephoneNumber),
+        }
+      : blankSpouse(),
     children:
       detail?.family.children.map((child) => ({
+        uiKey: createRowKey('child'),
         fullName: stringValue(child.fullName),
         birthDate: stringValue(child.birthDate),
       })) ?? [],
@@ -502,33 +859,54 @@ function formFromDetail(detail: PdsDetailData | null): PdsForm {
         documentId: stringValue(record.documentId),
         documentVersionId: stringValue(record.documentVersionId),
       })) ?? [],
-  };
-}
-
-function nullable(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed || null;
-}
-
-function numberValue(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function addressPayload(value: AddressForm): PdsAddressData {
-  return Object.fromEntries(
-    addressFields.map(([key]) => [key, nullable(value[key])]),
-  ) as unknown as PdsAddressData;
-}
-
-function namePayload(value: NameForm, includeNameExtension = true) {
-  return {
-    surname: nullable(value.surname),
-    firstName: nullable(value.firstName),
-    middleName: nullable(value.middleName),
-    ...(includeNameExtension ? { nameExtension: nullable(value.nameExtension) } : {}),
+    workExperience,
+    voluntaryWork: (detail?.voluntaryWork ?? []).map((row) => ({
+      uiKey: createRowKey('voluntary'),
+      id: row.id ?? '',
+      organizationNameAddress: stringValue(row.organizationNameAddress),
+      inclusiveFrom: stringValue(row.inclusiveFrom),
+      inclusiveTo: stringValue(row.inclusiveTo),
+      hours: stringValue(row.hours),
+      positionNatureOfWork: stringValue(row.positionNatureOfWork),
+      documentId: stringValue(row.documentId),
+      documentVersionId: stringValue(row.documentVersionId),
+    })),
+    learningAndDevelopment: (detail?.learningAndDevelopment ?? []).map((row) => ({
+      uiKey: createRowKey('learning'),
+      id: row.id ?? '',
+      interventionTitle: stringValue(row.interventionTitle),
+      attendanceFrom: stringValue(row.attendanceFrom),
+      attendanceTo: stringValue(row.attendanceTo),
+      hours: stringValue(row.hours),
+      type: stringValue(row.type),
+      conductedSponsoredBy: stringValue(row.conductedSponsoredBy),
+      documentId: stringValue(row.documentId),
+      documentVersionId: stringValue(row.documentVersionId),
+    })),
+    wes: (detail?.wes ?? []).map((artifact) => ({
+      uiKey: createRowKey('wes'),
+      id: artifact.id ?? '',
+      contextKey: stringValue(artifact.contextKey),
+      documentId: stringValue(artifact.documentId),
+      documentVersionId: stringValue(artifact.documentVersionId),
+      entries: artifact.entries.map((entry) => ({
+        uiKey: createRowKey('wes-entry'),
+        id: entry.id ?? '',
+        workExperienceKey:
+          (entry.workExperienceId ? workKeys.byId.get(entry.workExperienceId) : undefined) ??
+          (entry.workExperienceSequenceNo
+            ? workKeys.bySequence.get(entry.workExperienceSequenceNo)
+            : undefined) ??
+          '',
+        durationText: stringValue(entry.durationText),
+        position: stringValue(entry.position),
+        officeUnit: stringValue(entry.officeUnit),
+        immediateSupervisor: stringValue(entry.immediateSupervisor),
+        agencyOrganizationLocation: stringValue(entry.agencyOrganizationLocation),
+        accomplishments: stringValue(entry.accomplishments),
+        actualDuties: stringValue(entry.actualDuties),
+      })),
+    })),
   };
 }
 
@@ -573,6 +951,11 @@ function formPayload(form: PdsForm) {
   );
   const fatherHasValue = Object.values(form.father).some((value) => value.trim());
   const motherHasValue = Object.values(form.mother).some((value) => value.trim());
+  const workSequenceByKey = new Map(
+    form.workExperience.map((row, index) => [row.uiKey, index + 1]),
+  );
+  const workByKey = new Map(form.workExperience.map((row) => [row.uiKey, row]));
+
   const payload = {
     asOfDate: form.asOfDate,
     personal: {
@@ -621,11 +1004,156 @@ function formPayload(form: PdsForm) {
       father: fatherHasValue ? namePayload(form.father) : null,
       mother: motherHasValue ? namePayload(form.mother, false) : null,
     },
+    workExperience: form.workExperience.map((row, index) => ({
+      ...optionalIdPayload(row.id),
+      sequenceNo: index + 1,
+      inclusiveFrom: nullable(row.inclusiveFrom),
+      inclusiveTo: nullable(row.inclusiveTo),
+      positionTitle: nullable(row.positionTitle),
+      departmentAgencyOfficeCompany: nullable(row.departmentAgencyOfficeCompany),
+      monthlySalary: numberValue(row.monthlySalary),
+      salaryGradeStep: nullable(row.salaryGradeStep),
+      appointmentStatus: nullable(row.appointmentStatus),
+      governmentService: row.governmentService || null,
+      isCurrent: row.isCurrent,
+      ...evidencePayload(row),
+    })),
+    voluntaryWork: form.voluntaryWork.map((row, index) => ({
+      ...optionalIdPayload(row.id),
+      sequenceNo: index + 1,
+      organizationNameAddress: nullable(row.organizationNameAddress),
+      inclusiveFrom: nullable(row.inclusiveFrom),
+      inclusiveTo: nullable(row.inclusiveTo),
+      hours: numberValue(row.hours),
+      positionNatureOfWork: nullable(row.positionNatureOfWork),
+      ...evidencePayload(row),
+    })),
+    learningAndDevelopment: form.learningAndDevelopment.map((row, index) => ({
+      ...optionalIdPayload(row.id),
+      sequenceNo: index + 1,
+      interventionTitle: nullable(row.interventionTitle),
+      attendanceFrom: nullable(row.attendanceFrom),
+      attendanceTo: nullable(row.attendanceTo),
+      hours: numberValue(row.hours),
+      type: nullable(row.type),
+      conductedSponsoredBy: nullable(row.conductedSponsoredBy),
+      ...evidencePayload(row),
+    })),
+    wes: form.wes.map((artifact) => ({
+      ...optionalIdPayload(artifact.id),
+      contextKey: nullable(artifact.contextKey),
+      ...evidencePayload(artifact),
+      entries: artifact.entries.map((entry, index) => {
+        const work = workByKey.get(entry.workExperienceKey);
+        const workExperienceId = work ? optionalId(work.id) : undefined;
+        return {
+          ...optionalIdPayload(entry.id),
+          ...(workExperienceId
+            ? { workExperienceId }
+            : entry.workExperienceKey
+              ? { workExperienceSequenceNo: workSequenceByKey.get(entry.workExperienceKey) }
+              : {}),
+          sequenceNo: index + 1,
+          durationText: nullable(entry.durationText),
+          position: entry.position.trim(),
+          officeUnit: entry.officeUnit.trim(),
+          immediateSupervisor: entry.immediateSupervisor.trim(),
+          agencyOrganizationLocation: entry.agencyOrganizationLocation.trim(),
+          accomplishments: nullable(entry.accomplishments),
+          actualDuties: entry.actualDuties.trim(),
+        };
+      }),
+    })),
   };
   return {
     ...payload,
     education: educationPayload(form.education),
     eligibility: eligibilityPayload(form.eligibility),
+  };
+}
+
+function formDetailSections(form: PdsForm): PdsDetailSections {
+  const workSequenceByKey = new Map(
+    form.workExperience.map((row, index) => [row.uiKey, index + 1]),
+  );
+  const workByKey = new Map(form.workExperience.map((row) => [row.uiKey, row]));
+
+  return {
+    workExperience: form.workExperience.map((row, index) => ({
+      ...optionalIdPayload(row.id),
+      sequenceNo: index + 1,
+      inclusiveFrom: nullable(row.inclusiveFrom),
+      inclusiveTo: nullable(row.inclusiveTo),
+      positionTitle: nullable(row.positionTitle),
+      departmentAgencyOfficeCompany: nullable(row.departmentAgencyOfficeCompany),
+      monthlySalary: numberValue(row.monthlySalary),
+      salaryGradeStep: nullable(row.salaryGradeStep),
+      appointmentStatus: nullable(row.appointmentStatus),
+      governmentService:
+        row.governmentService === 'Y' || row.governmentService === 'N'
+          ? row.governmentService
+          : null,
+      isCurrent: row.isCurrent,
+      ...evidencePayload(row),
+    })),
+    voluntaryWork: form.voluntaryWork.map((row, index) => ({
+      ...optionalIdPayload(row.id),
+      sequenceNo: index + 1,
+      organizationNameAddress: nullable(row.organizationNameAddress),
+      inclusiveFrom: nullable(row.inclusiveFrom),
+      inclusiveTo: nullable(row.inclusiveTo),
+      hours: numberValue(row.hours),
+      positionNatureOfWork: nullable(row.positionNatureOfWork),
+      ...evidencePayload(row),
+    })),
+    learningAndDevelopment: form.learningAndDevelopment.map((row, index) => ({
+      ...optionalIdPayload(row.id),
+      sequenceNo: index + 1,
+      interventionTitle: nullable(row.interventionTitle),
+      attendanceFrom: nullable(row.attendanceFrom),
+      attendanceTo: nullable(row.attendanceTo),
+      hours: numberValue(row.hours),
+      type: nullable(row.type),
+      conductedSponsoredBy: nullable(row.conductedSponsoredBy),
+      ...evidencePayload(row),
+    })),
+    wes: form.wes.map((artifact) => ({
+      ...optionalIdPayload(artifact.id),
+      contextKey: nullable(artifact.contextKey),
+      ...evidencePayload(artifact),
+      entries: artifact.entries.map((entry, index) => {
+        const work = workByKey.get(entry.workExperienceKey);
+        const workExperienceId = work ? optionalId(work.id) : undefined;
+        const workExperienceSequenceNo = workSequenceByKey.get(entry.workExperienceKey);
+        return {
+          ...optionalIdPayload(entry.id),
+          ...(workExperienceId
+            ? { workExperienceId }
+            : workExperienceSequenceNo
+              ? { workExperienceSequenceNo }
+              : {}),
+          sequenceNo: index + 1,
+          durationText: entry.durationText,
+          position: nullable(entry.position),
+          officeUnit: nullable(entry.officeUnit),
+          immediateSupervisor: nullable(entry.immediateSupervisor),
+          agencyOrganizationLocation: nullable(entry.agencyOrganizationLocation),
+          accomplishments: nullable(entry.accomplishments),
+          actualDuties: nullable(entry.actualDuties),
+        };
+      }),
+    })),
+  };
+}
+
+function detailAfterSave(saved: PdsDetailData, form: PdsForm): PdsDetailData {
+  const fallback = formDetailSections(form);
+  return {
+    ...saved,
+    workExperience: saved.workExperience ?? fallback.workExperience,
+    voluntaryWork: saved.voluntaryWork ?? fallback.voluntaryWork,
+    learningAndDevelopment: saved.learningAndDevelopment ?? fallback.learningAndDevelopment,
+    wes: saved.wes ?? fallback.wes,
   };
 }
 
@@ -666,6 +1194,10 @@ function listAfterSave(list: PdsVersionListData, detail: PdsDetailData): PdsVers
   };
 }
 
+function display(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === '' ? 'Not provided' : String(value);
+}
+
 function TextField({
   label,
   value,
@@ -675,6 +1207,7 @@ function TextField({
   min,
   step,
   list,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -684,6 +1217,7 @@ function TextField({
   min?: string;
   step?: string;
   list?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className={employeeLabelClass}>
@@ -697,6 +1231,31 @@ function TextField({
         min={min}
         step={step}
         list={list}
+        disabled={disabled}
+      />
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  required = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+}) {
+  return (
+    <label className={employeeLabelClass}>
+      {label}
+      <textarea
+        className={`${employeeInputClass} min-h-[96px] resize-y`}
+        value={value}
+        onChange={(event) => onChange((event.target as unknown as { value: string }).value)}
+        required={required}
       />
     </label>
   );
@@ -708,12 +1267,16 @@ function SelectField({
   onChange,
   options,
   required = false,
+  placeholder = 'Not provided',
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: readonly (readonly [string, string])[];
   required?: boolean;
+  placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
     <label className={employeeLabelClass}>
@@ -723,14 +1286,37 @@ function SelectField({
         value={value}
         onChange={(event) => onChange((event.target as unknown as { value: string }).value)}
         required={required}
+        disabled={disabled}
       >
-        <option value="">Not provided</option>
+        <option value="">{placeholder}</option>
         {options.map(([option, text]) => (
           <option key={option} value={option}>
             {text}
           </option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function ToggleField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-3 text-sm font-[560] text-ink">
+      <input
+        className="size-4 rounded border border-line"
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange((event.target as unknown as { checked: boolean }).checked)}
+      />
+      {label}
     </label>
   );
 }
@@ -782,6 +1368,65 @@ function NameFields({
   );
 }
 
+function EvidenceFields({
+  value,
+  onChange,
+  options,
+  loading,
+  canBrowse,
+}: {
+  value: EvidenceForm;
+  onChange: (key: keyof EvidenceForm, value: string) => void;
+  options: readonly PdsEvidenceOption[];
+  loading: boolean;
+  canBrowse: boolean;
+}) {
+  const selectedKey =
+    value.documentId && value.documentVersionId
+      ? `${value.documentId}:${value.documentVersionId}`
+      : '';
+  const choices: readonly (readonly [string, string])[] = [
+    ...(selectedKey &&
+    !options.some((option) => `${option.documentId}:${option.version.id}` === selectedKey)
+      ? [[selectedKey, 'Current linked Document Version'] as const]
+      : []),
+    ...options.map(
+      (option) =>
+        [
+          `${option.documentId}:${option.version.id}`,
+          `${option.documentNo ?? titleCase(option.documentType)} · v${option.version.versionNo}`,
+        ] as const,
+    ),
+  ];
+
+  return (
+    <div className="grid gap-2">
+      <SelectField
+        label="Controlled evidence Document Version"
+        value={selectedKey}
+        options={choices}
+        placeholder={
+          loading
+            ? 'Loading finalized Agency Document Versions…'
+            : canBrowse
+              ? 'No finalized Agency Document Version selected'
+              : 'Evidence selection is restricted for this membership'
+        }
+        disabled={loading || !canBrowse}
+        onChange={(next) => {
+          const [documentId = '', documentVersionId = ''] = next.split(':');
+          onChange('documentId', documentId);
+          onChange('documentVersionId', documentVersionId);
+        }}
+      />
+      <p className="m-0 text-xs leading-5 text-muted">
+        Select one finalized same-Agency Document Version. Source storage is shared and is not
+        copied into the PDS.
+      </p>
+    </div>
+  );
+}
+
 function FormSection({
   item,
   title,
@@ -789,7 +1434,7 @@ function FormSection({
 }: {
   item: string;
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <fieldset className="m-0 grid gap-4 border-0 border-t border-line p-0 pt-5 first:border-t-0 first:pt-0">
@@ -802,8 +1447,76 @@ function FormSection({
   );
 }
 
-function display(value: string | number | null | undefined): string {
-  return value === null || value === undefined || value === '' ? 'Not provided' : String(value);
+function RepeatableRow({
+  title,
+  index,
+  total,
+  onMoveUp,
+  onMoveDown,
+  onRemove,
+  children,
+}: {
+  title: string;
+  index: number;
+  total: number;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onRemove: () => void;
+  children: ReactNode;
+}) {
+  const label = `${title} ${index + 1}`;
+  const labelId = useId();
+  return (
+    <fieldset
+      aria-labelledby={labelId}
+      className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+    >
+      <legend id={labelId} className="sr-only">
+        {label}
+      </legend>
+      <div className="flex flex-col gap-3 min-[620px]:flex-row min-[620px]:items-center min-[620px]:justify-between">
+        <strong aria-hidden="true" className="text-xs font-[680] text-ink">
+          {label}
+        </strong>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="default"
+            disabled={index === 0}
+            aria-label={`Move ${label.toLowerCase()} up`}
+            onClick={onMoveUp}
+          >
+            Move up
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="default"
+            disabled={index === total - 1}
+            aria-label={`Move ${label.toLowerCase()} down`}
+            onClick={onMoveDown}
+          >
+            Move down
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="default"
+            aria-label={`Remove ${label.toLowerCase()}`}
+            onClick={onRemove}
+          >
+            Remove
+          </Button>
+        </div>
+      </div>
+      {children}
+    </fieldset>
+  );
+}
+
+function EmptyRows({ message }: { message: string }) {
+  return <p className="m-0 text-sm leading-6 text-muted">{message}</p>;
 }
 
 function DetailValue({
@@ -883,6 +1596,7 @@ export function PdsWorkspace({
   initialList,
   initialDetail,
   canUpdate,
+  canBrowseEvidence,
   createUrl,
   backHref,
 }: {
@@ -891,6 +1605,7 @@ export function PdsWorkspace({
   initialList: PdsVersionListData;
   initialDetail: PdsDetailData | null;
   canUpdate: boolean;
+  canBrowseEvidence: boolean;
   createUrl: string;
   backHref: string;
 }) {
@@ -902,13 +1617,51 @@ export function PdsWorkspace({
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<'ok' | 'error'>('ok');
   const [error, setError] = useState<string | null>(null);
+  const [evidenceOptions, setEvidenceOptions] = useState<PdsEvidenceOption[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
   const editable = detail?.fieldScope === 'FULL' && ['DRAFT', 'RETURNED'].includes(detail.status);
   const canCreate = canUpdate && (!detail || (detail.fieldScope === 'FULL' && !list.draft));
+  const personal = detail?.personal;
+  const family = detail?.family;
+  const detailWorkExperience = detail?.workExperience ?? [];
+  const detailVoluntaryWork = detail?.voluntaryWork ?? [];
+  const detailLearningAndDevelopment = detail?.learningAndDevelopment ?? [];
+  const detailWes = detail?.wes ?? [];
+  const workOptions = form.workExperience.map(
+    (row, index) => [row.uiKey, workExperienceLabel(row, index)] as const,
+  );
 
   useEffect(() => {
-    if (error) (errorRef.current as unknown as { focus: () => void } | null)?.focus();
+    if (error) (errorRef.current as { focus: () => void } | null)?.focus();
   }, [error]);
+
+  useEffect(() => {
+    if (!open || !canBrowseEvidence) return;
+    let active = true;
+    setEvidenceLoading(true);
+    void fetch(`/api/v1/agencies/${agencyId}/documents/versions`, { credentials: 'include' })
+      .then(async (response) => {
+        const value: unknown = await response.json().catch(() => null);
+        if (!response.ok) throw new Error('Agency Document Versions could not be loaded.');
+        if (active) setEvidenceOptions(parsePdsEvidenceOptions(value));
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : 'Agency Document Versions could not be loaded.',
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setEvidenceLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [agencyId, canBrowseEvidence, open]);
 
   function openForm() {
     setForm(formFromDetail(detail));
@@ -989,6 +1742,7 @@ export function PdsWorkspace({
     setSubmitting(true);
     setError(null);
     setMessage(null);
+
     try {
       const payload = formPayload(form);
       const updating = editable && detail !== null;
@@ -1008,8 +1762,9 @@ export function PdsWorkspace({
         typeof value === 'object' &&
         typeof (value as PdsDetailData).id === 'string'
       ) {
-        const saved = value as PdsDetailData;
+        const saved = detailAfterSave(value as PdsDetailData, form);
         setDetail(saved);
+        setForm(formFromDetail(saved));
         setList((current) => listAfterSave(current, saved));
         setOpen(false);
         setMessageTone('ok');
@@ -1025,8 +1780,6 @@ export function PdsWorkspace({
     }
   }
 
-  const personal = detail?.personal;
-  const family = detail?.family;
   const education = detail?.education ?? [];
   const eligibility = detail?.eligibility ?? [];
 
@@ -1044,23 +1797,23 @@ export function PdsWorkspace({
           <EmployeePageTitle
             eyebrow="CS Form No. 212 · Revised 2026 Draft"
             title={employeeName ? `${employeeName} · PDS` : 'My Personal Data Sheet'}
-            description="Maintain personal, family, education, and eligibility information in the protected Draft PDS record."
+            description="Maintain personal, family, qualifications, work, voluntary, development, and WES draft information."
           />
         </div>
         {canUpdate && (editable || canCreate) && (
           <Dialog open={open} onOpenChange={(next) => !submitting && setOpen(next)}>
             <DialogTrigger asChild>
               <Button variant="primary" size="default" onClick={openForm}>
-                {editable ? 'Edit personal and family information' : 'Create Draft PDS'}
+                {editable ? 'Edit Draft PDS' : 'Create Draft PDS'}
               </Button>
             </DialogTrigger>
-            <DialogContent size="compact" aria-describedby="pds-dialog-description">
+            <DialogContent aria-describedby="pds-dialog-description">
               <DialogHeader>
                 <div className="grid gap-1.5">
                   <DialogTitle>{editable ? 'Edit Draft PDS' : 'Create Draft PDS'}</DialogTitle>
                   <DialogDescription id="pds-dialog-description">
-                    Items 1-27 are saved as one protected Draft. Empty fields remain available for
-                    later completion.
+                    Items 1–30 and Work Experience Sheet rows are saved as one protected Draft.
+                    Empty fields remain available for later completion.
                   </DialogDescription>
                 </div>
               </DialogHeader>
@@ -1283,30 +2036,30 @@ export function PdsWorkspace({
                   <FormSection item="23" title="Children">
                     <div className="grid gap-4">
                       {form.children.map((child, index) => (
-                        <div
-                          key={index}
-                          className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        <RepeatableRow
+                          key={child.uiKey}
+                          title="Child"
+                          index={index}
+                          total={form.children.length}
+                          onMoveUp={() =>
+                            setForm((current) => ({
+                              ...current,
+                              children: moveAt(current.children, index, -1),
+                            }))
+                          }
+                          onMoveDown={() =>
+                            setForm((current) => ({
+                              ...current,
+                              children: moveAt(current.children, index, 1),
+                            }))
+                          }
+                          onRemove={() =>
+                            setForm((current) => ({
+                              ...current,
+                              children: removeAt(current.children, index),
+                            }))
+                          }
                         >
-                          <div className="flex items-center justify-between gap-3">
-                            <strong className="text-xs font-[680] text-ink">
-                              Child {index + 1}
-                            </strong>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="default"
-                              onClick={() =>
-                                setForm((current) => ({
-                                  ...current,
-                                  children: current.children.filter(
-                                    (_, childIndex) => childIndex !== index,
-                                  ),
-                                }))
-                              }
-                            >
-                              Remove
-                            </Button>
-                          </div>
                           <div className="grid gap-4 min-[620px]:grid-cols-2">
                             <TextField
                               label="Full name"
@@ -1314,9 +2067,10 @@ export function PdsWorkspace({
                               onChange={(value) =>
                                 setForm((current) => ({
                                   ...current,
-                                  children: current.children.map((item, childIndex) =>
-                                    childIndex === index ? { ...item, fullName: value } : item,
-                                  ),
+                                  children: updateAt(current.children, index, (item) => ({
+                                    ...item,
+                                    fullName: value,
+                                  })),
                                 }))
                               }
                             />
@@ -1327,14 +2081,15 @@ export function PdsWorkspace({
                               onChange={(value) =>
                                 setForm((current) => ({
                                   ...current,
-                                  children: current.children.map((item, childIndex) =>
-                                    childIndex === index ? { ...item, birthDate: value } : item,
-                                  ),
+                                  children: updateAt(current.children, index, (item) => ({
+                                    ...item,
+                                    birthDate: value,
+                                  })),
                                 }))
                               }
                             />
                           </div>
-                        </div>
+                        </RepeatableRow>
                       ))}
                       <Button
                         type="button"
@@ -1344,7 +2099,7 @@ export function PdsWorkspace({
                         onClick={() =>
                           setForm((current) => ({
                             ...current,
-                            children: [...current.children, { fullName: '', birthDate: '' }],
+                            children: [...current.children, blankChild()],
                           }))
                         }
                       >
@@ -1364,6 +2119,858 @@ export function PdsWorkspace({
                       onChange={(key, value) => changeName('mother', key, value)}
                       includeNameExtension={false}
                     />
+                  </FormSection>
+                  <FormSection item="WORK" title="Work experience">
+                    <div className="grid gap-4">
+                      {form.workExperience.length === 0 && (
+                        <EmptyRows message="No work experience rows added yet." />
+                      )}
+                      {form.workExperience.map((row, index) => (
+                        <RepeatableRow
+                          key={row.uiKey}
+                          title="Work experience"
+                          index={index}
+                          total={form.workExperience.length}
+                          onMoveUp={() =>
+                            setForm((current) => ({
+                              ...current,
+                              workExperience: moveAt(current.workExperience, index, -1),
+                            }))
+                          }
+                          onMoveDown={() =>
+                            setForm((current) => ({
+                              ...current,
+                              workExperience: moveAt(current.workExperience, index, 1),
+                            }))
+                          }
+                          onRemove={() =>
+                            (() => {
+                              const removedKey = row.uiKey;
+                              const hasWesBinding = form.wes.some((artifact) =>
+                                artifact.entries.some(
+                                  (entry) => entry.workExperienceKey === removedKey,
+                                ),
+                              );
+                              if (hasWesBinding) {
+                                setError(
+                                  'This work row is linked to a WES entry. Select a new parent before saving.',
+                                );
+                              }
+                              setForm((current) => ({
+                                ...current,
+                                workExperience: removeAt(current.workExperience, index),
+                                wes: current.wes.map((artifact) => ({
+                                  ...artifact,
+                                  entries: artifact.entries.map((entry) =>
+                                    entry.workExperienceKey === removedKey
+                                      ? { ...entry, workExperienceKey: '' }
+                                      : entry,
+                                  ),
+                                })),
+                              }));
+                            })()
+                          }
+                        >
+                          <div className="grid gap-4">
+                            <ToggleField
+                              label="Current work"
+                              checked={row.isCurrent}
+                              onChange={(checked) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  workExperience: updateAt(
+                                    current.workExperience,
+                                    index,
+                                    (item) => ({
+                                      ...item,
+                                      isCurrent: checked,
+                                      inclusiveTo: checked ? '' : item.inclusiveTo,
+                                    }),
+                                  ),
+                                }))
+                              }
+                            />
+                            <div className="grid gap-4 min-[620px]:grid-cols-2">
+                              <TextField
+                                label="Inclusive from"
+                                type="date"
+                                value={row.inclusiveFrom}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        inclusiveFrom: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="Inclusive to"
+                                type="date"
+                                value={row.inclusiveTo}
+                                disabled={row.isCurrent}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        inclusiveTo: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="Position title"
+                                value={row.positionTitle}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        positionTitle: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="Department / agency / office / company"
+                                value={row.departmentAgencyOfficeCompany}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        departmentAgencyOfficeCompany: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="Monthly salary"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={row.monthlySalary}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        monthlySalary: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="Salary / job / pay grade and step"
+                                value={row.salaryGradeStep}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        salaryGradeStep: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="Status of appointment"
+                                value={row.appointmentStatus}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        appointmentStatus: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                              />
+                              <SelectField
+                                label="Government service"
+                                value={row.governmentService}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    workExperience: updateAt(
+                                      current.workExperience,
+                                      index,
+                                      (item) => ({
+                                        ...item,
+                                        governmentService: value,
+                                      }),
+                                    ),
+                                  }))
+                                }
+                                options={workExperienceOptions}
+                              />
+                            </div>
+                            <EvidenceFields
+                              value={row}
+                              options={evidenceOptions}
+                              loading={evidenceLoading}
+                              canBrowse={canBrowseEvidence}
+                              onChange={(key, value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  workExperience: updateAt(
+                                    current.workExperience,
+                                    index,
+                                    (item) => ({
+                                      ...item,
+                                      [key]: value,
+                                    }),
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                        </RepeatableRow>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            workExperience: [...current.workExperience, blankWorkExperience()],
+                          }))
+                        }
+                      >
+                        Add work experience
+                      </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="VOL" title="Voluntary work">
+                    <div className="grid gap-4">
+                      {form.voluntaryWork.length === 0 && (
+                        <EmptyRows message="No voluntary-work rows added yet." />
+                      )}
+                      {form.voluntaryWork.map((row, index) => (
+                        <RepeatableRow
+                          key={row.uiKey}
+                          title="Voluntary work"
+                          index={index}
+                          total={form.voluntaryWork.length}
+                          onMoveUp={() =>
+                            setForm((current) => ({
+                              ...current,
+                              voluntaryWork: moveAt(current.voluntaryWork, index, -1),
+                            }))
+                          }
+                          onMoveDown={() =>
+                            setForm((current) => ({
+                              ...current,
+                              voluntaryWork: moveAt(current.voluntaryWork, index, 1),
+                            }))
+                          }
+                          onRemove={() =>
+                            setForm((current) => ({
+                              ...current,
+                              voluntaryWork: removeAt(current.voluntaryWork, index),
+                            }))
+                          }
+                        >
+                          <div className="grid gap-4 min-[620px]:grid-cols-2">
+                            <TextField
+                              label="Organization name and address"
+                              value={row.organizationNameAddress}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  voluntaryWork: updateAt(current.voluntaryWork, index, (item) => ({
+                                    ...item,
+                                    organizationNameAddress: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Position / nature of work"
+                              value={row.positionNatureOfWork}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  voluntaryWork: updateAt(current.voluntaryWork, index, (item) => ({
+                                    ...item,
+                                    positionNatureOfWork: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Inclusive from"
+                              type="date"
+                              value={row.inclusiveFrom}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  voluntaryWork: updateAt(current.voluntaryWork, index, (item) => ({
+                                    ...item,
+                                    inclusiveFrom: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Inclusive to"
+                              type="date"
+                              value={row.inclusiveTo}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  voluntaryWork: updateAt(current.voluntaryWork, index, (item) => ({
+                                    ...item,
+                                    inclusiveTo: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Number of hours"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={row.hours}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  voluntaryWork: updateAt(current.voluntaryWork, index, (item) => ({
+                                    ...item,
+                                    hours: value,
+                                  })),
+                                }))
+                              }
+                            />
+                          </div>
+                          <EvidenceFields
+                            value={row}
+                            options={evidenceOptions}
+                            loading={evidenceLoading}
+                            canBrowse={canBrowseEvidence}
+                            onChange={(key, value) =>
+                              setForm((current) => ({
+                                ...current,
+                                voluntaryWork: updateAt(current.voluntaryWork, index, (item) => ({
+                                  ...item,
+                                  [key]: value,
+                                })),
+                              }))
+                            }
+                          />
+                        </RepeatableRow>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            voluntaryWork: [...current.voluntaryWork, blankVoluntaryWork()],
+                          }))
+                        }
+                      >
+                        Add voluntary work
+                      </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="L&D" title="Learning and development">
+                    <div className="grid gap-4">
+                      {form.learningAndDevelopment.length === 0 && (
+                        <EmptyRows message="No learning-and-development rows added yet." />
+                      )}
+                      {form.learningAndDevelopment.map((row, index) => (
+                        <RepeatableRow
+                          key={row.uiKey}
+                          title="Learning and development"
+                          index={index}
+                          total={form.learningAndDevelopment.length}
+                          onMoveUp={() =>
+                            setForm((current) => ({
+                              ...current,
+                              learningAndDevelopment: moveAt(
+                                current.learningAndDevelopment,
+                                index,
+                                -1,
+                              ),
+                            }))
+                          }
+                          onMoveDown={() =>
+                            setForm((current) => ({
+                              ...current,
+                              learningAndDevelopment: moveAt(
+                                current.learningAndDevelopment,
+                                index,
+                                1,
+                              ),
+                            }))
+                          }
+                          onRemove={() =>
+                            setForm((current) => ({
+                              ...current,
+                              learningAndDevelopment: removeAt(
+                                current.learningAndDevelopment,
+                                index,
+                              ),
+                            }))
+                          }
+                        >
+                          <div className="grid gap-4 min-[620px]:grid-cols-2">
+                            <TextField
+                              label="Intervention / training title"
+                              value={row.interventionTitle}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  learningAndDevelopment: updateAt(
+                                    current.learningAndDevelopment,
+                                    index,
+                                    (item) => ({ ...item, interventionTitle: value }),
+                                  ),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Type"
+                              value={row.type}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  learningAndDevelopment: updateAt(
+                                    current.learningAndDevelopment,
+                                    index,
+                                    (item) => ({ ...item, type: value }),
+                                  ),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Attendance from"
+                              type="date"
+                              value={row.attendanceFrom}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  learningAndDevelopment: updateAt(
+                                    current.learningAndDevelopment,
+                                    index,
+                                    (item) => ({ ...item, attendanceFrom: value }),
+                                  ),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Attendance to"
+                              type="date"
+                              value={row.attendanceTo}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  learningAndDevelopment: updateAt(
+                                    current.learningAndDevelopment,
+                                    index,
+                                    (item) => ({ ...item, attendanceTo: value }),
+                                  ),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Number of hours"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={row.hours}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  learningAndDevelopment: updateAt(
+                                    current.learningAndDevelopment,
+                                    index,
+                                    (item) => ({ ...item, hours: value }),
+                                  ),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Conducted / sponsored by"
+                              value={row.conductedSponsoredBy}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  learningAndDevelopment: updateAt(
+                                    current.learningAndDevelopment,
+                                    index,
+                                    (item) => ({ ...item, conductedSponsoredBy: value }),
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                          <EvidenceFields
+                            value={row}
+                            options={evidenceOptions}
+                            loading={evidenceLoading}
+                            canBrowse={canBrowseEvidence}
+                            onChange={(key, value) =>
+                              setForm((current) => ({
+                                ...current,
+                                learningAndDevelopment: updateAt(
+                                  current.learningAndDevelopment,
+                                  index,
+                                  (item) => ({ ...item, [key]: value }),
+                                ),
+                              }))
+                            }
+                          />
+                        </RepeatableRow>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            learningAndDevelopment: [
+                              ...current.learningAndDevelopment,
+                              blankLearningDevelopment(),
+                            ],
+                          }))
+                        }
+                      >
+                        Add learning and development
+                      </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="WES" title="Work Experience Sheet">
+                    <div className="grid gap-4">
+                      {form.wes.length === 0 && (
+                        <EmptyRows message="No Work Experience Sheet artifacts added yet." />
+                      )}
+                      {form.wes.map((artifact, artifactIndex) => (
+                        <RepeatableRow
+                          key={artifact.uiKey}
+                          title="WES artifact"
+                          index={artifactIndex}
+                          total={form.wes.length}
+                          onMoveUp={() =>
+                            setForm((current) => ({
+                              ...current,
+                              wes: moveAt(current.wes, artifactIndex, -1),
+                            }))
+                          }
+                          onMoveDown={() =>
+                            setForm((current) => ({
+                              ...current,
+                              wes: moveAt(current.wes, artifactIndex, 1),
+                            }))
+                          }
+                          onRemove={() =>
+                            setForm((current) => ({
+                              ...current,
+                              wes: removeAt(current.wes, artifactIndex),
+                            }))
+                          }
+                        >
+                          <div className="grid gap-4">
+                            <TextField
+                              label="Context key"
+                              value={artifact.contextKey}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                    ...item,
+                                    contextKey: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <EvidenceFields
+                              value={artifact}
+                              options={evidenceOptions}
+                              loading={evidenceLoading}
+                              canBrowse={canBrowseEvidence}
+                              onChange={(key, value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                    ...item,
+                                    [key]: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <div className="grid gap-4">
+                              {artifact.entries.map((entry, entryIndex) => (
+                                <RepeatableRow
+                                  key={entry.uiKey}
+                                  title="WES entry"
+                                  index={entryIndex}
+                                  total={artifact.entries.length}
+                                  onMoveUp={() =>
+                                    setForm((current) => ({
+                                      ...current,
+                                      wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                        ...item,
+                                        entries: moveAt(item.entries, entryIndex, -1),
+                                      })),
+                                    }))
+                                  }
+                                  onMoveDown={() =>
+                                    setForm((current) => ({
+                                      ...current,
+                                      wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                        ...item,
+                                        entries: moveAt(item.entries, entryIndex, 1),
+                                      })),
+                                    }))
+                                  }
+                                  onRemove={() =>
+                                    setForm((current) => ({
+                                      ...current,
+                                      wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                        ...item,
+                                        entries: removeAt(item.entries, entryIndex),
+                                      })),
+                                    }))
+                                  }
+                                >
+                                  <div className="grid gap-4">
+                                    <SelectField
+                                      label="Parent work-experience row"
+                                      value={entry.workExperienceKey}
+                                      onChange={(value) =>
+                                        setForm((current) => ({
+                                          ...current,
+                                          wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                            ...item,
+                                            entries: updateAt(item.entries, entryIndex, (row) => ({
+                                              ...row,
+                                              workExperienceKey: value,
+                                            })),
+                                          })),
+                                        }))
+                                      }
+                                      options={workOptions}
+                                      required
+                                      placeholder={
+                                        workOptions.length === 0
+                                          ? 'Add a work-experience row first'
+                                          : 'Select a parent row'
+                                      }
+                                    />
+                                    <div className="grid gap-4 min-[620px]:grid-cols-2">
+                                      <TextField
+                                        label="Duration text"
+                                        value={entry.durationText}
+                                        onChange={(value) =>
+                                          setForm((current) => ({
+                                            ...current,
+                                            wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                              ...item,
+                                              entries: updateAt(
+                                                item.entries,
+                                                entryIndex,
+                                                (row) => ({
+                                                  ...row,
+                                                  durationText: value,
+                                                }),
+                                              ),
+                                            })),
+                                          }))
+                                        }
+                                        required
+                                      />
+                                      <TextField
+                                        label="Position"
+                                        value={entry.position}
+                                        onChange={(value) =>
+                                          setForm((current) => ({
+                                            ...current,
+                                            wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                              ...item,
+                                              entries: updateAt(
+                                                item.entries,
+                                                entryIndex,
+                                                (row) => ({
+                                                  ...row,
+                                                  position: value,
+                                                }),
+                                              ),
+                                            })),
+                                          }))
+                                        }
+                                        required
+                                      />
+                                      <TextField
+                                        label="Office / unit"
+                                        value={entry.officeUnit}
+                                        onChange={(value) =>
+                                          setForm((current) => ({
+                                            ...current,
+                                            wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                              ...item,
+                                              entries: updateAt(
+                                                item.entries,
+                                                entryIndex,
+                                                (row) => ({
+                                                  ...row,
+                                                  officeUnit: value,
+                                                }),
+                                              ),
+                                            })),
+                                          }))
+                                        }
+                                        required
+                                      />
+                                      <TextField
+                                        label="Immediate supervisor"
+                                        value={entry.immediateSupervisor}
+                                        onChange={(value) =>
+                                          setForm((current) => ({
+                                            ...current,
+                                            wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                              ...item,
+                                              entries: updateAt(
+                                                item.entries,
+                                                entryIndex,
+                                                (row) => ({
+                                                  ...row,
+                                                  immediateSupervisor: value,
+                                                }),
+                                              ),
+                                            })),
+                                          }))
+                                        }
+                                        required
+                                      />
+                                      <TextField
+                                        label="Agency / organization / location"
+                                        value={entry.agencyOrganizationLocation}
+                                        onChange={(value) =>
+                                          setForm((current) => ({
+                                            ...current,
+                                            wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                              ...item,
+                                              entries: updateAt(
+                                                item.entries,
+                                                entryIndex,
+                                                (row) => ({
+                                                  ...row,
+                                                  agencyOrganizationLocation: value,
+                                                }),
+                                              ),
+                                            })),
+                                          }))
+                                        }
+                                        required
+                                      />
+                                    </div>
+                                    <TextAreaField
+                                      label="Accomplishments / contributions"
+                                      value={entry.accomplishments}
+                                      onChange={(value) =>
+                                        setForm((current) => ({
+                                          ...current,
+                                          wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                            ...item,
+                                            entries: updateAt(item.entries, entryIndex, (row) => ({
+                                              ...row,
+                                              accomplishments: value,
+                                            })),
+                                          })),
+                                        }))
+                                      }
+                                    />
+                                    <TextAreaField
+                                      label="Summary of actual duties"
+                                      value={entry.actualDuties}
+                                      onChange={(value) =>
+                                        setForm((current) => ({
+                                          ...current,
+                                          wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                            ...item,
+                                            entries: updateAt(item.entries, entryIndex, (row) => ({
+                                              ...row,
+                                              actualDuties: value,
+                                            })),
+                                          })),
+                                        }))
+                                      }
+                                      required
+                                    />
+                                  </div>
+                                </RepeatableRow>
+                              ))}
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="default"
+                                className="justify-self-start"
+                                onClick={() =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                      ...item,
+                                      entries: [...item.entries, blankWesEntry()],
+                                    })),
+                                  }))
+                                }
+                              >
+                                Add WES entry
+                              </Button>
+                            </div>
+                          </div>
+                        </RepeatableRow>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({ ...current, wes: [...current.wes, blankWes()] }))
+                        }
+                      >
+                        Add WES artifact
+                      </Button>
+                    </div>
                   </FormSection>
                   <FormSection item="26" title="Educational background">
                     <div className="grid gap-4">
@@ -1619,7 +3226,7 @@ export function PdsWorkspace({
             <div>
               <p className="m-0 font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">C1</p>
               <h2 id="pds-record-heading" className="mt-1 mb-0 text-sm font-[680] text-midnight">
-                Personal and family information
+                PDS draft information
               </h2>
             </div>
             {detail && <StatusBadge status={detail.status} />}
@@ -1628,14 +3235,14 @@ export function PdsWorkspace({
             <div className="grid gap-2 px-5 py-8">
               <strong className="text-sm font-[650] text-midnight">No Draft PDS yet.</strong>
               <p className="m-0 max-w-[560px] text-sm leading-6 text-muted">
-                Create the first Draft to begin recording Items 1-27. A single Draft successor is
-                allowed for this Employee.
+                Create the first Draft to begin recording personal, family, work, voluntary, and
+                learning history plus WES rows.
               </p>
             </div>
           ) : detail.fieldScope === 'REDACTED' ? (
             <div className="border-l-2 border-[#d99a32] bg-[#fff9ec] px-5 py-5 text-sm leading-6 text-[#70490f]">
-              Personal and family fields are withheld for this access scope. Version metadata is
-              visible for Agency-safe record history.
+              Personal, family, work, development, and WES fields are withheld for this access
+              scope. Version metadata is visible for Agency-safe record history.
             </div>
           ) : (
             <div className="grid gap-7 px-5 py-6 min-[700px]:px-8">
@@ -1730,6 +3337,235 @@ export function PdsWorkspace({
                   <DetailValue label="Father" value={family?.father?.fullName} />
                   <DetailValue label="Mother’s maiden name" value={family?.mother?.fullName} />
                 </dl>
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Work experience
+                </h3>
+                {detailWorkExperience.length === 0 ? (
+                  <EmptyRows message="No work-experience rows recorded." />
+                ) : (
+                  <div className="grid gap-4">
+                    {detailWorkExperience.map((row, index) => (
+                      <div
+                        key={row.id ?? `work-${index}`}
+                        className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                      >
+                        <strong className="text-xs font-[680] text-ink">
+                          Work experience {index + 1}
+                        </strong>
+                        <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                          <DetailValue
+                            label="Inclusive dates"
+                            value={sequenceLabel(
+                              stringValue(row.inclusiveFrom),
+                              stringValue(row.inclusiveTo),
+                              Boolean(row.isCurrent),
+                            )}
+                          />
+                          <DetailValue label="Position title" value={row.positionTitle} />
+                          <DetailValue
+                            label="Department / agency / office / company"
+                            value={row.departmentAgencyOfficeCompany}
+                          />
+                          <DetailValue label="Monthly salary" value={row.monthlySalary} />
+                          <DetailValue label="Salary grade / step" value={row.salaryGradeStep} />
+                          <DetailValue
+                            label="Status of appointment"
+                            value={row.appointmentStatus}
+                          />
+                          <DetailValue
+                            label="Government service"
+                            value={
+                              row.governmentService === 'Y'
+                                ? 'Yes'
+                                : row.governmentService === 'N'
+                                  ? 'No'
+                                  : null
+                            }
+                          />
+                          <DetailValue label="Evidence document ID" value={row.documentId} />
+                          <DetailValue
+                            label="Evidence document version ID"
+                            value={row.documentVersionId}
+                          />
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Voluntary work
+                </h3>
+                {detailVoluntaryWork.length === 0 ? (
+                  <EmptyRows message="No voluntary-work rows recorded." />
+                ) : (
+                  <div className="grid gap-4">
+                    {detailVoluntaryWork.map((row, index) => (
+                      <div
+                        key={row.id ?? `voluntary-${index}`}
+                        className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                      >
+                        <strong className="text-xs font-[680] text-ink">
+                          Voluntary work {index + 1}
+                        </strong>
+                        <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                          <DetailValue
+                            label="Organization name and address"
+                            value={row.organizationNameAddress}
+                          />
+                          <DetailValue
+                            label="Inclusive dates"
+                            value={sequenceLabel(
+                              stringValue(row.inclusiveFrom),
+                              stringValue(row.inclusiveTo),
+                            )}
+                          />
+                          <DetailValue label="Number of hours" value={row.hours} />
+                          <DetailValue
+                            label="Position / nature of work"
+                            value={row.positionNatureOfWork}
+                          />
+                          <DetailValue label="Evidence document ID" value={row.documentId} />
+                          <DetailValue
+                            label="Evidence document version ID"
+                            value={row.documentVersionId}
+                          />
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Learning and development
+                </h3>
+                {detailLearningAndDevelopment.length === 0 ? (
+                  <EmptyRows message="No learning-and-development rows recorded." />
+                ) : (
+                  <div className="grid gap-4">
+                    {detailLearningAndDevelopment.map((row, index) => (
+                      <div
+                        key={row.id ?? `learning-${index}`}
+                        className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                      >
+                        <strong className="text-xs font-[680] text-ink">
+                          Learning and development {index + 1}
+                        </strong>
+                        <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                          <DetailValue
+                            label="Intervention / training title"
+                            value={row.interventionTitle}
+                          />
+                          <DetailValue
+                            label="Attendance dates"
+                            value={sequenceLabel(
+                              stringValue(row.attendanceFrom),
+                              stringValue(row.attendanceTo),
+                            )}
+                          />
+                          <DetailValue label="Number of hours" value={row.hours} />
+                          <DetailValue label="Type" value={row.type} />
+                          <DetailValue
+                            label="Conducted / sponsored by"
+                            value={row.conductedSponsoredBy}
+                          />
+                          <DetailValue label="Evidence document ID" value={row.documentId} />
+                          <DetailValue
+                            label="Evidence document version ID"
+                            value={row.documentVersionId}
+                          />
+                        </dl>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Work Experience Sheet
+                </h3>
+                {detailWes.length === 0 ? (
+                  <EmptyRows message="No Work Experience Sheet artifacts recorded." />
+                ) : (
+                  <div className="grid gap-4">
+                    {detailWes.map((artifact, artifactIndex) => (
+                      <div
+                        key={artifact.id ?? `wes-${artifactIndex}`}
+                        className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                      >
+                        <strong className="text-xs font-[680] text-ink">
+                          WES artifact {artifactIndex + 1}
+                        </strong>
+                        <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                          <DetailValue label="Context key" value={artifact.contextKey} />
+                          <DetailValue label="Evidence document ID" value={artifact.documentId} />
+                          <DetailValue
+                            label="Evidence document version ID"
+                            value={artifact.documentVersionId}
+                          />
+                        </dl>
+                        <div className="grid gap-4">
+                          {artifact.entries.map((entry, entryIndex) => {
+                            const parent = detailWorkExperience.find(
+                              (row) =>
+                                (entry.workExperienceId && row.id === entry.workExperienceId) ||
+                                (!entry.workExperienceId &&
+                                  entry.workExperienceSequenceNo === row.sequenceNo),
+                            );
+                            return (
+                              <div
+                                key={entry.id ?? `wes-entry-${entryIndex}`}
+                                className="grid gap-4 rounded-[3px] border border-line bg-paper p-4"
+                              >
+                                <strong className="text-xs font-[680] text-ink">
+                                  WES entry {entryIndex + 1}
+                                </strong>
+                                <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                                  <DetailValue
+                                    label="Parent work row"
+                                    value={
+                                      parent
+                                        ? [
+                                            parent.positionTitle,
+                                            parent.departmentAgencyOfficeCompany,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(' · ') || `Work experience ${parent.sequenceNo}`
+                                        : (entry.workExperienceId ?? entry.workExperienceSequenceNo)
+                                    }
+                                  />
+                                  <DetailValue label="Duration text" value={entry.durationText} />
+                                  <DetailValue label="Position" value={entry.position} />
+                                  <DetailValue label="Office / unit" value={entry.officeUnit} />
+                                  <DetailValue
+                                    label="Immediate supervisor"
+                                    value={entry.immediateSupervisor}
+                                  />
+                                  <DetailValue
+                                    label="Agency / organization / location"
+                                    value={entry.agencyOrganizationLocation}
+                                  />
+                                  <DetailValue
+                                    label="Accomplishments / contributions"
+                                    value={entry.accomplishments}
+                                  />
+                                  <DetailValue
+                                    label="Summary of actual duties"
+                                    value={entry.actualDuties}
+                                  />
+                                </dl>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="grid gap-4">
                 <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">

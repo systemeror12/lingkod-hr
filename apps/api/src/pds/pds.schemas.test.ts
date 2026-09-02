@@ -5,8 +5,12 @@ import {
   pdsEducationSchema,
   pdsEligibilitySchema,
   pdsFamilySchema,
+  pdsLearningDevelopmentSchema,
   pdsPersonalDetailsSchema,
   pdsUpdateSchema,
+  pdsVoluntaryWorkSchema,
+  pdsWesSchema,
+  pdsWorkExperienceSchema,
 } from './pds.schemas';
 
 const personal = {
@@ -185,4 +189,154 @@ it('rejects qualification ordering, ranges, ratings, and license mismatches', ()
       },
     ]).success,
   ).toBe(false);
+});
+
+it('accepts the Revised 2026 work, voluntary work, L&D, and WES sections', () => {
+  const workExperienceId = '00000000-0000-4000-8000-000000000004';
+  expect(
+    pdsCreateSchema.parse({
+      workExperience: [
+        {
+          sequenceNo: 1,
+          inclusiveFrom: '2020-01-01',
+          inclusiveTo: '2024-01-01',
+          positionTitle: 'Administrative Officer',
+          departmentAgencyOfficeCompany: 'Department of Example',
+          monthlySalary: 21877,
+          salaryGradeStep: '24-2',
+          appointmentStatus: 'Permanent',
+          governmentService: 'Y',
+        },
+      ],
+      voluntaryWork: [
+        {
+          sequenceNo: 1,
+          organizationNameAddress: 'Example Foundation, Manila',
+          inclusiveFrom: '2021-01-01',
+          inclusiveTo: '2021-12-31',
+          hours: 24,
+          positionNatureOfWork: 'Volunteer coordinator',
+        },
+      ],
+      learningAndDevelopment: [
+        {
+          sequenceNo: 1,
+          interventionTitle: 'Public service orientation',
+          attendanceFrom: '2024-02-01',
+          attendanceTo: '2024-02-02',
+          hours: 16,
+          type: 'Technical',
+          conductedSponsoredBy: 'Example Academy',
+        },
+      ],
+      wes: [
+        {
+          contextKey: 'vacancy-1',
+          entries: [
+            {
+              workExperienceId,
+              sequenceNo: 1,
+              durationText: 'January 2020 - December 2024',
+              position: 'Administrative Officer',
+              officeUnit: 'Administrative Services Office',
+              immediateSupervisor: 'Example Supervisor',
+              agencyOrganizationLocation: 'Department of Example, Manila',
+              accomplishments: 'Improved filing turnaround.',
+              actualDuties: 'Managed administrative records.',
+            },
+          ],
+        },
+      ],
+    }),
+  ).toMatchObject({
+    workExperience: [{ positionTitle: 'Administrative Officer' }],
+    voluntaryWork: [{ hours: 24 }],
+    learningAndDevelopment: [{ type: 'Technical' }],
+    wes: [{ entries: [{ workExperienceId }] }],
+  });
+});
+
+it('rejects invalid target-section ranges, hours, order, evidence pairs, and WES links', () => {
+  expect(
+    pdsWorkExperienceSchema.safeParse({
+      inclusiveFrom: '2024-01-02',
+      inclusiveTo: '2024-01-01',
+    }).success,
+  ).toBe(false);
+  expect(pdsVoluntaryWorkSchema.safeParse({ hours: -1 }).success).toBe(false);
+  expect(
+    pdsLearningDevelopmentSchema.safeParse({
+      attendanceFrom: '2024-01-01',
+      attendanceTo: '2024-01-02',
+      documentId: '00000000-0000-4000-8000-000000000001',
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsWesSchema.safeParse({
+      entries: [
+        {
+          workExperienceId: '00000000-0000-4000-8000-000000000001',
+          sequenceNo: 1,
+          durationText: 'January 2020 - December 2021',
+          position: 'One',
+          officeUnit: 'Office',
+          immediateSupervisor: 'Supervisor',
+          agencyOrganizationLocation: 'Agency',
+          actualDuties: 'Duties',
+        },
+        {
+          workExperienceId: '00000000-0000-4000-8000-000000000002',
+          sequenceNo: 1,
+          durationText: 'January 2018 - December 2019',
+          position: 'Two',
+          officeUnit: 'Office',
+          immediateSupervisor: 'Supervisor',
+          agencyOrganizationLocation: 'Agency',
+          actualDuties: 'Duties',
+        },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsCreateSchema.safeParse({
+      workExperience: [
+        { sequenceNo: 1, inclusiveFrom: '2020-01-01', inclusiveTo: '2021-01-01' },
+        { sequenceNo: 2, inclusiveFrom: '2022-01-01', inclusiveTo: '2023-01-01' },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsCreateSchema.safeParse({
+      learningAndDevelopment: [
+        { sequenceNo: 1, attendanceFrom: '2020-01-01', attendanceTo: '2020-01-02' },
+        { sequenceNo: 2, attendanceFrom: '2024-01-01', attendanceTo: '2024-01-02' },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsCreateSchema.safeParse({
+      workExperience: [{ sequenceNo: 1 }, { sequenceNo: 1 }],
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsCreateSchema.safeParse({
+      workExperience: [{ sequenceNo: 1, monthlySalary: 1.001 }],
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsWesSchema.safeParse({
+      entries: [
+        {
+          workExperienceId: '00000000-0000-4000-8000-000000000001',
+          sequenceNo: 1,
+          position: 'One',
+          officeUnit: 'Office',
+          immediateSupervisor: 'Supervisor',
+          agencyOrganizationLocation: 'Agency',
+          actualDuties: 'Duties',
+        },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(pdsUpdateSchema.safeParse({ rowVersion: 2 }).success).toBe(false);
 });

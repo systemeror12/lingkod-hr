@@ -66,6 +66,118 @@ function todayDate(): string {
   }).format(new Date());
 }
 
+const optionalHours = z.number().finite().nonnegative().nullable().optional();
+const optionalMoney = z
+  .number()
+  .finite()
+  .nonnegative()
+  .nullable()
+  .optional()
+  .refine(
+    (value) => value === null || value === undefined || value <= 999999999999.99,
+    'Monthly salary must fit the supported money range.',
+  )
+  .refine(
+    (value) => value === null || value === undefined || Number(value.toFixed(2)) === value,
+    'Monthly salary must have no more than two decimal places.',
+  );
+
+function evidenceFields<T extends z.ZodRawShape>(shape: T) {
+  return z
+    .object({
+      ...shape,
+      documentId: z.string().uuid().nullable().optional(),
+      documentVersionId: z.string().uuid().nullable().optional(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      const evidence = value as {
+        documentId?: string | null;
+        documentVersionId?: string | null;
+      };
+      if (Boolean(evidence.documentId) !== Boolean(evidence.documentVersionId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['documentVersionId'],
+          message: 'An evidence Document and exact Document Version are both required.',
+        });
+      }
+    });
+}
+
+function dateRange(
+  value: Record<string, unknown>,
+  context: z.RefinementCtx,
+  fromPath: string,
+  toPath: string,
+): void {
+  const from = typeof value[fromPath] === 'string' ? value[fromPath] : null;
+  const to = typeof value[toPath] === 'string' ? value[toPath] : null;
+  if (from && to && to < from) {
+    context.addIssue({
+      code: 'custom',
+      path: [toPath],
+      message: 'The finish date must be on or after the start date.',
+    });
+  }
+  if (!from && to) {
+    context.addIssue({
+      code: 'custom',
+      path: [fromPath],
+      message: 'A start date is required when a finish date is entered.',
+    });
+  }
+}
+
+function validateSequenceNumbers(
+  rows: readonly { sequenceNo: number }[] | undefined,
+  context: z.RefinementCtx,
+  path: string,
+  label: string,
+): void {
+  const seen = new Set<number>();
+  for (const [index, row] of (rows ?? []).entries()) {
+    if (seen.has(row.sequenceNo)) {
+      context.addIssue({
+        code: 'custom',
+        path: [path, index, 'sequenceNo'],
+        message: `${label} sequence numbers must be unique within this PDS.`,
+      });
+    }
+    seen.add(row.sequenceNo);
+  }
+}
+
+function validateMostRecentFirst(
+  rows: readonly Record<string, unknown>[] | undefined,
+  context: z.RefinementCtx,
+  path: string,
+  fromField: string,
+  toField: string,
+  currentField?: string,
+  label = 'Rows',
+): void {
+  let previousLatest: string | null = null;
+  for (const [index, row] of (rows ?? []).entries()) {
+    const latest =
+      currentField && row[currentField] === true
+        ? '9999-12-31'
+        : typeof row[toField] === 'string'
+          ? row[toField]
+          : typeof row[fromField] === 'string'
+            ? row[fromField]
+            : null;
+    if (latest && previousLatest && latest > previousLatest) {
+      context.addIssue({
+        code: 'custom',
+        path: [path, index, toField],
+        message: `${label} must be ordered from most recent to oldest.`,
+      });
+    }
+    if (latest) previousLatest = latest;
+  }
+}
+
 export const pdsAddressSchema = z
   .object({
     houseBlockLotNo: optionalText(160),
@@ -334,6 +446,120 @@ export const pdsEligibilitySchema = z
     }
   });
 
+export const pdsWorkExperienceSchema = evidenceFields({
+  id: z.string().uuid().optional(),
+  sequenceNo: z.number().int().positive(),
+  inclusiveFrom: optionalDate,
+  inclusiveTo: optionalDate,
+  positionTitle: optionalText(240),
+  departmentAgencyOfficeCompany: optionalText(320),
+  monthlySalary: optionalMoney,
+  salaryGradeStep: optionalText(80),
+  appointmentStatus: optionalText(120),
+  governmentService: z.enum(['Y', 'N']).nullable().optional(),
+  isCurrent: z.boolean().optional(),
+}).superRefine((value, context) => {
+  dateRange(value, context, 'inclusiveFrom', 'inclusiveTo');
+  if (value.isCurrent && value.inclusiveTo) {
+    context.addIssue({
+      code: 'custom',
+      path: ['inclusiveTo'],
+      message: 'Current work cannot have a finish date.',
+    });
+  }
+});
+
+export const pdsVoluntaryWorkSchema = evidenceFields({
+  id: z.string().uuid().optional(),
+  sequenceNo: z.number().int().positive(),
+  organizationNameAddress: optionalText(500),
+  inclusiveFrom: optionalDate,
+  inclusiveTo: optionalDate,
+  hours: optionalHours,
+  positionNatureOfWork: optionalText(240),
+}).superRefine((value, context) => {
+  dateRange(value, context, 'inclusiveFrom', 'inclusiveTo');
+});
+
+export const pdsLearningDevelopmentSchema = evidenceFields({
+  id: z.string().uuid().optional(),
+  sequenceNo: z.number().int().positive(),
+  interventionTitle: optionalText(320),
+  attendanceFrom: optionalDate,
+  attendanceTo: optionalDate,
+  hours: optionalHours,
+  type: optionalText(120),
+  conductedSponsoredBy: optionalText(320),
+}).superRefine((value, context) => {
+  dateRange(value, context, 'attendanceFrom', 'attendanceTo');
+});
+
+export const pdsWesEntrySchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    workExperienceId: z.string().uuid().optional(),
+    workExperienceSequenceNo: z.number().int().positive().optional(),
+    sequenceNo: z.number().int().positive(),
+    durationText: requiredText(160),
+    position: requiredText(240),
+    officeUnit: requiredText(320),
+    immediateSupervisor: requiredText(240),
+    agencyOrganizationLocation: requiredText(500),
+    accomplishments: optionalText(2000),
+    actualDuties: requiredText(4000),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (Boolean(value.workExperienceId) === Boolean(value.workExperienceSequenceNo)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['workExperienceId'],
+        message: 'Select exactly one parent work-experience row.',
+      });
+    }
+  });
+
+export const pdsWesSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    contextKey: z.string().trim().min(1).max(120).nullable().optional(),
+    documentId: z.string().uuid().nullable().optional(),
+    documentVersionId: z.string().uuid().nullable().optional(),
+    entries: z.array(pdsWesEntrySchema),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (Boolean(value.documentId) !== Boolean(value.documentVersionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['documentVersionId'],
+        message: 'An evidence Document and exact Document Version are both required.',
+      });
+    }
+    const sequences = new Set<number>();
+    const parents = new Set<string>();
+    for (const [index, entry] of value.entries.entries()) {
+      const sequenceNo = entry.sequenceNo;
+      if (sequences.has(sequenceNo)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['entries', index, 'sequenceNo'],
+          message: 'WES entry sequence numbers must be unique within the artifact.',
+        });
+      }
+      sequences.add(sequenceNo);
+      const parentKey = entry.workExperienceId ?? `sequence:${entry.workExperienceSequenceNo}`;
+      if (parents.has(parentKey)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['entries', index, 'workExperienceId'],
+          message: 'A work-experience row may appear only once in one WES artifact.',
+        });
+      }
+      parents.add(parentKey);
+    }
+  });
+
 export const pdsCreateSchema = z
   .object({
     employeeId: z.string().uuid().optional(),
@@ -342,8 +568,40 @@ export const pdsCreateSchema = z
     family: pdsFamilySchema.optional(),
     education: pdsEducationSchema.optional(),
     eligibility: pdsEligibilitySchema.optional(),
+    workExperience: z.array(pdsWorkExperienceSchema).optional(),
+    voluntaryWork: z.array(pdsVoluntaryWorkSchema).optional(),
+    learningAndDevelopment: z.array(pdsLearningDevelopmentSchema).optional(),
+    wes: z.array(pdsWesSchema).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    validateSequenceNumbers(value.workExperience, context, 'workExperience', 'Work experience');
+    validateSequenceNumbers(value.voluntaryWork, context, 'voluntaryWork', 'Voluntary work');
+    validateSequenceNumbers(
+      value.learningAndDevelopment,
+      context,
+      'learningAndDevelopment',
+      'Learning and development',
+    );
+    validateMostRecentFirst(
+      value.workExperience,
+      context,
+      'workExperience',
+      'inclusiveFrom',
+      'inclusiveTo',
+      'isCurrent',
+      'Work experience',
+    );
+    validateMostRecentFirst(
+      value.learningAndDevelopment,
+      context,
+      'learningAndDevelopment',
+      'attendanceFrom',
+      'attendanceTo',
+      undefined,
+      'Learning and development',
+    );
+  });
 
 export const pdsVersionIdSchema = z.string().uuid();
 
@@ -355,16 +613,51 @@ export const pdsUpdateSchema = z
     family: pdsFamilySchema.optional(),
     education: pdsEducationSchema.optional(),
     eligibility: pdsEligibilitySchema.optional(),
+    workExperience: z.array(pdsWorkExperienceSchema).optional(),
+    voluntaryWork: z.array(pdsVoluntaryWorkSchema).optional(),
+    learningAndDevelopment: z.array(pdsLearningDevelopmentSchema).optional(),
+    wes: z.array(pdsWesSchema).nullable().optional(),
   })
   .strict()
+  .superRefine((value, context) => {
+    validateSequenceNumbers(value.workExperience, context, 'workExperience', 'Work experience');
+    validateSequenceNumbers(value.voluntaryWork, context, 'voluntaryWork', 'Voluntary work');
+    validateSequenceNumbers(
+      value.learningAndDevelopment,
+      context,
+      'learningAndDevelopment',
+      'Learning and development',
+    );
+    validateMostRecentFirst(
+      value.workExperience,
+      context,
+      'workExperience',
+      'inclusiveFrom',
+      'inclusiveTo',
+      'isCurrent',
+      'Work experience',
+    );
+    validateMostRecentFirst(
+      value.learningAndDevelopment,
+      context,
+      'learningAndDevelopment',
+      'attendanceFrom',
+      'attendanceTo',
+      undefined,
+      'Learning and development',
+    );
+  })
   .refine(
     (value) =>
-      value.rowVersion !== undefined ||
       value.asOfDate !== undefined ||
       value.personal ||
       value.family ||
       value.education ||
-      value.eligibility,
+      value.eligibility ||
+      value.workExperience ||
+      value.voluntaryWork ||
+      value.learningAndDevelopment ||
+      value.wes !== undefined,
     { message: 'Provide a PDS section or as-of date to update.' },
   );
 
@@ -374,3 +667,8 @@ export type PdsPersonalDetailsInput = z.infer<typeof pdsPersonalDetailsSchema>;
 export type PdsFamilyInput = z.infer<typeof pdsFamilySchema>;
 export type PdsEducationInput = z.infer<typeof pdsEducationSchema>;
 export type PdsEligibilityInput = z.infer<typeof pdsEligibilitySchema>;
+export type PdsWorkExperienceInput = z.infer<typeof pdsWorkExperienceSchema>;
+export type PdsVoluntaryWorkInput = z.infer<typeof pdsVoluntaryWorkSchema>;
+export type PdsLearningDevelopmentInput = z.infer<typeof pdsLearningDevelopmentSchema>;
+export type PdsWesInput = z.infer<typeof pdsWesSchema>;
+export type PdsWesEntryInput = z.infer<typeof pdsWesEntrySchema>;
