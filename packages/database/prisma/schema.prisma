@@ -47,6 +47,8 @@ model Agency {
   pdsVersions                   PdsVersion[]
   pdsPersonalDetails            PdsPersonalDetails[]
   pdsFamilyRecords              PdsFamilyRecord[]
+  pdsEducationRecords            PdsEducationRecord[]
+  pdsEligibilityRecords          PdsEligibilityRecord[]
   personnelBaselines            PersonnelBaseline[]
   serviceSegments               ServiceSegment[]
   positionIncumbencies          PositionIncumbency[]
@@ -436,6 +438,8 @@ model Document {
   qualificationStandardApprovalVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalDocument")
   positionDocuments                     PositionDocument[]             @relation("PositionDocumentDocuments")
   employeeDocuments                     EmployeeDocument[]              @relation("DocumentEmployeeDocuments")
+  pdsEducationEvidenceRecords            PdsEducationRecord[]             @relation("PdsEducationEvidenceDocument")
+  pdsEligibilityEvidenceRecords          PdsEligibilityRecord[]           @relation("PdsEligibilityEvidenceDocument")
   personnelBaselineEvidenceDocuments     PersonnelBaseline[]             @relation("PersonnelBaselineEvidenceDocument")
 
   @@unique([agencyId, id])
@@ -466,6 +470,8 @@ model DocumentVersion {
   qualificationStandardSourceEvidenceVersions   QualificationStandardVersion[] @relation("QualificationStandardSourceVersion")
   qualificationStandardApprovalEvidenceVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalVersion")
   employeeDocuments                           EmployeeDocument[]              @relation("DocumentVersionEmployeeDocuments")
+  pdsEducationEvidenceRecords                 PdsEducationRecord[]            @relation("PdsEducationEvidenceVersion")
+  pdsEligibilityEvidenceRecords               PdsEligibilityRecord[]          @relation("PdsEligibilityEvidenceVersion")
   personnelBaselineEvidenceVersions             PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceVersion")
 
   @@unique([documentId, versionNo])
@@ -768,6 +774,8 @@ model PdsVersion {
   updatedBy         AgencyMembership   @relation("PdsVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   personalDetails   PdsPersonalDetails?
   familyRecords     PdsFamilyRecord[]
+  educationRecords  PdsEducationRecord[]
+  eligibilityRecords PdsEligibilityRecord[]
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeId, versionNo])
@@ -837,6 +845,57 @@ model PdsFamilyRecord {
   @@unique([pdsVersionId, relationshipType, sequenceNo])
   @@index([agencyId, pdsVersionId, relationshipType, sequenceNo])
   @@map("pds_family_records")
+}
+
+model PdsEducationRecord {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId            String    @map("agency_id") @db.Uuid
+  pdsVersionId        String    @map("pds_version_id") @db.Uuid
+  level               String
+  sequenceNo          Int       @map("sequence_no")
+  schoolName          String    @map("school_name")
+  degreeCourse        String    @map("degree_course")
+  periodOfAttendance  String    @map("period_of_attendance")
+  highestLevelUnits   String    @map("highest_level_units")
+  yearGraduated       Int?      @map("year_graduated")
+  honors              String
+  documentId          String?   @map("document_id") @db.Uuid
+  documentVersionId   String?   @map("document_version_id") @db.Uuid
+
+  agency          Agency         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion      PdsVersion     @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  document        Document?      @relation("PdsEducationEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion? @relation("PdsEducationEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([pdsVersionId, level, sequenceNo])
+  @@index([agencyId, pdsVersionId, level, sequenceNo])
+  @@map("pds_education_records")
+}
+
+model PdsEligibilityRecord {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String    @map("agency_id") @db.Uuid
+  pdsVersionId      String    @map("pds_version_id") @db.Uuid
+  sequenceNo        Int       @map("sequence_no")
+  eligibilityName   String    @map("eligibility_name")
+  rating            String?
+  examDate          DateTime? @map("exam_date") @db.Date
+  examPlace         String    @map("exam_place")
+  licenseNo         String?   @map("license_no")
+  validUntil        DateTime? @map("valid_until") @db.Date
+  documentId        String?   @map("document_id") @db.Uuid
+  documentVersionId String?   @map("document_version_id") @db.Uuid
+
+  agency          Agency         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion      PdsVersion     @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  document        Document?      @relation("PdsEligibilityEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion? @relation("PdsEligibilityEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_eligibility_records")
 }
 
 model PersonnelBaseline {

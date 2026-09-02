@@ -2,6 +2,8 @@ import { expect, it } from 'vitest';
 import {
   PDS_CITIZENSHIP_COUNTRIES,
   pdsCreateSchema,
+  pdsEducationSchema,
+  pdsEligibilitySchema,
   pdsFamilySchema,
   pdsPersonalDetailsSchema,
   pdsUpdateSchema,
@@ -77,4 +79,110 @@ it('rejects unsupported values, conditional omissions, duplicate child order, an
     }).success,
   ).toBe(false);
   expect(pdsUpdateSchema.safeParse({ personal: { civilStatus: 'OTHER' } }).success).toBe(false);
+});
+
+it('accepts the Revised 2026 qualification sections and exact evidence references', () => {
+  expect(
+    pdsEducationSchema.parse([
+      {
+        level: 'COLLEGE',
+        schoolName: 'University of the Philippines',
+        degreeCourse: 'BS Public Administration',
+        periodOfAttendance: '2010-2014',
+        highestLevelUnits: 'Graduate',
+        yearGraduated: 2014,
+        honors: 'N/A',
+        documentId: '00000000-0000-4000-8000-000000000010',
+        documentVersionId: '00000000-0000-4000-8000-000000000011',
+      },
+    ]),
+  ).toHaveLength(1);
+  expect(
+    pdsEligibilitySchema.parse([
+      {
+        eligibilityName: 'Civil Service Professional',
+        rating: 'Passed',
+        examDate: '2020-01-15',
+        examPlace: 'Manila',
+        documentId: '00000000-0000-4000-8000-000000000010',
+        documentVersionId: '00000000-0000-4000-8000-000000000011',
+      },
+    ]),
+  ).toHaveLength(1);
+});
+
+it('rejects qualification ordering, ranges, ratings, and license mismatches', () => {
+  expect(
+    pdsEducationSchema.safeParse([
+      {
+        level: 'COLLEGE',
+        sequenceNo: 1,
+        schoolName: 'One',
+        degreeCourse: 'Course',
+        periodOfAttendance: '2014-2010',
+        highestLevelUnits: 'N/A',
+        honors: 'N/A',
+      },
+      {
+        level: 'COLLEGE',
+        sequenceNo: 1,
+        schoolName: 'Two',
+        degreeCourse: 'Course',
+        periodOfAttendance: '2015-2016',
+        highestLevelUnits: 'N/A',
+        honors: 'N/A',
+      },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsEligibilitySchema.safeParse([
+      {
+        eligibilityName: 'Career Service',
+        rating: '',
+        examPlace: 'Manila',
+      },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsEligibilitySchema.safeParse([
+      {
+        eligibilityName: "Driver's License",
+        examPlace: 'Manila',
+        licenseNo: 'DL-1',
+      },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsEligibilitySchema.safeParse([
+      {
+        eligibilityName: 'Career Service',
+        examDate: '2999-01-01',
+        examPlace: 'Manila',
+      },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsEligibilitySchema.safeParse([
+      {
+        eligibilityName: "Driver's License",
+        examDate: '2020-01-15',
+        examPlace: 'Manila',
+        licenseNo: 'DL-1',
+        validUntil: '2019-12-31',
+      },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsEducationSchema.safeParse([
+      {
+        level: 'COLLEGE',
+        schoolName: 'One',
+        degreeCourse: 'Course',
+        periodOfAttendance: '2014-2016',
+        highestLevelUnits: 'N/A',
+        honors: 'N/A',
+        documentId: '00000000-0000-4000-8000-000000000010',
+      },
+    ]).success,
+  ).toBe(false);
 });

@@ -37,6 +37,8 @@ const detail: PdsVersionDetail = {
   fieldScope: 'FULL',
   personal: null,
   family: { spouse: null, children: [], father: null, mother: null },
+  education: [],
+  eligibility: [],
 };
 
 function serviceMock() {
@@ -101,6 +103,40 @@ it('forwards create, own-list, and update through the public response contract',
   expect(service.update).toHaveBeenCalledWith(context, versionId, {
     rowVersion: 1,
     personal: {},
+  });
+});
+
+it('forwards qualification rows without reshaping exact evidence references', async () => {
+  const service = serviceMock();
+  service.create.mockResolvedValue(detail);
+  const controller = new PdsController(service as never);
+  const education = {
+    level: 'COLLEGE',
+    schoolName: 'University',
+    degreeCourse: 'Course',
+    periodOfAttendance: '2010-2014',
+    highestLevelUnits: null,
+    yearGraduated: 2014,
+    honors: 'N/A',
+    documentId: '00000000-0000-4000-8000-000000000010',
+    documentVersionId: '00000000-0000-4000-8000-000000000011',
+  };
+  const eligibility = {
+    eligibilityName: 'Career Service Professional',
+    rating: 'Passed',
+    examDate: '2020-01-15',
+    examPlace: 'Manila',
+  };
+  await controller.createForEmployee(
+    agencyId,
+    employeeId,
+    { education: [education], eligibility: [eligibility] },
+    context,
+  );
+  expect(service.create).toHaveBeenCalledWith(context, {
+    employeeId,
+    education: [education],
+    eligibility: [eligibility],
   });
 });
 

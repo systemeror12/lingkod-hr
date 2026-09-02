@@ -110,9 +110,38 @@ interface PdsFamilyData {
   mother: PdsFamilyRecordData | null;
 }
 
+interface PdsEducationRecordData {
+  id?: string;
+  sequenceNo: number;
+  level: string | null;
+  schoolName: string | null;
+  degreeCourse: string | null;
+  periodOfAttendance: string | null;
+  highestLevelUnits: string | null;
+  yearGraduated: number | null;
+  honors: string | null;
+  documentId: string | null;
+  documentVersionId: string | null;
+}
+
+interface PdsEligibilityRecordData {
+  id?: string;
+  sequenceNo: number;
+  eligibilityName: string | null;
+  rating: string | null;
+  examDate: string | null;
+  examPlace: string | null;
+  licenseNo: string | null;
+  validUntil: string | null;
+  documentId: string | null;
+  documentVersionId: string | null;
+}
+
 export interface PdsDetailData extends PdsVersionSummaryData {
   personal: PdsPersonalData | null;
   family: PdsFamilyData;
+  education?: PdsEducationRecordData[];
+  eligibility?: PdsEligibilityRecordData[];
 }
 
 interface AddressForm {
@@ -142,6 +171,29 @@ interface SpouseForm extends NameForm {
 interface ChildForm {
   fullName: string;
   birthDate: string;
+}
+
+interface EducationForm {
+  level: string;
+  schoolName: string;
+  degreeCourse: string;
+  periodOfAttendance: string;
+  highestLevelUnits: string;
+  yearGraduated: string;
+  honors: string;
+  documentId: string;
+  documentVersionId: string;
+}
+
+interface EligibilityForm {
+  eligibilityName: string;
+  rating: string;
+  examDate: string;
+  examPlace: string;
+  licenseNo: string;
+  validUntil: string;
+  documentId: string;
+  documentVersionId: string;
 }
 
 interface PersonalForm {
@@ -180,6 +232,8 @@ interface PdsForm {
   children: ChildForm[];
   father: NameForm;
   mother: NameForm;
+  education: EducationForm[];
+  eligibility: EligibilityForm[];
 }
 
 interface ErrorEnvelope {
@@ -220,6 +274,23 @@ const personalTextFields = [
   ['mobileNumber', 'Mobile'],
   ['emailAddress', 'Email address'],
 ] as const satisfies readonly [keyof PersonalForm, string][];
+
+const educationLevelOptions = [
+  ['ELEMENTARY', 'Elementary'],
+  ['SECONDARY', 'Secondary'],
+  ['VOCATIONAL_TRADE', 'Vocational / trade course'],
+  ['COLLEGE', 'College'],
+  ['GRADUATE_STUDIES', 'Graduate studies'],
+] as const;
+
+const eligibilityCategoryOptions = [
+  'Career Service',
+  'RA 1080 (Board/Bar)',
+  'Under Special Laws',
+  'CES/CSEE',
+  'Barangay Eligibility',
+  "Driver's License",
+] as const;
 
 function today(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -303,6 +374,43 @@ function blankPersonal(): PersonalForm {
   };
 }
 
+function blankEducation(): EducationForm {
+  return {
+    level: '',
+    schoolName: '',
+    degreeCourse: '',
+    periodOfAttendance: '',
+    highestLevelUnits: '',
+    yearGraduated: '',
+    honors: '',
+    documentId: '',
+    documentVersionId: '',
+  };
+}
+
+function blankEligibility(): EligibilityForm {
+  return {
+    eligibilityName: '',
+    rating: '',
+    examDate: '',
+    examPlace: '',
+    licenseNo: '',
+    validUntil: '',
+    documentId: '',
+    documentVersionId: '',
+  };
+}
+
+function moveRow<T>(rows: T[], index: number, offset: -1 | 1): T[] {
+  const target = index + offset;
+  if (target < 0 || target >= rows.length) return rows;
+  const next = [...rows];
+  const [row] = next.splice(index, 1);
+  if (row === undefined) return rows;
+  next.splice(target, 0, row);
+  return next;
+}
+
 function formFromDetail(detail: PdsDetailData | null): PdsForm {
   const personal = detail?.personal;
   return {
@@ -371,6 +479,29 @@ function formFromDetail(detail: PdsDetailData | null): PdsForm {
           nameExtension: stringValue(detail.family.mother.nameExtension),
         }
       : blankName(),
+    education:
+      detail?.education?.map((record) => ({
+        level: stringValue(record.level),
+        schoolName: stringValue(record.schoolName),
+        degreeCourse: stringValue(record.degreeCourse),
+        periodOfAttendance: stringValue(record.periodOfAttendance),
+        highestLevelUnits: stringValue(record.highestLevelUnits),
+        yearGraduated: stringValue(record.yearGraduated),
+        honors: stringValue(record.honors),
+        documentId: stringValue(record.documentId),
+        documentVersionId: stringValue(record.documentVersionId),
+      })) ?? [],
+    eligibility:
+      detail?.eligibility?.map((record) => ({
+        eligibilityName: stringValue(record.eligibilityName),
+        rating: stringValue(record.rating),
+        examDate: stringValue(record.examDate),
+        examPlace: stringValue(record.examPlace),
+        licenseNo: stringValue(record.licenseNo),
+        validUntil: stringValue(record.validUntil),
+        documentId: stringValue(record.documentId),
+        documentVersionId: stringValue(record.documentVersionId),
+      })) ?? [],
   };
 }
 
@@ -401,6 +532,40 @@ function namePayload(value: NameForm, includeNameExtension = true) {
   };
 }
 
+function educationPayload(records: EducationForm[]) {
+  const nextSequence = new Map<string, number>();
+  return records.map((record, index) => {
+    const sequenceNo = nextSequence.get(record.level) ?? 0;
+    if (record.level) nextSequence.set(record.level, sequenceNo + 1);
+    return {
+      sequenceNo: record.level ? sequenceNo + 1 : index + 1,
+      level: record.level || null,
+      schoolName: nullable(record.schoolName),
+      degreeCourse: nullable(record.degreeCourse),
+      periodOfAttendance: nullable(record.periodOfAttendance),
+      highestLevelUnits: nullable(record.highestLevelUnits),
+      yearGraduated: numberValue(record.yearGraduated),
+      honors: nullable(record.honors),
+      documentId: nullable(record.documentId),
+      documentVersionId: nullable(record.documentVersionId),
+    };
+  });
+}
+
+function eligibilityPayload(records: EligibilityForm[]) {
+  return records.map((record, index) => ({
+    sequenceNo: index + 1,
+    eligibilityName: nullable(record.eligibilityName),
+    rating: nullable(record.rating),
+    examDate: nullable(record.examDate),
+    examPlace: nullable(record.examPlace),
+    licenseNo: nullable(record.licenseNo),
+    validUntil: nullable(record.validUntil),
+    documentId: nullable(record.documentId),
+    documentVersionId: nullable(record.documentVersionId),
+  }));
+}
+
 function formPayload(form: PdsForm) {
   const personal = form.personal;
   const spouseHasValue = Object.values(form.spouse).some((value) =>
@@ -408,7 +573,7 @@ function formPayload(form: PdsForm) {
   );
   const fatherHasValue = Object.values(form.father).some((value) => value.trim());
   const motherHasValue = Object.values(form.mother).some((value) => value.trim());
-  return {
+  const payload = {
     asOfDate: form.asOfDate,
     personal: {
       surname: nullable(personal.surname),
@@ -457,6 +622,11 @@ function formPayload(form: PdsForm) {
       mother: motherHasValue ? namePayload(form.mother, false) : null,
     },
   };
+  return {
+    ...payload,
+    education: educationPayload(form.education),
+    eligibility: eligibilityPayload(form.eligibility),
+  };
 }
 
 function summaryFromDetail(detail: PdsDetailData): PdsVersionSummaryData {
@@ -504,6 +674,7 @@ function TextField({
   required = false,
   min,
   step,
+  list,
 }: {
   label: string;
   value: string;
@@ -512,6 +683,7 @@ function TextField({
   required?: boolean;
   min?: string;
   step?: string;
+  list?: string;
 }) {
   return (
     <label className={employeeLabelClass}>
@@ -524,6 +696,7 @@ function TextField({
         required={required}
         min={min}
         step={step}
+        list={list}
       />
     </label>
   );
@@ -648,6 +821,46 @@ function DetailValue({
   );
 }
 
+function RowButtons({
+  label,
+  index,
+  count,
+  onMove,
+  onRemove,
+}: {
+  label: string;
+  index: number;
+  count: number;
+  onMove: (offset: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <Button
+        type="button"
+        variant="secondary"
+        size="default"
+        onClick={() => onMove(-1)}
+        disabled={index === 0}
+      >
+        Move {label} up
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        size="default"
+        onClick={() => onMove(1)}
+        disabled={index === count - 1}
+      >
+        Move {label} down
+      </Button>
+      <Button type="button" variant="secondary" size="default" onClick={onRemove}>
+        Remove
+      </Button>
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const colors =
     status === 'DRAFT' || status === 'RETURNED'
@@ -749,6 +962,24 @@ export function PdsWorkspace({
     setForm((current) => ({ ...current, [section]: { ...current[section], [key]: value } }));
   }
 
+  function changeEducation(index: number, key: keyof EducationForm, value: string) {
+    setForm((current) => ({
+      ...current,
+      education: current.education.map((record, recordIndex) =>
+        recordIndex === index ? { ...record, [key]: value } : record,
+      ),
+    }));
+  }
+
+  function changeEligibility(index: number, key: keyof EligibilityForm, value: string) {
+    setForm((current) => ({
+      ...current,
+      eligibility: current.eligibility.map((record, recordIndex) =>
+        recordIndex === index ? { ...record, [key]: value } : record,
+      ),
+    }));
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void save();
@@ -796,6 +1027,8 @@ export function PdsWorkspace({
 
   const personal = detail?.personal;
   const family = detail?.family;
+  const education = detail?.education ?? [];
+  const eligibility = detail?.eligibility ?? [];
 
   return (
     <>
@@ -811,7 +1044,7 @@ export function PdsWorkspace({
           <EmployeePageTitle
             eyebrow="CS Form No. 212 · Revised 2026 Draft"
             title={employeeName ? `${employeeName} · PDS` : 'My Personal Data Sheet'}
-            description="Maintain personal and family information in the protected Draft PDS record."
+            description="Maintain personal, family, education, and eligibility information in the protected Draft PDS record."
           />
         </div>
         {canUpdate && (editable || canCreate) && (
@@ -826,7 +1059,7 @@ export function PdsWorkspace({
                 <div className="grid gap-1.5">
                   <DialogTitle>{editable ? 'Edit Draft PDS' : 'Create Draft PDS'}</DialogTitle>
                   <DialogDescription id="pds-dialog-description">
-                    Items 1–25 are saved as one protected Draft. Empty fields remain available for
+                    Items 1-27 are saved as one protected Draft. Empty fields remain available for
                     later completion.
                   </DialogDescription>
                 </div>
@@ -1132,6 +1365,219 @@ export function PdsWorkspace({
                       includeNameExtension={false}
                     />
                   </FormSection>
+                  <FormSection item="26" title="Educational background">
+                    <div className="grid gap-4">
+                      {form.education.map((record, index) => (
+                        <div
+                          key={index}
+                          className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <strong className="text-xs font-[680] text-ink">
+                              Education {index + 1}
+                            </strong>
+                            <RowButtons
+                              label="education row"
+                              index={index}
+                              count={form.education.length}
+                              onMove={(offset) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  education: moveRow(current.education, index, offset),
+                                }))
+                              }
+                              onRemove={() =>
+                                setForm((current) => ({
+                                  ...current,
+                                  education: current.education.filter(
+                                    (_, recordIndex) => recordIndex !== index,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="grid gap-4 min-[620px]:grid-cols-2">
+                            <SelectField
+                              label="Education level"
+                              value={record.level}
+                              onChange={(value) => changeEducation(index, 'level', value)}
+                              options={educationLevelOptions}
+                              required
+                            />
+                            <TextField
+                              label="Name of school"
+                              value={record.schoolName}
+                              onChange={(value) => changeEducation(index, 'schoolName', value)}
+                              required
+                            />
+                            <TextField
+                              label="Basic education / degree / course"
+                              value={record.degreeCourse}
+                              onChange={(value) => changeEducation(index, 'degreeCourse', value)}
+                              required
+                            />
+                            <TextField
+                              label="Period of attendance"
+                              value={record.periodOfAttendance}
+                              onChange={(value) =>
+                                changeEducation(index, 'periodOfAttendance', value)
+                              }
+                              required
+                            />
+                            <TextField
+                              label="Highest level / units earned"
+                              value={record.highestLevelUnits}
+                              onChange={(value) =>
+                                changeEducation(index, 'highestLevelUnits', value)
+                              }
+                            />
+                            <TextField
+                              label="Year graduated"
+                              type="number"
+                              min="1900"
+                              value={record.yearGraduated}
+                              onChange={(value) => changeEducation(index, 'yearGraduated', value)}
+                            />
+                            <TextField
+                              label="Scholarship / academic honors"
+                              value={record.honors}
+                              onChange={(value) => changeEducation(index, 'honors', value)}
+                            />
+                            <TextField
+                              label="Evidence document ID"
+                              value={record.documentId}
+                              onChange={(value) => changeEducation(index, 'documentId', value)}
+                            />
+                            <TextField
+                              label="Evidence document version ID"
+                              value={record.documentVersionId}
+                              onChange={(value) =>
+                                changeEducation(index, 'documentVersionId', value)
+                              }
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            education: [...current.education, blankEducation()],
+                          }))
+                        }
+                      >
+                        Add education row
+                      </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="27" title="Civil-service eligibility">
+                    <div className="grid gap-4">
+                      <datalist id="pds-eligibility-categories">
+                        {eligibilityCategoryOptions.map((option) => (
+                          <option key={option} value={option} />
+                        ))}
+                      </datalist>
+                      {form.eligibility.map((record, index) => (
+                        <div
+                          key={index}
+                          className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <strong className="text-xs font-[680] text-ink">
+                              Eligibility {index + 1}
+                            </strong>
+                            <RowButtons
+                              label="eligibility row"
+                              index={index}
+                              count={form.eligibility.length}
+                              onMove={(offset) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  eligibility: moveRow(current.eligibility, index, offset),
+                                }))
+                              }
+                              onRemove={() =>
+                                setForm((current) => ({
+                                  ...current,
+                                  eligibility: current.eligibility.filter(
+                                    (_, recordIndex) => recordIndex !== index,
+                                  ),
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="grid gap-4 min-[620px]:grid-cols-2">
+                            <TextField
+                              label="Eligibility name / category"
+                              value={record.eligibilityName}
+                              list="pds-eligibility-categories"
+                              onChange={(value) =>
+                                changeEligibility(index, 'eligibilityName', value)
+                              }
+                              required
+                            />
+                            <TextField
+                              label="Rating"
+                              value={record.rating}
+                              onChange={(value) => changeEligibility(index, 'rating', value)}
+                            />
+                            <TextField
+                              label="Date of examination / conferment"
+                              type="date"
+                              value={record.examDate}
+                              onChange={(value) => changeEligibility(index, 'examDate', value)}
+                            />
+                            <TextField
+                              label="Place of examination / conferment"
+                              value={record.examPlace}
+                              onChange={(value) => changeEligibility(index, 'examPlace', value)}
+                            />
+                            <TextField
+                              label="License number"
+                              value={record.licenseNo}
+                              onChange={(value) => changeEligibility(index, 'licenseNo', value)}
+                            />
+                            <TextField
+                              label="License date of validity"
+                              type="date"
+                              value={record.validUntil}
+                              onChange={(value) => changeEligibility(index, 'validUntil', value)}
+                            />
+                            <TextField
+                              label="Evidence document ID"
+                              value={record.documentId}
+                              onChange={(value) => changeEligibility(index, 'documentId', value)}
+                            />
+                            <TextField
+                              label="Evidence document version ID"
+                              value={record.documentVersionId}
+                              onChange={(value) =>
+                                changeEligibility(index, 'documentVersionId', value)
+                              }
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            eligibility: [...current.eligibility, blankEligibility()],
+                          }))
+                        }
+                      >
+                        Add eligibility row
+                      </Button>
+                    </div>
+                  </FormSection>
                 </form>
               </DialogBody>
               <DialogFooter>
@@ -1182,7 +1628,7 @@ export function PdsWorkspace({
             <div className="grid gap-2 px-5 py-8">
               <strong className="text-sm font-[650] text-midnight">No Draft PDS yet.</strong>
               <p className="m-0 max-w-[560px] text-sm leading-6 text-muted">
-                Create the first Draft to begin recording Items 1–25. A single Draft successor is
+                Create the first Draft to begin recording Items 1-27. A single Draft successor is
                 allowed for this Employee.
               </p>
             </div>
@@ -1284,6 +1730,74 @@ export function PdsWorkspace({
                   <DetailValue label="Father" value={family?.father?.fullName} />
                   <DetailValue label="Mother’s maiden name" value={family?.mother?.fullName} />
                 </dl>
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Item 26 · Education
+                </h3>
+                {education.length ? (
+                  <div className="grid gap-3">
+                    {education.map((record, index) => (
+                      <dl
+                        key={record.id ?? index}
+                        className="grid gap-x-8 gap-y-5 rounded-[3px] border border-line bg-[#fafbfd] p-4 min-[620px]:grid-cols-3"
+                      >
+                        <DetailValue label="Level" value={record.level} />
+                        <DetailValue label="School" value={record.schoolName} />
+                        <DetailValue label="Degree / course" value={record.degreeCourse} />
+                        <DetailValue
+                          label="Period of attendance"
+                          value={record.periodOfAttendance}
+                        />
+                        <DetailValue
+                          label="Highest level / units"
+                          value={record.highestLevelUnits}
+                        />
+                        <DetailValue label="Year graduated" value={record.yearGraduated} />
+                        <DetailValue label="Honors" value={record.honors} />
+                        <DetailValue label="Document ID" value={record.documentId} />
+                        <DetailValue label="Document version ID" value={record.documentVersionId} />
+                      </dl>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="m-0 text-sm text-muted">No education rows recorded.</p>
+                )}
+              </div>
+              <div className="grid gap-4">
+                <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
+                  Item 27 · Eligibility
+                </h3>
+                {eligibility.length ? (
+                  <div className="grid gap-3">
+                    {eligibility.map((record, index) => (
+                      <dl
+                        key={record.id ?? index}
+                        className="grid gap-x-8 gap-y-5 rounded-[3px] border border-line bg-[#fafbfd] p-4 min-[620px]:grid-cols-3"
+                      >
+                        <DetailValue
+                          label="Eligibility / category"
+                          value={record.eligibilityName}
+                        />
+                        <DetailValue label="Rating" value={record.rating} />
+                        <DetailValue
+                          label="Exam / conferment date"
+                          value={record.examDate ? formatEmployeeDate(record.examDate) : null}
+                        />
+                        <DetailValue label="Exam / conferment place" value={record.examPlace} />
+                        <DetailValue label="License number" value={record.licenseNo} />
+                        <DetailValue
+                          label="Valid until"
+                          value={record.validUntil ? formatEmployeeDate(record.validUntil) : null}
+                        />
+                        <DetailValue label="Document ID" value={record.documentId} />
+                        <DetailValue label="Document version ID" value={record.documentVersionId} />
+                      </dl>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="m-0 text-sm text-muted">No eligibility rows recorded.</p>
+                )}
               </div>
             </div>
           )}
