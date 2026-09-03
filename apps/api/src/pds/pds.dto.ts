@@ -1,6 +1,8 @@
 import type {
   PdsFamilyRecordView,
   PdsFamilyView,
+  PdsEducationRecordView,
+  PdsEligibilityRecordView,
   PdsPersonalDetailsView,
   PdsVersionDetail,
   PdsVersionList,
@@ -74,6 +76,41 @@ export class PdsFamilyDto implements PdsFamilyView {
   }
 }
 
+export class PdsEducationRecordDto implements PdsEducationRecordView {
+  declare readonly id: string;
+  declare readonly level: string;
+  declare readonly sequenceNo: number;
+  declare readonly schoolName: string;
+  declare readonly degreeCourse: string;
+  declare readonly periodOfAttendance: string;
+  declare readonly highestLevelUnits: string;
+  declare readonly yearGraduated: number | null;
+  declare readonly honors: string;
+  declare readonly documentId: string | null;
+  declare readonly documentVersionId: string | null;
+
+  constructor(value: PdsEducationRecordView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsEligibilityRecordDto implements PdsEligibilityRecordView {
+  declare readonly id: string;
+  declare readonly sequenceNo: number;
+  declare readonly eligibilityName: string;
+  declare readonly rating: string | null;
+  declare readonly examDate: string | null;
+  declare readonly examPlace: string;
+  declare readonly licenseNo: string | null;
+  declare readonly validUntil: string | null;
+  declare readonly documentId: string | null;
+  declare readonly documentVersionId: string | null;
+
+  constructor(value: PdsEligibilityRecordView) {
+    Object.assign(this, value);
+  }
+}
+
 export class PdsVersionDto implements PdsVersionSummary {
   declare readonly id: string;
   declare readonly employeeId: string;
@@ -98,11 +135,15 @@ export class PdsVersionDto implements PdsVersionSummary {
 export class PdsVersionDetailDto extends PdsVersionDto {
   readonly personal: PdsPersonalDetailsDto | null;
   readonly family: PdsFamilyDto;
+  readonly education: PdsEducationRecordDto[];
+  readonly eligibility: PdsEligibilityRecordDto[];
 
   constructor(value: PdsVersionDetail) {
     super(value);
     this.personal = value.personal ? new PdsPersonalDetailsDto(value.personal) : null;
     this.family = new PdsFamilyDto(value.family);
+    this.education = value.education.map((record) => new PdsEducationRecordDto(record));
+    this.eligibility = value.eligibility.map((record) => new PdsEligibilityRecordDto(record));
   }
 }
 

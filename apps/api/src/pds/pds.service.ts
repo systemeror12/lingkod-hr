@@ -1,12 +1,21 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import {
+  DocumentsService,
+  LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
+} from '../documents/documents.service';
 import {
   PDS_FORM_VERSION,
   PDS_CITIZENSHIP_COUNTRIES,
+  PDS_EDUCATION_LEVELS,
+  pdsEducationSchema,
+  pdsEligibilitySchema,
   pdsPersonalDetailsSchema,
   type PdsCreateInput,
+  type PdsEducationInput,
+  type PdsEligibilityInput,
   type PdsFamilyInput,
   type PdsPersonalDetailsInput,
   type PdsUpdateInput,
@@ -68,6 +77,33 @@ export interface PdsFamilyView {
   mother: PdsFamilyRecordView | null;
 }
 
+export interface PdsEducationRecordView {
+  id: string;
+  level: string;
+  sequenceNo: number;
+  schoolName: string;
+  degreeCourse: string;
+  periodOfAttendance: string;
+  highestLevelUnits: string;
+  yearGraduated: number | null;
+  honors: string;
+  documentId: string | null;
+  documentVersionId: string | null;
+}
+
+export interface PdsEligibilityRecordView {
+  id: string;
+  sequenceNo: number;
+  eligibilityName: string;
+  rating: string | null;
+  examDate: string | null;
+  examPlace: string;
+  licenseNo: string | null;
+  validUntil: string | null;
+  documentId: string | null;
+  documentVersionId: string | null;
+}
+
 export interface PdsVersionSummary {
   id: string;
   employeeId: string;
@@ -88,6 +124,8 @@ export interface PdsVersionSummary {
 export interface PdsVersionDetail extends PdsVersionSummary {
   personal: PdsPersonalDetailsView | null;
   family: PdsFamilyView;
+  education: PdsEducationRecordView[];
+  eligibility: PdsEligibilityRecordView[];
 }
 
 export interface PdsVersionList {
@@ -109,7 +147,30 @@ export const PDS_AUDIT_WRITER = Symbol('PDS_AUDIT_WRITER');
 
 export const pdsAuditWriter: PdsAuditWriter = {
   async write(transaction, event): Promise<void> {
-    await transaction.auditEvent.create({ data: event });
+    const safeMetadataKeys = new Set([
+      'access',
+      'asOfDate',
+      'changedFieldCount',
+      'childCount',
+      'evidenceLinkCount',
+      'fieldScope',
+      'formVersion',
+      'hasFather',
+      'hasMother',
+      'hasSpouse',
+      'rowCount',
+      'section',
+      'versionCount',
+      'versionNo',
+      'employeeId',
+    ]);
+    const metadata =
+      event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata)
+        ? Object.fromEntries(
+            Object.entries(event.metadata).filter(([key]) => safeMetadataKeys.has(key)),
+          )
+        : {};
+    await transaction.auditEvent.create({ data: { ...event, metadata } });
   },
 };
 
@@ -198,10 +259,74 @@ const pdsSelect = {
       telephoneNumber: true,
     },
   },
+  educationRecords: {
+    orderBy: [{ level: 'asc' }, { sequenceNo: 'asc' }],
+    select: {
+      id: true,
+      level: true,
+      sequenceNo: true,
+      schoolName: true,
+      degreeCourse: true,
+      periodOfAttendance: true,
+      highestLevelUnits: true,
+      yearGraduated: true,
+      honors: true,
+      documentId: true,
+      documentVersionId: true,
+    },
+  },
+  eligibilityRecords: {
+    orderBy: { sequenceNo: 'asc' },
+    select: {
+      id: true,
+      sequenceNo: true,
+      eligibilityName: true,
+      rating: true,
+      examDate: true,
+      examPlace: true,
+      licenseNo: true,
+      validUntil: true,
+      documentId: true,
+      documentVersionId: true,
+    },
+  },
+} satisfies Prisma.PdsVersionSelect;
+
+const pdsRedactedSelect = {
+  ...pdsSummaryWithOwnerSelect,
+  educationRecords: {
+    orderBy: [{ level: 'asc' }, { sequenceNo: 'asc' }],
+    select: {
+      id: true,
+      level: true,
+      sequenceNo: true,
+      schoolName: true,
+      degreeCourse: true,
+      periodOfAttendance: true,
+      highestLevelUnits: true,
+      yearGraduated: true,
+      honors: true,
+    },
+  },
+  eligibilityRecords: {
+    orderBy: { sequenceNo: 'asc' },
+    select: {
+      id: true,
+      sequenceNo: true,
+      eligibilityName: true,
+      examDate: true,
+      examPlace: true,
+    },
+  },
 } satisfies Prisma.PdsVersionSelect;
 
 type PdsRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsSelect }>;
 type PdsSummaryRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsSummarySelect }>;
+type PdsRedactedRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsRedactedSelect }>;
+
+const PDS_EDUCATION_LEVEL_ORDER = new Map(
+  PDS_EDUCATION_LEVELS.map((level, index) => [level, index]),
+);
 
 function formatDate(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
@@ -221,6 +346,12 @@ function text(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const normalized = value.trim();
   return normalized || null;
+}
+
+function ratingText(value: string | number | null | undefined): string | null {
+  const normalized = value === null || value === undefined ? null : String(value).trim();
+  if (!normalized) return null;
+  return normalized.toLowerCase() === 'if applicable' ? 'If Applicable' : normalized;
 }
 
 function databaseDate(value: string): Date {
@@ -427,6 +558,78 @@ function familyCreateData(
   return records;
 }
 
+function educationCreateData(
+  agencyId: string,
+  pdsVersionId: string,
+  input: PdsEducationInput,
+): Prisma.PdsEducationRecordCreateManyInput[] {
+  const records: Prisma.PdsEducationRecordCreateManyInput[] = [];
+  const seen = new Set<string>();
+  const nextSequence = new Map<string, number>();
+  for (const record of input) {
+    const sequenceNo = record.sequenceNo ?? (nextSequence.get(record.level) ?? 0) + 1;
+    const key = `${record.level}:${sequenceNo}`;
+    if (seen.has(key)) {
+      throw new PdsServiceError(
+        'Education sequence numbers must be unique within each level.',
+        400,
+        'PDS_EDUCATION_SEQUENCE_CONFLICT',
+      );
+    }
+    seen.add(key);
+    nextSequence.set(record.level, Math.max(nextSequence.get(record.level) ?? 0, sequenceNo));
+    records.push({
+      agencyId,
+      pdsVersionId,
+      level: record.level,
+      sequenceNo,
+      schoolName: text(record.schoolName) ?? '',
+      degreeCourse: text(record.degreeCourse) ?? '',
+      periodOfAttendance: text(record.periodOfAttendance) ?? '',
+      highestLevelUnits: text(record.highestLevelUnits) ?? '',
+      yearGraduated: record.yearGraduated ?? null,
+      honors: text(record.honors) ?? '',
+      documentId: record.documentId ?? null,
+      documentVersionId: record.documentVersionId ?? null,
+    });
+  }
+  return records;
+}
+
+function eligibilityCreateData(
+  agencyId: string,
+  pdsVersionId: string,
+  input: PdsEligibilityInput,
+): Prisma.PdsEligibilityRecordCreateManyInput[] {
+  const records: Prisma.PdsEligibilityRecordCreateManyInput[] = [];
+  const seen = new Set<number>();
+  for (const [index, record] of input.entries()) {
+    const sequenceNo = record.sequenceNo ?? index + 1;
+    if (seen.has(sequenceNo)) {
+      throw new PdsServiceError(
+        'Eligibility sequence numbers must be unique within this PDS.',
+        400,
+        'PDS_ELIGIBILITY_SEQUENCE_CONFLICT',
+      );
+    }
+    seen.add(sequenceNo);
+    records.push({
+      agencyId,
+      pdsVersionId,
+      sequenceNo,
+      eligibilityName: record.eligibilityName,
+      rating: ratingText(record.rating),
+      examDate: record.examDate ? databaseDate(record.examDate) : null,
+      examPlace: text(record.examPlace) ?? '',
+      licenseNo: text(record.licenseNo),
+      validUntil: record.validUntil ? databaseDate(record.validUntil) : null,
+      documentId: record.documentId ?? null,
+      documentVersionId: record.documentVersionId ?? null,
+    });
+  }
+  return records;
+}
+
 function personalView(record: PdsRecord['personalDetails']): PdsPersonalDetailsView | null {
   if (!record) return null;
   return {
@@ -487,6 +690,84 @@ function familyView(records: PdsRecord['familyRecords']): PdsFamilyView {
   };
 }
 
+function educationView(records: PdsRecord['educationRecords']): PdsEducationRecordView[] {
+  return [...records].sort(compareEducationRecords).map((record) => ({
+    id: record.id,
+    level: record.level,
+    sequenceNo: record.sequenceNo,
+    schoolName: record.schoolName,
+    degreeCourse: record.degreeCourse,
+    periodOfAttendance: record.periodOfAttendance,
+    highestLevelUnits: record.highestLevelUnits,
+    yearGraduated: record.yearGraduated,
+    honors: record.honors,
+    documentId: record.documentId,
+    documentVersionId: record.documentVersionId,
+  }));
+}
+
+function compareEducationRecords(
+  left: { level: string; sequenceNo: number },
+  right: { level: string; sequenceNo: number },
+): number {
+  return (
+    (PDS_EDUCATION_LEVEL_ORDER.get(left.level as (typeof PDS_EDUCATION_LEVELS)[number]) ??
+      Number.MAX_SAFE_INTEGER) -
+      (PDS_EDUCATION_LEVEL_ORDER.get(right.level as (typeof PDS_EDUCATION_LEVELS)[number]) ??
+        Number.MAX_SAFE_INTEGER) || left.sequenceNo - right.sequenceNo
+  );
+}
+
+function redactedEducationView(
+  records: PdsRedactedRecord['educationRecords'],
+): PdsEducationRecordView[] {
+  return [...records].sort(compareEducationRecords).map((record) => ({
+    id: record.id,
+    level: record.level,
+    sequenceNo: record.sequenceNo,
+    schoolName: record.schoolName,
+    degreeCourse: record.degreeCourse,
+    periodOfAttendance: record.periodOfAttendance,
+    highestLevelUnits: record.highestLevelUnits,
+    yearGraduated: record.yearGraduated,
+    honors: record.honors,
+    documentId: null,
+    documentVersionId: null,
+  }));
+}
+
+function eligibilityView(records: PdsRecord['eligibilityRecords']): PdsEligibilityRecordView[] {
+  return records.map((record) => ({
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    eligibilityName: record.eligibilityName,
+    rating: record.rating,
+    examDate: formatDate(record.examDate),
+    examPlace: record.examPlace,
+    licenseNo: record.licenseNo,
+    validUntil: formatDate(record.validUntil),
+    documentId: record.documentId,
+    documentVersionId: record.documentVersionId,
+  }));
+}
+
+function redactedEligibilityView(
+  records: PdsRedactedRecord['eligibilityRecords'],
+): PdsEligibilityRecordView[] {
+  return records.map((record) => ({
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    eligibilityName: record.eligibilityName,
+    rating: null,
+    examDate: formatDate(record.examDate),
+    examPlace: record.examPlace,
+    licenseNo: null,
+    validUntil: null,
+    documentId: null,
+    documentVersionId: null,
+  }));
+}
+
 function summary(record: PdsSummaryRecord, fieldScope: PdsFieldScope): PdsVersionSummary {
   return {
     id: record.id,
@@ -523,14 +804,18 @@ function detail(record: PdsRecord, fieldScope: PdsFieldScope): PdsVersionDetail 
       fieldScope === 'FULL'
         ? familyView(record.familyRecords)
         : { spouse: null, children: [], father: null, mother: null },
+    education: fieldScope === 'FULL' ? educationView(record.educationRecords) : [],
+    eligibility: fieldScope === 'FULL' ? eligibilityView(record.eligibilityRecords) : [],
   };
 }
 
-function redactedDetail(record: PdsSummaryRecord, fieldScope: PdsFieldScope): PdsVersionDetail {
+function redactedDetail(record: PdsRedactedRecord, fieldScope: PdsFieldScope): PdsVersionDetail {
   return {
     ...summary(record, fieldScope),
     personal: null,
     family: { spouse: null, children: [], father: null, mother: null },
+    education: redactedEducationView(record.educationRecords),
+    eligibility: redactedEligibilityView(record.eligibilityRecords),
   };
 }
 
@@ -596,9 +881,178 @@ function databaseContext(context: RequestContext, pdsMutation = false) {
   };
 }
 
+function isFinalizedEvidence(document: {
+  status: string;
+  currentVersion: { issuedAt: string | null } | null;
+}): boolean {
+  return (
+    document.status !== 'VOIDED' &&
+    Boolean(document.currentVersion) &&
+    (document.currentVersion?.issuedAt !== null ||
+      (LINKABLE_EXTERNAL_EVIDENCE_STATUSES as readonly string[]).includes(document.status))
+  );
+}
+
 @Injectable()
 export class PdsService {
-  constructor(@Inject(PDS_AUDIT_WRITER) private readonly auditWriter: PdsAuditWriter) {}
+  constructor(
+    @Inject(PDS_AUDIT_WRITER) private readonly auditWriter: PdsAuditWriter,
+    private readonly documentsService?: DocumentsService,
+  ) {}
+
+  private validateQualificationInput(input: PdsCreateInput | PdsUpdateInput): void {
+    if (input.education !== undefined) {
+      const parsed = pdsEducationSchema.safeParse(input.education);
+      if (!parsed.success) {
+        throw new PdsServiceError(
+          parsed.error.issues[0]?.message ?? 'The PDS education records are invalid.',
+          400,
+          'PDS_EDUCATION_INVALID',
+        );
+      }
+    }
+    if (input.eligibility !== undefined) {
+      const parsed = pdsEligibilitySchema.safeParse(input.eligibility);
+      if (!parsed.success) {
+        throw new PdsServiceError(
+          parsed.error.issues[0]?.message ?? 'The PDS eligibility records are invalid.',
+          400,
+          'PDS_ELIGIBILITY_INVALID',
+        );
+      }
+      for (const record of parsed.data) {
+        if (record.examDate && record.examDate > today()) {
+          throw new PdsServiceError(
+            'The examination or conferment date cannot be in the future.',
+            400,
+            'PDS_QUALIFICATION_DATE_INVALID',
+          );
+        }
+      }
+    }
+  }
+
+  private async validateEvidenceLinks(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    records: readonly { documentId?: string | null; documentVersionId?: string | null }[],
+  ): Promise<void> {
+    const ownWorkflow = permissionScope(context, 'personnel.pds.update') === 'OWN';
+    for (const record of records) {
+      if (!record.documentId && !record.documentVersionId) continue;
+      if (!record.documentId || !record.documentVersionId || !this.documentsService) {
+        throw new PdsServiceError(
+          'Evidence must reference an exact same-Agency Document Version.',
+          400,
+          'PDS_EVIDENCE_INVALID',
+        );
+      }
+      const document = await this.documentsService.findDocumentForLinkingInTransaction(
+        transaction,
+        context,
+        record.documentId,
+        record.documentVersionId,
+      );
+      if (!document || !document.currentVersion || document.status === 'VOIDED') {
+        throw new PdsServiceError(
+          'Evidence must reference a finalized same-Agency Document Version.',
+          400,
+          'PDS_EVIDENCE_INVALID',
+        );
+      }
+      if (ownWorkflow) {
+        const ownVersion = await this.documentsService.isVersionCreatedByMembershipInTransaction(
+          transaction,
+          context,
+          record.documentId,
+          record.documentVersionId,
+          context.membershipId,
+        );
+        if (!ownVersion) {
+          throw new PdsServiceError(
+            'Employees may link only their own uploaded evidence.',
+            403,
+            'PDS_EVIDENCE_FORBIDDEN',
+          );
+        }
+        continue;
+      }
+      if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
+        throw new PdsServiceError(
+          'The current Agency Membership cannot inspect shared Agency Documents.',
+          403,
+          'PDS_EVIDENCE_READ_FORBIDDEN',
+        );
+      }
+      if (
+        document.classification === 'HIGHLY_SENSITIVE' &&
+        !hasPermission(context, 'documents.evidence.read_sensitive', {
+          agencyId: context.agencyId,
+        })
+      ) {
+        throw new PdsServiceError(
+          'The current Agency Membership cannot inspect highly sensitive shared Documents.',
+          403,
+          'PDS_EVIDENCE_SENSITIVE_FORBIDDEN',
+        );
+      }
+      if (!isFinalizedEvidence(document)) {
+        throw new PdsServiceError(
+          'Evidence must reference a finalized same-Agency Document Version.',
+          400,
+          'PDS_EVIDENCE_INVALID',
+        );
+      }
+    }
+  }
+
+  private async writeQualificationRows(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    input: PdsCreateInput | PdsUpdateInput,
+  ): Promise<void> {
+    if (input.education !== undefined) {
+      const records = educationCreateData(context.agencyId, pdsVersionId, input.education);
+      await this.validateEvidenceLinks(transaction, context, records);
+      if (records.length) await transaction.pdsEducationRecord.createMany({ data: records });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'PDS_EDUCATION_UPDATED',
+        entityType: 'PdsVersion',
+        entityId: pdsVersionId,
+        requestId: context.requestId,
+        metadata: {
+          section: 'education',
+          rowCount: records.length,
+          evidenceLinkCount: records.filter((record) => record.documentId).length,
+        },
+      });
+    }
+    if (input.eligibility !== undefined) {
+      const records = eligibilityCreateData(context.agencyId, pdsVersionId, input.eligibility);
+      await this.validateEvidenceLinks(transaction, context, records);
+      if (records.length) await transaction.pdsEligibilityRecord.createMany({ data: records });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'PDS_ELIGIBILITY_UPDATED',
+        entityType: 'PdsVersion',
+        entityId: pdsVersionId,
+        requestId: context.requestId,
+        metadata: {
+          section: 'eligibility',
+          rowCount: records.length,
+          evidenceLinkCount: records.filter((record) => record.documentId).length,
+        },
+      });
+    }
+  }
 
   async list(context: RequestContext, employeeId: string): Promise<PdsVersionList> {
     this.assertContext(context, 'personnel.pds.read', 'PDS_READ_FORBIDDEN');
@@ -627,7 +1081,13 @@ export class PdsService {
       const fieldScope = readFieldScope(context, ownerUserId(summaryRecord));
       if (!fieldScope) return null;
       await this.auditRead(transaction, context, pdsVersionId, fieldScope, 'DETAIL');
-      if (fieldScope === 'REDACTED') return redactedDetail(summaryRecord, fieldScope);
+      if (fieldScope === 'REDACTED') {
+        const record = await transaction.pdsVersion.findFirst({
+          where: { agencyId: context.agencyId, id: pdsVersionId },
+          select: pdsRedactedSelect,
+        });
+        return record ? redactedDetail(record, fieldScope) : null;
+      }
       const record = await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, id: pdsVersionId },
         select: pdsSelect,
@@ -638,6 +1098,7 @@ export class PdsService {
 
   async create(context: RequestContext, input: PdsCreateInput): Promise<PdsVersionDetail> {
     this.assertContext(context, 'personnel.pds.update', 'PDS_UPDATE_FORBIDDEN');
+    this.validateQualificationInput(input);
     return withDatabaseContext(databaseContext(context, true), async (transaction) => {
       const employeeId = input.employeeId ?? (await this.ownEmployeeId(transaction, context));
       if (!employeeId) throw this.employeeRequired();
@@ -682,6 +1143,7 @@ export class PdsService {
         const records = familyCreateData(context.agencyId, created.id, input.family);
         if (records.length) await transaction.pdsFamilyRecord.createMany({ data: records });
       }
+      await this.writeQualificationRows(transaction, context, created.id, input);
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,
@@ -712,6 +1174,7 @@ export class PdsService {
     input: PdsUpdateInput,
   ): Promise<PdsVersionDetail> {
     this.assertContext(context, 'personnel.pds.update', 'PDS_UPDATE_FORBIDDEN');
+    this.validateQualificationInput(input);
     return withDatabaseContext(databaseContext(context, true), async (transaction) => {
       await this.lockVersion(transaction, context.agencyId, pdsVersionId);
       const existing = await this.record(transaction, context.agencyId, pdsVersionId);
@@ -793,6 +1256,17 @@ export class PdsService {
           },
         });
       }
+      if (input.education !== undefined) {
+        await transaction.pdsEducationRecord.deleteMany({
+          where: { agencyId: context.agencyId, pdsVersionId },
+        });
+      }
+      if (input.eligibility !== undefined) {
+        await transaction.pdsEligibilityRecord.deleteMany({
+          where: { agencyId: context.agencyId, pdsVersionId },
+        });
+      }
+      await this.writeQualificationRows(transaction, context, pdsVersionId, input);
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
       return detail(updated, 'FULL');

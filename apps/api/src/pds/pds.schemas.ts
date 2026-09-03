@@ -6,6 +6,21 @@ export const PDS_CITIZENSHIP_TYPES = ['FILIPINO', 'DUAL_CITIZENSHIP'] as const;
 export const PDS_DUAL_CITIZENSHIP_TYPES = ['BY_BIRTH', 'BY_NATURALIZATION'] as const;
 export const PDS_SEXES = ['MALE', 'FEMALE'] as const;
 export const PDS_CIVIL_STATUSES = ['SINGLE', 'MARRIED', 'WIDOWED', 'SEPARATED', 'OTHER'] as const;
+export const PDS_EDUCATION_LEVELS = [
+  'ELEMENTARY',
+  'SECONDARY',
+  'VOCATIONAL_TRADE',
+  'COLLEGE',
+  'GRADUATE_STUDIES',
+] as const;
+export const PDS_ELIGIBILITY_CATEGORIES = [
+  'Career Service',
+  'RA 1080 (Board/Bar)',
+  'Under Special Laws',
+  'CES/CSEE',
+  'Barangay Eligibility',
+  "Driver's License",
+] as const;
 
 export const PDS_CITIZENSHIP_COUNTRIES = `
 Afghanistan;Albania;Algeria;Andorra;Angola;Antigua and Barbuda;Argentina;Armenia;Aruba;Australia
@@ -37,6 +52,19 @@ United Kingdom;Uruguay;Uzbekistan;Vanuatu;Venezuela;Vietnam;Yemen;Zambia;Zimbabw
 const optionalText = (max = 500) => z.string().trim().max(max).nullable().optional();
 const requiredText = (max = 500) => z.string().trim().min(1).max(max);
 const optionalDate = z.string().date().nullable().optional();
+const pastOrTodayDate = optionalDate.refine(
+  (value) => value === undefined || value === null || value <= todayDate(),
+  'The date cannot be in the future.',
+);
+
+function todayDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 export const pdsAddressSchema = z
   .object({
@@ -182,12 +210,138 @@ export const pdsFamilySchema = z
     }
   });
 
+const pdsEvidenceFields = {
+  documentId: z.string().uuid().nullable().optional(),
+  documentVersionId: z.string().uuid().nullable().optional(),
+};
+
+const withEvidenceValidation = <T extends z.ZodRawShape>(shape: T) =>
+  z
+    .object({ ...shape, ...pdsEvidenceFields })
+    .strict()
+    .superRefine((value, context) => {
+      const evidence = value as { documentId?: string | null; documentVersionId?: string | null };
+      const hasDocument = Boolean(evidence.documentId);
+      const hasVersion = Boolean(evidence.documentVersionId);
+      if (hasDocument !== hasVersion) {
+        context.addIssue({
+          code: 'custom',
+          path: [hasDocument ? 'documentVersionId' : 'documentId'],
+          message: 'Document and Document Version must be provided together.',
+        });
+      }
+    });
+
+const schoolYearSchema = requiredText(40).refine((value) => {
+  if (value === 'N/A') return true;
+  const match = /^(\d{4})(?:-(\d{4}))?$/.exec(value);
+  return Boolean(match && (!match[2] || Number(match[2]) >= Number(match[1])));
+}, 'Enter a school year such as 1992-1996 or N/A.');
+
+const ratingSchema = z
+  .union([z.number().finite(), z.string().trim().min(1).max(80)])
+  .nullable()
+  .optional();
+
+export const pdsEducationRecordSchema = withEvidenceValidation({
+  sequenceNo: z.number().int().positive().optional(),
+  level: z.enum(PDS_EDUCATION_LEVELS),
+  schoolName: requiredText(240),
+  degreeCourse: requiredText(240),
+  periodOfAttendance: schoolYearSchema,
+  highestLevelUnits: optionalText(160),
+  yearGraduated: z.number().int().min(1).max(9999).nullable().optional(),
+  honors: requiredText(240),
+}).superRefine((value, context) => {
+  if (value.yearGraduated === undefined || value.yearGraduated === null) {
+    if (!value.highestLevelUnits?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        path: ['highestLevelUnits'],
+        message: 'Highest level or units earned is required when no graduation year is given.',
+      });
+    }
+  }
+});
+
+export const pdsEducationSchema = z
+  .array(pdsEducationRecordSchema)
+  .superRefine((records, context) => {
+    const seen = new Set<string>();
+    for (const [index, record] of records.entries()) {
+      if (record.sequenceNo === undefined) continue;
+      const key = `${record.level}:${record.sequenceNo}`;
+      if (seen.has(key)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'sequenceNo'],
+          message: 'Education sequence numbers must be unique within each level.',
+        });
+      }
+      seen.add(key);
+    }
+  });
+
+export const pdsEligibilityRecordSchema = withEvidenceValidation({
+  sequenceNo: z.number().int().positive().optional(),
+  eligibilityName: requiredText(240),
+  rating: ratingSchema,
+  examDate: pastOrTodayDate,
+  examPlace: requiredText(240),
+  licenseNo: optionalText(160),
+  validUntil: optionalDate,
+}).superRefine((value, context) => {
+  const licenseApplies =
+    value.eligibilityName === 'RA 1080 (Board/Bar)' || value.eligibilityName === "Driver's License";
+  const hasLicense = Boolean(value.licenseNo || value.validUntil);
+  if (licenseApplies && (!value.licenseNo || !value.validUntil)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['licenseNo'],
+      message: 'License number and validity date are required for this eligibility.',
+    });
+  }
+  if (!licenseApplies && hasLicense && (!value.licenseNo || !value.validUntil)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['licenseNo'],
+      message: 'License details require a license eligibility category.',
+    });
+  }
+  if (value.examDate && value.validUntil && value.validUntil < value.examDate) {
+    context.addIssue({
+      code: 'custom',
+      path: ['validUntil'],
+      message: 'License validity cannot end before the examination or conferment date.',
+    });
+  }
+});
+
+export const pdsEligibilitySchema = z
+  .array(pdsEligibilityRecordSchema)
+  .superRefine((records, context) => {
+    const seen = new Set<number>();
+    for (const [index, record] of records.entries()) {
+      if (record.sequenceNo === undefined) continue;
+      if (seen.has(record.sequenceNo)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'sequenceNo'],
+          message: 'Eligibility sequence numbers must be unique within this PDS.',
+        });
+      }
+      seen.add(record.sequenceNo);
+    }
+  });
+
 export const pdsCreateSchema = z
   .object({
     employeeId: z.string().uuid().optional(),
     asOfDate: z.string().date().optional(),
     personal: pdsPersonalDetailsSchema.optional(),
     family: pdsFamilySchema.optional(),
+    education: pdsEducationSchema.optional(),
+    eligibility: pdsEligibilitySchema.optional(),
   })
   .strict();
 
@@ -199,6 +353,8 @@ export const pdsUpdateSchema = z
     asOfDate: z.string().date().optional(),
     personal: pdsPersonalDetailsSchema.optional(),
     family: pdsFamilySchema.optional(),
+    education: pdsEducationSchema.optional(),
+    eligibility: pdsEligibilitySchema.optional(),
   })
   .strict()
   .refine(
@@ -206,7 +362,9 @@ export const pdsUpdateSchema = z
       value.rowVersion !== undefined ||
       value.asOfDate !== undefined ||
       value.personal ||
-      value.family,
+      value.family ||
+      value.education ||
+      value.eligibility,
     { message: 'Provide a PDS section or as-of date to update.' },
   );
 
@@ -214,3 +372,5 @@ export type PdsCreateInput = z.infer<typeof pdsCreateSchema>;
 export type PdsUpdateInput = z.infer<typeof pdsUpdateSchema>;
 export type PdsPersonalDetailsInput = z.infer<typeof pdsPersonalDetailsSchema>;
 export type PdsFamilyInput = z.infer<typeof pdsFamilySchema>;
+export type PdsEducationInput = z.infer<typeof pdsEducationSchema>;
+export type PdsEligibilityInput = z.infer<typeof pdsEligibilitySchema>;

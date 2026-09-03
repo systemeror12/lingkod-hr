@@ -185,7 +185,7 @@ export class PdsController {
     return new BadRequestException({
       error: {
         code: 'INVALID_INPUT',
-        message: 'Enter supported PDS personal and family values.',
+        message: 'Enter supported PDS personal, family, education, and eligibility values.',
         fields: validationFields(issues),
         requestId: context.requestId,
       },

@@ -96,6 +96,20 @@ it.skipIf(!enabled)('isolates PDS sections and enforces draft-only mutations', a
     await transaction.pdsPersonalDetails.create({
       data: { agencyId: agencyB.id, pdsVersionId: version.id, surname: 'Foreign' },
     });
+    await transaction.pdsEducationRecord.create({
+      data: {
+        agencyId: agencyB.id,
+        pdsVersionId: version.id,
+        level: 'COLLEGE',
+        sequenceNo: 1,
+        schoolName: 'Foreign University',
+        degreeCourse: 'Foreign Course',
+        periodOfAttendance: '2010-2014',
+        highestLevelUnits: 'Graduate',
+        yearGraduated: 2014,
+        honors: 'N/A',
+      },
+    });
     return version;
   });
 
@@ -142,9 +156,43 @@ it.skipIf(!enabled)('isolates PDS sections and enforces draft-only mutations', a
             birthDate: new Date('2020-01-01'),
           },
         });
+        await transaction.pdsEducationRecord.create({
+          data: {
+            agencyId: agencyA.id,
+            pdsVersionId: version.id,
+            level: 'COLLEGE',
+            sequenceNo: 1,
+            schoolName: 'Local University',
+            degreeCourse: 'Local Course',
+            periodOfAttendance: '2010-2014',
+            highestLevelUnits: 'Graduate',
+            yearGraduated: 2014,
+            honors: 'N/A',
+          },
+        });
+        await transaction.pdsEligibilityRecord.create({
+          data: {
+            agencyId: agencyA.id,
+            pdsVersionId: version.id,
+            sequenceNo: 1,
+            eligibilityName: 'Career Service',
+            rating: '85.5',
+            examDate: new Date('2020-01-01'),
+            examPlace: 'Manila',
+          },
+        });
         return version;
       },
     );
+
+    await expect(
+      withContext(
+        app,
+        { agencyId: agencyA.id, userId: user.id, membershipId: membershipA.id },
+        (transaction) =>
+          transaction.pdsEducationRecord.findMany({ where: { pdsVersionId: pdsB.id } }),
+      ),
+    ).resolves.toHaveLength(0);
 
     await expect(
       withContext(
@@ -220,9 +268,41 @@ it.skipIf(!enabled)('isolates PDS sections and enforces draft-only mutations', a
           transaction.pdsFamilyRecord.deleteMany({ where: { pdsVersionId: pdsA.id } }),
       ),
     ).rejects.toThrow(/immutable/i);
+    await expect(
+      withContext(
+        app,
+        {
+          agencyId: agencyA.id,
+          userId: user.id,
+          membershipId: membershipA.id,
+          pdsMutation: true,
+        },
+        (transaction) =>
+          transaction.pdsEducationRecord.deleteMany({ where: { pdsVersionId: pdsA.id } }),
+      ),
+    ).rejects.toThrow(/immutable/i);
+    await expect(
+      withContext(
+        app,
+        {
+          agencyId: agencyA.id,
+          userId: user.id,
+          membershipId: membershipA.id,
+          pdsMutation: true,
+        },
+        (transaction) =>
+          transaction.pdsEligibilityRecord.deleteMany({ where: { pdsVersionId: pdsA.id } }),
+      ),
+    ).rejects.toThrow(/immutable/i);
   } finally {
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      await transaction.pdsEligibilityRecord.deleteMany({
+        where: { pdsVersion: { agencyId: { in: [agencyA.id, agencyB.id] } } },
+      });
+      await transaction.pdsEducationRecord.deleteMany({
+        where: { pdsVersion: { agencyId: { in: [agencyA.id, agencyB.id] } } },
+      });
       await transaction.pdsFamilyRecord.deleteMany({
         where: { pdsVersion: { agencyId: { in: [agencyA.id, agencyB.id] } } },
       });
