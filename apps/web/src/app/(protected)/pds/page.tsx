@@ -87,6 +87,7 @@ export default async function MyPdsPage() {
         ({ code, scopePolicy }) =>
           code === 'personnel.pds.update' && (scopePolicy === 'AGENCY' || scopePolicy === 'OWN'),
       )}
+      canBrowseEvidence={hasPermission(session, 'documents.evidence.read')}
       createUrl={`/api/v1/agencies/${session.agencyId}/my-pds`}
       backHref="/dashboard"
     />

@@ -22,13 +22,14 @@ function context(
   userId: string,
   membershipId: string,
   permissions: RequestContext['permissions'],
+  primaryOrganizationUnitId: string | null = null,
 ): RequestContext {
   return {
     requestId: `pds-${Date.now()}`,
     userId,
     agencyId,
     membershipId,
-    primaryOrganizationUnitId: null,
+    primaryOrganizationUnitId,
     permissions,
   };
 }
@@ -83,6 +84,34 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
       createdByMembershipId: membership.id,
       updatedByMembershipId: membership.id,
     },
+  });
+  const organizationUnit = await admin.organizationUnit.create({
+    data: {
+      agencyId: agency.id,
+      code: `PDSI-UNIT-${suffix}`,
+      unitType: 'OFFICE',
+      status: 'ACTIVE',
+    },
+  });
+  await admin.$transaction(async (transaction) => {
+    await transaction.$executeRaw`
+      SELECT set_config('app.personnel_baseline_transition', 'on', true)
+    `;
+    const created = await transaction.serviceSegment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        organizationUnitId: organizationUnit.id,
+        appointmentStatus: 'PERMANENT',
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.employee.update({
+      where: { id: employee.id },
+      data: { currentServiceSegmentId: created.id },
+    });
   });
   const foreignEmployee = await admin.employee.create({
     data: {
@@ -197,9 +226,13 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
     expect(updated.eligibility).toHaveLength(1);
 
     const redacted = await pds.findById(
-      context(agency.id, user.id, membership.id, [
-        { code: 'personnel.pds.read', scopePolicy: 'DIRECT_REPORTS' },
-      ]),
+      context(
+        agency.id,
+        user.id,
+        membership.id,
+        [{ code: 'personnel.pds.read', scopePolicy: 'ASSIGNED_OFFICE' }],
+        organizationUnit.id,
+      ),
       created.id,
     );
     expect(redacted).toMatchObject({
@@ -284,9 +317,15 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
       await transaction.document.deleteMany({
         where: { agencyId: { in: [agency.id, foreignAgency.id] } },
       });
+      await transaction.employee.updateMany({
+        where: { agencyId: agency.id },
+        data: { currentServiceSegmentId: null },
+      });
+      await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
       await transaction.employee.deleteMany({
         where: { agencyId: { in: [agency.id, foreignAgency.id] } },
       });
+      await transaction.organizationUnit.delete({ where: { id: organizationUnit.id } });
       await transaction.agencyMembership.deleteMany({
         where: { agencyId: { in: [agency.id, foreignAgency.id] } },
       });

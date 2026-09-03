@@ -18,6 +18,7 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   const employeeNumber = `E2E-PDS-${stamp}`;
   const legalName = `E2E PDS Employee ${stamp}`;
   const dialog = page.getByRole('dialog');
+  let createPayload: Record<string, unknown> | null = null;
 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/dashboard');
@@ -43,7 +44,7 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAccessibleName('Create Draft PDS');
   await expect(dialog).toHaveAccessibleDescription(
-    'Items 1-27 are saved as one protected Draft. Empty fields remain available for later completion.',
+    'Items 1–30 and Work Experience Sheet rows are saved as one protected Draft. Empty fields remain available for later completion.',
   );
   await expect(dialog.getByLabel('As-of date')).toBeFocused();
   await expectCenteredDialog(dialog, 1280);
@@ -99,13 +100,58 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await dialog.getByLabel('Eligibility name / category').fill('Career Service Professional');
   await dialog.getByLabel('Rating').fill('Passed');
   await dialog.getByLabel('Place of examination / conferment').fill('Manila');
+  await dialog.getByRole('button', { name: 'Add work experience' }).click();
+  await dialog.getByRole('button', { name: 'Add work experience' }).click();
+  await dialog.getByLabel('Position title').nth(0).fill('Administrative Assistant II');
+  await dialog
+    .getByLabel('Department / agency / office / company')
+    .nth(0)
+    .fill('Records Management Unit');
+  await dialog.getByLabel('Inclusive from').nth(0).fill('2020-06-01');
+  await dialog.getByLabel('Government service').nth(0).selectOption('Y');
+  await dialog.getByLabel('Position title').nth(1).fill('Administrative Officer IV');
+  await dialog
+    .getByLabel('Department / agency / office / company')
+    .nth(1)
+    .fill('Human Resource Management Division');
+  await dialog.getByRole('group', { name: 'Work experience 2' }).getByLabel('Current work').check();
+  await dialog.getByLabel('Government service').nth(1).selectOption('Y');
+  await dialog.getByRole('button', { name: 'Move work experience 2 up' }).click();
+  await expect(dialog.getByLabel('Position title').nth(0)).toHaveValue('Administrative Officer IV');
+  await dialog.getByRole('button', { name: 'Add voluntary work' }).click();
+  await dialog.getByLabel('Organization name and address').fill('Barangay San Isidro, Quezon City');
+  await dialog.getByLabel('Position / nature of work').fill('Community organizer');
+  await dialog.getByLabel('Inclusive from').nth(1).fill('2019-01-01');
+  await dialog.getByLabel('Inclusive to').nth(1).fill('2019-12-31');
+  await dialog.getByLabel('Number of hours').nth(0).fill('24');
+  await dialog.getByRole('button', { name: 'Add learning and development' }).click();
+  await dialog.getByLabel('Intervention / training title').fill('Records management workshop');
+  await dialog.getByLabel('Type', { exact: true }).fill('Technical');
+  await dialog.getByLabel('Attendance from').fill('2024-03-01');
+  await dialog.getByLabel('Attendance to').fill('2024-03-02');
+  await dialog.getByLabel('Number of hours').nth(1).fill('16');
+  await dialog.getByLabel('Conducted / sponsored by').fill('Civil Service Commission');
+  await dialog.getByRole('button', { name: 'Add WES artifact' }).click();
+  await dialog.getByLabel('Context key').fill('vacancy-1');
+  await dialog.getByLabel('Parent work-experience row').selectOption({ index: 1 });
+  await dialog.getByLabel('Duration text').fill('January 2018 - Present');
+  await dialog.getByLabel('Position', { exact: true }).fill('Administrative Officer IV');
+  await dialog.getByLabel('Office / unit').fill('Human Resource Management Division');
+  await dialog.getByLabel('Immediate supervisor').fill('Alicia Ramos');
+  await dialog.getByLabel('Agency / organization / location').fill('Lingkod HR, Quezon City');
+  await dialog
+    .getByLabel('Summary of actual duties')
+    .fill('Led personnel records maintenance and supervised administrative services.');
   const routePattern = '**/api/v1/agencies/**/pds**';
   let releaseCreate: () => void = () => {};
   const createHeld = new Promise<void>((resolve) => {
     releaseCreate = resolve;
   });
   await page.route(routePattern, async (route) => {
-    if (route.request().method() === 'POST') await createHeld;
+    if (route.request().method() === 'POST') {
+      createPayload = route.request().postDataJSON() as Record<string, unknown>;
+      await createHeld;
+    }
     await route.continue();
   });
   const saveButton = dialog.locator('button[type="submit"]');
@@ -116,6 +162,57 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await saveRequest;
   await page.unroute(routePattern);
 
+  expect(createPayload).not.toBeNull();
+  expect(createPayload?.workExperience).toMatchObject([
+    {
+      sequenceNo: 1,
+      positionTitle: 'Administrative Officer IV',
+      departmentAgencyOfficeCompany: 'Human Resource Management Division',
+      governmentService: 'Y',
+      isCurrent: true,
+    },
+    {
+      sequenceNo: 2,
+      positionTitle: 'Administrative Assistant II',
+      departmentAgencyOfficeCompany: 'Records Management Unit',
+      governmentService: 'Y',
+      isCurrent: false,
+    },
+  ]);
+  expect(createPayload?.voluntaryWork).toMatchObject([
+    {
+      sequenceNo: 1,
+      organizationNameAddress: 'Barangay San Isidro, Quezon City',
+      hours: 24,
+      positionNatureOfWork: 'Community organizer',
+    },
+  ]);
+  expect(createPayload?.learningAndDevelopment).toMatchObject([
+    {
+      sequenceNo: 1,
+      interventionTitle: 'Records management workshop',
+      hours: 16,
+      type: 'Technical',
+      conductedSponsoredBy: 'Civil Service Commission',
+    },
+  ]);
+  expect(createPayload?.wes).toMatchObject([
+    {
+      contextKey: 'vacancy-1',
+      entries: [
+        {
+          sequenceNo: 1,
+          workExperienceSequenceNo: 1,
+          position: 'Administrative Officer IV',
+          officeUnit: 'Human Resource Management Division',
+          immediateSupervisor: 'Alicia Ramos',
+          agencyOrganizationLocation: 'Lingkod HR, Quezon City',
+          actualDuties: 'Led personnel records maintenance and supervised administrative services.',
+        },
+      ],
+    },
+  ]);
+
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('status')).toContainText('PDS Draft created.');
   await expect(page.getByText('Mara Santos Jr.', { exact: true })).toBeVisible();
@@ -123,7 +220,7 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await expect(page.getByText('Career Service Professional', { exact: true })).toBeVisible();
   await expect(page.getByText('Married', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Edit personal and family information' }).click();
+  await page.getByRole('button', { name: 'Edit Draft PDS' }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByLabel('Place of birth').fill('Manila');
   await dialog
@@ -142,4 +239,12 @@ test('creates and edits a Draft PDS personal and family record', async ({ page }
   await expect(page.getByText('Manila', { exact: true })).toBeVisible();
   await expect(page.getByText('No education rows recorded.', { exact: true })).toBeVisible();
   await expect(page.getByText('No eligibility rows recorded.', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Edit Draft PDS' }).click();
+  await expect(dialog.getByLabel('Position title').nth(0)).toHaveValue('Administrative Officer IV');
+  await expect(dialog.getByLabel('Position title').nth(1)).toHaveValue(
+    'Administrative Assistant II',
+  );
+  await expect(dialog.getByLabel('Parent work-experience row')).toHaveValue(/.+/);
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
 });

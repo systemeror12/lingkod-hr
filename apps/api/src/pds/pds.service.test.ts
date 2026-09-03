@@ -12,7 +12,7 @@ const context: RequestContext = {
 };
 
 it('rechecks PDS permissions before opening a database transaction', async () => {
-  const service = new PdsService(pdsAuditWriter);
+  const service = new PdsService(pdsAuditWriter, undefined as never);
 
   await expect(service.list(context, '00000000-0000-4000-8000-000000000004')).rejects.toMatchObject(
     {

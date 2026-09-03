@@ -1,9 +1,15 @@
 import type {
+  PdsEvidenceView,
   PdsFamilyRecordView,
   PdsFamilyView,
   PdsEducationRecordView,
   PdsEligibilityRecordView,
+  PdsLearningDevelopmentView,
   PdsPersonalDetailsView,
+  PdsVoluntaryWorkView,
+  PdsWesEntryView,
+  PdsWesView,
+  PdsWorkExperienceView,
   PdsVersionDetail,
   PdsVersionList,
   PdsVersionSummary,
@@ -94,6 +100,15 @@ export class PdsEducationRecordDto implements PdsEducationRecordView {
   }
 }
 
+export class PdsEvidenceDto implements PdsEvidenceView {
+  declare readonly documentId: string | null;
+  declare readonly documentVersionId: string | null;
+
+  constructor(value: PdsEvidenceView) {
+    Object.assign(this, value);
+  }
+}
+
 export class PdsEligibilityRecordDto implements PdsEligibilityRecordView {
   declare readonly id: string;
   declare readonly sequenceNo: number;
@@ -108,6 +123,90 @@ export class PdsEligibilityRecordDto implements PdsEligibilityRecordView {
 
   constructor(value: PdsEligibilityRecordView) {
     Object.assign(this, value);
+  }
+}
+
+export class PdsWorkExperienceDto extends PdsEvidenceDto implements PdsWorkExperienceView {
+  declare readonly id: string;
+  declare readonly sequenceNo: number;
+  declare readonly inclusiveFrom: string | null;
+  declare readonly inclusiveTo: string | null;
+  declare readonly positionTitle: string | null;
+  declare readonly departmentAgencyOfficeCompany: string | null;
+  declare readonly monthlySalary: number | null;
+  declare readonly salaryGradeStep: string | null;
+  declare readonly appointmentStatus: string | null;
+  declare readonly governmentService: PdsWorkExperienceView['governmentService'];
+  declare readonly isCurrent: boolean;
+
+  constructor(value: PdsWorkExperienceView) {
+    super(value);
+    Object.assign(this, value);
+  }
+}
+
+export class PdsVoluntaryWorkDto extends PdsEvidenceDto implements PdsVoluntaryWorkView {
+  declare readonly id: string;
+  declare readonly sequenceNo: number;
+  declare readonly organizationNameAddress: string | null;
+  declare readonly inclusiveFrom: string | null;
+  declare readonly inclusiveTo: string | null;
+  declare readonly hours: number | null;
+  declare readonly positionNatureOfWork: string | null;
+
+  constructor(value: PdsVoluntaryWorkView) {
+    super(value);
+    Object.assign(this, value);
+  }
+}
+
+export class PdsLearningDevelopmentDto
+  extends PdsEvidenceDto
+  implements PdsLearningDevelopmentView
+{
+  declare readonly id: string;
+  declare readonly sequenceNo: number;
+  declare readonly interventionTitle: string | null;
+  declare readonly attendanceFrom: string | null;
+  declare readonly attendanceTo: string | null;
+  declare readonly hours: number | null;
+  declare readonly type: string | null;
+  declare readonly conductedSponsoredBy: string | null;
+
+  constructor(value: PdsLearningDevelopmentView) {
+    super(value);
+    Object.assign(this, value);
+  }
+}
+
+export class PdsWesEntryDto implements PdsWesEntryView {
+  declare readonly id: string;
+  declare readonly workExperienceId: string;
+  declare readonly sequenceNo: number;
+  declare readonly durationText: string;
+  declare readonly position: string;
+  declare readonly officeUnit: string;
+  declare readonly immediateSupervisor: string;
+  declare readonly agencyOrganizationLocation: string;
+  declare readonly accomplishments: string | null;
+  declare readonly actualDuties: string;
+
+  constructor(value: PdsWesEntryView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsWesDto extends PdsEvidenceDto implements PdsWesView {
+  declare readonly id: string;
+  declare readonly contextKey: string;
+  declare readonly templateVersion: string;
+  declare readonly status: string;
+  readonly entries: PdsWesEntryDto[];
+
+  constructor(value: PdsWesView) {
+    super(value);
+    Object.assign(this, value);
+    this.entries = value.entries.map((entry) => new PdsWesEntryDto(entry));
   }
 }
 
@@ -137,6 +236,10 @@ export class PdsVersionDetailDto extends PdsVersionDto {
   readonly family: PdsFamilyDto;
   readonly education: PdsEducationRecordDto[];
   readonly eligibility: PdsEligibilityRecordDto[];
+  readonly workExperience: PdsWorkExperienceDto[];
+  readonly voluntaryWork: PdsVoluntaryWorkDto[];
+  readonly learningAndDevelopment: PdsLearningDevelopmentDto[];
+  readonly wes: PdsWesDto[];
 
   constructor(value: PdsVersionDetail) {
     super(value);
@@ -144,6 +247,12 @@ export class PdsVersionDetailDto extends PdsVersionDto {
     this.family = new PdsFamilyDto(value.family);
     this.education = value.education.map((record) => new PdsEducationRecordDto(record));
     this.eligibility = value.eligibility.map((record) => new PdsEligibilityRecordDto(record));
+    this.workExperience = value.workExperience.map((row) => new PdsWorkExperienceDto(row));
+    this.voluntaryWork = value.voluntaryWork.map((row) => new PdsVoluntaryWorkDto(row));
+    this.learningAndDevelopment = value.learningAndDevelopment.map(
+      (row) => new PdsLearningDevelopmentDto(row),
+    );
+    this.wes = value.wes.map((artifact) => new PdsWesDto(artifact));
   }
 }
 

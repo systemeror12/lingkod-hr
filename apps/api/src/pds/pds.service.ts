@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import {
   DocumentsService,
@@ -17,8 +17,12 @@ import {
   type PdsEducationInput,
   type PdsEligibilityInput,
   type PdsFamilyInput,
+  type PdsLearningDevelopmentInput,
   type PdsPersonalDetailsInput,
   type PdsUpdateInput,
+  type PdsVoluntaryWorkInput,
+  type PdsWesInput,
+  type PdsWorkExperienceInput,
 } from './pds.schemas';
 
 export type PdsVersionState = 'DRAFT' | 'SUBMITTED' | 'RETURNED' | 'CERTIFIED' | 'SUPERSEDED';
@@ -104,6 +108,67 @@ export interface PdsEligibilityRecordView {
   documentVersionId: string | null;
 }
 
+export interface PdsEvidenceView {
+  documentId: string | null;
+  documentVersionId: string | null;
+}
+
+export interface PdsWorkExperienceView extends PdsEvidenceView {
+  id: string;
+  sequenceNo: number;
+  inclusiveFrom: string | null;
+  inclusiveTo: string | null;
+  positionTitle: string | null;
+  departmentAgencyOfficeCompany: string | null;
+  monthlySalary: number | null;
+  salaryGradeStep: string | null;
+  appointmentStatus: string | null;
+  governmentService: 'Y' | 'N' | null;
+  isCurrent: boolean;
+}
+
+export interface PdsVoluntaryWorkView extends PdsEvidenceView {
+  id: string;
+  sequenceNo: number;
+  organizationNameAddress: string | null;
+  inclusiveFrom: string | null;
+  inclusiveTo: string | null;
+  hours: number | null;
+  positionNatureOfWork: string | null;
+}
+
+export interface PdsLearningDevelopmentView extends PdsEvidenceView {
+  id: string;
+  sequenceNo: number;
+  interventionTitle: string | null;
+  attendanceFrom: string | null;
+  attendanceTo: string | null;
+  hours: number | null;
+  type: string | null;
+  conductedSponsoredBy: string | null;
+}
+
+export interface PdsWesEntryView {
+  id: string;
+  workExperienceId: string;
+  sequenceNo: number;
+  durationText: string;
+  position: string;
+  officeUnit: string;
+  immediateSupervisor: string;
+  agencyOrganizationLocation: string;
+  accomplishments: string | null;
+  actualDuties: string;
+}
+
+export interface PdsWesView extends PdsEvidenceView {
+  id: string;
+  contextKey: string;
+  templateVersion: string;
+  status: string;
+  entries: PdsWesEntryView[];
+}
+
 export interface PdsVersionSummary {
   id: string;
   employeeId: string;
@@ -126,6 +191,10 @@ export interface PdsVersionDetail extends PdsVersionSummary {
   family: PdsFamilyView;
   education: PdsEducationRecordView[];
   eligibility: PdsEligibilityRecordView[];
+  workExperience: PdsWorkExperienceView[];
+  voluntaryWork: PdsVoluntaryWorkView[];
+  learningAndDevelopment: PdsLearningDevelopmentView[];
+  wes: PdsWesView[];
 }
 
 export interface PdsVersionList {
@@ -175,6 +244,7 @@ export const pdsAuditWriter: PdsAuditWriter = {
 };
 
 const PDS_VERSION_LIST_LIMIT = 200;
+const PDS_WES_TEMPLATE_VERSION = 'CS_FORM_212_ATTACHMENT_WES_ORAOHRA_2025_H2';
 
 export class PdsServiceError extends Error {
   constructor(
@@ -206,7 +276,12 @@ const pdsSummarySelect = {
 
 const pdsSummaryWithOwnerSelect = {
   ...pdsSummarySelect,
-  employee: { select: { memberships: { select: { userId: true } } } },
+  employee: {
+    select: {
+      memberships: { select: { userId: true } },
+      currentServiceSegment: { select: { organizationUnitId: true } },
+    },
+  },
 } satisfies Prisma.PdsVersionSelect;
 
 const pdsSelect = {
@@ -290,6 +365,79 @@ const pdsSelect = {
       documentVersionId: true,
     },
   },
+  workExperienceRecords: {
+    orderBy: { sequenceNo: 'asc' },
+    select: {
+      id: true,
+      sequenceNo: true,
+      inclusiveFrom: true,
+      inclusiveTo: true,
+      positionTitle: true,
+      departmentAgencyOfficeCompany: true,
+      monthlySalary: true,
+      salaryGradeStep: true,
+      appointmentStatus: true,
+      governmentService: true,
+      isCurrent: true,
+      documentId: true,
+      documentVersionId: true,
+    },
+  },
+  voluntaryWorkRecords: {
+    orderBy: { sequenceNo: 'asc' },
+    select: {
+      id: true,
+      sequenceNo: true,
+      organizationNameAddress: true,
+      inclusiveFrom: true,
+      inclusiveTo: true,
+      hours: true,
+      positionNatureOfWork: true,
+      documentId: true,
+      documentVersionId: true,
+    },
+  },
+  learningDevelopmentRecords: {
+    orderBy: { sequenceNo: 'asc' },
+    select: {
+      id: true,
+      sequenceNo: true,
+      interventionTitle: true,
+      attendanceFrom: true,
+      attendanceTo: true,
+      hours: true,
+      type: true,
+      conductedSponsoredBy: true,
+      documentId: true,
+      documentVersionId: true,
+    },
+  },
+  wesArtifacts: {
+    orderBy: { contextKey: 'asc' },
+    select: {
+      id: true,
+      contextKey: true,
+      templateVersion: true,
+      status: true,
+      documentId: true,
+      documentVersionId: true,
+      entries: {
+        orderBy: { sequenceNo: 'asc' },
+        select: {
+          id: true,
+          workExperienceId: true,
+          sequenceNo: true,
+          durationText: true,
+          position: true,
+          officeUnit: true,
+          immediateSupervisor: true,
+          agencyOrganizationLocation: true,
+          accomplishments: true,
+          actualDuties: true,
+        },
+      },
+    },
+  },
 } satisfies Prisma.PdsVersionSelect;
 
 const pdsRedactedSelect = {
@@ -327,6 +475,9 @@ type PdsRedactedRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsRedacte
 const PDS_EDUCATION_LEVEL_ORDER = new Map(
   PDS_EDUCATION_LEVELS.map((level, index) => [level, index]),
 );
+type PdsAccessRecord = Prisma.PdsVersionGetPayload<{
+  select: typeof pdsSummaryWithOwnerSelect;
+}>;
 
 function formatDate(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
@@ -630,6 +781,134 @@ function eligibilityCreateData(
   return records;
 }
 
+type EvidenceInput = {
+  documentId?: string | null | undefined;
+  documentVersionId?: string | null | undefined;
+};
+
+function sectionSequence(
+  value: number | undefined,
+  index: number,
+  section: string,
+  seen: Set<number>,
+): number {
+  const sequenceNo = value ?? index + 1;
+  if (!Number.isSafeInteger(sequenceNo) || sequenceNo < 1 || seen.has(sequenceNo)) {
+    throw new PdsServiceError(
+      `${section} sequence numbers must be unique positive integers.`,
+      400,
+      'PDS_SEQUENCE_CONFLICT',
+    );
+  }
+  seen.add(sequenceNo);
+  return sequenceNo;
+}
+
+function dateValue(value: string | null | undefined): Date | null {
+  return value ? databaseDate(value) : null;
+}
+
+function decimalValue(value: number | null | undefined): Prisma.Decimal | null {
+  return value === null || value === undefined ? null : new Prisma.Decimal(value);
+}
+
+function moneyValue(value: number | null | undefined): Prisma.Decimal | null {
+  if (value === null || value === undefined) return null;
+  if (value > 999999999999.99 || Number(value.toFixed(2)) !== value) {
+    throw new PdsServiceError(
+      'Monthly salary must be a non-negative amount with no more than two decimal places.',
+      400,
+      'PDS_WORK_EXPERIENCE_INVALID',
+    );
+  }
+  return new Prisma.Decimal(value);
+}
+
+function requiredTextValue(value: string | null | undefined, field: string): string {
+  const normalized = text(value);
+  if (!normalized) {
+    throw new PdsServiceError(`${field} is required.`, 400, 'PDS_WES_ENTRY_INVALID');
+  }
+  return normalized;
+}
+
+function recentDateValue(row: {
+  inclusiveFrom: Date | null;
+  inclusiveTo: Date | null;
+  isCurrent: boolean;
+}): number | null {
+  if (row.isCurrent) return Number.POSITIVE_INFINITY;
+  return (row.inclusiveTo ?? row.inclusiveFrom)?.getTime() ?? null;
+}
+
+function workExperienceCreateData(
+  agencyId: string,
+  pdsVersionId: string,
+  rows: readonly PdsWorkExperienceInput[],
+): Prisma.PdsWorkExperienceRecordCreateManyInput[] {
+  const seen = new Set<number>();
+  return rows.map((row, index) => ({
+    ...(row.id ? { id: row.id } : {}),
+    agencyId,
+    pdsVersionId,
+    sequenceNo: sectionSequence(row.sequenceNo, index, 'Work experience', seen),
+    inclusiveFrom: dateValue(row.inclusiveFrom),
+    inclusiveTo: dateValue(row.inclusiveTo),
+    positionTitle: text(row.positionTitle),
+    departmentAgencyOfficeCompany: text(row.departmentAgencyOfficeCompany),
+    monthlySalary: moneyValue(row.monthlySalary),
+    salaryGradeStep: text(row.salaryGradeStep),
+    appointmentStatus: text(row.appointmentStatus),
+    governmentService: row.governmentService ?? null,
+    isCurrent: row.isCurrent ?? false,
+    documentId: row.documentId ?? null,
+    documentVersionId: row.documentVersionId ?? null,
+  }));
+}
+
+function voluntaryWorkCreateData(
+  agencyId: string,
+  pdsVersionId: string,
+  rows: readonly PdsVoluntaryWorkInput[],
+): Prisma.PdsVoluntaryWorkRecordCreateManyInput[] {
+  const seen = new Set<number>();
+  return rows.map((row, index) => ({
+    ...(row.id ? { id: row.id } : {}),
+    agencyId,
+    pdsVersionId,
+    sequenceNo: sectionSequence(row.sequenceNo, index, 'Voluntary work', seen),
+    organizationNameAddress: text(row.organizationNameAddress),
+    inclusiveFrom: dateValue(row.inclusiveFrom),
+    inclusiveTo: dateValue(row.inclusiveTo),
+    hours: decimalValue(row.hours),
+    positionNatureOfWork: text(row.positionNatureOfWork),
+    documentId: row.documentId ?? null,
+    documentVersionId: row.documentVersionId ?? null,
+  }));
+}
+
+function learningDevelopmentCreateData(
+  agencyId: string,
+  pdsVersionId: string,
+  rows: readonly PdsLearningDevelopmentInput[],
+): Prisma.PdsLearningDevelopmentRecordCreateManyInput[] {
+  const seen = new Set<number>();
+  return rows.map((row, index) => ({
+    ...(row.id ? { id: row.id } : {}),
+    agencyId,
+    pdsVersionId,
+    sequenceNo: sectionSequence(row.sequenceNo, index, 'Learning and development', seen),
+    interventionTitle: text(row.interventionTitle),
+    attendanceFrom: dateValue(row.attendanceFrom),
+    attendanceTo: dateValue(row.attendanceTo),
+    hours: decimalValue(row.hours),
+    type: text(row.type),
+    conductedSponsoredBy: text(row.conductedSponsoredBy),
+    documentId: row.documentId ?? null,
+    documentVersionId: row.documentVersionId ?? null,
+  }));
+}
+
 function personalView(record: PdsRecord['personalDetails']): PdsPersonalDetailsView | null {
   if (!record) return null;
   return {
@@ -768,6 +1047,88 @@ function redactedEligibilityView(
   }));
 }
 
+function workExperienceView(
+  record: PdsRecord['workExperienceRecords'][number],
+): PdsWorkExperienceView {
+  return {
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    inclusiveFrom: formatDate(record.inclusiveFrom),
+    inclusiveTo: formatDate(record.inclusiveTo),
+    positionTitle: record.positionTitle,
+    departmentAgencyOfficeCompany: record.departmentAgencyOfficeCompany,
+    monthlySalary: record.monthlySalary?.toNumber() ?? null,
+    salaryGradeStep: record.salaryGradeStep,
+    appointmentStatus: record.appointmentStatus,
+    governmentService: record.governmentService as PdsWorkExperienceView['governmentService'],
+    isCurrent: record.isCurrent,
+    documentId: record.documentId,
+    documentVersionId: record.documentVersionId,
+  };
+}
+
+function voluntaryWorkView(
+  record: PdsRecord['voluntaryWorkRecords'][number],
+): PdsVoluntaryWorkView {
+  return {
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    organizationNameAddress: record.organizationNameAddress,
+    inclusiveFrom: formatDate(record.inclusiveFrom),
+    inclusiveTo: formatDate(record.inclusiveTo),
+    hours: record.hours?.toNumber() ?? null,
+    positionNatureOfWork: record.positionNatureOfWork,
+    documentId: record.documentId,
+    documentVersionId: record.documentVersionId,
+  };
+}
+
+function learningDevelopmentView(
+  record: PdsRecord['learningDevelopmentRecords'][number],
+): PdsLearningDevelopmentView {
+  return {
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    interventionTitle: record.interventionTitle,
+    attendanceFrom: formatDate(record.attendanceFrom),
+    attendanceTo: formatDate(record.attendanceTo),
+    hours: record.hours?.toNumber() ?? null,
+    type: record.type,
+    conductedSponsoredBy: record.conductedSponsoredBy,
+    documentId: record.documentId,
+    documentVersionId: record.documentVersionId,
+  };
+}
+
+function wesEntryView(
+  record: PdsRecord['wesArtifacts'][number]['entries'][number],
+): PdsWesEntryView {
+  return {
+    id: record.id,
+    workExperienceId: record.workExperienceId,
+    sequenceNo: record.sequenceNo,
+    durationText: record.durationText ?? '',
+    position: record.position,
+    officeUnit: record.officeUnit,
+    immediateSupervisor: record.immediateSupervisor,
+    agencyOrganizationLocation: record.agencyOrganizationLocation,
+    accomplishments: record.accomplishments,
+    actualDuties: record.actualDuties,
+  };
+}
+
+function wesView(record: PdsRecord['wesArtifacts'][number]): PdsWesView {
+  return {
+    id: record.id,
+    contextKey: record.contextKey,
+    templateVersion: record.templateVersion,
+    status: record.status,
+    documentId: record.documentId,
+    documentVersionId: record.documentVersionId,
+    entries: record.entries.map(wesEntryView),
+  };
+}
+
 function summary(record: PdsSummaryRecord, fieldScope: PdsFieldScope): PdsVersionSummary {
   return {
     id: record.id,
@@ -806,6 +1167,12 @@ function detail(record: PdsRecord, fieldScope: PdsFieldScope): PdsVersionDetail 
         : { spouse: null, children: [], father: null, mother: null },
     education: fieldScope === 'FULL' ? educationView(record.educationRecords) : [],
     eligibility: fieldScope === 'FULL' ? eligibilityView(record.eligibilityRecords) : [],
+    workExperience:
+      fieldScope === 'FULL' ? record.workExperienceRecords.map(workExperienceView) : [],
+    voluntaryWork: fieldScope === 'FULL' ? record.voluntaryWorkRecords.map(voluntaryWorkView) : [],
+    learningAndDevelopment:
+      fieldScope === 'FULL' ? record.learningDevelopmentRecords.map(learningDevelopmentView) : [],
+    wes: fieldScope === 'FULL' ? record.wesArtifacts.map(wesView) : [],
   };
 }
 
@@ -816,10 +1183,14 @@ function redactedDetail(record: PdsRedactedRecord, fieldScope: PdsFieldScope): P
     family: { spouse: null, children: [], father: null, mother: null },
     education: redactedEducationView(record.educationRecords),
     eligibility: redactedEligibilityView(record.eligibilityRecords),
+    workExperience: [],
+    voluntaryWork: [],
+    learningAndDevelopment: [],
+    wes: [],
   };
 }
 
-function ownerUserId(record: Pick<PdsRecord, 'employee'>): string | null {
+function ownerUserId(record: Pick<PdsAccessRecord, 'employee'>): string | null {
   return record.employee.memberships[0]?.userId ?? null;
 }
 
@@ -844,23 +1215,28 @@ function permissionScope(context: RequestContext, permission: string): 'AGENCY' 
 
 function readFieldScope(
   context: RequestContext,
-  employeeOwnerUserId: string | null,
+  record: Pick<PdsAccessRecord, 'agencyId' | 'employee'>,
 ): PdsFieldScope | null {
   if (!hasPermissionGrant(context, 'personnel.pds.read')) return null;
-  const scope = permissionScope(context, 'personnel.pds.read');
-  if (scope === 'AGENCY') return 'FULL';
-  if (scope === 'OWN' && employeeOwnerUserId === context.userId) return 'FULL';
-  if (scope === 'OWN' && !hasNonOwnReadScope(context)) return null;
-  return 'REDACTED';
-}
-
-function hasNonOwnReadScope(context: RequestContext): boolean {
+  const owner = ownerUserId(record);
+  const accessRecord = {
+    agencyId: record.agencyId,
+    ...(owner ? { ownerUserId: owner } : {}),
+    ...(record.employee.currentServiceSegment
+      ? { organizationUnitId: record.employee.currentServiceSegment.organizationUnitId }
+      : {}),
+  };
+  if (!canAccessRecord(context, 'personnel.pds.read', accessRecord)) {
+    return null;
+  }
   return context.permissions.some(
     (candidate) =>
       candidate.code === 'personnel.pds.read' &&
-      candidate.scopePolicy !== 'AGENCY' &&
-      candidate.scopePolicy !== 'OWN',
-  );
+      (candidate.scopePolicy === 'AGENCY' ||
+        (candidate.scopePolicy === 'OWN' && owner === context.userId)),
+  )
+    ? 'FULL'
+    : 'REDACTED';
 }
 
 function canAccess(
@@ -897,7 +1273,7 @@ function isFinalizedEvidence(document: {
 export class PdsService {
   constructor(
     @Inject(PDS_AUDIT_WRITER) private readonly auditWriter: PdsAuditWriter,
-    private readonly documentsService?: DocumentsService,
+    @Inject(DocumentsService) private readonly documentsService: DocumentsService,
   ) {}
 
   private validateQualificationInput(input: PdsCreateInput | PdsUpdateInput): void {
@@ -1078,7 +1454,7 @@ export class PdsService {
         select: pdsSummaryWithOwnerSelect,
       });
       if (!summaryRecord) return null;
-      const fieldScope = readFieldScope(context, ownerUserId(summaryRecord));
+      const fieldScope = readFieldScope(context, summaryRecord);
       if (!fieldScope) return null;
       await this.auditRead(transaction, context, pdsVersionId, fieldScope, 'DETAIL');
       if (fieldScope === 'REDACTED') {
@@ -1144,6 +1520,36 @@ export class PdsService {
         if (records.length) await transaction.pdsFamilyRecord.createMany({ data: records });
       }
       await this.writeQualificationRows(transaction, context, created.id, input);
+      const workExperience = input.workExperience ?? [];
+      for (const row of workExperience) await this.assertEvidence(transaction, context, row);
+      if (workExperience.length) {
+        await transaction.pdsWorkExperienceRecord.createMany({
+          data: workExperienceCreateData(context.agencyId, created.id, workExperience),
+        });
+      }
+      const voluntaryWork = input.voluntaryWork ?? [];
+      for (const row of voluntaryWork) await this.assertEvidence(transaction, context, row);
+      if (voluntaryWork.length) {
+        await transaction.pdsVoluntaryWorkRecord.createMany({
+          data: voluntaryWorkCreateData(context.agencyId, created.id, voluntaryWork),
+        });
+      }
+      const learningAndDevelopment = input.learningAndDevelopment ?? [];
+      for (const row of learningAndDevelopment)
+        await this.assertEvidence(transaction, context, row);
+      if (learningAndDevelopment.length) {
+        await transaction.pdsLearningDevelopmentRecord.createMany({
+          data: learningDevelopmentCreateData(context.agencyId, created.id, learningAndDevelopment),
+        });
+      }
+      const wes = input.wes ?? [];
+      const wesResult = await this.createWesArtifacts(
+        transaction,
+        context,
+        created.id,
+        employeeId,
+        wes,
+      );
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,
@@ -1160,6 +1566,11 @@ export class PdsService {
           formVersion: PDS_FORM_VERSION,
           versionNo: (latest?.versionNo ?? 0) + 1,
           asOfDate: input.asOfDate ?? today(),
+          workExperienceCount: workExperience.length,
+          voluntaryWorkCount: voluntaryWork.length,
+          learningAndDevelopmentCount: learningAndDevelopment.length,
+          wesArtifactCount: wesResult.artifactCount,
+          wesEntryCount: wesResult.entryCount,
         },
       });
       const record = await this.record(transaction, context.agencyId, created.id);
@@ -1267,9 +1678,458 @@ export class PdsService {
         });
       }
       await this.writeQualificationRows(transaction, context, pdsVersionId, input);
+      const workExperienceChanged = input.workExperience !== undefined;
+      let wesInput: readonly PdsWesInput[] | null | undefined = input.wes;
+      if (workExperienceChanged && wesInput === undefined && existing.wesArtifacts.length) {
+        wesInput = this.preservedWesInput(existing);
+      }
+      if (workExperienceChanged || wesInput !== undefined) {
+        if (existing.wesArtifacts.length) this.assertWesEditable(existing);
+        await transaction.pdsWesEntry.deleteMany({
+          where: { agencyId: context.agencyId, pdsVersionId },
+        });
+        await transaction.pdsWesArtifact.deleteMany({
+          where: { agencyId: context.agencyId, pdsVersionId },
+        });
+      }
+      if (workExperienceChanged) {
+        const result = await this.replaceWorkExperience(
+          transaction,
+          context,
+          pdsVersionId,
+          input.workExperience ?? [],
+        );
+        await this.writeSectionAudit(
+          transaction,
+          context,
+          pdsVersionId,
+          existing.status,
+          'PDS_WORK_EXPERIENCE_UPDATED',
+          { section: 'workExperience', ...result },
+        );
+      }
+      if (input.voluntaryWork !== undefined) {
+        const result = await this.replaceVoluntaryWork(
+          transaction,
+          context,
+          pdsVersionId,
+          input.voluntaryWork,
+        );
+        await this.writeSectionAudit(
+          transaction,
+          context,
+          pdsVersionId,
+          existing.status,
+          'PDS_VOLUNTARY_WORK_UPDATED',
+          { section: 'voluntaryWork', ...result },
+        );
+      }
+      if (input.learningAndDevelopment !== undefined) {
+        const result = await this.replaceLearningDevelopment(
+          transaction,
+          context,
+          pdsVersionId,
+          input.learningAndDevelopment,
+        );
+        await this.writeSectionAudit(
+          transaction,
+          context,
+          pdsVersionId,
+          existing.status,
+          'PDS_LEARNING_DEVELOPMENT_UPDATED',
+          { section: 'learningAndDevelopment', ...result },
+        );
+      }
+      if (wesInput !== undefined) {
+        const result =
+          wesInput === null
+            ? { artifactCount: 0, entryCount: 0, evidenceCount: 0 }
+            : await this.createWesArtifacts(
+                transaction,
+                context,
+                pdsVersionId,
+                existing.employeeId,
+                wesInput,
+              );
+        await this.writeSectionAudit(
+          transaction,
+          context,
+          pdsVersionId,
+          existing.status,
+          'PDS_WES_UPDATED',
+          { section: 'wes', ...result },
+        );
+      }
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
       return detail(updated, 'FULL');
+    });
+  }
+
+  private async assertEvidence(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: EvidenceInput,
+  ): Promise<void> {
+    const documentId = input.documentId ?? null;
+    const documentVersionId = input.documentVersionId ?? null;
+    if (!documentId && !documentVersionId) return;
+    if (!documentId || !documentVersionId) {
+      throw new PdsServiceError(
+        'An evidence Document and exact Document Version are both required.',
+        400,
+        'PDS_EVIDENCE_PAIR_INVALID',
+      );
+    }
+    if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
+      throw new PdsServiceError(
+        'The current Agency Membership cannot inspect shared Agency Documents.',
+        403,
+        'PDS_EVIDENCE_FORBIDDEN',
+      );
+    }
+    const evidence = await this.documentsService.findDocumentForLinkingInTransaction(
+      transaction,
+      context,
+      documentId,
+      documentVersionId,
+    );
+    if (!evidence || !evidence.currentVersion) {
+      throw new PdsServiceError(
+        'The selected evidence Document Version could not be found in this Agency.',
+        404,
+        'PDS_EVIDENCE_NOT_FOUND',
+      );
+    }
+    if (
+      evidence.classification === 'HIGHLY_SENSITIVE' &&
+      !hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId })
+    ) {
+      throw new PdsServiceError(
+        'The current Agency Membership cannot inspect this External Evidence.',
+        403,
+        'PDS_EVIDENCE_SENSITIVE_FORBIDDEN',
+      );
+    }
+    if (
+      evidence.status === 'VOIDED' ||
+      (evidence.currentVersion.issuedAt === null &&
+        !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
+          evidence.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
+        ))
+    ) {
+      throw new PdsServiceError(
+        'The selected evidence Document Version is not finalized for PDS linking.',
+        400,
+        'PDS_EVIDENCE_INELIGIBLE',
+      );
+    }
+  }
+
+  private async assertSectionIds(
+    transaction: Prisma.TransactionClient,
+    pdsVersionId: string,
+    rows: readonly { id?: string | undefined }[],
+    section: string,
+    code: string,
+    findRows: (ids: string[]) => Promise<ReadonlyArray<{ id: string; pdsVersionId: string }>>,
+  ): Promise<void> {
+    const ids = rows.flatMap((row) => (row.id ? [row.id] : []));
+    if (!ids.length) return;
+    if (new Set(ids).size !== ids.length) {
+      throw new PdsServiceError(
+        `${section} row identifiers must be unique.`,
+        400,
+        'PDS_ROW_ID_CONFLICT',
+      );
+    }
+    const found = await findRows(ids);
+    if (found.length !== ids.length || found.some((row) => row.pdsVersionId !== pdsVersionId)) {
+      throw new PdsServiceError(
+        `The selected ${section} row does not belong to this PDS Version.`,
+        400,
+        code,
+      );
+    }
+  }
+
+  private async replaceWorkExperience(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    rows: readonly PdsWorkExperienceInput[],
+  ): Promise<{ rowCount: number; evidenceCount: number }> {
+    await this.assertSectionIds(
+      transaction,
+      pdsVersionId,
+      rows,
+      'work-experience',
+      'PDS_WORK_EXPERIENCE_NOT_FOUND',
+      (ids) =>
+        transaction.pdsWorkExperienceRecord.findMany({
+          where: { agencyId: context.agencyId, id: { in: ids } },
+          select: { id: true, pdsVersionId: true },
+        }),
+    );
+    for (const row of rows) await this.assertEvidence(transaction, context, row);
+    await transaction.pdsWorkExperienceRecord.deleteMany({
+      where: { agencyId: context.agencyId, pdsVersionId },
+    });
+    const data = workExperienceCreateData(context.agencyId, pdsVersionId, rows);
+    if (data.length) await transaction.pdsWorkExperienceRecord.createMany({ data });
+    return {
+      rowCount: data.length,
+      evidenceCount: data.filter((row) => Boolean(row.documentId)).length,
+    };
+  }
+
+  private async replaceVoluntaryWork(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    rows: readonly PdsVoluntaryWorkInput[],
+  ): Promise<{ rowCount: number; evidenceCount: number }> {
+    await this.assertSectionIds(
+      transaction,
+      pdsVersionId,
+      rows,
+      'voluntary-work',
+      'PDS_VOLUNTARY_WORK_NOT_FOUND',
+      (ids) =>
+        transaction.pdsVoluntaryWorkRecord.findMany({
+          where: { agencyId: context.agencyId, id: { in: ids } },
+          select: { id: true, pdsVersionId: true },
+        }),
+    );
+    for (const row of rows) await this.assertEvidence(transaction, context, row);
+    await transaction.pdsVoluntaryWorkRecord.deleteMany({
+      where: { agencyId: context.agencyId, pdsVersionId },
+    });
+    const data = voluntaryWorkCreateData(context.agencyId, pdsVersionId, rows);
+    if (data.length) await transaction.pdsVoluntaryWorkRecord.createMany({ data });
+    return {
+      rowCount: data.length,
+      evidenceCount: data.filter((row) => Boolean(row.documentId)).length,
+    };
+  }
+
+  private async replaceLearningDevelopment(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    rows: readonly PdsLearningDevelopmentInput[],
+  ): Promise<{ rowCount: number; evidenceCount: number }> {
+    await this.assertSectionIds(
+      transaction,
+      pdsVersionId,
+      rows,
+      'learning-and-development',
+      'PDS_LEARNING_DEVELOPMENT_NOT_FOUND',
+      (ids) =>
+        transaction.pdsLearningDevelopmentRecord.findMany({
+          where: { agencyId: context.agencyId, id: { in: ids } },
+          select: { id: true, pdsVersionId: true },
+        }),
+    );
+    for (const row of rows) await this.assertEvidence(transaction, context, row);
+    await transaction.pdsLearningDevelopmentRecord.deleteMany({
+      where: { agencyId: context.agencyId, pdsVersionId },
+    });
+    const data = learningDevelopmentCreateData(context.agencyId, pdsVersionId, rows);
+    if (data.length) await transaction.pdsLearningDevelopmentRecord.createMany({ data });
+    return {
+      rowCount: data.length,
+      evidenceCount: data.filter((row) => Boolean(row.documentId)).length,
+    };
+  }
+
+  private preservedWesInput(record: PdsRecord): PdsWesInput[] {
+    return record.wesArtifacts.map((artifact) => ({
+      contextKey: artifact.contextKey,
+      documentId: artifact.documentId,
+      documentVersionId: artifact.documentVersionId,
+      entries: artifact.entries.map((entry) => ({
+        workExperienceId: entry.workExperienceId,
+        sequenceNo: entry.sequenceNo,
+        durationText: entry.durationText ?? '',
+        position: entry.position,
+        officeUnit: entry.officeUnit,
+        immediateSupervisor: entry.immediateSupervisor,
+        agencyOrganizationLocation: entry.agencyOrganizationLocation,
+        accomplishments: entry.accomplishments,
+        actualDuties: entry.actualDuties,
+      })),
+    }));
+  }
+
+  private assertWesEditable(record: PdsRecord): void {
+    if (record.wesArtifacts.some((artifact) => artifact.status !== 'DRAFT')) {
+      throw this.immutable();
+    }
+  }
+
+  private async createWesArtifacts(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    employeeId: string,
+    artifacts: readonly PdsWesInput[],
+  ): Promise<{ artifactCount: number; entryCount: number; evidenceCount: number }> {
+    if (!artifacts.length) return { artifactCount: 0, entryCount: 0, evidenceCount: 0 };
+    const workRows = await transaction.pdsWorkExperienceRecord.findMany({
+      where: { agencyId: context.agencyId, pdsVersionId },
+      select: {
+        id: true,
+        sequenceNo: true,
+        inclusiveFrom: true,
+        inclusiveTo: true,
+        isCurrent: true,
+      },
+    });
+    const workIds = new Set(workRows.map((row) => row.id));
+    const workBySequence = new Map(workRows.map((row) => [row.sequenceNo, row.id]));
+    const workById = new Map(workRows.map((row) => [row.id, row]));
+    const contexts = new Set<string>();
+    let entryCount = 0;
+    let evidenceCount = 0;
+
+    for (const artifact of artifacts) {
+      const contextKey =
+        artifact.contextKey === null || artifact.contextKey === undefined
+          ? 'DEFAULT'
+          : text(artifact.contextKey);
+      if (!contextKey) {
+        throw new PdsServiceError('A WES context key is required.', 400, 'PDS_WES_CONTEXT_INVALID');
+      }
+      if (contexts.has(contextKey)) {
+        throw new PdsServiceError(
+          'WES context keys must be unique within this PDS Version.',
+          400,
+          'PDS_WES_CONTEXT_CONFLICT',
+        );
+      }
+      contexts.add(contextKey);
+      await this.assertEvidence(transaction, context, artifact);
+      if (artifact.documentId) evidenceCount += 1;
+
+      const entrySequences = new Set<number>();
+      const entryParents = new Set<string>();
+      let previousLatest: number | null = null;
+      const entries = artifact.entries.map((entry, index) => {
+        const sequenceNo = sectionSequence(entry.sequenceNo, index, 'WES entry', entrySequences);
+        const workExperienceId =
+          entry.workExperienceId ??
+          (entry.workExperienceSequenceNo === undefined
+            ? undefined
+            : workBySequence.get(entry.workExperienceSequenceNo));
+        if (!workExperienceId || !workIds.has(workExperienceId)) {
+          throw new PdsServiceError(
+            'Each WES entry must reference a work-experience row in this PDS Version.',
+            400,
+            'PDS_WES_PARENT_NOT_FOUND',
+          );
+        }
+        const workRow = workById.get(workExperienceId);
+        const latest = workRow ? recentDateValue(workRow) : null;
+        if (latest !== null && previousLatest !== null && latest > previousLatest) {
+          throw new PdsServiceError(
+            'WES entries must be ordered from most recent to oldest.',
+            400,
+            'PDS_WES_ORDER_INVALID',
+          );
+        }
+        if (latest !== null) previousLatest = latest;
+        const durationText = requiredTextValue(entry.durationText, 'WES duration');
+        if (workRow?.isCurrent && !/\bpresent\b/i.test(durationText)) {
+          throw new PdsServiceError(
+            'Current WES work must use Present in its duration.',
+            400,
+            'PDS_WES_DURATION_INVALID',
+          );
+        }
+        if (entryParents.has(workExperienceId)) {
+          throw new PdsServiceError(
+            'A work-experience row may appear only once in one WES artifact.',
+            400,
+            'PDS_WES_PARENT_CONFLICT',
+          );
+        }
+        entryParents.add(workExperienceId);
+        return {
+          sequenceNo,
+          workExperienceId,
+          durationText,
+          position: requiredTextValue(entry.position, 'WES position'),
+          officeUnit: requiredTextValue(entry.officeUnit, 'WES office or unit'),
+          immediateSupervisor: requiredTextValue(
+            entry.immediateSupervisor,
+            'WES immediate supervisor',
+          ),
+          agencyOrganizationLocation: requiredTextValue(
+            entry.agencyOrganizationLocation,
+            'WES agency, organization, or location',
+          ),
+          accomplishments: text(entry.accomplishments),
+          actualDuties: requiredTextValue(entry.actualDuties, 'WES actual duties'),
+        };
+      });
+
+      const created = await transaction.pdsWesArtifact.create({
+        data: {
+          agencyId: context.agencyId,
+          employeeId,
+          pdsVersionId,
+          contextKey,
+          templateVersion: PDS_WES_TEMPLATE_VERSION,
+          status: 'DRAFT',
+          documentId: artifact.documentId ?? null,
+          documentVersionId: artifact.documentVersionId ?? null,
+        },
+        select: { id: true },
+      });
+      if (entries.length) {
+        await transaction.pdsWesEntry.createMany({
+          data: entries.map((entry) => ({
+            agencyId: context.agencyId,
+            wesArtifactId: created.id,
+            pdsVersionId,
+            workExperienceId: entry.workExperienceId,
+            sequenceNo: entry.sequenceNo,
+            durationText: entry.durationText,
+            position: entry.position,
+            officeUnit: entry.officeUnit,
+            immediateSupervisor: entry.immediateSupervisor,
+            agencyOrganizationLocation: entry.agencyOrganizationLocation,
+            accomplishments: entry.accomplishments,
+            actualDuties: entry.actualDuties,
+          })),
+        });
+      }
+      entryCount += entries.length;
+    }
+    return { artifactCount: artifacts.length, entryCount, evidenceCount };
+  }
+
+  private async writeSectionAudit(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    status: string,
+    action: string,
+    metadata: Prisma.InputJsonObject,
+  ): Promise<void> {
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action,
+      entityType: 'PdsVersion',
+      entityId: pdsVersionId,
+      previousStatus: status,
+      newStatus: status,
+      requestId: context.requestId,
+      metadata,
     });
   }
 
@@ -1314,10 +2174,17 @@ export class PdsService {
   ): Promise<PdsVersionList> {
     const employee = await transaction.employee.findUnique({
       where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
-      select: { id: true, memberships: { select: { userId: true } } },
+      select: {
+        id: true,
+        memberships: { select: { userId: true } },
+        currentServiceSegment: { select: { organizationUnitId: true } },
+      },
     });
     if (!employee) throw this.notFound();
-    const fieldScope = readFieldScope(context, employee.memberships[0]?.userId ?? null);
+    const fieldScope = readFieldScope(context, {
+      agencyId: context.agencyId,
+      employee,
+    });
     if (!fieldScope) throw this.notFound();
     const records = await transaction.pdsVersion.findMany({
       where: { agencyId: context.agencyId, employeeId },

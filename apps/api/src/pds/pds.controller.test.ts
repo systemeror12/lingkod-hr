@@ -39,6 +39,10 @@ const detail: PdsVersionDetail = {
   family: { spouse: null, children: [], father: null, mother: null },
   education: [],
   eligibility: [],
+  workExperience: [],
+  voluntaryWork: [],
+  learningAndDevelopment: [],
+  wes: [],
 };
 
 function serviceMock() {
