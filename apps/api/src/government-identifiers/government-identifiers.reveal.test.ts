@@ -121,7 +121,7 @@ it('returns plaintext only on an authorized reveal and keeps it out of the audit
       context([{ code: 'personnel.identifiers.reveal', scopePolicy: 'AGENCY' }]),
       employeeId,
       identifierId,
-      { reason: 'Review the submitted record.' },
+      { reason: plaintext },
     ),
   ).resolves.toMatchObject({ value: plaintext, maskedValue: '********1234' });
 
@@ -129,7 +129,9 @@ it('returns plaintext only on an authorized reveal and keeps it out of the audit
   expect(auditEvents[0]?.data).toMatchObject({
     action: 'GOVERNMENT_IDENTIFIER_REVEAL_ATTEMPTED',
     newStatus: 'REVEALED',
+    reason: null,
   });
+  expect(JSON.stringify(auditEvents[0]?.data)).not.toContain(plaintext);
   expect(JSON.stringify(auditEvents[0]?.data.metadata)).not.toContain(plaintext);
 });
 

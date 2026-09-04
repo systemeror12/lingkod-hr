@@ -826,7 +826,6 @@ export class GovernmentIdentifiersService {
           base,
           allowed,
           auditStatus,
-          input,
         );
         return result;
       },
@@ -1045,9 +1044,7 @@ export class GovernmentIdentifiersService {
     value: GovernmentIdentifierSummary | null,
     allowed: boolean,
     status: GovernmentIdentifierRevealAuditStatus,
-    input: GovernmentIdentifierRevealInput,
   ): Promise<void> {
-    const reason = optionalTrimmed(input.reason);
     await this.auditWriter.write(transaction, {
       agencyId: context.agencyId,
       actorUserId: context.userId,
@@ -1058,7 +1055,7 @@ export class GovernmentIdentifiersService {
       entityId: identifierId,
       previousStatus: value?.status ?? null,
       newStatus: status,
-      reason,
+      reason: null,
       requestId: context.requestId,
       occurredAt: new Date(),
       metadata: value
