@@ -1,11 +1,11 @@
 # Philippine Public-Sector HRIS
 ## Technical Stack and Architecture Specification
 
-**Document status:** Draft v0.3  
+**Document status:** Draft v0.4
 **Project type:** Solo-developer modular SaaS / deployable HRIS platform  
 **Architecture:** Multi-tenant modular monolith  
 **Product scope:** Philippine Public-Sector HRIS  
-**Last updated:** August 7, 2026  
+**Last updated:** September 4, 2026
 
 ---
 
@@ -166,6 +166,8 @@ Dependency versions are pinned through the lockfile. Major upgrades are intentio
 - Sensitive HR and payroll fields are hidden unless authorized.
 - Finalized records render read-only unless a formal correction flow exists.
 - Public-sector forms and printable outputs use versioned templates.
+- The PDS editor module owns API-to-form mapping, payload serialization, repeatable-row ordering,
+  and post-save reconciliation; PDS rendering consumes that interface.
 
 ---
 
@@ -183,6 +185,8 @@ Dependency versions are pinned through the lockfile. Major upgrades are intentio
 - Agency scope is derived from authenticated membership.
 - Domain commands validate current state before transition.
 - Cross-module writes go through the owning module's application service.
+- Request identity is adapted to database context once. Domain modules declare named database
+  capabilities, while the database package alone maps those capabilities to PostgreSQL settings.
 - OpenAPI output is validated in CI.
 
 Example:
@@ -305,6 +309,11 @@ ai
 ## Module boundary rule
 
 A module may not directly modify another module's tables without using that module's application service or documented internal contract.
+
+The Documents module owns the universal External Evidence linking rules: Agency scope, exact
+Document Version resolution, classification sensitivity, and status/finalization eligibility.
+Consuming modules retain their workflow permissions, purpose requirements, and domain-specific
+error language.
 
 Examples:
 
@@ -1517,3 +1526,4 @@ The first meaningful milestone is:
 | 0.1 | August 2, 2026 | Initial general AI-enabled ERP architecture |
 | 0.2 | August 7, 2026 | Reframed architecture around the Philippine Public-Sector HRIS implementation |
 | 0.3 | August 7, 2026 | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
+| 0.4 | September 4, 2026 | Clarified ownership of database capabilities, External Evidence linking, and the PDS editor model |

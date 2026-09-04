@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -117,6 +117,55 @@ it('does not persist an authoritative row when object storage fails', async () =
 
 it('uses a safe error type for document failures', () => {
   expect(new DocumentsServiceError('message', 400, 'CODE')).toBeInstanceOf(Error);
+});
+
+it('resolves External Evidence through the shared version, sensitivity, and status rules', async () => {
+  const service = new DocumentsService(storage, documentAuditWriter);
+  const record = {
+    id: 'document-1',
+    documentNo: null,
+    documentType: 'PDS',
+    classification: 'CONFIDENTIAL',
+    status: 'APPROVED',
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    currentVersion: {
+      id: 'version-1',
+      versionNo: 1,
+      contentHash: 'a'.repeat(64),
+      mimeType: 'application/pdf',
+      sizeBytes: 10n,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      issuedAt: null,
+    },
+  };
+  const findFirst = vi
+    .fn()
+    .mockResolvedValueOnce(record)
+    .mockResolvedValueOnce({ ...record, classification: 'HIGHLY_SENSITIVE' })
+    .mockResolvedValueOnce({ ...record, status: 'DRAFT' });
+  const transaction = { document: { findFirst } } as unknown as Prisma.TransactionClient;
+
+  await expect(
+    service.resolveExternalEvidenceInTransaction(transaction, context(), {
+      documentId: record.id,
+      allowSensitive: true,
+      requirement: 'LINKABLE_STATUS',
+    }),
+  ).resolves.toMatchObject({ ok: true, document: { id: record.id } });
+  await expect(
+    service.resolveExternalEvidenceInTransaction(transaction, context(), {
+      documentId: record.id,
+      allowSensitive: false,
+      requirement: 'LINKABLE_STATUS',
+    }),
+  ).resolves.toEqual({ ok: false, reason: 'SENSITIVE_FORBIDDEN' });
+  await expect(
+    service.resolveExternalEvidenceInTransaction(transaction, context(), {
+      documentId: record.id,
+      allowSensitive: true,
+      requirement: 'LINKABLE_STATUS',
+    }),
+  ).resolves.toEqual({ ok: false, reason: 'STATUS_INELIGIBLE' });
 });
 
 class MemoryDocumentStorage implements DocumentStorage {

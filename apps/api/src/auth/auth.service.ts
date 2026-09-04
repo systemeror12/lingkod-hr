@@ -174,14 +174,16 @@ export class AuthService {
 
   async assertLoginAllowed(ipAddress: string): Promise<void> {
     const since = new Date(Date.now() - 15 * 60 * 1000);
-    const failures = await withDatabaseContext({ platformSecurity: true }, (transaction) =>
-      transaction.securityEvent.count({
-        where: {
-          eventType: 'LOGIN_FAILURE',
-          ipAddress: ipAddress ?? null,
-          occurredAt: { gte: since },
-        },
-      }),
+    const failures = await withDatabaseContext(
+      { capabilities: ['platform-security'] },
+      (transaction) =>
+        transaction.securityEvent.count({
+          where: {
+            eventType: 'LOGIN_FAILURE',
+            ipAddress: ipAddress ?? null,
+            occurredAt: { gte: since },
+          },
+        }),
     );
     if (failures >= 20) {
       throw new AuthServiceError(
@@ -434,7 +436,7 @@ export class AuthService {
   }
 
   async recordLoginFailure(requestId: string, reason: string, ipAddress?: string): Promise<void> {
-    await withDatabaseContext({ platformSecurity: true }, async (transaction) => {
+    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
       await transaction.securityEvent.create({
         data: {
           eventType: 'LOGIN_FAILURE',
@@ -730,7 +732,7 @@ export class AuthService {
 
   async handleBackChannelLogout(token: string, requestId: string): Promise<void> {
     const identity = await this.oidc.verifyLogoutToken(token);
-    await withDatabaseContext({ platformSecurity: true }, async (transaction) => {
+    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
       try {
         await transaction.securityEvent.create({
           data: {

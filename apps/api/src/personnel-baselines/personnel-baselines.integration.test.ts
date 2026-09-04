@@ -236,7 +236,7 @@ it.skipIf(!enabled)(
           agencyId,
           userId,
           membershipId,
-          qualificationStandardTransition: true,
+          capabilities: ['qualification-standard-transition'],
         },
         async (transaction) => {
           const standard = await transaction.qualificationStandard.create({
@@ -282,7 +282,7 @@ it.skipIf(!enabled)(
         },
       );
       const staffingAuthority = await withDatabaseContext(
-        { agencyId, userId, membershipId, staffingAuthorityTransition: true },
+        { agencyId, userId, membershipId, capabilities: ['staffing-authority-transition'] },
         (transaction) =>
           transaction.staffingAuthority.create({
             data: {

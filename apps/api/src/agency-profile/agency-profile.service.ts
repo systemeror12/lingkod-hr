@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import { AGENCY_PROFILE_TYPES, type agencyProfileDraftSchema } from './agency-profile.schemas';
 
 export type AgencyProfileType = (typeof AGENCY_PROFILE_TYPES)[number];
@@ -158,14 +159,6 @@ function normalizeCorrection(input: AgencyProfileCorrectionInput): AgencyProfile
   };
 }
 
-function databaseContext(context: RequestContext) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-  };
-}
-
 function toSummary(record: ProfileRecord): AgencyProfileVersionSummary {
   return {
     id: record.id,
@@ -251,7 +244,7 @@ export class AgencyProfileService {
     this.assertPermission(context, 'organization.agency.read', 'AGENCY_PROFILE_READ_FORBIDDEN');
     const asOf = asOfValue ? toDatabaseDate(asOfValue) : today();
 
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const [current, records] = await Promise.all([
         transaction.agencyProfileVersion.findFirst({
           where: currentWhere(context.agencyId, asOf),
@@ -280,7 +273,7 @@ export class AgencyProfileService {
   async createDraft(context: RequestContext): Promise<AgencyProfileVersionSummary> {
     this.assertPermission(context, 'organization.agency.update', 'AGENCY_PROFILE_UPDATE_FORBIDDEN');
     try {
-      return await withDatabaseContext(databaseContext(context), async (transaction) => {
+      return await withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
         const existingDraft = await transaction.agencyProfileVersion.findFirst({
           where: { agencyId: context.agencyId, status: 'DRAFT' },
           select: profileSelect,
@@ -344,7 +337,7 @@ export class AgencyProfileService {
     const input = normalizeInput(rawInput);
     const effectiveFrom = toDatabaseDate(input.effectiveFrom);
 
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const draft = await transaction.agencyProfileVersion.findFirst({
         where: { id: draftId, agencyId: context.agencyId, status: 'DRAFT' },
         select: profileSelect,
@@ -393,7 +386,7 @@ export class AgencyProfileService {
       );
     }
 
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const draft = await transaction.agencyProfileVersion.findFirst({
         where: { id: draftId, agencyId: context.agencyId, status: 'DRAFT' },
         select: profileSelect,
@@ -476,7 +469,7 @@ export class AgencyProfileService {
       );
     }
 
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const source = await transaction.agencyProfileVersion.findFirst({
         where: { id: versionId, agencyId: context.agencyId, status: { in: PUBLISHED_STATES } },
         select: profileSelect,
@@ -563,7 +556,7 @@ export class AgencyProfileService {
   }
 
   private async findDraft(context: RequestContext): Promise<AgencyProfileVersionSummary | null> {
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const draft = await transaction.agencyProfileVersion.findFirst({
         where: { agencyId: context.agencyId, status: 'DRAFT' },
         select: profileSelect,

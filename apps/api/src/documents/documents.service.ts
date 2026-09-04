@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import { DocumentStorage } from './documents.storage';
 
 export const DOCUMENT_CLASSIFICATIONS = [
@@ -64,6 +65,20 @@ export interface DocumentAccess {
 }
 
 export const LINKABLE_EXTERNAL_EVIDENCE_STATUSES = ['APPROVED', 'ISSUED', 'SUPERSEDED'] as const;
+
+export type ExternalEvidenceRequirement =
+  'ANY_STATUS' | 'NOT_VOIDED' | 'LINKABLE_STATUS' | 'FINALIZED_VERSION';
+
+export type ExternalEvidenceLinkingResult =
+  | {
+      ok: true;
+      document: DocumentSummary & { currentVersion: DocumentVersionSummary };
+    }
+  | {
+      ok: false;
+      reason:
+        'DOCUMENT_NOT_FOUND' | 'VERSION_NOT_FOUND' | 'SENSITIVE_FORBIDDEN' | 'STATUS_INELIGIBLE';
+    };
 
 export interface DocumentAuditWriter {
   write(
@@ -147,14 +162,6 @@ type DocumentRecord = Prisma.DocumentGetPayload<{ select: typeof documentSelect 
 type LinkableVersionRecord = Prisma.DocumentVersionGetPayload<{
   select: typeof linkableVersionSelect;
 }>;
-
-function databaseContext(context: RequestContext) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-  };
-}
 
 function formatDateTime(value: Date): string {
   return value.toISOString();
@@ -266,7 +273,7 @@ export class DocumentsService {
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
 
     if (idempotencyKey) {
-      const existing = await withDatabaseContext(databaseContext(context), (transaction) =>
+      const existing = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
         transaction.document.findFirst({
           where: { id: documentId, agencyId: context.agencyId },
           select: documentSelect,
@@ -294,7 +301,7 @@ export class DocumentsService {
 
     await this.store(storageKey, file, contentHash);
     try {
-      return await withDatabaseContext(databaseContext(context), async (transaction) => {
+      return await withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
         const document = await transaction.document.create({
           data: {
             id: documentId,
@@ -360,7 +367,7 @@ export class DocumentsService {
     } catch (error: unknown) {
       await this.removeObject(storageKey);
       if (isKnownPrismaError(error, 'P2002') && idempotencyKey) {
-        const existing = await withDatabaseContext(databaseContext(context), (transaction) =>
+        const existing = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
           transaction.document.findFirst({
             where: { id: documentId, agencyId: context.agencyId },
             select: documentSelect,
@@ -404,7 +411,7 @@ export class DocumentsService {
     const file = this.validateFile(fileInput);
     const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
-    const document = await withDatabaseContext(databaseContext(context), (transaction) =>
+    const document = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.document.findFirst({
         where: { id: documentId, agencyId: context.agencyId, status: { not: 'VOIDED' } },
         select: {
@@ -423,11 +430,13 @@ export class DocumentsService {
     const storageKey = this.storageKey();
 
     if (idempotencyKey) {
-      const existingVersion = await withDatabaseContext(databaseContext(context), (transaction) =>
-        transaction.documentVersion.findFirst({
-          where: { id: versionId, agencyId: context.agencyId, documentId },
-          select: { contentHash: true, mimeType: true, sizeBytes: true },
-        }),
+      const existingVersion = await withDatabaseContext(
+        requestDatabaseContext(context),
+        (transaction) =>
+          transaction.documentVersion.findFirst({
+            where: { id: versionId, agencyId: context.agencyId, documentId },
+            select: { contentHash: true, mimeType: true, sizeBytes: true },
+          }),
       );
       if (existingVersion) {
         if (
@@ -438,7 +447,7 @@ export class DocumentsService {
           })
         ) {
           const existingDocument = await withDatabaseContext(
-            databaseContext(context),
+            requestDatabaseContext(context),
             (transaction) =>
               transaction.document.findFirst({
                 where: { id: documentId, agencyId: context.agencyId },
@@ -457,7 +466,7 @@ export class DocumentsService {
 
     await this.store(storageKey, file, contentHash);
     try {
-      return await withDatabaseContext(databaseContext(context), async (transaction) => {
+      return await withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
         const wasFinalized = ['APPROVED', 'ISSUED', 'ARCHIVED', 'SUPERSEDED'].includes(
           document.status,
         );
@@ -522,11 +531,13 @@ export class DocumentsService {
     } catch (error: unknown) {
       await this.removeObject(storageKey);
       if (isKnownPrismaError(error, 'P2002') && idempotencyKey) {
-        const existingVersion = await withDatabaseContext(databaseContext(context), (transaction) =>
-          transaction.documentVersion.findFirst({
-            where: { id: versionId, agencyId: context.agencyId, documentId },
-            select: { contentHash: true, mimeType: true, sizeBytes: true },
-          }),
+        const existingVersion = await withDatabaseContext(
+          requestDatabaseContext(context),
+          (transaction) =>
+            transaction.documentVersion.findFirst({
+              where: { id: versionId, agencyId: context.agencyId, documentId },
+              select: { contentHash: true, mimeType: true, sizeBytes: true },
+            }),
         );
         if (
           existingVersion &&
@@ -537,7 +548,7 @@ export class DocumentsService {
           })
         ) {
           const existingDocument = await withDatabaseContext(
-            databaseContext(context),
+            requestDatabaseContext(context),
             (transaction) =>
               transaction.document.findFirst({
                 where: { id: documentId, agencyId: context.agencyId },
@@ -560,7 +571,7 @@ export class DocumentsService {
 
   async findById(context: RequestContext, documentId: string): Promise<DocumentSummary | null> {
     this.assertReadPermission(context);
-    const record = await withDatabaseContext(databaseContext(context), (transaction) =>
+    const record = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.document.findFirst({
         where: { id: documentId, agencyId: context.agencyId },
         select: documentSelect,
@@ -576,7 +587,7 @@ export class DocumentsService {
     const canReadSensitive = hasPermission(context, 'documents.evidence.read_sensitive', {
       agencyId: context.agencyId,
     });
-    const records = await withDatabaseContext(databaseContext(context), (transaction) =>
+    const records = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.document.findMany({
         where: {
           agencyId: context.agencyId,
@@ -599,7 +610,7 @@ export class DocumentsService {
     const canReadSensitive = hasPermission(context, 'documents.evidence.read_sensitive', {
       agencyId: context.agencyId,
     });
-    const records = await withDatabaseContext(databaseContext(context), (transaction) =>
+    const records = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.documentVersion.findMany({
         where: {
           agencyId: context.agencyId,
@@ -627,13 +638,19 @@ export class DocumentsService {
     return records.map(toLinkableVersionSummary);
   }
 
-  /** Internal contract: callers own authorization and use this only inside their transaction. */
-  async findDocumentForLinkingInTransaction(
+  /** Resolves the exact same-Agency version and applies the shared External Evidence rules. */
+  async resolveExternalEvidenceInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
-    documentId: string,
-    versionId?: string,
-  ): Promise<DocumentSummary | null> {
+    input: {
+      documentId: string;
+      versionId?: string;
+      allowSensitive: boolean;
+      requirement: ExternalEvidenceRequirement;
+    },
+  ): Promise<ExternalEvidenceLinkingResult> {
+    const { documentId, versionId } = input;
+    let document: DocumentSummary | null;
     if (versionId) {
       const record = await transaction.document.findFirst({
         where: { id: documentId, agencyId: context.agencyId },
@@ -646,9 +663,9 @@ export class DocumentsService {
           },
         },
       });
-      if (!record) return null;
+      if (!record) return { ok: false, reason: 'DOCUMENT_NOT_FOUND' };
       const version = record.versions[0] ?? null;
-      return {
+      document = {
         id: record.id,
         documentNo: record.documentNo,
         documentType: record.documentType,
@@ -657,13 +674,32 @@ export class DocumentsService {
         createdAt: formatDateTime(record.createdAt),
         currentVersion: version ? toVersionSummary(version) : null,
       };
+    } else {
+      const record = await transaction.document.findFirst({
+        where: { id: documentId, agencyId: context.agencyId },
+        select: documentSelect,
+      });
+      if (!record) return { ok: false, reason: 'DOCUMENT_NOT_FOUND' };
+      document = toSummary(record);
     }
-    const record = await transaction.document.findFirst({
-      where: { id: documentId, agencyId: context.agencyId },
-      select: documentSelect,
-    });
-    if (!record) return null;
-    return toSummary(record);
+
+    const currentVersion = document.currentVersion;
+    if (!currentVersion) return { ok: false, reason: 'VERSION_NOT_FOUND' };
+    if (document.classification === 'HIGHLY_SENSITIVE' && !input.allowSensitive) {
+      return { ok: false, reason: 'SENSITIVE_FORBIDDEN' };
+    }
+    const linkableStatus = (LINKABLE_EXTERNAL_EVIDENCE_STATUSES as readonly string[]).includes(
+      document.status,
+    );
+    const eligible =
+      input.requirement === 'ANY_STATUS' ||
+      (input.requirement === 'NOT_VOIDED' && document.status !== 'VOIDED') ||
+      (input.requirement === 'LINKABLE_STATUS' && linkableStatus) ||
+      (input.requirement === 'FINALIZED_VERSION' &&
+        document.status !== 'VOIDED' &&
+        (currentVersion.issuedAt !== null || linkableStatus));
+    if (!eligible) return { ok: false, reason: 'STATUS_INELIGIBLE' };
+    return { ok: true, document: { ...document, currentVersion } };
   }
 
   /** Internal contract: personnel own-record links may use only their uploaded version. */
@@ -718,7 +754,7 @@ export class DocumentsService {
           select: versionSelect,
         }
       : { orderBy: { versionNo: 'desc' as const }, take: 1, select: versionSelect };
-    const record = await withDatabaseContext(databaseContext(context), (transaction) =>
+    const record = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.document.findFirst({
         where: { id: documentId, agencyId: context.agencyId },
         select: {
@@ -732,7 +768,7 @@ export class DocumentsService {
     const version = record.versions[0];
     if (!version) return null;
 
-    const storageKey = await withDatabaseContext(databaseContext(context), (transaction) =>
+    const storageKey = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.documentVersion.findFirst({
         where: { id: version.id, documentId, agencyId: context.agencyId },
         select: { storageKey: true },
@@ -764,7 +800,7 @@ export class DocumentsService {
       createdAt: formatDateTime(record.createdAt),
       currentVersion: version ? toVersionSummary(version) : null,
     };
-    await withDatabaseContext(databaseContext(context), async (transaction) => {
+    await withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,

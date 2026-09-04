@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import { DocumentsService, type DocumentSummary } from '../documents/documents.service';
 
 export const STAFFING_AUTHORITY_TYPES = [
@@ -162,12 +163,10 @@ type AuthorityRecord = Prisma.StaffingAuthorityGetPayload<{ select: typeof autho
 type EvidenceDocument = DocumentSummary;
 
 function databaseContext(context: RequestContext, transition = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(transition ? { staffingAuthorityTransition: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(transition ? (['staffing-authority-transition'] as const) : []),
+  );
 }
 
 function normalizeIdempotencyKey(value: string | undefined): string | null {
@@ -959,13 +958,17 @@ export class StaffingAuthorityService {
     ) {
       return null;
     }
-    const document = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      authority.documentId,
-      authority.evidenceVersionId ?? undefined,
+      {
+        documentId: authority.documentId,
+        ...(authority.evidenceVersionId ? { versionId: authority.evidenceVersionId } : {}),
+        allowSensitive: true,
+        requirement: 'NOT_VOIDED',
+      },
     );
-    return isEvidenceUsable(document) ? document : null;
+    return evidenceResult.ok ? evidenceResult.document : null;
   }
 
   private async documentForValidation(
@@ -973,24 +976,29 @@ export class StaffingAuthorityService {
     context: RequestContext,
     documentId: string,
   ): Promise<EvidenceDocument | null> {
-    const document = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      documentId,
+      {
+        documentId,
+        allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+          agencyId: context.agencyId,
+        }),
+        requirement: 'NOT_VOIDED',
+      },
     );
-    if (!document) throw this.evidenceNotFound();
+    if (evidenceResult.ok === false && evidenceResult.reason === 'DOCUMENT_NOT_FOUND') {
+      throw this.evidenceNotFound();
+    }
     this.assertDocumentReadPermission(context);
-    if (
-      document.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId })
-    ) {
+    if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
       throw new StaffingAuthorityServiceError(
         'The current Agency Membership cannot inspect this External Evidence.',
         403,
         'STAFFING_AUTHORITY_EVIDENCE_SENSITIVE_FORBIDDEN',
       );
     }
-    return document;
+    return evidenceResult.ok ? evidenceResult.document : null;
   }
 
   private assertDocumentReadPermission(context: RequestContext): void {

@@ -2,10 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import {
-  DocumentsService,
-  LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
-} from '../documents/documents.service';
+import { requestDatabaseContext } from '../database-context';
+import { DocumentsService } from '../documents/documents.service';
 import {
   PDS_FORM_VERSION,
   PDS_CITIZENSHIP_COUNTRIES,
@@ -1249,24 +1247,7 @@ function canAccess(
 }
 
 function databaseContext(context: RequestContext, pdsMutation = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    pdsMutation,
-  };
-}
-
-function isFinalizedEvidence(document: {
-  status: string;
-  currentVersion: { issuedAt: string | null } | null;
-}): boolean {
-  return (
-    document.status !== 'VOIDED' &&
-    Boolean(document.currentVersion) &&
-    (document.currentVersion?.issuedAt !== null ||
-      (LINKABLE_EXTERNAL_EVIDENCE_STATUSES as readonly string[]).includes(document.status))
-  );
+  return requestDatabaseContext(context, ...(pdsMutation ? (['pds-mutation'] as const) : []));
 }
 
 @Injectable()
@@ -1323,13 +1304,26 @@ export class PdsService {
           'PDS_EVIDENCE_INVALID',
         );
       }
-      const document = await this.documentsService.findDocumentForLinkingInTransaction(
+      const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
         transaction,
         context,
-        record.documentId,
-        record.documentVersionId,
+        {
+          documentId: record.documentId,
+          versionId: record.documentVersionId,
+          allowSensitive:
+            ownWorkflow ||
+            hasPermission(context, 'documents.evidence.read_sensitive', {
+              agencyId: context.agencyId,
+            }),
+          requirement: ownWorkflow ? 'NOT_VOIDED' : 'FINALIZED_VERSION',
+        },
       );
-      if (!document || !document.currentVersion || document.status === 'VOIDED') {
+      if (
+        evidenceResult.ok === false &&
+        (evidenceResult.reason === 'DOCUMENT_NOT_FOUND' ||
+          evidenceResult.reason === 'VERSION_NOT_FOUND' ||
+          (ownWorkflow && evidenceResult.reason === 'STATUS_INELIGIBLE'))
+      ) {
         throw new PdsServiceError(
           'Evidence must reference a finalized same-Agency Document Version.',
           400,
@@ -1360,25 +1354,21 @@ export class PdsService {
           'PDS_EVIDENCE_READ_FORBIDDEN',
         );
       }
-      if (
-        document.classification === 'HIGHLY_SENSITIVE' &&
-        !hasPermission(context, 'documents.evidence.read_sensitive', {
-          agencyId: context.agencyId,
-        })
-      ) {
+      if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
         throw new PdsServiceError(
           'The current Agency Membership cannot inspect highly sensitive shared Documents.',
           403,
           'PDS_EVIDENCE_SENSITIVE_FORBIDDEN',
         );
       }
-      if (!isFinalizedEvidence(document)) {
+      if (evidenceResult.ok === false && evidenceResult.reason === 'STATUS_INELIGIBLE') {
         throw new PdsServiceError(
           'Evidence must reference a finalized same-Agency Document Version.',
           400,
           'PDS_EVIDENCE_INVALID',
         );
       }
+      if (!evidenceResult.ok) throw new Error('Unexpected External Evidence resolution result.');
     }
   }
 
@@ -1788,42 +1778,44 @@ export class PdsService {
         'PDS_EVIDENCE_FORBIDDEN',
       );
     }
-    const evidence = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      documentId,
-      documentVersionId,
+      {
+        documentId,
+        versionId: documentVersionId,
+        allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+          agencyId: context.agencyId,
+        }),
+        requirement: 'FINALIZED_VERSION',
+      },
     );
-    if (!evidence || !evidence.currentVersion) {
+    if (
+      evidenceResult.ok === false &&
+      (evidenceResult.reason === 'DOCUMENT_NOT_FOUND' ||
+        evidenceResult.reason === 'VERSION_NOT_FOUND')
+    ) {
       throw new PdsServiceError(
         'The selected evidence Document Version could not be found in this Agency.',
         404,
         'PDS_EVIDENCE_NOT_FOUND',
       );
     }
-    if (
-      evidence.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId })
-    ) {
+    if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
       throw new PdsServiceError(
         'The current Agency Membership cannot inspect this External Evidence.',
         403,
         'PDS_EVIDENCE_SENSITIVE_FORBIDDEN',
       );
     }
-    if (
-      evidence.status === 'VOIDED' ||
-      (evidence.currentVersion.issuedAt === null &&
-        !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
-          evidence.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
-        ))
-    ) {
+    if (evidenceResult.ok === false && evidenceResult.reason === 'STATUS_INELIGIBLE') {
       throw new PdsServiceError(
         'The selected evidence Document Version is not finalized for PDS linking.',
         400,
         'PDS_EVIDENCE_INELIGIBLE',
       );
     }
+    if (!evidenceResult.ok) throw new Error('Unexpected External Evidence resolution result.');
   }
 
   private async assertSectionIds(

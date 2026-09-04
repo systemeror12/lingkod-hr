@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 
 export interface EmployeeInput {
   employeeNumber: string;
@@ -120,12 +121,10 @@ type LinkableMembershipRecord = Prisma.AgencyMembershipGetPayload<{
 }>;
 
 function databaseContext(context: RequestContext, membershipLink = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(membershipLink ? { employeeMembershipLink: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(membershipLink ? (['employee-membership-link'] as const) : []),
+  );
 }
 
 function dateInvalid(): EmployeeServiceError {

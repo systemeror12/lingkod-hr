@@ -1,6 +1,19 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './client';
 
+export type DatabaseCapability =
+  | 'platform-security'
+  | 'operational-provisioning'
+  | 'staffing-authority-transition'
+  | 'qualification-standard-transition'
+  | 'plantilla-position-transition'
+  | 'plantilla-position-evidence-transition'
+  | 'employee-membership-link'
+  | 'pds-mutation'
+  | 'employee-document-transition'
+  | 'personnel-baseline-transition'
+  | 'organization-unit-correction';
+
 export interface DatabaseContext {
   agencyId?: string;
   userId?: string;
@@ -8,16 +21,11 @@ export interface DatabaseContext {
   sessionTokenHash?: string;
   invitationTokenHash?: string;
   providerSid?: string;
-  platformSecurity?: boolean;
-  operationalProvisioning?: boolean;
-  staffingAuthorityTransition?: boolean;
-  qualificationStandardTransition?: boolean;
-  plantillaPositionTransition?: boolean;
-  plantillaPositionEvidenceTransition?: boolean;
-  employeeMembershipLink?: boolean;
-  pdsMutation?: boolean;
-  employeeDocumentTransition?: boolean;
-  personnelBaselineTransition?: boolean;
+  capabilities?: readonly DatabaseCapability[];
+}
+
+function hasCapability(context: DatabaseContext, capability: DatabaseCapability): boolean {
+  return context.capabilities?.includes(capability) ?? false;
 }
 
 export async function withDatabaseContext<T>(
@@ -42,50 +50,55 @@ export async function setDatabaseContext(
       set_config('app.session_token_hash', ${context.sessionTokenHash ?? ''}, true),
       set_config('app.invitation_token_hash', ${context.invitationTokenHash ?? ''}, true),
       set_config('app.provider_sid', ${context.providerSid ?? ''}, true),
-      set_config('app.platform_security', ${context.platformSecurity ? 'true' : ''}, true),
+      set_config('app.platform_security', ${hasCapability(context, 'platform-security') ? 'true' : ''}, true),
       set_config(
         'app.operational_provisioning',
-        ${context.operationalProvisioning ? 'true' : ''},
+        ${hasCapability(context, 'operational-provisioning') ? 'true' : ''},
         true
       ),
       set_config(
         'app.staffing_authority_transition',
-        ${context.staffingAuthorityTransition ? 'on' : ''},
+        ${hasCapability(context, 'staffing-authority-transition') ? 'on' : ''},
         true
       ),
       set_config(
         'app.qualification_standard_transition',
-        ${context.qualificationStandardTransition ? 'on' : ''},
+        ${hasCapability(context, 'qualification-standard-transition') ? 'on' : ''},
         true
       ),
       set_config(
         'app.plantilla_position_transition',
-        ${context.plantillaPositionTransition ? 'on' : ''},
+        ${hasCapability(context, 'plantilla-position-transition') ? 'on' : ''},
         true
       ),
       set_config(
         'app.plantilla_position_evidence_transition',
-        ${context.plantillaPositionEvidenceTransition ? 'on' : ''},
+        ${hasCapability(context, 'plantilla-position-evidence-transition') ? 'on' : ''},
         true
       ),
       set_config(
         'app.employee_membership_link',
-        ${context.employeeMembershipLink ? 'on' : ''},
+        ${hasCapability(context, 'employee-membership-link') ? 'on' : ''},
         true
       ),
       set_config(
         'app.pds_mutation',
-        ${context.pdsMutation ? 'on' : ''},
+        ${hasCapability(context, 'pds-mutation') ? 'on' : ''},
         true
       ),
       set_config(
         'app.employee_document_transition',
-        ${context.employeeDocumentTransition ? 'on' : ''},
+        ${hasCapability(context, 'employee-document-transition') ? 'on' : ''},
         true
       ),
       set_config(
         'app.personnel_baseline_transition',
-        ${context.personnelBaselineTransition ? 'on' : ''},
+        ${hasCapability(context, 'personnel-baseline-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.organization_unit_correction',
+        ${hasCapability(context, 'organization-unit-correction') ? 'on' : ''},
         true
       )
   `;
