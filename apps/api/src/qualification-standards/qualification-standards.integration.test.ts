@@ -193,7 +193,7 @@ it.skipIf(!enabled)(
             agencyId: agency.id,
             userId: user.id,
             membershipId: membership.id,
-            qualificationStandardTransition: true,
+            capabilities: ['qualification-standard-transition'],
           },
           (transaction) =>
             transaction.qualificationStandardVersion.create({

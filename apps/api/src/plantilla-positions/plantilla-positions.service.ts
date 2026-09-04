@@ -2,11 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import {
   DocumentsService,
   LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
   type DocumentClassification,
-  type DocumentSummary,
 } from '../documents/documents.service';
 
 export const PLANTILLA_POSITION_VERSION_STATES = [
@@ -297,16 +297,14 @@ type PositionEvidenceRecord = Prisma.PositionDocumentGetPayload<{
 }>;
 
 function databaseContext(context: RequestContext, transition = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(transition ? { plantillaPositionTransition: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(transition ? (['plantilla-position-transition'] as const) : []),
+  );
 }
 
 function evidenceDatabaseContext(context: RequestContext) {
-  return { ...databaseContext(context), plantillaPositionEvidenceTransition: true };
+  return requestDatabaseContext(context, 'plantilla-position-evidence-transition');
 }
 
 function toDatabaseDate(value: string): Date {
@@ -609,12 +607,24 @@ export class PlantillaPositionsService {
     try {
       return await withDatabaseContext(evidenceDatabaseContext(context), async (transaction) => {
         await this.lockPosition(transaction, context.agencyId, positionId);
-        const document = await this.documentsService.findDocumentForLinkingInTransaction(
+        const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
           transaction,
           context,
-          input.documentId,
+          {
+            documentId: input.documentId,
+            allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+              agencyId: context.agencyId,
+            }),
+            requirement: 'LINKABLE_STATUS',
+          },
         );
-        this.assertLinkableDocument(context, document);
+        if (evidenceResult.ok === false && evidenceResult.reason === 'DOCUMENT_NOT_FOUND') {
+          throw this.evidenceDocumentNotFound();
+        }
+        if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
+          throw this.evidenceSensitiveForbidden();
+        }
+        if (!evidenceResult.ok) throw this.evidenceDocumentIneligible();
         const link = await transaction.positionDocument.create({
           data: {
             agencyId: context.agencyId,
@@ -1492,15 +1502,17 @@ export class PlantillaPositionsService {
       !authority.evidenceValidationReason
     )
       throw this.staffingAuthorityEvidenceRequired();
-    const evidence = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidence = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      authority.documentId,
-      authority.evidenceVersionId,
+      {
+        documentId: authority.documentId,
+        versionId: authority.evidenceVersionId,
+        allowSensitive: true,
+        requirement: 'NOT_VOIDED',
+      },
     );
-    if (!evidence || evidence.status === 'VOIDED' || !evidence.currentVersion) {
-      throw this.staffingAuthorityEvidenceRequired();
-    }
+    if (!evidence.ok) throw this.staffingAuthorityEvidenceRequired();
   }
 
   private async requiredEvidence(
@@ -1578,29 +1590,6 @@ export class PlantillaPositionsService {
       where: { id: evidenceId, agencyId, positionId },
       select: positionEvidenceSelect,
     });
-  }
-
-  private assertLinkableDocument(
-    context: RequestContext,
-    document: DocumentSummary | null,
-  ): asserts document is DocumentSummary {
-    if (!document) throw this.evidenceDocumentNotFound();
-    if (
-      document.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', {
-        agencyId: context.agencyId,
-      })
-    ) {
-      throw this.evidenceSensitiveForbidden();
-    }
-    if (
-      !document.currentVersion ||
-      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
-        document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
-      )
-    ) {
-      throw this.evidenceDocumentIneligible();
-    }
   }
 
   private evidenceDate(value: string): Date {

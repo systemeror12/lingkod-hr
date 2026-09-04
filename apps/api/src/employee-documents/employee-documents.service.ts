@@ -2,13 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import {
   DocumentsService,
   DocumentsServiceError,
-  LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
   type DocumentAccess,
   type DocumentClassification,
-  type DocumentSummary,
   type UploadedDocumentFile,
 } from '../documents/documents.service';
 
@@ -181,12 +180,10 @@ type EmployeeDocumentRecord = Prisma.EmployeeDocumentGetPayload<{
   select: typeof employeeDocumentSelect;
 }>;
 function databaseContext(context: RequestContext, transition = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(transition ? { employeeDocumentTransition: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(transition ? (['employee-document-transition'] as const) : []),
+  );
 }
 
 function formatDateTime(value: Date): string {
@@ -224,40 +221,6 @@ function employeeDocumentSummary(record: EmployeeDocumentRecord): EmployeeDocume
       : null,
     createdAt: formatDateTime(record.createdAt),
   };
-}
-
-function documentFromLink(
-  record: DocumentSummary | null,
-  input: EmployeeDocumentLinkInput,
-): DocumentSummary & { currentVersion: NonNullable<DocumentSummary['currentVersion']> } {
-  if (!record?.currentVersion) {
-    throw new EmployeeDocumentsServiceError(
-      'The selected Document Version could not be found in this Agency.',
-      404,
-      'EMPLOYEE_DOCUMENT_SOURCE_NOT_FOUND',
-    );
-  }
-  if (record.id !== input.documentId || record.currentVersion.id !== input.documentVersionId) {
-    throw new EmployeeDocumentsServiceError(
-      'The selected Document Version could not be found in this Agency.',
-      404,
-      'EMPLOYEE_DOCUMENT_SOURCE_NOT_FOUND',
-    );
-  }
-  return record as DocumentSummary & {
-    currentVersion: NonNullable<DocumentSummary['currentVersion']>;
-  };
-}
-
-function isFinalizedDocument(document: DocumentSummary): boolean {
-  return (
-    document.status !== 'VOIDED' &&
-    Boolean(document.currentVersion) &&
-    (document.currentVersion?.issuedAt !== null ||
-      LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
-        document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
-      ))
-  );
 }
 
 @Injectable()
@@ -324,15 +287,48 @@ export class EmployeeDocumentsService {
           'EMPLOYEE_DOCUMENT_LINK_FORBIDDEN',
         );
       }
-      const document = documentFromLink(
-        await this.documentsService.findDocumentForLinkingInTransaction(
-          transaction,
-          context,
-          input.documentId,
-          input.documentVersionId,
-        ),
-        input,
+      const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
+        transaction,
+        context,
+        {
+          documentId: input.documentId,
+          versionId: input.documentVersionId,
+          allowSensitive:
+            ownWorkflow || this.hasAgencyPermission(context, 'documents.evidence.read_sensitive'),
+          requirement: ownWorkflow ? 'ANY_STATUS' : 'FINALIZED_VERSION',
+        },
       );
+      if (
+        evidenceResult.ok === false &&
+        (evidenceResult.reason === 'DOCUMENT_NOT_FOUND' ||
+          evidenceResult.reason === 'VERSION_NOT_FOUND')
+      ) {
+        throw new EmployeeDocumentsServiceError(
+          'The selected Document Version could not be found in this Agency.',
+          404,
+          'EMPLOYEE_DOCUMENT_SOURCE_NOT_FOUND',
+        );
+      }
+      if (!ownWorkflow && !this.hasAgencyPermission(context, 'documents.evidence.read')) {
+        throw this.error(
+          'The current Agency Membership cannot inspect shared Agency Documents.',
+          'EMPLOYEE_DOCUMENT_SOURCE_READ_FORBIDDEN',
+        );
+      }
+      if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
+        throw this.error(
+          'The current Agency Membership cannot inspect highly sensitive shared Documents.',
+          'EMPLOYEE_DOCUMENT_SOURCE_SENSITIVE_FORBIDDEN',
+        );
+      }
+      if (evidenceResult.ok === false && evidenceResult.reason === 'STATUS_INELIGIBLE') {
+        throw this.error(
+          'Only an approved, issued, or otherwise finalized Document Version can be linked.',
+          'EMPLOYEE_DOCUMENT_SOURCE_INELIGIBLE',
+        );
+      }
+      if (!evidenceResult.ok) throw new Error('Unexpected External Evidence resolution result.');
+      const document = evidenceResult.document;
       const restricted = isRestricted(input.personnelClassification, document.classification);
       if (ownWorkflow) {
         const ownVersion = await this.documentsService.isVersionCreatedByMembershipInTransaction(
@@ -352,14 +348,6 @@ export class EmployeeDocumentsService {
           throw this.error(
             'Employee-uploaded evidence remains pending until an authorized release.',
             'EMPLOYEE_DOCUMENT_RELEASE_STATE_INVALID',
-          );
-        }
-      } else {
-        this.assertSourceReadPermission(context, document);
-        if (!isFinalizedDocument(document)) {
-          throw this.error(
-            'Only an approved, issued, or otherwise finalized Document Version can be linked.',
-            'EMPLOYEE_DOCUMENT_SOURCE_INELIGIBLE',
           );
         }
       }
@@ -698,24 +686,6 @@ export class EmployeeDocumentsService {
 
   private hasAgencyPermission(context: RequestContext, permission: string): boolean {
     return hasPermission(context, permission, { agencyId: context.agencyId });
-  }
-
-  private assertSourceReadPermission(context: RequestContext, document: DocumentSummary): void {
-    if (!this.hasAgencyPermission(context, 'documents.evidence.read')) {
-      throw this.error(
-        'The current Agency Membership cannot inspect shared Agency Documents.',
-        'EMPLOYEE_DOCUMENT_SOURCE_READ_FORBIDDEN',
-      );
-    }
-    if (
-      document.classification === 'HIGHLY_SENSITIVE' &&
-      !this.hasAgencyPermission(context, 'documents.evidence.read_sensitive')
-    ) {
-      throw this.error(
-        'The current Agency Membership cannot inspect highly sensitive shared Documents.',
-        'EMPLOYEE_DOCUMENT_SOURCE_SENSITIVE_FORBIDDEN',
-      );
-    }
   }
 
   private hasAnyPermission(context: RequestContext, permission: string): boolean {

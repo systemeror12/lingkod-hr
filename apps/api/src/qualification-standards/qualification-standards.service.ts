@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import { DocumentsService, type DocumentSummary } from '../documents/documents.service';
 
 export const QUALIFICATION_STANDARD_VERSION_STATES = [
@@ -228,12 +229,10 @@ type QualificationStandardRecord = Prisma.QualificationStandardGetPayload<{
 }>;
 
 function databaseContext(context: RequestContext, transition = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(transition ? { qualificationStandardTransition: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(transition ? (['qualification-standard-transition'] as const) : []),
+  );
 }
 
 function toDatabaseDate(value: string): Date {
@@ -1263,13 +1262,17 @@ export class QualificationStandardsService {
     validationReason: string | null,
   ): Promise<DocumentSummary | null> {
     if (!documentId || !versionId || !validatedAt || !validationReason) return null;
-    const document = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      documentId,
-      versionId,
+      {
+        documentId,
+        versionId,
+        allowSensitive: true,
+        requirement: 'NOT_VOIDED',
+      },
     );
-    return isEvidenceUsable(document) ? document : null;
+    return evidenceResult.ok ? evidenceResult.document : null;
   }
 
   private async documentForValidation(
@@ -1277,23 +1280,28 @@ export class QualificationStandardsService {
     context: RequestContext,
     documentId: string,
   ): Promise<DocumentSummary | null> {
-    const document = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      documentId,
+      {
+        documentId,
+        allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+          agencyId: context.agencyId,
+        }),
+        requirement: 'NOT_VOIDED',
+      },
     );
-    if (!document) throw this.evidenceNotFound();
-    if (
-      document.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId })
-    ) {
+    if (evidenceResult.ok === false && evidenceResult.reason === 'DOCUMENT_NOT_FOUND') {
+      throw this.evidenceNotFound();
+    }
+    if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
       throw new QualificationStandardServiceError(
         'The current Agency Membership cannot inspect this External Evidence.',
         403,
         'QUALIFICATION_STANDARD_EVIDENCE_SENSITIVE_FORBIDDEN',
       );
     }
-    return document;
+    return evidenceResult.ok ? evidenceResult.document : null;
   }
 
   private assertDocumentReadPermission(context: RequestContext): void {

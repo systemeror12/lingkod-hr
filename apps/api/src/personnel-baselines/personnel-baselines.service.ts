@@ -2,9 +2,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import {
   DocumentsService,
-  LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
   type DocumentClassification,
   type DocumentSummary,
 } from '../documents/documents.service';
@@ -253,12 +253,10 @@ type ValidatedReferences = {
 };
 
 function databaseContext(context: RequestContext, transition = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(transition ? { personnelBaselineTransition: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(transition ? (['personnel-baseline-transition'] as const) : []),
+  );
 }
 
 function formatDate(value: Date): string {
@@ -646,10 +644,11 @@ export class PersonnelBaselinesService {
     const idempotencyKey =
       normalizeIdempotencyKey(rawIdempotencyKey) || `personnel-baseline:${baselineId}`;
     return withDatabaseContext(
-      {
-        ...databaseContext(context, true),
-        plantillaPositionTransition: true,
-      },
+      requestDatabaseContext(
+        context,
+        'personnel-baseline-transition',
+        'plantilla-position-transition',
+      ),
       async (transaction) => {
         await this.lockBaseline(transaction, context.agencyId, baselineId);
         const current = await this.baselineRecord(transaction, context.agencyId, baselineId);
@@ -932,29 +931,26 @@ export class PersonnelBaselinesService {
       'documents.evidence.read',
       'PERSONNEL_BASELINE_EVIDENCE_READ_FORBIDDEN',
     );
-    const evidence = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      input.authorityDocumentId,
-      input.authorityEvidenceVersionId,
+      {
+        documentId: input.authorityDocumentId,
+        versionId: input.authorityEvidenceVersionId,
+        allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+          agencyId: context.agencyId,
+        }),
+        requirement: 'LINKABLE_STATUS',
+      },
     );
-    if (!evidence) throw this.evidenceNotFound();
-    if (
-      evidence.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', {
-        agencyId: context.agencyId,
-      })
-    ) {
+    if (evidenceResult.ok === false && evidenceResult.reason === 'DOCUMENT_NOT_FOUND') {
+      throw this.evidenceNotFound();
+    }
+    if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
       throw this.evidenceSensitiveForbidden();
     }
-    if (
-      !evidence.currentVersion ||
-      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
-        evidence.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
-      )
-    ) {
-      throw this.evidenceIneligible();
-    }
+    if (!evidenceResult.ok) throw this.evidenceIneligible();
+    const evidence = evidenceResult.document;
 
     const organizationVersion = await transaction.organizationUnitVersion.findFirst({
       where: {
