@@ -15,8 +15,19 @@ import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
-import { PdsVersionDetailDto, PdsVersionListResponseDto } from './pds.dto';
-import { pdsCreateSchema, pdsUpdateSchema, pdsVersionIdSchema } from './pds.schemas';
+import {
+  PdsOutputArtifactListDto,
+  PdsVersionDetailDto,
+  PdsVersionListResponseDto,
+} from './pds.dto';
+import {
+  pdsCreateSchema,
+  pdsEmployeeCertificationSchema,
+  pdsEmptyActionSchema,
+  pdsReasonSchema,
+  pdsUpdateSchema,
+  pdsVersionIdSchema,
+} from './pds.schemas';
 import { employeeIdSchema } from '../employees/employees.schemas';
 import { PdsService, PdsServiceError } from './pds.service';
 
@@ -32,7 +43,14 @@ function validationFields(issues: readonly { path: PropertyKey[]; message: strin
 function translateServiceError(error: unknown, requestId: string): never {
   if (error instanceof PdsServiceError) {
     throw new HttpException(
-      { error: { code: error.code, message: error.message, requestId } },
+      {
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.fields ? { fields: error.fields } : {}),
+          requestId,
+        },
+      },
       error.statusCode,
     );
   }
@@ -157,6 +175,159 @@ export class PdsController {
     }
   }
 
+  @Post(':agencyId/pds/:pdsVersionId/submit')
+  @RequirePermission('personnel.pds.update')
+  async submit(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsVersionDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    const parsed = pdsEmptyActionSchema.safeParse(body ?? {});
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return new PdsVersionDetailDto(await this.service.submit(context, parsedId.data));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/pds/:pdsVersionId/return')
+  @RequirePermission('personnel.pds.update')
+  async returnForCorrection(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsVersionDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    const parsed = pdsReasonSchema.safeParse(body ?? {});
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return new PdsVersionDetailDto(
+        await this.service.returnForCorrection(context, parsedId.data, parsed.data),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/my-pds/:pdsVersionId/certify')
+  @RequirePermission('personnel.pds.certify')
+  async certifyOwn(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsVersionDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    const parsed = pdsEmployeeCertificationSchema.safeParse(body ?? {});
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return new PdsVersionDetailDto(
+        await this.service.certify(context, parsedId.data, parsed.data),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/pds/:pdsVersionId/verify')
+  @RequirePermission('personnel.pds.certify')
+  async verify(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsVersionDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    const parsed = pdsEmptyActionSchema.safeParse(body ?? {});
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return new PdsVersionDetailDto(await this.service.verify(context, parsedId.data));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/pds/:pdsVersionId/correct')
+  @RequirePermission('personnel.pds.update')
+  async correct(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsVersionDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    const parsed = pdsReasonSchema.safeParse(body ?? {});
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return new PdsVersionDetailDto(
+        await this.service.correct(context, parsedId.data, parsed.data),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/pds/:pdsVersionId/render')
+  @RequirePermission('personnel.pds.update')
+  async render(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsOutputArtifactListDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    const parsed = pdsEmptyActionSchema.safeParse(body ?? {});
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return new PdsOutputArtifactListDto(await this.service.render(context, parsedId.data));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/pds/:pdsVersionId/outputs')
+  @RequirePermission('personnel.pds.read')
+  async listOutputs(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsOutputArtifactListDto> {
+    this.assertReadAgency(agencyId, context);
+    const parsedId = pdsVersionIdSchema.safeParse(pdsVersionId);
+    if (!parsedId.success) throw this.notFound(context);
+    try {
+      return new PdsOutputArtifactListDto(await this.service.listOutputs(context, parsedId.data));
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/my-pds/:pdsVersionId/outputs')
+  @RequirePermission('personnel.pds.read')
+  async listOwnOutputs(
+    @Param('agencyId') agencyId: string,
+    @Param('pdsVersionId') pdsVersionId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PdsOutputArtifactListDto> {
+    return this.listOutputs(agencyId, pdsVersionId, context);
+  }
+
   private assertReadAgency(agencyId: string, context: RequestContext): void {
     const parsed = agencyIdSchema.safeParse(agencyId);
     if (!parsed.success || parsed.data !== context.agencyId) throw this.notFound(context);
@@ -185,7 +356,7 @@ export class PdsController {
     return new BadRequestException({
       error: {
         code: 'INVALID_INPUT',
-        message: 'Enter supported PDS personal, family, education, and eligibility values.',
+        message: 'Enter supported PDS section and workflow values.',
         fields: validationFields(issues),
         requestId: context.requestId,
       },

@@ -21,6 +21,10 @@ export const PDS_ELIGIBILITY_CATEGORIES = [
   'Barangay Eligibility',
   "Driver's License",
 ] as const;
+export const PDS_MAIN_PAGE_KEYS = ['C1', 'C2', 'C3', 'C4'] as const;
+export const PDS_CONTINUATION_PAGE_KEYS = ['C5', 'C6', 'C7', 'C8', 'C9', 'C10', 'C11'] as const;
+export const PDS_PAGE_KEYS = [...PDS_MAIN_PAGE_KEYS, ...PDS_CONTINUATION_PAGE_KEYS] as const;
+export const PDS_OUTPUT_TYPES = ['PDS', 'WES'] as const;
 
 export const PDS_CITIZENSHIP_COUNTRIES = `
 Afghanistan;Albania;Algeria;Andorra;Angola;Antigua and Barbuda;Argentina;Armenia;Aruba;Australia
@@ -52,6 +56,7 @@ United Kingdom;Uruguay;Uzbekistan;Vanuatu;Venezuela;Vietnam;Yemen;Zambia;Zimbabw
 const optionalText = (max = 500) => z.string().trim().max(max).nullable().optional();
 const requiredText = (max = 500) => z.string().trim().min(1).max(max);
 const optionalDate = z.string().date().nullable().optional();
+const optionalDateTime = z.string().datetime({ offset: true }).nullable().optional();
 const pastOrTodayDate = optionalDate.refine(
   (value) => value === undefined || value === null || value <= todayDate(),
   'The date cannot be in the future.',
@@ -175,6 +180,42 @@ function validateMostRecentFirst(
       });
     }
     if (latest) previousLatest = latest;
+  }
+}
+
+function requireEvidencePair(
+  value: Record<string, unknown>,
+  context: z.RefinementCtx,
+  documentPath: string,
+  versionPath: string,
+): void {
+  if (Boolean(value[documentPath]) !== Boolean(value[versionPath])) {
+    context.addIssue({
+      code: 'custom',
+      path: [versionPath],
+      message: 'An evidence Document and exact Document Version are both required.',
+    });
+  }
+}
+
+function conditionalText(
+  value: Record<string, unknown>,
+  context: z.RefinementCtx,
+  flagPath: string,
+  detailPath: string,
+  message: string,
+): void {
+  const flag = value[flagPath];
+  const detail = typeof value[detailPath] === 'string' ? value[detailPath].trim() : '';
+  if (flag === true && !detail) {
+    context.addIssue({ code: 'custom', path: [detailPath], message });
+  }
+  if (flag !== true && detail) {
+    context.addIssue({
+      code: 'custom',
+      path: [detailPath],
+      message: 'Details require a Yes answer for this declaration.',
+    });
   }
 }
 
@@ -519,6 +560,9 @@ export const pdsWesSchema = z
     contextKey: z.string().trim().min(1).max(120).nullable().optional(),
     documentId: z.string().uuid().nullable().optional(),
     documentVersionId: z.string().uuid().nullable().optional(),
+    signatureDocumentId: z.string().uuid().nullable().optional(),
+    signatureDocumentVersionId: z.string().uuid().nullable().optional(),
+    signedAt: optionalDate,
     entries: z.array(pdsWesEntrySchema),
   })
   .strict()
@@ -530,6 +574,7 @@ export const pdsWesSchema = z
         message: 'An evidence Document and exact Document Version are both required.',
       });
     }
+    requireEvidencePair(value, context, 'signatureDocumentId', 'signatureDocumentVersionId');
     const sequences = new Set<number>();
     const parents = new Set<string>();
     for (const [index, entry] of value.entries.entries()) {
@@ -554,6 +599,313 @@ export const pdsWesSchema = z
     }
   });
 
+export const pdsOtherInformationSchema = z
+  .object({
+    skillsAndHobbies: optionalText(2000),
+    nonAcademicDistinctions: optionalText(2000),
+    associationMemberships: optionalText(2000),
+  })
+  .strict();
+
+export const pdsDeclarationDetailsSchema = z
+  .object({
+    relatedWithinThirdDegree: z.boolean().nullable().optional(),
+    relatedWithinFourthDegreeLgu: z.boolean().nullable().optional(),
+    relationshipDetails: optionalText(2000),
+    relatedWithinFourthDegreeDetails: optionalText(2000),
+    foundGuiltyAdministrativeOffense: z.boolean().nullable().optional(),
+    administrativeOffenseDetails: optionalText(2000),
+    criminallyCharged: z.boolean().nullable().optional(),
+    criminalChargeDetails: optionalText(2000),
+    criminalChargeDateFiled: optionalDate,
+    criminalChargeDateFiledUnknown: z.boolean().nullable().optional(),
+    criminalChargeStatus: optionalText(1000),
+    convictedOfCrime: z.boolean().nullable().optional(),
+    convictionDetails: optionalText(2000),
+    separatedFromService: z.boolean().nullable().optional(),
+    separationMode: optionalText(240),
+    separationDetails: optionalText(2000),
+    candidateInLastElection: z.boolean().nullable().optional(),
+    candidacyDetails: optionalText(2000),
+    resignedBeforeElection: z.boolean().nullable().optional(),
+    resignationDetails: optionalText(2000),
+    immigrantOrPermanentResident: z.boolean().nullable().optional(),
+    immigrantCountry: z.enum(PDS_CITIZENSHIP_COUNTRIES).nullable().optional(),
+    immigrantDetails: optionalText(1000),
+    indigenousGroupMember: z.boolean().nullable().optional(),
+    indigenousGroupDetails: optionalText(1000),
+    personWithDisability: z.boolean().nullable().optional(),
+    disabilitySpecification: optionalText(1000),
+    disabilityIdNumber: optionalText(240),
+    soloParent: z.boolean().nullable().optional(),
+    soloParentSpecification: optionalText(1000),
+    soloParentIdNumber: optionalText(240),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    conditionalText(
+      value,
+      context,
+      'relatedWithinThirdDegree',
+      'relationshipDetails',
+      'Describe the Item 34a relationship.',
+    );
+    conditionalText(
+      value,
+      context,
+      'relatedWithinFourthDegreeLgu',
+      'relatedWithinFourthDegreeDetails',
+      'Describe the Item 34b relationship.',
+    );
+    conditionalText(
+      value,
+      context,
+      'foundGuiltyAdministrativeOffense',
+      'administrativeOffenseDetails',
+      'Describe the administrative offense finding for Item 35a.',
+    );
+    conditionalText(
+      value,
+      context,
+      'convictedOfCrime',
+      'convictionDetails',
+      'Describe the conviction for Item 36.',
+    );
+    conditionalText(
+      value,
+      context,
+      'separatedFromService',
+      'separationDetails',
+      'Describe the separation for Item 37.',
+    );
+    if (value.separatedFromService === true && !value.separationMode?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        path: ['separationMode'],
+        message: 'Select or enter the separation mode for Item 37.',
+      });
+    }
+    if (value.separatedFromService !== true && value.separationMode?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        path: ['separationMode'],
+        message: 'Separation mode requires a Yes answer for Item 37.',
+      });
+    }
+    conditionalText(
+      value,
+      context,
+      'candidateInLastElection',
+      'candidacyDetails',
+      'Describe the candidacy for Item 38a.',
+    );
+    conditionalText(
+      value,
+      context,
+      'resignedBeforeElection',
+      'resignationDetails',
+      'Describe the resignation for Item 38b.',
+    );
+    if (value.criminallyCharged === true) {
+      if (!value.criminalChargeDetails?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['criminalChargeDetails'],
+          message: 'Describe the criminal charge for Item 35b.',
+        });
+      }
+      if (!value.criminalChargeDateFiled && value.criminalChargeDateFiledUnknown !== true) {
+        context.addIssue({
+          code: 'custom',
+          path: ['criminalChargeDateFiled'],
+          message: 'Enter the filing date or mark it unknown for Item 35b.',
+        });
+      }
+      if (!value.criminalChargeStatus?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['criminalChargeStatus'],
+          message: 'Enter the case status for Item 35b.',
+        });
+      }
+    } else if (
+      value.criminalChargeDetails?.trim() ||
+      value.criminalChargeDateFiled ||
+      value.criminalChargeDateFiledUnknown === true ||
+      value.criminalChargeStatus?.trim()
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['criminalChargeDetails'],
+        message: 'Criminal charge details require a Yes answer for Item 35b.',
+      });
+    }
+    if (value.criminalChargeDateFiled && value.criminalChargeDateFiledUnknown === true) {
+      context.addIssue({
+        code: 'custom',
+        path: ['criminalChargeDateFiledUnknown'],
+        message: 'Use either a filing date or the unknown marker, not both.',
+      });
+    }
+    if (value.immigrantOrPermanentResident === true && !value.immigrantCountry) {
+      context.addIssue({
+        code: 'custom',
+        path: ['immigrantCountry'],
+        message: 'Select the country for Item 39.',
+      });
+    }
+    if (
+      value.immigrantOrPermanentResident !== true &&
+      (value.immigrantCountry || value.immigrantDetails?.trim())
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['immigrantCountry'],
+        message: 'Immigrant details require a Yes answer for Item 39.',
+      });
+    }
+    conditionalText(
+      value,
+      context,
+      'indigenousGroupMember',
+      'indigenousGroupDetails',
+      'Enter the indigenous group for Item 40a.',
+    );
+    if (value.personWithDisability === true) {
+      if (!value.disabilitySpecification?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['disabilitySpecification'],
+          message: 'Enter the disability specification for Item 40b.',
+        });
+      }
+      if (!value.disabilityIdNumber?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['disabilityIdNumber'],
+          message: 'Enter the PWD ID number for Item 40b.',
+        });
+      }
+    } else if (value.disabilitySpecification?.trim() || value.disabilityIdNumber?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        path: ['disabilitySpecification'],
+        message: 'Disability details require a Yes answer for Item 40b.',
+      });
+    }
+    if (value.soloParent === true) {
+      if (!value.soloParentSpecification?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['soloParentSpecification'],
+          message: 'Enter the solo parent specification for Item 40c.',
+        });
+      }
+      if (!value.soloParentIdNumber?.trim()) {
+        context.addIssue({
+          code: 'custom',
+          path: ['soloParentIdNumber'],
+          message: 'Enter the solo parent ID number for Item 40c.',
+        });
+      }
+    } else if (value.soloParentSpecification?.trim() || value.soloParentIdNumber?.trim()) {
+      context.addIssue({
+        code: 'custom',
+        path: ['soloParentSpecification'],
+        message: 'Solo parent details require a Yes answer for Item 40c.',
+      });
+    }
+  });
+
+export const pdsReferenceRecordSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    sequenceNo: z.number().int().min(1).max(3),
+    name: requiredText(240),
+    address: requiredText(500),
+    contact: requiredText(240),
+  })
+  .strict();
+
+export const pdsCertificationDetailsSchema = z
+  .object({
+    truthDeclarationAccepted: z.boolean().nullable().optional(),
+    verificationAuthorizationAccepted: z.boolean().nullable().optional(),
+    misrepresentationWarningAccepted: z.boolean().nullable().optional(),
+    photoDocumentId: z.string().uuid().nullable().optional(),
+    photoDocumentVersionId: z.string().uuid().nullable().optional(),
+    governmentIdType: optionalText(160),
+    governmentIdNumber: optionalText(160),
+    governmentIdIssuedAt: optionalDate,
+    governmentIdIssuedPlace: optionalText(240),
+    employeeSignatureDocumentId: z.string().uuid().nullable().optional(),
+    employeeSignatureDocumentVersionId: z.string().uuid().nullable().optional(),
+    employeeSignatureDate: optionalDate,
+    thumbmarkDocumentId: z.string().uuid().nullable().optional(),
+    thumbmarkDocumentVersionId: z.string().uuid().nullable().optional(),
+    subscribedAndSwornText: optionalText(2000),
+    subscribedAndSwornAt: optionalDateTime,
+    oathAdministeredBy: optionalText(240),
+    oathAdminSignatureDocumentId: z.string().uuid().nullable().optional(),
+    oathAdminSignatureDocumentVersionId: z.string().uuid().nullable().optional(),
+    oathAdministeredAt: optionalDateTime,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    requireEvidencePair(value, context, 'photoDocumentId', 'photoDocumentVersionId');
+    requireEvidencePair(
+      value,
+      context,
+      'employeeSignatureDocumentId',
+      'employeeSignatureDocumentVersionId',
+    );
+    requireEvidencePair(value, context, 'thumbmarkDocumentId', 'thumbmarkDocumentVersionId');
+    requireEvidencePair(
+      value,
+      context,
+      'oathAdminSignatureDocumentId',
+      'oathAdminSignatureDocumentVersionId',
+    );
+  });
+
+export const pdsPageSignatureSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    pageKey: z.enum(PDS_PAGE_KEYS),
+    signatureDocumentId: z.string().uuid().nullable().optional(),
+    signatureDocumentVersionId: z.string().uuid().nullable().optional(),
+    signedAt: optionalDateTime,
+    signatureDate: optionalDate,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    requireEvidencePair(value, context, 'signatureDocumentId', 'signatureDocumentVersionId');
+  });
+
+export const pdsReferenceRecordsSchema = z
+  .array(pdsReferenceRecordSchema)
+  .max(3)
+  .superRefine((rows, context) =>
+    validateSequenceNumbers(rows, context, 'references', 'Reference'),
+  );
+
+export const pdsPageSignaturesSchema = z
+  .array(pdsPageSignatureSchema)
+  .superRefine((rows, context) =>
+    validateSequenceNumbers(
+      rows.map((row) => ({ sequenceNo: PDS_PAGE_KEYS.indexOf(row.pageKey) + 1 })),
+      context,
+      'pageSignatures',
+      'PDS page signature',
+    ),
+  );
+
+export const pdsReasonSchema = z.object({ reason: requiredText(2000) }).strict();
+export const pdsEmployeeCertificationSchema = z
+  .object({ employeeCertificationAccepted: z.literal(true) })
+  .strict();
+export const pdsEmptyActionSchema = z.object({}).strict();
+
 export const pdsCreateSchema = z
   .object({
     employeeId: z.string().uuid().optional(),
@@ -566,6 +918,11 @@ export const pdsCreateSchema = z
     voluntaryWork: z.array(pdsVoluntaryWorkSchema).optional(),
     learningAndDevelopment: z.array(pdsLearningDevelopmentSchema).optional(),
     wes: z.array(pdsWesSchema).optional(),
+    otherInformation: pdsOtherInformationSchema.optional(),
+    declarations: pdsDeclarationDetailsSchema.optional(),
+    references: pdsReferenceRecordsSchema.optional(),
+    certification: pdsCertificationDetailsSchema.optional(),
+    pageSignatures: pdsPageSignaturesSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -595,6 +952,7 @@ export const pdsCreateSchema = z
       undefined,
       'Learning and development',
     );
+    validateSequenceNumbers(value.references, context, 'references', 'Reference');
   });
 
 export const pdsVersionIdSchema = z.string().uuid();
@@ -611,6 +969,11 @@ export const pdsUpdateSchema = z
     voluntaryWork: z.array(pdsVoluntaryWorkSchema).optional(),
     learningAndDevelopment: z.array(pdsLearningDevelopmentSchema).optional(),
     wes: z.array(pdsWesSchema).nullable().optional(),
+    otherInformation: pdsOtherInformationSchema.optional(),
+    declarations: pdsDeclarationDetailsSchema.optional(),
+    references: pdsReferenceRecordsSchema.optional(),
+    certification: pdsCertificationDetailsSchema.optional(),
+    pageSignatures: pdsPageSignaturesSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -640,6 +1003,7 @@ export const pdsUpdateSchema = z
       undefined,
       'Learning and development',
     );
+    validateSequenceNumbers(value.references, context, 'references', 'Reference');
   })
   .refine(
     (value) =>
@@ -651,7 +1015,12 @@ export const pdsUpdateSchema = z
       value.workExperience ||
       value.voluntaryWork ||
       value.learningAndDevelopment ||
-      value.wes !== undefined,
+      value.wes !== undefined ||
+      value.otherInformation ||
+      value.declarations ||
+      value.references ||
+      value.certification ||
+      value.pageSignatures,
     { message: 'Provide a PDS section or as-of date to update.' },
   );
 
@@ -666,3 +1035,10 @@ export type PdsVoluntaryWorkInput = z.infer<typeof pdsVoluntaryWorkSchema>;
 export type PdsLearningDevelopmentInput = z.infer<typeof pdsLearningDevelopmentSchema>;
 export type PdsWesInput = z.infer<typeof pdsWesSchema>;
 export type PdsWesEntryInput = z.infer<typeof pdsWesEntrySchema>;
+export type PdsOtherInformationInput = z.infer<typeof pdsOtherInformationSchema>;
+export type PdsDeclarationDetailsInput = z.infer<typeof pdsDeclarationDetailsSchema>;
+export type PdsReferenceRecordInput = z.infer<typeof pdsReferenceRecordSchema>;
+export type PdsCertificationDetailsInput = z.infer<typeof pdsCertificationDetailsSchema>;
+export type PdsPageSignatureInput = z.infer<typeof pdsPageSignatureSchema>;
+export type PdsReasonInput = z.infer<typeof pdsReasonSchema>;
+export type PdsEmployeeCertificationInput = z.infer<typeof pdsEmployeeCertificationSchema>;

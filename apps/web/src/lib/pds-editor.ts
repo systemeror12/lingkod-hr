@@ -170,7 +170,89 @@ export interface PdsWesEntryData {
 export interface PdsWesData extends PdsEvidenceData {
   id?: string;
   contextKey: string | null;
+  signatureDocumentId?: string | null;
+  signatureDocumentVersionId?: string | null;
+  signedAt?: string | null;
   entries: PdsWesEntryData[];
+}
+
+export interface PdsOtherInformationData {
+  skillsAndHobbies?: string | null;
+  nonAcademicDistinctions?: string | null;
+  associationMemberships?: string | null;
+}
+
+export interface PdsDeclarationData {
+  relatedWithinThirdDegree?: boolean | null;
+  relatedWithinFourthDegreeLgu?: boolean | null;
+  relationshipDetails?: string | null;
+  relatedWithinFourthDegreeDetails?: string | null;
+  foundGuiltyAdministrativeOffense?: boolean | null;
+  administrativeOffenseDetails?: string | null;
+  criminallyCharged?: boolean | null;
+  criminalChargeDetails?: string | null;
+  criminalChargeDateFiled?: string | null;
+  criminalChargeDateFiledUnknown?: boolean | null;
+  criminalChargeStatus?: string | null;
+  convictedOfCrime?: boolean | null;
+  convictionDetails?: string | null;
+  separatedFromService?: boolean | null;
+  separationMode?: string | null;
+  separationDetails?: string | null;
+  candidateInLastElection?: boolean | null;
+  candidacyDetails?: string | null;
+  resignedBeforeElection?: boolean | null;
+  resignationDetails?: string | null;
+  immigrantOrPermanentResident?: boolean | null;
+  immigrantCountry?: string | null;
+  immigrantDetails?: string | null;
+  indigenousGroupMember?: boolean | null;
+  indigenousGroupDetails?: string | null;
+  personWithDisability?: boolean | null;
+  disabilitySpecification?: string | null;
+  disabilityIdNumber?: string | null;
+  soloParent?: boolean | null;
+  soloParentSpecification?: string | null;
+  soloParentIdNumber?: string | null;
+}
+
+export interface PdsReferenceData {
+  id?: string;
+  sequenceNo: number;
+  name: string | null;
+  address: string | null;
+  contact: string | null;
+}
+
+export interface PdsPageSignatureData {
+  pageKey: string;
+  signatureDocumentId: string | null;
+  signatureDocumentVersionId: string | null;
+  signedAt: string | null;
+  signatureDate: string | null;
+}
+
+export interface PdsCertificationData {
+  truthDeclarationAccepted?: boolean | null;
+  verificationAuthorizationAccepted?: boolean | null;
+  misrepresentationWarningAccepted?: boolean | null;
+  governmentIdType?: string | null;
+  governmentIdNumber?: string | null;
+  governmentIdIssuedAt?: string | null;
+  governmentIdIssuedPlace?: string | null;
+  photoDocumentId?: string | null;
+  photoDocumentVersionId?: string | null;
+  employeeSignatureDocumentId?: string | null;
+  employeeSignatureDocumentVersionId?: string | null;
+  employeeSignatureDate?: string | null;
+  thumbmarkDocumentId?: string | null;
+  thumbmarkDocumentVersionId?: string | null;
+  subscribedAndSwornText?: string | null;
+  subscribedAndSwornAt?: string | null;
+  oathAdministeredBy?: string | null;
+  oathAdminSignatureDocumentId?: string | null;
+  oathAdminSignatureDocumentVersionId?: string | null;
+  oathAdministeredAt?: string | null;
 }
 
 export interface PdsDetailData extends PdsVersionSummaryData {
@@ -182,6 +264,11 @@ export interface PdsDetailData extends PdsVersionSummaryData {
   voluntaryWork?: PdsVoluntaryWorkData[];
   learningAndDevelopment?: PdsLearningDevelopmentData[];
   wes?: PdsWesData[] | null;
+  otherInformation?: PdsOtherInformationData | null;
+  declarations?: PdsDeclarationData | null;
+  references?: PdsReferenceData[] | null;
+  certification?: PdsCertificationData | null;
+  pageSignatures?: PdsPageSignatureData[] | null;
 }
 
 export interface PdsDetailSections {
@@ -278,7 +365,90 @@ export interface WesForm extends EvidenceForm {
   uiKey: string;
   id: string;
   contextKey: string;
+  signatureDocumentId: string;
+  signatureDocumentVersionId: string;
+  signedAt: string;
   entries: WesEntryForm[];
+}
+
+export interface OtherInformationForm {
+  specialSkillsHobbies: string;
+  nonAcademicDistinctions: string;
+  memberships: string;
+}
+
+export type DeclarationKey =
+  | 'relatedThirdDegree'
+  | 'relatedThirdDegreeDetails'
+  | 'relatedFourthDegree'
+  | 'relatedFourthDegreeDetails'
+  | 'administrativeCase'
+  | 'administrativeCaseDetails'
+  | 'criminalCharge'
+  | 'criminalChargeDetails'
+  | 'criminalChargeDateFiled'
+  | 'criminalChargeDateFiledUnknown'
+  | 'criminalChargeStatus'
+  | 'conviction'
+  | 'convictionDetails'
+  | 'separatedFromService'
+  | 'separationMode'
+  | 'separatedFromServiceDetails'
+  | 'electionCandidate'
+  | 'electionCandidateDetails'
+  | 'resignedForElection'
+  | 'resignedForElectionDetails'
+  | 'immigrant'
+  | 'immigrantCountry'
+  | 'immigrantDetails'
+  | 'indigenousGroup'
+  | 'indigenousGroupDetails'
+  | 'disability'
+  | 'disabilityIdNumber'
+  | 'disabilityDetails'
+  | 'soloParent'
+  | 'soloParentDetails'
+  | 'soloParentIdNumber';
+
+export type DeclarationForm = Record<DeclarationKey, string>;
+
+export interface ReferenceForm {
+  uiKey: string;
+  id: string;
+  name: string;
+  address: string;
+  telephoneNumber: string;
+}
+
+export interface PageSignatureForm {
+  pageNo: number;
+  signatureDocumentId: string;
+  signatureDocumentVersionId: string;
+  signedAt: string;
+}
+
+export interface CertificationForm {
+  truthDeclarationAccepted: boolean;
+  verificationAuthorizationAccepted: boolean;
+  misrepresentationWarningAccepted: boolean;
+  governmentIdType: string;
+  governmentIdNumber: string;
+  governmentIdIssuedDate: string;
+  governmentIdIssuedPlace: string;
+  photoDocumentId: string;
+  photoDocumentVersionId: string;
+  signatureDocumentId: string;
+  signatureDocumentVersionId: string;
+  employeeSignatureDate: string;
+  thumbmarkDocumentId: string;
+  thumbmarkDocumentVersionId: string;
+  subscribedAndSwornText: string;
+  oathDate: string;
+  oathAdministeredBy: string;
+  oathAdminSignatureDocumentId: string;
+  oathAdminSignatureDocumentVersionId: string;
+  oathAdministeredAt: string;
+  pageSignatures: PageSignatureForm[];
 }
 
 export interface EducationForm {
@@ -340,7 +510,78 @@ export interface PdsForm {
   voluntaryWork: VoluntaryWorkForm[];
   learningAndDevelopment: LearningDevelopmentForm[];
   wes: WesForm[];
+  otherInformation: OtherInformationForm;
+  declarations: DeclarationForm;
+  references: ReferenceForm[];
+  certification: CertificationForm;
 }
+
+export const yesNoOptions = [
+  ['NO', 'No'],
+  ['YES', 'Yes'],
+] as const satisfies readonly (readonly [string, string])[];
+
+export const declarationFields = [
+  ['relatedThirdDegree', '34.a Related within the third degree?', 'relatedThirdDegreeDetails'],
+  ['relatedFourthDegree', '34.b Related within the fourth degree?', 'relatedFourthDegreeDetails'],
+  [
+    'administrativeCase',
+    '35.a Found guilty of an administrative offense?',
+    'administrativeCaseDetails',
+  ],
+  ['criminalCharge', '35.b Criminally charged before any court?', 'criminalChargeDetails'],
+  ['conviction', '36 Convicted of any crime?', 'convictionDetails'],
+  ['separatedFromService', '37 Separated from service?', 'separatedFromServiceDetails'],
+  ['electionCandidate', '38.a Candidate in an election?', 'electionCandidateDetails'],
+  ['resignedForElection', '38.b Resigned for an election campaign?', 'resignedForElectionDetails'],
+  ['immigrant', '39 Immigrant or permanent resident of another country?', 'immigrantDetails'],
+  ['indigenousGroup', '40.a Indigenous group member?', 'indigenousGroupDetails'],
+  ['disability', '40.b Person with disability?', 'disabilityDetails'],
+  ['soloParent', '40.c Solo parent?', 'soloParentDetails'],
+] as const satisfies readonly (readonly [DeclarationKey, string, DeclarationKey])[];
+
+const declarationAnswerKeys = {
+  relatedThirdDegree: 'relatedWithinThirdDegree',
+  relatedFourthDegree: 'relatedWithinFourthDegreeLgu',
+  administrativeCase: 'foundGuiltyAdministrativeOffense',
+  criminalCharge: 'criminallyCharged',
+  conviction: 'convictedOfCrime',
+  separatedFromService: 'separatedFromService',
+  electionCandidate: 'candidateInLastElection',
+  resignedForElection: 'resignedBeforeElection',
+  immigrant: 'immigrantOrPermanentResident',
+  indigenousGroup: 'indigenousGroupMember',
+  disability: 'personWithDisability',
+  soloParent: 'soloParent',
+} as const;
+
+const declarationDetailKeys = {
+  relatedThirdDegreeDetails: 'relationshipDetails',
+  relatedFourthDegreeDetails: 'relatedWithinFourthDegreeDetails',
+  administrativeCaseDetails: 'administrativeOffenseDetails',
+  criminalChargeDetails: 'criminalChargeDetails',
+  convictionDetails: 'convictionDetails',
+  separatedFromServiceDetails: 'separationDetails',
+  electionCandidateDetails: 'candidacyDetails',
+  resignedForElectionDetails: 'resignationDetails',
+  immigrantDetails: 'immigrantDetails',
+  indigenousGroupDetails: 'indigenousGroupDetails',
+  disabilityDetails: 'disabilitySpecification',
+  soloParentDetails: 'soloParentSpecification',
+} as const;
+
+const pdsMainPageKeys = ['C1', 'C2', 'C3', 'C4'] as const;
+export const pdsPageKeys = [
+  ...pdsMainPageKeys,
+  'C5',
+  'C6',
+  'C7',
+  'C8',
+  'C9',
+  'C10',
+  'C11',
+] as const;
+export type PdsPageKey = (typeof pdsPageKeys)[number];
 
 const addressKeys = [
   'houseBlockLotNo',
@@ -375,6 +616,21 @@ export function stringValue(value: string | number | null | undefined): string {
 export function nullable(value: string): string | null {
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function yesNoValue(value: boolean | null | undefined): string {
+  return value === true ? 'YES' : 'NO';
+}
+
+function booleanPayload(value: string): boolean | null {
+  if (value === 'YES') return true;
+  if (value === 'NO') return false;
+  return null;
+}
+
+function dateTimePayload(value: string): string | null {
+  const trimmed = nullable(value);
+  return trimmed ? `${trimmed}T00:00:00.000+08:00` : null;
 }
 
 export function parsePdsEvidenceOptions(value: unknown): PdsEvidenceOption[] {
@@ -525,8 +781,109 @@ export function blankWes(): WesForm {
     uiKey: createRowKey('wes'),
     id: '',
     contextKey: '',
+    signatureDocumentId: '',
+    signatureDocumentVersionId: '',
+    signedAt: '',
     entries: [blankWesEntry()],
     ...blankEvidence(),
+  };
+}
+
+function blankOtherInformation(): OtherInformationForm {
+  return { specialSkillsHobbies: '', nonAcademicDistinctions: '', memberships: '' };
+}
+
+function blankDeclarations(): DeclarationForm {
+  return Object.fromEntries([
+    ...declarationFields.flatMap(([key, , detailsKey]) => [
+      [key, 'NO'],
+      [detailsKey, ''],
+    ]),
+    ['criminalChargeDateFiled', ''],
+    ['criminalChargeDateFiledUnknown', 'NO'],
+    ['criminalChargeStatus', ''],
+    ['separationMode', ''],
+    ['immigrantCountry', ''],
+    ['disabilityIdNumber', ''],
+    ['soloParentIdNumber', ''],
+  ]) as DeclarationForm;
+}
+
+export function blankReference(): ReferenceForm {
+  return { uiKey: createRowKey('reference'), id: '', name: '', address: '', telephoneNumber: '' };
+}
+
+function pageKeysForDetail(detail: PdsDetailData | null): PdsPageKey[] {
+  const keys: PdsPageKey[] = [...pdsMainPageKeys];
+  if ((detail?.family?.children.length ?? 0) > 4) keys.push('C5');
+  if ((detail?.education?.length ?? 0) > 5) keys.push('C6');
+  if ((detail?.eligibility?.length ?? 0) > 7) keys.push('C7');
+  if ((detail?.workExperience?.length ?? 0) > 28) keys.push('C8');
+  if ((detail?.voluntaryWork?.length ?? 0) > 7) keys.push('C9');
+  if ((detail?.learningAndDevelopment?.length ?? 0) > 21) keys.push('C10');
+  if (
+    (detail?.otherInformation?.skillsAndHobbies?.length ?? 0) > 500 ||
+    (detail?.otherInformation?.nonAcademicDistinctions?.length ?? 0) > 500 ||
+    (detail?.otherInformation?.associationMemberships?.length ?? 0) > 500
+  ) {
+    keys.push('C11');
+  }
+  const signedPageKeys = new Set(
+    (detail?.pageSignatures ?? []).map((signature) => signature.pageKey as PdsPageKey),
+  );
+  return pdsPageKeys.filter((pageKey) => keys.includes(pageKey) || signedPageKeys.has(pageKey));
+}
+
+export function pageKeysForForm(form: PdsForm): PdsPageKey[] {
+  const keys: PdsPageKey[] = [...pdsMainPageKeys];
+  if (form.children.length > 4) keys.push('C5');
+  if (form.education.length > 5) keys.push('C6');
+  if (form.eligibility.length > 7) keys.push('C7');
+  if (form.workExperience.length > 28) keys.push('C8');
+  if (form.voluntaryWork.length > 7) keys.push('C9');
+  if (form.learningAndDevelopment.length > 21) keys.push('C10');
+  if (
+    form.otherInformation.specialSkillsHobbies.length > 500 ||
+    form.otherInformation.nonAcademicDistinctions.length > 500 ||
+    form.otherInformation.memberships.length > 500
+  ) {
+    keys.push('C11');
+  }
+  return keys;
+}
+
+export function blankPageSignature(pageKey: PdsPageKey): PageSignatureForm {
+  return {
+    pageNo: pdsPageKeys.indexOf(pageKey) + 1,
+    signatureDocumentId: '',
+    signatureDocumentVersionId: '',
+    signedAt: '',
+  };
+}
+
+function blankCertification(pageKeys: readonly PdsPageKey[] = pdsMainPageKeys): CertificationForm {
+  return {
+    truthDeclarationAccepted: false,
+    verificationAuthorizationAccepted: false,
+    misrepresentationWarningAccepted: false,
+    governmentIdType: '',
+    governmentIdNumber: '',
+    governmentIdIssuedDate: '',
+    governmentIdIssuedPlace: '',
+    photoDocumentId: '',
+    photoDocumentVersionId: '',
+    signatureDocumentId: '',
+    signatureDocumentVersionId: '',
+    employeeSignatureDate: '',
+    thumbmarkDocumentId: '',
+    thumbmarkDocumentVersionId: '',
+    subscribedAndSwornText: '',
+    oathDate: '',
+    oathAdministeredBy: '',
+    oathAdminSignatureDocumentId: '',
+    oathAdminSignatureDocumentVersionId: '',
+    oathAdministeredAt: '',
+    pageSignatures: pageKeys.map(blankPageSignature),
   };
 }
 
@@ -644,6 +1001,7 @@ export function formFromDetail(detail: PdsDetailData | null): PdsForm {
   }));
   const workKeys = workKeyMaps(workExperience, detail?.workExperience ?? []);
   const personal = detail?.personal;
+  const pageKeys = pageKeysForDetail(detail);
 
   return {
     asOfDate: detail?.asOfDate ?? today(),
@@ -758,6 +1116,9 @@ export function formFromDetail(detail: PdsDetailData | null): PdsForm {
       contextKey: stringValue(artifact.contextKey),
       documentId: stringValue(artifact.documentId),
       documentVersionId: stringValue(artifact.documentVersionId),
+      signatureDocumentId: stringValue(artifact.signatureDocumentId),
+      signatureDocumentVersionId: stringValue(artifact.signatureDocumentVersionId),
+      signedAt: stringValue(artifact.signedAt),
       entries: artifact.entries.map((entry) => ({
         uiKey: createRowKey('wes-entry'),
         id: entry.id ?? '',
@@ -776,6 +1137,100 @@ export function formFromDetail(detail: PdsDetailData | null): PdsForm {
         actualDuties: stringValue(entry.actualDuties),
       })),
     })),
+    otherInformation: {
+      ...blankOtherInformation(),
+      specialSkillsHobbies: stringValue(detail?.otherInformation?.skillsAndHobbies),
+      nonAcademicDistinctions: stringValue(detail?.otherInformation?.nonAcademicDistinctions),
+      memberships: stringValue(detail?.otherInformation?.associationMemberships),
+    },
+    declarations: {
+      ...blankDeclarations(),
+      relatedThirdDegree: yesNoValue(detail?.declarations?.relatedWithinThirdDegree),
+      relatedThirdDegreeDetails: stringValue(detail?.declarations?.relationshipDetails),
+      relatedFourthDegree: yesNoValue(detail?.declarations?.relatedWithinFourthDegreeLgu),
+      relatedFourthDegreeDetails: stringValue(
+        detail?.declarations?.relatedWithinFourthDegreeDetails,
+      ),
+      administrativeCase: yesNoValue(detail?.declarations?.foundGuiltyAdministrativeOffense),
+      administrativeCaseDetails: stringValue(detail?.declarations?.administrativeOffenseDetails),
+      criminalCharge: yesNoValue(detail?.declarations?.criminallyCharged),
+      criminalChargeDetails: stringValue(detail?.declarations?.criminalChargeDetails),
+      criminalChargeDateFiled: stringValue(detail?.declarations?.criminalChargeDateFiled),
+      criminalChargeDateFiledUnknown: yesNoValue(
+        detail?.declarations?.criminalChargeDateFiledUnknown,
+      ),
+      criminalChargeStatus: stringValue(detail?.declarations?.criminalChargeStatus),
+      conviction: yesNoValue(detail?.declarations?.convictedOfCrime),
+      convictionDetails: stringValue(detail?.declarations?.convictionDetails),
+      separatedFromService: yesNoValue(detail?.declarations?.separatedFromService),
+      separationMode: stringValue(detail?.declarations?.separationMode),
+      separatedFromServiceDetails: stringValue(detail?.declarations?.separationDetails),
+      electionCandidate: yesNoValue(detail?.declarations?.candidateInLastElection),
+      electionCandidateDetails: stringValue(detail?.declarations?.candidacyDetails),
+      resignedForElection: yesNoValue(detail?.declarations?.resignedBeforeElection),
+      resignedForElectionDetails: stringValue(detail?.declarations?.resignationDetails),
+      immigrant: yesNoValue(detail?.declarations?.immigrantOrPermanentResident),
+      immigrantCountry: stringValue(detail?.declarations?.immigrantCountry),
+      immigrantDetails: stringValue(detail?.declarations?.immigrantDetails),
+      indigenousGroup: yesNoValue(detail?.declarations?.indigenousGroupMember),
+      indigenousGroupDetails: stringValue(detail?.declarations?.indigenousGroupDetails),
+      disability: yesNoValue(detail?.declarations?.personWithDisability),
+      disabilityIdNumber: stringValue(detail?.declarations?.disabilityIdNumber),
+      disabilityDetails: stringValue(detail?.declarations?.disabilitySpecification),
+      soloParent: yesNoValue(detail?.declarations?.soloParent),
+      soloParentIdNumber: stringValue(detail?.declarations?.soloParentIdNumber),
+      soloParentDetails: stringValue(detail?.declarations?.soloParentSpecification),
+    } as DeclarationForm,
+    references:
+      detail?.references?.map((record) => ({
+        uiKey: createRowKey('reference'),
+        id: record.id ?? '',
+        name: stringValue(record.name),
+        address: stringValue(record.address),
+        telephoneNumber: stringValue(record.contact),
+      })) ?? [],
+    certification: {
+      ...blankCertification(pageKeys),
+      truthDeclarationAccepted: Boolean(detail?.certification?.truthDeclarationAccepted),
+      verificationAuthorizationAccepted: Boolean(
+        detail?.certification?.verificationAuthorizationAccepted,
+      ),
+      misrepresentationWarningAccepted: Boolean(
+        detail?.certification?.misrepresentationWarningAccepted,
+      ),
+      governmentIdType: stringValue(detail?.certification?.governmentIdType),
+      governmentIdNumber: stringValue(detail?.certification?.governmentIdNumber),
+      governmentIdIssuedDate: stringValue(detail?.certification?.governmentIdIssuedAt),
+      governmentIdIssuedPlace: stringValue(detail?.certification?.governmentIdIssuedPlace),
+      photoDocumentId: stringValue(detail?.certification?.photoDocumentId),
+      photoDocumentVersionId: stringValue(detail?.certification?.photoDocumentVersionId),
+      signatureDocumentId: stringValue(detail?.certification?.employeeSignatureDocumentId),
+      signatureDocumentVersionId: stringValue(
+        detail?.certification?.employeeSignatureDocumentVersionId,
+      ),
+      employeeSignatureDate: stringValue(detail?.certification?.employeeSignatureDate),
+      thumbmarkDocumentId: stringValue(detail?.certification?.thumbmarkDocumentId),
+      thumbmarkDocumentVersionId: stringValue(detail?.certification?.thumbmarkDocumentVersionId),
+      subscribedAndSwornText: stringValue(detail?.certification?.subscribedAndSwornText),
+      oathDate: stringValue(detail?.certification?.subscribedAndSwornAt?.slice(0, 10)),
+      oathAdministeredBy: stringValue(detail?.certification?.oathAdministeredBy),
+      oathAdminSignatureDocumentId: stringValue(
+        detail?.certification?.oathAdminSignatureDocumentId,
+      ),
+      oathAdminSignatureDocumentVersionId: stringValue(
+        detail?.certification?.oathAdminSignatureDocumentVersionId,
+      ),
+      oathAdministeredAt: stringValue(detail?.certification?.oathAdministeredAt?.slice(0, 10)),
+      pageSignatures: pageKeys.map((pageKey) => {
+        const signature = detail?.pageSignatures?.find((record) => record.pageKey === pageKey);
+        return {
+          pageNo: pdsPageKeys.indexOf(pageKey) + 1,
+          signatureDocumentId: stringValue(signature?.signatureDocumentId),
+          signatureDocumentVersionId: stringValue(signature?.signatureDocumentVersionId),
+          signedAt: stringValue(signature?.signatureDate ?? signature?.signedAt?.slice(0, 10)),
+        };
+      }),
+    },
   };
 }
 
@@ -906,6 +1361,9 @@ export function formPayload(form: PdsForm) {
       ...optionalIdPayload(artifact.id),
       contextKey: nullable(artifact.contextKey),
       ...evidencePayload(artifact),
+      signatureDocumentId: nullable(artifact.signatureDocumentId),
+      signatureDocumentVersionId: nullable(artifact.signatureDocumentVersionId),
+      signedAt: nullable(artifact.signedAt),
       entries: artifact.entries.map((entry, index) => {
         const work = workByKey.get(entry.workExperienceKey);
         const workExperienceId = work ? optionalId(work.id) : undefined;
@@ -932,6 +1390,72 @@ export function formPayload(form: PdsForm) {
     ...payload,
     education: educationPayload(form.education),
     eligibility: eligibilityPayload(form.eligibility),
+    otherInformation: {
+      skillsAndHobbies: nullable(form.otherInformation.specialSkillsHobbies),
+      nonAcademicDistinctions: nullable(form.otherInformation.nonAcademicDistinctions),
+      associationMemberships: nullable(form.otherInformation.memberships),
+    },
+    declarations: {
+      ...Object.fromEntries(
+        Object.entries(declarationAnswerKeys).map(([uiKey, apiKey]) => [
+          apiKey,
+          booleanPayload(form.declarations[uiKey as keyof typeof declarationAnswerKeys]),
+        ]),
+      ),
+      ...Object.fromEntries(
+        Object.entries(declarationDetailKeys).map(([uiKey, apiKey]) => [
+          apiKey,
+          nullable(form.declarations[uiKey as keyof typeof declarationDetailKeys]),
+        ]),
+      ),
+      criminalChargeDateFiled: nullable(form.declarations.criminalChargeDateFiled),
+      criminalChargeDateFiledUnknown: booleanPayload(
+        form.declarations.criminalChargeDateFiledUnknown,
+      ),
+      criminalChargeStatus: nullable(form.declarations.criminalChargeStatus),
+      separationMode: nullable(form.declarations.separationMode),
+      immigrantCountry: nullable(form.declarations.immigrantCountry),
+      disabilityIdNumber: nullable(form.declarations.disabilityIdNumber),
+      soloParentIdNumber: nullable(form.declarations.soloParentIdNumber),
+    },
+    references: form.references.map((record, index) => ({
+      ...optionalIdPayload(record.id),
+      sequenceNo: index + 1,
+      name: nullable(record.name),
+      address: nullable(record.address),
+      contact: nullable(record.telephoneNumber),
+    })),
+    certification: {
+      truthDeclarationAccepted: form.certification.truthDeclarationAccepted,
+      verificationAuthorizationAccepted: form.certification.verificationAuthorizationAccepted,
+      misrepresentationWarningAccepted: form.certification.misrepresentationWarningAccepted,
+      governmentIdType: nullable(form.certification.governmentIdType),
+      governmentIdNumber: nullable(form.certification.governmentIdNumber),
+      governmentIdIssuedAt: nullable(form.certification.governmentIdIssuedDate),
+      governmentIdIssuedPlace: nullable(form.certification.governmentIdIssuedPlace),
+      photoDocumentId: nullable(form.certification.photoDocumentId),
+      photoDocumentVersionId: nullable(form.certification.photoDocumentVersionId),
+      employeeSignatureDocumentId: nullable(form.certification.signatureDocumentId),
+      employeeSignatureDocumentVersionId: nullable(form.certification.signatureDocumentVersionId),
+      employeeSignatureDate: nullable(form.certification.employeeSignatureDate),
+      thumbmarkDocumentId: nullable(form.certification.thumbmarkDocumentId),
+      thumbmarkDocumentVersionId: nullable(form.certification.thumbmarkDocumentVersionId),
+      subscribedAndSwornText: nullable(form.certification.subscribedAndSwornText),
+      subscribedAndSwornAt: dateTimePayload(form.certification.oathDate),
+      oathAdministeredBy: nullable(form.certification.oathAdministeredBy),
+      oathAdminSignatureDocumentId: nullable(form.certification.oathAdminSignatureDocumentId),
+      oathAdminSignatureDocumentVersionId: nullable(
+        form.certification.oathAdminSignatureDocumentVersionId,
+      ),
+      oathAdministeredAt: dateTimePayload(form.certification.oathAdministeredAt),
+    },
+    pageSignatures: form.certification.pageSignatures.map((signature) => ({
+      pageKey: pdsPageKeys[signature.pageNo - 1],
+      signatureDocumentId: nullable(signature.signatureDocumentId),
+      signatureDocumentVersionId: nullable(signature.signatureDocumentVersionId),
+      signedAt: dateTimePayload(signature.signedAt),
+      signatureDate: nullable(signature.signedAt),
+    })),
   };
 }
 
@@ -984,6 +1508,9 @@ function formDetailSections(form: PdsForm): PdsDetailSections {
       ...optionalIdPayload(artifact.id),
       contextKey: nullable(artifact.contextKey),
       ...evidencePayload(artifact),
+      signatureDocumentId: nullable(artifact.signatureDocumentId),
+      signatureDocumentVersionId: nullable(artifact.signatureDocumentVersionId),
+      signedAt: nullable(artifact.signedAt),
       entries: artifact.entries.map((entry, index) => {
         const work = workByKey.get(entry.workExperienceKey);
         const workExperienceId = work ? optionalId(work.id) : undefined;

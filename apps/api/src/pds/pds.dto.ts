@@ -1,11 +1,19 @@
 import type {
   PdsEvidenceView,
+  PdsCertificationDetailsView,
+  PdsDeclarationDetailsView,
   PdsFamilyRecordView,
   PdsFamilyView,
   PdsEducationRecordView,
   PdsEligibilityRecordView,
   PdsLearningDevelopmentView,
+  PdsOtherInformationView,
+  PdsOutputArtifactList,
+  PdsOutputArtifactView,
+  PdsPageSignatureView,
   PdsPersonalDetailsView,
+  PdsReferenceRecordView,
+  PdsTransitionEventView,
   PdsVoluntaryWorkView,
   PdsWesEntryView,
   PdsWesView,
@@ -195,12 +203,130 @@ export class PdsWesDto extends PdsEvidenceDto implements PdsWesView {
   declare readonly contextKey: string;
   declare readonly templateVersion: string;
   declare readonly status: string;
+  declare readonly signatureDocumentId: string | null;
+  declare readonly signatureDocumentVersionId: string | null;
+  declare readonly signedAt: string | null;
   readonly entries: PdsWesEntryDto[];
 
   constructor(value: PdsWesView) {
     super(value);
     Object.assign(this, value);
     this.entries = value.entries.map((entry) => new PdsWesEntryDto(entry));
+  }
+}
+
+export class PdsOtherInformationDto implements PdsOtherInformationView {
+  declare readonly skillsAndHobbies: string | null;
+  declare readonly nonAcademicDistinctions: string | null;
+  declare readonly associationMemberships: string | null;
+
+  constructor(value: PdsOtherInformationView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsDeclarationDetailsDto implements PdsDeclarationDetailsView {
+  declare readonly relatedWithinThirdDegree: boolean | null;
+  declare readonly relatedWithinFourthDegreeLgu: boolean | null;
+  declare readonly relationshipDetails: string | null;
+  declare readonly relatedWithinFourthDegreeDetails: string | null;
+  declare readonly foundGuiltyAdministrativeOffense: boolean | null;
+  declare readonly administrativeOffenseDetails: string | null;
+  declare readonly criminallyCharged: boolean | null;
+  declare readonly criminalChargeDetails: string | null;
+  declare readonly criminalChargeDateFiled: string | null;
+  declare readonly criminalChargeDateFiledUnknown: boolean | null;
+  declare readonly criminalChargeStatus: string | null;
+  declare readonly convictedOfCrime: boolean | null;
+  declare readonly convictionDetails: string | null;
+  declare readonly separatedFromService: boolean | null;
+  declare readonly separationMode: string | null;
+  declare readonly separationDetails: string | null;
+  declare readonly candidateInLastElection: boolean | null;
+  declare readonly candidacyDetails: string | null;
+  declare readonly resignedBeforeElection: boolean | null;
+  declare readonly resignationDetails: string | null;
+  declare readonly immigrantOrPermanentResident: boolean | null;
+  declare readonly immigrantCountry: string | null;
+  declare readonly immigrantDetails: string | null;
+  declare readonly indigenousGroupMember: boolean | null;
+  declare readonly indigenousGroupDetails: string | null;
+  declare readonly personWithDisability: boolean | null;
+  declare readonly disabilitySpecification: string | null;
+  declare readonly disabilityIdNumber: string | null;
+  declare readonly soloParent: boolean | null;
+  declare readonly soloParentSpecification: string | null;
+  declare readonly soloParentIdNumber: string | null;
+
+  constructor(value: PdsDeclarationDetailsView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsReferenceRecordDto implements PdsReferenceRecordView {
+  declare readonly id: string;
+  declare readonly sequenceNo: number;
+  declare readonly name: string;
+  declare readonly address: string;
+  declare readonly contact: string;
+
+  constructor(value: PdsReferenceRecordView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsCertificationDetailsDto implements PdsCertificationDetailsView {
+  declare readonly truthDeclarationAccepted: boolean | null;
+  declare readonly verificationAuthorizationAccepted: boolean | null;
+  declare readonly misrepresentationWarningAccepted: boolean | null;
+  declare readonly photoDocumentId: string | null;
+  declare readonly photoDocumentVersionId: string | null;
+  declare readonly governmentIdType: string | null;
+  declare readonly governmentIdNumber: string | null;
+  declare readonly governmentIdIssuedAt: string | null;
+  declare readonly governmentIdIssuedPlace: string | null;
+  declare readonly employeeSignatureDocumentId: string | null;
+  declare readonly employeeSignatureDocumentVersionId: string | null;
+  declare readonly employeeSignatureDate: string | null;
+  declare readonly thumbmarkDocumentId: string | null;
+  declare readonly thumbmarkDocumentVersionId: string | null;
+  declare readonly subscribedAndSwornText: string | null;
+  declare readonly subscribedAndSwornAt: string | null;
+  declare readonly oathAdministeredBy: string | null;
+  declare readonly oathAdminSignatureDocumentId: string | null;
+  declare readonly oathAdminSignatureDocumentVersionId: string | null;
+  declare readonly oathAdministeredAt: string | null;
+
+  constructor(value: PdsCertificationDetailsView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsPageSignatureDto implements PdsPageSignatureView {
+  declare readonly id: string;
+  declare readonly pageKey: PdsPageSignatureView['pageKey'];
+  declare readonly signatureDocumentId: string | null;
+  declare readonly signatureDocumentVersionId: string | null;
+  declare readonly signedAt: string | null;
+  declare readonly signatureDate: string | null;
+
+  constructor(value: PdsPageSignatureView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsTransitionEventDto implements PdsTransitionEventView {
+  declare readonly id: string;
+  declare readonly fromStatus: string | null;
+  declare readonly toStatus: string;
+  declare readonly action: string;
+  declare readonly actorUserId: string;
+  declare readonly actorMembershipId: string;
+  declare readonly reason: string | null;
+  declare readonly occurredAt: string;
+
+  constructor(value: PdsTransitionEventView) {
+    Object.assign(this, value);
   }
 }
 
@@ -213,6 +339,10 @@ export class PdsVersionDto implements PdsVersionSummary {
   declare readonly status: PdsVersionSummary['status'];
   declare readonly supersedesVersionId: string | null;
   declare readonly correctionReason: string | null;
+  declare readonly employeeCertifiedAt: string | null;
+  declare readonly employeeCertifiedByMembershipId: string | null;
+  declare readonly hrVerifiedAt: string | null;
+  declare readonly hrVerifiedByMembershipId: string | null;
   declare readonly createdByMembershipId: string;
   declare readonly createdAt: string;
   declare readonly updatedByMembershipId: string;
@@ -234,6 +364,12 @@ export class PdsVersionDetailDto extends PdsVersionDto {
   readonly voluntaryWork: PdsVoluntaryWorkDto[];
   readonly learningAndDevelopment: PdsLearningDevelopmentDto[];
   readonly wes: PdsWesDto[];
+  readonly otherInformation: PdsOtherInformationDto | null;
+  readonly declarations: PdsDeclarationDetailsDto | null;
+  readonly references: PdsReferenceRecordDto[];
+  readonly certification: PdsCertificationDetailsDto | null;
+  readonly pageSignatures: PdsPageSignatureDto[];
+  readonly transitions: PdsTransitionEventDto[];
 
   constructor(value: PdsVersionDetail) {
     super(value);
@@ -247,6 +383,50 @@ export class PdsVersionDetailDto extends PdsVersionDto {
       (row) => new PdsLearningDevelopmentDto(row),
     );
     this.wes = value.wes.map((artifact) => new PdsWesDto(artifact));
+    this.otherInformation = value.otherInformation
+      ? new PdsOtherInformationDto(value.otherInformation)
+      : null;
+    this.declarations = value.declarations
+      ? new PdsDeclarationDetailsDto(value.declarations)
+      : null;
+    this.references = value.references.map((record) => new PdsReferenceRecordDto(record));
+    this.certification = value.certification
+      ? new PdsCertificationDetailsDto(value.certification)
+      : null;
+    this.pageSignatures = value.pageSignatures.map((row) => new PdsPageSignatureDto(row));
+    this.transitions = value.transitions.map((event) => new PdsTransitionEventDto(event));
+  }
+}
+
+export class PdsOutputArtifactDto implements PdsOutputArtifactView {
+  declare readonly id: string;
+  declare readonly outputKey: string;
+  declare readonly outputType: PdsOutputArtifactView['outputType'];
+  declare readonly formVersion: string;
+  declare readonly templateVersion: string | null;
+  declare readonly sourceArtifactId: string;
+  declare readonly sourceArtifactHash: string;
+  declare readonly generatedAt: string;
+  declare readonly dataAsOfDate: string;
+  declare readonly status: string;
+  declare readonly renderingMetadata: Record<string, unknown>;
+  declare readonly signatureMetadata: Record<string, unknown> | null;
+  declare readonly renderedContent: Record<string, unknown> | null;
+
+  constructor(value: PdsOutputArtifactView) {
+    Object.assign(this, value);
+  }
+}
+
+export class PdsOutputArtifactListDto implements PdsOutputArtifactList {
+  declare readonly pdsVersionId: string;
+  declare readonly fieldScope: PdsOutputArtifactList['fieldScope'];
+  readonly outputs: PdsOutputArtifactDto[];
+
+  constructor(value: PdsOutputArtifactList) {
+    this.pdsVersionId = value.pdsVersionId;
+    this.fieldScope = value.fieldScope;
+    this.outputs = value.outputs.map((output) => new PdsOutputArtifactDto(output));
   }
 }
 

@@ -69,6 +69,18 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
   const membership = await admin.agencyMembership.create({
     data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
   });
+  const otherUser = await admin.user.create({
+    data: {
+      identityProvider: 'pds-api-e2e',
+      externalSubject: `pds-api-other-${suffix}`,
+      emailNormalized: `pds-api-other-${suffix}@example.test`,
+      displayName: 'Other PDS API User',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  const otherMembership = await admin.agencyMembership.create({
+    data: { agencyId: agency.id, userId: otherUser.id, status: 'ACTIVE' },
+  });
   const foreignMembership = await admin.agencyMembership.create({
     data: { agencyId: foreignAgency.id, userId: user.id, status: 'ACTIVE' },
   });
@@ -84,6 +96,15 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
       createdByMembershipId: membership.id,
       updatedByMembershipId: membership.id,
     },
+  });
+  await admin.$transaction(async (transaction) => {
+    await transaction.$executeRaw`
+      SELECT set_config('app.employee_membership_link', 'on', true)
+    `;
+    await transaction.agencyMembership.update({
+      where: { id: membership.id },
+      data: { employeeId: employee.id },
+    });
   });
   const organizationUnit = await admin.organizationUnit.create({
     data: {
@@ -131,10 +152,20 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
   const pds = new PdsService(pdsAuditWriter, documents);
   const hrContext = context(agency.id, user.id, membership.id, [
     { code: 'personnel.pds.read', scopePolicy: 'AGENCY' },
+    { code: 'personnel.pds.read_sensitive', scopePolicy: 'AGENCY' },
     { code: 'personnel.pds.update', scopePolicy: 'AGENCY' },
     { code: 'documents.evidence.create', scopePolicy: 'AGENCY' },
     { code: 'documents.evidence.read', scopePolicy: 'AGENCY' },
     { code: 'documents.evidence.read_sensitive', scopePolicy: 'AGENCY' },
+  ]);
+  const employeeContext = context(agency.id, user.id, membership.id, [
+    { code: 'personnel.pds.read', scopePolicy: 'OWN' },
+    { code: 'personnel.pds.read_sensitive', scopePolicy: 'OWN' },
+    { code: 'personnel.pds.update', scopePolicy: 'OWN' },
+  ]);
+  const redactedHrContext = context(agency.id, user.id, membership.id, [
+    { code: 'personnel.pds.read', scopePolicy: 'AGENCY' },
+    { code: 'personnel.pds.update', scopePolicy: 'AGENCY' },
   ]);
   const source = await documents.create(hrContext, {
     documentNo: `EDU-${suffix}`,
@@ -146,6 +177,21 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
   const sourceVersionId = source.currentVersion?.id;
   if (!sourceVersionId) throw new Error('The source Document Version was not created.');
   await admin.document.update({ where: { id: source.id }, data: { status: 'APPROVED' } });
+  const otherSource = await documents.create(
+    context(agency.id, otherUser.id, otherMembership.id, [
+      { code: 'documents.evidence.create', scopePolicy: 'AGENCY' },
+    ]),
+    {
+      documentNo: `OTHER-${suffix}`,
+      documentType: 'Other employee evidence',
+      classification: 'CONFIDENTIAL',
+      idempotencyKey: `other-${suffix}`,
+      file: { buffer: Buffer.from('%PDF-1.7 other'), mimetype: 'application/pdf' },
+    },
+  );
+  const otherSourceVersionId = otherSource.currentVersion?.id;
+  if (!otherSourceVersionId) throw new Error('The other Document Version was not created.');
+  await admin.document.update({ where: { id: otherSource.id }, data: { status: 'APPROVED' } });
 
   try {
     const created = await pds.create(hrContext, {
@@ -197,6 +243,26 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
       licenseNo: 'DL-123',
       validUntil: '2030-01-15',
     });
+    const employeeLinked = await pds.update(employeeContext, created.id, {
+      rowVersion: created.rowVersion,
+      certification: {
+        photoDocumentId: source.id,
+        photoDocumentVersionId: sourceVersionId,
+      },
+    });
+    expect(employeeLinked.certification).toMatchObject({
+      photoDocumentId: source.id,
+      photoDocumentVersionId: sourceVersionId,
+    });
+    await expect(
+      pds.update(employeeContext, created.id, {
+        rowVersion: employeeLinked.rowVersion,
+        certification: {
+          photoDocumentId: otherSource.id,
+          photoDocumentVersionId: otherSourceVersionId,
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'PDS_EVIDENCE_FORBIDDEN' });
 
     const audit = await admin.auditEvent.findFirstOrThrow({
       where: { agencyId: agency.id, action: 'PDS_EDUCATION_UPDATED' },
@@ -205,7 +271,7 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
     expect(JSON.stringify(audit.metadata)).toContain('evidenceLinkCount');
 
     const updated = await pds.update(hrContext, created.id, {
-      rowVersion: created.rowVersion,
+      rowVersion: employeeLinked.rowVersion,
       education: [
         {
           level: 'COLLEGE',
@@ -257,10 +323,19 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
     });
     expect(cleared.education).toHaveLength(0);
     expect(cleared.eligibility).toHaveLength(1);
+    const redactedMutation = await pds.update(redactedHrContext, created.id, {
+      rowVersion: cleared.rowVersion,
+      education: [],
+    });
+    expect(redactedMutation).toMatchObject({
+      fieldScope: 'REDACTED',
+      personal: null,
+      certification: null,
+    });
 
     await expect(
       pds.update(hrContext, created.id, {
-        rowVersion: cleared.rowVersion,
+        rowVersion: redactedMutation.rowVersion,
         education: [
           {
             level: 'COLLEGE',
@@ -283,7 +358,47 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
         where: { id: created.id },
         data: { status: 'CERTIFIED' },
       });
+      await transaction.pdsOutputArtifact.create({
+        data: {
+          agencyId: agency.id,
+          employeeId: employee.id,
+          pdsVersionId: created.id,
+          outputKey: `${created.id}:PDS:CS_FORM_212_REVISED_2026`,
+          outputType: 'PDS',
+          formVersion: 'CS_FORM_212_REVISED_2026',
+          sourceArtifactId: `pds:${created.id}`,
+          sourceArtifactHash: 'a'.repeat(64),
+          dataAsOfDate: new Date('2026-08-31'),
+          renderingMetadata: { revision: 'CS_FORM_212_REVISED_2026' },
+          signatureMetadata: { signatureDocumentId: 'restricted' },
+          renderedContent: { governmentIdNumber: 'restricted' },
+        },
+      });
     });
+    const fullOutputs = await pds.listOutputs(
+      context(agency.id, user.id, membership.id, [
+        { code: 'personnel.pds.read', scopePolicy: 'AGENCY' },
+        { code: 'personnel.pds.read_sensitive', scopePolicy: 'AGENCY' },
+      ]),
+      created.id,
+    );
+    expect(fullOutputs).toMatchObject({
+      fieldScope: 'FULL',
+      outputs: [{ renderedContent: { governmentIdNumber: 'restricted' } }],
+    });
+    const redactedOutputs = await pds.listOutputs(redactedHrContext, created.id);
+    expect(redactedOutputs).toMatchObject({
+      fieldScope: 'REDACTED',
+      outputs: [{ renderedContent: null, signatureMetadata: null }],
+    });
+    await expect(
+      pds.listOutputs(
+        context(agency.id, '00000000-0000-4000-8000-000000000099', membership.id, [
+          { code: 'personnel.pds.read', scopePolicy: 'OWN' },
+        ]),
+        created.id,
+      ),
+    ).rejects.toMatchObject({ code: 'PDS_NOT_FOUND' });
     await expect(
       pds.update(hrContext, created.id, { rowVersion: cleared.rowVersion, education: [] }),
     ).rejects.toMatchObject({ code: 'PDS_VERSION_IMMUTABLE' });
@@ -293,6 +408,9 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
   } finally {
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      await transaction.pdsOutputArtifact.deleteMany({
+        where: { agencyId: { in: [agency.id, foreignAgency.id] } },
+      });
       await transaction.pdsEligibilityRecord.deleteMany({
         where: { pdsVersion: { agencyId: { in: [agency.id, foreignAgency.id] } } },
       });
@@ -330,7 +448,7 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
         where: { agencyId: { in: [agency.id, foreignAgency.id] } },
       });
       await transaction.agency.deleteMany({ where: { id: { in: [agency.id, foreignAgency.id] } } });
-      await transaction.user.delete({ where: { id: user.id } });
+      await transaction.user.deleteMany({ where: { id: { in: [user.id, otherUser.id] } } });
     });
     await app.$disconnect();
     await admin.$disconnect();

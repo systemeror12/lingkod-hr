@@ -28,21 +28,28 @@ import {
   blankEducation,
   blankEligibility,
   blankLearningDevelopment,
+  blankPageSignature,
+  blankReference,
   blankVoluntaryWork,
   blankWes,
   blankWesEntry,
   blankWorkExperience,
   detailAfterSave,
+  declarationFields,
   formFromDetail,
   formPayload,
   listAfterSave,
   moveAt,
   nullable,
   parsePdsEvidenceOptions,
+  pageKeysForForm,
+  pdsPageKeys,
   removeAt,
   stringValue,
   updateAt,
+  yesNoOptions,
   type AddressForm,
+  type DeclarationKey,
   type EducationForm,
   type EligibilityForm,
   type EvidenceForm,
@@ -60,6 +67,209 @@ export type { PdsDetailData, PdsVersionListData } from '../lib/pds-editor';
 interface ErrorEnvelope {
   error?: { message?: string; fields?: Record<string, string> };
 }
+
+const pdsCertificationStatements = {
+  truthDeclaration:
+    'I declare under oath that I have personally accomplished this Personal Data Sheet which is a true, correct, and complete statement pursuant to the provisions of pertinent laws, rules, and regulations of the Republic of the Philippines.',
+  verificationAuthorization:
+    'I authorize the agency head/authorized representative to verify/validate the contents stated herein.',
+  misrepresentationWarning:
+    'I agree that any misrepresentation made in this document and its attachments shall cause the filing of administrative/criminal case/s against me.',
+} as const;
+
+function responseError(value: unknown, fallback: string): string {
+  return ((value ?? {}) as ErrorEnvelope).error?.message ?? fallback;
+}
+
+function responseField(value: unknown): string | null {
+  const fields = ((value ?? {}) as ErrorEnvelope).error?.fields;
+  return fields ? (Object.keys(fields)[0] ?? null) : null;
+}
+
+const deficiencyLabels: Record<string, string> = {
+  'personal.surname': 'Surname',
+  'personal.firstName': 'First name',
+  'personal.birthDate': 'Birth date',
+  'personal.birthPlace': 'Place of birth',
+  'personal.sex': 'Sex at birth',
+  'personal.civilStatus': 'Civil status',
+  'personal.heightMeters': 'Height (metres)',
+  'personal.weightKilograms': 'Weight (kilograms)',
+  'personal.bloodType': 'Blood type',
+  'personal.citizenship': 'Citizenship',
+  'personal.dualCitizenshipType': 'Dual citizenship basis',
+  'personal.dualCitizenshipCountry': 'Other citizenship country',
+  'otherInformation.skillsAndHobbies': 'Special skills and hobbies',
+  'otherInformation.nonAcademicDistinctions': 'Non-academic distinctions',
+  'otherInformation.associationMemberships': 'Membership in associations',
+  'declarations.relationshipDetails': '34.a Related within the third degree? details',
+  'declarations.relatedWithinFourthDegreeDetails': '34.b Related within the fourth degree? details',
+  'declarations.administrativeOffenseDetails':
+    '35.a Found guilty of an administrative offense? details',
+  'declarations.criminalChargeDetails': '35.b Criminally charged before any court? details',
+  'declarations.criminalChargeDateFiled': 'Date filed',
+  'declarations.criminalChargeStatus': 'Case status',
+  'declarations.convictionDetails': '36 Convicted of any crime? details',
+  'declarations.separationMode': 'Separation mode',
+  'declarations.separationDetails': '37 Separated from service? details',
+  'declarations.candidacyDetails': '38.a Candidate in an election? details',
+  'declarations.resignationDetails': '38.b Resigned for an election campaign? details',
+  'declarations.immigrantCountry': 'Country of immigration or permanent residence',
+  'declarations.indigenousGroupDetails': '40.a Indigenous group member? details',
+  'declarations.disabilitySpecification': '40.b Person with disability? details',
+  'declarations.disabilityIdNumber': 'Disability ID number',
+  'declarations.soloParentSpecification': '40.c Solo parent? details',
+  'declarations.soloParentIdNumber': 'Solo parent ID number',
+  'certification.truthDeclarationAccepted': 'Truth declaration accepted',
+  'certification.verificationAuthorizationAccepted': 'Verification authorization accepted',
+  'certification.misrepresentationWarningAccepted': 'Misrepresentation warning accepted',
+  'certification.photoDocumentId': 'Photo document ID',
+  'certification.governmentIdType': 'Government ID type',
+  'certification.governmentIdNumber': 'Government ID number',
+  'certification.governmentIdIssuedAt': 'Government ID issued date',
+  'certification.governmentIdIssuedPlace': 'Government ID issued place',
+  'certification.employeeSignatureDocumentId': 'Signature document ID',
+  'certification.employeeSignatureDate': 'Employee signature date',
+  'certification.subscribedAndSwornText': 'Subscribed and sworn text',
+  'certification.subscribedAndSwornAt': 'Subscribed and sworn date',
+  'certification.oathAdministeredBy': 'Administering officer',
+  'certification.oathAdminSignatureDocumentId': 'Oath administrator signature document ID',
+  'certification.oathAdministeredAt': 'Oath administration date',
+  'wes.signatureDocumentId': 'WES signature document ID',
+  'wes.signedAt': 'WES signed date',
+};
+
+const declarationApiFields: Record<DeclarationKey, string> = {
+  relatedThirdDegree: 'relatedWithinThirdDegree',
+  relatedThirdDegreeDetails: 'relationshipDetails',
+  relatedFourthDegree: 'relatedWithinFourthDegreeLgu',
+  relatedFourthDegreeDetails: 'relatedWithinFourthDegreeDetails',
+  administrativeCase: 'foundGuiltyAdministrativeOffense',
+  administrativeCaseDetails: 'administrativeOffenseDetails',
+  criminalCharge: 'criminallyCharged',
+  criminalChargeDetails: 'criminalChargeDetails',
+  criminalChargeDateFiled: 'criminalChargeDateFiled',
+  criminalChargeDateFiledUnknown: 'criminalChargeDateFiledUnknown',
+  criminalChargeStatus: 'criminalChargeStatus',
+  conviction: 'convictedOfCrime',
+  convictionDetails: 'convictionDetails',
+  separatedFromService: 'separatedFromService',
+  separationMode: 'separationMode',
+  separatedFromServiceDetails: 'separationDetails',
+  electionCandidate: 'candidateInLastElection',
+  electionCandidateDetails: 'candidacyDetails',
+  resignedForElection: 'resignedBeforeElection',
+  resignedForElectionDetails: 'resignationDetails',
+  immigrant: 'immigrantOrPermanentResident',
+  immigrantCountry: 'immigrantCountry',
+  immigrantDetails: 'immigrantDetails',
+  indigenousGroup: 'indigenousGroupMember',
+  indigenousGroupDetails: 'indigenousGroupDetails',
+  disability: 'personWithDisability',
+  disabilityIdNumber: 'disabilityIdNumber',
+  disabilityDetails: 'disabilitySpecification',
+  soloParent: 'soloParent',
+  soloParentDetails: 'soloParentSpecification',
+  soloParentIdNumber: 'soloParentIdNumber',
+};
+
+function deficiencyLabel(field: string): string | null {
+  const reference = /^references\.(\d+)\.(name|address|contact)$/.exec(field);
+  if (reference) {
+    return {
+      name: 'Reference name',
+      address: 'Reference address',
+      contact: 'Reference telephone',
+    }[reference[2] as 'name' | 'address' | 'contact'];
+  }
+  const page = /^pageSignatures\.(C\d+)\.(signatureDocumentId|signedAt|signatureDate)$/.exec(field);
+  if (page) {
+    const pageNo = pdsPageKeys.indexOf(page[1] as (typeof pdsPageKeys)[number]) + 1;
+    if (pageNo > 0) {
+      return page[2] === 'signatureDocumentId'
+        ? `Page ${pageNo} signature document ID`
+        : `Page ${pageNo} signed date`;
+    }
+  }
+  return deficiencyLabels[field] ?? null;
+}
+
+function focusDeficiency(field: string): void {
+  type FocusableControl = {
+    labels?: ArrayLike<{ textContent?: string | null }> | null;
+    getAttribute(name: string): string | null;
+    focus(): void;
+    scrollIntoView(options: { block: string }): void;
+  };
+  const browser = globalThis as unknown as {
+    document: { querySelectorAll(selector: string): ArrayLike<FocusableControl> };
+  };
+  const marked = Array.from(browser.document.querySelectorAll('[role="dialog"] [data-pds-field]'));
+  const exact = marked.find((element) => element.getAttribute('data-pds-field') === field);
+  if (exact) {
+    exact.focus();
+    exact.scrollIntoView({ block: 'center' });
+    return;
+  }
+  const label = deficiencyLabel(field);
+  if (!label) return;
+  const controls = Array.from(
+    browser.document.querySelectorAll(
+      '[role="dialog"] input, [role="dialog"] select, [role="dialog"] textarea',
+    ),
+  );
+  const control = controls.find((element) =>
+    Array.from(element.labels ?? []).some((item) => item.textContent?.trim() === label),
+  );
+  control?.focus();
+  control?.scrollIntoView({ block: 'center' });
+}
+
+type WorkflowAction = 'submit' | 'return' | 'certify' | 'verify' | 'correct' | 'outputs';
+
+const workflowCopy: Record<WorkflowAction, { title: string; description: string; submit: string }> =
+  {
+    submit: {
+      title: 'Submit PDS',
+      description: 'Send this complete Draft or Returned PDS for certification and HR review.',
+      submit: 'Submit',
+    },
+    return: {
+      title: 'Return PDS',
+      description: 'Return this submitted PDS with a reason the employee can act on.',
+      submit: 'Return with reason',
+    },
+    certify: {
+      title: 'Employee certify PDS',
+      description: 'Record the employee certification for this submitted PDS.',
+      submit: 'Employee certify',
+    },
+    verify: {
+      title: 'HR verify PDS',
+      description:
+        'Verify this submitted PDS after employee certification without changing declared content.',
+      submit: 'HR verify',
+    },
+    correct: {
+      title: 'Correct certified PDS',
+      description: 'Create a reasoned successor Draft linked to this certified PDS.',
+      submit: 'Correct certified',
+    },
+    outputs: {
+      title: 'Generate output',
+      description: 'Generate released PDS and WES output artifacts from this exact version.',
+      submit: 'Generate output',
+    },
+  };
+
+const workflowMessages: Record<WorkflowAction, string> = {
+  submit: 'PDS submitted.',
+  return: 'PDS returned.',
+  certify: 'PDS employee certification recorded.',
+  verify: 'PDS HR verification recorded.',
+  correct: 'Correction Draft created.',
+  outputs: 'PDS output generation started.',
+};
 
 const addressFields = [
   ['houseBlockLotNo', 'House / block / lot no.'],
@@ -139,6 +349,7 @@ function display(value: string | number | null | undefined): string {
 
 function TextField({
   label,
+  field,
   value,
   onChange,
   type = 'text',
@@ -149,6 +360,7 @@ function TextField({
   disabled = false,
 }: {
   label: string;
+  field?: string | undefined;
   value: string;
   onChange: (value: string) => void;
   type?: 'text' | 'date' | 'email' | 'number';
@@ -162,6 +374,7 @@ function TextField({
     <label className={employeeLabelClass}>
       {label}
       <input
+        data-pds-field={field}
         className={employeeInputClass}
         type={type}
         value={value}
@@ -178,11 +391,13 @@ function TextField({
 
 function TextAreaField({
   label,
+  field,
   value,
   onChange,
   required = false,
 }: {
   label: string;
+  field?: string | undefined;
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
@@ -191,6 +406,7 @@ function TextAreaField({
     <label className={employeeLabelClass}>
       {label}
       <textarea
+        data-pds-field={field}
         className={`${employeeInputClass} min-h-[96px] resize-y`}
         value={value}
         onChange={(event) => onChange((event.target as unknown as { value: string }).value)}
@@ -202,6 +418,7 @@ function TextAreaField({
 
 function SelectField({
   label,
+  field,
   value,
   onChange,
   options,
@@ -210,6 +427,7 @@ function SelectField({
   disabled = false,
 }: {
   label: string;
+  field?: string | undefined;
   value: string;
   onChange: (value: string) => void;
   options: readonly (readonly [string, string])[];
@@ -221,6 +439,7 @@ function SelectField({
     <label className={employeeLabelClass}>
       {label}
       <select
+        data-pds-field={field}
         className={employeeInputClass}
         value={value}
         onChange={(event) => onChange((event.target as unknown as { value: string }).value)}
@@ -240,16 +459,19 @@ function SelectField({
 
 function ToggleField({
   label,
+  field,
   checked,
   onChange,
 }: {
   label: string;
+  field?: string | undefined;
   checked: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
     <label className="flex items-center gap-3 text-sm font-[560] text-ink">
       <input
+        data-pds-field={field}
         className="size-4 rounded border border-line"
         type="checkbox"
         checked={checked}
@@ -263,9 +485,11 @@ function ToggleField({
 function AddressFields({
   value,
   onChange,
+  fieldPrefix,
 }: {
   value: AddressForm;
   onChange: (key: keyof AddressForm, value: string) => void;
+  fieldPrefix?: string;
 }) {
   return (
     <div className="grid gap-4 min-[620px]:grid-cols-2">
@@ -273,6 +497,7 @@ function AddressFields({
         <TextField
           key={key}
           label={label}
+          field={fieldPrefix ? `${fieldPrefix}.${key}` : undefined}
           value={value[key]}
           onChange={(next) => onChange(key, next)}
         />
@@ -284,10 +509,12 @@ function AddressFields({
 function NameFields({
   value,
   onChange,
+  fieldPrefix,
   includeNameExtension = true,
 }: {
   value: NameForm;
   onChange: (key: keyof NameForm, value: string) => void;
+  fieldPrefix?: string;
   includeNameExtension?: boolean;
 }) {
   const fields = includeNameExtension
@@ -299,6 +526,7 @@ function NameFields({
         <TextField
           key={key}
           label={label}
+          field={fieldPrefix ? `${fieldPrefix}.${key}` : undefined}
           value={value[key]}
           onChange={(next) => onChange(key, next)}
         />
@@ -529,12 +757,101 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function WorkflowDialog({
+  action,
+  busy,
+  error,
+  reason,
+  onReasonChange,
+  onClose,
+  onSubmit,
+}: {
+  action: WorkflowAction | null;
+  busy: boolean;
+  error: string | null;
+  reason: string;
+  onReasonChange: (value: string) => void;
+  onClose: (open: boolean) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (error) (errorRef.current as { focus: () => void } | null)?.focus();
+  }, [error]);
+
+  if (!action) return null;
+  const copy = workflowCopy[action];
+  const needsReason = action === 'return' || action === 'correct';
+
+  return (
+    <Dialog open onOpenChange={(next) => !busy && onClose(next)}>
+      <DialogContent size="compact" aria-describedby="pds-workflow-description">
+        <DialogHeader>
+          <div className="grid gap-1.5">
+            <DialogTitle>{copy.title}</DialogTitle>
+            <DialogDescription id="pds-workflow-description">{copy.description}</DialogDescription>
+          </div>
+        </DialogHeader>
+        <DialogBody>
+          <form id="pds-workflow-form" className="grid gap-4" onSubmit={onSubmit}>
+            {error && (
+              <div
+                ref={errorRef}
+                tabIndex={-1}
+                role="alert"
+                className="rounded-[3px] border-l-2 border-[#b64040] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d] outline-none"
+              >
+                {error}
+              </div>
+            )}
+            {needsReason ? (
+              <TextAreaField
+                label={action === 'return' ? 'Return reason' : 'Correction reason'}
+                value={reason}
+                onChange={onReasonChange}
+                required
+              />
+            ) : (
+              <p className="m-0 text-sm leading-6 text-muted">
+                This action uses the current version exactly as shown.
+              </p>
+            )}
+          </form>
+        </DialogBody>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button type="button" variant="secondary" size="default" disabled={busy}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            type="submit"
+            form="pds-workflow-form"
+            variant="primary"
+            size="default"
+            disabled={busy}
+          >
+            {busy ? `${copy.submit}...` : copy.submit}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function PdsWorkspace({
   agencyId,
   employeeName,
   initialList,
   initialDetail,
   canUpdate,
+  canSubmit = false,
+  canReturn = false,
+  canCertify = false,
+  canVerify = false,
+  canCorrect = false,
+  canGenerateOutputs = false,
   canBrowseEvidence,
   createUrl,
   backHref,
@@ -544,6 +861,12 @@ export function PdsWorkspace({
   initialList: PdsVersionListData;
   initialDetail: PdsDetailData | null;
   canUpdate: boolean;
+  canSubmit?: boolean;
+  canReturn?: boolean;
+  canCertify?: boolean;
+  canVerify?: boolean;
+  canCorrect?: boolean;
+  canGenerateOutputs?: boolean;
   canBrowseEvidence: boolean;
   createUrl: string;
   backHref: string;
@@ -553,14 +876,41 @@ export function PdsWorkspace({
   const [form, setForm] = useState(() => formFromDetail(initialDetail));
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [workflowAction, setWorkflowAction] = useState<WorkflowAction | null>(null);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [workflowReason, setWorkflowReason] = useState('');
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<'ok' | 'error'>('ok');
   const [error, setError] = useState<string | null>(null);
+  const [deficiencyField, setDeficiencyField] = useState<string | null>(null);
   const [evidenceOptions, setEvidenceOptions] = useState<PdsEvidenceOption[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  const workflowReturnFocusRef = useRef<{ focus(): void } | null>(null);
+  const pageSignatureShape = pageKeysForForm(form).join('|');
   const editable = detail?.fieldScope === 'FULL' && ['DRAFT', 'RETURNED'].includes(detail.status);
   const canCreate = canUpdate && (!detail || (detail.fieldScope === 'FULL' && !list.draft));
+  const submittedWorkflowActions = [
+    canReturn ? 'return' : null,
+    canCertify ? 'certify' : null,
+    canVerify ? 'verify' : null,
+  ].filter((action): action is WorkflowAction => action !== null);
+  const certifiedWorkflowActions = [
+    canCorrect ? 'correct' : null,
+    canGenerateOutputs ? 'outputs' : null,
+  ].filter((action): action is WorkflowAction => action !== null);
+  const workflowActions: WorkflowAction[] = !detail
+    ? []
+    : detail.status === 'DRAFT' || detail.status === 'RETURNED'
+      ? canSubmit
+        ? ['submit']
+        : []
+      : detail.status === 'SUBMITTED'
+        ? submittedWorkflowActions
+        : detail.status === 'CERTIFIED'
+          ? certifiedWorkflowActions
+          : [];
   const personal = detail?.personal;
   const family = detail?.family;
   const detailWorkExperience = detail?.workExperience ?? [];
@@ -570,6 +920,36 @@ export function PdsWorkspace({
   const workOptions = form.workExperience.map(
     (row, index) => [row.uiKey, workExperienceLabel(row, index)] as const,
   );
+
+  useEffect(() => {
+    setForm((current) => {
+      const pageKeys = pageKeysForForm(current);
+      const currentPageKeys = current.certification.pageSignatures.map(
+        (signature) => pdsPageKeys[signature.pageNo - 1],
+      );
+      if (
+        currentPageKeys.length === pageKeys.length &&
+        currentPageKeys.every((pageKey, index) => pageKey === pageKeys[index])
+      ) {
+        return current;
+      }
+      const signaturesByPage = new Map(
+        current.certification.pageSignatures.map((signature) => [
+          pdsPageKeys[signature.pageNo - 1],
+          signature,
+        ]),
+      );
+      return {
+        ...current,
+        certification: {
+          ...current.certification,
+          pageSignatures: pageKeys.map(
+            (pageKey) => signaturesByPage.get(pageKey) ?? blankPageSignature(pageKey),
+          ),
+        },
+      };
+    });
+  }, [pageSignatureShape]);
 
   useEffect(() => {
     if (error) (errorRef.current as { focus: () => void } | null)?.focus();
@@ -605,7 +985,100 @@ export function PdsWorkspace({
   function openForm() {
     setForm(formFromDetail(detail));
     setError(null);
+    setDeficiencyField(null);
     setOpen(true);
+  }
+
+  function openWorkflow(action: WorkflowAction, trigger: { focus(): void }) {
+    workflowReturnFocusRef.current = trigger;
+    setWorkflowAction(action);
+    setWorkflowReason('');
+    setWorkflowError(null);
+    setMessage(null);
+  }
+
+  function closeWorkflow(next: boolean) {
+    if (workflowBusy || next) return;
+    setWorkflowAction(null);
+    setWorkflowError(null);
+    const target = workflowReturnFocusRef.current;
+    setTimeout(() => target?.focus(), 0);
+  }
+
+  function applyWorkflowResult(action: WorkflowAction, value: unknown) {
+    if (value && typeof value === 'object' && typeof (value as PdsDetailData).id === 'string') {
+      const saved = value as PdsDetailData;
+      setDetail(saved);
+      setForm(formFromDetail(saved));
+      setList((current) => listAfterSave(current, saved));
+    }
+    setWorkflowAction(null);
+    setMessageTone('ok');
+    const outputCount =
+      action === 'outputs' &&
+      value &&
+      typeof value === 'object' &&
+      Array.isArray((value as { outputs?: unknown }).outputs)
+        ? (value as { outputs: unknown[] }).outputs.length
+        : null;
+    setMessage(
+      outputCount === null
+        ? workflowMessages[action]
+        : `${workflowMessages[action]} ${outputCount} artifact${outputCount === 1 ? '' : 's'} ready.`,
+    );
+    const target = workflowReturnFocusRef.current;
+    setTimeout(() => target?.focus(), 0);
+  }
+
+  async function submitWorkflow(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!detail || !workflowAction || workflowBusy) return;
+    setWorkflowBusy(true);
+    setWorkflowError(null);
+    try {
+      const actionPath =
+        workflowAction === 'certify'
+          ? `my-pds/${detail.id}/certify`
+          : workflowAction === 'outputs'
+            ? `pds/${detail.id}/render`
+            : `pds/${detail.id}/${workflowAction}`;
+      const body =
+        workflowAction === 'return'
+          ? { reason: workflowReason }
+          : workflowAction === 'correct'
+            ? { reason: workflowReason }
+            : workflowAction === 'certify'
+              ? { employeeCertificationAccepted: true }
+              : workflowAction === 'outputs'
+                ? {}
+                : undefined;
+      const response = await fetch(`/api/v1/agencies/${agencyId}/${actionPath}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const field = responseField(value);
+        if (workflowAction === 'submit' && field) {
+          setWorkflowAction(null);
+          setForm(formFromDetail(detail));
+          setOpen(true);
+          setError(responseError(value, 'The PDS action could not be completed.'));
+          setDeficiencyField(field);
+          return;
+        }
+        throw new Error(responseError(value, 'The PDS action could not be completed.'));
+      }
+      applyWorkflowResult(workflowAction, value);
+    } catch (caught: unknown) {
+      setWorkflowError(
+        caught instanceof Error ? caught.message : 'The PDS action could not be completed.',
+      );
+    } finally {
+      setWorkflowBusy(false);
+    }
   }
 
   function changePersonal(key: keyof PersonalForm, value: string) {
@@ -746,7 +1219,17 @@ export function PdsWorkspace({
                 {editable ? 'Edit Draft PDS' : 'Create Draft PDS'}
               </Button>
             </DialogTrigger>
-            <DialogContent aria-describedby="pds-dialog-description">
+            <DialogContent
+              aria-describedby="pds-dialog-description"
+              onOpenAutoFocus={(event) => {
+                if (!deficiencyField) return;
+                event.preventDefault();
+                setTimeout(() => {
+                  focusDeficiency(deficiencyField);
+                  setDeficiencyField(null);
+                }, 50);
+              }}
+            >
               <DialogHeader>
                 <div className="grid gap-1.5">
                   <DialogTitle>{editable ? 'Edit Draft PDS' : 'Create Draft PDS'}</DialogTitle>
@@ -786,11 +1269,13 @@ export function PdsWorkspace({
                     <div className="grid gap-4 min-[620px]:grid-cols-2">
                       <TextField
                         label="Surname"
+                        field="personal.surname"
                         value={form.personal.surname}
                         onChange={(value) => changePersonal('surname', value)}
                       />
                       <TextField
                         label="First name"
+                        field="personal.firstName"
                         value={form.personal.firstName}
                         onChange={(value) => changePersonal('firstName', value)}
                       />
@@ -806,17 +1291,20 @@ export function PdsWorkspace({
                       />
                       <TextField
                         label="Birth date"
+                        field="personal.birthDate"
                         type="date"
                         value={form.personal.birthDate}
                         onChange={(value) => changePersonal('birthDate', value)}
                       />
                       <TextField
                         label="Place of birth"
+                        field="personal.birthPlace"
                         value={form.personal.birthPlace}
                         onChange={(value) => changePersonal('birthPlace', value)}
                       />
                       <SelectField
                         label="Sex at birth"
+                        field="personal.sex"
                         value={form.personal.sex}
                         onChange={(value) => changePersonal('sex', value)}
                         options={[
@@ -826,6 +1314,7 @@ export function PdsWorkspace({
                       />
                       <SelectField
                         label="Civil status"
+                        field="personal.civilStatus"
                         value={form.personal.civilStatus}
                         onChange={(value) => changePersonal('civilStatus', value)}
                         options={[
@@ -846,6 +1335,7 @@ export function PdsWorkspace({
                       )}
                       <TextField
                         label="Height (metres)"
+                        field="personal.heightMeters"
                         type="number"
                         min="0"
                         step="0.001"
@@ -854,6 +1344,7 @@ export function PdsWorkspace({
                       />
                       <TextField
                         label="Weight (kilograms)"
+                        field="personal.weightKilograms"
                         type="number"
                         min="0"
                         step="0.001"
@@ -862,6 +1353,7 @@ export function PdsWorkspace({
                       />
                       <TextField
                         label="Blood type"
+                        field="personal.bloodType"
                         value={form.personal.bloodType}
                         onChange={(value) => changePersonal('bloodType', value)}
                       />
@@ -873,6 +1365,7 @@ export function PdsWorkspace({
                         <TextField
                           key={key}
                           label={label}
+                          field={`personal.${key}`}
                           value={form.personal[key]}
                           onChange={(value) => changePersonal(key, value)}
                         />
@@ -883,6 +1376,7 @@ export function PdsWorkspace({
                     <div className="grid gap-4 min-[620px]:grid-cols-2">
                       <SelectField
                         label="Citizenship"
+                        field="personal.citizenship"
                         value={form.personal.citizenship}
                         onChange={(value) => changePersonal('citizenship', value)}
                         options={[
@@ -894,6 +1388,7 @@ export function PdsWorkspace({
                         <>
                           <SelectField
                             label="Dual citizenship by"
+                            field="personal.dualCitizenshipType"
                             value={form.personal.dualCitizenshipType}
                             onChange={(value) => changePersonal('dualCitizenshipType', value)}
                             options={[
@@ -903,6 +1398,7 @@ export function PdsWorkspace({
                           />
                           <SelectField
                             label="Other citizenship country"
+                            field="personal.dualCitizenshipCountry"
                             value={form.personal.dualCitizenshipCountry}
                             onChange={(value) => changePersonal('dualCitizenshipCountry', value)}
                             options={list.citizenshipCountries.map(
@@ -920,6 +1416,7 @@ export function PdsWorkspace({
                         <h3 className="m-0 text-xs font-[680] text-ink">Residential address</h3>
                         <AddressFields
                           value={form.personal.residentialAddress}
+                          fieldPrefix="personal.residentialAddress"
                           onChange={(key, value) => changeAddress('residentialAddress', key, value)}
                         />
                       </div>
@@ -927,6 +1424,7 @@ export function PdsWorkspace({
                         <h3 className="m-0 text-xs font-[680] text-ink">Permanent address</h3>
                         <AddressFields
                           value={form.personal.permanentAddress}
+                          fieldPrefix="personal.permanentAddress"
                           onChange={(key, value) => changeAddress('permanentAddress', key, value)}
                         />
                       </div>
@@ -938,6 +1436,7 @@ export function PdsWorkspace({
                         <TextField
                           key={key}
                           label={label}
+                          field={`personal.${key}`}
                           type={key === 'emailAddress' ? 'email' : 'text'}
                           value={form.personal[key]}
                           onChange={(value) => changePersonal(key, value)}
@@ -947,20 +1446,27 @@ export function PdsWorkspace({
                   </FormSection>
                   <FormSection item="22" title="Spouse">
                     <div className="grid gap-4">
-                      <NameFields value={form.spouse} onChange={changeSpouse} />
+                      <NameFields
+                        value={form.spouse}
+                        fieldPrefix="family.spouse"
+                        onChange={changeSpouse}
+                      />
                       <div className="grid gap-4 min-[620px]:grid-cols-2">
                         <TextField
                           label="Occupation"
+                          field="family.spouse.occupation"
                           value={form.spouse.occupation}
                           onChange={(value) => changeSpouse('occupation', value)}
                         />
                         <TextField
                           label="Employer / business name"
+                          field="family.spouse.employerBusinessName"
                           value={form.spouse.employerBusinessName}
                           onChange={(value) => changeSpouse('employerBusinessName', value)}
                         />
                         <TextField
                           label="Telephone"
+                          field="family.spouse.telephoneNumber"
                           value={form.spouse.telephoneNumber}
                           onChange={(value) => changeSpouse('telephoneNumber', value)}
                         />
@@ -968,6 +1474,7 @@ export function PdsWorkspace({
                       <h3 className="m-0 text-xs font-[680] text-ink">Spouse business address</h3>
                       <AddressFields
                         value={form.spouse.businessAddress}
+                        fieldPrefix="family.spouse.businessAddress"
                         onChange={changeSpouseAddress}
                       />
                     </div>
@@ -1002,6 +1509,7 @@ export function PdsWorkspace({
                           <div className="grid gap-4 min-[620px]:grid-cols-2">
                             <TextField
                               label="Full name"
+                              field={`family.children.${index}.fullName`}
                               value={child.fullName}
                               onChange={(value) =>
                                 setForm((current) => ({
@@ -1015,6 +1523,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Date of birth"
+                              field={`family.children.${index}.birthDate`}
                               type="date"
                               value={child.birthDate}
                               onChange={(value) =>
@@ -1049,12 +1558,14 @@ export function PdsWorkspace({
                   <FormSection item="24" title="Father">
                     <NameFields
                       value={form.father}
+                      fieldPrefix="family.father"
                       onChange={(key, value) => changeName('father', key, value)}
                     />
                   </FormSection>
                   <FormSection item="25" title="Mother’s maiden name">
                     <NameFields
                       value={form.mother}
+                      fieldPrefix="family.mother"
                       onChange={(key, value) => changeName('mother', key, value)}
                       includeNameExtension={false}
                     />
@@ -1113,6 +1624,7 @@ export function PdsWorkspace({
                           <div className="grid gap-4">
                             <ToggleField
                               label="Current work"
+                              field={`workExperience.${index}.isCurrent`}
                               checked={row.isCurrent}
                               onChange={(checked) =>
                                 setForm((current) => ({
@@ -1132,6 +1644,7 @@ export function PdsWorkspace({
                             <div className="grid gap-4 min-[620px]:grid-cols-2">
                               <TextField
                                 label="Inclusive from"
+                                field={`workExperience.${index}.inclusiveFrom`}
                                 type="date"
                                 value={row.inclusiveFrom}
                                 onChange={(value) =>
@@ -1150,6 +1663,7 @@ export function PdsWorkspace({
                               />
                               <TextField
                                 label="Inclusive to"
+                                field={`workExperience.${index}.inclusiveTo`}
                                 type="date"
                                 value={row.inclusiveTo}
                                 disabled={row.isCurrent}
@@ -1169,6 +1683,7 @@ export function PdsWorkspace({
                               />
                               <TextField
                                 label="Position title"
+                                field={`workExperience.${index}.positionTitle`}
                                 value={row.positionTitle}
                                 onChange={(value) =>
                                   setForm((current) => ({
@@ -1186,6 +1701,7 @@ export function PdsWorkspace({
                               />
                               <TextField
                                 label="Department / agency / office / company"
+                                field={`workExperience.${index}.departmentAgencyOfficeCompany`}
                                 value={row.departmentAgencyOfficeCompany}
                                 onChange={(value) =>
                                   setForm((current) => ({
@@ -1203,6 +1719,7 @@ export function PdsWorkspace({
                               />
                               <TextField
                                 label="Monthly salary"
+                                field={`workExperience.${index}.monthlySalary`}
                                 type="number"
                                 min="0"
                                 step="0.01"
@@ -1223,6 +1740,7 @@ export function PdsWorkspace({
                               />
                               <TextField
                                 label="Salary / job / pay grade and step"
+                                field={`workExperience.${index}.salaryGradeStep`}
                                 value={row.salaryGradeStep}
                                 onChange={(value) =>
                                   setForm((current) => ({
@@ -1240,6 +1758,7 @@ export function PdsWorkspace({
                               />
                               <TextField
                                 label="Status of appointment"
+                                field={`workExperience.${index}.appointmentStatus`}
                                 value={row.appointmentStatus}
                                 onChange={(value) =>
                                   setForm((current) => ({
@@ -1257,6 +1776,7 @@ export function PdsWorkspace({
                               />
                               <SelectField
                                 label="Government service"
+                                field={`workExperience.${index}.governmentService`}
                                 value={row.governmentService}
                                 onChange={(value) =>
                                   setForm((current) => ({
@@ -1297,6 +1817,7 @@ export function PdsWorkspace({
                         </RepeatableRow>
                       ))}
                       <Button
+                        data-pds-field="workExperience"
                         type="button"
                         variant="secondary"
                         size="default"
@@ -1345,6 +1866,7 @@ export function PdsWorkspace({
                           <div className="grid gap-4 min-[620px]:grid-cols-2">
                             <TextField
                               label="Organization name and address"
+                              field={`voluntaryWork.${index}.organizationNameAddress`}
                               value={row.organizationNameAddress}
                               onChange={(value) =>
                                 setForm((current) => ({
@@ -1358,6 +1880,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Position / nature of work"
+                              field={`voluntaryWork.${index}.positionNatureOfWork`}
                               value={row.positionNatureOfWork}
                               onChange={(value) =>
                                 setForm((current) => ({
@@ -1371,6 +1894,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Inclusive from"
+                              field={`voluntaryWork.${index}.inclusiveFrom`}
                               type="date"
                               value={row.inclusiveFrom}
                               onChange={(value) =>
@@ -1385,6 +1909,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Inclusive to"
+                              field={`voluntaryWork.${index}.inclusiveTo`}
                               type="date"
                               value={row.inclusiveTo}
                               onChange={(value) =>
@@ -1399,6 +1924,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Number of hours"
+                              field={`voluntaryWork.${index}.hours`}
                               type="number"
                               min="0"
                               step="0.01"
@@ -1432,6 +1958,7 @@ export function PdsWorkspace({
                         </RepeatableRow>
                       ))}
                       <Button
+                        data-pds-field="voluntaryWork"
                         type="button"
                         variant="secondary"
                         size="default"
@@ -1491,6 +2018,7 @@ export function PdsWorkspace({
                           <div className="grid gap-4 min-[620px]:grid-cols-2">
                             <TextField
                               label="Intervention / training title"
+                              field={`learningAndDevelopment.${index}.interventionTitle`}
                               value={row.interventionTitle}
                               onChange={(value) =>
                                 setForm((current) => ({
@@ -1505,6 +2033,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Type"
+                              field={`learningAndDevelopment.${index}.type`}
                               value={row.type}
                               onChange={(value) =>
                                 setForm((current) => ({
@@ -1519,6 +2048,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Attendance from"
+                              field={`learningAndDevelopment.${index}.attendanceFrom`}
                               type="date"
                               value={row.attendanceFrom}
                               onChange={(value) =>
@@ -1534,6 +2064,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Attendance to"
+                              field={`learningAndDevelopment.${index}.attendanceTo`}
                               type="date"
                               value={row.attendanceTo}
                               onChange={(value) =>
@@ -1549,6 +2080,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Number of hours"
+                              field={`learningAndDevelopment.${index}.hours`}
                               type="number"
                               min="0"
                               step="0.01"
@@ -1566,6 +2098,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Conducted / sponsored by"
+                              field={`learningAndDevelopment.${index}.conductedSponsoredBy`}
                               value={row.conductedSponsoredBy}
                               onChange={(value) =>
                                 setForm((current) => ({
@@ -1598,6 +2131,7 @@ export function PdsWorkspace({
                         </RepeatableRow>
                       ))}
                       <Button
+                        data-pds-field="learningAndDevelopment"
                         type="button"
                         variant="secondary"
                         size="default"
@@ -1675,6 +2209,48 @@ export function PdsWorkspace({
                                 }))
                               }
                             />
+                            <div className="grid gap-4 min-[620px]:grid-cols-3">
+                              <TextField
+                                label="WES signature document ID"
+                                value={artifact.signatureDocumentId}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                      ...item,
+                                      signatureDocumentId: value,
+                                    })),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="WES signature document version ID"
+                                value={artifact.signatureDocumentVersionId}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                      ...item,
+                                      signatureDocumentVersionId: value,
+                                    })),
+                                  }))
+                                }
+                              />
+                              <TextField
+                                label="WES signed date"
+                                type="date"
+                                value={artifact.signedAt}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    wes: updateAt(current.wes, artifactIndex, (item) => ({
+                                      ...item,
+                                      signedAt: value,
+                                    })),
+                                  }))
+                                }
+                              />
+                            </div>
                             <div className="grid gap-4">
                               {artifact.entries.map((entry, entryIndex) => (
                                 <RepeatableRow
@@ -1737,6 +2313,7 @@ export function PdsWorkspace({
                                     <div className="grid gap-4 min-[620px]:grid-cols-2">
                                       <TextField
                                         label="Duration text"
+                                        field={`wes.${artifactIndex}.entries.${entryIndex}.durationText`}
                                         value={entry.durationText}
                                         onChange={(value) =>
                                           setForm((current) => ({
@@ -1758,6 +2335,7 @@ export function PdsWorkspace({
                                       />
                                       <TextField
                                         label="Position"
+                                        field={`wes.${artifactIndex}.entries.${entryIndex}.position`}
                                         value={entry.position}
                                         onChange={(value) =>
                                           setForm((current) => ({
@@ -1779,6 +2357,7 @@ export function PdsWorkspace({
                                       />
                                       <TextField
                                         label="Office / unit"
+                                        field={`wes.${artifactIndex}.entries.${entryIndex}.officeUnit`}
                                         value={entry.officeUnit}
                                         onChange={(value) =>
                                           setForm((current) => ({
@@ -1800,6 +2379,7 @@ export function PdsWorkspace({
                                       />
                                       <TextField
                                         label="Immediate supervisor"
+                                        field={`wes.${artifactIndex}.entries.${entryIndex}.immediateSupervisor`}
                                         value={entry.immediateSupervisor}
                                         onChange={(value) =>
                                           setForm((current) => ({
@@ -1821,6 +2401,7 @@ export function PdsWorkspace({
                                       />
                                       <TextField
                                         label="Agency / organization / location"
+                                        field={`wes.${artifactIndex}.entries.${entryIndex}.agencyOrganizationLocation`}
                                         value={entry.agencyOrganizationLocation}
                                         onChange={(value) =>
                                           setForm((current) => ({
@@ -1859,6 +2440,7 @@ export function PdsWorkspace({
                                     />
                                     <TextAreaField
                                       label="Summary of actual duties"
+                                      field={`wes.${artifactIndex}.entries.${entryIndex}.actualDuties`}
                                       value={entry.actualDuties}
                                       onChange={(value) =>
                                         setForm((current) => ({
@@ -1878,6 +2460,7 @@ export function PdsWorkspace({
                                 </RepeatableRow>
                               ))}
                               <Button
+                                data-pds-field="wes.entries"
                                 type="button"
                                 variant="secondary"
                                 size="default"
@@ -1904,7 +2487,10 @@ export function PdsWorkspace({
                         size="default"
                         className="justify-self-start"
                         onClick={() =>
-                          setForm((current) => ({ ...current, wes: [...current.wes, blankWes()] }))
+                          setForm((current) => ({
+                            ...current,
+                            wes: [...current.wes, blankWes()],
+                          }))
                         }
                       >
                         Add WES artifact
@@ -1945,6 +2531,7 @@ export function PdsWorkspace({
                           <div className="grid gap-4 min-[620px]:grid-cols-2">
                             <SelectField
                               label="Education level"
+                              field={`education.${index}.level`}
                               value={record.level}
                               onChange={(value) => changeEducation(index, 'level', value)}
                               options={educationLevelOptions}
@@ -1952,18 +2539,21 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Name of school"
+                              field={`education.${index}.schoolName`}
                               value={record.schoolName}
                               onChange={(value) => changeEducation(index, 'schoolName', value)}
                               required
                             />
                             <TextField
                               label="Basic education / degree / course"
+                              field={`education.${index}.degreeCourse`}
                               value={record.degreeCourse}
                               onChange={(value) => changeEducation(index, 'degreeCourse', value)}
                               required
                             />
                             <TextField
                               label="Period of attendance"
+                              field={`education.${index}.periodOfAttendance`}
                               value={record.periodOfAttendance}
                               onChange={(value) =>
                                 changeEducation(index, 'periodOfAttendance', value)
@@ -1972,6 +2562,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Highest level / units earned"
+                              field={`education.${index}.highestLevelUnits`}
                               value={record.highestLevelUnits}
                               onChange={(value) =>
                                 changeEducation(index, 'highestLevelUnits', value)
@@ -1979,6 +2570,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Year graduated"
+                              field={`education.${index}.yearGraduated`}
                               type="number"
                               min="1900"
                               value={record.yearGraduated}
@@ -1986,6 +2578,7 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Scholarship / academic honors"
+                              field={`education.${index}.honors`}
                               value={record.honors}
                               onChange={(value) => changeEducation(index, 'honors', value)}
                             />
@@ -2005,6 +2598,7 @@ export function PdsWorkspace({
                         </div>
                       ))}
                       <Button
+                        data-pds-field="education"
                         type="button"
                         variant="secondary"
                         size="default"
@@ -2059,6 +2653,7 @@ export function PdsWorkspace({
                           <div className="grid gap-4 min-[620px]:grid-cols-2">
                             <TextField
                               label="Eligibility name / category"
+                              field={`eligibility.${index}.eligibilityName`}
                               value={record.eligibilityName}
                               list="pds-eligibility-categories"
                               onChange={(value) =>
@@ -2068,27 +2663,32 @@ export function PdsWorkspace({
                             />
                             <TextField
                               label="Rating"
+                              field={`eligibility.${index}.rating`}
                               value={record.rating}
                               onChange={(value) => changeEligibility(index, 'rating', value)}
                             />
                             <TextField
                               label="Date of examination / conferment"
+                              field={`eligibility.${index}.examDate`}
                               type="date"
                               value={record.examDate}
                               onChange={(value) => changeEligibility(index, 'examDate', value)}
                             />
                             <TextField
                               label="Place of examination / conferment"
+                              field={`eligibility.${index}.examPlace`}
                               value={record.examPlace}
                               onChange={(value) => changeEligibility(index, 'examPlace', value)}
                             />
                             <TextField
                               label="License number"
+                              field={`eligibility.${index}.licenseNo`}
                               value={record.licenseNo}
                               onChange={(value) => changeEligibility(index, 'licenseNo', value)}
                             />
                             <TextField
                               label="License date of validity"
+                              field={`eligibility.${index}.validUntil`}
                               type="date"
                               value={record.validUntil}
                               onChange={(value) => changeEligibility(index, 'validUntil', value)}
@@ -2109,6 +2709,7 @@ export function PdsWorkspace({
                         </div>
                       ))}
                       <Button
+                        data-pds-field="eligibility"
                         type="button"
                         variant="secondary"
                         size="default"
@@ -2122,6 +2723,652 @@ export function PdsWorkspace({
                       >
                         Add eligibility row
                       </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="31–33" title="Other information">
+                    <div className="grid gap-4">
+                      <TextAreaField
+                        label="Special skills and hobbies"
+                        value={form.otherInformation.specialSkillsHobbies}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            otherInformation: {
+                              ...current.otherInformation,
+                              specialSkillsHobbies: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextAreaField
+                        label="Non-academic distinctions"
+                        value={form.otherInformation.nonAcademicDistinctions}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            otherInformation: {
+                              ...current.otherInformation,
+                              nonAcademicDistinctions: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextAreaField
+                        label="Membership in associations"
+                        value={form.otherInformation.memberships}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            otherInformation: { ...current.otherInformation, memberships: value },
+                          }))
+                        }
+                      />
+                    </div>
+                  </FormSection>
+                  <FormSection item="34–40" title="Declarations">
+                    <div className="grid gap-4">
+                      {declarationFields.map(([key, label, detailsKey]) => (
+                        <div
+                          key={key}
+                          className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        >
+                          <SelectField
+                            label={label}
+                            field={`declarations.${declarationApiFields[key]}`}
+                            value={form.declarations[key]}
+                            onChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                declarations: {
+                                  ...current.declarations,
+                                  [key]: value,
+                                  ...(value !== 'YES'
+                                    ? {
+                                        [detailsKey]: '',
+                                        ...(key === 'criminalCharge'
+                                          ? {
+                                              criminalChargeDateFiled: '',
+                                              criminalChargeDateFiledUnknown: 'NO',
+                                              criminalChargeStatus: '',
+                                            }
+                                          : {}),
+                                        ...(key === 'separatedFromService'
+                                          ? { separationMode: '' }
+                                          : {}),
+                                        ...(key === 'immigrant' ? { immigrantCountry: '' } : {}),
+                                        ...(key === 'disability' ? { disabilityIdNumber: '' } : {}),
+                                        ...(key === 'soloParent' ? { soloParentIdNumber: '' } : {}),
+                                      }
+                                    : {}),
+                                },
+                              }))
+                            }
+                            options={yesNoOptions}
+                            required
+                          />
+                          {form.declarations[key] === 'YES' && (
+                            <TextAreaField
+                              label={`${label} details`}
+                              field={`declarations.${declarationApiFields[detailsKey]}`}
+                              value={form.declarations[detailsKey]}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  declarations: { ...current.declarations, [detailsKey]: value },
+                                }))
+                              }
+                              required
+                            />
+                          )}
+                          {key === 'criminalCharge' && form.declarations[key] === 'YES' && (
+                            <div className="grid gap-4 min-[620px]:grid-cols-2">
+                              <TextField
+                                label="Date filed"
+                                field="declarations.criminalChargeDateFiled"
+                                type="date"
+                                value={form.declarations.criminalChargeDateFiled}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    declarations: {
+                                      ...current.declarations,
+                                      criminalChargeDateFiled: value,
+                                      ...(value ? { criminalChargeDateFiledUnknown: 'NO' } : {}),
+                                    },
+                                  }))
+                                }
+                              />
+                              <SelectField
+                                label="Date filed unknown?"
+                                field="declarations.criminalChargeDateFiledUnknown"
+                                value={form.declarations.criminalChargeDateFiledUnknown}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    declarations: {
+                                      ...current.declarations,
+                                      criminalChargeDateFiledUnknown: value,
+                                      ...(value === 'YES' ? { criminalChargeDateFiled: '' } : {}),
+                                    },
+                                  }))
+                                }
+                                options={yesNoOptions}
+                              />
+                              <TextField
+                                label="Case status"
+                                field="declarations.criminalChargeStatus"
+                                value={form.declarations.criminalChargeStatus}
+                                onChange={(value) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    declarations: {
+                                      ...current.declarations,
+                                      criminalChargeStatus: value,
+                                    },
+                                  }))
+                                }
+                                required
+                              />
+                            </div>
+                          )}
+                          {key === 'separatedFromService' && form.declarations[key] === 'YES' && (
+                            <TextField
+                              label="Separation mode"
+                              field="declarations.separationMode"
+                              value={form.declarations.separationMode}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  declarations: { ...current.declarations, separationMode: value },
+                                }))
+                              }
+                              required
+                            />
+                          )}
+                          {key === 'immigrant' && form.declarations[key] === 'YES' && (
+                            <SelectField
+                              label="Country of immigration or permanent residence"
+                              field="declarations.immigrantCountry"
+                              value={form.declarations.immigrantCountry}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  declarations: {
+                                    ...current.declarations,
+                                    immigrantCountry: value,
+                                  },
+                                }))
+                              }
+                              options={list.citizenshipCountries.map(
+                                (country) => [country, country] as const,
+                              )}
+                              required
+                            />
+                          )}
+                          {key === 'disability' && form.declarations[key] === 'YES' && (
+                            <TextField
+                              label="Disability ID number"
+                              field="declarations.disabilityIdNumber"
+                              value={form.declarations.disabilityIdNumber}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  declarations: {
+                                    ...current.declarations,
+                                    disabilityIdNumber: value,
+                                  },
+                                }))
+                              }
+                              required
+                            />
+                          )}
+                          {key === 'soloParent' && form.declarations[key] === 'YES' && (
+                            <TextField
+                              label="Solo parent ID number"
+                              field="declarations.soloParentIdNumber"
+                              value={form.declarations.soloParentIdNumber}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  declarations: {
+                                    ...current.declarations,
+                                    soloParentIdNumber: value,
+                                  },
+                                }))
+                              }
+                              required
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </FormSection>
+                  <FormSection item="41" title="References">
+                    <div className="grid gap-4">
+                      {form.references.length === 0 && (
+                        <EmptyRows message="No references added yet." />
+                      )}
+                      {form.references.map((record, index) => (
+                        <RepeatableRow
+                          key={record.uiKey}
+                          title="Reference"
+                          index={index}
+                          total={form.references.length}
+                          onMoveUp={() =>
+                            setForm((current) => ({
+                              ...current,
+                              references: moveAt(current.references, index, -1),
+                            }))
+                          }
+                          onMoveDown={() =>
+                            setForm((current) => ({
+                              ...current,
+                              references: moveAt(current.references, index, 1),
+                            }))
+                          }
+                          onRemove={() =>
+                            setForm((current) => ({
+                              ...current,
+                              references: removeAt(current.references, index),
+                            }))
+                          }
+                        >
+                          <div className="grid gap-4 min-[620px]:grid-cols-3">
+                            <TextField
+                              label="Reference name"
+                              field={`references.${index}.name`}
+                              value={record.name}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  references: updateAt(current.references, index, (item) => ({
+                                    ...item,
+                                    name: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Reference address"
+                              field={`references.${index}.address`}
+                              value={record.address}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  references: updateAt(current.references, index, (item) => ({
+                                    ...item,
+                                    address: value,
+                                  })),
+                                }))
+                              }
+                            />
+                            <TextField
+                              label="Reference telephone"
+                              field={`references.${index}.contact`}
+                              value={record.telephoneNumber}
+                              onChange={(value) =>
+                                setForm((current) => ({
+                                  ...current,
+                                  references: updateAt(current.references, index, (item) => ({
+                                    ...item,
+                                    telephoneNumber: value,
+                                  })),
+                                }))
+                              }
+                            />
+                          </div>
+                        </RepeatableRow>
+                      ))}
+                      <Button
+                        data-pds-field="references"
+                        type="button"
+                        variant="secondary"
+                        size="default"
+                        className="justify-self-start"
+                        onClick={() =>
+                          setForm((current) => ({
+                            ...current,
+                            references: [...current.references, blankReference()],
+                          }))
+                        }
+                      >
+                        Add reference
+                      </Button>
+                    </div>
+                  </FormSection>
+                  <FormSection item="42" title="Certification and evidence">
+                    <div className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4">
+                      <strong className="text-xs font-[680] text-ink">
+                        Employee certification statements
+                      </strong>
+                      <p className="text-sm leading-6 text-ink-muted">
+                        {pdsCertificationStatements.truthDeclaration}
+                      </p>
+                      <ToggleField
+                        label="Truth declaration accepted"
+                        field="certification.truthDeclarationAccepted"
+                        checked={form.certification.truthDeclarationAccepted}
+                        onChange={(checked) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              truthDeclarationAccepted: checked,
+                            },
+                          }))
+                        }
+                      />
+                      <p className="text-sm leading-6 text-ink-muted">
+                        {pdsCertificationStatements.verificationAuthorization}
+                      </p>
+                      <ToggleField
+                        label="Verification authorization accepted"
+                        field="certification.verificationAuthorizationAccepted"
+                        checked={form.certification.verificationAuthorizationAccepted}
+                        onChange={(checked) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              verificationAuthorizationAccepted: checked,
+                            },
+                          }))
+                        }
+                      />
+                      <p className="text-sm leading-6 text-ink-muted">
+                        {pdsCertificationStatements.misrepresentationWarning}
+                      </p>
+                      <ToggleField
+                        label="Misrepresentation warning accepted"
+                        field="certification.misrepresentationWarningAccepted"
+                        checked={form.certification.misrepresentationWarningAccepted}
+                        onChange={(checked) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              misrepresentationWarningAccepted: checked,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-4 min-[620px]:grid-cols-2">
+                      <TextField
+                        label="Government ID type"
+                        value={form.certification.governmentIdType}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: { ...current.certification, governmentIdType: value },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Government ID number"
+                        value={form.certification.governmentIdNumber}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              governmentIdNumber: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Government ID issued date"
+                        type="date"
+                        value={form.certification.governmentIdIssuedDate}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              governmentIdIssuedDate: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Government ID issued place"
+                        value={form.certification.governmentIdIssuedPlace}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              governmentIdIssuedPlace: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Photo document ID"
+                        value={form.certification.photoDocumentId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: { ...current.certification, photoDocumentId: value },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Photo document version ID"
+                        value={form.certification.photoDocumentVersionId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              photoDocumentVersionId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Signature document ID"
+                        value={form.certification.signatureDocumentId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              signatureDocumentId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Signature document version ID"
+                        value={form.certification.signatureDocumentVersionId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              signatureDocumentVersionId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Employee signature date"
+                        type="date"
+                        value={form.certification.employeeSignatureDate}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              employeeSignatureDate: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Thumbmark document ID"
+                        value={form.certification.thumbmarkDocumentId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              thumbmarkDocumentId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Thumbmark document version ID"
+                        value={form.certification.thumbmarkDocumentVersionId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              thumbmarkDocumentVersionId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Oath administrator signature document ID"
+                        value={form.certification.oathAdminSignatureDocumentId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              oathAdminSignatureDocumentId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Oath administrator signature document version ID"
+                        value={form.certification.oathAdminSignatureDocumentVersionId}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              oathAdminSignatureDocumentVersionId: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Subscribed and sworn date"
+                        type="date"
+                        value={form.certification.oathDate}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: { ...current.certification, oathDate: value },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Oath administration date"
+                        type="date"
+                        value={form.certification.oathAdministeredAt}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              oathAdministeredAt: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextField
+                        label="Administering officer"
+                        value={form.certification.oathAdministeredBy}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              oathAdministeredBy: value,
+                            },
+                          }))
+                        }
+                      />
+                      <TextAreaField
+                        label="Subscribed and sworn text"
+                        value={form.certification.subscribedAndSwornText}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            certification: {
+                              ...current.certification,
+                              subscribedAndSwornText: value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4">
+                      <strong className="text-xs font-[680] text-ink">Per-page signatures</strong>
+                      {form.certification.pageSignatures.map((signature, index) => (
+                        <div key={signature.pageNo} className="grid gap-4 min-[620px]:grid-cols-3">
+                          <TextField
+                            label={`Page ${signature.pageNo} signature document ID`}
+                            value={signature.signatureDocumentId}
+                            onChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                certification: {
+                                  ...current.certification,
+                                  pageSignatures: updateAt(
+                                    current.certification.pageSignatures,
+                                    index,
+                                    (item) => ({ ...item, signatureDocumentId: value }),
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                          <TextField
+                            label={`Page ${signature.pageNo} signature document version ID`}
+                            value={signature.signatureDocumentVersionId}
+                            onChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                certification: {
+                                  ...current.certification,
+                                  pageSignatures: updateAt(
+                                    current.certification.pageSignatures,
+                                    index,
+                                    (item) => ({ ...item, signatureDocumentVersionId: value }),
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                          <TextField
+                            label={`Page ${signature.pageNo} signed date`}
+                            type="date"
+                            value={signature.signedAt}
+                            onChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                certification: {
+                                  ...current.certification,
+                                  pageSignatures: updateAt(
+                                    current.certification.pageSignatures,
+                                    index,
+                                    (item) => ({ ...item, signedAt: value }),
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      ))}
                     </div>
                   </FormSection>
                 </form>
@@ -2145,7 +3392,35 @@ export function PdsWorkspace({
             </DialogContent>
           </Dialog>
         )}
+        {detail?.fieldScope === 'FULL' && workflowActions.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2">
+            {workflowActions.map((action) => (
+              <Button
+                key={action}
+                type="button"
+                variant="secondary"
+                size="default"
+                disabled={workflowBusy}
+                onClick={(event) =>
+                  openWorkflow(action, event.currentTarget as unknown as { focus(): void })
+                }
+              >
+                {workflowCopy[action].submit}
+              </Button>
+            ))}
+          </div>
+        )}
       </header>
+
+      <WorkflowDialog
+        action={workflowAction}
+        busy={workflowBusy}
+        error={workflowError}
+        reason={workflowReason}
+        onReasonChange={setWorkflowReason}
+        onClose={closeWorkflow}
+        onSubmit={submitWorkflow}
+      />
 
       {message && (
         <p
@@ -2615,10 +3890,6 @@ export function PdsWorkspace({
           )}
         </section>
       </div>
-      <p className="m-0 border-l-2 border-[#d99a32] bg-[#fff9ec] px-4 py-3 text-xs leading-5 text-[#70490f]">
-        Submission, verification, certification, generated output, and later PDS correction are
-        separate workflows and are not available in this Draft maintenance slice.
-      </p>
     </>
   );
 }

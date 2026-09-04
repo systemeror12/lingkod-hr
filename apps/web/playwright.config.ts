@@ -1,8 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const oidcIssuer = 'http://127.0.0.1:4100';
-const apiUrl = 'http://localhost:3101';
-const appUrl = 'http://localhost:3100';
+const oidcIssuer = `http://127.0.0.1:${process.env.PLAYWRIGHT_OIDC_PORT ?? '4100'}`;
+const apiPort = process.env.PLAYWRIGHT_API_PORT ?? '3101';
+const appPort = process.env.PLAYWRIGHT_APP_PORT ?? '3100';
+const apiUrl = `http://localhost:${apiPort}`;
+const appUrl = `http://localhost:${appPort}`;
 
 process.env.OIDC_ISSUER = oidcIssuer;
 
@@ -36,14 +38,14 @@ export default defineConfig({
     },
     {
       command: 'pnpm exec turbo run dev --filter=@lingkod-hr/api',
-      url: `${apiUrl}/api/v1/health`,
+      url: `http://127.0.0.1:${apiPort}/api/v1/health`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       env: {
         ...process.env,
         APP_URL: appUrl,
         API_URL: apiUrl,
-        API_PORT: '3101',
+        API_PORT: apiPort,
         OIDC_ISSUER: oidcIssuer,
         OIDC_CLIENT_ID: 'local-client',
         OIDC_CLIENT_SECRET: 'local-client-secret',
@@ -51,8 +53,8 @@ export default defineConfig({
       },
     },
     {
-      command: 'pnpm exec next dev --hostname 0.0.0.0 --port 3100',
-      url: `${appUrl}/health`,
+      command: `pnpm exec next dev --hostname 0.0.0.0 --port ${appPort}`,
+      url: `http://127.0.0.1:${appPort}/health`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       env: {
