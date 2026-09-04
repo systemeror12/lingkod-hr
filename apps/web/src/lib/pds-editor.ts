@@ -46,12 +46,6 @@ export interface PdsPersonalData {
   heightMeters: number | null;
   weightKilograms: number | null;
   bloodType: string | null;
-  umidIdNumber: string | null;
-  pagibigIdNumber: string | null;
-  philhealthNumber: string | null;
-  philSysCardNumber: string | null;
-  tinNumber: string | null;
-  agencyEmployeeNumber: string | null;
   citizenship: string | null;
   dualCitizenshipType: string | null;
   dualCitizenshipCountry: string | null;
@@ -323,12 +317,6 @@ export interface PersonalForm {
   heightMeters: string;
   weightKilograms: string;
   bloodType: string;
-  umidIdNumber: string;
-  pagibigIdNumber: string;
-  philhealthNumber: string;
-  philSysCardNumber: string;
-  tinNumber: string;
-  agencyEmployeeNumber: string;
   citizenship: string;
   dualCitizenshipType: string;
   dualCitizenshipCountry: string;
@@ -473,12 +461,6 @@ export function blankPersonal(): PersonalForm {
     heightMeters: '',
     weightKilograms: '',
     bloodType: '',
-    umidIdNumber: '',
-    pagibigIdNumber: '',
-    philhealthNumber: '',
-    philSysCardNumber: '',
-    tinNumber: '',
-    agencyEmployeeNumber: '',
     citizenship: '',
     dualCitizenshipType: '',
     dualCitizenshipCountry: '',
@@ -679,12 +661,6 @@ export function formFromDetail(detail: PdsDetailData | null): PdsForm {
       heightMeters: stringValue(personal?.heightMeters),
       weightKilograms: stringValue(personal?.weightKilograms),
       bloodType: stringValue(personal?.bloodType),
-      umidIdNumber: stringValue(personal?.umidIdNumber),
-      pagibigIdNumber: stringValue(personal?.pagibigIdNumber),
-      philhealthNumber: stringValue(personal?.philhealthNumber),
-      philSysCardNumber: stringValue(personal?.philSysCardNumber),
-      tinNumber: stringValue(personal?.tinNumber),
-      agencyEmployeeNumber: stringValue(personal?.agencyEmployeeNumber),
       citizenship: stringValue(personal?.citizenship),
       dualCitizenshipType: stringValue(personal?.dualCitizenshipType),
       dualCitizenshipCountry: stringValue(personal?.dualCitizenshipCountry),
@@ -864,12 +840,6 @@ export function formPayload(form: PdsForm) {
       heightMeters: numberValue(personal.heightMeters),
       weightKilograms: numberValue(personal.weightKilograms),
       bloodType: nullable(personal.bloodType),
-      umidIdNumber: nullable(personal.umidIdNumber),
-      pagibigIdNumber: nullable(personal.pagibigIdNumber),
-      philhealthNumber: nullable(personal.philhealthNumber),
-      philSysCardNumber: nullable(personal.philSysCardNumber),
-      tinNumber: nullable(personal.tinNumber),
-      agencyEmployeeNumber: nullable(personal.agencyEmployeeNumber),
       citizenship: personal.citizenship || null,
       dualCitizenshipType: personal.dualCitizenshipType || null,
       dualCitizenshipCountry: nullable(personal.dualCitizenshipCountry),

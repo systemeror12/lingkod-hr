@@ -32,6 +32,7 @@ model Agency {
   sessions                      UserSession[]
   securityEvents                SecurityEvent[]
   auditEvents                   AuditEvent[]
+  governmentIdentifiers         GovernmentIdentifier[]
   organizationUnits             OrganizationUnit[]
   organizationUnitVersions      OrganizationUnitVersion[]
   documents                     Document[]
@@ -234,6 +235,8 @@ model AgencyMembership {
   effectuatedPersonnelBaselines          PersonnelBaseline[]            @relation("PersonnelBaselineEffectuator")
   createdServiceSegments                 ServiceSegment[]               @relation("ServiceSegmentCreator")
   createdPositionIncumbencies            PositionIncumbency[]           @relation("PositionIncumbencyCreator")
+  createdGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierCreator")
+  updatedGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierUpdater")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -450,6 +453,7 @@ model Document {
   pdsLearningDevelopmentEvidenceDocuments PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceDocument")
   pdsWesEvidenceDocuments                 PdsWesArtifact[]               @relation("PdsWesEvidenceDocument")
   personnelBaselineEvidenceDocuments      PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceDocument")
+  governmentIdentifierEvidenceDocuments   GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -486,6 +490,7 @@ model DocumentVersion {
   pdsLearningDevelopmentEvidenceVersions        PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceVersion")
   pdsWesEvidenceVersions                        PdsWesArtifact[]               @relation("PdsWesEvidenceVersion")
   personnelBaselineEvidenceVersions             PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceVersion")
+  governmentIdentifierEvidenceVersions          GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -732,6 +737,7 @@ model Employee {
   personnelBaselines    PersonnelBaseline[]  @relation("PersonnelBaselineEmployee")
   serviceSegments       ServiceSegment[]     @relation("ServiceSegmentEmployee")
   positionIncumbencies  PositionIncumbency[] @relation("PositionIncumbencyEmployee")
+  governmentIdentifiers GovernmentIdentifier[] @relation("EmployeeGovernmentIdentifiers")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -762,6 +768,44 @@ model EmployeeDocument {
   @@index([agencyId, employeeId, createdAt(sort: Desc)])
   @@index([agencyId, employeeId, releaseState])
   @@map("employee_documents")
+}
+
+model GovernmentIdentifier {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  identifierType            String    @map("identifier_type")
+  encryptedValue            Bytes     @map("encrypted_value")
+  encryptionVersion         Int       @default(1) @map("encryption_version") @db.SmallInt
+  maskedValue               String    @map("masked_value")
+  verifiedAt                DateTime? @map("verified_at") @db.Timestamptz(6)
+  status                    String    @default("ACTIVE")
+  effectiveFrom             DateTime  @map("effective_from") @db.Date
+  effectiveTo               DateTime? @map("effective_to") @db.Date
+  reason                    String?
+  evidenceDocumentId        String?   @map("evidence_document_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  replacesIdentifierId      String?   @map("replaces_identifier_id") @db.Uuid
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId     String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
+
+  agency                  Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                Employee             @relation("EmployeeGovernmentIdentifiers", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument        Document?            @relation("GovernmentIdentifierEvidenceDocument", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?     @relation("GovernmentIdentifierEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  replacesIdentifier      GovernmentIdentifier? @relation("GovernmentIdentifierReplacement", fields: [agencyId, replacesIdentifierId], references: [agencyId, id], onDelete: Restrict)
+  replacedByIdentifiers   GovernmentIdentifier[] @relation("GovernmentIdentifierReplacement")
+  createdBy               AgencyMembership     @relation("GovernmentIdentifierCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy               AgencyMembership     @relation("GovernmentIdentifierUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, replacesIdentifierId])
+  @@index([agencyId, employeeId, identifierType, effectiveFrom(sort: Desc)])
+  @@index([agencyId, employeeId, status])
+  @@map("government_identifiers")
 }
 
 model PdsVersion {

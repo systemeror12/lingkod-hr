@@ -12,6 +12,7 @@ import { EmployeesModule } from './employees/employees.module';
 import { PdsModule } from './pds/pds.module';
 import { EmployeeDocumentsModule } from './employee-documents/employee-documents.module';
 import { PersonnelBaselinesModule } from './personnel-baselines/personnel-baselines.module';
+import { GovernmentIdentifiersModule } from './government-identifiers/government-identifiers.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { PersonnelBaselinesModule } from './personnel-baselines/personnel-baseli
     PdsModule,
     EmployeeDocumentsModule,
     PersonnelBaselinesModule,
+    GovernmentIdentifiersModule,
   ],
   controllers: [HealthController],
 })

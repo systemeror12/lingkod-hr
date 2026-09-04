@@ -336,7 +336,6 @@ CREATE TABLE government_identifiers (
     CHECK (identifier_type IN ('GSIS','PHILHEALTH','PAGIBIG','TIN','OTHER')),
   encrypted_value bytea NOT NULL,
   masked_value text NOT NULL,
-  blind_index bytea,
   verified_at timestamptz,
   status text NOT NULL
     CHECK (status IN ('ACTIVE','REPLACED','INVALID')),
