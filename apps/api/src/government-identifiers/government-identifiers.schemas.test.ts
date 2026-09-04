@@ -6,17 +6,24 @@ import {
   governmentIdentifierRevealSchema,
 } from './government-identifiers.schemas';
 
-it('accepts the canonical identifier types and masked-response statuses', () => {
-  expect(
-    governmentIdentifierCreateSchema.parse({
-      identifierType: 'GSIS',
-      value: ' 12345678901 ',
-      effectiveFrom: '2026-09-01',
-      verifiedAt: '2026-09-01T08:00:00.000Z',
-      evidenceDocumentId: '00000000-0000-4000-8000-000000000001',
-      evidenceDocumentVersionId: '00000000-0000-4000-8000-000000000002',
-    }),
-  ).toMatchObject({ identifierType: 'GSIS', value: '12345678901' });
+it('accepts exactly the identifier types in the approved Revised 2026 PDS contract', () => {
+  for (const identifierType of ['UMID', 'PAGIBIG', 'PHILHEALTH', 'PHILSYS_PCN', 'TIN']) {
+    expect(
+      governmentIdentifierCreateSchema.parse({
+        identifierType,
+        value: ' 12345678901 ',
+        effectiveFrom: '2026-09-01',
+        verifiedAt: '2026-09-01T08:00:00.000Z',
+        evidenceDocumentId: '00000000-0000-4000-8000-000000000001',
+        evidenceDocumentVersionId: '00000000-0000-4000-8000-000000000002',
+      }),
+    ).toMatchObject({ identifierType, value: '12345678901' });
+  }
+  for (const identifierType of ['GSIS', 'OTHER']) {
+    expect(
+      governmentIdentifierCreateSchema.safeParse({ identifierType, value: '12345678901' }).success,
+    ).toBe(false);
+  }
 });
 
 it('rejects unsupported types, partial evidence, and extra fields', () => {

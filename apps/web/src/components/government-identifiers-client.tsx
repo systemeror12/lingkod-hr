@@ -15,7 +15,7 @@ import {
 } from './ui/dialog';
 import { employeeInputClass, employeeLabelClass, formatEmployeeDate } from './employee-directory';
 
-type IdentifierType = 'GSIS' | 'PHILHEALTH' | 'PAGIBIG' | 'TIN' | 'OTHER';
+type IdentifierType = 'UMID' | 'PAGIBIG' | 'PHILHEALTH' | 'PHILSYS_PCN' | 'TIN';
 
 interface GovernmentIdentifier {
   id: string;
@@ -80,7 +80,7 @@ function parseIdentifiers(value: unknown): GovernmentIdentifier[] {
     }
     return {
       id: entry.id,
-      identifierType: stringValue(entry.identifierType) ?? stringValue(entry.type) ?? 'OTHER',
+      identifierType: stringValue(entry.identifierType) ?? stringValue(entry.type) ?? 'UNKNOWN',
       maskedValue:
         stringValue(entry.maskedValue) ??
         stringValue(entry.masked_value) ??
@@ -138,11 +138,12 @@ function parseRevealValue(value: unknown): string | null {
 }
 
 function formatIdentifierType(value: string): string {
-  if (value === 'GSIS') return 'GSIS';
+  if (value === 'UMID') return 'UMID';
   if (value === 'PHILHEALTH') return 'PhilHealth';
   if (value === 'PAGIBIG') return 'Pag-IBIG';
+  if (value === 'PHILSYS_PCN') return 'PhilSys PCN';
   if (value === 'TIN') return 'TIN';
-  return 'Other';
+  return 'Unknown';
 }
 
 function formatStatus(value: string): string {
@@ -565,11 +566,11 @@ export function GovernmentIdentifiersSection({
                           }));
                         }}
                       >
-                        <option value="GSIS">GSIS</option>
-                        <option value="PHILHEALTH">PhilHealth</option>
+                        <option value="UMID">UMID</option>
                         <option value="PAGIBIG">Pag-IBIG</option>
+                        <option value="PHILHEALTH">PhilHealth</option>
+                        <option value="PHILSYS_PCN">PhilSys PCN</option>
                         <option value="TIN">TIN</option>
-                        <option value="OTHER">Other</option>
                       </select>
                     </label>
                     <label className={employeeLabelClass}>

@@ -21,7 +21,7 @@ CREATE TABLE "government_identifiers" (
   "row_version" INTEGER NOT NULL DEFAULT 1,
   CONSTRAINT "government_identifiers_pkey" PRIMARY KEY ("id"),
   CONSTRAINT "government_identifiers_type_check"
-    CHECK ("identifier_type" IN ('GSIS', 'PHILHEALTH', 'PAGIBIG', 'TIN', 'OTHER')),
+    CHECK ("identifier_type" IN ('UMID', 'PAGIBIG', 'PHILHEALTH', 'PHILSYS_PCN', 'TIN')),
   CONSTRAINT "government_identifiers_status_check"
     CHECK ("status" IN ('ACTIVE', 'REPLACED', 'INVALID')),
   CONSTRAINT "government_identifiers_masked_value_check"

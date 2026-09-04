@@ -164,7 +164,7 @@ test('manages masked government identifiers through the shared dialogs', async (
       const createdId = '00000000-0000-4000-8000-000000000102';
       identifiers.push({
         id: createdId,
-        identifierType: String(payload.identifierType ?? 'OTHER'),
+        identifierType: String(payload.identifierType ?? 'UMID'),
         maskedValue: '********5678',
         status: 'ACTIVE',
         verifiedAt: payload.verifiedAt ?? '2026-09-01T00:00:00.000Z',
@@ -231,14 +231,14 @@ test('manages masked government identifiers through the shared dialogs', async (
   await expectFocusInside(createDialog);
   await expectFocusTrap(page, createDialog);
   await expectCenteredDialog(createDialog, 1280);
-  await createDialog.getByLabel('Identifier type').selectOption('GSIS');
-  await createDialog.getByLabel('Identifier value').fill('GSIS-987654321');
+  await createDialog.getByLabel('Identifier type').selectOption('UMID');
+  await createDialog.getByLabel('Identifier value').fill('UMID-987654321');
   await createDialog.getByLabel('Verified date').fill('2026-09-01');
   await page.setViewportSize({ width: 390, height: 844 });
   await expectCenteredDialog(createDialog, 390);
   await createDialog.getByRole('button', { name: 'Save identifier' }).click();
   await expect(createDialog).toBeHidden();
-  await expect(page.getByText('GSIS', { exact: true })).toBeVisible();
+  await expect(page.getByText('UMID', { exact: true })).toBeVisible();
   await expect(page.getByText('********5678', { exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -308,7 +308,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   await expectFocusTrap(page, invalidateDialog);
   await invalidateDialog
     .getByLabel('Invalidation reason')
-    .fill('The GSIS number was entered for the wrong employee.');
+    .fill('The UMID number was entered for the wrong employee.');
   await invalidateDialog.getByRole('button', { name: 'Invalidate identifier' }).click();
   await expect(invalidateDialog).toBeHidden();
   await expect(page.getByText('Invalid', { exact: true })).toBeVisible();

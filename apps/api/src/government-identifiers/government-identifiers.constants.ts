@@ -1,9 +1,9 @@
 export const GOVERNMENT_IDENTIFIER_TYPES = [
-  'GSIS',
-  'PHILHEALTH',
+  'UMID',
   'PAGIBIG',
+  'PHILHEALTH',
+  'PHILSYS_PCN',
   'TIN',
-  'OTHER',
 ] as const;
 export type GovernmentIdentifierType = (typeof GOVERNMENT_IDENTIFIER_TYPES)[number];
 
