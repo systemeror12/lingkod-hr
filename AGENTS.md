@@ -22,10 +22,15 @@ Read only the sources that apply to the task.
 
 Do not invent public-sector business rules.
 
-## Development workflow
+## Working defaults
 
-Use `docs/development-workflow.md` for routing gates, GitHub ticket gates,
-implementation, pull requests, GitHub Actions, and continuity.
+- Run the smallest focused check that covers the change. Do not run the
+  repository-wide test suite unless the user explicitly asks for it.
+- Use shell commands and repo-native tools by default. Use computer-use or
+  browser automation only when the user explicitly asks for it.
+- Before finishing a task, terminate stale test processes running for this
+  repository, including processes left by earlier test runs.
+- Apply `$unslop-response` to every user-facing response.
 
 ## Cross-machine setup gate
 
@@ -51,69 +56,6 @@ The gate is complete only when all of these are true:
 Do not work around a failed migration by deleting the database or migration
 history. Diagnose ownership, environment, schema drift, or stale processes
 first, then leave the setup reproducible for the next machine.
-
-Use `$ask-matt` for Matt Pocock skill routing.
-
-## Pull requests
-
-- Never make a PR unless the developer explicitly asks you to do so.
-- Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
-- Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
-- UI changes need before/after images. Motion or timing needs a short video.
-
-## Global modal contract
-
-Every blocking modal, detail dialog, confirmation, loading state, and form
-dialog in the web UI uses the agreed global modal design. The source of truth
-is `apps/web/src/components/ui/dialog.tsx`, grounded in GitHub issues #69 and
-#70.
-
-When implementing or changing a modal:
-
-- Compose it from the shared `Dialog` primitives: `DialogTrigger`,
-  `DialogContent`, `DialogHeader`, `DialogTitle`, `DialogDescription`,
-  `DialogBody`, `DialogFooter`, and `DialogClose` as applicable.
-- Use the shared centered, responsive, safe-inset shell so the foundation
-  owns the portal, backdrop, focus containment/restoration, Escape handling,
-  and body scrolling.
-- Keep workflow state, validation, loading, errors, and read-only content in
-  the feature component; keep shell and accessibility behavior in the shared
-  foundation.
-- Treat a side panel, drawer, or sheet as an explicit product exception that
-  must be named and justified by the issue or specification before coding.
-- Add or update focused browser coverage for the accessible name/description,
-  initial focus, focus containment/restoration, dismissal behavior, responsive
-  centered geometry, and submission/loading guards that apply to the surface.
-
-Completion means the surface consumes the shared foundation, has no custom
-overlay or focus-trap shell, and its focused browser test plus before/after
-visual evidence pass.
-
-## Codex routing
-
-`$ask-matt` is routing-only.
-
-When `$ask-matt` runs, return:
-
-- route
-- recommended T3Code model
-- recommended reasoning effort
-- one reason
-- next command
-
-Then stop.
-
-Read `docs/agents/codex-routing.md`.
-
-A production bug fix requires a GitHub issue before `$implement`.
-
-## Hermes continuity
-
-For this GitHub project, use:
-
-`/github-development-continuity`
-
-The skill is read-only by default.
 
 ## Agent skills
 
