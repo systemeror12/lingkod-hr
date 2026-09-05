@@ -72,6 +72,10 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
         ({ code, scopePolicy }) => code === 'personnel.documents.upload' && scopePolicy === 'OWN',
       )}
       canBrowseSourceDocuments={hasPermission(session, 'documents.evidence.read')}
+      canReadIdentifiers={hasPermission(session, 'personnel.identifiers.read')}
+      canManageIdentifiers={hasPermission(session, 'personnel.identifiers.manage')}
+      canRevealIdentifiers={hasPermission(session, 'personnel.identifiers.reveal')}
+      canReadIdentifierHistory={hasPermission(session, 'personnel.identifiers.history.read')}
     />
   );
 }

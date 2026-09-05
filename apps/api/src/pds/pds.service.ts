@@ -40,12 +40,6 @@ export interface PdsPersonalDetailsView {
   heightMeters: number | null;
   weightKilograms: number | null;
   bloodType: string | null;
-  umidIdNumber: string | null;
-  pagibigIdNumber: string | null;
-  philhealthNumber: string | null;
-  philSysCardNumber: string | null;
-  tinNumber: string | null;
-  agencyEmployeeNumber: string | null;
   citizenship: string | null;
   dualCitizenshipType: string | null;
   dualCitizenshipCountry: string | null;
@@ -298,12 +292,6 @@ const pdsSelect = {
       heightMeters: true,
       weightKilograms: true,
       bloodType: true,
-      umidIdNumber: true,
-      pagibigIdNumber: true,
-      philhealthNumber: true,
-      philSysCardNumber: true,
-      tinNumber: true,
-      agencyEmployeeNumber: true,
       citizenship: true,
       dualCitizenshipType: true,
       dualCitizenshipCountry: true,
@@ -567,12 +555,6 @@ function personalCreateData(
         ? null
         : new Prisma.Decimal(input.weightKilograms),
     bloodType: text(input?.bloodType),
-    umidIdNumber: text(input?.umidIdNumber),
-    pagibigIdNumber: text(input?.pagibigIdNumber),
-    philhealthNumber: text(input?.philhealthNumber),
-    philSysCardNumber: text(input?.philSysCardNumber),
-    tinNumber: text(input?.tinNumber),
-    agencyEmployeeNumber: text(input?.agencyEmployeeNumber),
     citizenship: input?.citizenship ?? null,
     dualCitizenshipType: input?.dualCitizenshipType ?? null,
     dualCitizenshipCountry: input?.dualCitizenshipCountry ?? null,
@@ -608,12 +590,6 @@ function personalUpdateData(
       input.weightKilograms === null ? null : new Prisma.Decimal(input.weightKilograms);
   }
   if ('bloodType' in input) data.bloodType = text(input.bloodType);
-  if ('umidIdNumber' in input) data.umidIdNumber = text(input.umidIdNumber);
-  if ('pagibigIdNumber' in input) data.pagibigIdNumber = text(input.pagibigIdNumber);
-  if ('philhealthNumber' in input) data.philhealthNumber = text(input.philhealthNumber);
-  if ('philSysCardNumber' in input) data.philSysCardNumber = text(input.philSysCardNumber);
-  if ('tinNumber' in input) data.tinNumber = text(input.tinNumber);
-  if ('agencyEmployeeNumber' in input) data.agencyEmployeeNumber = text(input.agencyEmployeeNumber);
   if ('citizenship' in input) {
     data.citizenship = input.citizenship ?? null;
     if (input.citizenship !== 'DUAL_CITIZENSHIP') {
@@ -922,12 +898,6 @@ function personalView(record: PdsRecord['personalDetails']): PdsPersonalDetailsV
     heightMeters: record.heightMeters?.toNumber() ?? null,
     weightKilograms: record.weightKilograms?.toNumber() ?? null,
     bloodType: record.bloodType,
-    umidIdNumber: record.umidIdNumber,
-    pagibigIdNumber: record.pagibigIdNumber,
-    philhealthNumber: record.philhealthNumber,
-    philSysCardNumber: record.philSysCardNumber,
-    tinNumber: record.tinNumber,
-    agencyEmployeeNumber: record.agencyEmployeeNumber,
     citizenship: record.citizenship,
     dualCitizenshipType: record.dualCitizenshipType,
     dualCitizenshipCountry: record.dualCitizenshipCountry,

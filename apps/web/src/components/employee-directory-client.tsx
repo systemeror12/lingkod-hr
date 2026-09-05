@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 import { Button, buttonVariants } from './ui/button';
 import { EmployeeDocumentsSection } from './employee-documents-client';
+import { GovernmentIdentifiersSection } from './government-identifiers-client';
 import {
   EmployeeInitials,
   EmployeePageTitle,
@@ -249,6 +250,10 @@ export function EmployeeDetailView({
   canManageDocuments,
   canUploadOwnDocuments,
   canBrowseSourceDocuments,
+  canReadIdentifiers,
+  canManageIdentifiers,
+  canRevealIdentifiers,
+  canReadIdentifierHistory,
 }: {
   agencyId: string;
   initial: EmployeeDetailData;
@@ -258,6 +263,10 @@ export function EmployeeDetailView({
   canManageDocuments: boolean;
   canUploadOwnDocuments: boolean;
   canBrowseSourceDocuments: boolean;
+  canReadIdentifiers: boolean;
+  canManageIdentifiers: boolean;
+  canRevealIdentifiers: boolean;
+  canReadIdentifierHistory: boolean;
 }) {
   const [detail, setDetail] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -431,6 +440,14 @@ export function EmployeeDetailView({
           canUploadOwn={canUploadOwnDocuments}
           canBrowseSource={canBrowseSourceDocuments}
           canRemoveOwn={canUploadOwnDocuments}
+        />
+        <GovernmentIdentifiersSection
+          agencyId={agencyId}
+          employeeId={detail.id}
+          canRead={canReadIdentifiers}
+          canManage={canManageIdentifiers}
+          canReveal={canRevealIdentifiers}
+          canReadHistory={canReadIdentifierHistory}
         />
         <div className="border-t border-line bg-pale-blue px-6 py-4 text-xs leading-5 text-[#34557e] min-[700px]:px-8">
           Appointments, positions, salary, supervisors, separation, and retirement remain outside

@@ -85,12 +85,6 @@ const personalTextFields = [
   ['nameExtension', 'Name extension'],
   ['birthPlace', 'Place of birth'],
   ['bloodType', 'Blood type'],
-  ['umidIdNumber', 'UMID ID no.'],
-  ['pagibigIdNumber', 'Pag-IBIG ID no.'],
-  ['philhealthNumber', 'PhilHealth no.'],
-  ['philSysCardNumber', 'PhilSys PCN'],
-  ['tinNumber', 'TIN'],
-  ['agencyEmployeeNumber', 'Agency employee no.'],
   ['telephoneNumber', 'Telephone'],
   ['mobileNumber', 'Mobile'],
   ['emailAddress', 'Email address'],
@@ -2233,7 +2227,6 @@ export function PdsWorkspace({
                   <DetailValue label="Height (m)" value={personal?.heightMeters} />
                   <DetailValue label="Weight (kg)" value={personal?.weightKilograms} />
                   <DetailValue label="Blood type" value={personal?.bloodType} />
-                  <DetailValue label="Agency employee no." value={personal?.agencyEmployeeNumber} />
                 </dl>
               </div>
               <div className="grid gap-4">

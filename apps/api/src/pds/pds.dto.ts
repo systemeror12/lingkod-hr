@@ -28,12 +28,6 @@ export class PdsPersonalDetailsDto implements PdsPersonalDetailsView {
   declare readonly heightMeters: number | null;
   declare readonly weightKilograms: number | null;
   declare readonly bloodType: string | null;
-  declare readonly umidIdNumber: string | null;
-  declare readonly pagibigIdNumber: string | null;
-  declare readonly philhealthNumber: string | null;
-  declare readonly philSysCardNumber: string | null;
-  declare readonly tinNumber: string | null;
-  declare readonly agencyEmployeeNumber: string | null;
   declare readonly citizenship: string | null;
   declare readonly dualCitizenshipType: string | null;
   declare readonly dualCitizenshipCountry: string | null;

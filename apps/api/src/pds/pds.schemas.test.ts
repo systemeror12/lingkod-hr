@@ -24,7 +24,6 @@ const personal = {
   heightMeters: 1.62,
   weightKilograms: 58,
   bloodType: 'O+',
-  agencyEmployeeNumber: 'NACO-0001',
   citizenship: 'FILIPINO',
   residentialAddress: { barangay: 'San Antonio', cityMunicipality: 'Pasig City' },
   permanentAddress: { barangay: 'San Antonio', cityMunicipality: 'Pasig City' },
@@ -67,6 +66,16 @@ it('rejects unsupported values, conditional omissions, duplicate child order, an
     pdsPersonalDetailsSchema.safeParse({
       civilStatus: 'MARRIED',
       civilStatusDetail: 'Church marriage',
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsPersonalDetailsSchema.safeParse({
+      umidIdNumber: 'UMID-1234',
+      pagibigIdNumber: 'PAGIBIG-1234',
+      philhealthNumber: 'PH-1234',
+      philSysCardNumber: 'PSCN-1234',
+      tinNumber: 'TIN-1234',
+      agencyEmployeeNumber: 'NACO-0001',
     }).success,
   ).toBe(false);
   expect(
