@@ -1,4 +1,5 @@
 # Business Requirements Document (BRD)
+
 ## Philippine Public-Sector HRIS MVP
 
 **Document status:** Draft for approval  
@@ -29,7 +30,7 @@ The initial implementation profile is for a civilian National Government Agency.
 The public-sector product profile shall be maintained separately from a private-sector HRIS profile.
 
 | Area | Private-sector HRIS | Public-sector HRIS |
-|---|---|---|
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Position control | Company-defined jobs and headcount | Authorized organizational structure, plantilla, item number, salary grade, and step |
 | Hiring | Company recruitment policy | Publication, qualification standards, merit selection, appointing authority, and CSC appointment rules |
 | Employee record | Company employee profile | PDS, eligibility, appointment, oath, assumption, service record, and personnel actions |
@@ -127,7 +128,7 @@ The MVP shall:
 # 6. Primary Users and Stakeholders
 
 | Role | Responsibilities |
-|---|---|
+| ------------------------------------------ | ------------------------------------------------------------------------------ |
 | Agency Administrator | Agency profile, security, users, and configuration |
 | HRMO / HR Administrator | Plantilla, recruitment, appointments, personnel records, leave, and HR reports |
 | HRMPSB / Selection Board Member | Candidate evaluation, deliberation, and recommendations |
@@ -331,19 +332,28 @@ Recruitment for plantilla appointments shall originate from a valid vacant autho
 
 ## RSP-001 Request to fill
 
-HR or the requesting office shall create a request to fill a valid vacancy.
+HR or the requesting office shall create a request to fill only for a Recruitable Vacancy. During controlled review, the server shall resolve exactly one active Agency Merit Selection Plan Version and its applicable Merit Selection Criteria Set, Board Definition, effective Board Appointments, and required Approval Route Versions. Zero or multiple applicable matches shall block publication.
+
+The resolved bindings shall be agency-scoped and immutable after publication. Before publication, an authorized MSP Rebaseline shall require a reason, authority, evidence, and Audit Event. A material policy change after publication shall require cancellation and republication with lineage.
+
+The Reference Agency Profile shall contain no invented active MSP, criteria, board appointments, approval hierarchy, signatories, or agency procedure. Missing Pilot Agency facts are Configurable Placeholders that block the affected transition.
 
 ## RSP-002 Publication
 
 The system shall track:
 
-- vacancy-publication request;
+- exact CS Form No. 9 Document Version;
 - posting dates;
 - closing date;
-- publication channel or CSC reference;
+- CSC Field Office submission, CSC Job Portal publication, at least three Agency posting places for the required period, supplemental channels, and their available references or timestamps;
 - position details;
-- qualification standards;
-- application requirements.
+- the bound Qualification Standard Version;
+- application requirements;
+- active contact details, posting evidence, and HRMO certification.
+
+Unsupported publication exceptions shall fail closed. Materially incorrect publication data shall be cancelled and republished rather than silently corrected.
+
+Publication remains valid until filled but no longer than nine months unless a separately sourced exception applies.
 
 ## RSP-003 Applicant record
 
@@ -362,14 +372,14 @@ The applicant record shall support information needed for government recruitment
 
 ## RSP-004 Qualification screening
 
-The system shall compare applicant credentials with the approved qualification standard and identify:
+The system shall compare applicant evidence with the Qualification Standard Version bound to the Recruitment Case and identify:
 
 - meets requirements;
 - conditionally reviewable;
 - does not meet requirements;
 - missing evidence.
 
-The system shall not automatically make the final qualification or selection decision.
+The system shall not automatically make the final qualification or selection decision. Corrections to screening or assessment results shall create reasoned replacement versions and preserve the original evidence-backed result.
 
 ## RSP-005 Merit selection
 
@@ -385,9 +395,13 @@ The system shall support:
 - appointing-authority decision;
 - conflict-of-interest disclosure.
 
+Criteria, weights, scales, cutoffs, rounding, tie rules, required evidence, and evaluator eligibility shall come from the bound Merit Selection Criteria Set rather than executable agency-specific workflow code.
+
 ## RSP-006 Selection board records
 
-Board membership, quorum, attendance, scores, comments, deliberation, and recommendation shall be auditable.
+Board Definition, Board Appointment, frozen Board Roster Snapshot, actual participation, attendance, declarations, recusals, applicant-specific quorum, scores, deliberation, and recommendation shall be distinct and auditable. One person shall not fill two voting seats or act as both voting member and secretariat. Conflicted or recused members shall be excluded from the affected applicant's evaluation and quorum.
+
+The Board Recommendation and Comprehensive Candidate Evaluation Report are advisory. The appointing authority's Selection Decision is a separate Recruitment record, not an Approval Decision. A later Appointment return, invalidation, cancellation, or failure to assume shall not alter it.
 
 ## RSP-007 Non-selection and applicant status
 
@@ -399,17 +413,24 @@ Decisions and notices shall be recorded without exposing confidential deliberati
 
 ## APP-001 Appointment preparation
 
-The system shall prepare appointment data using:
+Appointment shall accept an immutable selected-candidate package through the Recruitment application service and revalidate the current reservation through the Plantilla application service. It shall prepare appointment data using:
 
-- selected applicant;
-- authorized position;
-- appointment status;
+- exact selected Application;
+- reserved Plantilla Position;
+- Employment Status;
 - nature of appointment;
 - salary grade and step;
 - effectivity;
 - appointing authority;
 - qualification evidence;
-- required CSC forms and attachments.
+- the applicable exact CS Form No. 33 variant and Document Version;
+- required evidence and exact supporting Document Versions.
+
+Supporting records include the applicable PDS and Work Experience Sheet, proof of eligibility, Position Description Form, selection and publication certifications, authority or delegation evidence, and condition-specific attachments.
+
+The Agency's evidenced regulatory or accreditation status shall select exactly one supported form and submission package. The regulated path uses CS Form No. 33-A, Revised 2025 with CS Form No. 1, Revised 2025. The accredited or deregulated path uses CS Form No. 33-B, Revised 2025 with CS Form No. 2, Revised 2025. Missing or unsupported Agency configuration shall block issuance rather than use a Reference Agency default.
+
+Every Appointment shall retain the applicable authority version and date. The 2025 ORAOHRA took effect on August 3, 2025 and shall not be treated as timeless.
 
 ## APP-002 Appointment validation
 
@@ -422,38 +443,49 @@ Before issuance, the system shall validate:
 - compensation alignment;
 - absence of conflicting active incumbency.
 
-## APP-003 Appointment statuses
+Issuance shall also require the authorized appointing authority, a still-valid reservation, the applicable signature contract, and all required evidence. It shall freeze the signed Appointment Version, exact Document Version, issue date, authority, and acknowledgment path. Rubber-stamped signatures and initials are not supported; electronic or digital signatures require their applicable evidenced certification contract.
+
+## APP-003 Appointment workflow statuses
 
 ```text
 DRAFT
 FOR_REVIEW
 FOR_SIGNATURE
 ISSUED
-SUBMITTED
-VALIDATED
-INVALIDATED
-RETURNED
 CANCELLED
 ```
 
+Employment Status and Nature of Appointment are separate official attributes. A Draft may be edited, but a correction after issuance shall create an authorized linked replacement or successor with reason and evidence.
+
 ## APP-004 CSC transaction tracking
 
-The MVP shall track submission, acknowledgment, action, return, validation, invalidation, and compliance dates. Direct CSC integration is future scope.
+The MVP shall append external submission, acknowledgment or receipt, return, resubmission, and official CSC action events against an exact Appointment Version and evidence Document Version. Regulated agencies use approval or disapproval; accredited or deregulated agencies use validation or invalidation. Events shall preserve the external reference, event date and time when available, receiving office, recording actor, and reason or deficiency.
+
+External events are the source of truth and may produce a derived standing for display or command eligibility. Downloading a form, internal approval, elapsed time, or an absent response shall not create an external action. Direct CSC integration is future scope.
+
+Submission deadlines and receiving office shall come from evidenced Agency configuration. The national baseline is within 30 calendar days from issuance for regulated agencies and on or before the 30th day of the succeeding month for accredited or deregulated agencies.
 
 ## APP-005 Oath and assumption
 
 The system shall record:
 
-- oath of office;
-- certification of assumption to duty;
+- the oath using the exact SS Porma Blg. 32, Narebisa 2025 Document Version;
+- certification using the exact CS Form No. 4, Revised 2025 Document Version;
 - actual assumption date;
-- first day of service;
-- responsible certifying officer;
-- supporting documents.
+- administering and certifying authorities;
+- certification time, signatures, and supporting evidence;
+- appointee receipt or acknowledgment of the issued Appointment;
+- failure to assume or lawful pre-assumption cancellation evidence.
+
+CSC approval or validation is not a prerequisite for oath, Assumption to Duty, salary entitlement, or service activation. After issuance, external CSC tracking and oath or assumption may advance independently. Corrections shall preserve the former oath or assumption version, reason, authority, evidence, and dependent recalculation. The conflicting national oath-copy deadline shall remain a Configurable Placeholder while both oath and assumption dates and the actual submission event are preserved.
+
+The period to assume shall run from evidenced receipt of the issued Appointment. `DID_NOT_ASSUME` requires the applicable notice, authority, dates, and evidence; any exception must come from configured authority rather than inference.
 
 ## APP-006 Employee creation
 
-An issued appointment and assumption shall create or activate the employee service segment and occupy the plantilla item.
+Only Appointment's immutable Assumed Appointment Contract shall activate an Employee and Service Segment through Personnel and create Position Incumbency through Plantilla. The owning application services shall apply the handoff idempotently and atomically, then Recruitment may close the Recruitment Case. Selection or issuance alone shall not create service or occupancy.
+
+A later adverse CSC action shall remain external history and route to the applicable evidence-backed personnel-action or separation contract. It shall not erase service already rendered or rewrite the Selection Decision, issued Appointment, oath, or assumption.
 
 ---
 
@@ -1206,7 +1238,7 @@ The public-sector MVP is acceptable when an agency can:
 # 28. Risks and Mitigations
 
 | Risk | Impact | Mitigation |
-|---|---|---|
+| ----------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
 | Treating all public agencies as identical | Incorrect workflows | Agency profiles and a defined first pilot |
 | Outdated CSC or DBM rule | Invalid transaction | Effective-dated policies and formal update process |
 | Incomplete plantilla data | Invalid appointment or payroll | Position reconciliation and migration validation |
@@ -1240,7 +1272,7 @@ The reference baseline must be revalidated before production and whenever an iss
 # 30. Approval
 
 | Role | Name | Decision | Date |
-|---|---|---|---|
+| ----------------------------- | ---- | -------- | ---- |
 | Product Owner |  | Pending |  |
 | Government HR / HRMO Reviewer |  | Pending |  |
 | Payroll / Accounting Reviewer |  | Pending |  |
@@ -1252,5 +1284,5 @@ The reference baseline must be revalidated before production and whenever an iss
 # 31. Change Log
 
 | Version | Date | Description |
-|---|---|---|
+| ------- | -------------- | ----------------------------------------------------------------------------------------------- |
 | 1.0 | August 5, 2026 | Reframed the product as a Philippine public-sector HRIS and replaced private-sector assumptions |

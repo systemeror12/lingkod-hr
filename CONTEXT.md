@@ -299,7 +299,7 @@ The versioned board output that preserves comparative evaluation results, qualif
 _Avoid_: Selection Decision, ranking-only report
 
 **Selection Decision**:
-The appointing authority's recruitment-domain choice following the board process; it remains distinct from administrative approvals handled through Approval Routes.
+The appointing authority's recruitment-domain choice following the board process. A later Appointment return, invalidation, cancellation, or failure to assume does not reopen or replace it; any further recruitment proceeds through an explicitly authorized new or republished recruitment path.
 _Avoid_: Board Recommendation, approval step
 
 **MSP Rebaseline**:
@@ -309,6 +309,32 @@ _Avoid_: Policy edit, retroactive amendment
 **Recruitment Approval Checkpoint**:
 An administrative approval point whose Agency Merit Selection Plan Version references an applicable Approval Route Version; it is distinct from a Board Recommendation or Selection Decision.
 _Avoid_: Selection stage, board approval
+
+## Appointment Administration
+
+**Appointment Workflow Status**:
+The HRIS-controlled progress of an Appointment, limited to `DRAFT`, `FOR_REVIEW`, `FOR_SIGNATURE`, `ISSUED`, or `CANCELLED`. External submission and CSC action do not change this status.
+_Avoid_: Employment Status, CSC status
+
+**Employment Status**:
+The official classification written on an Appointment, such as Permanent, Temporary, Coterminous, Fixed Term, Contractual, Substitute, or Provisional where applicable. It is separate from both Appointment Workflow Status and Nature of Appointment.
+_Avoid_: Appointment status, workflow state
+
+**Nature of Appointment**:
+The official personnel movement or action written on an Appointment, such as Original, Promotion, Transfer, Reemployment, Reappointment, Reinstatement, Reclassification, or Demotion where applicable.
+_Avoid_: Employment Status, workflow action
+
+**External Appointment Action**:
+An append-only, evidence-backed action received from the CSC or another competent external authority, such as approval, validation, disapproval, or invalidation. It never overwrites the issued Appointment or Selection Decision.
+_Avoid_: Appointment Workflow Status, Employment Status
+
+**Issued Appointment Contract**:
+The immutable Appointment Version, exact signed Document Version, issue date, appointing authority, appointee acknowledgment path, selected Application reference, and reserved Plantilla Position reference exposed by Appointment after lawful issuance. It does not establish actual service or occupancy.
+_Avoid_: Draft appointment, assumed service
+
+**Assumed Appointment Contract**:
+The immutable Appointment-owned handoff containing the Issued Appointment Contract, oath evidence, exact Assumption to Duty Document Version, actual assumption date, certifying authority, and certification time. Personnel and Plantilla consume this contract idempotently to create service and occupancy.
+_Avoid_: Issued Appointment Contract, active employee
 
 ## Performance Management
 
