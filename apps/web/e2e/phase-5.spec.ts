@@ -662,17 +662,20 @@ test('gates the representative protected personnel journey', async ({
       await expect(
         page.getByRole('heading', { name: 'The Employee record could not be found' }),
       ).toBeVisible();
+      expect(await page.locator('body').innerText()).not.toContain('foreign-protected-fixture');
 
       const foreignLink = await page.request.post(
         `/api/v1/agencies/${agencyId}/employees/${foreignEmployeeId}/membership-link`,
         { headers: origin(), data: { membershipId: adminSession.membershipId } },
       );
       expect(foreignLink.status()).toBe(404);
+      expect(await foreignLink.text()).not.toContain('foreign-protected-fixture');
       const foreignChange = await page.request.patch(
         `/api/v1/agencies/${foreignAgencyId}/employees/${foreignEmployeeId}/government-identifiers/${foreignIdentifierId}/invalidate`,
         { headers: origin(), data: { reason: 'Cross-Agency change must be absent.' } },
       );
       expect(foreignChange.status()).toBe(404);
+      expect(await foreignChange.text()).not.toContain('foreign-protected-fixture');
 
       for (const request of [
         page.request.get(`/api/v1/agencies/${foreignAgencyId}/employees/${foreignEmployeeId}`, {
@@ -691,7 +694,9 @@ test('gates the representative protected personnel journey', async ({
       ]) {
         const response = await request;
         expect(response.status()).toBe(404);
-        expect(await response.text()).not.toContain(protectedValue);
+        const responseBody = await response.text();
+        expect(responseBody).not.toContain(protectedValue);
+        expect(responseBody).not.toContain('foreign-protected-fixture');
       }
 
       const settings = `SELECT set_config('app.agency_id','${agencyId}',true), set_config('app.user_id','${adminSession.userId}',true), set_config('app.membership_id','${adminSession.membershipId}',true)`;
