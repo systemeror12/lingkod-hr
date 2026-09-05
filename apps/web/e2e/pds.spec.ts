@@ -47,12 +47,14 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
 
-  const sessionResponse = await page.request.get('/api/v1/auth/me');
+  const headers = { origin: new URL(page.url()).origin };
+  const sessionResponse = await page.request.get('/api/v1/auth/me', { headers });
   const sessionBody = await sessionResponse.text();
   expect(sessionResponse.ok(), sessionBody).toBe(true);
   const session = JSON.parse(sessionBody) as { agencyId: string; membershipId: string };
   const employeesResponse = await page.request.get(
     `/api/v1/agencies/${session.agencyId}/employees`,
+    { headers },
   );
   const employeesBody = await employeesResponse.text();
   expect(employeesResponse.ok(), employeesBody).toBe(true);
@@ -62,6 +64,7 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
   if (linkedEmployee) {
     const unlinkResponse = await page.request.delete(
       `/api/v1/agencies/${session.agencyId}/employees/${linkedEmployee.id}/membership-link`,
+      { headers },
     );
     expect(unlinkResponse.ok(), await unlinkResponse.text()).toBe(true);
   }
