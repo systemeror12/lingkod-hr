@@ -2,7 +2,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } fro
 import { createServer, type ServerResponse } from 'node:http';
 
 const host = '127.0.0.1';
-const port = 4100;
+const port = Number(process.env.PLAYWRIGHT_OIDC_PORT ?? 4100);
 const issuer = `http://${host}:${port}`;
 const clientId = 'local-client';
 const clientSecret = 'local-client-secret';

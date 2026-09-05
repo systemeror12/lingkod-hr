@@ -12,6 +12,16 @@ import { getActiveSession, hasPermission } from '../../../lib/session';
 export const metadata: Metadata = { title: 'My Personal Data Sheet' };
 export const dynamic = 'force-dynamic';
 
+function hasScopedPermission(
+  session: Awaited<ReturnType<typeof getActiveSession>>,
+  code: string,
+  scopePolicy: 'AGENCY' | 'OWN',
+): boolean {
+  return session.permissions.some(
+    (grant) => grant.code === code && grant.scopePolicy === scopePolicy,
+  );
+}
+
 export default async function MyPdsPage() {
   const session = await getActiveSession();
   if (!hasPermission(session, 'personnel.pds.read')) {
@@ -78,15 +88,24 @@ export default async function MyPdsPage() {
     }
     detail = detailValue as PdsDetailData;
   }
+  const canUpdateOwn =
+    hasScopedPermission(session, 'personnel.pds.update', 'AGENCY') ||
+    hasScopedPermission(session, 'personnel.pds.update', 'OWN');
+  const canAgencyUpdate = hasScopedPermission(session, 'personnel.pds.update', 'AGENCY');
+  const canOwnCertify = hasScopedPermission(session, 'personnel.pds.certify', 'OWN');
+  const canAgencyCertify = hasScopedPermission(session, 'personnel.pds.certify', 'AGENCY');
   return (
     <PdsWorkspace
       agencyId={session.agencyId}
       initialList={list}
       initialDetail={detail}
-      canUpdate={session.permissions.some(
-        ({ code, scopePolicy }) =>
-          code === 'personnel.pds.update' && (scopePolicy === 'AGENCY' || scopePolicy === 'OWN'),
-      )}
+      canUpdate={canUpdateOwn}
+      canSubmit={hasScopedPermission(session, 'personnel.pds.update', 'OWN')}
+      canReturn={canAgencyUpdate}
+      canCertify={canOwnCertify}
+      canVerify={canAgencyCertify}
+      canCorrect={canUpdateOwn}
+      canGenerateOutputs={canAgencyUpdate}
       canBrowseEvidence={hasPermission(session, 'documents.evidence.read')}
       createUrl={`/api/v1/agencies/${session.agencyId}/my-pds`}
       backHref="/dashboard"

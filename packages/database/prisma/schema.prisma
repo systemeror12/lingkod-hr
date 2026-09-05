@@ -55,6 +55,13 @@ model Agency {
   pdsLearningDevelopmentRecords PdsLearningDevelopmentRecord[]
   pdsWesArtifacts               PdsWesArtifact[]
   pdsWesEntries                 PdsWesEntry[]
+  pdsOtherInformation           PdsOtherInformation[]
+  pdsDeclarationDetails         PdsDeclarationDetails[]
+  pdsReferenceRecords           PdsReferenceRecord[]
+  pdsCertificationDetails       PdsCertificationDetails[]
+  pdsPageSignatures             PdsPageSignature[]
+  pdsTransitionEvents           PdsTransitionEvent[]
+  pdsOutputArtifacts            PdsOutputArtifact[]
   personnelBaselines            PersonnelBaseline[]
   serviceSegments               ServiceSegment[]
   positionIncumbencies          PositionIncumbency[]
@@ -229,6 +236,7 @@ model AgencyMembership {
   createdEmployeeDocuments               EmployeeDocument[]             @relation("EmployeeDocumentCreator")
   createdPdsVersions                     PdsVersion[]                   @relation("PdsVersionCreator")
   updatedPdsVersions                     PdsVersion[]                   @relation("PdsVersionUpdater")
+  pdsTransitionEvents                    PdsTransitionEvent[]           @relation("PdsTransitionActor")
   createdPersonnelBaselines              PersonnelBaseline[]            @relation("PersonnelBaselineCreator")
   updatedPersonnelBaselines              PersonnelBaseline[]            @relation("PersonnelBaselineUpdater")
   reviewedPersonnelBaselines             PersonnelBaseline[]            @relation("PersonnelBaselineReviewer")
@@ -452,6 +460,12 @@ model Document {
   pdsVoluntaryWorkEvidenceDocuments       PdsVoluntaryWorkRecord[]       @relation("PdsVoluntaryWorkEvidenceDocument")
   pdsLearningDevelopmentEvidenceDocuments PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceDocument")
   pdsWesEvidenceDocuments                 PdsWesArtifact[]               @relation("PdsWesEvidenceDocument")
+  pdsWesEmployeeSignatureDocuments        PdsWesArtifact[]               @relation("PdsWesEmployeeSignatureDocument")
+  pdsCertificationPhotoDocuments          PdsCertificationDetails[]      @relation("PdsCertificationPhotoDocument")
+  pdsEmployeeSignatureDocuments           PdsCertificationDetails[]      @relation("PdsEmployeeSignatureDocument")
+  pdsThumbmarkDocuments                   PdsCertificationDetails[]      @relation("PdsThumbmarkDocument")
+  pdsOathAdministratorSignatureDocuments  PdsCertificationDetails[]      @relation("PdsOathAdministratorSignatureDocument")
+  pdsPageSignatureDocuments               PdsPageSignature[]             @relation("PdsPageSignatureDocument")
   personnelBaselineEvidenceDocuments      PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceDocument")
   governmentIdentifierEvidenceDocuments   GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceDocument")
 
@@ -489,6 +503,12 @@ model DocumentVersion {
   pdsVoluntaryWorkEvidenceVersions              PdsVoluntaryWorkRecord[]       @relation("PdsVoluntaryWorkEvidenceVersion")
   pdsLearningDevelopmentEvidenceVersions        PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceVersion")
   pdsWesEvidenceVersions                        PdsWesArtifact[]               @relation("PdsWesEvidenceVersion")
+  pdsWesEmployeeSignatureVersions               PdsWesArtifact[]               @relation("PdsWesEmployeeSignatureVersion")
+  pdsCertificationPhotoVersions                 PdsCertificationDetails[]      @relation("PdsCertificationPhotoVersion")
+  pdsEmployeeSignatureVersions                  PdsCertificationDetails[]      @relation("PdsEmployeeSignatureVersion")
+  pdsThumbmarkVersions                          PdsCertificationDetails[]      @relation("PdsThumbmarkVersion")
+  pdsOathAdministratorSignatureVersions         PdsCertificationDetails[]      @relation("PdsOathAdministratorSignatureVersion")
+  pdsPageSignatureVersions                      PdsPageSignature[]             @relation("PdsPageSignatureVersion")
   personnelBaselineEvidenceVersions             PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceVersion")
   governmentIdentifierEvidenceVersions          GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceVersion")
 
@@ -733,6 +753,7 @@ model Employee {
   documents             EmployeeDocument[]   @relation("EmployeeDocuments")
   pdsVersions           PdsVersion[]
   pdsWesArtifacts       PdsWesArtifact[]
+  pdsOutputArtifacts    PdsOutputArtifact[]
   currentServiceSegment ServiceSegment?      @relation("EmployeeCurrentServiceSegment", fields: [agencyId, currentServiceSegmentId], references: [agencyId, id], onDelete: Restrict)
   personnelBaselines    PersonnelBaseline[]  @relation("PersonnelBaselineEmployee")
   serviceSegments       ServiceSegment[]     @relation("ServiceSegmentEmployee")
@@ -809,20 +830,24 @@ model GovernmentIdentifier {
 }
 
 model PdsVersion {
-  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agencyId              String   @map("agency_id") @db.Uuid
-  employeeId            String   @map("employee_id") @db.Uuid
-  versionNo             Int      @map("version_no")
-  formVersion           String   @map("form_version")
-  asOfDate              DateTime @map("as_of_date") @db.Date
-  status                String
-  supersedesVersionId   String?  @map("supersedes_version_id") @db.Uuid
-  correctionReason      String?  @map("correction_reason")
-  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  rowVersion            Int      @default(1) @map("row_version")
+  id                              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String    @map("agency_id") @db.Uuid
+  employeeId                      String    @map("employee_id") @db.Uuid
+  versionNo                       Int       @map("version_no")
+  formVersion                     String    @map("form_version")
+  asOfDate                        DateTime  @map("as_of_date") @db.Date
+  status                          String
+  supersedesVersionId             String?   @map("supersedes_version_id") @db.Uuid
+  correctionReason                String?   @map("correction_reason")
+  createdByMembershipId           String    @map("created_by_membership_id") @db.Uuid
+  createdAt                       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId           String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                      Int       @default(1) @map("row_version")
+  employeeCertifiedAt             DateTime? @map("employee_certified_at") @db.Timestamptz(6)
+  employeeCertifiedByMembershipId String?   @map("employee_certified_by_membership_id") @db.Uuid
+  hrVerifiedAt                    DateTime? @map("hr_verified_at") @db.Timestamptz(6)
+  hrVerifiedByMembershipId        String?   @map("hr_verified_by_membership_id") @db.Uuid
 
   agency                     Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   employee                   Employee                       @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
@@ -838,6 +863,13 @@ model PdsVersion {
   voluntaryWorkRecords       PdsVoluntaryWorkRecord[]
   learningDevelopmentRecords PdsLearningDevelopmentRecord[]
   wesArtifacts               PdsWesArtifact[]
+  otherInformation           PdsOtherInformation?
+  declarationDetails         PdsDeclarationDetails?
+  referenceRecords           PdsReferenceRecord[]
+  certificationDetails       PdsCertificationDetails?
+  pageSignatures             PdsPageSignature[]
+  transitionEvents           PdsTransitionEvent[]
+  outputArtifacts            PdsOutputArtifact[]
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeId, versionNo])
@@ -1041,22 +1073,28 @@ model PdsLearningDevelopmentRecord {
 }
 
 model PdsWesArtifact {
-  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agencyId          String  @map("agency_id") @db.Uuid
-  employeeId        String  @map("employee_id") @db.Uuid
-  pdsVersionId      String  @map("pds_version_id") @db.Uuid
-  contextKey        String  @default("DEFAULT") @map("context_key")
-  templateVersion   String  @default("CS_FORM_212_ATTACHMENT_WES_ORAOHRA_2025_H2") @map("template_version")
-  status            String  @default("DRAFT")
-  documentId        String? @map("document_id") @db.Uuid
-  documentVersionId String? @map("document_version_id") @db.Uuid
+  id                                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                           String    @map("agency_id") @db.Uuid
+  employeeId                         String    @map("employee_id") @db.Uuid
+  pdsVersionId                       String    @map("pds_version_id") @db.Uuid
+  contextKey                         String    @default("DEFAULT") @map("context_key")
+  templateVersion                    String    @default("CS_FORM_212_ATTACHMENT_WES_ORAOHRA_2025_H2") @map("template_version")
+  status                             String    @default("DRAFT")
+  documentId                         String?   @map("document_id") @db.Uuid
+  documentVersionId                  String?   @map("document_version_id") @db.Uuid
+  employeeSignatureDocumentId        String?   @map("employee_signature_document_id") @db.Uuid
+  employeeSignatureDocumentVersionId String?   @map("employee_signature_document_version_id") @db.Uuid
+  signedAt                           DateTime? @map("signed_at") @db.Timestamptz(6)
 
-  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  employee         Employee         @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
-  pdsVersion       PdsVersion       @relation(fields: [agencyId, pdsVersionId, employeeId], references: [agencyId, id, employeeId], onDelete: Restrict)
-  evidenceDocument Document?        @relation("PdsWesEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
-  evidenceVersion  DocumentVersion? @relation("PdsWesEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
-  entries          PdsWesEntry[]
+  agency                    Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                  Employee            @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  pdsVersion                PdsVersion          @relation(fields: [agencyId, pdsVersionId, employeeId], references: [agencyId, id, employeeId], onDelete: Restrict)
+  evidenceDocument          Document?           @relation("PdsWesEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion           DocumentVersion?    @relation("PdsWesEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  employeeSignatureDocument Document?           @relation("PdsWesEmployeeSignatureDocument", fields: [agencyId, employeeSignatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_wes_artifacts_employee_signature_document_fkey")
+  employeeSignatureVersion  DocumentVersion?    @relation("PdsWesEmployeeSignatureVersion", fields: [agencyId, employeeSignatureDocumentId, employeeSignatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_wes_artifacts_employee_signature_version_fkey")
+  entries                   PdsWesEntry[]
+  outputArtifacts           PdsOutputArtifact[]
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, pdsVersionId])
@@ -1089,6 +1127,197 @@ model PdsWesEntry {
   @@unique([wesArtifactId, workExperienceId])
   @@index([agencyId, pdsVersionId, wesArtifactId, sequenceNo])
   @@map("pds_wes_entries")
+}
+
+model PdsOtherInformation {
+  id                      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String  @map("agency_id") @db.Uuid
+  pdsVersionId            String  @map("pds_version_id") @db.Uuid
+  skillsAndHobbies        String? @map("skills_and_hobbies")
+  nonAcademicDistinctions String? @map("non_academic_distinctions")
+  associationMemberships  String? @map("association_memberships")
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_other_information")
+}
+
+model PdsDeclarationDetails {
+  id                               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                         String    @map("agency_id") @db.Uuid
+  pdsVersionId                     String    @map("pds_version_id") @db.Uuid
+  relatedWithinThirdDegree         Boolean?  @map("related_within_third_degree")
+  relatedWithinFourthDegreeLgu     Boolean?  @map("related_within_fourth_degree_lgu")
+  relationshipDetails              String?   @map("related_within_third_degree_details")
+  relatedWithinFourthDegreeDetails String?   @map("related_within_fourth_degree_details")
+  foundGuiltyAdministrativeOffense Boolean?  @map("administrative_offense")
+  administrativeOffenseDetails     String?   @map("administrative_offense_details")
+  criminallyCharged                Boolean?  @map("criminal_charge")
+  criminalChargeDetails            String?   @map("criminal_case_details")
+  criminalChargeDateFiled          DateTime? @map("criminal_case_date") @db.Date
+  criminalChargeDateFiledUnknown   Boolean?  @map("criminal_case_date_unknown")
+  criminalChargeStatus             String?   @map("criminal_case_status")
+  convictedOfCrime                 Boolean?  @map("conviction")
+  convictionDetails                String?   @map("conviction_details")
+  separatedFromService             Boolean?  @map("separated_from_service")
+  separationMode                   String?   @map("separation_mode")
+  separationDetails                String?   @map("separation_details")
+  candidateInLastElection          Boolean?  @map("election_candidacy")
+  candidacyDetails                 String?   @map("election_candidacy_details")
+  resignedBeforeElection           Boolean?  @map("resigned_before_election")
+  resignationDetails               String?   @map("resigned_before_election_details")
+  immigrantOrPermanentResident     Boolean?  @map("immigrant_permanent_resident")
+  immigrantCountry                 String?   @map("immigrant_permanent_resident_country")
+  immigrantDetails                 String?   @map("immigrant_permanent_resident_details")
+  indigenousGroupMember            Boolean?  @map("indigenous_group_member")
+  indigenousGroupDetails           String?   @map("indigenous_group")
+  personWithDisability             Boolean?  @map("person_with_disability")
+  disabilitySpecification          String?   @map("disability_specification")
+  disabilityIdNumber               String?   @map("disability_id_number")
+  soloParent                       Boolean?  @map("solo_parent")
+  soloParentSpecification          String?   @map("solo_parent_specification")
+  soloParentIdNumber               String?   @map("solo_parent_id_number")
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_declaration_details")
+}
+
+model PdsReferenceRecord {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId     String @map("agency_id") @db.Uuid
+  pdsVersionId String @map("pds_version_id") @db.Uuid
+  sequenceNo   Int    @map("sequence_no")
+  name         String
+  address      String
+  contact      String
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_reference_records")
+}
+
+model PdsCertificationDetails {
+  id                                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                            String    @map("agency_id") @db.Uuid
+  pdsVersionId                        String    @map("pds_version_id") @db.Uuid
+  truthDeclarationAccepted            Boolean?  @map("truth_declaration_accepted")
+  verificationAuthorizationAccepted   Boolean?  @map("authorization_accepted")
+  misrepresentationWarningAccepted    Boolean?  @map("misrepresentation_warning_accepted")
+  photoDocumentId                     String?   @map("photo_document_id") @db.Uuid
+  photoDocumentVersionId              String?   @map("photo_document_version_id") @db.Uuid
+  governmentIdType                    String?   @map("government_id_type")
+  governmentIdNumber                  String?   @map("government_id_number")
+  governmentIdIssuedAt                DateTime? @map("government_id_issued_at") @db.Date
+  governmentIdIssuedPlace             String?   @map("government_id_issued_place")
+  employeeSignatureDocumentId         String?   @map("employee_signature_document_id") @db.Uuid
+  employeeSignatureDocumentVersionId  String?   @map("employee_signature_document_version_id") @db.Uuid
+  employeeSignatureDate               DateTime? @map("employee_date_accomplished") @db.Date
+  thumbmarkDocumentId                 String?   @map("thumbmark_document_id") @db.Uuid
+  thumbmarkDocumentVersionId          String?   @map("thumbmark_document_version_id") @db.Uuid
+  subscribedAndSwornText              String?   @map("subscribed_and_sworn_text")
+  subscribedAndSwornAt                DateTime? @map("subscribed_and_sworn_at") @db.Timestamptz(6)
+  oathAdministeredBy                  String?   @map("oath_administered_by")
+  oathAdminSignatureDocumentId        String?   @map("oath_administrator_signature_document_id") @db.Uuid
+  oathAdminSignatureDocumentVersionId String?   @map("oath_administrator_signature_document_version_id") @db.Uuid
+  oathAdministeredAt                  DateTime? @map("oath_administered_at") @db.Timestamptz(6)
+
+  agency                                    Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion                                PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  photoDocument                             Document?        @relation("PdsCertificationPhotoDocument", fields: [agencyId, photoDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_photo_document_fkey")
+  photoDocumentVersion                      DocumentVersion? @relation("PdsCertificationPhotoVersion", fields: [agencyId, photoDocumentId, photoDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_photo_version_fkey")
+  employeeSignatureDocument                 Document?        @relation("PdsEmployeeSignatureDocument", fields: [agencyId, employeeSignatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_employee_signature_document_fkey")
+  employeeSignatureDocumentVersion          DocumentVersion? @relation("PdsEmployeeSignatureVersion", fields: [agencyId, employeeSignatureDocumentId, employeeSignatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_employee_signature_version_fkey")
+  thumbmarkDocument                         Document?        @relation("PdsThumbmarkDocument", fields: [agencyId, thumbmarkDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_thumbmark_document_fkey")
+  thumbmarkDocumentVersion                  DocumentVersion? @relation("PdsThumbmarkVersion", fields: [agencyId, thumbmarkDocumentId, thumbmarkDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_thumbmark_version_fkey")
+  oathAdministratorSignatureDocument        Document?        @relation("PdsOathAdministratorSignatureDocument", fields: [agencyId, oathAdminSignatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_oath_signature_document_fkey")
+  oathAdministratorSignatureDocumentVersion DocumentVersion? @relation("PdsOathAdministratorSignatureVersion", fields: [agencyId, oathAdminSignatureDocumentId, oathAdminSignatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_oath_signature_version_fkey")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_certification_details")
+}
+
+model PdsPageSignature {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  pdsVersionId               String    @map("pds_version_id") @db.Uuid
+  pageKey                    String    @map("page_key")
+  signatureDocumentId        String?   @map("signature_document_id") @db.Uuid
+  signatureDocumentVersionId String?   @map("signature_document_version_id") @db.Uuid
+  signedAt                   DateTime? @map("signed_at") @db.Timestamptz(6)
+  signatureDate              DateTime? @map("signature_date") @db.Date
+
+  agency                   Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion               PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  signatureDocument        Document?        @relation("PdsPageSignatureDocument", fields: [agencyId, signatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_page_signatures_document_fkey")
+  signatureDocumentVersion DocumentVersion? @relation("PdsPageSignatureVersion", fields: [agencyId, signatureDocumentId, signatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_page_signatures_version_evidence_fkey")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, pageKey])
+  @@map("pds_page_signatures")
+}
+
+model PdsTransitionEvent {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String   @map("agency_id") @db.Uuid
+  pdsVersionId      String   @map("pds_version_id") @db.Uuid
+  fromStatus        String   @map("from_status")
+  toStatus          String   @map("to_status")
+  action            String
+  actorUserId       String   @map("actor_user_id") @db.Uuid
+  actorMembershipId String   @map("actor_membership_id") @db.Uuid
+  reason            String?
+  occurredAt        DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  submittedSnapshot Json?    @map("submitted_snapshot")
+
+  agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  actor      AgencyMembership @relation("PdsTransitionActor", fields: [agencyId, actorMembershipId, actorUserId], references: [agencyId, id, userId], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, pdsVersionId, occurredAt])
+  @@map("pds_transition_events")
+}
+
+model PdsOutputArtifact {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String   @map("agency_id") @db.Uuid
+  employeeId         String   @map("employee_id") @db.Uuid
+  pdsVersionId       String   @map("pds_version_id") @db.Uuid
+  wesArtifactId      String?  @map("wes_artifact_id") @db.Uuid
+  outputKey          String   @map("output_key")
+  outputType         String   @map("output_type")
+  formVersion        String   @map("form_version")
+  templateVersion    String?  @map("template_version")
+  sourceArtifactId   String   @map("source_artifact_id")
+  sourceArtifactHash String   @map("source_artifact_hash")
+  generatedAt        DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+  dataAsOfDate       DateTime @map("data_as_of_date") @db.Date
+  status             String   @default("RELEASED")
+  renderingMetadata  Json     @map("rendering_metadata")
+  signatureMetadata  Json     @map("signature_metadata")
+  renderedContent    Json     @map("rendered_content")
+
+  agency      Agency          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee    Employee        @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  pdsVersion  PdsVersion      @relation(fields: [agencyId, pdsVersionId, employeeId], references: [agencyId, id, employeeId], onDelete: Restrict)
+  wesArtifact PdsWesArtifact? @relation(fields: [agencyId, wesArtifactId, pdsVersionId], references: [agencyId, id, pdsVersionId], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, outputKey])
+  @@index([agencyId, employeeId, status])
+  @@map("pds_output_artifacts")
 }
 
 model PersonnelBaseline {

@@ -1,12 +1,18 @@
 import { expect, it } from 'vitest';
 import {
   PDS_CITIZENSHIP_COUNTRIES,
+  pdsDeclarationDetailsSchema,
+  pdsEmployeeCertificationSchema,
   pdsCreateSchema,
   pdsEducationSchema,
   pdsEligibilitySchema,
   pdsFamilySchema,
   pdsLearningDevelopmentSchema,
+  pdsOtherInformationSchema,
+  pdsPageSignaturesSchema,
   pdsPersonalDetailsSchema,
+  pdsReasonSchema,
+  pdsReferenceRecordsSchema,
   pdsUpdateSchema,
   pdsVoluntaryWorkSchema,
   pdsWesSchema,
@@ -241,6 +247,9 @@ it('accepts the Revised 2026 work, voluntary work, L&D, and WES sections', () =>
       wes: [
         {
           contextKey: 'vacancy-1',
+          signatureDocumentId: '00000000-0000-4000-8000-000000000020',
+          signatureDocumentVersionId: '00000000-0000-4000-8000-000000000021',
+          signedAt: '2026-08-31',
           entries: [
             {
               workExperienceId,
@@ -263,6 +272,99 @@ it('accepts the Revised 2026 work, voluntary work, L&D, and WES sections', () =>
     learningAndDevelopment: [{ type: 'Technical' }],
     wes: [{ entries: [{ workExperienceId }] }],
   });
+});
+
+it('accepts remaining PDS sections and workflow action inputs', () => {
+  expect(
+    pdsCreateSchema.parse({
+      otherInformation: {
+        skillsAndHobbies: 'Policy writing',
+        nonAcademicDistinctions: 'N/A',
+        associationMemberships: 'Public HR Association',
+      },
+      declarations: {
+        relatedWithinThirdDegree: false,
+        relatedWithinFourthDegreeLgu: false,
+        foundGuiltyAdministrativeOffense: false,
+        criminallyCharged: false,
+        convictedOfCrime: false,
+        separatedFromService: false,
+        candidateInLastElection: false,
+        resignedBeforeElection: false,
+        immigrantOrPermanentResident: false,
+        indigenousGroupMember: false,
+        personWithDisability: false,
+        soloParent: false,
+      },
+      references: [
+        { sequenceNo: 1, name: 'Ana Santos', address: 'Pasig City', contact: 'ana@example.test' },
+        { sequenceNo: 2, name: 'Ben Cruz', address: 'Quezon City', contact: '+639171111111' },
+        { sequenceNo: 3, name: 'N/A', address: 'N/A', contact: 'N/A' },
+      ],
+      certification: {
+        truthDeclarationAccepted: true,
+        verificationAuthorizationAccepted: true,
+        misrepresentationWarningAccepted: true,
+        photoDocumentId: '00000000-0000-4000-8000-000000000010',
+        photoDocumentVersionId: '00000000-0000-4000-8000-000000000011',
+        governmentIdType: 'Passport',
+        governmentIdNumber: 'P1234567',
+        governmentIdIssuedAt: '2026-01-01',
+        governmentIdIssuedPlace: 'Manila',
+        employeeSignatureDocumentId: '00000000-0000-4000-8000-000000000012',
+        employeeSignatureDocumentVersionId: '00000000-0000-4000-8000-000000000013',
+        employeeSignatureDate: '2026-08-31',
+        subscribedAndSwornText: 'Subscribed and sworn before me.',
+        subscribedAndSwornAt: '2026-08-31T01:00:00.000Z',
+        oathAdministeredBy: 'Admin Officer',
+        oathAdminSignatureDocumentId: '00000000-0000-4000-8000-000000000014',
+        oathAdminSignatureDocumentVersionId: '00000000-0000-4000-8000-000000000015',
+        oathAdministeredAt: '2026-08-31T02:00:00.000Z',
+      },
+      pageSignatures: ['C1', 'C2', 'C3', 'C4'].map((pageKey, index) => ({
+        pageKey,
+        signatureDocumentId: `00000000-0000-4000-8000-0000000000${index + 16}`,
+        signatureDocumentVersionId: `00000000-0000-4000-8000-0000000000${index + 26}`,
+        signedAt: '2026-08-31T00:00:00.000Z',
+        signatureDate: '2026-08-31',
+      })),
+    }),
+  ).toMatchObject({ otherInformation: { skillsAndHobbies: 'Policy writing' } });
+  expect(pdsReasonSchema.parse({ reason: 'Correct Item 42.' })).toEqual({
+    reason: 'Correct Item 42.',
+  });
+  expect(pdsEmployeeCertificationSchema.parse({ employeeCertificationAccepted: true })).toEqual({
+    employeeCertificationAccepted: true,
+  });
+});
+
+it('rejects incomplete declarations, duplicate references, bad evidence pairs, and false certification', () => {
+  expect(pdsDeclarationDetailsSchema.safeParse({ relatedWithinThirdDegree: true }).success).toBe(
+    false,
+  );
+  expect(
+    pdsDeclarationDetailsSchema.safeParse({
+      criminallyCharged: true,
+      criminalChargeDetails: 'Case',
+    }).success,
+  ).toBe(false);
+  expect(
+    pdsReferenceRecordsSchema.safeParse([
+      { sequenceNo: 1, name: 'One', address: 'A', contact: 'C' },
+      { sequenceNo: 1, name: 'Two', address: 'A', contact: 'C' },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsPageSignaturesSchema.safeParse([
+      { pageKey: 'C1', signatureDocumentId: '00000000-0000-4000-8000-000000000001' },
+    ]).success,
+  ).toBe(false);
+  expect(
+    pdsOtherInformationSchema.safeParse({ skillsAndHobbies: 'x', unknown: true }).success,
+  ).toBe(false);
+  expect(
+    pdsEmployeeCertificationSchema.safeParse({ employeeCertificationAccepted: false }).success,
+  ).toBe(false);
 });
 
 it('rejects invalid target-section ranges, hours, order, evidence pairs, and WES links', () => {

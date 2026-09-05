@@ -24,8 +24,32 @@ it('rechecks PDS permissions before opening a database transaction', async () =>
     code: 'PDS_UPDATE_FORBIDDEN',
     statusCode: 403,
   });
+  await expect(
+    service.submit(context, '00000000-0000-4000-8000-000000000004'),
+  ).rejects.toMatchObject({ code: 'PDS_UPDATE_FORBIDDEN', statusCode: 403 });
+  await expect(
+    service.returnForCorrection(context, '00000000-0000-4000-8000-000000000004', {
+      reason: 'Fix it.',
+    }),
+  ).rejects.toMatchObject({ code: 'PDS_UPDATE_FORBIDDEN', statusCode: 403 });
+  await expect(
+    service.correct(context, '00000000-0000-4000-8000-000000000004', { reason: 'Fix it.' }),
+  ).rejects.toMatchObject({ code: 'PDS_UPDATE_FORBIDDEN', statusCode: 403 });
+  await expect(
+    service.certify(context, '00000000-0000-4000-8000-000000000004', {
+      employeeCertificationAccepted: true,
+    }),
+  ).rejects.toMatchObject({ code: 'PDS_CERTIFY_FORBIDDEN', statusCode: 403 });
+  await expect(
+    service.verify(context, '00000000-0000-4000-8000-000000000004'),
+  ).rejects.toMatchObject({ code: 'PDS_VERIFY_FORBIDDEN', statusCode: 403 });
+  await expect(
+    service.render(context, '00000000-0000-4000-8000-000000000004'),
+  ).rejects.toMatchObject({ code: 'PDS_RENDER_FORBIDDEN', statusCode: 403 });
 });
 
 it('uses a typed error for PDS workflow failures', () => {
-  expect(new PdsServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);
+  expect(new PdsServiceError('message', 409, 'CODE', { field: 'message' })).toMatchObject({
+    fields: { field: 'message' },
+  });
 });

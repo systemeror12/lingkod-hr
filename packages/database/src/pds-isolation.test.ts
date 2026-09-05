@@ -9,6 +9,15 @@ const pdsWorkHistoryTables = [
   'pds_wes_artifacts',
   'pds_wes_entries',
 ] as const;
+const pdsCompletionWorkflowTables = [
+  'pds_other_information',
+  'pds_declaration_details',
+  'pds_reference_records',
+  'pds_certification_details',
+  'pds_page_signatures',
+  'pds_transition_events',
+  'pds_output_artifacts',
+] as const;
 
 type SqlClient = PrismaClient | Prisma.TransactionClient;
 
@@ -35,7 +44,7 @@ async function adminClient(): Promise<PrismaClient> {
   return new PrismaClient({ datasources: { db: { url } } });
 }
 
-async function tableExists(client: SqlClient, tableName: (typeof pdsWorkHistoryTables)[number]) {
+async function tableExists(client: SqlClient, tableName: string) {
   const rows = await client.$queryRaw<Array<{ table_name: string }>>`
     SELECT table_name
     FROM information_schema.tables
@@ -48,6 +57,13 @@ async function tableExists(client: SqlClient, tableName: (typeof pdsWorkHistoryT
 async function workHistoryTablesReady(client: SqlClient) {
   const statuses = await Promise.all(
     pdsWorkHistoryTables.map((tableName) => tableExists(client, tableName)),
+  );
+  return statuses.every(Boolean);
+}
+
+async function completionWorkflowTablesReady(client: SqlClient) {
+  const statuses = await Promise.all(
+    pdsCompletionWorkflowTables.map((tableName) => tableExists(client, tableName)),
   );
   return statuses.every(Boolean);
 }
@@ -331,11 +347,7 @@ async function insertWesEntry(
   return row.id;
 }
 
-async function countById(
-  client: SqlClient,
-  tableName: (typeof pdsWorkHistoryTables)[number],
-  id: string,
-) {
+async function countById(client: SqlClient, tableName: string, id: string) {
   const rows = await client.$queryRawUnsafe<Array<{ count: number }>>(
     `SELECT count(*)::int AS count FROM "${tableName}" WHERE "id" = CAST($1 AS uuid)`,
     id,
@@ -343,11 +355,7 @@ async function countById(
   return Number(rows[0]?.count ?? 0);
 }
 
-async function deleteByAgencyIds(
-  client: SqlClient,
-  tableName: (typeof pdsWorkHistoryTables)[number],
-  agencyIds: string[],
-) {
+async function deleteByAgencyIds(client: SqlClient, tableName: string, agencyIds: string[]) {
   if (agencyIds.length === 0) return;
   await client.$executeRawUnsafe(
     `DELETE FROM "${tableName}" WHERE "agency_id" IN (${agencyIds
@@ -656,6 +664,311 @@ it.skipIf(!enabled)('isolates PDS sections and enforces draft-only mutations', a
     await admin.$disconnect();
   }
 });
+
+it.skipIf(!enabled)(
+  'enforces PDS completion workflow lifecycle and append-only artifacts',
+  async () => {
+    const runtimeUrl = process.env.DATABASE_URL;
+    if (!runtimeUrl) throw new Error('DATABASE_URL is required for the integration test.');
+    const app = new PrismaClient({ datasources: { db: { url: runtimeUrl } } });
+    const admin = await adminClient();
+
+    expect(await completionWorkflowTablesReady(admin)).toBe(true);
+
+    const suffix = `${Date.now()}-pds-workflow`;
+    const agency = await admin.agency.create({
+      data: {
+        code: `PDS-FLOW-${suffix}`,
+        name: 'PDS Workflow Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const user = await admin.user.create({
+      data: {
+        identityProvider: 'pds-workflow-e2e',
+        externalSubject: `pds-workflow-${suffix}`,
+        emailNormalized: `pds-workflow-${suffix}@example.test`,
+        displayName: 'PDS Workflow User',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const membership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const employee = await admin.employee.create({
+      data: {
+        agencyId: agency.id,
+        employeeNumber: `PDS-FLOW-${suffix}`,
+        legalName: 'PDS Workflow Employee',
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: `pds-flow-${suffix}@example.test`,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const evidence = await createEvidenceDocument(admin, {
+      agencyId: agency.id,
+      membershipId: membership.id,
+      suffix,
+      label: 'A',
+    });
+
+    try {
+      const pds = await withContext(
+        app,
+        { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+        async (transaction) => {
+          const version = await transaction.pdsVersion.create({
+            data: {
+              agencyId: agency.id,
+              employeeId: employee.id,
+              versionNo: 1,
+              formVersion: 'CS_FORM_212_REVISED_2026',
+              asOfDate: new Date('2026-09-01'),
+              status: 'DRAFT',
+              createdByMembershipId: membership.id,
+              updatedByMembershipId: membership.id,
+            },
+          });
+          await transaction.pdsOtherInformation.create({
+            data: {
+              agencyId: agency.id,
+              pdsVersionId: version.id,
+              skillsAndHobbies: 'Records management',
+              nonAcademicDistinctions: 'Employee award',
+              associationMemberships: 'HR association',
+            },
+          });
+          await transaction.pdsDeclarationDetails.create({
+            data: {
+              agencyId: agency.id,
+              pdsVersionId: version.id,
+              relatedWithinThirdDegree: false,
+              relatedWithinFourthDegreeLgu: false,
+              foundGuiltyAdministrativeOffense: false,
+              criminallyCharged: false,
+              criminalChargeDateFiledUnknown: false,
+              convictedOfCrime: false,
+              separatedFromService: false,
+              candidateInLastElection: false,
+              resignedBeforeElection: false,
+              immigrantOrPermanentResident: false,
+              indigenousGroupMember: false,
+              personWithDisability: false,
+              soloParent: false,
+            },
+          });
+          await transaction.pdsReferenceRecord.create({
+            data: {
+              agencyId: agency.id,
+              pdsVersionId: version.id,
+              sequenceNo: 1,
+              name: 'Maria Santos',
+              address: 'Manila',
+              contact: '09170000000',
+            },
+          });
+          await transaction.pdsCertificationDetails.create({
+            data: {
+              agencyId: agency.id,
+              pdsVersionId: version.id,
+              truthDeclarationAccepted: true,
+              verificationAuthorizationAccepted: true,
+              misrepresentationWarningAccepted: true,
+              governmentIdType: 'UMID',
+              governmentIdNumber: 'CRN-1234',
+              governmentIdIssuedAt: new Date('2024-01-01'),
+              governmentIdIssuedPlace: 'Manila',
+              employeeSignatureDocumentId: evidence.document.id,
+              employeeSignatureDocumentVersionId: evidence.version.id,
+              employeeSignatureDate: new Date('2026-09-01'),
+              subscribedAndSwornText: 'Subscribed and sworn before me.',
+              subscribedAndSwornAt: new Date('2026-09-01T08:00:00Z'),
+              oathAdministeredBy: 'Admin Officer',
+              oathAdministeredAt: new Date('2026-09-01T08:05:00Z'),
+            },
+          });
+          await transaction.pdsPageSignature.create({
+            data: {
+              agencyId: agency.id,
+              pdsVersionId: version.id,
+              pageKey: 'C1',
+              signatureDocumentId: evidence.document.id,
+              signatureDocumentVersionId: evidence.version.id,
+              signedAt: new Date('2026-09-01T08:00:00Z'),
+              signatureDate: new Date('2026-09-01'),
+            },
+          });
+          return version;
+        },
+      );
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id },
+          (transaction) =>
+            transaction.pdsOtherInformation.create({
+              data: { agencyId: agency.id, pdsVersionId: pds.id, skillsAndHobbies: 'Blocked' },
+            }),
+        ),
+      ).rejects.toThrow(/application service|section rows/i);
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+          (transaction) =>
+            transaction.pdsVersion.update({
+              where: { id: pds.id },
+              data: { status: 'CERTIFIED' },
+            }),
+        ),
+      ).rejects.toThrow(/transition/i);
+
+      await withContext(
+        app,
+        { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+        async (transaction) => {
+          await transaction.pdsVersion.update({
+            where: { id: pds.id },
+            data: { status: 'SUBMITTED' },
+          });
+          await transaction.pdsTransitionEvent.create({
+            data: {
+              agencyId: agency.id,
+              pdsVersionId: pds.id,
+              fromStatus: 'DRAFT',
+              toStatus: 'SUBMITTED',
+              action: 'SUBMIT',
+              actorUserId: user.id,
+              actorMembershipId: membership.id,
+              submittedSnapshot: { versionNo: 1 },
+            },
+          });
+        },
+      );
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+          (transaction) =>
+            transaction.pdsOtherInformation.update({
+              where: { agencyId_pdsVersionId: { agencyId: agency.id, pdsVersionId: pds.id } },
+              data: { skillsAndHobbies: 'Blocked after submit' },
+            }),
+        ),
+      ).rejects.toThrow(/immutable/i);
+
+      await withContext(
+        app,
+        { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+        async (transaction) => {
+          await transaction.pdsVersion.update({
+            where: { id: pds.id },
+            data: {
+              employeeCertifiedAt: new Date('2026-09-01T09:00:00Z'),
+              employeeCertifiedByMembershipId: membership.id,
+            },
+          });
+          await transaction.pdsVersion.update({
+            where: { id: pds.id },
+            data: {
+              status: 'CERTIFIED',
+              hrVerifiedAt: new Date('2026-09-01T10:00:00Z'),
+              hrVerifiedByMembershipId: membership.id,
+            },
+          });
+          await transaction.pdsOutputArtifact.create({
+            data: {
+              agencyId: agency.id,
+              employeeId: employee.id,
+              pdsVersionId: pds.id,
+              outputKey: 'PDS-C1-C4',
+              outputType: 'PDS',
+              formVersion: 'CS_FORM_212_REVISED_2026',
+              sourceArtifactId: pds.id,
+              sourceArtifactHash: '0'.repeat(64),
+              dataAsOfDate: new Date('2026-09-01'),
+              renderingMetadata: { pages: ['C1', 'C2', 'C3', 'C4'] },
+              signatureMetadata: { employeeCertified: true, hrVerified: true },
+              renderedContent: { status: 'released' },
+            },
+          });
+        },
+      );
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+          (transaction) =>
+            transaction.pdsVersion.update({
+              where: { id: pds.id },
+              data: { asOfDate: new Date('2026-09-02') },
+            }),
+        ),
+      ).rejects.toThrow(/draft|editable|changed/i);
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+          (transaction) =>
+            transaction.pdsTransitionEvent.updateMany({
+              where: { pdsVersionId: pds.id },
+              data: { reason: 'Changed' },
+            }),
+        ),
+      ).rejects.toThrow(/permission|append-only/i);
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+          (transaction) =>
+            transaction.pdsOutputArtifact.deleteMany({ where: { pdsVersionId: pds.id } }),
+        ),
+      ).rejects.toThrow(/permission|append-only/i);
+
+      await expect(
+        withContext(
+          app,
+          { agencyId: agency.id, userId: user.id, membershipId: membership.id, pdsMutation: true },
+          (transaction) =>
+            transaction.pdsVersion.update({
+              where: { id: pds.id },
+              data: { status: 'SUPERSEDED' },
+            }),
+        ),
+      ).rejects.toThrow(/successor/i);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await deleteByAgencyIds(transaction, 'pds_output_artifacts', [agency.id]);
+        await deleteByAgencyIds(transaction, 'pds_transition_events', [agency.id]);
+        await deleteByAgencyIds(transaction, 'pds_page_signatures', [agency.id]);
+        await deleteByAgencyIds(transaction, 'pds_certification_details', [agency.id]);
+        await deleteByAgencyIds(transaction, 'pds_reference_records', [agency.id]);
+        await deleteByAgencyIds(transaction, 'pds_declaration_details', [agency.id]);
+        await deleteByAgencyIds(transaction, 'pds_other_information', [agency.id]);
+        await transaction.pdsVersion.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.documentVersion.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.document.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.agencyMembership.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.employee.deleteMany({ where: { agencyId: agency.id } });
+      });
+      await admin.agency.delete({ where: { id: agency.id } });
+      await admin.user.delete({ where: { id: user.id } });
+      await app.$disconnect();
+      await admin.$disconnect();
+    }
+  },
+);
 
 it.skipIf(!enabled)(
   'isolates PDS work history rows and enforces WES and evidence integrity',

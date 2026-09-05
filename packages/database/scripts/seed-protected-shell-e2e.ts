@@ -327,6 +327,7 @@ async function seed(): Promise<void> {
   // One protected-shell identity exercises the browser critical path; production role grants remain distinct.
   for (const roleCode of [
     'agency_administrator',
+    'employee',
     'hrmo_administrator',
     'plantilla_officer',
     'budget_officer',

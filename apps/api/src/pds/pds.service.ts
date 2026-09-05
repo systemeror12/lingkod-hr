@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
@@ -8,15 +9,25 @@ import {
   PDS_FORM_VERSION,
   PDS_CITIZENSHIP_COUNTRIES,
   PDS_EDUCATION_LEVELS,
+  PDS_CONTINUATION_PAGE_KEYS,
+  PDS_MAIN_PAGE_KEYS,
+  PDS_PAGE_KEYS,
   pdsEducationSchema,
   pdsEligibilitySchema,
   pdsPersonalDetailsSchema,
+  type PdsCertificationDetailsInput,
   type PdsCreateInput,
+  type PdsDeclarationDetailsInput,
   type PdsEducationInput,
+  type PdsEmployeeCertificationInput,
   type PdsEligibilityInput,
   type PdsFamilyInput,
   type PdsLearningDevelopmentInput,
+  type PdsOtherInformationInput,
+  type PdsPageSignatureInput,
   type PdsPersonalDetailsInput,
+  type PdsReasonInput,
+  type PdsReferenceRecordInput,
   type PdsUpdateInput,
   type PdsVoluntaryWorkInput,
   type PdsWesInput,
@@ -158,7 +169,117 @@ export interface PdsWesView extends PdsEvidenceView {
   contextKey: string;
   templateVersion: string;
   status: string;
+  signatureDocumentId: string | null;
+  signatureDocumentVersionId: string | null;
+  signedAt: string | null;
   entries: PdsWesEntryView[];
+}
+
+export interface PdsOtherInformationView {
+  skillsAndHobbies: string | null;
+  nonAcademicDistinctions: string | null;
+  associationMemberships: string | null;
+}
+
+export interface PdsDeclarationDetailsView {
+  relatedWithinThirdDegree: boolean | null;
+  relatedWithinFourthDegreeLgu: boolean | null;
+  relationshipDetails: string | null;
+  relatedWithinFourthDegreeDetails: string | null;
+  foundGuiltyAdministrativeOffense: boolean | null;
+  administrativeOffenseDetails: string | null;
+  criminallyCharged: boolean | null;
+  criminalChargeDetails: string | null;
+  criminalChargeDateFiled: string | null;
+  criminalChargeDateFiledUnknown: boolean | null;
+  criminalChargeStatus: string | null;
+  convictedOfCrime: boolean | null;
+  convictionDetails: string | null;
+  separatedFromService: boolean | null;
+  separationMode: string | null;
+  separationDetails: string | null;
+  candidateInLastElection: boolean | null;
+  candidacyDetails: string | null;
+  resignedBeforeElection: boolean | null;
+  resignationDetails: string | null;
+  immigrantOrPermanentResident: boolean | null;
+  immigrantCountry: string | null;
+  immigrantDetails: string | null;
+  indigenousGroupMember: boolean | null;
+  indigenousGroupDetails: string | null;
+  personWithDisability: boolean | null;
+  disabilitySpecification: string | null;
+  disabilityIdNumber: string | null;
+  soloParent: boolean | null;
+  soloParentSpecification: string | null;
+  soloParentIdNumber: string | null;
+}
+
+export interface PdsReferenceRecordView {
+  id: string;
+  sequenceNo: number;
+  name: string;
+  address: string;
+  contact: string;
+}
+
+export interface PdsCertificationDetailsView {
+  truthDeclarationAccepted: boolean | null;
+  verificationAuthorizationAccepted: boolean | null;
+  misrepresentationWarningAccepted: boolean | null;
+  photoDocumentId: string | null;
+  photoDocumentVersionId: string | null;
+  governmentIdType: string | null;
+  governmentIdNumber: string | null;
+  governmentIdIssuedAt: string | null;
+  governmentIdIssuedPlace: string | null;
+  employeeSignatureDocumentId: string | null;
+  employeeSignatureDocumentVersionId: string | null;
+  employeeSignatureDate: string | null;
+  thumbmarkDocumentId: string | null;
+  thumbmarkDocumentVersionId: string | null;
+  subscribedAndSwornText: string | null;
+  subscribedAndSwornAt: string | null;
+  oathAdministeredBy: string | null;
+  oathAdminSignatureDocumentId: string | null;
+  oathAdminSignatureDocumentVersionId: string | null;
+  oathAdministeredAt: string | null;
+}
+
+export interface PdsPageSignatureView {
+  id: string;
+  pageKey: (typeof PDS_PAGE_KEYS)[number];
+  signatureDocumentId: string | null;
+  signatureDocumentVersionId: string | null;
+  signedAt: string | null;
+  signatureDate: string | null;
+}
+
+export interface PdsTransitionEventView {
+  id: string;
+  fromStatus: string | null;
+  toStatus: string;
+  action: string;
+  actorUserId: string;
+  actorMembershipId: string;
+  reason: string | null;
+  occurredAt: string;
+}
+
+export interface PdsOutputArtifactView {
+  id: string;
+  outputKey: string;
+  outputType: 'PDS' | 'WES';
+  formVersion: string;
+  templateVersion: string | null;
+  sourceArtifactId: string;
+  sourceArtifactHash: string;
+  generatedAt: string;
+  dataAsOfDate: string;
+  status: string;
+  renderingMetadata: Record<string, unknown>;
+  signatureMetadata: Record<string, unknown> | null;
+  renderedContent: Record<string, unknown> | null;
 }
 
 export interface PdsVersionSummary {
@@ -170,6 +291,10 @@ export interface PdsVersionSummary {
   status: PdsVersionState;
   supersedesVersionId: string | null;
   correctionReason: string | null;
+  employeeCertifiedAt: string | null;
+  employeeCertifiedByMembershipId: string | null;
+  hrVerifiedAt: string | null;
+  hrVerifiedByMembershipId: string | null;
   createdByMembershipId: string;
   createdAt: string;
   updatedByMembershipId: string;
@@ -187,6 +312,18 @@ export interface PdsVersionDetail extends PdsVersionSummary {
   voluntaryWork: PdsVoluntaryWorkView[];
   learningAndDevelopment: PdsLearningDevelopmentView[];
   wes: PdsWesView[];
+  otherInformation: PdsOtherInformationView | null;
+  declarations: PdsDeclarationDetailsView | null;
+  references: PdsReferenceRecordView[];
+  certification: PdsCertificationDetailsView | null;
+  pageSignatures: PdsPageSignatureView[];
+  transitions: PdsTransitionEventView[];
+}
+
+export interface PdsOutputArtifactList {
+  pdsVersionId: string;
+  fieldScope: PdsFieldScope;
+  outputs: PdsOutputArtifactView[];
 }
 
 export interface PdsVersionList {
@@ -221,6 +358,12 @@ export const pdsAuditWriter: PdsAuditWriter = {
       'hasSpouse',
       'rowCount',
       'section',
+      'status',
+      'previousStatus',
+      'newStatus',
+      'reasonCode',
+      'outputCount',
+      'artifactCount',
       'versionCount',
       'versionNo',
       'employeeId',
@@ -243,6 +386,7 @@ export class PdsServiceError extends Error {
     message: string,
     readonly statusCode: number,
     readonly code: string,
+    readonly fields?: Record<string, string>,
   ) {
     super(message);
     this.name = 'PdsServiceError';
@@ -259,12 +403,16 @@ const pdsSummarySelect = {
   status: true,
   supersedesVersionId: true,
   correctionReason: true,
+  employeeCertifiedAt: true,
+  employeeCertifiedByMembershipId: true,
+  hrVerifiedAt: true,
+  hrVerifiedByMembershipId: true,
   createdByMembershipId: true,
   createdAt: true,
   updatedByMembershipId: true,
   updatedAt: true,
   rowVersion: true,
-} satisfies Prisma.PdsVersionSelect;
+} as unknown as Prisma.PdsVersionSelect;
 
 const pdsSummaryWithOwnerSelect = {
   ...pdsSummarySelect,
@@ -274,7 +422,7 @@ const pdsSummaryWithOwnerSelect = {
       currentServiceSegment: { select: { organizationUnitId: true } },
     },
   },
-} satisfies Prisma.PdsVersionSelect;
+} as unknown as Prisma.PdsVersionSelect;
 
 const pdsSelect = {
   ...pdsSummaryWithOwnerSelect,
@@ -407,6 +555,9 @@ const pdsSelect = {
       status: true,
       documentId: true,
       documentVersionId: true,
+      employeeSignatureDocumentId: true,
+      employeeSignatureDocumentVersionId: true,
+      signedAt: true,
       entries: {
         orderBy: { sequenceNo: 'asc' },
         select: {
@@ -424,7 +575,101 @@ const pdsSelect = {
       },
     },
   },
-} satisfies Prisma.PdsVersionSelect;
+  otherInformation: {
+    select: {
+      skillsAndHobbies: true,
+      nonAcademicDistinctions: true,
+      associationMemberships: true,
+    },
+  },
+  declarationDetails: {
+    select: {
+      relatedWithinThirdDegree: true,
+      relatedWithinFourthDegreeLgu: true,
+      relationshipDetails: true,
+      relatedWithinFourthDegreeDetails: true,
+      foundGuiltyAdministrativeOffense: true,
+      administrativeOffenseDetails: true,
+      criminallyCharged: true,
+      criminalChargeDetails: true,
+      criminalChargeDateFiled: true,
+      criminalChargeDateFiledUnknown: true,
+      criminalChargeStatus: true,
+      convictedOfCrime: true,
+      convictionDetails: true,
+      separatedFromService: true,
+      separationMode: true,
+      separationDetails: true,
+      candidateInLastElection: true,
+      candidacyDetails: true,
+      resignedBeforeElection: true,
+      resignationDetails: true,
+      immigrantOrPermanentResident: true,
+      immigrantCountry: true,
+      immigrantDetails: true,
+      indigenousGroupMember: true,
+      indigenousGroupDetails: true,
+      personWithDisability: true,
+      disabilitySpecification: true,
+      disabilityIdNumber: true,
+      soloParent: true,
+      soloParentSpecification: true,
+      soloParentIdNumber: true,
+    },
+  },
+  referenceRecords: {
+    orderBy: { sequenceNo: 'asc' },
+    select: { id: true, sequenceNo: true, name: true, address: true, contact: true },
+  },
+  certificationDetails: {
+    select: {
+      truthDeclarationAccepted: true,
+      verificationAuthorizationAccepted: true,
+      misrepresentationWarningAccepted: true,
+      photoDocumentId: true,
+      photoDocumentVersionId: true,
+      governmentIdType: true,
+      governmentIdNumber: true,
+      governmentIdIssuedAt: true,
+      governmentIdIssuedPlace: true,
+      employeeSignatureDocumentId: true,
+      employeeSignatureDocumentVersionId: true,
+      employeeSignatureDate: true,
+      thumbmarkDocumentId: true,
+      thumbmarkDocumentVersionId: true,
+      subscribedAndSwornText: true,
+      subscribedAndSwornAt: true,
+      oathAdministeredBy: true,
+      oathAdminSignatureDocumentId: true,
+      oathAdminSignatureDocumentVersionId: true,
+      oathAdministeredAt: true,
+    },
+  },
+  pageSignatures: {
+    orderBy: { pageKey: 'asc' },
+    select: {
+      id: true,
+      pageKey: true,
+      signatureDocumentId: true,
+      signatureDocumentVersionId: true,
+      signedAt: true,
+      signatureDate: true,
+    },
+  },
+  transitionEvents: {
+    orderBy: { occurredAt: 'asc' },
+    select: {
+      id: true,
+      fromStatus: true,
+      toStatus: true,
+      action: true,
+      actorUserId: true,
+      actorMembershipId: true,
+      reason: true,
+      occurredAt: true,
+    },
+  },
+} as unknown as Prisma.PdsVersionSelect;
 
 const pdsRedactedSelect = {
   ...pdsSummaryWithOwnerSelect,
@@ -452,18 +697,268 @@ const pdsRedactedSelect = {
       examPlace: true,
     },
   },
-} satisfies Prisma.PdsVersionSelect;
+} as unknown as Prisma.PdsVersionSelect;
 
-type PdsRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsSelect }>;
-type PdsSummaryRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsSummarySelect }>;
-type PdsRedactedRecord = Prisma.PdsVersionGetPayload<{ select: typeof pdsRedactedSelect }>;
+type DecimalLike = {
+  toNumber(): number;
+};
+
+type PdsSummaryRecord = {
+  id: string;
+  agencyId: string;
+  employeeId: string;
+  versionNo: number;
+  formVersion: string;
+  asOfDate: Date;
+  status: string;
+  supersedesVersionId: string | null;
+  correctionReason: string | null;
+  employeeCertifiedAt: Date | null;
+  employeeCertifiedByMembershipId: string | null;
+  hrVerifiedAt: Date | null;
+  hrVerifiedByMembershipId: string | null;
+  createdByMembershipId: string;
+  createdAt: Date;
+  updatedByMembershipId: string;
+  updatedAt: Date;
+  rowVersion: number;
+};
+
+type PdsOwnerRecord = {
+  agencyId: string;
+  employee: {
+    memberships: { userId: string }[];
+    currentServiceSegment: { organizationUnitId: string | null } | null;
+  };
+};
+
+type PdsPersonalRecord = {
+  surname: string | null;
+  firstName: string | null;
+  nameExtension: string | null;
+  middleName: string | null;
+  birthDate: Date | null;
+  birthPlace: string | null;
+  sex: string | null;
+  civilStatus: string | null;
+  civilStatusDetail: string | null;
+  heightMeters: DecimalLike | null;
+  weightKilograms: DecimalLike | null;
+  bloodType: string | null;
+  citizenship: string | null;
+  dualCitizenshipType: string | null;
+  dualCitizenshipCountry: string | null;
+  residentialAddress: Prisma.JsonValue | null;
+  permanentAddress: Prisma.JsonValue | null;
+  telephoneNumber: string | null;
+  mobileNumber: string | null;
+  emailAddress: string | null;
+};
+
+type PdsFamilyRecord = {
+  id: string;
+  relationshipType: string;
+  sequenceNo: number;
+  fullName: string | null;
+  surname: string | null;
+  firstName: string | null;
+  middleName: string | null;
+  nameExtension: string | null;
+  birthDate: Date | null;
+  occupation: string | null;
+  employerBusinessName: string | null;
+  businessAddress: Prisma.JsonValue | null;
+  telephoneNumber: string | null;
+};
+
+type PdsEducationRecord = {
+  id: string;
+  level: string;
+  sequenceNo: number;
+  schoolName: string;
+  degreeCourse: string;
+  periodOfAttendance: string;
+  highestLevelUnits: string;
+  yearGraduated: number | null;
+  honors: string;
+  documentId: string | null;
+  documentVersionId: string | null;
+};
+
+type PdsEligibilityRecord = {
+  id: string;
+  sequenceNo: number;
+  eligibilityName: string;
+  rating: string | null;
+  examDate: Date | null;
+  examPlace: string;
+  licenseNo: string | null;
+  validUntil: Date | null;
+  documentId: string | null;
+  documentVersionId: string | null;
+};
+
+type PdsWorkExperienceRecord = {
+  id: string;
+  sequenceNo: number;
+  inclusiveFrom: Date | null;
+  inclusiveTo: Date | null;
+  positionTitle: string | null;
+  departmentAgencyOfficeCompany: string | null;
+  monthlySalary: DecimalLike | null;
+  salaryGradeStep: string | null;
+  appointmentStatus: string | null;
+  governmentService: string | null;
+  isCurrent: boolean;
+  documentId: string | null;
+  documentVersionId: string | null;
+};
+
+type PdsVoluntaryWorkRecord = {
+  id: string;
+  sequenceNo: number;
+  organizationNameAddress: string | null;
+  inclusiveFrom: Date | null;
+  inclusiveTo: Date | null;
+  hours: DecimalLike | null;
+  positionNatureOfWork: string | null;
+  documentId: string | null;
+  documentVersionId: string | null;
+};
+
+type PdsLearningDevelopmentRecord = {
+  id: string;
+  sequenceNo: number;
+  interventionTitle: string | null;
+  attendanceFrom: Date | null;
+  attendanceTo: Date | null;
+  hours: DecimalLike | null;
+  type: string | null;
+  conductedSponsoredBy: string | null;
+  documentId: string | null;
+  documentVersionId: string | null;
+};
+
+type PdsWesEntryRecord = {
+  id: string;
+  workExperienceId: string;
+  sequenceNo: number;
+  durationText: string | null;
+  position: string;
+  officeUnit: string;
+  immediateSupervisor: string;
+  agencyOrganizationLocation: string;
+  accomplishments: string | null;
+  actualDuties: string;
+};
+
+type PdsWesArtifactRecord = {
+  id: string;
+  contextKey: string;
+  templateVersion: string;
+  status: string;
+  documentId: string | null;
+  documentVersionId: string | null;
+  employeeSignatureDocumentId: string | null;
+  employeeSignatureDocumentVersionId: string | null;
+  signedAt: Date | null;
+  entries: PdsWesEntryRecord[];
+};
+
+type PdsDeclarationDetailsRecord = Omit<PdsDeclarationDetailsView, 'criminalChargeDateFiled'> & {
+  criminalChargeDateFiled: Date | null;
+};
+
+type PdsCertificationDetailsRecord = Omit<
+  PdsCertificationDetailsView,
+  'governmentIdIssuedAt' | 'employeeSignatureDate' | 'subscribedAndSwornAt' | 'oathAdministeredAt'
+> & {
+  governmentIdIssuedAt: Date | null;
+  employeeSignatureDate: Date | null;
+  subscribedAndSwornAt: Date | null;
+  oathAdministeredAt: Date | null;
+};
+
+type PdsPageSignatureRecord = Omit<PdsPageSignatureView, 'signedAt' | 'signatureDate'> & {
+  signedAt: Date | null;
+  signatureDate: Date | null;
+};
+
+type PdsTransitionEventRecord = {
+  id: string;
+  fromStatus: string | null;
+  toStatus: string;
+  action: string;
+  actorUserId: string;
+  actorMembershipId: string;
+  reason: string | null;
+  occurredAt: Date;
+};
+
+type PdsRecord = PdsSummaryRecord &
+  PdsOwnerRecord & {
+    personalDetails: PdsPersonalRecord | null;
+    familyRecords: PdsFamilyRecord[];
+    educationRecords: PdsEducationRecord[];
+    eligibilityRecords: PdsEligibilityRecord[];
+    workExperienceRecords: PdsWorkExperienceRecord[];
+    voluntaryWorkRecords: PdsVoluntaryWorkRecord[];
+    learningDevelopmentRecords: PdsLearningDevelopmentRecord[];
+    wesArtifacts: PdsWesArtifactRecord[];
+    otherInformation: PdsOtherInformationView | null;
+    declarationDetails: PdsDeclarationDetailsRecord | null;
+    referenceRecords: PdsReferenceRecordView[];
+    certificationDetails: PdsCertificationDetailsRecord | null;
+    pageSignatures: PdsPageSignatureRecord[];
+    transitionEvents: PdsTransitionEventRecord[];
+  };
+
+type PdsRedactedRecord = PdsSummaryRecord &
+  PdsOwnerRecord & {
+    educationRecords: PdsEducationRecord[];
+    eligibilityRecords: PdsEligibilityRecord[];
+  };
+
+type PdsOutputRecord = {
+  id: string;
+  outputKey: string;
+  outputType: string;
+  formVersion: string;
+  templateVersion: string | null;
+  sourceArtifactId: string;
+  sourceArtifactHash: string;
+  generatedAt: Date;
+  dataAsOfDate: Date;
+  status: string;
+  renderingMetadata: Prisma.JsonValue | null;
+  signatureMetadata: Prisma.JsonValue | null;
+  renderedContent: Prisma.JsonValue | null;
+};
 
 const PDS_EDUCATION_LEVEL_ORDER = new Map(
   PDS_EDUCATION_LEVELS.map((level, index) => [level, index]),
 );
-type PdsAccessRecord = Prisma.PdsVersionGetPayload<{
-  select: typeof pdsSummaryWithOwnerSelect;
-}>;
+type PendingPdsDelegate<TResult = unknown> = {
+  create(args: unknown): Promise<TResult>;
+  createMany(args: unknown): Promise<unknown>;
+  deleteMany(args: unknown): Promise<unknown>;
+  findMany(args: unknown): Promise<TResult[]>;
+  upsert(args: unknown): Promise<TResult>;
+};
+
+type PdsExtraClient = Prisma.TransactionClient & {
+  pdsOtherInformation: PendingPdsDelegate;
+  pdsDeclarationDetails: PendingPdsDelegate;
+  pdsReferenceRecord: PendingPdsDelegate;
+  pdsCertificationDetails: PendingPdsDelegate;
+  pdsPageSignature: PendingPdsDelegate;
+  pdsTransitionEvent: PendingPdsDelegate;
+  pdsOutputArtifact: PendingPdsDelegate<PdsOutputRecord>;
+};
+
+function pdsExtra(transaction: Prisma.TransactionClient): PdsExtraClient {
+  return transaction as PdsExtraClient;
+}
 
 function formatDate(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
@@ -782,6 +1277,16 @@ function dateValue(value: string | null | undefined): Date | null {
   return value ? databaseDate(value) : null;
 }
 
+function dateTimeValue(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00.000Z` : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    throw new PdsServiceError('The PDS date-time value is invalid.', 400, 'PDS_DATE_INVALID');
+  }
+  return date;
+}
+
 function decimalValue(value: number | null | undefined): Prisma.Decimal | null {
   return value === null || value === undefined ? null : new Prisma.Decimal(value);
 }
@@ -883,6 +1388,175 @@ function learningDevelopmentCreateData(
   }));
 }
 
+function otherInformationData(
+  agencyId: string,
+  pdsVersionId: string,
+  input: PdsOtherInformationInput,
+) {
+  return {
+    agencyId,
+    pdsVersionId,
+    skillsAndHobbies: text(input.skillsAndHobbies),
+    nonAcademicDistinctions: text(input.nonAcademicDistinctions),
+    associationMemberships: text(input.associationMemberships),
+  };
+}
+
+function declarationData(
+  agencyId: string,
+  pdsVersionId: string,
+  input: PdsDeclarationDetailsInput,
+) {
+  return {
+    agencyId,
+    pdsVersionId,
+    relatedWithinThirdDegree: input.relatedWithinThirdDegree ?? null,
+    relatedWithinFourthDegreeLgu: input.relatedWithinFourthDegreeLgu ?? null,
+    relationshipDetails: text(input.relationshipDetails),
+    relatedWithinFourthDegreeDetails: text(input.relatedWithinFourthDegreeDetails),
+    foundGuiltyAdministrativeOffense: input.foundGuiltyAdministrativeOffense ?? null,
+    administrativeOffenseDetails: text(input.administrativeOffenseDetails),
+    criminallyCharged: input.criminallyCharged ?? null,
+    criminalChargeDetails: text(input.criminalChargeDetails),
+    criminalChargeDateFiled: dateValue(input.criminalChargeDateFiled),
+    criminalChargeDateFiledUnknown: input.criminalChargeDateFiledUnknown ?? null,
+    criminalChargeStatus: text(input.criminalChargeStatus),
+    convictedOfCrime: input.convictedOfCrime ?? null,
+    convictionDetails: text(input.convictionDetails),
+    separatedFromService: input.separatedFromService ?? null,
+    separationMode: text(input.separationMode),
+    separationDetails: text(input.separationDetails),
+    candidateInLastElection: input.candidateInLastElection ?? null,
+    candidacyDetails: text(input.candidacyDetails),
+    resignedBeforeElection: input.resignedBeforeElection ?? null,
+    resignationDetails: text(input.resignationDetails),
+    immigrantOrPermanentResident: input.immigrantOrPermanentResident ?? null,
+    immigrantCountry: input.immigrantCountry ?? null,
+    immigrantDetails: text(input.immigrantDetails),
+    indigenousGroupMember: input.indigenousGroupMember ?? null,
+    indigenousGroupDetails: text(input.indigenousGroupDetails),
+    personWithDisability: input.personWithDisability ?? null,
+    disabilitySpecification: text(input.disabilitySpecification),
+    disabilityIdNumber: text(input.disabilityIdNumber),
+    soloParent: input.soloParent ?? null,
+    soloParentSpecification: text(input.soloParentSpecification),
+    soloParentIdNumber: text(input.soloParentIdNumber),
+  };
+}
+
+function referenceData(
+  agencyId: string,
+  pdsVersionId: string,
+  rows: readonly PdsReferenceRecordInput[],
+) {
+  const seen = new Set<number>();
+  return rows.map((row, index) => ({
+    ...(row.id ? { id: row.id } : {}),
+    agencyId,
+    pdsVersionId,
+    sequenceNo: sectionSequence(row.sequenceNo, index, 'Reference', seen),
+    name: requiredTextValue(row.name, 'Reference name'),
+    address: requiredTextValue(row.address, 'Reference address'),
+    contact: requiredTextValue(row.contact, 'Reference contact'),
+  }));
+}
+
+function certificationData(
+  agencyId: string,
+  pdsVersionId: string,
+  input: PdsCertificationDetailsInput,
+) {
+  return {
+    agencyId,
+    pdsVersionId,
+    truthDeclarationAccepted: input.truthDeclarationAccepted ?? null,
+    verificationAuthorizationAccepted: input.verificationAuthorizationAccepted ?? null,
+    misrepresentationWarningAccepted: input.misrepresentationWarningAccepted ?? null,
+    photoDocumentId: input.photoDocumentId ?? null,
+    photoDocumentVersionId: input.photoDocumentVersionId ?? null,
+    governmentIdType: text(input.governmentIdType),
+    governmentIdNumber: text(input.governmentIdNumber),
+    governmentIdIssuedAt: dateValue(input.governmentIdIssuedAt),
+    governmentIdIssuedPlace: text(input.governmentIdIssuedPlace),
+    employeeSignatureDocumentId: input.employeeSignatureDocumentId ?? null,
+    employeeSignatureDocumentVersionId: input.employeeSignatureDocumentVersionId ?? null,
+    employeeSignatureDate: dateValue(input.employeeSignatureDate),
+    thumbmarkDocumentId: input.thumbmarkDocumentId ?? null,
+    thumbmarkDocumentVersionId: input.thumbmarkDocumentVersionId ?? null,
+    subscribedAndSwornText: text(input.subscribedAndSwornText),
+    subscribedAndSwornAt: dateTimeValue(input.subscribedAndSwornAt),
+    oathAdministeredBy: text(input.oathAdministeredBy),
+    oathAdminSignatureDocumentId: input.oathAdminSignatureDocumentId ?? null,
+    oathAdminSignatureDocumentVersionId: input.oathAdminSignatureDocumentVersionId ?? null,
+    oathAdministeredAt: dateTimeValue(input.oathAdministeredAt),
+  };
+}
+
+function pageSignatureData(
+  agencyId: string,
+  pdsVersionId: string,
+  rows: readonly PdsPageSignatureInput[],
+) {
+  const seen = new Set<string>();
+  return rows.map((row) => {
+    if (seen.has(row.pageKey)) {
+      throw new PdsServiceError(
+        'PDS page signatures must be unique within this PDS Version.',
+        400,
+        'PDS_PAGE_SIGNATURE_CONFLICT',
+      );
+    }
+    seen.add(row.pageKey);
+    return {
+      ...(row.id ? { id: row.id } : {}),
+      agencyId,
+      pdsVersionId,
+      pageKey: row.pageKey,
+      signatureDocumentId: row.signatureDocumentId ?? null,
+      signatureDocumentVersionId: row.signatureDocumentVersionId ?? null,
+      signedAt: dateTimeValue(row.signedAt),
+      signatureDate: dateValue(row.signatureDate),
+    };
+  });
+}
+
+function evidenceInputsFromCompletion(input: PdsCreateInput | PdsUpdateInput): EvidenceInput[] {
+  const evidence: EvidenceInput[] = [];
+  for (const wes of input.wes ?? []) {
+    evidence.push(wes, {
+      documentId: wes.signatureDocumentId,
+      documentVersionId: wes.signatureDocumentVersionId,
+    });
+  }
+  if (input.certification) {
+    evidence.push(
+      {
+        documentId: input.certification.photoDocumentId,
+        documentVersionId: input.certification.photoDocumentVersionId,
+      },
+      {
+        documentId: input.certification.employeeSignatureDocumentId,
+        documentVersionId: input.certification.employeeSignatureDocumentVersionId,
+      },
+      {
+        documentId: input.certification.thumbmarkDocumentId,
+        documentVersionId: input.certification.thumbmarkDocumentVersionId,
+      },
+      {
+        documentId: input.certification.oathAdminSignatureDocumentId,
+        documentVersionId: input.certification.oathAdminSignatureDocumentVersionId,
+      },
+    );
+  }
+  for (const signature of input.pageSignatures ?? []) {
+    evidence.push({
+      documentId: signature.signatureDocumentId,
+      documentVersionId: signature.signatureDocumentVersionId,
+    });
+  }
+  return evidence;
+}
+
 function personalView(record: PdsRecord['personalDetails']): PdsPersonalDetailsView | null {
   if (!record) return null;
   return {
@@ -930,27 +1604,32 @@ function familyRecordView(record: PdsRecord['familyRecords'][number]): PdsFamily
 function familyView(records: PdsRecord['familyRecords']): PdsFamilyView {
   const views = records.map(familyRecordView);
   return {
-    spouse: views.find((record) => record.relationshipType === 'SPOUSE') ?? null,
-    children: views.filter((record) => record.relationshipType === 'CHILD'),
-    father: views.find((record) => record.relationshipType === 'FATHER') ?? null,
-    mother: views.find((record) => record.relationshipType === 'MOTHER') ?? null,
+    spouse:
+      views.find((record: PdsFamilyRecordView) => record.relationshipType === 'SPOUSE') ?? null,
+    children: views.filter((record: PdsFamilyRecordView) => record.relationshipType === 'CHILD'),
+    father:
+      views.find((record: PdsFamilyRecordView) => record.relationshipType === 'FATHER') ?? null,
+    mother:
+      views.find((record: PdsFamilyRecordView) => record.relationshipType === 'MOTHER') ?? null,
   };
 }
 
 function educationView(records: PdsRecord['educationRecords']): PdsEducationRecordView[] {
-  return [...records].sort(compareEducationRecords).map((record) => ({
-    id: record.id,
-    level: record.level,
-    sequenceNo: record.sequenceNo,
-    schoolName: record.schoolName,
-    degreeCourse: record.degreeCourse,
-    periodOfAttendance: record.periodOfAttendance,
-    highestLevelUnits: record.highestLevelUnits,
-    yearGraduated: record.yearGraduated,
-    honors: record.honors,
-    documentId: record.documentId,
-    documentVersionId: record.documentVersionId,
-  }));
+  return [...records]
+    .sort(compareEducationRecords)
+    .map((record: PdsRecord['educationRecords'][number]) => ({
+      id: record.id,
+      level: record.level,
+      sequenceNo: record.sequenceNo,
+      schoolName: record.schoolName,
+      degreeCourse: record.degreeCourse,
+      periodOfAttendance: record.periodOfAttendance,
+      highestLevelUnits: record.highestLevelUnits,
+      yearGraduated: record.yearGraduated,
+      honors: record.honors,
+      documentId: record.documentId ?? null,
+      documentVersionId: record.documentVersionId ?? null,
+    }));
 }
 
 function compareEducationRecords(
@@ -968,40 +1647,42 @@ function compareEducationRecords(
 function redactedEducationView(
   records: PdsRedactedRecord['educationRecords'],
 ): PdsEducationRecordView[] {
-  return [...records].sort(compareEducationRecords).map((record) => ({
-    id: record.id,
-    level: record.level,
-    sequenceNo: record.sequenceNo,
-    schoolName: record.schoolName,
-    degreeCourse: record.degreeCourse,
-    periodOfAttendance: record.periodOfAttendance,
-    highestLevelUnits: record.highestLevelUnits,
-    yearGraduated: record.yearGraduated,
-    honors: record.honors,
-    documentId: null,
-    documentVersionId: null,
-  }));
+  return [...records]
+    .sort(compareEducationRecords)
+    .map((record: PdsRedactedRecord['educationRecords'][number]) => ({
+      id: record.id,
+      level: record.level,
+      sequenceNo: record.sequenceNo,
+      schoolName: record.schoolName,
+      degreeCourse: record.degreeCourse,
+      periodOfAttendance: record.periodOfAttendance,
+      highestLevelUnits: record.highestLevelUnits,
+      yearGraduated: record.yearGraduated,
+      honors: record.honors,
+      documentId: null,
+      documentVersionId: null,
+    }));
 }
 
 function eligibilityView(records: PdsRecord['eligibilityRecords']): PdsEligibilityRecordView[] {
-  return records.map((record) => ({
+  return records.map((record: PdsRecord['eligibilityRecords'][number]) => ({
     id: record.id,
     sequenceNo: record.sequenceNo,
     eligibilityName: record.eligibilityName,
-    rating: record.rating,
+    rating: record.rating ?? null,
     examDate: formatDate(record.examDate),
     examPlace: record.examPlace,
-    licenseNo: record.licenseNo,
-    validUntil: formatDate(record.validUntil),
-    documentId: record.documentId,
-    documentVersionId: record.documentVersionId,
+    licenseNo: record.licenseNo ?? null,
+    validUntil: formatDate(record.validUntil ?? null),
+    documentId: record.documentId ?? null,
+    documentVersionId: record.documentVersionId ?? null,
   }));
 }
 
 function redactedEligibilityView(
   records: PdsRedactedRecord['eligibilityRecords'],
 ): PdsEligibilityRecordView[] {
-  return records.map((record) => ({
+  return records.map((record: PdsRedactedRecord['eligibilityRecords'][number]) => ({
     id: record.id,
     sequenceNo: record.sequenceNo,
     eligibilityName: record.eligibilityName,
@@ -1093,7 +1774,130 @@ function wesView(record: PdsRecord['wesArtifacts'][number]): PdsWesView {
     status: record.status,
     documentId: record.documentId,
     documentVersionId: record.documentVersionId,
+    signatureDocumentId: record.employeeSignatureDocumentId ?? null,
+    signatureDocumentVersionId: record.employeeSignatureDocumentVersionId ?? null,
+    signedAt: formatDate(record.signedAt),
     entries: record.entries.map(wesEntryView),
+  };
+}
+
+function otherInformationView(
+  record: PdsRecord['otherInformation'],
+): PdsOtherInformationView | null {
+  if (!record) return null;
+  return {
+    skillsAndHobbies: record.skillsAndHobbies,
+    nonAcademicDistinctions: record.nonAcademicDistinctions,
+    associationMemberships: record.associationMemberships,
+  };
+}
+
+function declarationDetailsView(
+  record: PdsRecord['declarationDetails'],
+): PdsDeclarationDetailsView | null {
+  if (!record) return null;
+  return {
+    relatedWithinThirdDegree: record.relatedWithinThirdDegree,
+    relatedWithinFourthDegreeLgu: record.relatedWithinFourthDegreeLgu,
+    relationshipDetails: record.relationshipDetails,
+    relatedWithinFourthDegreeDetails: record.relatedWithinFourthDegreeDetails,
+    foundGuiltyAdministrativeOffense: record.foundGuiltyAdministrativeOffense,
+    administrativeOffenseDetails: record.administrativeOffenseDetails,
+    criminallyCharged: record.criminallyCharged,
+    criminalChargeDetails: record.criminalChargeDetails,
+    criminalChargeDateFiled: formatDate(record.criminalChargeDateFiled),
+    criminalChargeDateFiledUnknown: record.criminalChargeDateFiledUnknown,
+    criminalChargeStatus: record.criminalChargeStatus,
+    convictedOfCrime: record.convictedOfCrime,
+    convictionDetails: record.convictionDetails,
+    separatedFromService: record.separatedFromService,
+    separationMode: record.separationMode,
+    separationDetails: record.separationDetails,
+    candidateInLastElection: record.candidateInLastElection,
+    candidacyDetails: record.candidacyDetails,
+    resignedBeforeElection: record.resignedBeforeElection,
+    resignationDetails: record.resignationDetails,
+    immigrantOrPermanentResident: record.immigrantOrPermanentResident,
+    immigrantCountry: record.immigrantCountry,
+    immigrantDetails: record.immigrantDetails,
+    indigenousGroupMember: record.indigenousGroupMember,
+    indigenousGroupDetails: record.indigenousGroupDetails,
+    personWithDisability: record.personWithDisability,
+    disabilitySpecification: record.disabilitySpecification,
+    disabilityIdNumber: record.disabilityIdNumber,
+    soloParent: record.soloParent,
+    soloParentSpecification: record.soloParentSpecification,
+    soloParentIdNumber: record.soloParentIdNumber,
+  };
+}
+
+function referenceRecordView(
+  record: PdsRecord['referenceRecords'][number],
+): PdsReferenceRecordView {
+  return {
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    name: record.name,
+    address: record.address,
+    contact: record.contact,
+  };
+}
+
+function certificationDetailsView(
+  record: PdsRecord['certificationDetails'],
+): PdsCertificationDetailsView | null {
+  if (!record) return null;
+  return {
+    truthDeclarationAccepted: record.truthDeclarationAccepted,
+    verificationAuthorizationAccepted: record.verificationAuthorizationAccepted,
+    misrepresentationWarningAccepted: record.misrepresentationWarningAccepted,
+    photoDocumentId: record.photoDocumentId,
+    photoDocumentVersionId: record.photoDocumentVersionId,
+    governmentIdType: record.governmentIdType,
+    governmentIdNumber: record.governmentIdNumber,
+    governmentIdIssuedAt: formatDate(record.governmentIdIssuedAt),
+    governmentIdIssuedPlace: record.governmentIdIssuedPlace,
+    employeeSignatureDocumentId: record.employeeSignatureDocumentId,
+    employeeSignatureDocumentVersionId: record.employeeSignatureDocumentVersionId,
+    employeeSignatureDate: formatDate(record.employeeSignatureDate),
+    thumbmarkDocumentId: record.thumbmarkDocumentId,
+    thumbmarkDocumentVersionId: record.thumbmarkDocumentVersionId,
+    subscribedAndSwornText: record.subscribedAndSwornText,
+    subscribedAndSwornAt: record.subscribedAndSwornAt
+      ? formatDateTime(record.subscribedAndSwornAt)
+      : null,
+    oathAdministeredBy: record.oathAdministeredBy,
+    oathAdminSignatureDocumentId: record.oathAdminSignatureDocumentId,
+    oathAdminSignatureDocumentVersionId: record.oathAdminSignatureDocumentVersionId,
+    oathAdministeredAt: record.oathAdministeredAt
+      ? formatDateTime(record.oathAdministeredAt)
+      : null,
+  };
+}
+
+function pageSignatureView(record: PdsRecord['pageSignatures'][number]): PdsPageSignatureView {
+  return {
+    id: record.id,
+    pageKey: record.pageKey,
+    signatureDocumentId: record.signatureDocumentId,
+    signatureDocumentVersionId: record.signatureDocumentVersionId,
+    signedAt: record.signedAt ? formatDateTime(record.signedAt) : null,
+    signatureDate: formatDate(record.signatureDate),
+  };
+}
+
+function transitionEventView(
+  record: PdsRecord['transitionEvents'][number],
+): PdsTransitionEventView {
+  return {
+    id: record.id,
+    fromStatus: record.fromStatus,
+    toStatus: record.toStatus,
+    action: record.action,
+    actorUserId: record.actorUserId,
+    actorMembershipId: record.actorMembershipId,
+    reason: record.reason,
+    occurredAt: formatDateTime(record.occurredAt),
   };
 }
 
@@ -1107,6 +1911,12 @@ function summary(record: PdsSummaryRecord, fieldScope: PdsFieldScope): PdsVersio
     status: record.status as PdsVersionState,
     supersedesVersionId: record.supersedesVersionId,
     correctionReason: record.correctionReason,
+    employeeCertifiedAt: record.employeeCertifiedAt
+      ? formatDateTime(record.employeeCertifiedAt)
+      : null,
+    employeeCertifiedByMembershipId: record.employeeCertifiedByMembershipId ?? null,
+    hrVerifiedAt: record.hrVerifiedAt ? formatDateTime(record.hrVerifiedAt) : null,
+    hrVerifiedByMembershipId: record.hrVerifiedByMembershipId ?? null,
     createdByMembershipId: record.createdByMembershipId,
     createdAt: formatDateTime(record.createdAt),
     updatedByMembershipId: record.updatedByMembershipId,
@@ -1125,6 +1935,868 @@ function currentVersion(versions: readonly PdsVersionSummary[]): PdsVersionSumma
   );
 }
 
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+}
+
+function sourceHash(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+function firstMissing(field: string, message: string): PdsServiceError {
+  return new PdsServiceError(message, 400, 'PDS_COMPLETENESS_FAILED', { [field]: message });
+}
+
+function requireValue(value: unknown, field: string, message: string): void {
+  if (value === null || value === undefined || (typeof value === 'string' && !value.trim())) {
+    throw firstMissing(field, message);
+  }
+}
+
+function requireEvidence(value: PdsEvidenceView, field: string, message: string): void {
+  if (!value.documentId || !value.documentVersionId) throw firstMissing(field, message);
+}
+
+const addressFieldNames = [
+  'houseBlockLotNo',
+  'street',
+  'subdivisionVillage',
+  'barangay',
+  'cityMunicipality',
+  'province',
+  'zipCode',
+] as const;
+
+function requireAddressCompleteness(
+  value: Record<string, unknown> | null,
+  field: string,
+  label: string,
+): void {
+  for (const name of addressFieldNames) {
+    requireValue(value?.[name], `${field}.${name}`, `Complete the ${label} ${name} or enter N/A.`);
+  }
+}
+
+function requireNameCompleteness(
+  value: PdsFamilyRecordView | null,
+  field: string,
+  label: string,
+): void {
+  if (!value) throw firstMissing(`${field}.surname`, `Complete the ${label} or enter N/A.`);
+  requireValue(value.surname, `${field}.surname`, `Complete the ${label} surname or enter N/A.`);
+  requireValue(
+    value.firstName,
+    `${field}.firstName`,
+    `Complete the ${label} first name or enter N/A.`,
+  );
+  requireValue(
+    value.middleName,
+    `${field}.middleName`,
+    `Complete the ${label} middle name or enter N/A.`,
+  );
+}
+
+function requirePersonalCompleteness(record: PdsRecord): void {
+  const personal = personalView(record.personalDetails);
+  if (!personal) throw firstMissing('personal', 'Complete personal information before submission.');
+  for (const field of [
+    'surname',
+    'firstName',
+    'birthDate',
+    'birthPlace',
+    'sex',
+    'civilStatus',
+    'heightMeters',
+    'weightKilograms',
+    'bloodType',
+    'citizenship',
+  ] as const) {
+    requireValue(personal[field], `personal.${field}`, `Complete ${field} before submission.`);
+  }
+  for (const field of ['telephoneNumber', 'mobileNumber', 'emailAddress'] as const) {
+    requireValue(personal[field], `personal.${field}`, `Complete ${field} or enter N/A.`);
+  }
+  requireAddressCompleteness(personal.residentialAddress, 'personal.residentialAddress', 'Item 17');
+  requireAddressCompleteness(personal.permanentAddress, 'personal.permanentAddress', 'Item 18');
+  if (personal.citizenship === 'DUAL_CITIZENSHIP') {
+    requireValue(
+      personal.dualCitizenshipType,
+      'personal.dualCitizenshipType',
+      'Select the dual citizenship basis.',
+    );
+    requireValue(
+      personal.dualCitizenshipCountry,
+      'personal.dualCitizenshipCountry',
+      'Select the other citizenship country.',
+    );
+  }
+}
+
+function requirePriorSectionCompleteness(record: PdsRecord): void {
+  const family = familyView(record.familyRecords);
+  if (record.personalDetails?.civilStatus === 'MARRIED') {
+    requireNameCompleteness(family.spouse, 'family.spouse', 'Item 22 spouse');
+    requireValue(
+      family.spouse?.occupation,
+      'family.spouse.occupation',
+      'Complete the Item 22 spouse occupation or enter N/A.',
+    );
+    requireValue(
+      family.spouse?.employerBusinessName,
+      'family.spouse.employerBusinessName',
+      'Complete the Item 22 spouse employer or enter N/A.',
+    );
+    requireAddressCompleteness(
+      family.spouse?.businessAddress ?? null,
+      'family.spouse.businessAddress',
+      'Item 22 spouse business address',
+    );
+    requireValue(
+      family.spouse?.telephoneNumber,
+      'family.spouse.telephoneNumber',
+      'Complete the Item 22 spouse telephone number or enter N/A.',
+    );
+  }
+  for (const [index, child] of family.children.entries()) {
+    requireValue(child.fullName, `family.children.${index}.fullName`, 'Complete the child name.');
+    requireValue(
+      child.birthDate,
+      `family.children.${index}.birthDate`,
+      'Complete the child birth date.',
+    );
+  }
+  requireNameCompleteness(family.father, 'family.father', 'Item 24 father');
+  requireNameCompleteness(family.mother, 'family.mother', 'Item 25 mother');
+
+  const educationLevels = new Set(record.educationRecords.map((row) => row.level));
+  for (const level of PDS_EDUCATION_LEVELS) {
+    if (!educationLevels.has(level)) {
+      throw firstMissing('education', 'Add every Item 26 education level, using N/A where needed.');
+    }
+  }
+  for (const [index, row] of record.educationRecords.entries()) {
+    for (const field of ['schoolName', 'degreeCourse', 'periodOfAttendance', 'honors'] as const) {
+      requireValue(
+        row[field],
+        `education.${index}.${field}`,
+        'Complete every Item 26 row with a value or N/A.',
+      );
+    }
+    if (!row.yearGraduated) {
+      requireValue(
+        row.highestLevelUnits,
+        `education.${index}.highestLevelUnits`,
+        'Enter highest level or units earned when no graduation year is recorded.',
+      );
+    }
+  }
+
+  if (!record.eligibilityRecords.length) {
+    throw firstMissing('eligibility', 'Add Item 27 eligibility information or an N/A row.');
+  }
+  for (const [index, row] of record.eligibilityRecords.entries()) {
+    requireValue(
+      row.eligibilityName,
+      `eligibility.${index}.eligibilityName`,
+      'Complete every Item 27 row with a value or N/A.',
+    );
+    requireValue(
+      row.examPlace,
+      `eligibility.${index}.examPlace`,
+      'Complete every Item 27 place with a value or N/A.',
+    );
+    if (row.eligibilityName.trim().toUpperCase() !== 'N/A') {
+      requireValue(row.examDate, `eligibility.${index}.examDate`, 'Enter the Item 27 date.');
+    }
+  }
+
+  if (!record.workExperienceRecords.length) {
+    throw firstMissing('workExperience', 'Add Item 28 work information or an N/A row.');
+  }
+  for (const [index, row] of record.workExperienceRecords.entries()) {
+    for (const field of [
+      'positionTitle',
+      'departmentAgencyOfficeCompany',
+      'salaryGradeStep',
+      'appointmentStatus',
+    ] as const) {
+      requireValue(
+        row[field],
+        `workExperience.${index}.${field}`,
+        'Complete every Item 28 row with a value or N/A.',
+      );
+    }
+    if (row.positionTitle?.trim().toUpperCase() !== 'N/A') {
+      requireValue(
+        row.inclusiveFrom,
+        `workExperience.${index}.inclusiveFrom`,
+        'Enter the Item 28 start date.',
+      );
+      if (!row.isCurrent) {
+        requireValue(
+          row.inclusiveTo,
+          `workExperience.${index}.inclusiveTo`,
+          'Enter the Item 28 end date.',
+        );
+      }
+      requireValue(
+        row.monthlySalary,
+        `workExperience.${index}.monthlySalary`,
+        'Enter the Item 28 monthly salary.',
+      );
+      requireValue(
+        row.governmentService,
+        `workExperience.${index}.governmentService`,
+        'Answer the Item 28 government-service field.',
+      );
+    }
+  }
+
+  if (!record.voluntaryWorkRecords.length) {
+    throw firstMissing('voluntaryWork', 'Add Item 29 voluntary-work information or an N/A row.');
+  }
+  for (const [index, row] of record.voluntaryWorkRecords.entries()) {
+    requireValue(
+      row.organizationNameAddress,
+      `voluntaryWork.${index}.organizationNameAddress`,
+      'Complete every Item 29 row with a value or N/A.',
+    );
+    requireValue(
+      row.positionNatureOfWork,
+      `voluntaryWork.${index}.positionNatureOfWork`,
+      'Complete every Item 29 position with a value or N/A.',
+    );
+    if (row.organizationNameAddress?.trim().toUpperCase() !== 'N/A') {
+      requireValue(
+        row.inclusiveFrom,
+        `voluntaryWork.${index}.inclusiveFrom`,
+        'Enter the Item 29 start date.',
+      );
+      requireValue(
+        row.inclusiveTo,
+        `voluntaryWork.${index}.inclusiveTo`,
+        'Enter the Item 29 end date.',
+      );
+      requireValue(row.hours, `voluntaryWork.${index}.hours`, 'Enter the Item 29 hours.');
+    }
+  }
+
+  if (!record.learningDevelopmentRecords.length) {
+    throw firstMissing(
+      'learningAndDevelopment',
+      'Add Item 30 learning and development information or an N/A row.',
+    );
+  }
+  for (const [index, row] of record.learningDevelopmentRecords.entries()) {
+    for (const field of ['interventionTitle', 'type', 'conductedSponsoredBy'] as const) {
+      requireValue(
+        row[field],
+        `learningAndDevelopment.${index}.${field}`,
+        'Complete every Item 30 row with a value or N/A.',
+      );
+    }
+    if (row.interventionTitle?.trim().toUpperCase() !== 'N/A') {
+      requireValue(
+        row.attendanceFrom,
+        `learningAndDevelopment.${index}.attendanceFrom`,
+        'Enter the Item 30 start date.',
+      );
+      requireValue(
+        row.attendanceTo,
+        `learningAndDevelopment.${index}.attendanceTo`,
+        'Enter the Item 30 end date.',
+      );
+      requireValue(row.hours, `learningAndDevelopment.${index}.hours`, 'Enter the Item 30 hours.');
+    }
+  }
+}
+
+const declarationAnswerFields = [
+  'relatedWithinThirdDegree',
+  'relatedWithinFourthDegreeLgu',
+  'foundGuiltyAdministrativeOffense',
+  'criminallyCharged',
+  'convictedOfCrime',
+  'separatedFromService',
+  'candidateInLastElection',
+  'resignedBeforeElection',
+  'immigrantOrPermanentResident',
+  'indigenousGroupMember',
+  'personWithDisability',
+  'soloParent',
+] as const;
+
+function requireSubmissionCompleteness(record: PdsRecord): void {
+  requirePersonalCompleteness(record);
+  requirePriorSectionCompleteness(record);
+  if (record.formVersion !== PDS_FORM_VERSION) {
+    throw firstMissing('formVersion', 'Use the Revised 2026 PDS contract before submission.');
+  }
+  const other = otherInformationView(record.otherInformation);
+  if (!other) throw firstMissing('otherInformation', 'Complete Items 31 to 33 before submission.');
+  requireValue(other.skillsAndHobbies, 'otherInformation.skillsAndHobbies', 'Complete Item 31.');
+  requireValue(
+    other.nonAcademicDistinctions,
+    'otherInformation.nonAcademicDistinctions',
+    'Complete Item 32.',
+  );
+  requireValue(
+    other.associationMemberships,
+    'otherInformation.associationMemberships',
+    'Complete Item 33.',
+  );
+  const declarations = declarationDetailsView(record.declarationDetails);
+  if (!declarations)
+    throw firstMissing('declarations', 'Complete Items 34 to 40 before submission.');
+  for (const field of declarationAnswerFields) {
+    if (declarations[field] === null)
+      throw firstMissing(`declarations.${field}`, 'Answer every Item 34 to 40 declaration.');
+  }
+  if (declarations.relatedWithinThirdDegree && !declarations.relationshipDetails) {
+    throw firstMissing('declarations.relationshipDetails', 'Describe the Item 34a relationship.');
+  }
+  if (declarations.relatedWithinFourthDegreeLgu && !declarations.relatedWithinFourthDegreeDetails) {
+    throw firstMissing(
+      'declarations.relatedWithinFourthDegreeDetails',
+      'Describe the Item 34b relationship.',
+    );
+  }
+  if (declarations.foundGuiltyAdministrativeOffense && !declarations.administrativeOffenseDetails) {
+    throw firstMissing(
+      'declarations.administrativeOffenseDetails',
+      'Describe the Item 35a finding.',
+    );
+  }
+  if (declarations.criminallyCharged) {
+    requireValue(
+      declarations.criminalChargeDetails,
+      'declarations.criminalChargeDetails',
+      'Describe the Item 35b charge.',
+    );
+    if (
+      !declarations.criminalChargeDateFiled &&
+      declarations.criminalChargeDateFiledUnknown !== true
+    ) {
+      throw firstMissing(
+        'declarations.criminalChargeDateFiled',
+        'Enter the Item 35b filing date or mark it unknown.',
+      );
+    }
+    requireValue(
+      declarations.criminalChargeStatus,
+      'declarations.criminalChargeStatus',
+      'Enter the Item 35b case status.',
+    );
+  }
+  if (declarations.convictedOfCrime && !declarations.convictionDetails) {
+    throw firstMissing('declarations.convictionDetails', 'Describe the Item 36 conviction.');
+  }
+  if (declarations.separatedFromService) {
+    requireValue(
+      declarations.separationMode,
+      'declarations.separationMode',
+      'Enter the Item 37 separation mode.',
+    );
+    requireValue(
+      declarations.separationDetails,
+      'declarations.separationDetails',
+      'Describe the Item 37 separation.',
+    );
+  }
+  if (declarations.candidateInLastElection && !declarations.candidacyDetails) {
+    throw firstMissing('declarations.candidacyDetails', 'Describe the Item 38a candidacy.');
+  }
+  if (declarations.resignedBeforeElection && !declarations.resignationDetails) {
+    throw firstMissing('declarations.resignationDetails', 'Describe the Item 38b resignation.');
+  }
+  if (declarations.immigrantOrPermanentResident && !declarations.immigrantCountry) {
+    throw firstMissing('declarations.immigrantCountry', 'Select the Item 39 country.');
+  }
+  if (declarations.indigenousGroupMember && !declarations.indigenousGroupDetails) {
+    throw firstMissing('declarations.indigenousGroupDetails', 'Enter the Item 40a group.');
+  }
+  if (declarations.personWithDisability) {
+    requireValue(
+      declarations.disabilitySpecification,
+      'declarations.disabilitySpecification',
+      'Enter the Item 40b specification.',
+    );
+    requireValue(
+      declarations.disabilityIdNumber,
+      'declarations.disabilityIdNumber',
+      'Enter the Item 40b ID number.',
+    );
+  }
+  if (declarations.soloParent) {
+    requireValue(
+      declarations.soloParentSpecification,
+      'declarations.soloParentSpecification',
+      'Enter the Item 40c specification.',
+    );
+    requireValue(
+      declarations.soloParentIdNumber,
+      'declarations.soloParentIdNumber',
+      'Enter the Item 40c ID number.',
+    );
+  }
+  if (record.referenceRecords.length !== 3) {
+    throw firstMissing(
+      'references',
+      'Enter all three Item 41 references, using N/A where applicable.',
+    );
+  }
+  for (const [index, reference] of record.referenceRecords.entries()) {
+    requireValue(
+      reference.name,
+      `references.${index}.name`,
+      'Complete every Item 41 reference name.',
+    );
+    requireValue(
+      reference.address,
+      `references.${index}.address`,
+      'Complete every Item 41 reference address.',
+    );
+    requireValue(
+      reference.contact,
+      `references.${index}.contact`,
+      'Complete every Item 41 reference contact.',
+    );
+  }
+  for (const [wesIndex, wes] of record.wesArtifacts.entries()) {
+    if (wes.templateVersion !== PDS_WES_TEMPLATE_VERSION) {
+      throw firstMissing(
+        'wes.templateVersion',
+        'Use the supported WES template before submission.',
+      );
+    }
+    if (!wes.entries.length)
+      throw firstMissing('wes.entries', 'Each WES artifact needs at least one work entry.');
+    for (const [index, entry] of wes.entries.entries()) {
+      for (const field of [
+        'durationText',
+        'position',
+        'officeUnit',
+        'immediateSupervisor',
+        'agencyOrganizationLocation',
+        'actualDuties',
+      ] as const) {
+        requireValue(
+          entry[field],
+          `wes.${wesIndex}.entries.${index}.${field}`,
+          'Complete every required WES narrative field.',
+        );
+      }
+    }
+  }
+}
+
+function requireCertificationCompleteness(record: PdsRecord): void {
+  requireSubmissionCompleteness(record);
+  const pageSignatures = new Map<string, PdsPageSignatureView>(
+    record.pageSignatures.map((row: PdsRecord['pageSignatures'][number]) => {
+      const signature = pageSignatureView(row);
+      return [signature.pageKey, signature];
+    }),
+  );
+  for (const pageKey of requiredPageKeys(record)) {
+    const signature = pageSignatures.get(pageKey);
+    if (!signature) throw firstMissing(`pageSignatures.${pageKey}`, `Sign page ${pageKey}.`);
+    requireEvidence(
+      {
+        documentId: signature.signatureDocumentId,
+        documentVersionId: signature.signatureDocumentVersionId,
+      },
+      `pageSignatures.${pageKey}.signatureDocumentId`,
+      `Attach the page ${pageKey} signature evidence.`,
+    );
+    requireValue(
+      signature.signedAt,
+      `pageSignatures.${pageKey}.signedAt`,
+      `Enter the page ${pageKey} signature timestamp.`,
+    );
+    requireValue(
+      signature.signatureDate,
+      `pageSignatures.${pageKey}.signatureDate`,
+      `Enter the page ${pageKey} signature date.`,
+    );
+  }
+  const certification = certificationDetailsView(record.certificationDetails);
+  if (!certification) throw firstMissing('certification', 'Complete Item 42 before certification.');
+  for (const field of [
+    'truthDeclarationAccepted',
+    'verificationAuthorizationAccepted',
+    'misrepresentationWarningAccepted',
+  ] as const) {
+    if (certification[field] !== true)
+      throw firstMissing(`certification.${field}`, 'Accept every Item 42 declaration.');
+  }
+  requireEvidence(
+    {
+      documentId: certification.photoDocumentId,
+      documentVersionId: certification.photoDocumentVersionId,
+    },
+    'certification.photoDocumentId',
+    'Attach the Item 42 photo evidence.',
+  );
+  requireValue(
+    certification.governmentIdType,
+    'certification.governmentIdType',
+    'Enter the government ID type.',
+  );
+  requireValue(
+    certification.governmentIdNumber,
+    'certification.governmentIdNumber',
+    'Enter the government ID number.',
+  );
+  requireValue(
+    certification.governmentIdIssuedAt,
+    'certification.governmentIdIssuedAt',
+    'Enter the government ID issue date.',
+  );
+  requireValue(
+    certification.governmentIdIssuedPlace,
+    'certification.governmentIdIssuedPlace',
+    'Enter the government ID issue place.',
+  );
+  if (!certification.employeeSignatureDocumentId && !certification.thumbmarkDocumentId) {
+    throw firstMissing(
+      'certification.employeeSignatureDocumentId',
+      'Attach an Item 42 signature or thumbmark.',
+    );
+  }
+  if (certification.employeeSignatureDocumentId) {
+    requireEvidence(
+      {
+        documentId: certification.employeeSignatureDocumentId,
+        documentVersionId: certification.employeeSignatureDocumentVersionId,
+      },
+      'certification.employeeSignatureDocumentId',
+      'Attach the Item 42 signature evidence.',
+    );
+  }
+  if (certification.thumbmarkDocumentId) {
+    requireEvidence(
+      {
+        documentId: certification.thumbmarkDocumentId,
+        documentVersionId: certification.thumbmarkDocumentVersionId,
+      },
+      'certification.thumbmarkDocumentId',
+      'Attach the Item 42 thumbmark evidence.',
+    );
+  }
+  requireValue(
+    certification.employeeSignatureDate,
+    'certification.employeeSignatureDate',
+    'Enter the Item 42 employee signature date.',
+  );
+  requireValue(
+    certification.subscribedAndSwornText,
+    'certification.subscribedAndSwornText',
+    'Complete the subscribed and sworn block.',
+  );
+  requireValue(
+    certification.subscribedAndSwornAt,
+    'certification.subscribedAndSwornAt',
+    'Enter the subscribed and sworn timestamp.',
+  );
+  requireValue(
+    certification.oathAdministeredBy,
+    'certification.oathAdministeredBy',
+    'Enter the oath administrator.',
+  );
+  requireEvidence(
+    {
+      documentId: certification.oathAdminSignatureDocumentId,
+      documentVersionId: certification.oathAdminSignatureDocumentVersionId,
+    },
+    'certification.oathAdminSignatureDocumentId',
+    'Attach the oath administrator signature evidence.',
+  );
+  requireValue(
+    certification.oathAdministeredAt,
+    'certification.oathAdministeredAt',
+    'Enter the oath administration timestamp.',
+  );
+  for (const wes of record.wesArtifacts) {
+    requireEvidence(
+      {
+        documentId: wes.employeeSignatureDocumentId,
+        documentVersionId: wes.employeeSignatureDocumentVersionId,
+      },
+      'wes.signatureDocumentId',
+      'Attach the WES employee signature evidence.',
+    );
+    requireValue(wes.signedAt, 'wes.signedAt', 'Enter the WES signature date.');
+  }
+}
+
+function continuationPages(record: PdsRecord): string[] {
+  return PDS_CONTINUATION_PAGE_KEYS.filter((pageKey) => {
+    switch (pageKey) {
+      case 'C5':
+        return record.familyRecords.length > 4;
+      case 'C6':
+        return record.educationRecords.length > 5;
+      case 'C7':
+        return record.eligibilityRecords.length > 7;
+      case 'C8':
+        return record.workExperienceRecords.length > 28;
+      case 'C9':
+        return record.voluntaryWorkRecords.length > 7;
+      case 'C10':
+        return record.learningDevelopmentRecords.length > 21;
+      case 'C11':
+        return (
+          (record.otherInformation?.skillsAndHobbies?.length ?? 0) > 500 ||
+          (record.otherInformation?.nonAcademicDistinctions?.length ?? 0) > 500 ||
+          (record.otherInformation?.associationMemberships?.length ?? 0) > 500
+        );
+    }
+  });
+}
+
+function requiredPageKeys(record: PdsRecord): readonly string[] {
+  return [...PDS_MAIN_PAGE_KEYS, ...continuationPages(record)];
+}
+
+const pdsPageLayout: Record<string, readonly Record<string, unknown>[]> = {
+  C1: [
+    {
+      section: 'I. PERSONAL INFORMATION',
+      items: [
+        '1. Surname',
+        '2. First Name, Name Extension, Middle Name',
+        '3. Date of Birth',
+        '4. Place of Birth',
+        '5. Sex at Birth',
+        '6. Civil Status',
+        '7. Height',
+        '8. Weight',
+        '9. Blood Type',
+        '10. UMID ID No.',
+        '11. Pag-IBIG ID No.',
+        '12. PhilHealth No.',
+        '13. PhilSys Card Number',
+        '14. TIN No.',
+        '15. Agency Employee No.',
+        '16. Citizenship',
+        '17. Residential Address',
+        '18. Permanent Address',
+        '19. Telephone No.',
+        '20. Mobile No.',
+        '21. E-mail Address',
+      ],
+    },
+    {
+      section: 'II. FAMILY BACKGROUND',
+      items: ['22. Spouse', '23. Children', '24. Father', '25. Mother’s Maiden Name'],
+    },
+    {
+      section: 'III. EDUCATIONAL BACKGROUND',
+      items: ['26. Education'],
+      columns: [
+        'Level',
+        'Name of School',
+        'Basic Education/Degree/Course',
+        'Period of Attendance',
+        'Highest Level/Units Earned',
+        'Year Graduated',
+        'Scholarship/Academic Honors',
+      ],
+    },
+  ],
+  C2: [
+    {
+      section: 'IV. CIVIL SERVICE ELIGIBILITY',
+      items: ['27. Eligibility'],
+      columns: [
+        'Eligibility',
+        'Rating',
+        'Date of Examination/Conferment',
+        'Place of Examination/Conferment',
+        'License Number',
+        'License Date of Validity',
+      ],
+    },
+    {
+      section: 'V. WORK EXPERIENCE',
+      items: ['28. Work Experience'],
+      columns: [
+        'Inclusive Dates',
+        'Position Title',
+        'Department/Agency/Office/Company',
+        'Monthly Salary',
+        'Salary/Job/Pay Grade and Step',
+        'Status of Appointment',
+        'Government Service',
+      ],
+    },
+  ],
+  C3: [
+    {
+      section:
+        'VI. VOLUNTARY WORK OR INVOLVEMENT IN CIVIC/NON-GOVERNMENT/PEOPLE/VOLUNTARY ORGANIZATIONS',
+      items: ['29. Voluntary Work'],
+    },
+    {
+      section: 'VII. LEARNING AND DEVELOPMENT INTERVENTIONS/TRAINING PROGRAMS ATTENDED',
+      items: ['30. Learning and Development'],
+    },
+    {
+      section: 'VIII. OTHER INFORMATION',
+      items: [
+        '31. Special Skills and Hobbies',
+        '32. Non-Academic Distinctions/Recognition',
+        '33. Membership in Association/Organization',
+      ],
+    },
+  ],
+  C4: [
+    { section: 'DECLARATIONS', items: ['34.a–40.c. Declarations'] },
+    { section: 'REFERENCES', items: ['41. References'] },
+    {
+      section: 'CERTIFICATION',
+      items: ['42. Certification, Photo, Government ID, Signature or Thumbmark, and Oath'],
+    },
+  ],
+  C5: [{ section: 'FAMILY BACKGROUND CONTINUATION', items: ['23. Children'] }],
+  C6: [{ section: 'EDUCATIONAL BACKGROUND CONTINUATION', items: ['26. Education'] }],
+  C7: [{ section: 'CIVIL SERVICE ELIGIBILITY CONTINUATION', items: ['27. Eligibility'] }],
+  C8: [{ section: 'WORK EXPERIENCE CONTINUATION', items: ['28. Work Experience'] }],
+  C9: [{ section: 'VOLUNTARY WORK CONTINUATION', items: ['29. Voluntary Work'] }],
+  C10: [
+    { section: 'LEARNING AND DEVELOPMENT CONTINUATION', items: ['30. Learning and Development'] },
+  ],
+  C11: [{ section: 'OTHER INFORMATION CONTINUATION', items: ['31–33. Other Information'] }],
+};
+
+const pdsCertificationStatements = {
+  truthDeclaration:
+    'I declare under oath that I have personally accomplished this Personal Data Sheet which is a true, correct, and complete statement pursuant to the provisions of pertinent laws, rules, and regulations of the Republic of the Philippines.',
+  verificationAuthorization:
+    'I authorize the agency head/authorized representative to verify/validate the contents stated herein.',
+  misrepresentationWarning:
+    'I agree that any misrepresentation made in this document and its attachments shall cause the filing of administrative/criminal case/s against me.',
+} as const;
+
+function pdsRenderedContent(record: PdsRecord): Record<string, unknown> {
+  const pageKeys = requiredPageKeys(record);
+  return {
+    header: 'CS Form No. 212, Revised 2026, Personal Data Sheet',
+    warning:
+      'Any misrepresentation made in the Personal Data Sheet and the Work Experience Sheet shall cause the filing of administrative or criminal case/s.',
+    guideReference: 'Guide to Filling Out the Personal Data Sheet (PDS), Revised 2026',
+    instructions: [
+      'Fill every applicable field with a value or N/A.',
+      'Mark the applicable checkbox for each choice.',
+      'DO NOT ABBREVIATE names, schools, employers, offices, agencies, organizations, titles, awards, or associations where the guide requires the full name.',
+    ],
+    revision: record.formVersion,
+    dateProfile: {
+      storage: 'ISO-8601 date',
+      displayConflict: 'PDS source mm/dd/yyyy vs guide dd/mm/yyyy',
+    },
+    photo: { widthCm: 3.5, heightCm: 4.5, transformations: 'NONE' },
+    signaturePlacement: { position: 'BOTTOM_OF_EVERY_PAGE', pageKeys },
+    certificationStatements: pdsCertificationStatements,
+    pages: pageKeys.map((pageKey) => ({
+      pageKey,
+      sections: pdsPageLayout[pageKey] ?? [],
+      footer:
+        pageKey.startsWith('C') && Number(pageKey.slice(1)) <= 4
+          ? `CS FORM 212 (Revised 2026), Page ${pageKey.slice(1)} of 4`
+          : null,
+    })),
+    sections: detail(record, 'FULL'),
+  };
+}
+
+function wesRenderedContent(
+  record: PdsRecord,
+  artifact: PdsRecord['wesArtifacts'][number],
+): Record<string, unknown> {
+  return {
+    header: 'Attachment to CS Form No. 212',
+    title: 'WORK EXPERIENCE SHEET',
+    instructions: [
+      'Include only work experiences relevant to the position being applied for.',
+      'The duration should include start and finish dates, most recent first, with Present for current work.',
+    ],
+    fieldOrder: [
+      'Duration',
+      'Position',
+      'Name of Office/Unit',
+      'Immediate Supervisor',
+      'Name of Agency/Organization and Location',
+      'List of Accomplishments and Contributions (if any)',
+      'Summary of Actual Duties',
+    ],
+    templateVersion: artifact.templateVersion,
+    contextKey: artifact.contextKey,
+    sourcePdsVersionId: record.id,
+    entries: artifact.entries.map((entry) => {
+      const view = wesEntryView(entry);
+      return {
+        duration: view.durationText,
+        position: view.position,
+        officeUnit: view.officeUnit,
+        immediateSupervisor: view.immediateSupervisor,
+        agencyOrganizationLocation: view.agencyOrganizationLocation,
+        accomplishments: view.accomplishments,
+        actualDuties: view.actualDuties,
+      };
+    }),
+    signature: {
+      label: 'Signature over Printed Name of Employee/Applicant',
+      dateLabel: 'Date',
+      signedAt: formatDate(artifact.signedAt),
+    },
+    date: formatDate(artifact.signedAt),
+  };
+}
+
+function signatureMetadata(
+  record: PdsRecord,
+  wesArtifact?: PdsRecord['wesArtifacts'][number],
+): Record<string, unknown> {
+  const certification = certificationDetailsView(record.certificationDetails);
+  return {
+    employeeCertifiedAt: record.employeeCertifiedAt
+      ? formatDateTime(record.employeeCertifiedAt)
+      : null,
+    employeeCertifiedByMembershipId: record.employeeCertifiedByMembershipId ?? null,
+    hrVerifiedAt: record.hrVerifiedAt ? formatDateTime(record.hrVerifiedAt) : null,
+    hrVerifiedByMembershipId: record.hrVerifiedByMembershipId ?? null,
+    pageKeys: record.pageSignatures.map((row: PdsRecord['pageSignatures'][number]) => row.pageKey),
+    hasItem42Signature: Boolean(certification?.employeeSignatureDocumentId),
+    hasItem42Thumbmark: Boolean(certification?.thumbmarkDocumentId),
+    ...(wesArtifact ? { wesSignedAt: formatDate(wesArtifact.signedAt) } : {}),
+  };
+}
+
+function outputView(record: PdsOutputRecord, fieldScope: PdsFieldScope): PdsOutputArtifactView {
+  return {
+    id: record.id,
+    outputKey: record.outputKey,
+    outputType: record.outputType as PdsOutputArtifactView['outputType'],
+    formVersion: record.formVersion,
+    templateVersion: record.templateVersion,
+    sourceArtifactId: record.sourceArtifactId,
+    sourceArtifactHash: record.sourceArtifactHash,
+    generatedAt: formatDateTime(record.generatedAt),
+    dataAsOfDate: formatDate(record.dataAsOfDate) as string,
+    status: record.status,
+    renderingMetadata: jsonObject(record.renderingMetadata) ?? {},
+    signatureMetadata: fieldScope === 'FULL' ? jsonObject(record.signatureMetadata) : null,
+    renderedContent: fieldScope === 'FULL' ? jsonObject(record.renderedContent) : null,
+  };
+}
+
 function detail(record: PdsRecord, fieldScope: PdsFieldScope): PdsVersionDetail {
   return {
     ...summary(record, fieldScope),
@@ -1141,6 +2813,13 @@ function detail(record: PdsRecord, fieldScope: PdsFieldScope): PdsVersionDetail 
     learningAndDevelopment:
       fieldScope === 'FULL' ? record.learningDevelopmentRecords.map(learningDevelopmentView) : [],
     wes: fieldScope === 'FULL' ? record.wesArtifacts.map(wesView) : [],
+    otherInformation: fieldScope === 'FULL' ? otherInformationView(record.otherInformation) : null,
+    declarations: fieldScope === 'FULL' ? declarationDetailsView(record.declarationDetails) : null,
+    references: fieldScope === 'FULL' ? record.referenceRecords.map(referenceRecordView) : [],
+    certification:
+      fieldScope === 'FULL' ? certificationDetailsView(record.certificationDetails) : null,
+    pageSignatures: fieldScope === 'FULL' ? record.pageSignatures.map(pageSignatureView) : [],
+    transitions: record.transitionEvents.map(transitionEventView),
   };
 }
 
@@ -1155,10 +2834,16 @@ function redactedDetail(record: PdsRedactedRecord, fieldScope: PdsFieldScope): P
     voluntaryWork: [],
     learningAndDevelopment: [],
     wes: [],
+    otherInformation: null,
+    declarations: null,
+    references: [],
+    certification: null,
+    pageSignatures: [],
+    transitions: [],
   };
 }
 
-function ownerUserId(record: Pick<PdsAccessRecord, 'employee'>): string | null {
+function ownerUserId(record: PdsOwnerRecord): string | null {
   return record.employee.memberships[0]?.userId ?? null;
 }
 
@@ -1181,30 +2866,33 @@ function permissionScope(context: RequestContext, permission: string): 'AGENCY' 
     : null;
 }
 
-function readFieldScope(
-  context: RequestContext,
-  record: Pick<PdsAccessRecord, 'agencyId' | 'employee'>,
-): PdsFieldScope | null {
+function readFieldScope(context: RequestContext, record: PdsOwnerRecord): PdsFieldScope | null {
   if (!hasPermissionGrant(context, 'personnel.pds.read')) return null;
   const owner = ownerUserId(record);
+  const organizationUnitId = record.employee.currentServiceSegment?.organizationUnitId ?? null;
   const accessRecord = {
     agencyId: record.agencyId,
     ...(owner ? { ownerUserId: owner } : {}),
-    ...(record.employee.currentServiceSegment
-      ? { organizationUnitId: record.employee.currentServiceSegment.organizationUnitId }
-      : {}),
+    ...(organizationUnitId ? { organizationUnitId } : {}),
   };
   if (!canAccessRecord(context, 'personnel.pds.read', accessRecord)) {
     return null;
   }
   return context.permissions.some(
     (candidate) =>
-      candidate.code === 'personnel.pds.read' &&
+      candidate.code === 'personnel.pds.read_sensitive' &&
       (candidate.scopePolicy === 'AGENCY' ||
         (candidate.scopePolicy === 'OWN' && owner === context.userId)),
   )
     ? 'FULL'
     : 'REDACTED';
+}
+
+function scopedDetail(context: RequestContext, record: PdsRecord): PdsVersionDetail {
+  const fieldScope = readFieldScope(context, record);
+  return fieldScope === 'FULL'
+    ? detail(record, fieldScope)
+    : redactedDetail(record, fieldScope ?? 'REDACTED');
 }
 
 function canAccess(
@@ -1390,6 +3078,108 @@ export class PdsService {
     }
   }
 
+  private async writeCompletionSections(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    pdsVersionId: string,
+    input: PdsCreateInput | PdsUpdateInput,
+  ): Promise<void> {
+    const extra = pdsExtra(transaction);
+    for (const evidence of evidenceInputsFromCompletion(input))
+      await this.assertEvidence(transaction, context, evidence);
+    if (input.otherInformation) {
+      await extra.pdsOtherInformation.upsert({
+        where: { agencyId_pdsVersionId: { agencyId: context.agencyId, pdsVersionId } },
+        create: otherInformationData(context.agencyId, pdsVersionId, input.otherInformation),
+        update: otherInformationData(context.agencyId, pdsVersionId, input.otherInformation),
+      });
+      await this.writeSectionAudit(
+        transaction,
+        context,
+        pdsVersionId,
+        'DRAFT',
+        'PDS_OTHER_INFORMATION_UPDATED',
+        {
+          section: 'otherInformation',
+          changedFieldCount: Object.keys(input.otherInformation).length,
+        },
+      );
+    }
+    if (input.declarations) {
+      await extra.pdsDeclarationDetails.upsert({
+        where: { agencyId_pdsVersionId: { agencyId: context.agencyId, pdsVersionId } },
+        create: declarationData(context.agencyId, pdsVersionId, input.declarations),
+        update: declarationData(context.agencyId, pdsVersionId, input.declarations),
+      });
+      await this.writeSectionAudit(
+        transaction,
+        context,
+        pdsVersionId,
+        'DRAFT',
+        'PDS_DECLARATIONS_UPDATED',
+        {
+          section: 'declarations',
+          changedFieldCount: Object.keys(input.declarations).length,
+        },
+      );
+    }
+    if (input.references) {
+      await extra.pdsReferenceRecord.deleteMany({
+        where: { agencyId: context.agencyId, pdsVersionId },
+      });
+      const records = referenceData(context.agencyId, pdsVersionId, input.references);
+      if (records.length) await extra.pdsReferenceRecord.createMany({ data: records });
+      await this.writeSectionAudit(
+        transaction,
+        context,
+        pdsVersionId,
+        'DRAFT',
+        'PDS_REFERENCES_UPDATED',
+        {
+          section: 'references',
+          rowCount: records.length,
+        },
+      );
+    }
+    if (input.certification) {
+      await extra.pdsCertificationDetails.upsert({
+        where: { agencyId_pdsVersionId: { agencyId: context.agencyId, pdsVersionId } },
+        create: certificationData(context.agencyId, pdsVersionId, input.certification),
+        update: certificationData(context.agencyId, pdsVersionId, input.certification),
+      });
+      await this.writeSectionAudit(
+        transaction,
+        context,
+        pdsVersionId,
+        'DRAFT',
+        'PDS_CERTIFICATION_DETAILS_UPDATED',
+        {
+          section: 'certification',
+          changedFieldCount: Object.keys(input.certification).length,
+        },
+      );
+    }
+    if (input.pageSignatures) {
+      await extra.pdsPageSignature.deleteMany({
+        where: { agencyId: context.agencyId, pdsVersionId },
+      });
+      const rows = pageSignatureData(context.agencyId, pdsVersionId, input.pageSignatures);
+      if (rows.length) await extra.pdsPageSignature.createMany({ data: rows });
+      await this.writeSectionAudit(
+        transaction,
+        context,
+        pdsVersionId,
+        'DRAFT',
+        'PDS_PAGE_SIGNATURES_UPDATED',
+        {
+          section: 'pageSignatures',
+          rowCount: rows.length,
+          evidenceLinkCount: rows.filter((row) => Boolean(row.signatureDocumentId)).length,
+        },
+      );
+    }
+  }
+
   async list(context: RequestContext, employeeId: string): Promise<PdsVersionList> {
     this.assertContext(context, 'personnel.pds.read', 'PDS_READ_FORBIDDEN');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
@@ -1409,25 +3199,25 @@ export class PdsService {
   async findById(context: RequestContext, pdsVersionId: string): Promise<PdsVersionDetail | null> {
     this.assertContext(context, 'personnel.pds.read', 'PDS_READ_FORBIDDEN');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const summaryRecord = await transaction.pdsVersion.findFirst({
+      const summaryRecord = (await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, id: pdsVersionId },
         select: pdsSummaryWithOwnerSelect,
-      });
+      })) as unknown as (PdsSummaryRecord & PdsOwnerRecord) | null;
       if (!summaryRecord) return null;
       const fieldScope = readFieldScope(context, summaryRecord);
       if (!fieldScope) return null;
       await this.auditRead(transaction, context, pdsVersionId, fieldScope, 'DETAIL');
       if (fieldScope === 'REDACTED') {
-        const record = await transaction.pdsVersion.findFirst({
+        const record = (await transaction.pdsVersion.findFirst({
           where: { agencyId: context.agencyId, id: pdsVersionId },
           select: pdsRedactedSelect,
-        });
+        })) as unknown as PdsRedactedRecord | null;
         return record ? redactedDetail(record, fieldScope) : null;
       }
-      const record = await transaction.pdsVersion.findFirst({
+      const record = (await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, id: pdsVersionId },
         select: pdsSelect,
-      });
+      })) as unknown as PdsRecord | null;
       return record ? detail(record, fieldScope) : null;
     });
   }
@@ -1447,17 +3237,24 @@ export class PdsService {
       if (!canAccess(context, 'personnel.pds.update', employee.memberships[0]?.userId ?? null)) {
         throw this.notFound();
       }
-      const existing = await transaction.pdsVersion.findFirst({
+      const existing = (await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, employeeId, status: { in: ['DRAFT', 'RETURNED'] } },
         select: pdsSelect,
-      });
-      if (existing) return detail(existing, 'FULL');
+      })) as unknown as PdsRecord | null;
+      if (existing) return scopedDetail(context, existing);
 
       const latest = await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, employeeId },
         orderBy: { versionNo: 'desc' },
-        select: { id: true, versionNo: true },
+        select: { id: true, versionNo: true, status: true },
       });
+      if (latest?.status === 'CERTIFIED') {
+        throw new PdsServiceError(
+          'Use the PDS correction workflow to create a successor to a Certified PDS.',
+          409,
+          'PDS_CORRECTION_REQUIRED',
+        );
+      }
       const created = await transaction.pdsVersion.create({
         data: {
           agencyId: context.agencyId,
@@ -1466,7 +3263,7 @@ export class PdsService {
           formVersion: PDS_FORM_VERSION,
           asOfDate: databaseDate(input.asOfDate ?? today()),
           status: 'DRAFT',
-          supersedesVersionId: latest?.id ?? null,
+          supersedesVersionId: null,
           createdByMembershipId: context.membershipId,
           updatedByMembershipId: context.membershipId,
         },
@@ -1510,6 +3307,7 @@ export class PdsService {
         employeeId,
         wes,
       );
+      await this.writeCompletionSections(transaction, context, created.id, input);
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,
@@ -1535,7 +3333,7 @@ export class PdsService {
       });
       const record = await this.record(transaction, context.agencyId, created.id);
       if (!record) throw this.notFound();
-      return detail(record, 'FULL');
+      return scopedDetail(context, record);
     });
   }
 
@@ -1720,10 +3518,632 @@ export class PdsService {
           { section: 'wes', ...result },
         );
       }
+      await this.writeCompletionSections(transaction, context, pdsVersionId, input);
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
-      return detail(updated, 'FULL');
+      return scopedDetail(context, updated);
     });
+  }
+
+  async submit(context: RequestContext, pdsVersionId: string): Promise<PdsVersionDetail> {
+    this.assertContext(context, 'personnel.pds.update', 'PDS_UPDATE_FORBIDDEN');
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      await this.lockVersion(transaction, context.agencyId, pdsVersionId);
+      const record = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!record) throw this.notFound();
+      if (!canAccess(context, 'personnel.pds.update', ownerUserId(record))) throw this.notFound();
+      if (
+        !context.permissions.some(
+          (grant) => grant.code === 'personnel.pds.update' && grant.scopePolicy === 'OWN',
+        ) ||
+        ownerUserId(record) !== context.userId
+      ) {
+        throw new PdsServiceError(
+          'Employees may submit only their own PDS.',
+          403,
+          'PDS_SUBMIT_FORBIDDEN',
+        );
+      }
+      if (!['DRAFT', 'RETURNED'].includes(record.status)) {
+        throw new PdsServiceError(
+          'Only a Draft or Returned PDS can be submitted.',
+          409,
+          'PDS_TRANSITION_INVALID',
+        );
+      }
+      requireSubmissionCompleteness(record);
+      await this.writeTransition(
+        transaction,
+        context,
+        record,
+        'SUBMITTED',
+        'PDS_SUBMITTED',
+        null,
+        true,
+      );
+      await transaction.pdsVersion.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: pdsVersionId } },
+        data: {
+          status: 'SUBMITTED',
+          employeeCertifiedAt: null,
+          employeeCertifiedByMembershipId: null,
+          hrVerifiedAt: null,
+          hrVerifiedByMembershipId: null,
+          updatedByMembershipId: context.membershipId,
+        } as Prisma.PdsVersionUncheckedUpdateInput & Record<string, unknown>,
+      });
+      const updated = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!updated) throw this.notFound();
+      return scopedDetail(context, updated);
+    });
+  }
+
+  async returnForCorrection(
+    context: RequestContext,
+    pdsVersionId: string,
+    input: PdsReasonInput,
+  ): Promise<PdsVersionDetail> {
+    this.assertAgencyAction(context, 'personnel.pds.update', 'PDS_UPDATE_FORBIDDEN');
+    const reason = text(input.reason);
+    if (!reason)
+      throw new PdsServiceError('A return reason is required.', 400, 'PDS_REASON_REQUIRED');
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      await this.lockVersion(transaction, context.agencyId, pdsVersionId);
+      const record = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!record) throw this.notFound();
+      if (record.status !== 'SUBMITTED') {
+        throw new PdsServiceError(
+          'Only a Submitted PDS can be returned.',
+          409,
+          'PDS_TRANSITION_INVALID',
+        );
+      }
+      await this.writeTransition(
+        transaction,
+        context,
+        record,
+        'RETURNED',
+        'PDS_RETURNED',
+        reason,
+        true,
+      );
+      await transaction.pdsVersion.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: pdsVersionId } },
+        data: {
+          status: 'RETURNED',
+          updatedByMembershipId: context.membershipId,
+        } as Prisma.PdsVersionUncheckedUpdateInput & Record<string, unknown>,
+      });
+      const updated = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!updated) throw this.notFound();
+      return scopedDetail(context, updated);
+    });
+  }
+
+  async certify(
+    context: RequestContext,
+    pdsVersionId: string,
+    input: PdsEmployeeCertificationInput,
+  ): Promise<PdsVersionDetail> {
+    this.assertContext(context, 'personnel.pds.certify', 'PDS_CERTIFY_FORBIDDEN');
+    if (input.employeeCertificationAccepted !== true) {
+      throw new PdsServiceError(
+        'Employee certification must be accepted.',
+        400,
+        'PDS_CERTIFICATION_REQUIRED',
+      );
+    }
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      await this.lockVersion(transaction, context.agencyId, pdsVersionId);
+      const record = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!record) throw this.notFound();
+      if (
+        !context.permissions.some(
+          (grant) => grant.code === 'personnel.pds.certify' && grant.scopePolicy === 'OWN',
+        ) ||
+        ownerUserId(record) !== context.userId
+      ) {
+        throw new PdsServiceError(
+          'Employees may certify only their own PDS.',
+          403,
+          'PDS_CERTIFY_FORBIDDEN',
+        );
+      }
+      if (record.status !== 'SUBMITTED') {
+        throw new PdsServiceError(
+          'Only a Submitted PDS can be certified by the employee.',
+          409,
+          'PDS_TRANSITION_INVALID',
+        );
+      }
+      requireCertificationCompleteness(record);
+      await this.writeTransition(
+        transaction,
+        context,
+        record,
+        'SUBMITTED',
+        'PDS_EMPLOYEE_CERTIFIED',
+        null,
+        false,
+      );
+      await transaction.pdsVersion.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: pdsVersionId } },
+        data: {
+          employeeCertifiedAt: new Date(),
+          employeeCertifiedByMembershipId: context.membershipId,
+          updatedByMembershipId: context.membershipId,
+        } as Prisma.PdsVersionUncheckedUpdateInput & Record<string, unknown>,
+      });
+      const updated = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!updated) throw this.notFound();
+      return scopedDetail(context, updated);
+    });
+  }
+
+  async verify(context: RequestContext, pdsVersionId: string): Promise<PdsVersionDetail> {
+    this.assertAgencyAction(context, 'personnel.pds.certify', 'PDS_VERIFY_FORBIDDEN');
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      await this.lockVersion(transaction, context.agencyId, pdsVersionId);
+      const record = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!record) throw this.notFound();
+      if (record.status !== 'SUBMITTED') {
+        throw new PdsServiceError(
+          'Only a Submitted PDS can be verified.',
+          409,
+          'PDS_TRANSITION_INVALID',
+        );
+      }
+      if (!record.employeeCertifiedAt || !record.employeeCertifiedByMembershipId) {
+        throw new PdsServiceError(
+          'Employee certification is required before HR verification.',
+          409,
+          'PDS_EMPLOYEE_CERTIFICATION_REQUIRED',
+        );
+      }
+      requireCertificationCompleteness(record);
+      await this.writeTransition(
+        transaction,
+        context,
+        record,
+        'CERTIFIED',
+        'PDS_HR_VERIFIED',
+        null,
+        false,
+      );
+      await transaction.pdsVersion.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: pdsVersionId } },
+        data: {
+          status: 'CERTIFIED',
+          hrVerifiedAt: new Date(),
+          hrVerifiedByMembershipId: context.membershipId,
+          updatedByMembershipId: context.membershipId,
+        } as Prisma.PdsVersionUncheckedUpdateInput & Record<string, unknown>,
+      });
+      if (record.supersedesVersionId) {
+        const source = (await transaction.pdsVersion.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            id: record.supersedesVersionId,
+            status: 'CERTIFIED',
+          },
+          select: pdsSelect,
+        })) as unknown as PdsRecord | null;
+        if (source) {
+          await this.writeTransition(
+            transaction,
+            context,
+            source,
+            'SUPERSEDED',
+            'PDS_SUPERSEDED',
+            record.correctionReason,
+            false,
+          );
+          await transaction.pdsVersion.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
+            data: {
+              status: 'SUPERSEDED',
+              updatedByMembershipId: context.membershipId,
+            } as Prisma.PdsVersionUncheckedUpdateInput & Record<string, unknown>,
+          });
+        }
+      }
+      const updated = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!updated) throw this.notFound();
+      return scopedDetail(context, updated);
+    });
+  }
+
+  async correct(
+    context: RequestContext,
+    pdsVersionId: string,
+    input: PdsReasonInput,
+  ): Promise<PdsVersionDetail> {
+    this.assertContext(context, 'personnel.pds.update', 'PDS_UPDATE_FORBIDDEN');
+    const reason = text(input.reason);
+    if (!reason)
+      throw new PdsServiceError('A correction reason is required.', 400, 'PDS_REASON_REQUIRED');
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      await this.lockVersion(transaction, context.agencyId, pdsVersionId);
+      const source = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!source) throw this.notFound();
+      if (!canAccess(context, 'personnel.pds.update', ownerUserId(source))) throw this.notFound();
+      if (source.status !== 'CERTIFIED') {
+        throw new PdsServiceError(
+          'Only a Certified PDS can be corrected.',
+          409,
+          'PDS_TRANSITION_INVALID',
+        );
+      }
+      const open = (await transaction.pdsVersion.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          employeeId: source.employeeId,
+          supersedesVersionId: source.id,
+          status: { in: ['DRAFT', 'RETURNED'] },
+        },
+        select: pdsSelect,
+      })) as unknown as PdsRecord | null;
+      if (open) return scopedDetail(context, open);
+      const latest = await transaction.pdsVersion.findFirst({
+        where: { agencyId: context.agencyId, employeeId: source.employeeId },
+        orderBy: { versionNo: 'desc' },
+        select: { versionNo: true },
+      });
+      const created = await transaction.pdsVersion.create({
+        data: {
+          agencyId: context.agencyId,
+          employeeId: source.employeeId,
+          versionNo: (latest?.versionNo ?? source.versionNo) + 1,
+          formVersion: source.formVersion,
+          asOfDate: source.asOfDate,
+          status: 'DRAFT',
+          supersedesVersionId: source.id,
+          correctionReason: reason,
+          createdByMembershipId: context.membershipId,
+          updatedByMembershipId: context.membershipId,
+        } as Prisma.PdsVersionUncheckedCreateInput & Record<string, unknown>,
+        select: { id: true },
+      });
+      await this.cloneSections(transaction, context, source, created.id);
+      const draft = await this.record(transaction, context.agencyId, created.id);
+      if (!draft) throw this.notFound();
+      await this.writeTransition(
+        transaction,
+        context,
+        draft,
+        'DRAFT',
+        'PDS_CORRECTION_CREATED',
+        reason,
+        false,
+      );
+      return scopedDetail(context, draft);
+    });
+  }
+
+  async render(context: RequestContext, pdsVersionId: string): Promise<PdsOutputArtifactList> {
+    this.assertAgencyAction(context, 'personnel.pds.update', 'PDS_RENDER_FORBIDDEN');
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      const record = await this.record(transaction, context.agencyId, pdsVersionId);
+      if (!record) throw this.notFound();
+      const fieldScope = readFieldScope(context, record);
+      if (fieldScope !== 'FULL') throw this.notFound();
+      if (record.status !== 'CERTIFIED') {
+        throw new PdsServiceError(
+          'Only a Certified PDS can be rendered.',
+          409,
+          'PDS_RENDER_NOT_READY',
+        );
+      }
+      const existing = await this.outputRecords(transaction, context.agencyId, pdsVersionId);
+      if (existing.length)
+        return {
+          pdsVersionId,
+          fieldScope,
+          outputs: existing.map((row) => outputView(row, fieldScope)),
+        };
+      requireCertificationCompleteness(record);
+      const rows = await this.createOutputArtifacts(transaction, context, record);
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'PDS_OUTPUT_RENDERED',
+        entityType: 'PdsVersion',
+        entityId: pdsVersionId,
+        requestId: context.requestId,
+        metadata: {
+          outputCount: rows.length,
+          status: record.status,
+          formVersion: record.formVersion,
+        },
+      });
+      return { pdsVersionId, fieldScope, outputs: rows.map((row) => outputView(row, fieldScope)) };
+    });
+  }
+
+  async listOutputs(context: RequestContext, pdsVersionId: string): Promise<PdsOutputArtifactList> {
+    this.assertContext(context, 'personnel.pds.read', 'PDS_READ_FORBIDDEN');
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const summaryRecord = (await transaction.pdsVersion.findFirst({
+        where: { agencyId: context.agencyId, id: pdsVersionId },
+        select: pdsSummaryWithOwnerSelect,
+      })) as unknown as (PdsSummaryRecord & PdsOwnerRecord) | null;
+      if (!summaryRecord) throw this.notFound();
+      const fieldScope = readFieldScope(context, summaryRecord);
+      if (!fieldScope) throw this.notFound();
+      const records = await this.outputRecords(transaction, context.agencyId, pdsVersionId);
+      await this.auditRead(
+        transaction,
+        context,
+        pdsVersionId,
+        fieldScope,
+        'DETAIL',
+        records.length,
+        'PdsOutputArtifact',
+      );
+      return {
+        pdsVersionId,
+        fieldScope,
+        outputs: records.map((row) => outputView(row, fieldScope)),
+      };
+    });
+  }
+
+  private assertAgencyAction(context: RequestContext, permission: string, code: string): void {
+    this.assertContext(context, permission, code);
+    if (permissionScope(context, permission) !== 'AGENCY') {
+      throw new PdsServiceError('This PDS action requires Agency scope.', 403, code);
+    }
+  }
+
+  private async writeTransition(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    record: PdsRecord,
+    toStatus: string,
+    action: string,
+    reason: string | null,
+    includeSnapshot: boolean,
+  ): Promise<void> {
+    await pdsExtra(transaction).pdsTransitionEvent.create({
+      data: {
+        agencyId: context.agencyId,
+        pdsVersionId: record.id,
+        fromStatus: record.status,
+        toStatus,
+        action,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        reason,
+        occurredAt: new Date(),
+        submittedSnapshot: includeSnapshot
+          ? (detail(record, 'FULL') as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
+      },
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action,
+      entityType: 'PdsVersion',
+      entityId: record.id,
+      previousStatus: record.status,
+      newStatus: toStatus,
+      reason: reason ?? null,
+      requestId: context.requestId,
+      metadata: {
+        previousStatus: record.status,
+        newStatus: toStatus,
+        status: toStatus,
+        reasonCode: reason ? 'PROVIDED' : 'NONE',
+      },
+    });
+  }
+
+  private async cloneSections(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    source: PdsRecord,
+    pdsVersionId: string,
+  ): Promise<void> {
+    const extra = pdsExtra(transaction);
+    await transaction.pdsPersonalDetails.create({
+      data: personalCreateData(
+        context.agencyId,
+        pdsVersionId,
+        (personalView(source.personalDetails) ?? undefined) as PdsPersonalDetailsInput | undefined,
+      ),
+    });
+    const familyRecords = familyCreateData(
+      context.agencyId,
+      pdsVersionId,
+      familyView(source.familyRecords) as PdsFamilyInput,
+    );
+    if (familyRecords.length) await transaction.pdsFamilyRecord.createMany({ data: familyRecords });
+    const educationRecords = educationCreateData(
+      context.agencyId,
+      pdsVersionId,
+      educationView(source.educationRecords) as PdsEducationInput,
+    );
+    if (educationRecords.length)
+      await transaction.pdsEducationRecord.createMany({ data: educationRecords });
+    const eligibilityRecords = eligibilityCreateData(
+      context.agencyId,
+      pdsVersionId,
+      eligibilityView(source.eligibilityRecords) as PdsEligibilityInput,
+    );
+    if (eligibilityRecords.length)
+      await transaction.pdsEligibilityRecord.createMany({ data: eligibilityRecords });
+    const workRecords = workExperienceCreateData(
+      context.agencyId,
+      pdsVersionId,
+      source.workExperienceRecords.map((row: PdsRecord['workExperienceRecords'][number]) => ({
+        ...workExperienceView(row),
+        id: undefined,
+      })) as PdsWorkExperienceInput[],
+    );
+    if (workRecords.length)
+      await transaction.pdsWorkExperienceRecord.createMany({ data: workRecords });
+    const voluntaryRows = voluntaryWorkCreateData(
+      context.agencyId,
+      pdsVersionId,
+      source.voluntaryWorkRecords.map((row: PdsRecord['voluntaryWorkRecords'][number]) => ({
+        ...voluntaryWorkView(row),
+        id: undefined,
+      })) as PdsVoluntaryWorkInput[],
+    );
+    if (voluntaryRows.length)
+      await transaction.pdsVoluntaryWorkRecord.createMany({ data: voluntaryRows });
+    const learningRows = learningDevelopmentCreateData(
+      context.agencyId,
+      pdsVersionId,
+      source.learningDevelopmentRecords.map(
+        (row: PdsRecord['learningDevelopmentRecords'][number]) => ({
+          ...learningDevelopmentView(row),
+          id: undefined,
+        }),
+      ) as PdsLearningDevelopmentInput[],
+    );
+    if (learningRows.length)
+      await transaction.pdsLearningDevelopmentRecord.createMany({ data: learningRows });
+    if (source.otherInformation) {
+      await extra.pdsOtherInformation.create({
+        data: otherInformationData(
+          context.agencyId,
+          pdsVersionId,
+          otherInformationView(source.otherInformation) as PdsOtherInformationInput,
+        ),
+      });
+    }
+    if (source.declarationDetails) {
+      await extra.pdsDeclarationDetails.create({
+        data: declarationData(
+          context.agencyId,
+          pdsVersionId,
+          declarationDetailsView(source.declarationDetails) as PdsDeclarationDetailsInput,
+        ),
+      });
+    }
+    const referenceRows = referenceData(
+      context.agencyId,
+      pdsVersionId,
+      source.referenceRecords.map((row: PdsRecord['referenceRecords'][number]) => ({
+        ...referenceRecordView(row),
+        id: undefined,
+      })),
+    );
+    if (referenceRows.length) await extra.pdsReferenceRecord.createMany({ data: referenceRows });
+    if (source.certificationDetails) {
+      const certification = certificationDetailsView(
+        source.certificationDetails,
+      ) as PdsCertificationDetailsInput;
+      await extra.pdsCertificationDetails.create({
+        data: certificationData(context.agencyId, pdsVersionId, {
+          ...certification,
+          truthDeclarationAccepted: null,
+          verificationAuthorizationAccepted: null,
+          misrepresentationWarningAccepted: null,
+          employeeSignatureDocumentId: null,
+          employeeSignatureDocumentVersionId: null,
+          employeeSignatureDate: null,
+          thumbmarkDocumentId: null,
+          thumbmarkDocumentVersionId: null,
+          subscribedAndSwornAt: null,
+          oathAdministeredBy: null,
+          oathAdminSignatureDocumentId: null,
+          oathAdminSignatureDocumentVersionId: null,
+          oathAdministeredAt: null,
+        }),
+      });
+    }
+    await this.createWesArtifacts(
+      transaction,
+      context,
+      pdsVersionId,
+      source.employeeId,
+      this.preservedWesInput(source),
+    );
+  }
+
+  private async outputRecords(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    pdsVersionId: string,
+  ): Promise<PdsOutputRecord[]> {
+    return pdsExtra(transaction).pdsOutputArtifact.findMany({
+      where: { agencyId, pdsVersionId, status: 'RELEASED' },
+      orderBy: [{ outputType: 'asc' }, { outputKey: 'asc' }],
+    });
+  }
+
+  private async createOutputArtifacts(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    record: PdsRecord,
+  ): Promise<PdsOutputRecord[]> {
+    const extra = pdsExtra(transaction);
+    const pdsContent = pdsRenderedContent(record);
+    const base = {
+      agencyId: context.agencyId,
+      employeeId: record.employeeId,
+      pdsVersionId: record.id,
+      formVersion: record.formVersion,
+      dataAsOfDate: record.asOfDate,
+      status: 'RELEASED',
+    };
+    await extra.pdsOutputArtifact.create({
+      data: {
+        ...base,
+        outputKey: `${record.id}:PDS:${record.formVersion}`,
+        outputType: 'PDS',
+        templateVersion: null,
+        sourceArtifactId: `pds:${record.id}`,
+        sourceArtifactHash: sourceHash(pdsContent),
+        renderingMetadata: {
+          pages: [...PDS_MAIN_PAGE_KEYS, ...continuationPages(record)],
+          dateProfile: 'ISO-8601',
+          revision: record.formVersion,
+          layoutContract: {
+            guideReference: pdsContent.guideReference,
+            photo: pdsContent.photo,
+            signaturePlacement: pdsContent.signaturePlacement,
+            pages: pdsContent.pages,
+          },
+        },
+        signatureMetadata: signatureMetadata(record),
+        renderedContent: pdsContent,
+      },
+    });
+    for (const artifact of record.wesArtifacts) {
+      const content = wesRenderedContent(record, artifact);
+      await extra.pdsOutputArtifact.create({
+        data: {
+          ...base,
+          wesArtifactId: artifact.id,
+          outputKey: `${record.id}:WES:${artifact.id}:${artifact.templateVersion}`,
+          outputType: 'WES',
+          templateVersion: artifact.templateVersion,
+          sourceArtifactId: `wes:${artifact.id}`,
+          sourceArtifactHash: sourceHash(content),
+          renderingMetadata: {
+            templateVersion: artifact.templateVersion,
+            contextKey: artifact.contextKey,
+            layoutContract: {
+              header: content.header,
+              title: content.title,
+              fieldOrder: content.fieldOrder,
+              signature: content.signature,
+            },
+          },
+          signatureMetadata: signatureMetadata(record, artifact),
+          renderedContent: content,
+        },
+      });
+    }
+    return this.outputRecords(transaction, context.agencyId, record.id);
   }
 
   private async assertEvidence(
@@ -1731,61 +4151,12 @@ export class PdsService {
     context: RequestContext,
     input: EvidenceInput,
   ): Promise<void> {
-    const documentId = input.documentId ?? null;
-    const documentVersionId = input.documentVersionId ?? null;
-    if (!documentId && !documentVersionId) return;
-    if (!documentId || !documentVersionId) {
-      throw new PdsServiceError(
-        'An evidence Document and exact Document Version are both required.',
-        400,
-        'PDS_EVIDENCE_PAIR_INVALID',
-      );
-    }
-    if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
-      throw new PdsServiceError(
-        'The current Agency Membership cannot inspect shared Agency Documents.',
-        403,
-        'PDS_EVIDENCE_FORBIDDEN',
-      );
-    }
-    const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
-      transaction,
-      context,
+    await this.validateEvidenceLinks(transaction, context, [
       {
-        documentId,
-        versionId: documentVersionId,
-        allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-          agencyId: context.agencyId,
-        }),
-        requirement: 'FINALIZED_VERSION',
+        documentId: input.documentId ?? null,
+        documentVersionId: input.documentVersionId ?? null,
       },
-    );
-    if (
-      evidenceResult.ok === false &&
-      (evidenceResult.reason === 'DOCUMENT_NOT_FOUND' ||
-        evidenceResult.reason === 'VERSION_NOT_FOUND')
-    ) {
-      throw new PdsServiceError(
-        'The selected evidence Document Version could not be found in this Agency.',
-        404,
-        'PDS_EVIDENCE_NOT_FOUND',
-      );
-    }
-    if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
-      throw new PdsServiceError(
-        'The current Agency Membership cannot inspect this External Evidence.',
-        403,
-        'PDS_EVIDENCE_SENSITIVE_FORBIDDEN',
-      );
-    }
-    if (evidenceResult.ok === false && evidenceResult.reason === 'STATUS_INELIGIBLE') {
-      throw new PdsServiceError(
-        'The selected evidence Document Version is not finalized for PDS linking.',
-        400,
-        'PDS_EVIDENCE_INELIGIBLE',
-      );
-    }
-    if (!evidenceResult.ok) throw new Error('Unexpected External Evidence resolution result.');
+    ]);
   }
 
   private async assertSectionIds(
@@ -1906,26 +4277,39 @@ export class PdsService {
   }
 
   private preservedWesInput(record: PdsRecord): PdsWesInput[] {
-    return record.wesArtifacts.map((artifact) => ({
+    return record.wesArtifacts.map((artifact: PdsRecord['wesArtifacts'][number]) => ({
       contextKey: artifact.contextKey,
       documentId: artifact.documentId,
       documentVersionId: artifact.documentVersionId,
-      entries: artifact.entries.map((entry) => ({
-        workExperienceId: entry.workExperienceId,
-        sequenceNo: entry.sequenceNo,
-        durationText: entry.durationText ?? '',
-        position: entry.position,
-        officeUnit: entry.officeUnit,
-        immediateSupervisor: entry.immediateSupervisor,
-        agencyOrganizationLocation: entry.agencyOrganizationLocation,
-        accomplishments: entry.accomplishments,
-        actualDuties: entry.actualDuties,
-      })),
+      signatureDocumentId: null,
+      signatureDocumentVersionId: null,
+      signedAt: null,
+      entries: artifact.entries.map(
+        (entry: PdsRecord['wesArtifacts'][number]['entries'][number]) => ({
+          workExperienceSequenceNo:
+            record.workExperienceRecords.find(
+              (row: PdsRecord['workExperienceRecords'][number]) =>
+                row.id === entry.workExperienceId,
+            )?.sequenceNo ?? undefined,
+          sequenceNo: entry.sequenceNo,
+          durationText: entry.durationText ?? '',
+          position: entry.position,
+          officeUnit: entry.officeUnit,
+          immediateSupervisor: entry.immediateSupervisor,
+          agencyOrganizationLocation: entry.agencyOrganizationLocation,
+          accomplishments: entry.accomplishments,
+          actualDuties: entry.actualDuties,
+        }),
+      ),
     }));
   }
 
   private assertWesEditable(record: PdsRecord): void {
-    if (record.wesArtifacts.some((artifact) => artifact.status !== 'DRAFT')) {
+    if (
+      record.wesArtifacts.some(
+        (artifact: PdsRecord['wesArtifacts'][number]) => artifact.status !== 'DRAFT',
+      )
+    ) {
       throw this.immutable();
     }
   }
@@ -1972,7 +4356,12 @@ export class PdsService {
       }
       contexts.add(contextKey);
       await this.assertEvidence(transaction, context, artifact);
+      await this.assertEvidence(transaction, context, {
+        documentId: artifact.signatureDocumentId,
+        documentVersionId: artifact.signatureDocumentVersionId,
+      });
       if (artifact.documentId) evidenceCount += 1;
+      if (artifact.signatureDocumentId) evidenceCount += 1;
 
       const entrySequences = new Set<number>();
       const entryParents = new Set<string>();
@@ -2046,7 +4435,10 @@ export class PdsService {
           status: 'DRAFT',
           documentId: artifact.documentId ?? null,
           documentVersionId: artifact.documentVersionId ?? null,
-        },
+          employeeSignatureDocumentId: artifact.signatureDocumentId ?? null,
+          employeeSignatureDocumentVersionId: artifact.signatureDocumentVersionId ?? null,
+          signedAt: dateValue(artifact.signedAt),
+        } as Prisma.PdsWesArtifactUncheckedCreateInput & Record<string, unknown>,
         select: { id: true },
       });
       if (entries.length) {
@@ -2100,7 +4492,10 @@ export class PdsService {
     agencyId: string,
     id: string,
   ): Promise<PdsRecord | null> {
-    return transaction.pdsVersion.findFirst({ where: { agencyId, id }, select: pdsSelect });
+    return (await transaction.pdsVersion.findFirst({
+      where: { agencyId, id },
+      select: pdsSelect,
+    })) as unknown as PdsRecord | null;
   }
 
   private async auditRead(
@@ -2148,12 +4543,12 @@ export class PdsService {
       employee,
     });
     if (!fieldScope) throw this.notFound();
-    const records = await transaction.pdsVersion.findMany({
+    const records = (await transaction.pdsVersion.findMany({
       where: { agencyId: context.agencyId, employeeId },
       orderBy: { versionNo: 'desc' },
       take: PDS_VERSION_LIST_LIMIT,
       select: pdsSummarySelect,
-    });
+    })) as unknown as PdsSummaryRecord[];
     const versions = records.map((record) => summary(record, fieldScope));
     if (records.length) {
       await this.auditRead(
