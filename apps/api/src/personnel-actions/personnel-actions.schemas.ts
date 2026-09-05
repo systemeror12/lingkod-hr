@@ -144,6 +144,7 @@ const schemas = [
         acceptanceDate: z.string().date(),
         noticeDate: z.string().date(),
         withdrawalState: z.enum(['NONE', 'PENDING', 'DENIED']),
+        mutuallyAgreedEarlier: z.boolean(),
       })
       .strict(),
   ),

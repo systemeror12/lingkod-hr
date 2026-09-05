@@ -3,7 +3,10 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { AuthService } from '../auth/auth.service';
 import { DocumentsService } from '../documents/documents.service';
+import { PlantillaPositionsService } from '../plantilla-positions/plantilla-positions.service';
+import { SeparationServiceError, SeparationsService } from '../separations/separations.service';
 import {
   personnelActionCreateSchema,
   type PersonnelActionEvidenceInput,
@@ -28,6 +31,7 @@ export interface PersonnelActionSummary {
   id: string;
   actionType: PersonnelActionInput['actionType'];
   status: PersonnelActionStatus;
+  effectuationAvailable: boolean;
   employee: {
     id: string;
     employeeNumber: string;
@@ -58,8 +62,10 @@ export interface PersonnelActionVersionSummary {
   proposedEffectivity: string;
   fromServiceSegment: {
     id: string;
+    appointmentId: string | null;
     positionId: string | null;
     organizationUnitId: string;
+    segmentType: string;
     appointmentStatus: string;
     salaryGrade: number | null;
     salaryStep: number | null;
@@ -197,6 +203,27 @@ const APPROVABLE_ACTIONS = new Set<PersonnelActionInput['actionType']>([
   'STEP_INCREMENT',
 ]);
 
+const SERVICE_STATUS_ACTIONS = new Set<PersonnelActionInput['actionType']>([
+  'SAME_ITEM_REINSTATEMENT',
+  'SEPARATION_RESIGNATION',
+  'SEPARATION_DISMISSAL',
+  'SEPARATION_DROPPING_FROM_ROLLS',
+  'SEPARATION_EXPIRATION',
+  'SEPARATION_TERMINATION',
+  'SEPARATION_DEATH',
+]);
+
+const COMPENSATION_ACTIONS = new Set<PersonnelActionInput['actionType']>([
+  'SALARY_ADJUSTMENT',
+  'STEP_INCREMENT',
+]);
+
+export function personnelActionCanBeEffectuated(
+  actionType: PersonnelActionInput['actionType'],
+): boolean {
+  return SERVICE_STATUS_ACTIONS.has(actionType) || COMPENSATION_ACTIONS.has(actionType);
+}
+
 export function personnelActionCanBeApproved(
   actionType: PersonnelActionInput['actionType'],
 ): boolean {
@@ -305,6 +332,17 @@ function daysBetween(start: string, end: string): number {
   return Math.round((databaseDate(end).getTime() - databaseDate(start).getTime()) / 86_400_000);
 }
 
+function addDays(value: Date, days: number): Date {
+  const result = new Date(value);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function jsonObject(value: Prisma.JsonValue | null): Prisma.JsonObject | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Prisma.JsonObject)
+    : null;
+}
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -356,6 +394,9 @@ function actionSummary(record: ActionRecord): PersonnelActionSummary {
     id: record.id,
     actionType: record.actionType as PersonnelActionInput['actionType'],
     status: record.status as PersonnelActionStatus,
+    effectuationAvailable: personnelActionCanBeEffectuated(
+      record.actionType as PersonnelActionInput['actionType'],
+    ),
     employee: record.employee,
     currentVersion: versionSummary(record.currentVersion),
     preparedBy: { id: record.preparedBy.id, displayName: record.preparedBy.user.displayName },
@@ -431,6 +472,10 @@ export class PersonnelActionsService {
     @Inject(PERSONNEL_ACTION_AUDIT_WRITER)
     private readonly auditWriter: PersonnelActionAuditWriter,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
+    @Inject(PlantillaPositionsService)
+    private readonly plantillaPositionsService: PlantillaPositionsService,
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(SeparationsService) private readonly separationsService: SeparationsService,
   ) {}
 
   async list(
@@ -855,6 +900,24 @@ export class PersonnelActionsService {
       'personnel.actions.effectuate',
       'PERSONNEL_ACTION_EFFECTUATE_FORBIDDEN',
     );
+    const action = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      transaction.personnelAction.findFirst({
+        where: { agencyId: context.agencyId, id: actionId },
+        select: { actionType: true },
+      }),
+    );
+    if (!action) throw this.notFound('Personnel Action');
+    if (COMPENSATION_ACTIONS.has(action.actionType as PersonnelActionInput['actionType'])) {
+      return this.effectuateCompensation(context, actionId, rawIdempotencyKey);
+    }
+    return this.effectuateServiceStatus(context, actionId, rawIdempotencyKey);
+  }
+
+  private async effectuateCompensation(
+    context: RequestContext,
+    actionId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PersonnelActionSummary> {
     return withDatabaseContext(
       requestDatabaseContext(context, 'personnel-action-transition'),
       async (transaction) => {
@@ -981,6 +1044,286 @@ export class PersonnelActionsService {
           },
         });
         return actionSummary(effective);
+      },
+    );
+  }
+
+  private async effectuateServiceStatus(
+    context: RequestContext,
+    actionId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PersonnelActionSummary> {
+    const idempotencyKey = rawIdempotencyKey?.trim() || `personnel-action:${actionId}`;
+    return withDatabaseContext(
+      requestDatabaseContext(
+        context,
+        'personnel-action-transition',
+        'plantilla-position-transition',
+      ),
+      async (transaction) => {
+        const current = await this.lockedAction(transaction, context.agencyId, actionId);
+        if (current.status === 'EFFECTIVE') {
+          if (current.effectuationKey !== idempotencyKey) {
+            throw new PersonnelActionServiceError(
+              'This Personnel Action was already effectuated with another idempotency key.',
+              409,
+              'PERSONNEL_ACTION_IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return actionSummary(current);
+        }
+        if (current.status !== 'APPROVED') throw this.workflowError('effectuate', current.status);
+        const actionType = current.actionType as PersonnelActionInput['actionType'];
+        if (!SERVICE_STATUS_ACTIONS.has(actionType)) {
+          throw new PersonnelActionServiceError(
+            'Only source-backed service-status actions can use this effectuation path.',
+            409,
+            'PERSONNEL_ACTION_EFFECT_UNSUPPORTED',
+          );
+        }
+        if (!current.currentVersion) throw this.versionMissing();
+        if (formatDate(current.currentVersion.proposedEffectivity) > manilaToday()) {
+          throw new PersonnelActionServiceError(
+            'The Personnel Action cannot be effectuated before its applicable date.',
+            409,
+            'PERSONNEL_ACTION_EFFECTIVITY_PENDING',
+          );
+        }
+
+        const source = current.currentVersion.fromServiceSegment;
+        const effectivity = current.currentVersion.proposedEffectivity;
+        if (effectivity <= source.effectiveFrom || !source.positionId) {
+          throw new PersonnelActionServiceError(
+            'The action requires an applicable Plantilla-backed service period.',
+            409,
+            'PERSONNEL_ACTION_SERVICE_PERIOD_INVALID',
+          );
+        }
+        const reinstatement = actionType === 'SAME_ITEM_REINSTATEMENT';
+        await this.lockEmployee(transaction, context.agencyId, current.employeeId);
+        await this.lockServiceSegment(transaction, context.agencyId, source.id);
+        await this.plantillaPositionsService.lockInTransaction(
+          transaction,
+          context,
+          source.positionId,
+        );
+        const incumbency = await transaction.positionIncumbency.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            serviceSegmentId: source.id,
+            status: reinstatement ? 'ENDED' : 'ACTIVE',
+          },
+          select: { id: true, effectiveFrom: true, effectiveTo: true },
+        });
+        if (!incumbency || effectivity <= incumbency.effectiveFrom) {
+          throw new PersonnelActionServiceError(
+            'The action requires the applicable Position Incumbency.',
+            409,
+            'PERSONNEL_ACTION_INCUMBENCY_INVALID',
+          );
+        }
+        await this.lockPositionIncumbency(transaction, context.agencyId, incumbency.id);
+        let separationCase: { id: string } | null = null;
+        if (!reinstatement) {
+          try {
+            separationCase = await this.separationsService.requireClearedCaseInTransaction(
+              transaction,
+              {
+                agencyId: context.agencyId,
+                employeeId: current.employeeId,
+                separationType: actionType.replace('SEPARATION_', ''),
+                serviceSegmentId: source.id,
+                positionIncumbencyId: incumbency.id,
+                effectivity,
+              },
+            );
+          } catch (error: unknown) {
+            if (error instanceof SeparationServiceError) {
+              throw new PersonnelActionServiceError(error.message, 409, error.code);
+            }
+            throw error;
+          }
+          if (source.appointmentId) {
+            throw new PersonnelActionServiceError(
+              'Appointment-backed separation is pending the Appointment owner closure acknowledgment.',
+              409,
+              'PERSONNEL_ACTION_APPOINTMENT_CLOSURE_UNAVAILABLE',
+            );
+          }
+        }
+        await this.validateStoredAction(transaction, context, current, true);
+        await this.assertApprovalStillValid(transaction, current);
+
+        let successorSegmentId: string | null = null;
+        if (reinstatement) {
+          if (
+            source.status !== 'CLOSED' ||
+            !source.effectiveTo ||
+            effectivity.getTime() !== addDays(source.effectiveTo, 1).getTime()
+          ) {
+            throw new PersonnelActionServiceError(
+              'Same-item reinstatement must continue the preserved service timeline without a gap.',
+              409,
+              'PERSONNEL_ACTION_REINSTATEMENT_PERIOD_INVALID',
+            );
+          }
+          const successor = await transaction.serviceSegment.create({
+            data: {
+              agencyId: context.agencyId,
+              employeeId: current.employeeId,
+              appointmentId: source.appointmentId,
+              personnelActionId: current.id,
+              positionId: source.positionId,
+              organizationUnitId: source.organizationUnitId,
+              segmentType: source.segmentType,
+              appointmentStatus: source.appointmentStatus,
+              salaryGrade: source.salaryGrade,
+              salaryStep: source.salaryStep,
+              effectiveFrom: effectivity,
+              effectiveTo: null,
+              status: 'ACTIVE',
+              createdByMembershipId: context.membershipId,
+            },
+            select: { id: true },
+          });
+          successorSegmentId = successor.id;
+          await transaction.positionIncumbency.create({
+            data: {
+              agencyId: context.agencyId,
+              positionId: source.positionId,
+              employeeId: current.employeeId,
+              serviceSegmentId: successor.id,
+              effectiveFrom: effectivity,
+              effectiveTo: null,
+              status: 'ACTIVE',
+              createdByMembershipId: context.membershipId,
+            },
+          });
+          await this.plantillaPositionsService.restoreOccupancyInTransaction(
+            transaction,
+            context,
+            source.positionId,
+            formatDate(effectivity),
+            current.currentVersion.reason,
+            `${idempotencyKey}:position`,
+          );
+          await transaction.employee.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: current.employeeId } },
+            data: {
+              serviceStatus: 'ACTIVE',
+              currentServiceSegmentId: successor.id,
+              updatedByMembershipId: context.membershipId,
+            },
+          });
+        } else {
+          if (!separationCase) throw new Error('The locked Separation Case was lost.');
+          const effectiveTo = addDays(effectivity, -1);
+          await transaction.serviceSegment.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
+            data: { effectiveTo, status: 'CLOSED' },
+          });
+          await transaction.positionIncumbency.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: incumbency.id } },
+            data: { effectiveTo, status: 'ENDED' },
+          });
+          await this.plantillaPositionsService.vacateInTransaction(
+            transaction,
+            context,
+            source.positionId,
+            formatDate(effectivity),
+            current.currentVersion.reason,
+            `${idempotencyKey}:position`,
+          );
+          await transaction.employee.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: current.employeeId } },
+            data: {
+              serviceStatus: actionType === 'SEPARATION_DEATH' ? 'DECEASED' : 'SEPARATED',
+              currentServiceSegmentId: null,
+              updatedByMembershipId: context.membershipId,
+            },
+          });
+          const appliedAt = new Date();
+          const access = await this.authService.deactivateEmployeeAccessInTransaction(
+            transaction,
+            context,
+            current.employeeId,
+            `Personnel Action ${current.id} became effective.`,
+            appliedAt,
+          );
+          await this.separationsService.completeInTransaction(transaction, context, {
+            separationCaseId: separationCase.id,
+            personnelActionId: current.id,
+            reason: current.currentVersion.reason,
+            idempotencyKey,
+            effects: [
+              {
+                effectType: 'CLOSE_SERVICE',
+                targetType: 'ServiceSegment',
+                targetId: source.id,
+              },
+              {
+                effectType: 'VACATE_POSITION',
+                targetType: 'PlantillaPosition',
+                targetId: source.positionId,
+              },
+              {
+                effectType: 'STOP_PAYROLL',
+                targetType: 'ServiceSegment',
+                targetId: source.id,
+              },
+              ...access.membershipIds.map((targetId) => ({
+                effectType: 'DEACTIVATE_MEMBERSHIP' as const,
+                targetType: 'AgencyMembership',
+                targetId,
+              })),
+              ...access.sessionIds.map((targetId) => ({
+                effectType: 'REVOKE_SESSIONS' as const,
+                targetType: 'UserSession',
+                targetId,
+              })),
+            ],
+            appliedAt,
+          });
+        }
+
+        const effectuated = await transaction.personnelAction.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+          data: {
+            status: 'EFFECTIVE',
+            effectuatedByMembershipId: context.membershipId,
+            effectuatedAt: new Date(),
+            effectuationKey: idempotencyKey,
+          },
+          select: actionSelect,
+        });
+        await this.writeAudit(transaction, context, effectuated, {
+          action: 'PERSONNEL_ACTION_EFFECTUATED',
+          previousStatus: current.status,
+          newStatus: 'EFFECTIVE',
+          reason: current.currentVersion.reason,
+          idempotencyKey,
+        });
+        await transaction.outboxEvent.create({
+          data: {
+            agencyId: context.agencyId,
+            eventType: 'PERSONNEL_ACTION_EFFECTUATED',
+            aggregateType: 'PersonnelAction',
+            aggregateId: current.id,
+            idempotencyKey,
+            payload: {
+              actionId: current.id,
+              actionVersionId: current.currentVersion.id,
+              actionType,
+              employeeId: current.employeeId,
+              sourceServiceSegmentId: source.id,
+              successorServiceSegmentId: successorSegmentId,
+              positionId: source.positionId,
+              separationCaseId: separationCase?.id ?? null,
+              effectivity: formatDate(effectivity),
+            },
+          },
+        });
+        return actionSummary(effectuated);
       },
     );
   }
@@ -1140,6 +1483,13 @@ export class PersonnelActionsService {
           'PERSONNEL_ACTION_EVIDENCE_INCOMPLETE',
         );
       }
+      if (input.evidence.some(({ sourceDate }) => databaseDate(sourceDate) > effectivity)) {
+        throw new PersonnelActionServiceError(
+          'Personnel Action evidence cannot postdate the proposed effectivity.',
+          409,
+          'PERSONNEL_ACTION_EVIDENCE_DATE_INVALID',
+        );
+      }
       if (input.actionType === 'STEP_INCREMENT') {
         await transaction.$queryRaw(
           Prisma.sql`SELECT "id" FROM "employees" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${input.employeeId} AS uuid) FOR UPDATE`,
@@ -1212,6 +1562,41 @@ export class PersonnelActionsService {
           409,
           'PERSONNEL_ACTION_EVIDENCE_TYPE_INVALID',
         );
+      }
+      const issuedDate = resolved.document.currentVersion.issuedAt?.slice(0, 10) ?? null;
+      if (requireCompleteEvidence && (!issuedDate || issuedDate !== item.sourceDate)) {
+        throw new PersonnelActionServiceError(
+          'Each evidence source date must match its exact issued document version.',
+          409,
+          'PERSONNEL_ACTION_EVIDENCE_DATE_INVALID',
+        );
+      }
+      if (item.evidenceType === 'APPOINTMENT_TERM') {
+        const termVersion = await transaction.documentVersion.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            documentId: item.documentId,
+            id: item.documentVersionId,
+          },
+          select: { signatureMetadata: true },
+        });
+        const metadata = jsonObject(termVersion?.signatureMetadata ?? null);
+        const endDate = metadata?.appointmentEndDate;
+        const appointmentType = metadata?.appointmentType;
+        if (
+          typeof endDate !== 'string' ||
+          !['TEMPORARY', 'COTERMINOUS', 'CONTRACTUAL', 'CASUAL'].includes(
+            typeof appointmentType === 'string' ? appointmentType : '',
+          ) ||
+          (input.actionType === 'SEPARATION_EXPIRATION' && endDate !== input.proposedEffectivity) ||
+          (input.actionType === 'SEPARATION_TERMINATION' && databaseDate(endDate) < effectivity)
+        ) {
+          throw new PersonnelActionServiceError(
+            'The exact appointment term does not authorize this separation date.',
+            409,
+            'PERSONNEL_ACTION_APPOINTMENT_TERM_INVALID',
+          );
+        }
       }
       if (
         input.actionType === 'SALARY_ADJUSTMENT' &&
@@ -1360,7 +1745,9 @@ export class PersonnelActionsService {
           databaseDate(input.targetFacts.acceptanceDate) >
             databaseDate(input.proposedEffectivity) ||
           databaseDate(input.targetFacts.noticeDate) >
-            databaseDate(input.targetFacts.acceptanceDate)
+            databaseDate(input.targetFacts.acceptanceDate) ||
+          (daysBetween(input.targetFacts.noticeDate, input.proposedEffectivity) < 30 &&
+            !input.targetFacts.mutuallyAgreedEarlier)
         ) {
           throw invalid('The resignation acceptance, notice, or withdrawal state is inconsistent.');
         }
@@ -1524,6 +1911,104 @@ export class PersonnelActionsService {
     );
   }
 
+  private async assertApprovalStillValid(
+    transaction: Prisma.TransactionClient,
+    action: ActionRecord,
+  ): Promise<void> {
+    if (!action.currentVersion || !action.approvedByMembershipId) {
+      throw new PersonnelActionServiceError(
+        'The Personnel Action has no valid approval authority.',
+        409,
+        'PERSONNEL_ACTION_APPROVAL_INVALID',
+      );
+    }
+    const now = new Date();
+    const effectivity = action.currentVersion.proposedEffectivity;
+    const first = now < effectivity ? now : effectivity;
+    const last = now > effectivity ? now : effectivity;
+    const roleWindow = {
+      effectiveFrom: { lte: first },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: last } }],
+    };
+    if (action.approvalDelegationId) {
+      const delegation = await transaction.delegatedAuthority.findFirst({
+        where: {
+          agencyId: action.agencyId,
+          id: action.approvalDelegationId,
+          delegateMembershipId: action.approvedByMembershipId,
+          permissionCode: 'personnel.actions.approve',
+          status: 'ACTIVE',
+          effectiveFrom: { lte: first },
+          effectiveTo: { gt: last },
+          OR: [
+            { organizationUnitId: null },
+            { organizationUnitId: action.currentVersion.fromServiceSegment.organizationUnitId },
+          ],
+          delegator: {
+            status: 'ACTIVE',
+            membershipRoles: {
+              some: {
+                agencyId: action.agencyId,
+                role: {
+                  status: 'ACTIVE',
+                  permissions: {
+                    some: {
+                      permission: { code: 'personnel.actions.approve' },
+                      scopePolicy: 'AGENCY',
+                    },
+                  },
+                },
+                ...roleWindow,
+              },
+            },
+          },
+        },
+        select: { authorityDocumentId: true },
+      });
+      if (delegation?.authorityDocumentId) {
+        const authorityDocument = await transaction.document.findFirst({
+          where: { agencyId: action.agencyId, id: delegation.authorityDocumentId },
+          select: { currentVersionId: true },
+        });
+        if (
+          action.currentVersion.evidence.some(
+            (item) =>
+              item.evidenceType === 'AUTHORITY' &&
+              item.document.id === delegation.authorityDocumentId &&
+              item.documentVersion.id === authorityDocument?.currentVersionId,
+          )
+        ) {
+          return;
+        }
+      }
+    } else {
+      const direct = await transaction.membershipRole.findFirst({
+        where: {
+          agencyId: action.agencyId,
+          membershipId: action.approvedByMembershipId,
+          membership: { status: 'ACTIVE' },
+          role: {
+            status: 'ACTIVE',
+            permissions: {
+              some: {
+                permission: { code: 'personnel.actions.approve' },
+                scopePolicy: 'AGENCY',
+              },
+            },
+          },
+          ...roleWindow,
+        },
+        select: { id: true },
+      });
+      if (direct) return;
+    }
+    throw new PersonnelActionServiceError(
+      'The recorded approval authority is no longer applicable.',
+      409,
+      'PERSONNEL_ACTION_APPROVAL_INVALID',
+    );
+  }
+
   private async transition(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -1583,7 +2068,7 @@ export class PersonnelActionsService {
     );
     if (rows.length !== 1) {
       throw new PersonnelActionServiceError(
-        'The applicable Service Segment could not be found.',
+        'The source Service Segment could not be found.',
         404,
         'PERSONNEL_ACTION_SERVICE_SEGMENT_NOT_FOUND',
       );
@@ -1669,6 +2154,23 @@ export class PersonnelActionsService {
     }
   }
 
+  private async lockPositionIncumbency(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    incumbencyId: string,
+  ): Promise<void> {
+    const rows = await transaction.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`SELECT "id" FROM "position_incumbencies" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${incumbencyId} AS uuid) FOR UPDATE`,
+    );
+    if (rows.length !== 1) {
+      throw new PersonnelActionServiceError(
+        'The Position Incumbency could not be found.',
+        404,
+        'PERSONNEL_ACTION_INCUMBENCY_NOT_FOUND',
+      );
+    }
+  }
+
   private async writeAudit(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -1697,6 +2199,7 @@ export class PersonnelActionsService {
       newStatus: event.newStatus,
       reason: event.reason,
       requestId: context.requestId,
+      ...(event.idempotencyKey ? { idempotencyKey: event.idempotencyKey } : {}),
       metadata: {
         employeeId: record.employeeId,
         actionType: record.actionType,

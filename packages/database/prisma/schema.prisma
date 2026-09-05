@@ -70,6 +70,8 @@ model Agency {
   personnelActionEvidence       PersonnelActionEvidence[]
   serviceSegments               ServiceSegment[]
   positionIncumbencies          PositionIncumbency[]
+  separationCases               SeparationCase[]
+  separationEffects             SeparationEffect[]
   outboxEvents                  OutboxEvent[]
 
   @@unique([id, code])
@@ -220,6 +222,8 @@ model AgencyMembership {
   preparedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionPreparer")
   approvedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionApprover")
   effectuatedPersonnelActions            PersonnelAction[]              @relation("PersonnelActionEffectuator")
+  initiatedSeparationCases               SeparationCase[]               @relation("SeparationCaseInitiator")
+  approvedSeparationCases                SeparationCase[]               @relation("SeparationCaseApprover")
   createdPersonnelActionVersions         PersonnelActionVersion[]       @relation("PersonnelActionVersionCreator")
   createdPersonnelActionEvidence         PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceCreator")
   sessions                               UserSession[]
@@ -782,6 +786,7 @@ model Employee {
   personnelActions      PersonnelAction[]      @relation("PersonnelActionEmployee")
   serviceSegments       ServiceSegment[]       @relation("ServiceSegmentEmployee")
   positionIncumbencies  PositionIncumbency[]   @relation("PositionIncumbencyEmployee")
+  separationCases       SeparationCase[]       @relation("SeparationCaseEmployee")
   governmentIdentifiers GovernmentIdentifier[] @relation("EmployeeGovernmentIdentifiers")
   payrollBankAccounts   PayrollBankAccount[]   @relation("EmployeePayrollBankAccounts")
   salnComplianceRecords SalnComplianceRecord[] @relation("EmployeeSalnComplianceRecords")
@@ -1589,6 +1594,7 @@ model ServiceSegment {
   actionSourceFor    PersonnelActionVersion[] @relation("PersonnelActionSourceServiceSegment")
   positionIncumbency PositionIncumbency?      @relation("PositionIncumbencyServiceSegment")
   createdBy          AgencyMembership         @relation("ServiceSegmentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  separationCases    SeparationCase[]         @relation("SeparationCaseServiceSegment")
 
   @@unique([agencyId, id])
   @@index([agencyId, employeeId, effectiveFrom])
@@ -1614,11 +1620,61 @@ model PositionIncumbency {
   serviceSegment    ServiceSegment     @relation("PositionIncumbencyServiceSegment", fields: [agencyId, serviceSegmentId], references: [agencyId, id], onDelete: Restrict)
   personnelBaseline PersonnelBaseline? @relation("PersonnelBaselinePositionIncumbency")
   createdBy         AgencyMembership   @relation("PositionIncumbencyCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  separationCases   SeparationCase[]   @relation("SeparationCasePositionIncumbency")
 
   @@unique([agencyId, id])
   @@unique([agencyId, serviceSegmentId])
   @@index([agencyId, positionId, effectiveFrom])
   @@map("position_incumbencies")
+}
+
+model SeparationCase {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  employeeId              String    @map("employee_id") @db.Uuid
+  separationType          String    @map("separation_type")
+  proposedEffectiveDate   DateTime  @map("proposed_effective_date") @db.Date
+  approvedEffectiveDate   DateTime? @map("approved_effective_date") @db.Date
+  status                  String
+  reason                  String?
+  initiatedByMembershipId String    @map("initiated_by_membership_id") @db.Uuid
+  approvedByMembershipId  String?   @map("approved_by_membership_id") @db.Uuid
+  serviceSegmentId        String?   @map("service_segment_id") @db.Uuid
+  positionIncumbencyId    String?   @map("position_incumbency_id") @db.Uuid
+  effectuatedAt           DateTime? @map("effectuated_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency             Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee           Employee            @relation("SeparationCaseEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  initiatedBy        AgencyMembership    @relation("SeparationCaseInitiator", fields: [agencyId, initiatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy         AgencyMembership?   @relation("SeparationCaseApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  serviceSegment     ServiceSegment?     @relation("SeparationCaseServiceSegment", fields: [agencyId, serviceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  positionIncumbency PositionIncumbency? @relation("SeparationCasePositionIncumbency", fields: [agencyId, positionIncumbencyId], references: [agencyId, id], onDelete: Restrict)
+  effects            SeparationEffect[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@map("separation_cases")
+}
+
+model SeparationEffect {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId         String    @map("agency_id") @db.Uuid
+  separationCaseId String    @map("separation_case_id") @db.Uuid
+  effectType       String    @map("effect_type")
+  targetType       String    @map("target_type")
+  targetId         String    @map("target_id") @db.Uuid
+  appliedAt        DateTime? @map("applied_at") @db.Timestamptz(6)
+  status           String
+  failureReason    String?   @map("failure_reason")
+
+  agency         Agency         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  separationCase SeparationCase @relation(fields: [agencyId, separationCaseId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([separationCaseId, effectType, targetId])
+  @@index([agencyId, separationCaseId])
+  @@map("separation_effects")
 }
 
 model OutboxEvent {

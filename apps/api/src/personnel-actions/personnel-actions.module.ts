@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { PlantillaPositionsModule } from '../plantilla-positions/plantilla-positions.module';
+import { SeparationsModule } from '../separations/separations.module';
 import { PersonnelActionsController } from './personnel-actions.controller';
 import {
   personnelActionAuditWriter,
@@ -9,7 +11,7 @@ import {
 } from './personnel-actions.service';
 
 @Module({
-  imports: [AuthModule, DocumentsModule],
+  imports: [AuthModule, DocumentsModule, PlantillaPositionsModule, SeparationsModule],
   controllers: [PersonnelActionsController],
   providers: [
     PersonnelActionsService,

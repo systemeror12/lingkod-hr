@@ -1,10 +1,24 @@
-import { PrismaClient } from '@prisma/client';
+import { randomBytes } from 'node:crypto';
+import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
-import type { PersonnelActionEvidenceInput } from './personnel-actions.schemas';
-import { personnelActionAuditWriter, PersonnelActionsService } from './personnel-actions.service';
+import { AuthService } from '../auth/auth.service';
+import {
+  plantillaPositionAuditWriter,
+  PlantillaPositionsService,
+} from '../plantilla-positions/plantilla-positions.service';
+import { separationAuditWriter, SeparationsService } from '../separations/separations.service';
+import type {
+  PersonnelActionEvidenceInput,
+  PersonnelActionInput,
+} from './personnel-actions.schemas';
+import {
+  personnelActionAuditWriter,
+  personnelActionCanBeEffectuated,
+  PersonnelActionsService,
+} from './personnel-actions.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -64,6 +78,7 @@ async function createEvidence(
   membershipId: string,
   suffix: string,
   evidenceType: PersonnelActionEvidenceInput['evidenceType'],
+  signatureMetadata?: Prisma.InputJsonObject,
 ): Promise<PersonnelActionEvidenceInput> {
   const document = await admin.document.create({
     data: {
@@ -85,6 +100,7 @@ async function createEvidence(
       mimeType: 'application/pdf',
       sizeBytes: 1,
       issuedAt: new Date(`${manilaDate(-5)}T00:00:00.000Z`),
+      ...(signatureMetadata ? { signatureMetadata } : {}),
       createdByMembershipId: membershipId,
     },
   });
@@ -329,10 +345,21 @@ it.skipIf(!enabled)(
       });
 
       const documentsService = new DocumentsService({} as never, documentAuditWriter);
-      const service = new PersonnelActionsService(personnelActionAuditWriter, documentsService);
+      const plantillaPositionsService = new PlantillaPositionsService(
+        plantillaPositionAuditWriter,
+        documentsService,
+      );
+      const service = new PersonnelActionsService(
+        personnelActionAuditWriter,
+        documentsService,
+        plantillaPositionsService,
+        new AuthService(),
+        new SeparationsService(separationAuditWriter),
+      );
       const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [
         'personnel.actions.read',
         'personnel.actions.create',
+        'personnel.actions.correct',
         'personnel.actions.submit',
         'personnel.actions.audit.read',
         'personnel.actions.effectuate',
@@ -434,6 +461,14 @@ it.skipIf(!enabled)(
         approvalDelegationId: delegation.id,
         currentVersion: { versionNo: 3, fromServiceSegment: { id: serviceSegment.id } },
       });
+      await expect(
+        service.effectuate(
+          context(agencyId, preparer.userId, preparer.membershipId, [
+            'personnel.actions.effectuate',
+          ]),
+          approved.id,
+        ),
+      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EVIDENCE_READ_FORBIDDEN' });
       const duplicate = await service.create(preparerContext, {
         ...baseInput,
         evidence,
@@ -563,6 +598,9 @@ it.skipIf(!enabled)(
       const failingService = new PersonnelActionsService(
         { write: async () => Promise.reject(new Error('audit unavailable')) },
         documentsService,
+        plantillaPositionsService,
+        new AuthService(),
+        new SeparationsService(separationAuditWriter),
       );
       await expect(
         failingService.effectuate(preparerContext, salaryAction.id, 'salary-effectuation-key'),
@@ -689,6 +727,661 @@ it.skipIf(!enabled)(
           await transaction.documentVersion.deleteMany({ where: { agencyId } });
           await transaction.document.deleteMany({ where: { agencyId } });
         });
+        await admin.agencyMembership.deleteMany({ where: { agencyId } });
+        await admin.agency.delete({ where: { id: agencyId } });
+      }
+      await admin.user.deleteMany({ where: { id: { in: userIds } } });
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'effectuates every supported service-status action atomically and idempotently',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-service-status`;
+    let agencyId = '';
+    const userIds: string[] = [];
+
+    try {
+      const agency = await admin.agency.create({
+        data: {
+          code: `STATUS-${suffix}`,
+          name: 'Personnel Action Service Status Agency',
+          agencyType: 'NGA',
+          status: 'ACTIVE',
+        },
+      });
+      agencyId = agency.id;
+      const preparer = await createActor(admin, agencyId, suffix, 'status-preparer');
+      const reviewer = await createActor(admin, agencyId, suffix, 'status-reviewer');
+      const authority = await createActor(admin, agencyId, suffix, 'status-authority');
+      userIds.push(preparer.userId, reviewer.userId, authority.userId);
+
+      const unit = await admin.organizationUnit.create({
+        data: { agencyId, code: `STATUS-${suffix}`, unitType: 'DIVISION', status: 'ACTIVE' },
+      });
+      const unitVersion = await admin.organizationUnitVersion.create({
+        data: {
+          agencyId,
+          organizationUnitId: unit.id,
+          versionNo: 1,
+          name: 'Personnel Records Division',
+          effectiveFrom: new Date(manilaDate(-60)),
+          status: 'ACTIVE',
+          domainStatus: 'ACTIVE',
+        },
+      });
+      await admin.organizationUnit.update({
+        where: { id: unit.id },
+        data: { currentVersionId: unitVersion.id },
+      });
+
+      const plantillaEvidence = await createEvidence(
+        admin,
+        agencyId,
+        preparer.membershipId,
+        `${suffix}-plantilla`,
+        'AUTHORITY',
+      );
+      const standard = await withDatabaseContext(
+        {
+          agencyId,
+          userId: preparer.userId,
+          membershipId: preparer.membershipId,
+          capabilities: ['qualification-standard-transition'],
+        },
+        async (transaction) => {
+          const record = await transaction.qualificationStandard.create({
+            data: {
+              agencyId,
+              code: `QS-${suffix}`,
+              name: 'Service Status Test Standard',
+              status: 'ACTIVE',
+              createdByMembershipId: preparer.membershipId,
+              updatedByMembershipId: preparer.membershipId,
+            },
+          });
+          const version = await transaction.qualificationStandardVersion.create({
+            data: {
+              agencyId,
+              qualificationStandardId: record.id,
+              versionNo: 1,
+              sourceDocumentId: plantillaEvidence.documentId,
+              sourceEvidenceVersionId: plantillaEvidence.documentVersionId,
+              sourceEvidenceValidatedAt: new Date(),
+              sourceEvidenceValidatedByMembershipId: preparer.membershipId,
+              sourceEvidenceValidationReason: 'The qualification source was reviewed.',
+              approvalDocumentId: plantillaEvidence.documentId,
+              approvalEvidenceVersionId: plantillaEvidence.documentVersionId,
+              approvalEvidenceValidatedAt: new Date(),
+              approvalEvidenceValidatedByMembershipId: preparer.membershipId,
+              approvalEvidenceValidationReason: 'The qualification approval was reviewed.',
+              effectiveFrom: new Date(manilaDate(-60)),
+              status: 'ACTIVE',
+              domainStatus: 'ACTIVE',
+              createdByMembershipId: preparer.membershipId,
+              updatedByMembershipId: preparer.membershipId,
+            },
+          });
+          await transaction.qualificationStandard.update({
+            where: { id: record.id },
+            data: { currentVersionId: version.id },
+          });
+          return version;
+        },
+      );
+      const staffingAuthority = await withDatabaseContext(
+        {
+          agencyId,
+          userId: preparer.userId,
+          membershipId: preparer.membershipId,
+          capabilities: ['staffing-authority-transition'],
+        },
+        (transaction) =>
+          transaction.staffingAuthority.create({
+            data: {
+              agencyId,
+              authorityType: 'DBM_APPROVAL',
+              referenceNo: `STATUS-AUTH-${suffix}`,
+              issuedDate: new Date(manilaDate(-60)),
+              effectiveDate: new Date(manilaDate(-60)),
+              documentId: plantillaEvidence.documentId,
+              evidenceVersionId: plantillaEvidence.documentVersionId,
+              evidenceValidatedAt: new Date(),
+              evidenceValidatedByMembershipId: preparer.membershipId,
+              evidenceValidationReason: 'The staffing authority evidence was reviewed.',
+              status: 'ACTIVE',
+              createdByMembershipId: preparer.membershipId,
+              updatedByMembershipId: preparer.membershipId,
+            },
+          }),
+      );
+      const authorityRole = await admin.role.findFirstOrThrow({
+        where: { code: 'appointing_authority' },
+      });
+      await admin.membershipRole.create({
+        data: {
+          agencyId,
+          membershipId: authority.membershipId,
+          roleId: authorityRole.id,
+          effectiveFrom: new Date(manilaDate(-60)),
+          assignedByMembershipId: authority.membershipId,
+          reason: 'Exercise appointing authority for service-status effectuation tests.',
+        },
+      });
+
+      const documentsService = new DocumentsService({} as never, documentAuditWriter);
+      const plantillaService = new PlantillaPositionsService(
+        plantillaPositionAuditWriter,
+        documentsService,
+      );
+      const service = new PersonnelActionsService(
+        personnelActionAuditWriter,
+        documentsService,
+        plantillaService,
+        new AuthService(),
+        new SeparationsService(separationAuditWriter),
+      );
+      const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [
+        'personnel.actions.read',
+        'personnel.actions.create',
+        'personnel.actions.correct',
+        'personnel.actions.submit',
+        'personnel.actions.effectuate',
+        'documents.evidence.read',
+        'positions.items.create',
+        'positions.items.update',
+        'positions.items.authorize',
+        'positions.items.declare_vacant',
+      ]);
+      const reviewerContext = context(agencyId, reviewer.userId, reviewer.membershipId, [
+        'personnel.actions.endorse',
+        'documents.evidence.read',
+      ]);
+      const authorityContext = context(agencyId, authority.userId, authority.membershipId, [
+        'personnel.actions.approve',
+        'documents.evidence.read',
+      ]);
+
+      const scenarios = [
+        {
+          actionType: 'SEPARATION_RESIGNATION',
+          targetFacts: {
+            acceptanceDate: manilaDate(-2),
+            noticeDate: manilaDate(-3),
+            withdrawalState: 'NONE',
+            mutuallyAgreedEarlier: true,
+          },
+          evidence: ['WRITTEN_RESIGNATION', 'ACCEPTANCE', 'NOTICE', 'WITHDRAWAL_STATE'],
+          expectedStatus: 'SEPARATED',
+        },
+        {
+          actionType: 'SEPARATION_DISMISSAL',
+          targetFacts: { decisionFinalityDate: manilaDate(-2), appealState: 'FINAL' },
+          evidence: ['EXECUTORY_DECISION', 'CSC_SUBMISSION', 'APPEAL_STATE'],
+          expectedStatus: 'SEPARATED',
+        },
+        {
+          actionType: 'SEPARATION_DROPPING_FROM_ROLLS',
+          targetFacts: { orderDate: manilaDate(-2) },
+          evidence: ['DROPPING_ORDER', 'ABSENCE_RECORD', 'NOTICE', 'DUE_PROCESS'],
+          expectedStatus: 'SEPARATED',
+        },
+        {
+          actionType: 'SEPARATION_EXPIRATION',
+          targetFacts: { appointmentEndDate: manilaDate() },
+          evidence: ['APPOINTMENT_TERM', 'CSC_SUBMISSION'],
+          expectedStatus: 'SEPARATED',
+        },
+        {
+          actionType: 'SEPARATION_TERMINATION',
+          targetFacts: { terminationOrderDate: manilaDate(-2) },
+          evidence: ['APPOINTMENT_TERM', 'TERMINATION_ORDER', 'CSC_SUBMISSION'],
+          expectedStatus: 'SEPARATED',
+        },
+        {
+          actionType: 'SEPARATION_DEATH',
+          targetFacts: { dateOfDeath: manilaDate() },
+          evidence: ['DEATH_CERTIFICATE', 'CSC_SUBMISSION'],
+          expectedStatus: 'DECEASED',
+        },
+      ] as const;
+
+      let reinstatementSource: {
+        employeeId: string;
+        positionId: string;
+        separationActionId: string;
+      } | null = null;
+      for (const [index, scenario] of scenarios.entries()) {
+        const position = await plantillaService.create(preparerContext, {
+          itemNumber: `STATUS-${index}-${suffix}`,
+          title: 'Administrative Officer V',
+          parentheticalTitle: null,
+          salaryGrade: 18,
+          organizationUnitId: unit.id,
+          fundingSource: 'General Appropriations Act',
+          employmentCategory: 'PLANTILLA',
+          qualificationStandardVersionId: standard.id,
+          staffingAuthorityId: staffingAuthority.id,
+          effectiveDate: manilaDate(-30),
+        });
+        await plantillaService.linkEvidence(preparerContext, position.id, {
+          documentId: plantillaEvidence.documentId,
+          purpose: 'CREATION',
+          effectiveDate: manilaDate(-30),
+        });
+        await plantillaService.authorize(preparerContext, position.id, {
+          effectiveDate: manilaDate(-29),
+          reason: 'The source-backed Plantilla Position is authorized.',
+        });
+        await plantillaService.declareVacant(preparerContext, position.id, {
+          effectiveDate: manilaDate(-28),
+          reason: 'The authorized position is vacant before incumbency begins.',
+        });
+        const employee = await admin.employee.create({
+          data: {
+            agencyId,
+            employeeNumber: `STATUS-${index}-${suffix}`,
+            legalName: `Service Status Employee ${index}`,
+            birthDate: new Date(`199${index}-01-01`),
+            sex: 'FEMALE',
+            civilStatus: 'SINGLE',
+            contactEmail: `status-${index}-${suffix}@example.test`,
+            serviceStatus: 'ACTIVE',
+            firstGovernmentServiceDate: new Date(manilaDate(-25)),
+            agencyServiceStartDate: new Date(manilaDate(-25)),
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        const employeeUser = await admin.user.create({
+          data: {
+            identityProvider: 'personnel-action-integration',
+            externalSubject: `separating-${index}-${suffix}`,
+            emailNormalized: `separating-${index}-${suffix}@example.test`,
+            displayName: `Separating Employee ${index}`,
+            globalStatus: 'ACTIVE',
+          },
+        });
+        userIds.push(employeeUser.id);
+        const employeeMembership = await withDatabaseContext(
+          {
+            agencyId,
+            userId: employeeUser.id,
+            capabilities: ['employee-membership-link'],
+          },
+          (transaction) =>
+            transaction.agencyMembership.create({
+              data: {
+                agencyId,
+                userId: employeeUser.id,
+                employeeId: employee.id,
+                status: 'ACTIVE',
+              },
+            }),
+        );
+        await admin.userSession.create({
+          data: {
+            agencyId,
+            userId: employeeUser.id,
+            agencyMembershipId: employeeMembership.id,
+            sessionTokenHash: randomBytes(32),
+            expiresAt: new Date(Date.now() + 86_400_000),
+          },
+        });
+        const source = await withDatabaseContext(
+          {
+            agencyId,
+            userId: preparer.userId,
+            membershipId: preparer.membershipId,
+            capabilities: ['personnel-baseline-transition', 'plantilla-position-transition'],
+          },
+          async (transaction) => {
+            const segment = await transaction.serviceSegment.create({
+              data: {
+                agencyId,
+                employeeId: employee.id,
+                positionId: position.id,
+                organizationUnitId: unit.id,
+                appointmentStatus: 'PERMANENT',
+                salaryGrade: 18,
+                salaryStep: 3,
+                effectiveFrom: new Date(manilaDate(-25)),
+                status: 'ACTIVE',
+                createdByMembershipId: preparer.membershipId,
+              },
+            });
+            await transaction.positionIncumbency.create({
+              data: {
+                agencyId,
+                positionId: position.id,
+                employeeId: employee.id,
+                serviceSegmentId: segment.id,
+                effectiveFrom: new Date(manilaDate(-25)),
+                status: 'ACTIVE',
+                createdByMembershipId: preparer.membershipId,
+              },
+            });
+            await transaction.employee.update({
+              where: { id: employee.id },
+              data: { currentServiceSegmentId: segment.id },
+            });
+            await plantillaService.occupyInTransaction(
+              transaction,
+              preparerContext,
+              position.id,
+              manilaDate(-25),
+              'The employee assumed the Plantilla Position.',
+              `occupy-${index}-${suffix}`,
+            );
+            return segment;
+          },
+        );
+        const evidence = await Promise.all(
+          scenario.evidence.map((type) =>
+            createEvidence(
+              admin,
+              agencyId,
+              preparer.membershipId,
+              `${suffix}-${index}`,
+              type,
+              type === 'APPOINTMENT_TERM'
+                ? {
+                    appointmentType: 'TEMPORARY',
+                    appointmentEndDate:
+                      scenario.actionType === 'SEPARATION_EXPIRATION'
+                        ? manilaDate()
+                        : manilaDate(30),
+                  }
+                : undefined,
+            ),
+          ),
+        );
+        const input = {
+          employeeId: employee.id,
+          actionType: scenario.actionType,
+          proposedEffectivity: manilaDate(),
+          targetFacts: scenario.targetFacts,
+          reason: `Effectuate ${scenario.actionType} from its exact approved evidence.`,
+          evidence,
+        } as PersonnelActionInput;
+        if (index === 0 && scenario.actionType === 'SEPARATION_RESIGNATION') {
+          await expect(
+            service.create(preparerContext, {
+              ...input,
+              targetFacts: { ...scenario.targetFacts, mutuallyAgreedEarlier: false },
+              reason: 'A shortened notice period without written agreement must fail.',
+            } as PersonnelActionInput),
+          ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_TARGET_INVALID' });
+          const mismatchedEvidence = await service.create(preparerContext, {
+            ...input,
+            evidence: input.evidence.map((item, evidenceIndex) =>
+              evidenceIndex === 0 ? { ...item, sourceDate: manilaDate(-4) } : item,
+            ),
+            reason: 'A client-supplied source date must match the issued evidence version.',
+          });
+          await expect(
+            service.submit(preparerContext, mismatchedEvidence.id),
+          ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EVIDENCE_DATE_INVALID' });
+        }
+        const prepared = await service.create(preparerContext, input);
+        await service.submit(preparerContext, prepared.id);
+        await service.review(reviewerContext, prepared.id, {
+          decision: 'ENDORSE',
+          reason: 'The evidence package is complete.',
+        });
+        await service.decide(authorityContext, prepared.id, {
+          decision: 'APPROVE',
+          reason: 'The action is approved under current authority.',
+        });
+        const separationCase = await admin.separationCase.create({
+          data: {
+            agencyId,
+            employeeId: employee.id,
+            separationType: scenario.actionType.replace('SEPARATION_', ''),
+            proposedEffectiveDate: new Date(manilaDate()),
+            approvedEffectiveDate: new Date(manilaDate()),
+            status: index === 0 ? 'APPROVED' : 'CLEARED',
+            reason: input.reason,
+            initiatedByMembershipId: preparer.membershipId,
+            approvedByMembershipId: authority.membershipId,
+            serviceSegmentId: source.id,
+          },
+        });
+        if (index === 0) {
+          await expect(
+            service.effectuate(preparerContext, prepared.id, `uncleared-${suffix}`),
+          ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_CLEARANCE_PENDING' });
+          await admin.separationCase.update({
+            where: { id: separationCase.id },
+            data: { status: 'CLEARED' },
+          });
+          const future = await service.create(preparerContext, {
+            ...input,
+            proposedEffectivity: manilaDate(1),
+            reason: 'Prove that approval cannot bypass the applicable date.',
+          });
+          await service.submit(preparerContext, future.id);
+          await service.review(reviewerContext, future.id, {
+            decision: 'ENDORSE',
+            reason: 'The future-dated evidence package is complete.',
+          });
+          await service.decide(authorityContext, future.id, {
+            decision: 'APPROVE',
+            reason: 'Approval does not waive effectivity.',
+          });
+          await expect(
+            service.effectuate(preparerContext, future.id, `future-${suffix}`),
+          ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EFFECTIVITY_PENDING' });
+
+          const failingService = new PersonnelActionsService(
+            personnelActionAuditWriter,
+            documentsService,
+            {
+              lockInTransaction: () => undefined,
+              vacateInTransaction: () => {
+                throw new Error('Injected Plantilla transition failure.');
+              },
+            } as never,
+            new AuthService(),
+            new SeparationsService(separationAuditWriter),
+          );
+          await expect(
+            failingService.effectuate(preparerContext, prepared.id, `rollback-${suffix}`),
+          ).rejects.toThrow('Injected Plantilla transition failure.');
+          await expect(
+            admin.personnelAction.findUniqueOrThrow({ where: { id: prepared.id } }),
+          ).resolves.toMatchObject({ status: 'APPROVED', effectuatedAt: null });
+          await expect(
+            admin.serviceSegment.findUniqueOrThrow({ where: { id: source.id } }),
+          ).resolves.toMatchObject({ status: 'ACTIVE', effectiveTo: null });
+        }
+        const [effective, retried] = await Promise.all([
+          service.effectuate(preparerContext, prepared.id, `effect-${index}-${suffix}`),
+          service.effectuate(preparerContext, prepared.id, `effect-${index}-${suffix}`),
+        ]);
+        expect(effective).toMatchObject({
+          status: 'EFFECTIVE',
+          employee: { serviceStatus: scenario.expectedStatus },
+        });
+        expect(retried.id).toBe(effective.id);
+        await expect(
+          admin.separationCase.findUniqueOrThrow({ where: { id: separationCase.id } }),
+        ).resolves.toMatchObject({ status: 'EFFECTIVE' });
+        await expect(
+          admin.separationEffect.count({ where: { separationCaseId: separationCase.id } }),
+        ).resolves.toBe(5);
+        await expect(
+          admin.separationEffect.findFirstOrThrow({
+            where: { separationCaseId: separationCase.id, effectType: 'STOP_PAYROLL' },
+          }),
+        ).resolves.toMatchObject({ targetType: 'ServiceSegment', targetId: source.id });
+        if (index === 0) {
+          await expect(
+            withDatabaseContext(
+              {
+                agencyId: '00000000-0000-4000-8000-000000000099',
+                userId: reviewer.userId,
+                membershipId: reviewer.membershipId,
+                capabilities: [],
+              },
+              (transaction) =>
+                Promise.all([
+                  transaction.separationCase.count({ where: { id: separationCase.id } }),
+                  transaction.separationEffect.count({
+                    where: { separationCaseId: separationCase.id },
+                  }),
+                ]),
+            ),
+          ).resolves.toEqual([0, 0]);
+        }
+        await expect(
+          admin.agencyMembership.findUniqueOrThrow({ where: { id: employeeMembership.id } }),
+        ).resolves.toMatchObject({ status: 'DEACTIVATED' });
+        await expect(
+          admin.userSession.findFirstOrThrow({
+            where: { agencyMembershipId: employeeMembership.id },
+          }),
+        ).resolves.toMatchObject({ revokedAt: expect.any(Date) });
+        await expect(
+          admin.serviceSegment.findUniqueOrThrow({ where: { id: source.id } }),
+        ).resolves.toMatchObject({ status: 'CLOSED', effectiveTo: new Date(manilaDate(-1)) });
+        await expect(
+          admin.positionIncumbency.findUniqueOrThrow({
+            where: { agencyId_serviceSegmentId: { agencyId, serviceSegmentId: source.id } },
+          }),
+        ).resolves.toMatchObject({ status: 'ENDED', effectiveTo: new Date(manilaDate(-1)) });
+        await expect(
+          admin.outboxEvent.count({
+            where: {
+              agencyId,
+              aggregateId: prepared.id,
+              eventType: 'PERSONNEL_ACTION_EFFECTUATED',
+            },
+          }),
+        ).resolves.toBe(1);
+        await expect(
+          admin.auditEvent.count({
+            where: {
+              agencyId,
+              entityType: 'SeparationCase',
+              entityId: separationCase.id,
+              action: 'SEPARATION_EFFECTUATED',
+            },
+          }),
+        ).resolves.toBe(1);
+        if (index === 0) {
+          reinstatementSource = {
+            employeeId: employee.id,
+            positionId: position.id,
+            separationActionId: prepared.id,
+          };
+        }
+      }
+
+      if (!reinstatementSource) throw new Error('The reinstatement source was not created.');
+      const reinstatementEvidence = await Promise.all(
+        (
+          [
+            'EXECUTORY_DECISION',
+            'PRIOR_SEPARATION',
+            'NO_MISCONDUCT',
+            'ORIGINAL_ITEM',
+            'BACK_PAY_DETERMINATION',
+          ] as const
+        ).map((type) =>
+          createEvidence(admin, agencyId, preparer.membershipId, `${suffix}-reinstate`, type),
+        ),
+      );
+      const reinstatement = await service.replace(
+        preparerContext,
+        reinstatementSource.separationActionId,
+        {
+          employeeId: reinstatementSource.employeeId,
+          actionType: 'SAME_ITEM_REINSTATEMENT',
+          proposedEffectivity: manilaDate(),
+          targetFacts: {
+            originalPositionId: reinstatementSource.positionId,
+            backPayDetermination:
+              'Apply the executory decision through authoritative payroll rules.',
+          },
+          reason: 'Restore continuous service under the executory decision.',
+          evidence: reinstatementEvidence,
+        },
+      );
+      await service.submit(preparerContext, reinstatement.id);
+      await service.review(reviewerContext, reinstatement.id, {
+        decision: 'ENDORSE',
+        reason: 'The restoration evidence is complete.',
+      });
+      await service.decide(authorityContext, reinstatement.id, {
+        decision: 'APPROVE',
+        reason: 'The executory restoration is approved.',
+      });
+      await expect(
+        service.effectuate(preparerContext, reinstatement.id, `reinstate-${suffix}`),
+      ).resolves.toMatchObject({ status: 'EFFECTIVE', employee: { serviceStatus: 'ACTIVE' } });
+      await expect(
+        admin.serviceSegment.count({
+          where: { agencyId, personnelActionId: reinstatement.id, status: 'ACTIVE' },
+        }),
+      ).resolves.toBe(1);
+      await expect(
+        admin.plantillaPositionVersion.findFirstOrThrow({
+          where: { agencyId, positionId: reinstatementSource.positionId, status: 'ACTIVE' },
+        }),
+      ).resolves.toMatchObject({ domainStatus: 'OCCUPIED', effectiveFrom: new Date(manilaDate()) });
+
+      expect(personnelActionCanBeEffectuated('SEPARATION_RETIREMENT')).toBe(false);
+    } finally {
+      if (agencyId) {
+        await admin.$transaction(async (transaction) => {
+          await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+          await transaction.employee.updateMany({
+            where: { agencyId },
+            data: { currentServiceSegmentId: null },
+          });
+          await transaction.outboxEvent.deleteMany({ where: { agencyId } });
+          await transaction.auditEvent.deleteMany({ where: { agencyId } });
+          await transaction.separationEffect.deleteMany({ where: { agencyId } });
+          await transaction.separationCase.deleteMany({ where: { agencyId } });
+          await transaction.personnelActionEvidence.deleteMany({ where: { agencyId } });
+          await transaction.personnelAction.updateMany({
+            where: { agencyId },
+            data: { currentVersionId: null },
+          });
+          await transaction.personnelActionVersion.deleteMany({ where: { agencyId } });
+          await transaction.personnelAction.deleteMany({ where: { agencyId } });
+          await transaction.positionIncumbency.deleteMany({ where: { agencyId } });
+          await transaction.serviceSegment.deleteMany({ where: { agencyId } });
+          await transaction.employee.deleteMany({ where: { agencyId } });
+          await transaction.plantillaPosition.updateMany({
+            where: { agencyId },
+            data: { currentVersionId: null },
+          });
+          await transaction.positionDocument.deleteMany({ where: { agencyId } });
+          await transaction.plantillaPositionVersion.deleteMany({ where: { agencyId } });
+          await transaction.plantillaPosition.deleteMany({ where: { agencyId } });
+          await transaction.qualificationStandard.updateMany({
+            where: { agencyId },
+            data: { currentVersionId: null },
+          });
+          await transaction.qualificationStandardVersion.deleteMany({ where: { agencyId } });
+          await transaction.qualificationStandard.deleteMany({ where: { agencyId } });
+          await transaction.staffingAuthority.deleteMany({ where: { agencyId } });
+          await transaction.membershipRole.deleteMany({ where: { agencyId } });
+          await transaction.organizationUnit.updateMany({
+            where: { agencyId },
+            data: { currentVersionId: null },
+          });
+          await transaction.organizationUnitVersion.deleteMany({ where: { agencyId } });
+          await transaction.organizationUnit.deleteMany({ where: { agencyId } });
+          await transaction.documentVersion.deleteMany({ where: { agencyId } });
+          await transaction.document.deleteMany({ where: { agencyId } });
+        });
+        await admin.userSession.deleteMany({ where: { agencyId } });
         await admin.agencyMembership.deleteMany({ where: { agencyId } });
         await admin.agency.delete({ where: { id: agencyId } });
       }
