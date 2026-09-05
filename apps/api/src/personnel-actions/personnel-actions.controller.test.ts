@@ -1,5 +1,6 @@
 import type { RequestContext } from '@lingkod-hr/auth';
 import { expect, it, vi } from 'vitest';
+import { REQUIRED_PERMISSIONS } from '../auth/auth.decorators';
 import { PersonnelActionsController } from './personnel-actions.controller';
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
@@ -84,3 +85,14 @@ it('forwards separate review and authority decisions', async () => {
     ),
   ).resolves.toMatchObject({ status: 'APPROVED' });
 });
+
+it.each(['review', 'decide', 'cancel'] as const)(
+  'does not require a broad read grant before the %s-specific service check',
+  (method) => {
+    const permission = Reflect.getMetadata(
+      REQUIRED_PERMISSIONS,
+      PersonnelActionsController.prototype[method],
+    );
+    expect(permission).toBeUndefined();
+  },
+);

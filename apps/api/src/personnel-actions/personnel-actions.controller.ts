@@ -173,7 +173,6 @@ export class PersonnelActionsController {
   }
 
   @Post(':agencyId/personnel-actions/:actionId/review')
-  @RequirePermission('personnel.actions.read')
   async review(
     @Param('agencyId') agencyId: string,
     @Param('actionId') actionId: string,
@@ -191,7 +190,6 @@ export class PersonnelActionsController {
   }
 
   @Post(':agencyId/personnel-actions/:actionId/decision')
-  @RequirePermission('personnel.actions.read')
   async decide(
     @Param('agencyId') agencyId: string,
     @Param('actionId') actionId: string,
@@ -209,7 +207,6 @@ export class PersonnelActionsController {
   }
 
   @Post(':agencyId/personnel-actions/:actionId/cancel')
-  @RequirePermission('personnel.actions.read')
   async cancel(
     @Param('agencyId') agencyId: string,
     @Param('actionId') actionId: string,
