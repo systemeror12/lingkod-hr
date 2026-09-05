@@ -80,6 +80,10 @@ export default async function EmployeeDetailPage({ params }: { params: Promise<{
       canManageBankAccounts={hasPermission(session, 'payroll.bank_accounts.manage')}
       canRevealBankAccounts={hasPermission(session, 'payroll.bank_accounts.reveal')}
       canReadBankAccountHistory={hasPermission(session, 'payroll.bank_accounts.history.read')}
+      canReadSaln={hasPermission(session, 'personnel.saln_compliance.read')}
+      canManageSaln={hasPermission(session, 'personnel.saln_compliance.update')}
+      canCorrectSaln={hasPermission(session, 'personnel.saln_compliance.update')}
+      canReadSalnHistory={hasPermission(session, 'personnel.saln_compliance.read')}
     />
   );
 }

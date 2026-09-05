@@ -33,3 +33,12 @@ it('shows Users & Access only to an Agency Administrator with both handoff permi
   );
   expect(authorizedDestinations(hrmo).some(({ href }) => href === '/users-access')).toBe(false);
 });
+
+it('shows My SALN Compliance only for own-record access', () => {
+  const own = session('employee', []);
+  own.permissions = [{ code: 'personnel.saln_compliance.read', scopePolicy: 'OWN' }];
+  const agency = session('personnel_officer', ['personnel.saln_compliance.read']);
+
+  expect(authorizedDestinations(own).some(({ href }) => href === '/my-saln')).toBe(true);
+  expect(authorizedDestinations(agency).some(({ href }) => href === '/my-saln')).toBe(false);
+});
