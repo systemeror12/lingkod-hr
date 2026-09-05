@@ -18,11 +18,11 @@ export const PERSONNEL_ACTION_STATUSES = [
   'FOR_REVIEW',
   'FOR_APPROVAL',
   'APPROVED',
+  'EFFECTIVE',
   'RETURNED',
   'REJECTED',
   'CANCELLED',
   'SUPERSEDED',
-  'EFFECTIVE',
 ] as const;
 
 export type PersonnelActionStatus = (typeof PERSONNEL_ACTION_STATUSES)[number];
@@ -43,8 +43,13 @@ export interface PersonnelActionSummary {
   approvedBy: { id: string; displayName: string } | null;
   approvalDelegationId: string | null;
   approvedAt: string | null;
-  effectuatedAt: string | null;
   cancelledAt: string | null;
+  effectuatedAt: string | null;
+  effect: {
+    serviceSegmentId: string;
+    salaryGrade: number | null;
+    salaryStep: number | null;
+  } | null;
   supersedesActionId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -208,10 +213,15 @@ const SERVICE_STATUS_ACTIONS = new Set<PersonnelActionInput['actionType']>([
   'SEPARATION_DEATH',
 ]);
 
+const COMPENSATION_ACTIONS = new Set<PersonnelActionInput['actionType']>([
+  'SALARY_ADJUSTMENT',
+  'STEP_INCREMENT',
+]);
+
 export function personnelActionCanBeEffectuated(
   actionType: PersonnelActionInput['actionType'],
 ): boolean {
-  return SERVICE_STATUS_ACTIONS.has(actionType);
+  return SERVICE_STATUS_ACTIONS.has(actionType) || COMPENSATION_ACTIONS.has(actionType);
 }
 
 export function personnelActionCanBeApproved(
@@ -275,9 +285,9 @@ const actionSelect = {
   approvedByMembershipId: true,
   approvalDelegationId: true,
   approvedAt: true,
+  cancelledAt: true,
   effectuatedAt: true,
   effectuationKey: true,
-  cancelledAt: true,
   supersedesActionId: true,
   createdAt: true,
   updatedAt: true,
@@ -288,6 +298,11 @@ const actionSelect = {
   currentVersion: { select: versionSelect },
   preparedBy: { select: { id: true, user: { select: { displayName: true } } } },
   approvedBy: { select: { id: true, user: { select: { displayName: true } } } },
+  serviceSegments: {
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+    select: { id: true, salaryGrade: true, salaryStep: true },
+  },
 } as const;
 
 type ActionRecord = Prisma.PersonnelActionGetPayload<{ select: typeof actionSelect }>;
@@ -328,7 +343,6 @@ function jsonObject(value: Prisma.JsonValue | null): Prisma.JsonObject | null {
     ? (value as Prisma.JsonObject)
     : null;
 }
-
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -391,8 +405,15 @@ function actionSummary(record: ActionRecord): PersonnelActionSummary {
       : null,
     approvalDelegationId: record.approvalDelegationId,
     approvedAt: formatDateTime(record.approvedAt),
-    effectuatedAt: formatDateTime(record.effectuatedAt),
     cancelledAt: formatDateTime(record.cancelledAt),
+    effectuatedAt: formatDateTime(record.effectuatedAt),
+    effect: record.serviceSegments[0]
+      ? {
+          serviceSegmentId: record.serviceSegments[0].id,
+          salaryGrade: record.serviceSegments[0].salaryGrade,
+          salaryStep: record.serviceSegments[0].salaryStep,
+        }
+      : null,
     supersedesActionId: record.supersedesActionId,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
@@ -833,12 +854,7 @@ export class PersonnelActionsService {
           if (current.preparedByMembershipId !== context.membershipId)
             throw this.preparerRequired();
         } else if (current.status === 'APPROVED') {
-          const today = new Intl.DateTimeFormat('en-CA', {
-            timeZone: 'Asia/Manila',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-          }).format(new Date());
+          const today = manilaToday();
           if (
             !current.currentVersion ||
             today >= formatDate(current.currentVersion.proposedEffectivity)
@@ -884,6 +900,159 @@ export class PersonnelActionsService {
       'personnel.actions.effectuate',
       'PERSONNEL_ACTION_EFFECTUATE_FORBIDDEN',
     );
+    const action = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      transaction.personnelAction.findFirst({
+        where: { agencyId: context.agencyId, id: actionId },
+        select: { actionType: true },
+      }),
+    );
+    if (!action) throw this.notFound('Personnel Action');
+    if (COMPENSATION_ACTIONS.has(action.actionType as PersonnelActionInput['actionType'])) {
+      return this.effectuateCompensation(context, actionId, rawIdempotencyKey);
+    }
+    return this.effectuateServiceStatus(context, actionId, rawIdempotencyKey);
+  }
+
+  private async effectuateCompensation(
+    context: RequestContext,
+    actionId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PersonnelActionSummary> {
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'personnel-action-transition'),
+      async (transaction) => {
+        const current = await this.lockedAction(transaction, context.agencyId, actionId);
+        if (current.status === 'EFFECTIVE') return actionSummary(current);
+        if (current.status !== 'APPROVED') throw this.workflowError('effectuate', current.status);
+        if (!current.currentVersion) throw this.versionMissing();
+        await this.lockEmployee(transaction, context.agencyId, current.employeeId);
+        await this.lockServiceSegment(
+          transaction,
+          context.agencyId,
+          current.currentVersion.fromServiceSegmentId,
+        );
+        if (current.currentVersion.fromServiceSegment.positionId) {
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT "id" FROM "plantilla_positions" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${current.currentVersion.fromServiceSegment.positionId} AS uuid) FOR UPDATE`,
+          );
+        }
+
+        const input = inputFromAction(current);
+        if (input.actionType !== 'SALARY_ADJUSTMENT' && input.actionType !== 'STEP_INCREMENT') {
+          throw new PersonnelActionServiceError(
+            'Only approved salary adjustments and step increments use this effectuation path.',
+            409,
+            'PERSONNEL_ACTION_COMPENSATION_EFFECT_UNSUPPORTED',
+          );
+        }
+        const salaryGrade =
+          input.actionType === 'SALARY_ADJUSTMENT'
+            ? input.targetFacts.newSalaryGrade
+            : current.currentVersion.fromServiceSegment.salaryGrade;
+        const salaryStep = input.targetFacts.newSalaryStep;
+        const effectivity = databaseDate(input.proposedEffectivity);
+        if (input.proposedEffectivity > manilaToday()) {
+          throw new PersonnelActionServiceError(
+            'The Personnel Action cannot be effectuated before its applicable date.',
+            409,
+            'PERSONNEL_ACTION_NOT_YET_EFFECTIVE',
+          );
+        }
+        if (effectivity <= current.currentVersion.fromServiceSegment.effectiveFrom) {
+          throw new PersonnelActionServiceError(
+            'Compensation effectivity must follow the current Service Segment start date.',
+            409,
+            'PERSONNEL_ACTION_EFFECTIVITY_INVALID',
+          );
+        }
+        await this.validateStoredAction(transaction, context, current, true);
+        await this.validateApprovalAuthority(transaction, context.agencyId, current);
+
+        const predecessorEnd = new Date(effectivity);
+        predecessorEnd.setUTCDate(predecessorEnd.getUTCDate() - 1);
+        await transaction.serviceSegment.update({
+          where: {
+            agencyId_id: {
+              agencyId: context.agencyId,
+              id: current.currentVersion.fromServiceSegmentId,
+            },
+          },
+          data: { status: 'CLOSED', effectiveTo: predecessorEnd },
+        });
+        const successor = await transaction.serviceSegment.create({
+          data: {
+            agencyId: context.agencyId,
+            employeeId: current.employeeId,
+            appointmentId: current.currentVersion.fromServiceSegment.appointmentId,
+            personnelActionId: current.id,
+            positionId: current.currentVersion.fromServiceSegment.positionId,
+            organizationUnitId: current.currentVersion.fromServiceSegment.organizationUnitId,
+            segmentType: current.currentVersion.fromServiceSegment.segmentType,
+            appointmentStatus: current.currentVersion.fromServiceSegment.appointmentStatus,
+            salaryGrade,
+            salaryStep,
+            effectiveFrom: effectivity,
+            status: 'ACTIVE',
+            createdByMembershipId: context.membershipId,
+          },
+          select: { id: true, salaryGrade: true, salaryStep: true },
+        });
+        await transaction.employee.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: current.employeeId } },
+          data: {
+            currentServiceSegmentId: successor.id,
+            updatedByMembershipId: context.membershipId,
+          },
+        });
+        const idempotencyKey =
+          rawIdempotencyKey?.trim() ||
+          `personnel-action:${current.id}:${current.currentVersion.id}`;
+        const effective = await transaction.personnelAction.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+          data: {
+            status: 'EFFECTIVE',
+            effectuatedByMembershipId: context.membershipId,
+            effectuatedAt: new Date(),
+            effectuationKey: idempotencyKey,
+          },
+          select: actionSelect,
+        });
+        await this.writeAudit(transaction, context, effective, {
+          action: 'PERSONNEL_ACTION_EFFECTUATED',
+          previousStatus: current.status,
+          newStatus: 'EFFECTIVE',
+          reason: current.currentVersion.reason,
+          idempotencyKey,
+          serviceSegmentId: successor.id,
+        });
+        await transaction.outboxEvent.create({
+          data: {
+            agencyId: context.agencyId,
+            eventType: 'PERSONNEL_ACTION_EFFECTUATED',
+            aggregateType: 'PersonnelAction',
+            aggregateId: current.id,
+            idempotencyKey,
+            payload: {
+              actionId: current.id,
+              actionVersionId: current.currentVersion.id,
+              employeeId: current.employeeId,
+              serviceSegmentId: successor.id,
+              effectivity: input.proposedEffectivity,
+              salaryGrade: successor.salaryGrade,
+              salaryStep: successor.salaryStep,
+            },
+          },
+        });
+        return actionSummary(effective);
+      },
+    );
+  }
+
+  private async effectuateServiceStatus(
+    context: RequestContext,
+    actionId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PersonnelActionSummary> {
     const idempotencyKey = rawIdempotencyKey?.trim() || `personnel-action:${actionId}`;
     return withDatabaseContext(
       requestDatabaseContext(
@@ -905,7 +1074,7 @@ export class PersonnelActionsService {
         }
         if (current.status !== 'APPROVED') throw this.workflowError('effectuate', current.status);
         const actionType = current.actionType as PersonnelActionInput['actionType'];
-        if (!personnelActionCanBeEffectuated(actionType)) {
+        if (!SERVICE_STATUS_ACTIONS.has(actionType)) {
           throw new PersonnelActionServiceError(
             'Only source-backed service-status actions can use this effectuation path.',
             409,
@@ -1285,7 +1454,11 @@ export class PersonnelActionsService {
             },
           })
         : null);
-    if (employee.serviceStatus !== requiredStatus || !sourceSegment) {
+    if (
+      employee.serviceStatus !== requiredStatus ||
+      !sourceSegment ||
+      (input.actionType !== 'SAME_ITEM_REINSTATEMENT' && sourceSegment.status !== 'ACTIVE')
+    ) {
       throw new PersonnelActionServiceError(
         `The Employee must have ${requiredStatus} service and an applicable Service Segment.`,
         409,
@@ -1347,6 +1520,13 @@ export class PersonnelActionsService {
       'PERSONNEL_ACTION_EVIDENCE_READ_FORBIDDEN',
     );
     for (const item of input.evidence) {
+      if (item.sourceDate > input.proposedEffectivity) {
+        throw new PersonnelActionServiceError(
+          'Personnel Action effectivity cannot predate its authority evidence.',
+          409,
+          'PERSONNEL_ACTION_EFFECTIVITY_INVALID',
+        );
+      }
       const resolved = await this.documentsService.resolveExternalEvidenceInTransaction(
         transaction,
         context,
@@ -1471,7 +1651,8 @@ export class PersonnelActionsService {
           where: {
             agencyId,
             positionId: source.positionId,
-            domainStatus: 'ACTIVE',
+            status: 'ACTIVE',
+            domainStatus: 'OCCUPIED',
             effectiveFrom: { lte: databaseDate(input.proposedEffectivity) },
             OR: [
               { effectiveTo: null },
@@ -1483,7 +1664,8 @@ export class PersonnelActionsService {
         if (
           !authorizedPosition ||
           input.targetFacts.newSalaryGrade !== authorizedPosition.salaryGrade ||
-          input.targetFacts.newSalaryGrade === source.salaryGrade
+          input.targetFacts.newSalaryGrade === source.salaryGrade ||
+          input.targetFacts.newSalaryStep !== source.salaryStep
         ) {
           throw invalid(
             'A Salary Adjustment must match the changed effective Plantilla salary grade.',
@@ -1893,6 +2075,85 @@ export class PersonnelActionsService {
     }
   }
 
+  private async validateApprovalAuthority(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    action: ActionRecord,
+  ): Promise<void> {
+    if (!action.currentVersion || !action.approvedByMembershipId || !action.approvedAt) {
+      throw new PersonnelActionServiceError(
+        'The Personnel Action has no valid approval authority.',
+        409,
+        'PERSONNEL_ACTION_APPROVAL_INVALID',
+      );
+    }
+    if (action.approvedByMembershipId === action.preparedByMembershipId) {
+      throw new PersonnelActionServiceError(
+        'The preparer cannot approve their own Personnel Action.',
+        409,
+        'PERSONNEL_ACTION_SEGREGATION_REQUIRED',
+      );
+    }
+    const effectivity = action.currentVersion.proposedEffectivity;
+    let valid = false;
+    if (action.approvalDelegationId) {
+      const delegation = await transaction.delegatedAuthority.findFirst({
+        where: {
+          agencyId,
+          id: action.approvalDelegationId,
+          delegateMembershipId: action.approvedByMembershipId,
+          permissionCode: 'personnel.actions.approve',
+          status: 'ACTIVE',
+          authorityDocumentId: { not: null },
+          effectiveFrom: { lte: effectivity },
+          effectiveTo: { gt: effectivity },
+        },
+        select: { authorityDocumentId: true },
+      });
+      if (delegation?.authorityDocumentId) {
+        const authorityDocument = await transaction.document.findFirst({
+          where: { agencyId, id: delegation.authorityDocumentId },
+          select: { currentVersionId: true },
+        });
+        valid = action.currentVersion.evidence.some(
+          (item) =>
+            item.evidenceType === 'AUTHORITY' &&
+            item.document.id === delegation.authorityDocumentId &&
+            item.documentVersion.id === authorityDocument?.currentVersionId,
+        );
+      }
+    } else {
+      valid = Boolean(
+        await transaction.membershipRole.findFirst({
+          where: {
+            agencyId,
+            membershipId: action.approvedByMembershipId,
+            effectiveFrom: { lte: effectivity },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gt: effectivity } }],
+            membership: { status: 'ACTIVE' },
+            role: {
+              status: 'ACTIVE',
+              permissions: {
+                some: {
+                  permission: { code: 'personnel.actions.approve' },
+                  scopePolicy: 'AGENCY',
+                },
+              },
+            },
+          },
+          select: { id: true },
+        }),
+      );
+    }
+    if (!valid) {
+      throw new PersonnelActionServiceError(
+        'The approval authority is not applicable on the action effectivity date.',
+        409,
+        'PERSONNEL_ACTION_APPROVAL_INVALID',
+      );
+    }
+  }
+
   private async lockPositionIncumbency(
     transaction: Prisma.TransactionClient,
     agencyId: string,
@@ -1922,6 +2183,7 @@ export class PersonnelActionsService {
       delegationId?: string | null;
       replacementActionId?: string;
       idempotencyKey?: string;
+      serviceSegmentId?: string;
     },
   ): Promise<void> {
     if (!record.currentVersion) throw this.versionMissing();
@@ -1948,6 +2210,8 @@ export class PersonnelActionsService {
         evidenceTypes: record.currentVersion.evidence.map(({ evidenceType }) => evidenceType),
         ...(event.delegationId ? { delegationId: event.delegationId } : {}),
         ...(event.replacementActionId ? { replacementActionId: event.replacementActionId } : {}),
+        ...(event.idempotencyKey ? { idempotencyKey: event.idempotencyKey } : {}),
+        ...(event.serviceSegmentId ? { serviceSegmentId: event.serviceSegmentId } : {}),
       },
     });
   }

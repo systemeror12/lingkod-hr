@@ -37,11 +37,11 @@ type ActionStatus =
   | 'FOR_REVIEW'
   | 'FOR_APPROVAL'
   | 'APPROVED'
+  | 'EFFECTIVE'
   | 'RETURNED'
   | 'REJECTED'
   | 'CANCELLED'
-  | 'SUPERSEDED'
-  | 'EFFECTIVE';
+  | 'SUPERSEDED';
 
 interface PersonnelAction {
   id: string;
@@ -82,6 +82,11 @@ interface PersonnelAction {
   approvalDelegationId: string | null;
   approvedAt: string | null;
   effectuatedAt: string | null;
+  effect: {
+    serviceSegmentId: string;
+    salaryGrade: number | null;
+    salaryStep: number | null;
+  } | null;
   supersedesActionId: string | null;
   rowVersion: number;
 }
@@ -369,12 +374,12 @@ export function PersonnelActionWorkspace({
   canSubmit,
   canReturn,
   canEndorse,
+  canEffectuate,
   canApprove,
   canReject,
   canCancel,
   canCancelApproved,
   canCorrect,
-  canEffectuate,
   canAudit,
 }: {
   agencyId: string;
@@ -384,12 +389,12 @@ export function PersonnelActionWorkspace({
   canSubmit: boolean;
   canReturn: boolean;
   canEndorse: boolean;
+  canEffectuate: boolean;
   canApprove: boolean;
   canReject: boolean;
   canCancel: boolean;
   canCancelApproved: boolean;
   canCorrect: boolean;
-  canEffectuate: boolean;
   canAudit: boolean;
 }) {
   const [actions, setActions] = useState(initial.actions);
@@ -1091,6 +1096,12 @@ export function PersonnelActionWorkspace({
                     label="Delegation"
                     value={selected.approvalDelegationId ?? 'Direct or pending'}
                   />
+                  {selected.effect ? (
+                    <DetailRow
+                      label="Effective result"
+                      value={`SG ${selected.effect.salaryGrade ?? '—'}, Step ${selected.effect.salaryStep ?? '—'}`}
+                    />
+                  ) : null}
                 </DetailGroup>
                 <DetailGroup title="Target facts">
                   {Object.entries(selected.currentVersion.targetFacts).map(([key, value]) => (
@@ -1242,7 +1253,10 @@ export function PersonnelActionWorkspace({
                 <DialogTitle>{transitionLabel(transition)} Personnel Action</DialogTitle>
                 <DialogDescription id="personnel-action-transition-description">
                   {transition === 'EFFECTUATE'
-                    ? `Apply exact version ${selected.currentVersion.versionNo} to service and Plantilla records on its stated date.`
+                    ? selected.actionType === 'SALARY_ADJUSTMENT' ||
+                      selected.actionType === 'STEP_INCREMENT'
+                      ? `Confirm the effective-dated compensation facts for exact version ${selected.currentVersion.versionNo}.`
+                      : `Apply exact version ${selected.currentVersion.versionNo} to service and Plantilla records on its stated date.`
                     : `Record the accountable reason against exact version ${selected.currentVersion.versionNo}.`}
                 </DialogDescription>
               </div>
@@ -1252,10 +1266,25 @@ export function PersonnelActionWorkspace({
               <DialogBody className="grid gap-5">
                 <ErrorMessage message={error} />
                 {transition === 'EFFECTUATE' ? (
-                  <p className="m-0 text-sm leading-6 text-ink">
-                    This closes or restores the Employee’s preserved service history and updates the
-                    occupied Plantilla Position atomically. The approved version remains immutable.
-                  </p>
+                  selected.actionType === 'SALARY_ADJUSTMENT' ||
+                  selected.actionType === 'STEP_INCREMENT' ? (
+                    <div className="grid gap-2 text-sm leading-6 text-ink">
+                      <DetailRow
+                        label="Effectivity"
+                        value={dateLabel(selected.currentVersion.proposedEffectivity)}
+                      />
+                      <DetailRow
+                        label="New compensation"
+                        value={`SG ${selected.actionType === 'SALARY_ADJUSTMENT' ? String(selected.currentVersion.targetFacts.newSalaryGrade) : (selected.currentVersion.fromServiceSegment.salaryGrade ?? '—')}, Step ${String(selected.currentVersion.targetFacts.newSalaryStep)}`}
+                      />
+                    </div>
+                  ) : (
+                    <p className="m-0 text-sm leading-6 text-ink">
+                      This closes or restores the Employee’s preserved service history and updates
+                      the occupied Plantilla Position atomically. The approved version remains
+                      immutable.
+                    </p>
+                  )
                 ) : (
                   <Field htmlFor="action-transition-reason" label="Reason">
                     <textarea

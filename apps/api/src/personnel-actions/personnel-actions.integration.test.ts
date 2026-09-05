@@ -202,6 +202,123 @@ it.skipIf(!enabled)(
       const authorityEvidence = evidence.find(({ evidenceType }) => evidenceType === 'AUTHORITY');
       if (!authorityEvidence) throw new Error('Authority evidence fixture is missing.');
 
+      const position = await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        const standard = await transaction.qualificationStandard.create({
+          data: {
+            agencyId,
+            code: `QS-${suffix}`,
+            name: 'Compensation action qualification standard',
+            status: 'ACTIVE',
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        const standardVersion = await transaction.qualificationStandardVersion.create({
+          data: {
+            agencyId,
+            qualificationStandardId: standard.id,
+            versionNo: 1,
+            educationRequirement: 'Bachelor degree',
+            eligibilityRequirement: 'Career service',
+            sourceDocumentId: authorityEvidence.documentId,
+            sourceEvidenceVersionId: authorityEvidence.documentVersionId,
+            sourceEvidenceValidatedAt: new Date(manilaDate(-5)),
+            sourceEvidenceValidatedByMembershipId: preparer.membershipId,
+            sourceEvidenceValidationReason: 'Validated the qualification source.',
+            approvalDocumentId: authorityEvidence.documentId,
+            approvalEvidenceVersionId: authorityEvidence.documentVersionId,
+            approvalEvidenceValidatedAt: new Date(manilaDate(-5)),
+            approvalEvidenceValidatedByMembershipId: preparer.membershipId,
+            approvalEvidenceValidationReason: 'Validated the qualification approval.',
+            effectiveFrom: new Date(manilaDate(-1000)),
+            status: 'ACTIVE',
+            domainStatus: 'ACTIVE',
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        await transaction.qualificationStandard.update({
+          where: { id: standard.id },
+          data: { currentVersionId: standardVersion.id },
+        });
+        const staffingAuthority = await transaction.staffingAuthority.create({
+          data: {
+            agencyId,
+            authorityType: 'DBM_APPROVAL',
+            referenceNo: `AUTH-${suffix}`,
+            issuedDate: new Date(manilaDate(-1000)),
+            effectiveDate: new Date(manilaDate(-1000)),
+            documentId: authorityEvidence.documentId,
+            evidenceVersionId: authorityEvidence.documentVersionId,
+            evidenceValidatedAt: new Date(manilaDate(-5)),
+            evidenceValidatedByMembershipId: preparer.membershipId,
+            evidenceValidationReason: 'Validated the staffing authority.',
+            status: 'ACTIVE',
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        const item = await transaction.plantillaPosition.create({
+          data: {
+            agencyId,
+            itemNumber: `ITEM-${suffix}`,
+            status: 'OCCUPIED',
+            createdFromAuthorityId: staffingAuthority.id,
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        const oldVersion = await transaction.plantillaPositionVersion.create({
+          data: {
+            agencyId,
+            positionId: item.id,
+            organizationUnitId: unit.id,
+            qualificationStandardVersionId: standardVersion.id,
+            staffingAuthorityId: staffingAuthority.id,
+            versionNo: 1,
+            positionTitle: 'Administrative Officer',
+            salaryGrade: 12,
+            fundingSource: 'General Appropriations Act',
+            employmentCategory: 'PLANTILLA',
+            effectiveFrom: new Date(manilaDate(-900)),
+            effectiveTo: new Date(manilaDate(-1)),
+            status: 'ACTIVE',
+            domainStatus: 'OCCUPIED',
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        const currentVersion = await transaction.plantillaPositionVersion.create({
+          data: {
+            agencyId,
+            positionId: item.id,
+            organizationUnitId: unit.id,
+            qualificationStandardVersionId: standardVersion.id,
+            staffingAuthorityId: staffingAuthority.id,
+            versionNo: 2,
+            positionTitle: 'Administrative Officer',
+            salaryGrade: 13,
+            fundingSource: 'General Appropriations Act',
+            employmentCategory: 'PLANTILLA',
+            effectiveFrom: new Date(manilaDate()),
+            status: 'ACTIVE',
+            domainStatus: 'OCCUPIED',
+            createdByMembershipId: preparer.membershipId,
+            updatedByMembershipId: preparer.membershipId,
+          },
+        });
+        await transaction.plantillaPosition.update({
+          where: { id: item.id },
+          data: { currentVersionId: currentVersion.id },
+        });
+        await transaction.serviceSegment.update({
+          where: { id: serviceSegment.id },
+          data: { positionId: item.id },
+        });
+        return { id: item.id, oldVersionId: oldVersion.id, currentVersionId: currentVersion.id };
+      });
+
       const role = await admin.role.findFirstOrThrow({ where: { code: 'appointing_authority' } });
       await admin.membershipRole.create({
         data: {
@@ -245,6 +362,7 @@ it.skipIf(!enabled)(
         'personnel.actions.correct',
         'personnel.actions.submit',
         'personnel.actions.audit.read',
+        'personnel.actions.effectuate',
         'documents.evidence.read',
       ]);
       const reviewerContext = context(agencyId, reviewer.userId, reviewer.membershipId, [
@@ -257,13 +375,7 @@ it.skipIf(!enabled)(
         'personnel.actions.read',
         'documents.evidence.read',
       ]);
-      const authorityContext = context(
-        agencyId,
-        appointingAuthority.userId,
-        appointingAuthority.membershipId,
-        ['personnel.actions.read', 'personnel.actions.audit.read', 'documents.evidence.read'],
-      );
-      const proposedEffectivity = manilaDate(30);
+      const proposedEffectivity = manilaDate(-1);
       const baseInput = {
         employeeId: employee.id,
         actionType: 'STEP_INCREMENT' as const,
@@ -356,7 +468,7 @@ it.skipIf(!enabled)(
           ]),
           approved.id,
         ),
-      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EFFECT_UNSUPPORTED' });
+      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EVIDENCE_READ_FORBIDDEN' });
       const duplicate = await service.create(preparerContext, {
         ...baseInput,
         evidence,
@@ -373,27 +485,32 @@ it.skipIf(!enabled)(
           { ...baseInput, evidence: [] },
         ),
       ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EMPLOYEE_NOT_FOUND' });
-      await expect(
-        service.cancel(
-          authorityContext,
-          approved.id,
-          'Cancel before effectivity under the appointing authority.',
-        ),
-      ).resolves.toMatchObject({ status: 'CANCELLED' });
-      await service.submit(preparerContext, duplicate.id);
-      await service.review(reviewerContext, duplicate.id, {
-        decision: 'ENDORSE',
-        reason: 'The replacement decision package is complete.',
+      await admin.document.update({
+        where: { id: authorityEvidence.documentId },
+        data: { currentVersionId: replacementAuthorityVersion.id },
       });
       await expect(
-        service.decide(authorityContext, duplicate.id, {
-          decision: 'REJECT',
-          reason: 'The appointing authority rejected this action.',
-        }),
-      ).resolves.toMatchObject({ status: 'REJECTED' });
+        service.effectuate(preparerContext, approved.id, 'stale-authority-key'),
+      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_APPROVAL_INVALID' });
+      await admin.document.update({
+        where: { id: authorityEvidence.documentId },
+        data: { currentVersionId: authorityEvidence.documentVersionId },
+      });
+      const [firstEffect, retriedEffect] = await Promise.all([
+        service.effectuate(preparerContext, approved.id, 'step-effectuation-key'),
+        service.effectuate(preparerContext, approved.id, 'step-effectuation-key'),
+      ]);
+      expect(firstEffect).toMatchObject({
+        status: 'EFFECTIVE',
+        effect: { salaryGrade: 12, salaryStep: 3 },
+      });
+      expect(retriedEffect.effect?.serviceSegmentId).toBe(firstEffect.effect?.serviceSegmentId);
+      const effectedSegmentId = firstEffect.effect?.serviceSegmentId;
+      if (!effectedSegmentId) throw new Error('Effectuation did not return its Service Segment.');
       const concurrentInput = {
         ...baseInput,
         proposedEffectivity: manilaDate(31),
+        targetFacts: { newSalaryStep: 4 },
         evidence,
       };
       const [concurrentA, concurrentB] = await Promise.all([
@@ -410,14 +527,113 @@ it.skipIf(!enabled)(
           reason: expect.objectContaining({ code: 'PERSONNEL_ACTION_DUPLICATE_INCREMENT' }),
         }),
       ]);
-      const unchanged = await admin.employee.findUniqueOrThrow({
+      const futureAction =
+        concurrentSubmissions[0]?.status === 'fulfilled' ? concurrentA : concurrentB;
+      await service.review(reviewerContext, futureAction.id, {
+        decision: 'ENDORSE',
+        reason: 'The future-dated increment package is complete.',
+      });
+      await service.decide(delegateContext, futureAction.id, {
+        decision: 'APPROVE',
+        reason: 'Approved for its stated future date.',
+      });
+      await expect(service.effectuate(preparerContext, futureAction.id)).rejects.toMatchObject({
+        code: 'PERSONNEL_ACTION_NOT_YET_EFFECTIVE',
+      });
+      const changed = await admin.employee.findUniqueOrThrow({
         where: { agencyId_id: { agencyId, id: employee.id } },
         include: { currentServiceSegment: true },
       });
-      expect(unchanged).toMatchObject({
+      expect(changed).toMatchObject({
         serviceStatus: 'ACTIVE',
-        currentServiceSegment: { id: serviceSegment.id, salaryGrade: 12, salaryStep: 2 },
+        currentServiceSegment: {
+          id: effectedSegmentId,
+          salaryGrade: 12,
+          salaryStep: 3,
+          personnelActionId: approved.id,
+        },
       });
+      await expect(
+        admin.serviceSegment.findUniqueOrThrow({ where: { id: serviceSegment.id } }),
+      ).resolves.toMatchObject({ status: 'CLOSED', effectiveTo: new Date(manilaDate(-2)) });
+      await expect(
+        admin.outboxEvent.count({
+          where: { agencyId, aggregateId: approved.id, eventType: 'PERSONNEL_ACTION_EFFECTUATED' },
+        }),
+      ).resolves.toBe(1);
+
+      const salaryEvidence = await Promise.all(
+        (
+          [
+            'PAY_AUTHORITY',
+            'SALARY_ADJUSTMENT_NOTICE',
+            'CURRENT_COMPENSATION',
+            'PAY_TABLE_VERSION',
+          ] as const
+        ).map((type) =>
+          createEvidence(admin, agencyId, preparer.membershipId, `${suffix}-salary`, type),
+        ),
+      );
+      const salaryAction = await service.create(preparerContext, {
+        employeeId: employee.id,
+        actionType: 'SALARY_ADJUSTMENT',
+        proposedEffectivity: manilaDate(),
+        targetFacts: {
+          newSalaryGrade: 13,
+          newSalaryStep: 3,
+          payTableVersion: `PAY_TABLE_VERSION-${suffix}-salary`,
+        },
+        reason: 'Apply the authorized position salary-grade adjustment.',
+        evidence: [...salaryEvidence, authorityEvidence],
+      });
+      await service.submit(preparerContext, salaryAction.id);
+      await service.review(reviewerContext, salaryAction.id, {
+        decision: 'ENDORSE',
+        reason: 'The salary authority and exact pay-table version are complete.',
+      });
+      await service.decide(delegateContext, salaryAction.id, {
+        decision: 'APPROVE',
+        reason: 'Approved under the applicable delegated authority.',
+      });
+      const failingService = new PersonnelActionsService(
+        { write: async () => Promise.reject(new Error('audit unavailable')) },
+        documentsService,
+        plantillaPositionsService,
+        new AuthService(),
+        new SeparationsService(separationAuditWriter),
+      );
+      await expect(
+        failingService.effectuate(preparerContext, salaryAction.id, 'salary-effectuation-key'),
+      ).rejects.toThrow('audit unavailable');
+      await expect(
+        admin.employee.findUniqueOrThrow({
+          where: { agencyId_id: { agencyId, id: employee.id } },
+          include: { currentServiceSegment: true },
+        }),
+      ).resolves.toMatchObject({
+        currentServiceSegment: { id: effectedSegmentId, salaryGrade: 12, salaryStep: 3 },
+      });
+      const adjusted = await service.effectuate(
+        preparerContext,
+        salaryAction.id,
+        'salary-effectuation-key',
+      );
+      expect(adjusted).toMatchObject({
+        status: 'EFFECTIVE',
+        effect: {
+          salaryGrade: 13,
+          salaryStep: 3,
+          serviceSegmentId: expect.any(String),
+        },
+      });
+      const adjustedSegmentId = adjusted.effect?.serviceSegmentId;
+      if (!adjustedSegmentId) throw new Error('Expected a successor service segment.');
+      await expect(
+        admin.serviceSegment.findUniqueOrThrow({ where: { id: adjustedSegmentId } }),
+      ).resolves.toMatchObject({ positionId: position.id });
+      await expect(
+        admin.plantillaPosition.findUniqueOrThrow({ where: { id: position.id } }),
+      ).resolves.toMatchObject({ status: 'OCCUPIED' });
       await expect(
         admin.personnelActionVersion.update({
           where: { id: approved.currentVersion.id },
@@ -433,8 +649,8 @@ it.skipIf(!enabled)(
         },
         async (transaction) => {
           await transaction.serviceSegment.update({
-            where: { id: serviceSegment.id },
-            data: { status: 'CLOSED', effectiveTo: new Date(manilaDate(-1)) },
+            where: { id: adjustedSegmentId },
+            data: { status: 'CLOSED', effectiveTo: new Date(manilaDate()) },
           });
           return transaction.employee.update({
             where: { id: employee.id },
@@ -474,15 +690,9 @@ it.skipIf(!enabled)(
           'PERSONNEL_ACTION_RETURNED',
           'PERSONNEL_ACTION_ENDORSED',
           'PERSONNEL_ACTION_APPROVED',
-          'PERSONNEL_ACTION_CANCELLED',
+          'PERSONNEL_ACTION_EFFECTUATED',
         ]),
       );
-      await expect(service.history(authorityContext, duplicate.id)).resolves.toMatchObject({
-        action: { status: 'REJECTED' },
-        entries: expect.arrayContaining([
-          expect.objectContaining({ action: 'PERSONNEL_ACTION_REJECTED' }),
-        ]),
-      });
       for (const entry of history?.entries ?? []) {
         expect(entry).toMatchObject({ requestId: expect.any(String) });
         expect(JSON.stringify(entry.metadata)).not.toContain('newSalaryStep');
@@ -496,6 +706,7 @@ it.skipIf(!enabled)(
             data: { currentServiceSegmentId: null },
           });
           await transaction.auditEvent.deleteMany({ where: { agencyId } });
+          await transaction.outboxEvent.deleteMany({ where: { agencyId } });
           await transaction.personnelActionEvidence.deleteMany({ where: { agencyId } });
           await transaction.personnelAction.updateMany({
             where: { agencyId },
@@ -507,6 +718,11 @@ it.skipIf(!enabled)(
           await transaction.membershipRole.deleteMany({ where: { agencyId } });
           await transaction.serviceSegment.deleteMany({ where: { agencyId } });
           await transaction.employee.deleteMany({ where: { agencyId } });
+          await transaction.plantillaPositionVersion.deleteMany({ where: { agencyId } });
+          await transaction.plantillaPosition.deleteMany({ where: { agencyId } });
+          await transaction.qualificationStandardVersion.deleteMany({ where: { agencyId } });
+          await transaction.qualificationStandard.deleteMany({ where: { agencyId } });
+          await transaction.staffingAuthority.deleteMany({ where: { agencyId } });
           await transaction.organizationUnit.deleteMany({ where: { agencyId } });
           await transaction.documentVersion.deleteMany({ where: { agencyId } });
           await transaction.document.deleteMany({ where: { agencyId } });

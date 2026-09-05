@@ -11,6 +11,15 @@ const foreignUnitId = '22222222-2222-4222-8222-222222222222';
 const foreignUnitVersionId = '33333333-3333-4333-8333-333333333333';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 
+function manilaToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
 async function resetProfile(agency: {
   id: string;
   name: string;
@@ -117,6 +126,30 @@ async function seed(): Promise<void> {
       data: { status: 'ACTIVE', activatedAt: new Date(), deactivatedAt: null },
     });
   }
+  const preparerUser = await prisma.user.upsert({
+    where: { emailNormalized: 'personnel.preparer@example.test' },
+    update: { displayName: 'Personnel Preparer', globalStatus: 'ACTIVE' },
+    create: {
+      identityProvider: issuer,
+      externalSubject: 'local-personnel-preparer',
+      emailNormalized: 'personnel.preparer@example.test',
+      displayName: 'Personnel Preparer',
+      globalStatus: 'ACTIVE',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  const preparerMembership =
+    (await prisma.agencyMembership.findFirst({
+      where: { agencyId: agency.id, userId: preparerUser.id },
+    })) ??
+    (await prisma.agencyMembership.create({
+      data: {
+        agencyId: agency.id,
+        userId: preparerUser.id,
+        status: 'ACTIVE',
+        activatedAt: new Date(),
+      },
+    }));
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({
@@ -139,6 +172,9 @@ async function seed(): Promise<void> {
     });
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'PayrollBankAccount' },
+    });
+    await transaction.auditEvent.deleteMany({
+      where: { agencyId: agency.id, entityType: 'PersonnelAction' },
     });
     await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationEffect.deleteMany({ where: { agencyId: agency.id } });
@@ -186,7 +222,15 @@ async function seed(): Promise<void> {
         agencyId: agency.id,
         document: {
           documentNo: {
-            in: ['E2E-PLANTILLA-QS-SOURCE', 'E2E-PLANTILLA-QS-APPROVAL', 'E2E-PLANTILLA-AUTHORITY'],
+            in: [
+              'E2E-PLANTILLA-QS-SOURCE',
+              'E2E-PLANTILLA-QS-APPROVAL',
+              'E2E-PLANTILLA-AUTHORITY',
+              'E2E-ACTION-NOSI',
+              'E2E-ACTION-CURRENT_COMPENSATION',
+              'E2E-ACTION-PERFORMANCE_OR_SERVICE',
+              'E2E-ACTION-SERVICE_CONTINUITY',
+            ],
           },
         },
       },
@@ -195,7 +239,15 @@ async function seed(): Promise<void> {
       where: {
         agencyId: agency.id,
         documentNo: {
-          in: ['E2E-PLANTILLA-QS-SOURCE', 'E2E-PLANTILLA-QS-APPROVAL', 'E2E-PLANTILLA-AUTHORITY'],
+          in: [
+            'E2E-PLANTILLA-QS-SOURCE',
+            'E2E-PLANTILLA-QS-APPROVAL',
+            'E2E-PLANTILLA-AUTHORITY',
+            'E2E-ACTION-NOSI',
+            'E2E-ACTION-CURRENT_COMPENSATION',
+            'E2E-ACTION-PERFORMANCE_OR_SERVICE',
+            'E2E-ACTION-SERVICE_CONTINUITY',
+          ],
         },
       },
     });
@@ -345,7 +397,110 @@ async function seed(): Promise<void> {
     });
     await transaction.plantillaPosition.update({
       where: { id: position.id },
-      data: { currentVersionId: positionVersion.id },
+      data: { currentVersionId: positionVersion.id, status: 'OCCUPIED' },
+    });
+    await transaction.plantillaPositionVersion.update({
+      where: { id: positionVersion.id },
+      data: { domainStatus: 'OCCUPIED' },
+    });
+
+    const employee = await transaction.employee.create({
+      data: {
+        agencyId: agency.id,
+        employeeNumber: 'E2E-0001',
+        legalName: 'Alex Rivera',
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: 'alex.rivera@example.test',
+        serviceStatus: 'ACTIVE',
+        firstGovernmentServiceDate: new Date('2020-01-01'),
+        agencyServiceStartDate: new Date('2020-01-01'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const serviceSegment = await transaction.serviceSegment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        positionId: position.id,
+        organizationUnitId: unit.id,
+        appointmentStatus: 'PERMANENT',
+        salaryGrade: 24,
+        salaryStep: 1,
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.employee.update({
+      where: { id: employee.id },
+      data: { currentServiceSegmentId: serviceSegment.id },
+    });
+    const actionEvidence = await Promise.all(
+      ['NOSI', 'CURRENT_COMPENSATION', 'PERFORMANCE_OR_SERVICE', 'SERVICE_CONTINUITY'].map((type) =>
+        evidence(`E2E-ACTION-${type}`, type),
+      ),
+    );
+    const compensationAction = await transaction.personnelAction.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        actionType: 'STEP_INCREMENT',
+        status: 'APPROVED',
+        preparedByMembershipId: preparerMembership.id,
+        approvedByMembershipId: membership.id,
+        approvedAt: new Date(),
+      },
+    });
+    const compensationActionVersion = await transaction.personnelActionVersion.create({
+      data: {
+        agencyId: agency.id,
+        actionId: compensationAction.id,
+        versionNo: 1,
+        proposedEffectivity: new Date(`${manilaToday()}T00:00:00.000Z`),
+        fromServiceSegmentId: serviceSegment.id,
+        targetFacts: { newSalaryStep: 2 },
+        reason: 'Apply the signed Notice of Step Increment on its stated date.',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.personnelActionEvidence.createMany({
+      data: actionEvidence.map((item, index) => ({
+        agencyId: agency.id,
+        actionVersionId: compensationActionVersion.id,
+        evidenceType: [
+          'NOSI',
+          'CURRENT_COMPENSATION',
+          'PERFORMANCE_OR_SERVICE',
+          'SERVICE_CONTINUITY',
+        ][index]!,
+        documentId: item.id,
+        documentVersionId: item.currentVersionId!,
+        sourceDate: new Date('2026-01-01'),
+        createdByMembershipId: membership.id,
+      })),
+    });
+    await transaction.personnelAction.update({
+      where: { id: compensationAction.id },
+      data: { currentVersionId: compensationActionVersion.id },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        agencyId: agency.id,
+        actorUserId: user.id,
+        actorMembershipId: membership.id,
+        actorType: 'USER',
+        action: 'PERSONNEL_ACTION_APPROVED',
+        entityType: 'PersonnelAction',
+        entityId: compensationAction.id,
+        previousStatus: 'FOR_APPROVAL',
+        newStatus: 'APPROVED',
+        reason: 'Protected shell effectuation fixture.',
+        requestId: 'protected-shell-seed',
+        metadata: { actionType: 'STEP_INCREMENT', versionId: compensationActionVersion.id },
+      },
     });
 
     const actionEmployee = await transaction.employee.create({
@@ -381,7 +536,7 @@ async function seed(): Promise<void> {
       where: { id: actionEmployee.id },
       data: { currentServiceSegmentId: actionSegment.id },
     });
-    const action = await transaction.personnelAction.create({
+    const separationAction = await transaction.personnelAction.create({
       data: {
         agencyId: agency.id,
         employeeId: actionEmployee.id,
@@ -392,10 +547,10 @@ async function seed(): Promise<void> {
         approvedAt: new Date(),
       },
     });
-    const actionVersion = await transaction.personnelActionVersion.create({
+    const separationActionVersion = await transaction.personnelActionVersion.create({
       data: {
         agencyId: agency.id,
-        actionId: action.id,
+        actionId: separationAction.id,
         versionNo: 1,
         proposedEffectivity: new Date(),
         fromServiceSegmentId: actionSegment.id,
@@ -410,8 +565,8 @@ async function seed(): Promise<void> {
       },
     });
     await transaction.personnelAction.update({
-      where: { id: action.id },
-      data: { currentVersionId: actionVersion.id },
+      where: { id: separationAction.id },
+      data: { currentVersionId: separationActionVersion.id },
     });
   });
   // One protected-shell identity exercises the browser critical path; production role grants remain distinct.
@@ -437,10 +592,15 @@ async function seed(): Promise<void> {
           agencyId: agency.id,
           membershipId: membership.id,
           roleId: role.id,
-          effectiveFrom: new Date(),
+          effectiveFrom: new Date('2026-01-01'),
           assignedByMembershipId: membership.id,
           reason: 'Protected shell E2E fixture',
         },
+      });
+    } else if (assignment.effectiveFrom > new Date('2026-01-01')) {
+      await prisma.membershipRole.update({
+        where: { id: assignment.id },
+        data: { effectiveFrom: new Date('2026-01-01') },
       });
     }
   }

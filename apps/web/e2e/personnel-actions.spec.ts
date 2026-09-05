@@ -39,6 +39,28 @@ test('opens Personnel Action preparation with the shared modal contract', async 
   await expect(trigger).toBeFocused();
 });
 
+test('confirms and shows an effective compensation action in shared modals', async ({ page }) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/personnel-actions');
+  await page.getByRole('button', { name: 'Open action for Alex Rivera' }).click();
+
+  const detail = page.getByRole('dialog', { name: 'Alex Rivera' });
+  await detail.getByRole('button', { name: 'Effectuate action' }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Effectuate Personnel Action' });
+  await expect(confirmation).toHaveAccessibleDescription(
+    'Confirm the effective-dated compensation facts for exact version 1.',
+  );
+  await expect(confirmation.getByText('SG 24, Step 2')).toBeVisible();
+  await confirmation.getByRole('button', { name: 'Confirm effectuation' }).click();
+
+  await expect(detail.getByText('EFFECTIVE', { exact: true })).toBeVisible();
+  await expect(detail.getByText('SG 24, Step 2')).toBeVisible();
+  await detail.getByRole('button', { name: 'View history' }).click();
+  const history = page.getByRole('dialog', { name: 'Personnel Action history' });
+  await expect(history.getByText('PERSONNEL ACTION EFFECTUATED')).toBeVisible();
+});
+
 test('reviews, confirms, and reports service-status effectuation in shared modals', async ({
   page,
 }) => {

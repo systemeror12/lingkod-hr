@@ -33,7 +33,6 @@ const personnelClassifications = [
   'TRAINING',
   'LICENSE',
   'PERFORMANCE',
-  'SALN',
   'SALARY_ADJUSTMENT',
   'SEPARATION',
   'GOVERNMENT_IDENTIFIER',

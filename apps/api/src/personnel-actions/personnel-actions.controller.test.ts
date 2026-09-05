@@ -52,6 +52,17 @@ it('treats a foreign Agency Personnel Action register as absent', async () => {
   expect(service.list).not.toHaveBeenCalled();
 });
 
+it('forwards the idempotent effectuation command', async () => {
+  const service = serviceMock();
+  service.effectuate.mockResolvedValue({ id: actionId, status: 'EFFECTIVE' });
+  const controller = new PersonnelActionsController(service as never);
+
+  await expect(
+    controller.effectuate(agencyId, actionId, 'action-effect-key', context),
+  ).resolves.toMatchObject({ status: 'EFFECTIVE' });
+  expect(service.effectuate).toHaveBeenCalledWith(context, actionId, 'action-effect-key');
+});
+
 it('rejects unsupported actions before calling the service', async () => {
   const service = serviceMock();
   const controller = new PersonnelActionsController(service as never);
@@ -96,18 +107,3 @@ it.each(['review', 'decide', 'cancel'] as const)(
     expect(permission).toBeUndefined();
   },
 );
-
-it('forwards effectuation with its idempotency key', async () => {
-  const service = serviceMock();
-  service.effectuate.mockResolvedValue({ id: actionId, status: 'EFFECTIVE' });
-  const controller = new PersonnelActionsController(service as never);
-
-  await expect(
-    controller.effectuate(agencyId, actionId, 'personnel-action-effectuation', context),
-  ).resolves.toMatchObject({ status: 'EFFECTIVE' });
-  expect(service.effectuate).toHaveBeenCalledWith(
-    context,
-    actionId,
-    'personnel-action-effectuation',
-  );
-});

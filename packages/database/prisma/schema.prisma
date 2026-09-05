@@ -34,6 +34,7 @@ model Agency {
   auditEvents                   AuditEvent[]
   governmentIdentifiers         GovernmentIdentifier[]
   payrollBankAccounts           PayrollBankAccount[]
+  salnComplianceRecords         SalnComplianceRecord[]
   organizationUnits             OrganizationUnit[]
   organizationUnitVersions      OrganizationUnitVersion[]
   documents                     Document[]
@@ -260,6 +261,7 @@ model AgencyMembership {
   createdGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierCreator")
   updatedGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierUpdater")
   createdPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountCreator")
+  createdSalnComplianceRecords           SalnComplianceRecord[]         @relation("SalnComplianceCreator")
   updatedPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountUpdater")
 
   @@unique([agencyId, id])
@@ -488,6 +490,7 @@ model Document {
   governmentIdentifierEvidenceDocuments   GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceDocument")
   personnelActionEvidenceDocuments        PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceDocument")
   payrollBankAccountEvidenceDocuments     PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceDocument")
+  salnAcknowledgmentDocuments             SalnComplianceRecord[]         @relation("SalnAcknowledgmentDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -533,6 +536,7 @@ model DocumentVersion {
   governmentIdentifierEvidenceVersions          GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceVersion")
   personnelActionEvidenceVersions               PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceVersion")
   payrollBankAccountEvidenceVersions            PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceVersion")
+  salnAcknowledgmentVersions                    SalnComplianceRecord[]         @relation("SalnAcknowledgmentVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -785,6 +789,7 @@ model Employee {
   separationCases       SeparationCase[]       @relation("SeparationCaseEmployee")
   governmentIdentifiers GovernmentIdentifier[] @relation("EmployeeGovernmentIdentifiers")
   payrollBankAccounts   PayrollBankAccount[]   @relation("EmployeePayrollBankAccounts")
+  salnComplianceRecords SalnComplianceRecord[] @relation("EmployeeSalnComplianceRecords")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -894,6 +899,37 @@ model PayrollBankAccount {
   @@index([agencyId, employeeId, effectiveFrom(sort: Desc)])
   @@index([agencyId, employeeId, status])
   @@map("payroll_bank_accounts")
+}
+
+model SalnComplianceRecord {
+  id                              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String    @map("agency_id") @db.Uuid
+  employeeId                      String    @map("employee_id") @db.Uuid
+  requirementReference            String    @map("requirement_reference")
+  filingYear                      Int       @map("filing_year") @db.SmallInt
+  filingType                      String    @map("filing_type")
+  status                          String
+  submittedAt                     DateTime? @map("submitted_at") @db.Timestamptz(6)
+  repositoryReference             String?   @map("repository_reference")
+  acknowledgmentDocumentId        String?   @map("acknowledgment_document_id") @db.Uuid
+  acknowledgmentDocumentVersionId String?   @map("acknowledgment_document_version_id") @db.Uuid
+  correctsRecordId                String?   @map("corrects_record_id") @db.Uuid
+  correctionReason                String?   @map("correction_reason")
+  createdByMembershipId           String    @map("created_by_membership_id") @db.Uuid
+  createdAt                       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency                        Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                      Employee              @relation("EmployeeSalnComplianceRecords", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  acknowledgmentDocument        Document?             @relation("SalnAcknowledgmentDocument", fields: [agencyId, acknowledgmentDocumentId], references: [agencyId, id], onDelete: Restrict, map: "saln_compliance_acknowledgment_document_fkey")
+  acknowledgmentDocumentVersion DocumentVersion?      @relation("SalnAcknowledgmentVersion", fields: [agencyId, acknowledgmentDocumentId, acknowledgmentDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "saln_compliance_acknowledgment_version_fkey")
+  correctsRecord                SalnComplianceRecord? @relation("SalnComplianceCorrection", fields: [agencyId, correctsRecordId], references: [agencyId, id], onDelete: Restrict)
+  correctedByRecord             SalnComplianceRecord? @relation("SalnComplianceCorrection")
+  createdBy                     AgencyMembership      @relation("SalnComplianceCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, correctsRecordId])
+  @@index([agencyId, employeeId, filingYear(sort: Desc)])
+  @@map("saln_compliance_records")
 }
 
 model PdsVersion {
@@ -1447,12 +1483,12 @@ model PersonnelAction {
   currentVersionId          String?   @map("current_version_id") @db.Uuid
   preparedByMembershipId    String    @map("prepared_by_membership_id") @db.Uuid
   approvedByMembershipId    String?   @map("approved_by_membership_id") @db.Uuid
-  effectuatedByMembershipId String?   @map("effectuated_by_membership_id") @db.Uuid
   approvalDelegationId      String?   @map("approval_delegation_id") @db.Uuid
   approvedAt                DateTime? @map("approved_at") @db.Timestamptz(6)
+  cancelledAt               DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  effectuatedByMembershipId String?   @map("effectuated_by_membership_id") @db.Uuid
   effectuatedAt             DateTime? @map("effectuated_at") @db.Timestamptz(6)
   effectuationKey           String?   @map("effectuation_key")
-  cancelledAt               DateTime? @map("cancelled_at") @db.Timestamptz(6)
   supersedesActionId        String?   @map("supersedes_action_id") @db.Uuid
   createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
