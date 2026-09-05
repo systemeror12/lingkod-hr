@@ -12,6 +12,7 @@ export type DatabaseCapability =
   | 'pds-mutation'
   | 'employee-document-transition'
   | 'personnel-baseline-transition'
+  | 'personnel-action-transition'
   | 'government-identifier-transition'
   | 'payroll-bank-account-transition'
   | 'organization-unit-correction';
@@ -96,6 +97,11 @@ export async function setDatabaseContext(
       set_config(
         'app.personnel_baseline_transition',
         ${hasCapability(context, 'personnel-baseline-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.personnel_action_transition',
+        ${hasCapability(context, 'personnel-action-transition') ? 'on' : ''},
         true
       ),
       set_config(
