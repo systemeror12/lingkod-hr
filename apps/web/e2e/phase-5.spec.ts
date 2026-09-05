@@ -1,22 +1,15 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import {
-  expect,
-  test,
-  type APIResponse,
-  type Browser,
-  type Locator,
-  type Page,
-} from '@playwright/test';
+import { expect, test, type APIResponse, type Browser, type Locator } from '@playwright/test';
 
 const foreignAgencyId = '11111111-1111-4111-8111-111111111111';
 const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
+const foreignIdentifierId = '66666666-6666-4666-8666-666666666666';
+const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
+const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
+const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
 
-interface MailpitMessageSummary {
-  ID: string;
-  Subject: string;
-  To: Array<{ Address: string }>;
-}
+test.use({ trace: 'off' });
 
 async function body<T>(response: APIResponse): Promise<T> {
   const text = await response.text();
@@ -24,36 +17,10 @@ async function body<T>(response: APIResponse): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-async function invitationUrl(recipient: string): Promise<string> {
-  let messageId: string | null = null;
-  await expect
-    .poll(async () => {
-      const response = await fetch('http://localhost:8025/api/v1/messages');
-      const payload = (await response.json()) as { messages: MailpitMessageSummary[] };
-      messageId =
-        payload.messages.find((message) => message.To.some(({ Address }) => Address === recipient))
-          ?.ID ?? null;
-      return messageId;
-    })
-    .not.toBeNull();
-  const response = await fetch(`http://localhost:8025/api/v1/message/${messageId}`);
-  const text = ((await response.json()) as { Text: string }).Text;
-  const url = /https?:\/\/[^\s]+\/api\/v1\/auth\/invitations\/[A-Za-z0-9_-]{43}\/activate/.exec(
-    text,
-  )?.[0];
-  if (!url) throw new Error(`The invitation for ${recipient} had no activation URL.`);
-  return url;
-}
-
-async function activateInvitation(browser: Browser, admin: Page, agencyId: string, email: string) {
-  const response = await admin.request.post(`/api/v1/agencies/${agencyId}/invitations`, {
-    headers: { origin: new URL(admin.url()).origin },
-    data: { email, roleCodes: ['hrmo_administrator'] },
-  });
-  expect(response.status(), await response.text()).toBe(201);
+async function activateInvitation(browser: Browser, token: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto(await invitationUrl(email));
+  await page.goto(`${apiUrl}/api/v1/auth/invitations/${token}/activate`);
   await page.getByRole('link', { name: 'Continue to secure sign-in' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   const session = await body<{ agencyId: string; membershipId: string; userId: string }>(
@@ -64,57 +31,10 @@ async function activateInvitation(browser: Browser, admin: Page, agencyId: strin
   return { context, page, session };
 }
 
-function setEmployeeFixtureRole(
-  agencyId: string,
-  membershipId: string,
-  assignedByMembershipId: string,
-  employeeOnly = false,
-  personnelRecordsOfficer = false,
-): void {
-  const adminUrl =
-    process.env.DATABASE_E2E_ADMIN_URL ??
-    process.env.DATABASE_MIGRATION_OWNER_URL ??
-    'postgresql://hris_local:local_only@localhost:55432/hris';
-  const removeHrmo = employeeOnly
-    ? `DELETE FROM membership_roles USING roles WHERE membership_roles.role_id = roles.id AND membership_roles.membership_id = '${membershipId}' AND roles.code = 'hrmo_administrator';`
-    : '';
-  execFileSync(
-    'psql',
-    [
-      adminUrl,
-      '-XAt',
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-c',
-      `${removeHrmo} INSERT INTO membership_roles (agency_id, membership_id, role_id, effective_from, assigned_by_membership_id, reason) SELECT '${agencyId}', '${membershipId}', id, '2026-01-01', '${assignedByMembershipId}', 'Phase 5 acceptance fixture' FROM roles WHERE agency_id IS NULL AND code IN ('employee'${personnelRecordsOfficer ? ", 'personnel_records_officer'" : ''}) ON CONFLICT DO NOTHING;`,
-    ],
-    { stdio: 'pipe' },
-  );
-}
-
-function finalizeDocumentFixture(documentId: string): void {
-  const adminUrl =
-    process.env.DATABASE_E2E_ADMIN_URL ??
-    process.env.DATABASE_MIGRATION_OWNER_URL ??
-    'postgresql://hris_local:local_only@localhost:55432/hris';
-  execFileSync(
-    'psql',
-    [
-      adminUrl,
-      '-XAt',
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-c',
-      `UPDATE documents SET status = 'APPROVED' WHERE id = '${documentId}';`,
-    ],
-    { stdio: 'pipe' },
-  );
-}
-
-function resetFixture(): void {
+function resetFixture(phase5Access = false): void {
   execFileSync('pnpm', ['--filter', '@lingkod-hr/database', 'e2e:seed:shell'], {
     cwd: resolve(__dirname, '../../..'),
-    env: process.env,
+    env: { ...process.env, PHASE5_ACCESS_FIXTURES: phase5Access ? 'true' : 'false' },
     stdio: 'pipe',
   });
 }
@@ -276,6 +196,7 @@ test('gates the representative protected personnel journey', async ({
   browser,
 }, testInfo) => {
   test.setTimeout(120_000);
+  resetFixture(true);
   const suffix = `${Date.now()}-${testInfo.workerIndex}`;
   const origin = () => ({ origin: new URL(page.url()).origin });
   let ownerContext: Awaited<ReturnType<typeof activateInvitation>> | null = null;
@@ -289,6 +210,9 @@ test('gates the representative protected personnel journey', async ({
   const agencyId = adminSession.agencyId;
   const runtimeUrl =
     process.env.DATABASE_URL ?? 'postgresql://hris_app:local_app@localhost:55432/hris';
+  let employeeId = '';
+  let baselineId = '';
+  let pdsVersionId = '';
 
   try {
     await test.step('create and link the protected PREBOARDING Employee', async () => {
@@ -298,7 +222,7 @@ test('gates the representative protected personnel journey', async ({
       await page.getByLabel('Birth date').fill('1992-04-12');
       await page.getByLabel('Sex').selectOption('FEMALE');
       await page.getByLabel('Civil status').selectOption('SINGLE');
-      await page.getByLabel('Contact email').fill(`phase5-owner-${suffix}@example.test`);
+      await page.getByLabel('Contact email').fill('phase5.owner@example.test');
       const createdResponse = page.waitForResponse(
         (response) =>
           response.url().includes('/employees') && response.request().method() === 'POST',
@@ -307,19 +231,7 @@ test('gates the representative protected personnel journey', async ({
       const employee = await body<{ id: string; serviceStatus: string }>(await createdResponse);
       expect(employee.serviceStatus).toBe('PREBOARDING');
 
-      ownerContext = await activateInvitation(
-        browser,
-        page,
-        agencyId,
-        `phase5-owner-${suffix}@example.test`,
-      );
-      setEmployeeFixtureRole(
-        agencyId,
-        ownerContext.session.membershipId,
-        adminSession.membershipId,
-        false,
-        true,
-      );
+      ownerContext = await activateInvitation(browser, phase5OwnerToken);
       await body(
         await page.request.post(
           `/api/v1/agencies/${agencyId}/employees/${employee.id}/membership-link`,
@@ -338,11 +250,10 @@ test('gates the representative protected personnel journey', async ({
         membershipId: ownerContext.session.membershipId,
         serviceStatus: 'PREBOARDING',
       });
-      testInfo.annotations.push({ type: 'employeeId', description: employee.id });
+      employeeId = employee.id;
     });
 
     if (!ownerContext) throw new Error('The linked Employee context was not created.');
-    const employeeId = testInfo.annotations.find(({ type }) => type === 'employeeId')?.description;
     if (!employeeId) throw new Error('The Employee identity was not captured.');
 
     await test.step('effectuate the evidence-backed Personnel Baseline', async () => {
@@ -415,8 +326,8 @@ test('gates the representative protected personnel journey', async ({
       const effective = await body<{
         status: string;
         employee: { serviceStatus: string };
-        serviceSegment: { id: string; salaryGrade: number; salaryStep: number };
-        positionIncumbency: { id: string; positionId: string };
+        serviceSegment: { id: string; salaryGrade: number; salaryStep: number; status: string };
+        positionIncumbency: { id: string; positionId: string; status: string };
       }>(
         await page.request.post(
           `/api/v1/agencies/${agencyId}/personnel-baselines/${baseline.id}/effectuate`,
@@ -429,34 +340,53 @@ test('gates the representative protected personnel journey', async ({
       expect(effective).toMatchObject({
         status: 'EFFECTIVE',
         employee: { serviceStatus: 'ACTIVE' },
-        serviceSegment: { salaryGrade: 18, salaryStep: 1 },
-        positionIncumbency: { positionId: position.id },
+        serviceSegment: { salaryGrade: 18, salaryStep: 1, status: 'ACTIVE' },
+        positionIncumbency: { positionId: position.id, status: 'ACTIVE' },
       });
-      testInfo.annotations.push({ type: 'baselineId', description: baseline.id });
+      const occupiedPosition = await body<{
+        position: {
+          status: string;
+          currentVersion: {
+            lifecycleStatus: string;
+            versionState: string;
+            qualificationStandard: { id: string };
+          };
+        };
+      }>(
+        await page.request.get(`/api/v1/agencies/${agencyId}/plantilla-positions/${position.id}`, {
+          headers: origin(),
+        }),
+      );
+      expect(occupiedPosition).toMatchObject({
+        position: {
+          status: 'OCCUPIED',
+          currentVersion: {
+            lifecycleStatus: 'OCCUPIED',
+            versionState: 'ACTIVE',
+            qualificationStandard: { id: expect.any(String) },
+          },
+        },
+      });
+      baselineId = baseline.id;
     });
 
     await test.step('complete, submit, certify, verify, and render Revised 2026 PDS output', async () => {
       const employeeOrigin = { origin: new URL(ownerContext.page.url()).origin };
-      const document = await body<{ id: string; currentVersion: { id: string } }>(
-        await ownerContext.page.request.post(`/api/v1/agencies/${agencyId}/documents`, {
-          headers: { ...employeeOrigin, 'idempotency-key': `p5-pds-evidence-${suffix}` },
-          multipart: {
-            documentNo: `P5-PDS-${suffix}`,
-            documentType: 'PDS',
-            classification: 'CONFIDENTIAL',
-            file: {
-              name: 'phase-5-pds.pdf',
-              mimeType: 'application/pdf',
-              buffer: Buffer.from('%PDF-1.7 phase 5'),
-            },
-          },
+      const documents = await body<{
+        documents: Array<{ documentId: string; documentNo: string; version: { id: string } }>;
+      }>(
+        await ownerContext.page.request.get(`/api/v1/agencies/${agencyId}/documents/versions`, {
+          headers: employeeOrigin,
         }),
       );
-      finalizeDocumentFixture(document.id);
+      const document = documents.documents.find(
+        ({ documentNo }) => documentNo === 'E2E-PDS-EVIDENCE',
+      );
+      if (!document) throw new Error('The finalized PDS evidence fixture is missing.');
       const pds = await body<{ id: string; formVersion: string }>(
         await ownerContext.page.request.post(`/api/v1/agencies/${agencyId}/my-pds`, {
           headers: employeeOrigin,
-          data: completePds({ documentId: document.id, versionId: document.currentVersion.id }),
+          data: completePds({ documentId: document.documentId, versionId: document.version.id }),
         }),
       );
       expect(pds.formVersion).toBe('CS_FORM_212_REVISED_2026');
@@ -507,7 +437,7 @@ test('gates the representative protected personnel journey', async ({
         ),
       );
       expect(historical).toEqual(outputs);
-      testInfo.annotations.push({ type: 'pdsId', description: pds.id });
+      pdsVersionId = pds.id;
     });
 
     const protectedValue = `TIN-P5-${suffix}`;
@@ -540,6 +470,8 @@ test('gates the representative protected personnel journey', async ({
 
       await page.setViewportSize({ width: 1280, height: 720 });
       await page.goto(`/employees/${employeeId}`);
+      await expect(page.getByText(protectedValue, { exact: true })).toHaveCount(0);
+      await expect(page.getByText(created.maskedValue, { exact: true })).toBeVisible();
       const trigger = page.getByRole('button', { name: 'Reveal value' });
       await trigger.click();
       const dialog = page.getByRole('dialog', { name: 'Reveal government identifier' });
@@ -712,18 +644,7 @@ test('gates the representative protected personnel journey', async ({
     });
 
     await test.step('deny same-Agency and Cross-Agency high-risk access', async () => {
-      restrictedContext = await activateInvitation(
-        browser,
-        page,
-        agencyId,
-        `phase5-restricted-${suffix}@example.test`,
-      );
-      setEmployeeFixtureRole(
-        agencyId,
-        restrictedContext.session.membershipId,
-        adminSession.membershipId,
-        true,
-      );
+      restrictedContext = await activateInvitation(browser, phase5RestrictedToken);
       const restrictedOrigin = { origin: new URL(restrictedContext.page.url()).origin };
       const forbiddenReveal = await restrictedContext.page.request.post(
         `/api/v1/agencies/${agencyId}/employees/${employeeId}/government-identifiers/${identifierId}/reveal`,
@@ -737,6 +658,22 @@ test('gates the representative protected personnel journey', async ({
       );
       expect(forbiddenAction.status()).toBe(403);
 
+      await page.goto(`/employees/${foreignEmployeeId}`);
+      await expect(
+        page.getByRole('heading', { name: 'The Employee record could not be found' }),
+      ).toBeVisible();
+
+      const foreignLink = await page.request.post(
+        `/api/v1/agencies/${agencyId}/employees/${foreignEmployeeId}/membership-link`,
+        { headers: origin(), data: { membershipId: adminSession.membershipId } },
+      );
+      expect(foreignLink.status()).toBe(404);
+      const foreignChange = await page.request.patch(
+        `/api/v1/agencies/${foreignAgencyId}/employees/${foreignEmployeeId}/government-identifiers/${foreignIdentifierId}/invalidate`,
+        { headers: origin(), data: { reason: 'Cross-Agency change must be absent.' } },
+      );
+      expect(foreignChange.status()).toBe(404);
+
       for (const request of [
         page.request.get(`/api/v1/agencies/${foreignAgencyId}/employees/${foreignEmployeeId}`, {
           headers: origin(),
@@ -745,7 +682,7 @@ test('gates the representative protected personnel journey', async ({
           headers: origin(),
         }),
         page.request.post(
-          `/api/v1/agencies/${foreignAgencyId}/employees/${foreignEmployeeId}/government-identifiers/${identifierId}/reveal`,
+          `/api/v1/agencies/${foreignAgencyId}/employees/${foreignEmployeeId}/government-identifiers/${foreignIdentifierId}/reveal`,
           {
             headers: origin(),
             data: { reason: 'Cross-Agency reveal must be absent.' },
@@ -766,11 +703,16 @@ test('gates the representative protected personnel journey', async ({
           '-v',
           'ON_ERROR_STOP=1',
           '-c',
-          `BEGIN; ${settings}; SELECT count(*) FROM employees WHERE id = '${foreignEmployeeId}'; ROLLBACK;`,
+          `BEGIN; ${settings}; SELECT count(*) FROM employees WHERE id = '${foreignEmployeeId}' UNION ALL SELECT count(*) FROM government_identifiers WHERE id = '${foreignIdentifierId}'; ROLLBACK;`,
         ],
         { encoding: 'utf8' },
       );
-      expect(count.trim().split('\n')).toContain('0');
+      expect(
+        count
+          .trim()
+          .split('\n')
+          .filter((line) => /^\d+$/.test(line)),
+      ).toEqual(['0', '0']);
       expect(() =>
         execFileSync(
           'psql',
@@ -799,25 +741,40 @@ test('gates the representative protected personnel journey', async ({
           '-v',
           'ON_ERROR_STOP=1',
           '-c',
-          `BEGIN; ${settings}; SELECT action, entity_id, metadata::text FROM audit_events WHERE agency_id = '${agencyId}' ORDER BY occurred_at; ROLLBACK;`,
+          `BEGIN; ${settings}; SELECT action, entity_id, metadata::text FROM audit_events WHERE agency_id = '${agencyId}' AND entity_id IN ('${employeeId}', '${baselineId}', '${pdsVersionId}', '${identifierId}', '${actionId}', '${snapshotId}') ORDER BY occurred_at; ROLLBACK;`,
         ],
         { encoding: 'utf8', stdio: 'pipe' },
       );
       const actions = new Set(auditRows.split('\n').map((row) => row.split('\t')[0]));
       for (const action of [
         'EMPLOYEE_CREATED',
+        'EMPLOYEE_MEMBERSHIP_LINKED',
+        'PERSONNEL_BASELINE_PREPARED',
+        'PERSONNEL_BASELINE_SUBMITTED',
+        'PERSONNEL_BASELINE_REVIEWED',
         'PERSONNEL_BASELINE_EFFECTUATED',
+        'PDS_VERSION_CREATED',
+        'PDS_SUBMITTED',
         'PDS_EMPLOYEE_CERTIFIED',
         'PDS_HR_VERIFIED',
         'PDS_OUTPUT_RENDERED',
         'GOVERNMENT_IDENTIFIER_CREATED',
         'GOVERNMENT_IDENTIFIER_REVEAL_ATTEMPTED',
+        'PERSONNEL_ACTION_PREPARED',
+        'PERSONNEL_ACTION_SUBMITTED',
+        'PERSONNEL_ACTION_ENDORSED',
+        'PERSONNEL_ACTION_APPROVED',
         'PERSONNEL_ACTION_EFFECTUATED',
         'SERVICE_RECORD_GENERATED',
+        'SERVICE_RECORD_ACCESSED',
       ])
         expect(actions, `Missing ${action}`).toContain(action);
       expect(auditRows).not.toContain(protectedValue);
       expect(auditRows).toContain(employeeId);
+      expect(auditRows).toContain(baselineId);
+      expect(auditRows).toContain(pdsVersionId);
+      expect(auditRows).toContain(identifierId);
+      expect(auditRows).toContain(actionId);
       expect(auditRows).toContain(snapshotId);
     });
   } finally {

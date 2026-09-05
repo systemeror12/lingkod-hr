@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
 const issuer = process.env.OIDC_ISSUER ?? 'http://127.0.0.1:4100';
@@ -11,6 +12,12 @@ const foreignUnitId = '22222222-2222-4222-8222-222222222222';
 const foreignUnitVersionId = '33333333-3333-4333-8333-333333333333';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
+const foreignIdentifierId = '66666666-6666-4666-8666-666666666666';
+const phase5OwnerEmail = 'phase5.owner@example.test';
+const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
+const phase5RestrictedEmail = 'phase5.restricted@example.test';
+const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
+const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
 
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -151,6 +158,63 @@ async function seed(): Promise<void> {
         activatedAt: new Date(),
       },
     }));
+
+  async function seedInvitation(email: string, token: string, roleCodes: string[]) {
+    const subject = `local-${createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
+    const invitee = await prisma.user.upsert({
+      where: { emailNormalized: email },
+      update: { identityProvider: issuer, externalSubject: subject, globalStatus: 'ACTIVE' },
+      create: {
+        identityProvider: issuer,
+        externalSubject: subject,
+        emailNormalized: email,
+        displayName: email === phase5OwnerEmail ? 'Phase5 Owner' : 'Phase5 Restricted',
+        globalStatus: 'ACTIVE',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    const inviteeMembership =
+      (await prisma.agencyMembership.findFirst({
+        where: { agencyId: agency.id, userId: invitee.id },
+      })) ??
+      (await prisma.agencyMembership.create({
+        data: { agencyId: agency.id, userId: invitee.id, status: 'INVITED' },
+      }));
+    await prisma.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      await transaction.userSession.deleteMany({
+        where: { agencyMembershipId: inviteeMembership.id },
+      });
+      await transaction.membershipRole.deleteMany({
+        where: { membershipId: inviteeMembership.id },
+      });
+      await transaction.invitation.deleteMany({
+        where: { agencyId: agency.id, emailNormalized: email },
+      });
+      await transaction.agencyMembership.update({
+        where: { id: inviteeMembership.id },
+        data: { employeeId: null, status: 'INVITED', activatedAt: null },
+      });
+      if (seedPhase5Access)
+        await transaction.invitation.create({
+          data: {
+            agencyId: agency.id,
+            emailNormalized: email,
+            invitedByMembershipId: membership.id,
+            tokenHash: createHash('sha256').update(token).digest(),
+            requestedRoleCodes: roleCodes,
+            expiresAt: new Date('2099-01-01'),
+            status: 'PENDING',
+          },
+        });
+    });
+  }
+
+  await seedInvitation(phase5OwnerEmail, phase5OwnerToken, [
+    'employee',
+    'personnel_records_officer',
+  ]);
+  await seedInvitation(phase5RestrictedEmail, phase5RestrictedToken, ['employee']);
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
@@ -233,6 +297,7 @@ async function seed(): Promise<void> {
               'E2E-ACTION-CURRENT_COMPENSATION',
               'E2E-ACTION-PERFORMANCE_OR_SERVICE',
               'E2E-ACTION-SERVICE_CONTINUITY',
+              'E2E-PDS-EVIDENCE',
             ],
           },
         },
@@ -250,6 +315,7 @@ async function seed(): Promise<void> {
             'E2E-ACTION-CURRENT_COMPENSATION',
             'E2E-ACTION-PERFORMANCE_OR_SERVICE',
             'E2E-ACTION-SERVICE_CONTINUITY',
+            'E2E-PDS-EVIDENCE',
           ],
         },
       },
@@ -313,6 +379,7 @@ async function seed(): Promise<void> {
     const sourceEvidence = await evidence('E2E-PLANTILLA-QS-SOURCE', 'QUALIFICATION_STANDARD');
     const approvalEvidence = await evidence('E2E-PLANTILLA-QS-APPROVAL', 'QUALIFICATION_STANDARD');
     const authorityEvidence = await evidence('E2E-PLANTILLA-AUTHORITY', 'STAFFING_AUTHORITY');
+    await evidence('E2E-PDS-EVIDENCE', 'PDS');
     const standard = await transaction.qualificationStandard.create({
       data: {
         agencyId: agency.id,
@@ -691,6 +758,7 @@ async function seed(): Promise<void> {
       where: { agencyId: foreignAgency.id },
       data: { employeeId: null },
     });
+    await transaction.governmentIdentifier.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.employee.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: foreignAgency.id } });
@@ -746,6 +814,19 @@ async function seed(): Promise<void> {
         sex: 'FEMALE',
         civilStatus: 'SINGLE',
         contactEmail: 'foreign.personnel@example.test',
+        createdByMembershipId: foreignMembership.id,
+        updatedByMembershipId: foreignMembership.id,
+      },
+    });
+    await transaction.governmentIdentifier.create({
+      data: {
+        id: foreignIdentifierId,
+        agencyId: foreignAgency.id,
+        employeeId: foreignEmployeeId,
+        identifierType: 'GSIS',
+        encryptedValue: Buffer.from('foreign-protected-fixture'),
+        maskedValue: '••••0001',
+        effectiveFrom: new Date('2026-01-01'),
         createdByMembershipId: foreignMembership.id,
         updatedByMembershipId: foreignMembership.id,
       },
