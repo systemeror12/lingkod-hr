@@ -46,6 +46,26 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
+
+  const sessionResponse = await page.request.get('/api/v1/auth/me');
+  const sessionBody = await sessionResponse.text();
+  expect(sessionResponse.ok(), sessionBody).toBe(true);
+  const session = JSON.parse(sessionBody) as { agencyId: string; membershipId: string };
+  const employeesResponse = await page.request.get(
+    `/api/v1/agencies/${session.agencyId}/employees`,
+  );
+  const employeesBody = await employeesResponse.text();
+  expect(employeesResponse.ok(), employeesBody).toBe(true);
+  const linkedEmployee = (
+    JSON.parse(employeesBody) as { employees: { id: string; membershipId: string | null }[] }
+  ).employees.find((employee) => employee.membershipId === session.membershipId);
+  if (linkedEmployee) {
+    const unlinkResponse = await page.request.delete(
+      `/api/v1/agencies/${session.agencyId}/employees/${linkedEmployee.id}/membership-link`,
+    );
+    expect(unlinkResponse.ok(), await unlinkResponse.text()).toBe(true);
+  }
+
   await page.goto('/employees');
   await page.getByRole('link', { name: 'Create employee' }).click();
   await page.getByLabel('Employee number').fill(employeeNumber);
@@ -57,7 +77,7 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
   await page.getByRole('button', { name: 'Create employee' }).click();
   await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
 
-  await page.getByLabel('Agency Membership').selectOption({ index: 1 });
+  await page.getByLabel('Agency Membership').selectOption(session.membershipId);
   await page.getByRole('button', { name: 'Link membership' }).click();
   await expect(page.getByText('LINKED', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Maintain PDS' }).click();
