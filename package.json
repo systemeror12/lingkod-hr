@@ -16,6 +16,7 @@
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
     "test:e2e:phase3": "pnpm --filter @lingkod-hr/web test:e2e:phase3",
+    "test:e2e:phase5": "pnpm --filter @lingkod-hr/web test:e2e:phase5",
     "typecheck": "turbo run typecheck",
     "validate": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

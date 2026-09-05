@@ -34,7 +34,7 @@ function context(permissions: RequestContext['permissions']): RequestContext {
   };
 }
 
-function record(encryptedValue: Buffer) {
+function record(encryptedValue: Uint8Array) {
   return {
     id: identifierId,
     agencyId,
@@ -133,6 +133,23 @@ it('returns plaintext only on an authorized reveal and keeps it out of the audit
   });
   expect(JSON.stringify(auditEvents[0]?.data)).not.toContain(plaintext);
   expect(JSON.stringify(auditEvents[0]?.data.metadata)).not.toContain(plaintext);
+});
+
+it('reveals values returned from Prisma as Uint8Array', async () => {
+  const plaintext = 'TIN-123456789';
+  const sealed = sealedValue(plaintext);
+  setupTransaction(record(new Uint8Array(sealed.envelope)));
+  process.env.DATA_ENCRYPTION_KEY = key.toString('hex');
+  const service = new GovernmentIdentifiersService(governmentIdentifierAuditWriter);
+
+  await expect(
+    service.reveal(
+      context([{ code: 'personnel.identifiers.reveal', scopePolicy: 'AGENCY' }]),
+      employeeId,
+      identifierId,
+      { reason: 'Review the submitted record.' },
+    ),
+  ).resolves.toMatchObject({ value: plaintext });
 });
 
 it('audits tampered ciphertext as a failed reveal without exposing the value', async () => {

@@ -764,7 +764,10 @@ export class GovernmentIdentifiersService {
         } else {
           auditStatus = 'FAILED';
           try {
-            const opened = decryptProtectedValue(record.encryptedValue, this.protectedValueKey);
+            const opened = decryptProtectedValue(
+              Buffer.from(record.encryptedValue),
+              this.protectedValueKey,
+            );
             if (!protectedValueMatchesRecord(opened.metadata, employeeId, record.identifierType)) {
               result = { kind: 'failed' };
             } else {

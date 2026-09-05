@@ -9,6 +9,7 @@
     "test": "vitest run --passWithNoTests --exclude 'e2e/**'",
     "test:e2e": "playwright test",
     "test:e2e:phase3": "playwright test e2e/phase-3.spec.ts --project=chromium",
+    "test:e2e:phase5": "playwright test e2e/phase-5.spec.ts --project=chromium",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

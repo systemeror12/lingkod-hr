@@ -10,6 +10,7 @@ const foreignAgencyId = '11111111-1111-4111-8111-111111111111';
 const foreignUnitId = '22222222-2222-4222-8222-222222222222';
 const foreignUnitVersionId = '33333333-3333-4333-8333-333333333333';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
+const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
 
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -152,34 +153,8 @@ async function seed(): Promise<void> {
     }));
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'PlantillaPosition' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'OrganizationUnit' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'StaffingAuthority' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'QualificationStandard' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'Employee' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'PdsVersion' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'PayrollBankAccount' },
-    });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'ServiceRecordSnapshot' },
-    });
+    await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.serviceRecordSnapshot.deleteMany({ where: { agencyId: agency.id } });
-    await transaction.auditEvent.deleteMany({
-      where: { agencyId: agency.id, entityType: 'PersonnelAction' },
-    });
     await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationEffect.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationCase.deleteMany({ where: { agencyId: agency.id } });
@@ -190,6 +165,7 @@ async function seed(): Promise<void> {
     });
     await transaction.personnelActionVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.personnelAction.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.personnelBaseline.deleteMany({ where: { agencyId: agency.id } });
     await transaction.positionIncumbency.deleteMany({ where: { agencyId: agency.id } });
     await transaction.employee.updateMany({
       where: { agencyId: agency.id },
@@ -203,7 +179,24 @@ async function seed(): Promise<void> {
     });
     await transaction.plantillaPositionVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.governmentIdentifier.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollBankAccount.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.salnComplianceRecord.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.employeeDocument.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsOutputArtifact.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsWesEntry.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsWesArtifact.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsTransitionEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsPageSignature.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsCertificationDetails.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsReferenceRecord.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsDeclarationDetails.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsOtherInformation.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsLearningDevelopmentRecord.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsVoluntaryWorkRecord.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsWorkExperienceRecord.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsEligibilityRecord.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.pdsEducationRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsFamilyRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsPersonalDetails.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsVersion.deleteMany({ where: { agencyId: agency.id } });
@@ -221,6 +214,12 @@ async function seed(): Promise<void> {
     });
     await transaction.qualificationStandardVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.qualificationStandard.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.documentVersion.deleteMany({
+      where: { agencyId: agency.id, document: { documentNo: { startsWith: 'P5-PDS-' } } },
+    });
+    await transaction.document.deleteMany({
+      where: { agencyId: agency.id, documentNo: { startsWith: 'P5-PDS-' } },
+    });
     await transaction.documentVersion.deleteMany({
       where: {
         agencyId: agency.id,
@@ -406,6 +405,41 @@ async function seed(): Promise<void> {
     await transaction.plantillaPositionVersion.update({
       where: { id: positionVersion.id },
       data: { domainStatus: 'OCCUPIED' },
+    });
+
+    const vacantPosition = await transaction.plantillaPosition.create({
+      data: {
+        agencyId: agency.id,
+        itemNumber: 'HRM-000143',
+        status: 'VACANT',
+        createdFromAuthorityId: authority.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const vacantPositionVersion = await transaction.plantillaPositionVersion.create({
+      data: {
+        agencyId: agency.id,
+        positionId: vacantPosition.id,
+        organizationUnitId: unit.id,
+        qualificationStandardVersionId: standardVersion.id,
+        staffingAuthorityId: authority.id,
+        versionNo: 1,
+        positionTitle: 'Human Resource Management Officer III',
+        parentheticalTitle: 'Personnel Records',
+        salaryGrade: 18,
+        fundingSource: 'General Appropriations Act',
+        employmentCategory: 'PLANTILLA',
+        effectiveFrom: new Date('2026-01-01'),
+        status: 'ACTIVE',
+        domainStatus: 'VACANT',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.plantillaPosition.update({
+      where: { id: vacantPosition.id },
+      data: { currentVersionId: vacantPositionVersion.id },
     });
 
     const employee = await transaction.employee.create({
@@ -626,9 +660,38 @@ async function seed(): Promise<void> {
     },
   });
   await resetProfile(foreignAgency);
+  const foreignUser = await prisma.user.upsert({
+    where: { emailNormalized: 'foreign.personnel@example.test' },
+    update: { displayName: 'Foreign Personnel User', globalStatus: 'ACTIVE' },
+    create: {
+      identityProvider: issuer,
+      externalSubject: 'local-foreign-personnel',
+      emailNormalized: 'foreign.personnel@example.test',
+      displayName: 'Foreign Personnel User',
+      globalStatus: 'ACTIVE',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  const foreignMembership =
+    (await prisma.agencyMembership.findFirst({
+      where: { agencyId: foreignAgency.id, userId: foreignUser.id },
+    })) ??
+    (await prisma.agencyMembership.create({
+      data: {
+        agencyId: foreignAgency.id,
+        userId: foreignUser.id,
+        status: 'ACTIVE',
+        activatedAt: new Date(),
+      },
+    }));
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.agencyMembership.updateMany({
+      where: { agencyId: foreignAgency.id },
+      data: { employeeId: null },
+    });
+    await transaction.employee.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnit.create({
@@ -671,6 +734,20 @@ async function seed(): Promise<void> {
           unitType: 'OFFICE',
           effectiveDate: '2026-08-16',
         },
+      },
+    });
+    await transaction.employee.create({
+      data: {
+        id: foreignEmployeeId,
+        agencyId: foreignAgency.id,
+        employeeNumber: 'FOREIGN-0001',
+        legalName: 'Synthetic Foreign Employee',
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: 'foreign.personnel@example.test',
+        createdByMembershipId: foreignMembership.id,
+        updatedByMembershipId: foreignMembership.id,
       },
     });
   });

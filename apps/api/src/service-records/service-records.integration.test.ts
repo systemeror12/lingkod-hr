@@ -214,6 +214,15 @@ it.skipIf(!enabled)(
               approvedAt: new Date('2025-01-01'),
             },
           });
+          await transaction.personnelAction.update({
+            where: { agencyId_id: { agencyId, id: action.id } },
+            data: {
+              status: 'EFFECTIVE',
+              effectuatedByMembershipId: membership.id,
+              effectuatedAt: new Date('2025-01-01'),
+              effectuationKey: `service-record-${suffix}`,
+            },
+          });
         },
       );
 

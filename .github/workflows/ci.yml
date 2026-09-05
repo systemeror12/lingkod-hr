@@ -41,6 +41,15 @@ jobs:
           DATABASE_E2E: 'true'
           DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
         run: pnpm test:e2e:phase3
+      - name: Test Phase 5 acceptance gate
+        env:
+          DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
+          DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
+          DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
+          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
+          DATABASE_E2E: 'true'
+          DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
+        run: pnpm test:e2e:phase5
       - name: Validate repository
         env:
           DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris

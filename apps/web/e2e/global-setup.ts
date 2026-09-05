@@ -17,7 +17,17 @@ export default async function globalSetup(): Promise<void> {
 
   execFileSync(
     'docker',
-    ['compose', '-f', 'infrastructure/compose.yaml', 'up', '-d', 'postgres', 'mailpit', '--wait'],
+    [
+      'compose',
+      '-f',
+      'infrastructure/compose.yaml',
+      'up',
+      '-d',
+      'postgres',
+      'seaweedfs',
+      'mailpit',
+      '--wait',
+    ],
     { cwd: repositoryRoot, env: environment, stdio: 'inherit' },
   );
   execFileSync('pnpm', ['db:migrate'], {
