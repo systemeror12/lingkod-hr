@@ -52,7 +52,11 @@ export default async function ServiceRecordsPage() {
   if (
     typeof value !== 'object' ||
     value === null ||
-    !Array.isArray((value as { records?: unknown }).records)
+    !Array.isArray((value as { records?: unknown }).records) ||
+    !(
+      (value as { nextCursor?: unknown }).nextCursor === null ||
+      typeof (value as { nextCursor?: unknown }).nextCursor === 'string'
+    )
   )
     throw new Error('The Service Record response was invalid.');
 
@@ -60,7 +64,10 @@ export default async function ServiceRecordsPage() {
     <ServiceRecordWorkspace
       agencyId={session.agencyId}
       canGenerate={hasPermission(session, 'personnel.service_records.generate')}
-      canReplace={hasPermission(session, 'personnel.service_records.replace')}
+      canReplace={
+        hasPermission(session, 'personnel.service_records.replace') &&
+        hasPermission(session, 'documents.evidence.read')
+      }
       initial={value as ServiceRecordListResponse}
     />
   );

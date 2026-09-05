@@ -6,6 +6,7 @@ import {
   Inject,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -16,6 +17,7 @@ import { PermissionGuard } from '../auth/permission.guard';
 import {
   serviceRecordGenerationSchema,
   serviceRecordIdSchema,
+  serviceRecordListSchema,
   serviceRecordReplacementSchema,
 } from './service-records.schemas';
 import {
@@ -44,10 +46,13 @@ export class ServiceRecordsController {
   async list(
     @Param('agencyId') agencyId: string,
     @CurrentContext() context: RequestContext,
-  ): Promise<{ records: ServiceRecordSummary[] }> {
+    @Query() query?: unknown,
+  ): Promise<{ records: ServiceRecordSummary[]; nextCursor: string | null }> {
     this.assertAgency(agencyId, context);
+    const input = serviceRecordListSchema.safeParse(query ?? {});
+    if (!input.success) throw this.invalidInput(context);
     try {
-      return { records: await this.service.list(context) };
+      return await this.service.list(context, input.data);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

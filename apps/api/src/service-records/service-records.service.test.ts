@@ -22,7 +22,12 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 function service(): ServiceRecordsService {
-  return new ServiceRecordsService(serviceRecordAuditWriter);
+  return new ServiceRecordsService(serviceRecordAuditWriter, {
+    resolveExternalEvidenceInTransaction: async () => ({
+      ok: false,
+      reason: 'DOCUMENT_NOT_FOUND',
+    }),
+  } as never);
 }
 
 it.each([

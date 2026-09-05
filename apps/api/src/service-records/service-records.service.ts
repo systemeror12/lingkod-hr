@@ -3,9 +3,9 @@ import { Prisma } from '@prisma/client';
 import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { DocumentsService } from '../documents/documents.service';
 
 const RENDERING_CONTRACT_VERSION = 'service-record-printable-v1';
-const LIST_LIMIT = 200;
 
 export interface ServiceRecordGenerationInput {
   employeeId: string;
@@ -194,9 +194,13 @@ export class ServiceRecordsService {
   constructor(
     @Inject(SERVICE_RECORD_AUDIT_WRITER)
     private readonly auditWriter: ServiceRecordAuditWriter,
+    @Inject(DocumentsService) private readonly documentsService: DocumentsService,
   ) {}
 
-  async list(context: RequestContext): Promise<ServiceRecordSummary[]> {
+  async list(
+    context: RequestContext,
+    input: { cursor?: string | undefined; limit: number } = { limit: 50 },
+  ): Promise<{ records: ServiceRecordSummary[]; nextCursor: string | null }> {
     this.assertAnyReadPermission(context);
     const agencyWide = hasPermission(context, 'personnel.service_records.read', {
       agencyId: context.agencyId,
@@ -209,11 +213,16 @@ export class ServiceRecordsService {
             ? { employee: { memberships: { some: { userId: context.userId } } } }
             : {}),
         },
-        orderBy: { generatedAt: 'desc' },
-        take: LIST_LIMIT,
+        orderBy: [{ generatedAt: 'desc' }, { id: 'desc' }],
+        take: input.limit + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
         select: serviceRecordSelect,
       });
-      return rows.map(toSummary);
+      const page = rows.slice(0, input.limit);
+      return {
+        records: page.map(toSummary),
+        nextCursor: rows.length > input.limit ? (page.at(-1)?.id ?? null) : null,
+      };
     });
   }
 
@@ -293,24 +302,19 @@ export class ServiceRecordsService {
             'SERVICE_RECORD_ALREADY_REPLACED',
           );
         }
-        const evidence = await transaction.document.findUnique({
-          where: {
-            agencyId_id: { agencyId: context.agencyId, id: input.evidenceDocumentId },
+        const evidence = await this.documentsService.resolveExternalEvidenceInTransaction(
+          transaction,
+          context,
+          {
+            documentId: input.evidenceDocumentId,
+            versionId: input.evidenceDocumentVersionId,
+            allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+              agencyId: context.agencyId,
+            }),
+            requirement: 'FINALIZED_VERSION',
           },
-          select: {
-            status: true,
-            versions: {
-              where: { id: input.evidenceDocumentVersionId },
-              take: 1,
-              select: { id: true },
-            },
-          },
-        });
-        if (
-          !evidence ||
-          !['APPROVED', 'FINAL'].includes(evidence.status) ||
-          !evidence.versions[0]
-        ) {
+        );
+        if (!evidence.ok) {
           throw new ServiceRecordServiceError(
             'The exact correction evidence version is unavailable or not final.',
             404,

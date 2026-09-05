@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { DocumentsModule } from '../documents/documents.module';
 import { ServiceRecordsController } from './service-records.controller';
 import {
   serviceRecordAuditWriter,
@@ -8,7 +9,7 @@ import {
 } from './service-records.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, DocumentsModule],
   controllers: [ServiceRecordsController],
   providers: [
     ServiceRecordsService,

@@ -2,6 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
+import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { serviceRecordAuditWriter, ServiceRecordsService } from './service-records.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -216,7 +217,8 @@ it.skipIf(!enabled)(
         },
       );
 
-      const service = new ServiceRecordsService(serviceRecordAuditWriter);
+      const documentsService = new DocumentsService({} as never, documentAuditWriter);
+      const service = new ServiceRecordsService(serviceRecordAuditWriter, documentsService);
       const requestContext = context(agencyId, userId, membership.id);
       const original = await service.generate(requestContext, {
         employeeId: employee.id,
@@ -232,7 +234,10 @@ it.skipIf(!enabled)(
         ...requestContext,
         permissions: [{ code: 'personnel.service_records.read', scopePolicy: 'OWN' as const }],
       };
-      await expect(service.list(ownContext)).resolves.toHaveLength(1);
+      await expect(service.list(ownContext)).resolves.toMatchObject({
+        records: [{ id: original.id }],
+        nextCursor: null,
+      });
       await expect(service.findById(ownContext, original.id)).resolves.toMatchObject({
         id: original.id,
       });
@@ -288,6 +293,12 @@ it.skipIf(!enabled)(
         correctionReason: 'Regenerate from the corrected retained source history.',
         snapshot: { serviceSegments: [{ id: correctedSegment.id, salaryStep: 3 }] },
       });
+      const firstPage = await service.list(requestContext, { limit: 1 });
+      expect(firstPage).toMatchObject({ records: [{ id: replacement.id }] });
+      expect(firstPage.nextCursor).toBe(replacement.id);
+      await expect(
+        service.list(requestContext, { limit: 1, cursor: firstPage.nextCursor ?? undefined }),
+      ).resolves.toMatchObject({ records: [{ id: original.id }], nextCursor: null });
       await expect(service.findById(requestContext, original.id)).resolves.toMatchObject({
         snapshot: { serviceSegments: [{ salaryStep: 2 }] },
         replacementSnapshotId: replacement.id,

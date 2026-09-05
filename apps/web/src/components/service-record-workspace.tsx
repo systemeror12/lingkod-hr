@@ -52,6 +52,7 @@ interface ServiceRecord {
 
 export interface ServiceRecordListResponse {
   records: ServiceRecord[];
+  nextCursor: string | null;
 }
 
 interface EmployeeOption {
@@ -116,6 +117,7 @@ export function ServiceRecordWorkspace({
   initial: ServiceRecordListResponse;
 }) {
   const [records, setRecords] = useState(initial.records);
+  const [nextCursor, setNextCursor] = useState(initial.nextCursor);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [selected, setSelected] = useState<ServiceRecord | null>(null);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
@@ -128,6 +130,7 @@ export function ServiceRecordWorkspace({
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
   const employeeRef = useRef<{ focus(): void } | null>(null);
   const reasonRef = useRef<{ focus(): void } | null>(null);
   const returnFocusRef = useRef<(() => void) | null>(null);
@@ -223,6 +226,23 @@ export function ServiceRecordWorkspace({
       setDialog('preview');
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : 'Replacement failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setBusy(true);
+    setListError('');
+    try {
+      const page = await api<ServiceRecordListResponse>(
+        `/api/v1/agencies/${agencyId}/service-records?cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      setRecords((current) => [...current, ...page.records]);
+      setNextCursor(page.nextCursor);
+    } catch (cause: unknown) {
+      setListError(cause instanceof Error ? cause.message : 'Loading failed.');
     } finally {
       setBusy(false);
     }
@@ -350,6 +370,18 @@ export function ServiceRecordWorkspace({
           </div>
         )}
       </section>
+      {listError ? (
+        <p className="mt-4 text-center text-sm text-[#a73333]" role="alert">
+          {listError}
+        </p>
+      ) : null}
+      {nextCursor ? (
+        <div className="mt-4 flex justify-center">
+          <Button disabled={busy} size="default" variant="secondary" onClick={loadMore}>
+            {busy ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      ) : null}
 
       <Dialog open={dialog !== null} onOpenChange={(value) => !value && !busy && setDialog(null)}>
         {dialog === 'generate' ? (
@@ -617,7 +649,7 @@ export function ServiceRecordWorkspace({
               <div>
                 <DialogTitle>Service Record history</DialogTitle>
                 <DialogDescription id="service-record-history-description">
-                  Every issued snapshot for {selected.employee.legalName} in your permitted scope.
+                  Loaded issued snapshots for {selected.employee.legalName} in your permitted scope.
                 </DialogDescription>
               </div>
               <DialogClose asChild>
