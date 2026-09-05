@@ -823,7 +823,7 @@ async function seed(): Promise<void> {
         id: foreignIdentifierId,
         agencyId: foreignAgency.id,
         employeeId: foreignEmployeeId,
-        identifierType: 'GSIS',
+        identifierType: 'PHILHEALTH',
         encryptedValue: Buffer.from('foreign-protected-fixture'),
         maskedValue: '••••0001',
         effectiveFrom: new Date('2026-01-01'),
