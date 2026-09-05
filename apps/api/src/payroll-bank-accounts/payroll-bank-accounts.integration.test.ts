@@ -8,6 +8,7 @@ import {
 } from './payroll-bank-accounts.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
+process.env.DATA_ENCRYPTION_KEY ||= Buffer.alloc(32, 7).toString('hex');
 
 function adminUrl(): string {
   const value = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
