@@ -115,12 +115,6 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
   await dialog.getByLabel('Sex at birth').selectOption('FEMALE');
   await dialog.getByLabel('Civil status').selectOption('MARRIED');
   await dialog.getByLabel('Citizenship').selectOption('FILIPINO');
-  await dialog.getByLabel('UMID ID no.').fill('N/A');
-  await dialog.getByLabel('Pag-IBIG ID no.').fill('N/A');
-  await dialog.getByLabel('PhilHealth no.').fill('N/A');
-  await dialog.getByLabel('PhilSys PCN').fill('N/A');
-  await dialog.getByLabel('TIN', { exact: true }).fill('N/A');
-  await dialog.getByLabel('Agency employee no.').fill(employeeNumber);
   for (const label of [
     'House / block / lot no.',
     'Street',

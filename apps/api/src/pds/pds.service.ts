@@ -745,12 +745,6 @@ type PdsPersonalRecord = {
   heightMeters: DecimalLike | null;
   weightKilograms: DecimalLike | null;
   bloodType: string | null;
-  umidIdNumber: string | null;
-  pagibigIdNumber: string | null;
-  philhealthNumber: string | null;
-  philSysCardNumber: string | null;
-  tinNumber: string | null;
-  agencyEmployeeNumber: string | null;
   citizenship: string | null;
   dualCitizenshipType: string | null;
   dualCitizenshipCountry: string | null;
@@ -2024,17 +2018,7 @@ function requirePersonalCompleteness(record: PdsRecord): void {
   ] as const) {
     requireValue(personal[field], `personal.${field}`, `Complete ${field} before submission.`);
   }
-  for (const field of [
-    'umidIdNumber',
-    'pagibigIdNumber',
-    'philhealthNumber',
-    'philSysCardNumber',
-    'tinNumber',
-    'agencyEmployeeNumber',
-    'telephoneNumber',
-    'mobileNumber',
-    'emailAddress',
-  ] as const) {
+  for (const field of ['telephoneNumber', 'mobileNumber', 'emailAddress'] as const) {
     requireValue(personal[field], `personal.${field}`, `Complete ${field} or enter N/A.`);
   }
   requireAddressCompleteness(personal.residentialAddress, 'personal.residentialAddress', 'Item 17');
