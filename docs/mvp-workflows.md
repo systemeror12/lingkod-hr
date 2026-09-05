@@ -1,4 +1,5 @@
 # Philippine Public-Sector HRIS MVP
+
 ## Business Process Workflow Specification
 
 **Document status:** Draft for review  
@@ -35,7 +36,7 @@ The workflow set differs materially from a private-sector HRIS because the publi
 # 3. Workflow Index
 
 | ID | Workflow |
-|---|---|
+| ------ | -------------------------------------------------- |
 | WF-001 | User Invitation, Login, and Agency Access |
 | WF-002 | Plantilla Position Creation and Vacancy Control |
 | WF-003 | Vacancy Publication and Merit Selection |
@@ -133,28 +134,30 @@ Controls:
 ```mermaid
 flowchart TD
     A[Requesting office selects vacant position] --> B[Submit request to fill]
-    B --> C[HR validates position, qualification standard, and authority]
-    C --> D{Valid vacancy?}
+    B --> C[HR validates Recruitable Vacancy and resolves governing configuration]
+    C --> D{Exactly one MSP, criteria set, board, and required route set?}
     D -- No --> E[Reject or return request]
-    D -- Yes --> F[Prepare vacancy publication data]
-    F --> G[Obtain required approval]
-    G --> H[Record publication channel and dates]
-    H --> I[Accept applications]
-    I --> J[Validate documents and PDS-compatible data]
-    J --> K[Screen against qualification standard]
-    K --> L{Meets minimum requirements?}
-    L -- No --> M[Record non-qualification reason]
-    L -- Yes --> N[Proceed to assessment and interview]
-    N --> O[Record scores, evidence, and evaluator comments]
-    O --> P[Selection board deliberation]
-    P --> Q[Board recommendation]
-    Q --> R[Appointing authority reviews]
-    R --> S{Decision}
-    S -- Select --> T[Create selected-candidate record]
-    S -- Return --> U[Return for further review]
-    S -- No selection --> V[Close or republish vacancy]
-    U --> P
-    T --> W[Begin appointment preparation]
+    D -- Yes --> F[Bind configuration to Recruitment Case]
+    F --> G[Prepare CS Form No. 9 and publication evidence]
+    G --> H[Obtain approvals through bound route versions]
+    H --> I[Publish and freeze governing bindings]
+    I --> J[Accept applications]
+    J --> K[Validate documents and PDS-compatible data]
+    K --> L[Screen against bound Qualification Standard Version]
+    L --> M{Meets minimum requirements?}
+    M -- No --> N[Record non-qualification reason]
+    M -- Yes --> O[Assess using bound criteria set]
+    O --> P{Publication period elapsed and screening complete?}
+    P -- No --> Y[Block deliberation]
+    P -- Yes --> Q[Freeze board roster and applicant-specific quorum]
+    Q --> R[Record participation, conflicts, recusals, and results]
+    R --> S[Board recommendation and comparative report]
+    S --> T[Appointing authority reviews advisory records]
+    T --> U{Action}
+    U -- Select --> V[Record Selection Decision and send idempotent package to Appointment]
+    U -- Return --> W[Return for authorized further review]
+    U -- No selection --> X[Record Selection Decision and close or republish vacancy]
+    W --> Q
 ```
 
 Required audit:
@@ -174,31 +177,34 @@ AI may summarize credentials but cannot make the final decision.
 
 ```mermaid
 flowchart TD
-    A[Selected candidate and vacant item] --> B[Prepare appointment record]
-    B --> C[Attach qualification and selection evidence]
-    C --> D[Validate salary grade, step, status, and position occupancy]
+    A[Receive immutable Recruitment selection package] --> B[Revalidate Plantilla reservation]
+    B --> C[Prepare Appointment Version and exact form package]
+    C --> D[Validate evidence, classification, signature authority, and reservation]
     D --> E{Complete and valid?}
     E -- No --> F[Return for correction]
-    F --> B
+    F --> C
     E -- Yes --> G[Route for HR and legal or authorized review]
     G --> H[Route to appointing authority]
-    H --> I{Signed or approved?}
+    H --> I{Signed by authorized authority?}
     I -- No --> J[Return or cancel]
-    I -- Yes --> K[Set appointment ISSUED]
-    K --> L[Prepare CSC transmittal or tracking record]
-    L --> M[Record submission and acknowledgment]
-    M --> N{CSC or authority action}
-    N -- Returned --> O[Record deficiency and comply]
-    O --> L
-    N -- Invalidated --> P[Record invalidation and required action]
-    N -- Validated or recorded --> Q[Update appointment status]
-    Q --> R[Administer oath of office]
-    R --> S[Record certification of assumption to duty]
-    S --> T{Actual assumption occurred?}
-    T -- No --> U[Keep appointee pending and item reserved]
-    T -- Yes --> V[Create active service segment]
-    V --> W[Set position OCCUPIED]
-    W --> X[Begin onboarding and payroll eligibility]
+    I -- Yes --> K[Freeze Issued Appointment Contract]
+    K --> L[Furnish Appointment and record acknowledgment]
+    L --> M[External CSC tracking branch]
+    L --> N[Oath and assumption branch]
+    M --> O[Append submission, receipt, return, or resubmission event]
+    O --> P[Append evidenced CSC action when received]
+    P --> Q{Adverse action?}
+    Q -- Yes --> R[Route to applicable personnel response]
+    Q -- No --> S[Retain external standing]
+    N --> T[Record versioned oath]
+    T --> U[Record evidenced Assumption to Duty]
+    U --> V{Actual assumption certified?}
+    V -- No --> W[Keep reservation or record evidenced failure or cancellation]
+    V -- Yes --> X[Publish Assumed Appointment Contract]
+    X --> Y[Personnel activates service]
+    X --> Z[Plantilla creates incumbency]
+    Y --> AA[Close Recruitment Case after atomic handoff]
+    Z --> AA
 ```
 
 Appointment states:
@@ -208,12 +214,10 @@ DRAFT
 FOR_REVIEW
 FOR_SIGNATURE
 ISSUED
-SUBMITTED
-VALIDATED
-RETURNED
-INVALIDATED
 CANCELLED
 ```
+
+`SUBMITTED`, `RETURNED`, `VALIDATED`, and `INVALIDATED` describe external events or a derived external standing, not Appointment workflow states. CSC tracking does not gate the oath or assumption branch. Selection and issuance do not activate service.
 
 ---
 
@@ -623,7 +627,7 @@ Shared
 # 18. Approval
 
 | Role | Name | Decision | Date |
-|---|---|---|---|
+| ----------------------------- | ---- | -------- | ---- |
 | Product Owner |  | Pending |  |
 | Government HR / HRMO Reviewer |  | Pending |  |
 | Payroll / Accounting Reviewer |  | Pending |  |
@@ -634,5 +638,5 @@ Shared
 # 19. Change Log
 
 | Version | Date | Description |
-|---|---|---|
+| ------- | -------------- | ---------------------------------------------------------------------------- |
 | 1.0 | August 5, 2026 | Replaced private-sector workflows with Philippine public-sector HR workflows |

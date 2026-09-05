@@ -1,8 +1,10 @@
 # Philippine Public-Sector HRIS MVP
+
 ## Status Transition and Role-Permission Control Specification
 
 **Document status:** Draft for approval  
 **Source documents:**  
+
 - Philippine Public-Sector HRIS MVP BRD v1.0  
 - Philippine Public-Sector HRIS MVP Workflow Specification v1.0  
 
@@ -113,7 +115,7 @@ The permission string stored in the system may remain normalized while scope is 
 # 4. Baseline Roles
 
 | Role | Purpose |
-|---|---|
+| ------------------------------ | -------------------------------------------------------------------------------- |
 | Agency Administrator | Manages agency setup, accounts, roles, and technical configuration |
 | HRMO Administrator | Broad HR management excluding unrestricted payroll and system administration |
 | Plantilla Officer | Manages authorized positions and position history |
@@ -157,7 +159,7 @@ DEACTIVATED
 ```
 
 | Current | Action | Next | Primary actor | Required permission | Validations | Side effects and audit |
-|---|---|---|---|---|---|---|
+| ----------- | ------------------ | ----------- | --------------------------------------------- | --------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
 | None | Invite user | INVITED | Agency Administrator | `security.users.invite` | Valid email; agency exists; role assignment permitted | Create invitation; send email; audit invitation |
 | INVITED | Accept invitation | ACTIVE | Invited user | Public invitation flow | Token valid, unused, unexpired; email verified | Create credentials; activate membership; audit activation |
 | INVITED | Resend invitation | INVITED | Agency Administrator | `security.users.invite` | Existing invitation pending; resend limit | Replace or renew token; audit resend |
@@ -192,7 +194,7 @@ ABOLISHED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| -------- | -------------------- | --------- | --------------------------- | ------------------------------- | ------------------------------------------------------- | ----------------------------------- |
 | None | Create unit | DRAFT | Agency Administrator / HRMO | `organization.units.create` | Parent unit and effective date valid | Create draft history |
 | DRAFT | Activate | ACTIVE | Agency Administrator / HRMO | `organization.units.activate` | Code and hierarchy valid | Unit becomes assignable |
 | ACTIVE | Rename or reorganize | ACTIVE | HRMO Administrator | `organization.units.update` | Effective date; no hierarchy cycle | Create history version |
@@ -218,7 +220,7 @@ ABOLISHED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects and audit |
-|---|---|---|---|---|---|---|
+| ---------- | ---------------------------------- | ---------- | ------------------------- | ------------------------------------- | ------------------------------------------------- | ------------------------------------------- |
 | None | Create proposed item | PROPOSED | Plantilla Officer | `positions.items.create` | Item number format; unit exists | Create position history |
 | PROPOSED | Authorize item | AUTHORIZED | HRMO / Budget Officer | `positions.items.authorize` | Supporting authority; grade; funding; QS | Mark authorized; audit authority |
 | AUTHORIZED | Declare vacant | VACANT | Plantilla Officer | `positions.items.declare_vacant` | No active incumbent | Enable request-to-fill |
@@ -241,7 +243,7 @@ Critical rule:
 VACANT → OCCUPIED
 ```
 
-is permitted only through an issued appointment or approved personnel action with assumption/effectivity validation.
+is permitted only through an Assumed Appointment Contract or an effectual personnel action.
 
 ---
 
@@ -260,11 +262,12 @@ CLOSED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------- | ----------------------- | ---------- | --------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | None | Create request | DRAFT | Requesting Office / Recruitment Officer | `recruitment.requests.create` | Position is VACANT; office scope valid | Create request |
 | DRAFT | Submit | SUBMITTED | Requesting Office | `recruitment.requests.submit` | Required justification complete | Start review |
-| SUBMITTED | Begin review | FOR_REVIEW | Recruitment Officer / HRMO | `recruitment.requests.review` | Position still vacant and funded | Create review task |
-| FOR_REVIEW | Approve | APPROVED | Authorized HR / Agency Approver | `recruitment.requests.approve` | Authority, funding, and QS confirmed | Permit vacancy publication |
+| SUBMITTED  | Begin review            | FOR_REVIEW | Recruitment Officer / HRMO              | `recruitment.requests.review`     | Position remains a Recruitable Vacancy; exactly one applicable Agency Merit Selection Plan Version, Merit Selection Criteria Set, Board Definition with effective appointments, and every required Approval Route Version resolve server-side | Store immutable governing bindings; create review task      |
+| FOR_REVIEW | Rebaseline MSP          | FOR_REVIEW | HRMO Administrator                      | `recruitment.requests.rebaseline` | Not published; replacement configuration resolves uniquely; reason, authority, and evidence required                                                                                                  | Preserve former bindings; append rebaseline and Audit Event |
+| FOR_REVIEW | Approve                 | APPROVED   | Authorized HR / Agency Approver         | `recruitment.requests.approve`    | Authority, funding, QS, governing bindings, and required route decisions confirmed                                                                                                                    | Permit vacancy publication                                  |
 | FOR_REVIEW | Reject | REJECTED | Authorized HR / Agency Approver | `recruitment.requests.reject` | Reason required | Notify requesting office |
 | DRAFT | Cancel | CANCELLED | Requesting Office | `recruitment.requests.cancel` | Not submitted | Close request |
 | SUBMITTED | Withdraw | CANCELLED | Requesting Office / HRMO | `recruitment.requests.cancel` | No active publication | Stop workflow |
@@ -286,14 +289,14 @@ REPUBLISHED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------------- | ------------------- | ------------ | ---------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | None | Prepare publication | DRAFT | Recruitment Officer | `recruitment.vacancies.create` | Approved request to fill | Create publication draft |
 | DRAFT | Submit for approval | FOR_APPROVAL | Recruitment Officer | `recruitment.vacancies.submit` | Position details and dates complete | Start approval |
-| FOR_APPROVAL | Approve and publish | PUBLISHED | HRMO Approver | `recruitment.vacancies.publish` | Posting period and channels valid | Open applications; audit publication |
+| FOR_APPROVAL        | Approve and publish | PUBLISHED    | HRMO Approver                | `recruitment.vacancies.publish`   | Exact CS Form No. 9 Document Version; bound QS Version; required channels, dates, contact details, evidence, and certification; governing bindings still valid | Freeze bindings; open applications; audit publication              |
 | FOR_APPROVAL | Return | DRAFT | HRMO Approver | `recruitment.vacancies.return` | Comment required | Notify officer |
 | PUBLISHED | Close applications | CLOSED | Recruitment Officer / System | `recruitment.vacancies.close` | Closing date reached or authorized early closure | Stop normal submissions |
-| PUBLISHED | Cancel publication | CANCELLED | HRMO Administrator | `recruitment.vacancies.cancel` | Reason and authority required | Notify affected applicants |
-| CLOSED | Republish | REPUBLISHED | Recruitment Officer | `recruitment.vacancies.republish` | Approved basis; dates reset | Create linked new publication |
+| PUBLISHED           | Cancel publication  | CANCELLED    | HRMO Administrator           | `recruitment.vacancies.cancel`    | Reason and authority required; mandatory for a material post-publication policy or publication-data change                                                     | Notify affected applicants                                         |
+| CLOSED or CANCELLED | Republish           | REPUBLISHED  | Recruitment Officer          | `recruitment.vacancies.republish` | Approved basis; new exact form, dates, evidence, and governing bindings                                                                                        | Create linked publication without rewriting the former publication |
 
 ---
 
@@ -318,7 +321,7 @@ CLOSED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------------- | ------------------------------ | ---------------- | ----------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | None | Record application | RECEIVED | Recruitment Officer | `recruitment.applications.create` | Vacancy open or authorized late handling | Create applicant/application record |
 | RECEIVED | Mark incomplete | INCOMPLETE | Recruitment Officer | `recruitment.applications.screen` | Missing required evidence | Notify applicant where applicable |
 | INCOMPLETE | Complete application | RECEIVED | Recruitment Officer | `recruitment.applications.update` | Documents received before allowed cutoff | Reopen screening |
@@ -334,7 +337,7 @@ CLOSED
 | Any open state | Withdraw | WITHDRAWN | Recruitment Officer | `recruitment.applications.withdraw` | Applicant withdrawal evidence | Stop evaluation |
 | NOT_QUALIFIED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
 | NOT_SELECTED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
-| SELECTED | Close after appointment | CLOSED | Recruitment Officer | `recruitment.applications.close` | Appointment workflow started or completed | Preserve recruitment history |
+| SELECTED         | Close after service activation | CLOSED           | Recruitment Officer                 | `recruitment.applications.close`      | Idempotent Appointment handoff completed and Assumed Appointment Contract activated by Personnel and Plantilla | Preserve complete recruitment outcome links |
 
 AI may assist with summaries but may not execute `select`, `not select`, `qualify`, or `not qualified` as an autonomous final action.
 
@@ -349,30 +352,30 @@ DRAFT
 FOR_REVIEW
 FOR_SIGNATURE
 ISSUED
-SUBMITTED
-RETURNED
-VALIDATED
-INVALIDATED
 CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
-| None | Prepare appointment | DRAFT | Personnel Records Officer | `appointments.records.create` | Selected candidate; reserved position | Create appointment record |
+| ------------- | ------------------------ | ------------- | --------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| None          | Prepare appointment      | DRAFT         | Personnel Records Officer   | `appointments.records.create`  | Immutable Recruitment selection package received; Plantilla reservation revalidated; same active Agency                                                               | Create appointment record idempotently |
 | DRAFT | Submit for review | FOR_REVIEW | Personnel Records Officer | `appointments.records.submit` | Required fields and documents complete | Start review |
 | FOR_REVIEW | Return for correction | DRAFT | HRMO Reviewer | `appointments.records.return` | Comment required | Notify preparer |
 | FOR_REVIEW | Endorse for signature | FOR_SIGNATURE | HRMO Reviewer | `appointments.records.endorse` | QS and selection validation passed | Route to authority |
-| FOR_SIGNATURE | Issue appointment | ISSUED | Appointing Authority | `appointments.records.issue` | Signature authority; position reserved | Lock issued version |
+| FOR_SIGNATURE | Issue appointment        | ISSUED        | Appointing Authority        | `appointments.records.issue`   | Complete reviewed version; evidenced Agency form path and signature method; exact form and supporting Document Versions; signature authority; reservation still valid | Freeze Issued Appointment Contract     |
 | FOR_SIGNATURE | Reject or cancel | CANCELLED | Appointing Authority | `appointments.records.cancel` | Reason required | Release position reservation |
-| ISSUED | Record submission | SUBMITTED | Personnel Records Officer | `appointments.submissions.record` | Submission reference and date | Start external tracking |
-| SUBMITTED | Record return | RETURNED | Personnel Records Officer | `appointments.submissions.update` | Return basis documented | Create compliance task |
-| RETURNED | Resubmit | SUBMITTED | Personnel Records Officer | `appointments.submissions.record` | Deficiency resolved | Preserve submission history |
-| SUBMITTED | Record validation | VALIDATED | Personnel Records Officer / Authorized HR | `appointments.records.validate` | Official result evidence | Update appointment standing |
-| SUBMITTED | Record invalidation | INVALIDATED | Personnel Records Officer / Authorized HR | `appointments.records.invalidate` | Official basis required | Trigger personnel review |
 | ISSUED | Cancel before assumption | CANCELLED | Appointing Authority / HRMO | `appointments.records.cancel` | No active assumption or lawful cancellation basis | Release reservation |
-| RETURNED | Cancel | CANCELLED | HRMO / Appointing Authority | `appointments.records.cancel` | Decision basis | Release reservation |
 
-Issued and validated appointment versions are immutable; corrections require a linked amendment or replacement record.
+Issued Appointment Versions are immutable; corrections require a linked successor with reason, authority, and evidence. Employment Status and Nature of Appointment are official fields, not workflow states.
+
+External submission and CSC action events are append-only and may advance independently of Appointment Workflow Status, oath, and assumption:
+
+| Event                                               | Actor                                     | Permission                             | Validations                                                                                                                             | Side effects                                                   |
+| --------------------------------------------------- | ----------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Record submission, receipt, return, or resubmission | Personnel Records Officer                 | `appointments.external_events.record`  | Exact Appointment Version and evidence Document Version; external reference, date or time, receiving office, and reason when applicable | Append external submission event; derive standing              |
+| Record approval or disapproval                      | Personnel Records Officer / Authorized HR | `appointments.external_actions.record` | Agency is regulated; exact official Document Version                                                                                    | Append CSC action; route adverse action for personnel response |
+| Record validation or invalidation                   | Personnel Records Officer / Authorized HR | `appointments.external_actions.record` | Agency is accredited or deregulated; exact official Document Version                                                                    | Append CSC action; route adverse action for personnel response |
+
+The client cannot select the Agency form path or invent an external action. Missing evidenced regulatory or accreditation configuration blocks issuance and submission.
 
 ---
 
@@ -388,12 +391,15 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------- | ------------------------- | -------------- | ------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | None | Create pending assumption | PENDING | Personnel Records Officer | `appointments.assumption.create` | Appointment ISSUED | Reserve onboarding action |
-| PENDING | Record assumption | ASSUMED | Personnel Records Officer / Certifying Officer | `appointments.assumption.certify` | Oath and certification; actual date valid | Occupy position; create service segment; activate employee |
-| PENDING | Record failure to assume | DID_NOT_ASSUME | Personnel Records Officer | `appointments.assumption.fail` | Evidence and authority | Cancel onboarding; release reservation |
+| PENDING | Record or replace oath    | PENDING        | Personnel Records Officer / Administering Officer | `appointments.oath.record`        | Issued Appointment acknowledged; exact oath Document Version; date, authority, place or permitted method, and signatures                          | Append immutable oath version                                                                          |
+| PENDING | Record assumption         | ASSUMED        | Personnel Records Officer / Certifying Officer    | `appointments.assumption.certify` | Appointment is ISSUED and acknowledged; linked oath; exact assumption Document Version; actual date, certifying authority, and certification time | Publish Assumed Appointment Contract; atomically request Personnel activation and Plantilla incumbency |
+| PENDING | Record failure to assume  | DID_NOT_ASSUME | Personnel Records Officer                         | `appointments.assumption.fail`    | Required notice, dates, authority, and exact evidence Document Version                                                                            | Cancel onboarding; request Plantilla release                                                           |
 | PENDING | Cancel assumption | CANCELLED | HRMO / Appointing Authority | `appointments.assumption.cancel` | Appointment cancellation | Release position |
-| ASSUMED | Correct date | ASSUMED | Personnel Records Officer / HRMO Approver | `appointments.assumption.correct` | Supporting evidence; no conflicting payroll | Create correction history; recalculate dependent dates |
+| ASSUMED | Correct assumption        | ASSUMED        | Personnel Records Officer / HRMO Approver         | `appointments.assumption.correct` | Former value preserved; reason, authority, and exact evidence Document Version; dependent effects identified                                      | Append replacement version; recalculate dependent dates through owning services                        |
+
+CSC approval or validation is not a prerequisite for oath, assumption, salary entitlement, service activation, or occupancy. The oath-copy deadline remains a Configurable Placeholder until the conflicting national wording is resolved; both source dates and the actual submission event are retained.
 
 ---
 
@@ -411,7 +417,7 @@ DECEASED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------------- | ---------------------------- | -------------------- | -------------------------------- | ------------------------------------ | --------------------------------------------------- | --------------------------------------------------- |
 | None | Create preboarding employee | PREBOARDING | Personnel Records Officer | `personnel.employees.create` | Appointment preparation or direct authorized record | Create employee master |
 | PREBOARDING | Activate service | ACTIVE | Personnel Records Officer | `personnel.employees.activate` | Assumption completed; required setup | Include in HR and payroll scope |
 | ACTIVE | Record extended leave status | ON_EXTENDED_LEAVE | Leave Administrator / HRMO | `personnel.employees.change_status` | Approved leave basis | Adjust attendance and payroll scope |
@@ -442,7 +448,7 @@ SUPERSEDED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------ | ------------------------- | ------------ | ------------------------------------------ | ----------------------------------- | ----------------------------------------- | --------------------------------------------- |
 | None | Create action | DRAFT | Personnel Records Officer | `personnel.actions.create` | Employee and action type valid | Create draft |
 | DRAFT | Submit | FOR_REVIEW | Personnel Records Officer | `personnel.actions.submit` | Required authority and fields complete | Start HR review |
 | FOR_REVIEW | Return | RETURNED | HRMO Reviewer | `personnel.actions.return` | Comment required | Notify preparer |
@@ -472,7 +478,7 @@ ADJUSTED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------- | --------------------------- | ---------- | -------------------------------------------------- | ------------------------------- | --------------------------------- | -------------------------------------------- |
 | None | Create attendance day | PENDING | System | Internal | Employee and schedule valid | Initialize day |
 | PENDING | Calculate | CALCULATED | System / Attendance Administrator | `attendance.days.calculate` | Raw events and schedule available | Store computed values |
 | PENDING | Detect exception | EXCEPTION | System | Internal | Missing or inconsistent data | Create exception |
@@ -502,7 +508,7 @@ APPLIED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ----------------- | ------------------- | ----------------- | ------------------------------------- | -------------------------------- | ---------------------------------------- | -------------------------------- |
 | None | Create request | DRAFT | Employee / Attendance Administrator | `attendance.corrections.create` | Employee owns record or admin scope | Save draft |
 | DRAFT | Submit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested values and reason complete | Notify approver |
 | SUBMITTED | Request information | NEEDS_INFORMATION | Supervisor / Attendance Administrator | `attendance.corrections.return` | Comment required | Notify employee |
@@ -534,7 +540,7 @@ POSTED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------------ | ----------------------------- | ------------------ | ------------------------------ | ----------------------------------- | ------------------------------------------ | ----------------------------------------------- |
 | None | Create application | DRAFT | Employee / Leave Administrator | `leave.applications.create` | Leave type available | Save draft |
 | DRAFT | Submit | SUBMITTED | Employee | `leave.applications.submit` | Required fields and attachments | Start workflow |
 | SUBMITTED | Send for credit certification | FOR_CERTIFICATION | System / Leave Administrator | `leave.applications.route` | Employee record valid | Reserve review task |
@@ -569,7 +575,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| -------------- | -------------------- | ----------------- | -------------------------------------- | ----------------------------- | ---------------------------------------- | ----------------------------------------- |
 | None | Create request | DRAFT | Employee / Leave Administrator | `leave.monetization.create` | Eligible leave account | Save request |
 | DRAFT | Submit | SUBMITTED | Employee | `leave.monetization.submit` | Required reason and amount | Route validation |
 | SUBMITTED | Validate eligibility | FOR_VALIDATION | Leave Administrator | `leave.monetization.validate` | Balance, limits, retention, rule version | Store result |
@@ -598,7 +604,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------- | ---------------------- | ---------- | --------------------- | ------------------------------- | ------------------------------------------- | ------------------------------- |
 | None | Create authority | DRAFT | Supervisor / HRMO | `overtime.authorities.create` | Purpose, dates, employees, method | Save draft |
 | DRAFT | Submit | SUBMITTED | Supervisor | `overtime.authorities.submit` | Required details complete | Start review |
 | SUBMITTED | Review | FOR_REVIEW | HRMO / Budget Officer | `overtime.authorities.review` | Eligibility, necessity, funding | Create review result |
@@ -626,7 +632,7 @@ COMPENSATED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ----------------- | ---------------------- | ----------------- | --------------------------------- | --------------------------------- | ---------------------------------- | ----------------------------------------- |
 | None | Create expected record | PENDING | System / Supervisor | `overtime.service.create` | Approved authority | Initialize |
 | PENDING | Record service | RENDERED | Employee / Supervisor | `overtime.service.record` | Actual attendance/accomplishment | Store claimed hours |
 | RENDERED | Submit certification | FOR_CERTIFICATION | Employee / Supervisor | `overtime.service.submit` | Evidence complete | Route supervisor |
@@ -652,7 +658,7 @@ REVERSAL
 COC entries are immutable. Corrections shall create adjusting or reversing entries.
 
 | Action | Actor | Permission | Validation | Side effect |
-|---|---|---|---|---|
+| ----------------------- | ---------------------------- | ---------------------- | ------------------------------------------- | ----------------------- |
 | Post earned COC | Leave/Overtime Administrator | `overtime.coc.award` | Certified service and approved method | Increase balance |
 | Post CTO usage | Leave Administrator / System | `overtime.coc.use` | Approved CTO request and sufficient balance | Decrease balance |
 | Adjust COC | HRMO Approver | `overtime.coc.adjust` | Reason and supporting authority | Create adjustment entry |
@@ -677,7 +683,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------ | ----------------- | ------------ | ---------------------------- | ------------------------ | ------------------------------ | ------------------------------------- |
 | None | Create request | DRAFT | Employee | `overtime.cto.create` | COC account exists | Save |
 | DRAFT | Submit | SUBMITTED | Employee | `overtime.cto.submit` | Requested units valid | Start review |
 | SUBMITTED | Recommend | FOR_APPROVAL | Supervisor | `overtime.cto.recommend` | Service needs and balance | Route approval |
@@ -705,7 +711,7 @@ VOIDED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects and audit |
-|---|---|---|---|---|---|---|
+| ----------- | -------------------------- | ----------- | ------------------------------------------- | -------------------------------------- | ------------------------------------------------- | ------------------------------------------ |
 | None | Create period | DRAFT | Payroll Preparer | `payroll.periods.create` | No duplicate profile/period | Create period |
 | DRAFT | Start calculation | CALCULATING | Payroll Preparer | `payroll.periods.calculate` | Rule snapshot; source cutoff complete | Queue calculation |
 | CALCULATING | Complete calculation | FOR_REVIEW | System | Internal | No technical failure; results stored | Run validations |
@@ -741,7 +747,7 @@ SUPERSEDED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------- | ---------------- | ---------- | ------------------------- | ---------------------------- | -------------------------- | ------------------------------------------ |
 | None | Generate | GENERATING | System | Internal | Payroll FINALIZED | Queue PDF |
 | GENERATING | Mark ready | READY | System | Internal | File generated and secured | Store document |
 | READY | Release | RELEASED | Payroll Approver / System | `payroll.payslips.release` | Release policy satisfied | Notify employee |
@@ -768,7 +774,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| -------------- | ------------------- | -------------- | ------------------------------- | ---------------------------------- | ------------------------------ | ------------------------ |
 | None | Create cycle | DRAFT | Performance Management Officer | `performance.cycles.create` | Period and policy version | Create cycle |
 | DRAFT | Open planning | PLANNING | Performance Management Officer | `performance.cycles.open_planning` | Organizational goals available | Permit commitments |
 | PLANNING | Activate cycle | ACTIVE | Performance Management Officer | `performance.cycles.activate` | Required commitments approved | Start monitoring |
@@ -799,7 +805,7 @@ AMENDED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------- | ------------------------ | ---------- | --------------------- | ------------------------------------------- | --------------------------------- | ------------------------ |
 | None | Create commitment | DRAFT | Employee / Supervisor | `performance.commitments.create` | Active planning cycle | Save targets |
 | DRAFT | Submit | SUBMITTED | Employee | `performance.commitments.submit` | Required indicators complete | Notify supervisor |
 | SUBMITTED | Approve | APPROVED | Supervisor | `performance.commitments.approve` | Targets aligned and measurable | Lock approved plan |
@@ -830,7 +836,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| --------------------- | ------------------------- | --------------------- | ------------------------------------------ | --------------------------------------- | ----------------------------------------------- | --------------------------------------------- |
 | None | Create separation case | DRAFT | Employee / Personnel Records Officer | `personnel.separations.create` | Employee active or suspended | Save case |
 | DRAFT | Submit | SUBMITTED | Employee / Personnel Records Officer | `personnel.separations.submit` | Required basis and date | Start review |
 | SUBMITTED | Review | FOR_REVIEW | HRMO | `personnel.separations.review` | Authority and notice requirements | Create review |
@@ -858,7 +864,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------------- | --------------------- | ------------------- | -------------------------- | ------------------------------------------- | -------------------------------- | ------------------------ |
 | None | Create task | PENDING | System / Records Officer | `personnel.clearance.manage` | Separation approved | Assign office |
 | PENDING | Start review | IN_PROGRESS | Assigned Clearing Officer | `personnel.clearance.review` | Officer scope | Record review |
 | IN_PROGRESS | Clear employee | CLEARED | Assigned Clearing Officer | `personnel.clearance.clear` | No outstanding accountability | Sign task |
@@ -884,7 +890,7 @@ EXPIRED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------------------- | ----------------------- | ----------------------- | -------------------------- | ------------------------------------ | ------------------------------ | ------------------------ |
 | None | Create approval request | PENDING | System | Internal | Workflow route resolved | Create steps |
 | PENDING | Activate first step | IN_PROGRESS | System | Internal | Approver available | Notify approver |
 | IN_PROGRESS | Approve current step | IN_PROGRESS or APPROVED | Assigned Approver | Domain-specific approval permission | Approver is assigned/delegated | Advance step or complete |
@@ -911,7 +917,7 @@ VOIDED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ---------- | --------------- | ---------- | -------------------------------------- | ----------------------------- | ---------------------------- | ---------------------------------- |
 | None | Create document | DRAFT | Authorized Domain User | `documents.records.create` | Entity and template valid | Create version |
 | DRAFT | Submit review | FOR_REVIEW | Document Creator | `documents.records.submit` | Required fields complete | Route review |
 | FOR_REVIEW | Approve | APPROVED | Authorized Reviewer | `documents.records.approve` | Content and authority valid | Lock approved version |
@@ -938,7 +944,7 @@ CANCELLED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-|---|---|---|---|---|---|---|
+| ------------ | ------------------ | ------------ | --------------- | -------------------- | ------------------------------------------------- | ---------------------------- |
 | None | Create request | CREATED | Authorized User | Domain AI permission | Feature enabled; minimum data | Store request metadata |
 | CREATED | Start processing | PROCESSING | System | Internal | Provider available | Send controlled request |
 | PROCESSING | Validate output | VALIDATED | System | Internal | Schema and policy checks | Store safe draft |
@@ -957,7 +963,7 @@ AI acceptance does not authorize the downstream business action. Normal domain p
 Legend:
 
 | Symbol | Meaning |
-|---|---|
+| ------ | ---------------------------------------------------------- |
 | A | Allowed by baseline role |
 | S | Allowed only within assigned office or direct-report scope |
 | O | Own-record access only |
@@ -972,7 +978,7 @@ Roles may be customized, but high-risk combinations must be reviewed.
 ## 6.1 Identity and Security
 
 | Permission | Agency Admin | HRMO Admin | Supervisor | Employee | Security Admin | DPO | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| ----------------------------- | -----------: | ---------: | ---------: | -------: | -------------: | --: | ------: |
 | `security.users.read` | A | R | S | O | A | R | R |
 | `security.users.invite` | A | C | — | — | A | — | — |
 | `security.users.update_roles` | A | — | — | — | A | — | — |
@@ -995,7 +1001,7 @@ Controls:
 ## 6.2 Agency Organization
 
 | Permission | Agency Admin | HRMO Admin | Plantilla Officer | Budget Officer | Supervisor | Employee | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| ------------------------------- | -----------: | ---------: | ----------------: | -------------: | ---------: | -------: | ------: |
 | `organization.agency.read` | A | A | R | R | R | R | R |
 | `organization.agency.update` | A | C | — | — | — | — | — |
 | `organization.units.read` | A | A | A | A | S | R | R |
@@ -1010,7 +1016,7 @@ Controls:
 ## 6.3 Plantilla and Position Control
 
 | Permission | HRMO Admin | Plantilla Officer | Budget Officer | Recruitment Officer | Personnel Officer | Appointing Authority | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| -------------------------------- | ---------: | ----------------: | -------------: | ------------------: | ----------------: | -------------------: | ------: |
 | `positions.items.read` | A | A | A | R | R | R | R |
 | `positions.items.create` | C | A | C | — | — | — | — |
 | `positions.items.update` | C | A | C | — | — | — | — |
@@ -1029,9 +1035,10 @@ Controls:
 ## 6.4 Recruitment and Merit Selection
 
 | Permission | HRMO Admin | Recruitment Officer | HRMPSB Member | Supervisor | Appointing Authority | Records Officer | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| ------------------------------------- | ---------: | ------------------: | ------------: | ---------: | -------------------: | --------------: | ------: |
 | `recruitment.requests.create` | A | A | — | S | — | — | — |
 | `recruitment.requests.review` | A | A | — | — | — | — | R |
+| `recruitment.requests.rebaseline`     |          A |                   C |             — |          — |                    — |               — |       R |
 | `recruitment.requests.approve` | A | C | — | — | C | — | — |
 | `recruitment.vacancies.create` | A | A | — | — | — | — | — |
 | `recruitment.vacancies.publish` | A | C | — | — | — | — | — |
@@ -1053,7 +1060,7 @@ HRMPSB Member access should be limited to assigned vacancies and deliberation pe
 ## 6.5 Appointment and Assumption
 
 | Permission | HRMO Admin | Personnel Officer | Appointing Authority | Records Officer | Budget Officer | Auditor |
-|---|---:|---:|---:|---:|---:|---:|
+| -------------------------------------- | ---------: | ----------------: | -------------------: | --------------: | -------------: | ------: |
 | `appointments.records.read` | A | A | R | R | R | R |
 | `appointments.records.create` | C | A | — | — | — | — |
 | `appointments.records.submit` | C | A | — | — | — | — |
@@ -1061,10 +1068,10 @@ HRMPSB Member access should be limited to assigned vacancies and deliberation pe
 | `appointments.records.endorse` | A | C | — | — | — | — |
 | `appointments.records.issue` | — | — | A | — | — | — |
 | `appointments.records.cancel` | C | C | A | — | — | — |
-| `appointments.submissions.record` | C | A | — | C | — | — |
-| `appointments.records.validate` | A | A | — | C | — | — |
-| `appointments.records.invalidate` | A | A | — | C | — | — |
+| `appointments.external_events.record`  |          C |                 A |                    — |               C |              — |       — |
+| `appointments.external_actions.record` |          A |                 A |                    — |               C |              — |       — |
 | `appointments.assumption.create` | C | A | — | — | — | — |
+| `appointments.oath.record`             |          C |                 A |                    C |               — |              — |       — |
 | `appointments.assumption.certify` | C | A | C | — | — | — |
 | `appointments.assumption.correct` | A | C | C | — | — | — |
 
@@ -1073,7 +1080,7 @@ HRMPSB Member access should be limited to assigned vacancies and deliberation pe
 ## 6.6 Personnel Records and PDS
 
 | Permission | HRMO Admin | Personnel Officer | Supervisor | Employee | Payroll Preparer | Records Officer | DPO | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ----------------------------------- | ---------: | ----------------: | ---------: | -------: | ---------------: | --------------: | --: | ------: |
 | `personnel.records.read` | A | A | S | O | C | C | R | R |
 | `personnel.records.create` | C | A | — | — | — | — | — | — |
 | `personnel.records.update` | C | A | — | O/C | — | — | — | — |
@@ -1098,7 +1105,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 ## 6.7 Attendance and DTR
 
 | Permission | Attendance Admin | HRMO Admin | Supervisor | Employee | HR Certifier | Payroll Preparer | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| --------------------------------- | ---------------: | ---------: | ---------: | -------: | -----------: | ---------------: | ------: |
 | `attendance.events.create_manual` | A | C | C | — | — | — | — |
 | `attendance.events.clock` | — | — | O | O | — | — | — |
 | `attendance.events.read` | A | A | S | O | A | R | R |
@@ -1119,7 +1126,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 ## 6.8 Leave Administration
 
 | Permission | Leave Admin | HRMO Admin | Supervisor | Employee | Approving Official | Payroll Preparer | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| ------------------------------ | ----------: | ---------: | ---------: | -------: | -----------------: | ---------------: | ------: |
 | `leave.types.read` | A | A | R | R | R | R | R |
 | `leave.types.manage` | A | A | — | — | — | — | — |
 | `leave.accounts.read` | A | A | S | O | C | R | R |
@@ -1141,7 +1148,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 ## 6.9 Overtime, COC, and CTO
 
 | Permission | HRMO Admin | Supervisor | Employee | Budget Officer | Approving Official | Payroll Preparer | Leave Admin | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| --------------------------------- | ---------: | ---------: | -------: | -------------: | -----------------: | ---------------: | ----------: | ------: |
 | `overtime.authorities.create` | A | S | — | — | — | — | — | — |
 | `overtime.authorities.submit` | A | S | — | — | — | — | — | — |
 | `overtime.authorities.review` | A | — | — | A | — | — | — | R |
@@ -1163,7 +1170,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 ## 6.10 Payroll
 
 | Permission | Payroll Preparer | HR Certifier | Budget Officer | Accounting Reviewer | Payroll Approver | Cashier | HRMO Admin | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ---------------------------------- | ---------------: | -----------: | -------------: | ------------------: | ---------------: | ------: | ---------: | ------: |
 | `payroll.periods.read` | A | A | A | A | A | R | C | R |
 | `payroll.periods.create` | A | — | — | — | — | — | — | — |
 | `payroll.periods.calculate` | A | — | — | — | — | — | — | — |
@@ -1201,7 +1208,7 @@ Payroll Approver ≠ Cashier / Disbursing Officer
 ## 6.11 Performance Management
 
 | Permission | Performance Officer | HRMO Admin | Supervisor | Employee | Performance Approver | Auditor |
-|---|---:|---:|---:|---:|---:|---:|
+| ------------------------------------ | ------------------: | ---------: | ---------: | -------: | -------------------: | ------: |
 | `performance.cycles.read` | A | A | R | R | R | R |
 | `performance.cycles.create` | A | C | — | — | — | — |
 | `performance.cycles.activate` | A | C | — | — | — | — |
@@ -1223,7 +1230,7 @@ Supervisors may not finalize their own rating unless the agency's approved hiera
 ## 6.12 Separation and Clearance
 
 | Permission | Personnel Officer | HRMO Admin | Supervisor | Employee | Appointing Authority | Clearing Officer | Security Admin | Auditor |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ----------------------------------- | ----------------: | ---------: | ---------: | -------: | -------------------: | ---------------: | -------------: | ------: |
 | `personnel.separations.create` | A | A | C | O | — | — | — | — |
 | `personnel.separations.submit` | A | A | C | O | — | — | — | — |
 | `personnel.separations.review` | C | A | C | — | R | — | — | R |
@@ -1242,7 +1249,7 @@ Supervisors may not finalize their own rating unless the agency's approved hiera
 ## 6.13 Documents, Records, Audit, Privacy, and AI
 
 | Permission | Records Officer | DPO | Internal Auditor | Agency Admin | HRMO Admin | AI Admin | Employee |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| --------------------------- | --------------: | --: | ---------------: | -----------: | ---------: | -------: | -------: |
 | `documents.records.read` | A | R | R | C | C | — | O |
 | `documents.records.create` | A | — | — | C | C | — | O/C |
 | `documents.records.approve` | A | — | — | C | C | — | — |
@@ -1493,7 +1500,7 @@ The conceptual ERD should show major entities and cardinalities without defining
 # 14. Approval
 
 | Role | Name | Decision | Date |
-|---|---|---|---|
+| ----------------------------- | ---- | -------- | ---- |
 | Product Owner |  | Pending |  |
 | Government HR / HRMO Reviewer |  | Pending |  |
 | Payroll / Accounting Reviewer |  | Pending |  |
@@ -1505,5 +1512,5 @@ The conceptual ERD should show major entities and cardinalities without defining
 # 15. Change Log
 
 | Version | Date | Description |
-|---|---|---|
+| ------- | -------------- | -------------------------------------------------------------------------------------- |
 | 1.0 | August 5, 2026 | Initial public-sector HRIS status transition and role-permission control specification |

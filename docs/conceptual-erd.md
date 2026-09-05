@@ -1,4 +1,5 @@
 # Philippine Public-Sector HRIS MVP
+
 ## Conceptual Entity-Relationship Diagram
 
 **Document status:** Draft for review  
@@ -139,7 +140,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ------------------------ | -------------------------------------------------- |
 | `AGENCY` | Root tenant and government-agency record |
 | `AGENCY_PROFILE_VERSION` | Effective-dated agency rules and configuration |
 | `USER` | Authenticated identity |
@@ -173,7 +174,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| --------------------------- | ------------------------------------------------------------------------- |
 | `ORGANIZATION_UNIT` | Office, bureau, service, division, section, or unit |
 | `ORGANIZATION_UNIT_HISTORY` | Effective-dated reorganizations and name changes |
 | `PLANTILLA_POSITION` | Authorized position or item |
@@ -197,6 +198,11 @@ but normally only one active incumbency.
 erDiagram
     PLANTILLA_POSITION ||--o{ REQUEST_TO_FILL : requested_for
     ORGANIZATION_UNIT ||--o{ REQUEST_TO_FILL : initiated_by
+    AGENCY_MERIT_SELECTION_PLAN_VERSION ||--o{ REQUEST_TO_FILL : governs
+    MERIT_SELECTION_CRITERIA_SET ||--o{ REQUEST_TO_FILL : binds
+    BOARD_DEFINITION ||--o{ REQUEST_TO_FILL : binds
+    REQUEST_TO_FILL ||--o{ APPROVAL_ROUTE_BINDING : requires
+    REQUEST_TO_FILL ||--o{ MSP_REBASELINE : preserves
     REQUEST_TO_FILL ||--o{ VACANCY_PUBLICATION : results_in
 
     VACANCY_PUBLICATION ||--o{ APPLICATION : receives
@@ -209,30 +215,46 @@ erDiagram
     INTERVIEW ||--o{ INTERVIEW_FEEDBACK : produces
 
     VACANCY_PUBLICATION ||--o{ SELECTION_BOARD_SESSION : reviewed_in
+    BOARD_DEFINITION ||--o{ BOARD_APPOINTMENT : designates
+    SELECTION_BOARD_SESSION ||--|| BOARD_ROSTER_SNAPSHOT : freezes
+    BOARD_ROSTER_SNAPSHOT ||--o{ BOARD_MEMBER_PARTICIPATION : authorizes
     SELECTION_BOARD_SESSION ||--o{ BOARD_MEMBER_PARTICIPATION : attended_by
     AGENCY_MEMBERSHIP ||--o{ BOARD_MEMBER_PARTICIPATION : participates
     BOARD_MEMBER_PARTICIPATION ||--o{ CONFLICT_DECLARATION : declares
 
     SELECTION_BOARD_SESSION ||--o{ BOARD_RECOMMENDATION : produces
+    SELECTION_BOARD_SESSION ||--o| COMPREHENSIVE_CANDIDATE_EVALUATION_REPORT : produces
     APPLICATION ||--o{ BOARD_RECOMMENDATION : receives
     APPLICATION ||--o| SELECTION_DECISION : decided_by
+    SELECTION_DECISION ||--o| RECRUITMENT_HANDOFF : hands_off
 ```
 
 | Entity | Purpose |
-|---|---|
+| ----------------------------- | ------------------------------------------------------------------------- |
 | `REQUEST_TO_FILL` | Approved request to recruit for a vacant item |
-| `VACANCY_PUBLICATION` | Official publication cycle |
+| `AGENCY_MERIT_SELECTION_PLAN_VERSION` | Immutable, effective-dated governing merit-selection plan                 |
+| `MERIT_SELECTION_CRITERIA_SET`         | Bound criteria, weights, scales, cutoffs, evidence, and calculation rules |
+| `APPROVAL_ROUTE_BINDING`      | Immutable checkpoint-to-route-version binding                             |
+| `MSP_REBASELINE`              | Evidence-backed pre-publication replacement of governing bindings         |
+| `VACANCY_PUBLICATION`         | Official publication cycle with exact CS Form No. 9 and evidence versions |
 | `APPLICANT` | Person applying for one or more vacancies |
 | `APPLICATION` | Applicant submission for one vacancy |
 | `APPLICATION_SCREENING` | Qualification-standard comparison |
 | `ASSESSMENT` | Examination or competency assessment |
 | `INTERVIEW` | Interview event |
 | `INTERVIEW_FEEDBACK` | Structured evaluator feedback |
+| `BOARD_DEFINITION`            | Versioned seats, alternates, and quorum rule                              |
+| `BOARD_APPOINTMENT`           | Effective-dated, evidence-backed designation to a board seat              |
 | `SELECTION_BOARD_SESSION` | HRMPSB or equivalent deliberation |
-| `BOARD_MEMBER_PARTICIPATION` | Board attendance and role |
+| `BOARD_ROSTER_SNAPSHOT`       | Roster frozen when deliberation begins                                    |
+| `BOARD_MEMBER_PARTICIPATION`  | Actual attendance, role, conflict, and recusal record                     |
 | `CONFLICT_DECLARATION` | Conflict-of-interest record |
 | `BOARD_RECOMMENDATION` | Board recommendation |
+| `COMPREHENSIVE_CANDIDATE_EVALUATION_REPORT` | Versioned advisory comparative evaluation report                          |
 | `SELECTION_DECISION` | Appointing-authority decision |
+| `RECRUITMENT_HANDOFF`         | Idempotent immutable selected-candidate package sent to Appointment       |
+
+The server resolves the governing configuration during controlled review. Zero or multiple matches fail closed. Publication freezes every binding, and a material later change requires cancellation and republication rather than mutation.
 
 ---
 
@@ -240,41 +262,47 @@ erDiagram
 
 ```mermaid
 erDiagram
-    APPLICATION ||--o| APPOINTMENT : may_result_in
+    RECRUITMENT_HANDOFF ||--o| APPOINTMENT : may_result_in
     PLANTILLA_POSITION ||--o{ APPOINTMENT : appointed_to
 
     APPOINTMENT ||--o{ APPOINTMENT_VERSION : versioned_as
-    APPOINTMENT ||--o{ APPOINTMENT_DOCUMENT : supported_by
-    APPOINTMENT ||--o{ APPOINTMENT_SUBMISSION : tracked_through
+    APPOINTMENT_VERSION ||--o{ APPOINTMENT_DOCUMENT_VERSION_LINK : supported_by
+    APPOINTMENT_VERSION ||--o{ EXTERNAL_SUBMISSION_EVENT : submitted_through
+    APPOINTMENT_VERSION ||--o{ EXTERNAL_APPOINTMENT_ACTION : acted_on
 
-    APPOINTMENT ||--o| OATH_OF_OFFICE : requires
-    APPOINTMENT ||--o| ASSUMPTION_TO_DUTY : requires
+    APPOINTMENT_VERSION ||--o{ OATH_VERSION : acknowledged_by
+    APPOINTMENT_VERSION ||--o{ ASSUMPTION_VERSION : effected_by
 
-    ASSUMPTION_TO_DUTY ||--o| EMPLOYEE : activates
-    ASSUMPTION_TO_DUTY ||--o| SERVICE_SEGMENT : begins
-    ASSUMPTION_TO_DUTY ||--o| POSITION_INCUMBENCY : establishes
+    ASSUMPTION_VERSION ||--o| SERVICE_ACTIVATION_HANDOFF : publishes
+    SERVICE_ACTIVATION_HANDOFF ||--o| EMPLOYEE : activates
+    SERVICE_ACTIVATION_HANDOFF ||--o| SERVICE_SEGMENT : begins
+    SERVICE_ACTIVATION_HANDOFF ||--o| POSITION_INCUMBENCY : establishes
 ```
 
 | Entity | Purpose |
-|---|---|
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `APPOINTMENT` | Government appointment transaction |
-| `APPOINTMENT_VERSION` | Issued, corrected, returned, or replacement version |
-| `APPOINTMENT_DOCUMENT` | Supporting appointment documents |
-| `APPOINTMENT_SUBMISSION` | CSC or external submission tracking |
-| `OATH_OF_OFFICE` | Oath record |
-| `ASSUMPTION_TO_DUTY` | Actual start-of-service certification |
+| `APPOINTMENT_VERSION`               | Draft or immutable issued or replacement version with separate Employment Status and Nature of Appointment |
+| `APPOINTMENT_DOCUMENT_VERSION_LINK` | Exact form or supporting Document Version used by an Appointment Version                                   |
+| `EXTERNAL_SUBMISSION_EVENT`         | Append-only submission, receipt, return, or resubmission evidence                                          |
+| `EXTERNAL_APPOINTMENT_ACTION`       | Append-only official approval, validation, disapproval, or invalidation evidence                           |
+| `OATH_VERSION`                      | Immutable oath evidence version; correction creates a replacement                                          |
+| `ASSUMPTION_VERSION`                | Immutable actual start-of-service certification version                                                    |
+| `SERVICE_ACTIVATION_HANDOFF`        | Idempotent Assumed Appointment Contract consumed by Personnel and Plantilla                                |
 
 Important lifecycle:
 
 ```text
-Application
-→ Appointment
-→ Oath
-→ Assumption to Duty
-→ Employee Service
+Selection Decision
+→ Recruitment handoff
+→ Issued Appointment Contract
+├── External CSC tracking
+└── Oath → Assumption to Duty → Assumed Appointment Contract
+                              ├── Personnel service activation
+                              └── Plantilla occupancy
 ```
 
-Selection or appointment issuance alone does not create active service.
+External CSC tracking and oath or assumption advance independently after issuance. CSC approval or validation is not a prerequisite for oath, assumption, salary entitlement, service activation, or occupancy. A later adverse action is preserved and routed to the applicable personnel response without rewriting prior history.
 
 ---
 
@@ -305,7 +333,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ------------------------ | ------------------------------------------------------------------- |
 | `EMPLOYEE` | Agency personnel master record |
 | `PDS_VERSION` | Draft or certified PDS version |
 | `SERVICE_SEGMENT` | Effective period of government service |
@@ -344,7 +372,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ----------------------- | ------------------------------------------------ |
 | `WORK_SCHEDULE` | Reusable schedule pattern |
 | `WORK_ARRANGEMENT` | Office, hybrid, WFH, field, or other arrangement |
 | `SCHEDULE_ASSIGNMENT` | Effective employee schedule |
@@ -380,7 +408,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ---------------------------- | ------------------------------------------------ |
 | `LEAVE_TYPE` | Government leave category |
 | `LEAVE_POLICY_VERSION` | Effective-dated leave rules |
 | `LEAVE_ACCOUNT` | Employee account for a leave type |
@@ -414,7 +442,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| -------------------------------- | ------------------------------------------------ |
 | `OVERTIME_AUTHORITY` | Prior authorization for overtime |
 | `OVERTIME_AUTHORITY_EMPLOYEE` | Covered employee list |
 | `OVERTIME_SERVICE_RECORD` | Actual rendered service |
@@ -459,7 +487,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ----------------------- | ----------------------------------------------------- |
 | `SALARY_SCHEDULE` | Effective government salary schedule |
 | `SALARY_GRADE_RATE` | Grade-and-step amount |
 | `PAY_COMPONENT` | Earning, deduction, contribution, or adjustment type |
@@ -502,7 +530,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ----------------------- | -------------------------------------------------------- |
 | `PERFORMANCE_CYCLE` | SPMS rating cycle |
 | `ORGANIZATIONAL_GOAL` | Agency or office goal |
 | `OFFICE_COMMITMENT` | OPCR, DPCR, or equivalent |
@@ -535,7 +563,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| --------------------- | ------------------------------------------------------------------------- |
 | `SEPARATION_CASE` | Resignation, retirement, transfer, expiration, death, or other separation |
 | `SEPARATION_DOCUMENT` | Acceptance, authority, or supporting evidence |
 | `CLEARANCE_OFFICE` | Office participating in clearance |
@@ -574,7 +602,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-|---|---|
+| ----------------------- | -------------------------------------------------- |
 | `APPROVAL_REQUEST` | Shared approval workflow linked to a domain entity |
 | `APPROVAL_STEP` | Sequential or parallel approval step |
 | `APPROVAL_DECISION` | Approve, reject, return, or delegate |
@@ -626,18 +654,23 @@ A position may be vacant, reserved, occupied, frozen, or abolished independently
 ```text
 VACANT POSITION
 → REQUEST TO FILL
+→ GOVERNING CONFIGURATION BINDINGS
 → VACANCY PUBLICATION
 → APPLICATION
 → SELECTION DECISION
-→ APPOINTMENT
-→ ASSUMPTION TO DUTY
-→ EMPLOYEE SERVICE SEGMENT
+→ RECRUITMENT HANDOFF
+→ ISSUED APPOINTMENT CONTRACT
+→ ASSUMED APPOINTMENT CONTRACT
+→ PERSONNEL SERVICE SEGMENT + PLANTILLA INCUMBENCY
 ```
 
 ## 17.4 Immutable ledger model
 
 These entities use immutable entries:
 
+- finalized governing Recruitment bindings and MSP Rebaselines;
+- Assessment Result Versions, Board Roster Snapshots, Board Recommendations, and Selection Decisions;
+- issued Appointment Versions, external submission and action events, Oath Versions, and Assumption Versions;
 - `LEAVE_LEDGER_ENTRY`;
 - `COC_LEDGER_ENTRY`;
 - finalized `PAYROLL_LINE`;
@@ -670,30 +703,31 @@ The logical ERD must later enforce:
 2. no cycle in the organization-unit hierarchy;
 3. unique active item number within an agency;
 4. normally one active incumbent per plantilla position;
-5. no position occupancy without valid appointment or personnel action;
-6. assumption date cannot precede appointment issuance;
-7. service segments must not improperly overlap;
-8. certified PDS versions cannot be overwritten;
-9. raw attendance events cannot be edited directly;
-10. locked attendance requires an adjustment;
-11. leave and COC reversals must reference original ledger entries;
-12. one payroll-employee result per employee and payroll period;
-13. finalized payroll lines cannot be edited;
-14. final performance ratings require controlled amendment;
-15. effectual separation closes service and occupancy but preserves history;
-16. every operational entity is traceable to one agency.
+5. no Recruitment publication unless exactly one governing configuration set is bound;
+6. no position occupancy without an Assumed Appointment Contract or effective personnel action;
+7. assumption date cannot precede appointment issuance;
+8. service segments must not improperly overlap;
+9. certified PDS versions cannot be overwritten;
+10. raw attendance events cannot be edited directly;
+11. locked attendance requires an adjustment;
+12. leave and COC reversals must reference original ledger entries;
+13. one payroll-employee result per employee and payroll period;
+14. finalized payroll lines cannot be edited;
+15. final performance ratings require controlled amendment;
+16. effectual separation closes service and occupancy but preserves history;
+17. every operational entity is traceable to one agency.
 
 ---
 
 # 19. Proposed Module Ownership
 
 | Module | Aggregate roots |
-|---|---|
+| ----------- | ---------------------------------------------------------------------------------------- |
 | Identity | User, AgencyMembership, Role |
 | Agency | Agency, OrganizationUnit |
 | Plantilla | PlantillaPosition, QualificationStandard |
-| Recruitment | RequestToFill, VacancyPublication, Application, SelectionBoardSession |
-| Appointment | Appointment, AssumptionToDuty |
+| Recruitment | RequestToFill, VacancyPublication, Application, SelectionBoardSession, SelectionDecision |
+| Appointment | Appointment, ExternalAppointmentAction, OathVersion, AssumptionVersion                   |
 | Personnel | Employee, PdsVersion, PersonnelAction, ServiceSegment |
 | Attendance | WorkSchedule, AttendancePeriod, AttendanceDay |
 | Leave | LeaveType, LeaveAccount, LeaveApplication |
@@ -706,7 +740,7 @@ The logical ERD must later enforce:
 | Audit | AuditEvent |
 | AI | AiRequest |
 
-Cross-module changes should occur through application services and domain events, not direct updates to another module's tables.
+Cross-module reads and writes occur through owning application services, not direct access to another module's tables. The Recruitment-to-Appointment handoff is idempotent. Personnel service activation and Plantilla occupancy consume the same Assumed Appointment Contract and commit atomically with the originating business event.
 
 ---
 
@@ -767,7 +801,7 @@ Each logical ERD will add:
 # 22. Approval
 
 | Role | Name | Decision | Date |
-|---|---|---|---|
+| ----------------------------- | ---- | -------- | ---- |
 | Product Owner |  | Pending |  |
 | Government HR / HRMO Reviewer |  | Pending |  |
 | Payroll / Accounting Reviewer |  | Pending |  |
@@ -779,5 +813,5 @@ Each logical ERD will add:
 # 23. Change Log
 
 | Version | Date | Description |
-|---|---|---|
+| ------- | -------------- | ---------------------------------------------------------------- |
 | 1.0 | August 6, 2026 | Initial conceptual ERD for the Philippine Public-Sector HRIS MVP |
