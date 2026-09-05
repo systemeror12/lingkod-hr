@@ -24,7 +24,6 @@ export const PERSONNEL_DOCUMENT_CLASSIFICATIONS = [
   'TRAINING',
   'LICENSE',
   'PERFORMANCE',
-  'SALN',
   'SALARY_ADJUSTMENT',
   'SEPARATION',
   'GOVERNMENT_IDENTIFIER',
@@ -140,7 +139,6 @@ export class EmployeeDocumentsServiceError extends Error {
 
 const restrictedPersonnelClassifications = new Set<PersonnelDocumentClassification>([
   'MEDICAL',
-  'SALN',
   'GOVERNMENT_IDENTIFIER',
   'BANK_ACCOUNT',
 ]);
@@ -624,6 +622,7 @@ export class EmployeeDocumentsService {
     const classification = record.document.classification as DocumentClassification;
     const personnelClassification =
       record.personnelClassification as PersonnelDocumentClassification;
+    if (record.personnelClassification === 'SALN') return false;
     if (record.document.status === 'VOIDED') return false;
     if (!this.canRecordPermission(context, 'personnel.documents.read', access)) return false;
     if (

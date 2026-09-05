@@ -7,6 +7,7 @@ import { Button, buttonVariants } from './ui/button';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import { GovernmentIdentifiersSection } from './government-identifiers-client';
 import { PayrollBankAccountsSection } from './payroll-bank-accounts-client';
+import { SalnComplianceSection } from './saln-compliance-section';
 import {
   EmployeeInitials,
   EmployeePageTitle,
@@ -259,6 +260,10 @@ export function EmployeeDetailView({
   canManageBankAccounts,
   canRevealBankAccounts,
   canReadBankAccountHistory,
+  canReadSaln,
+  canManageSaln,
+  canCorrectSaln,
+  canReadSalnHistory,
 }: {
   agencyId: string;
   initial: EmployeeDetailData;
@@ -276,6 +281,10 @@ export function EmployeeDetailView({
   canManageBankAccounts: boolean;
   canRevealBankAccounts: boolean;
   canReadBankAccountHistory: boolean;
+  canReadSaln: boolean;
+  canManageSaln: boolean;
+  canCorrectSaln: boolean;
+  canReadSalnHistory: boolean;
 }) {
   const [detail, setDetail] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -466,6 +475,15 @@ export function EmployeeDetailView({
           canManage={canManageBankAccounts}
           canReveal={canRevealBankAccounts}
           canReadHistory={canReadBankAccountHistory}
+        />
+        <SalnComplianceSection
+          agencyId={agencyId}
+          employeeId={detail.id}
+          canRead={canReadSaln}
+          canManage={canManageSaln}
+          canCorrect={canCorrectSaln}
+          canReadHistory={canReadSalnHistory}
+          canReadEvidence={canReadDocuments}
         />
         <div className="border-t border-line bg-pale-blue px-6 py-4 text-xs leading-5 text-[#34557e] min-[700px]:px-8">
           Appointments, positions, salary, supervisors, separation, and retirement remain outside

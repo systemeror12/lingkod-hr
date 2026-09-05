@@ -144,6 +144,7 @@ const schemas = [
         acceptanceDate: z.string().date(),
         noticeDate: z.string().date(),
         withdrawalState: z.enum(['NONE', 'PENDING', 'DENIED']),
+        mutuallyAgreedEarlier: z.boolean(),
       })
       .strict(),
   ),
@@ -210,6 +211,7 @@ export const personnelActionReasonSchema = z
   .strict();
 
 export const personnelActionIdSchema = z.string().uuid();
+export const personnelActionIdempotencyKeySchema = z.string().trim().min(1).max(200);
 export const personnelActionListSchema = z
   .object({
     cursor: z.string().uuid().optional(),

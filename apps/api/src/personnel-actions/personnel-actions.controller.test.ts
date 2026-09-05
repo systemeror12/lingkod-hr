@@ -37,6 +37,7 @@ function serviceMock() {
     decide: vi.fn(),
     cancel: vi.fn(),
     replace: vi.fn(),
+    effectuate: vi.fn(),
   };
 }
 
@@ -49,6 +50,17 @@ it('treats a foreign Agency Personnel Action register as absent', async () => {
     response: { error: { code: 'PERSONNEL_ACTION_NOT_FOUND', requestId: context.requestId } },
   });
   expect(service.list).not.toHaveBeenCalled();
+});
+
+it('forwards the idempotent effectuation command', async () => {
+  const service = serviceMock();
+  service.effectuate.mockResolvedValue({ id: actionId, status: 'EFFECTIVE' });
+  const controller = new PersonnelActionsController(service as never);
+
+  await expect(
+    controller.effectuate(agencyId, actionId, 'action-effect-key', context),
+  ).resolves.toMatchObject({ status: 'EFFECTIVE' });
+  expect(service.effectuate).toHaveBeenCalledWith(context, actionId, 'action-effect-key');
 });
 
 it('rejects unsupported actions before calling the service', async () => {
