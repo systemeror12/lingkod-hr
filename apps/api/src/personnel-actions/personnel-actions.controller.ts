@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -19,6 +20,7 @@ import {
   personnelActionCreateSchema,
   personnelActionDecisionSchema,
   personnelActionIdSchema,
+  personnelActionListSchema,
   personnelActionReasonSchema,
   personnelActionReviewSchema,
   personnelActionUpdateSchema,
@@ -51,10 +53,13 @@ export class PersonnelActionsController {
   async list(
     @Param('agencyId') agencyId: string,
     @CurrentContext() context: RequestContext,
-  ): Promise<{ actions: PersonnelActionSummary[] }> {
+    @Query() query?: unknown,
+  ): Promise<{ actions: PersonnelActionSummary[]; nextCursor: string | null }> {
     this.assertReadAgency(agencyId, context);
+    const parsed = personnelActionListSchema.safeParse(query ?? {});
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     try {
-      return { actions: await this.service.list(context) };
+      return await this.service.list(context, parsed.data);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
@@ -240,21 +245,6 @@ export class PersonnelActionsController {
     if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     try {
       return await this.service.replace(context, this.parseId(actionId, context), parsed.data);
-    } catch (error: unknown) {
-      translateServiceError(error, context.requestId);
-    }
-  }
-
-  @Post(':agencyId/personnel-actions/:actionId/effectuate')
-  @RequirePermission('personnel.actions.effectuate')
-  async effectuate(
-    @Param('agencyId') agencyId: string,
-    @Param('actionId') actionId: string,
-    @CurrentContext() context: RequestContext,
-  ): Promise<never> {
-    this.assertWriteAgency(agencyId, context);
-    try {
-      return await this.service.requestEffectuation(context, this.parseId(actionId, context));
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

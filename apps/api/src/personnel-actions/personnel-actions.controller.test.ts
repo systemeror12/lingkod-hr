@@ -37,7 +37,6 @@ function serviceMock() {
     decide: vi.fn(),
     cancel: vi.fn(),
     replace: vi.fn(),
-    requestEffectuation: vi.fn(),
   };
 }
 

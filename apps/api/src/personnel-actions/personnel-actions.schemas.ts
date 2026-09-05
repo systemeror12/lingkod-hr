@@ -210,3 +210,9 @@ export const personnelActionReasonSchema = z
   .strict();
 
 export const personnelActionIdSchema = z.string().uuid();
+export const personnelActionListSchema = z
+  .object({
+    cursor: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .strict();

@@ -2,8 +2,14 @@ import { expect, it } from 'vitest';
 import {
   personnelActionCreateSchema,
   personnelActionDecisionSchema,
+  personnelActionListSchema,
   personnelActionReviewSchema,
 } from './personnel-actions.schemas';
+
+it('bounds Personnel Action list pages', () => {
+  expect(personnelActionListSchema.parse({ limit: '25' })).toEqual({ limit: 25 });
+  expect(personnelActionListSchema.safeParse({ limit: '101' }).success).toBe(false);
+});
 
 const evidence = (evidenceType: string) => ({
   evidenceType,

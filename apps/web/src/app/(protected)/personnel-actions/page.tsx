@@ -55,7 +55,11 @@ export default async function PersonnelActionsPage() {
   if (
     typeof value !== 'object' ||
     value === null ||
-    !Array.isArray((value as { actions?: unknown }).actions)
+    !Array.isArray((value as { actions?: unknown }).actions) ||
+    !(
+      (value as { nextCursor?: unknown }).nextCursor === null ||
+      typeof (value as { nextCursor?: unknown }).nextCursor === 'string'
+    )
   ) {
     throw new Error('The Personnel Action response was invalid.');
   }
@@ -68,7 +72,6 @@ export default async function PersonnelActionsPage() {
       canCancel={hasPermission(session, 'personnel.actions.cancel')}
       canCancelApproved={hasPermission(session, 'personnel.actions.cancel_approved')}
       canCorrect={hasPermission(session, 'personnel.actions.correct')}
-      canEffectuate={hasPermission(session, 'personnel.actions.effectuate')}
       canEndorse={hasPermission(session, 'personnel.actions.endorse')}
       canPrepare={hasPermission(session, 'personnel.actions.create')}
       canReject={hasPermission(session, 'personnel.actions.reject')}

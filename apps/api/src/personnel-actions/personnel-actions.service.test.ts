@@ -2,9 +2,18 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { expect, it } from 'vitest';
 import {
   personnelActionAuditWriter,
+  personnelActionCanBeApproved,
   PersonnelActionServiceError,
   PersonnelActionsService,
 } from './personnel-actions.service';
+
+it('keeps assignment overlays review-only until their effect owner exists', () => {
+  expect(personnelActionCanBeApproved('REASSIGNMENT')).toBe(false);
+  expect(personnelActionCanBeApproved('DETAIL')).toBe(false);
+  expect(personnelActionCanBeApproved('DESIGNATION')).toBe(false);
+  expect(personnelActionCanBeApproved('SECONDMENT')).toBe(false);
+  expect(personnelActionCanBeApproved('STEP_INCREMENT')).toBe(true);
+});
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const actionId = '00000000-0000-4000-8000-000000000009';

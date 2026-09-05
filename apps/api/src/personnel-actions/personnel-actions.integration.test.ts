@@ -217,7 +217,6 @@ it.skipIf(!enabled)(
         'personnel.actions.read',
         'personnel.actions.create',
         'personnel.actions.submit',
-        'personnel.actions.effectuate',
         'personnel.actions.audit.read',
         'documents.evidence.read',
       ]);
@@ -231,6 +230,12 @@ it.skipIf(!enabled)(
         'personnel.actions.read',
         'documents.evidence.read',
       ]);
+      const authorityContext = context(
+        agencyId,
+        appointingAuthority.userId,
+        appointingAuthority.membershipId,
+        ['personnel.actions.read', 'personnel.actions.audit.read', 'documents.evidence.read'],
+      );
       const proposedEffectivity = manilaDate(30);
       const baseInput = {
         employeeId: employee.id,
@@ -272,6 +277,36 @@ it.skipIf(!enabled)(
         canApprove: true,
         canReject: false,
       });
+      const replacementAuthorityVersion = await admin.documentVersion.create({
+        data: {
+          agencyId,
+          documentId: authorityEvidence.documentId,
+          versionNo: 2,
+          storageKey: `personnel-action/${suffix}/AUTHORITY-2`,
+          contentHash: 'b'.repeat(64),
+          mimeType: 'application/pdf',
+          sizeBytes: 1,
+          issuedAt: new Date(`${manilaDate(-4)}T00:00:00.000Z`),
+          createdByMembershipId: preparer.membershipId,
+        },
+      });
+      await admin.document.update({
+        where: { id: authorityEvidence.documentId },
+        data: { currentVersionId: replacementAuthorityVersion.id },
+      });
+      await expect(service.authority(delegateContext, prepared.id)).resolves.toMatchObject({
+        canApprove: false,
+      });
+      await expect(
+        service.decide(delegateContext, prepared.id, {
+          decision: 'APPROVE',
+          reason: 'Attempted approval under an unpinned delegation version.',
+        }),
+      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_AUTHORITY_REQUIRED' });
+      await admin.document.update({
+        where: { id: authorityEvidence.documentId },
+        data: { currentVersionId: authorityEvidence.documentVersionId },
+      });
       await expect(
         service.decide(preparerContext, prepared.id, {
           decision: 'APPROVE',
@@ -287,12 +322,59 @@ it.skipIf(!enabled)(
         approvalDelegationId: delegation.id,
         currentVersion: { versionNo: 3, fromServiceSegment: { id: serviceSegment.id } },
       });
-      await expect(service.requestEffectuation(preparerContext, prepared.id)).rejects.toMatchObject(
-        {
-          code: 'PERSONNEL_ACTION_NOT_YET_EFFECTIVE',
-        },
-      );
-
+      const duplicate = await service.create(preparerContext, {
+        ...baseInput,
+        evidence,
+      });
+      await expect(service.submit(preparerContext, duplicate.id)).rejects.toMatchObject({
+        code: 'PERSONNEL_ACTION_DUPLICATE_INCREMENT',
+      });
+      await expect(
+        service.create(
+          context('00000000-0000-4000-8000-000000000099', preparer.userId, preparer.membershipId, [
+            'personnel.actions.create',
+            'documents.evidence.read',
+          ]),
+          { ...baseInput, evidence: [] },
+        ),
+      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_EMPLOYEE_NOT_FOUND' });
+      await expect(
+        service.cancel(
+          authorityContext,
+          approved.id,
+          'Cancel before effectivity under the appointing authority.',
+        ),
+      ).resolves.toMatchObject({ status: 'CANCELLED' });
+      await service.submit(preparerContext, duplicate.id);
+      await service.review(reviewerContext, duplicate.id, {
+        decision: 'ENDORSE',
+        reason: 'The replacement decision package is complete.',
+      });
+      await expect(
+        service.decide(authorityContext, duplicate.id, {
+          decision: 'REJECT',
+          reason: 'The appointing authority rejected this action.',
+        }),
+      ).resolves.toMatchObject({ status: 'REJECTED' });
+      const concurrentInput = {
+        ...baseInput,
+        proposedEffectivity: manilaDate(31),
+        evidence,
+      };
+      const [concurrentA, concurrentB] = await Promise.all([
+        service.create(preparerContext, concurrentInput),
+        service.create(preparerContext, concurrentInput),
+      ]);
+      const concurrentSubmissions = await Promise.allSettled([
+        service.submit(preparerContext, concurrentA.id),
+        service.submit(preparerContext, concurrentB.id),
+      ]);
+      expect(concurrentSubmissions.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      expect(concurrentSubmissions.filter(({ status }) => status === 'rejected')).toEqual([
+        expect.objectContaining({
+          reason: expect.objectContaining({ code: 'PERSONNEL_ACTION_DUPLICATE_INCREMENT' }),
+        }),
+      ]);
       const unchanged = await admin.employee.findUniqueOrThrow({
         where: { agencyId_id: { agencyId, id: employee.id } },
         include: { currentServiceSegment: true },
@@ -307,13 +389,47 @@ it.skipIf(!enabled)(
           data: { reason: 'Rewrite approved history.' },
         }),
       ).rejects.toThrow(/immutable/i);
+      await withDatabaseContext(
+        {
+          agencyId,
+          userId: preparer.userId,
+          membershipId: preparer.membershipId,
+          capabilities: ['personnel-baseline-transition'],
+        },
+        async (transaction) => {
+          await transaction.serviceSegment.update({
+            where: { id: serviceSegment.id },
+            data: { status: 'CLOSED', effectiveTo: new Date(manilaDate(-1)) },
+          });
+          return transaction.employee.update({
+            where: { id: employee.id },
+            data: { currentServiceSegmentId: null, serviceStatus: 'SEPARATED' },
+          });
+        },
+      );
+      await expect(
+        service.create(preparerContext, {
+          employeeId: employee.id,
+          actionType: 'SAME_ITEM_REINSTATEMENT',
+          proposedEffectivity,
+          targetFacts: {
+            originalPositionId: '00000000-0000-4000-8000-000000000098',
+            backPayDetermination: 'Use the executory decision.',
+          },
+          reason: 'Restore the Employee to the original item under the executory decision.',
+          evidence: [],
+        }),
+      ).rejects.toMatchObject({ code: 'PERSONNEL_ACTION_TARGET_INVALID' });
       const foreignContext = context(
         '00000000-0000-4000-8000-000000000099',
         delegate.userId,
         delegate.membershipId,
         ['personnel.actions.read'],
       );
-      await expect(service.list(foreignContext)).resolves.toEqual([]);
+      await expect(service.list(foreignContext)).resolves.toEqual({
+        actions: [],
+        nextCursor: null,
+      });
 
       const history = await service.history(preparerContext, prepared.id);
       expect(history?.versions.map(({ versionNo }) => versionNo)).toEqual([3, 2, 1]);
@@ -323,8 +439,15 @@ it.skipIf(!enabled)(
           'PERSONNEL_ACTION_RETURNED',
           'PERSONNEL_ACTION_ENDORSED',
           'PERSONNEL_ACTION_APPROVED',
+          'PERSONNEL_ACTION_CANCELLED',
         ]),
       );
+      await expect(service.history(authorityContext, duplicate.id)).resolves.toMatchObject({
+        action: { status: 'REJECTED' },
+        entries: expect.arrayContaining([
+          expect.objectContaining({ action: 'PERSONNEL_ACTION_REJECTED' }),
+        ]),
+      });
       for (const entry of history?.entries ?? []) {
         expect(entry).toMatchObject({ requestId: expect.any(String) });
         expect(JSON.stringify(entry.metadata)).not.toContain('newSalaryStep');

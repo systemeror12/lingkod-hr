@@ -85,6 +85,7 @@ interface PersonnelAction {
 
 export interface PersonnelActionListResponse {
   actions: PersonnelAction[];
+  nextCursor: string | null;
 }
 
 interface EmployeeOption {
@@ -364,7 +365,6 @@ export function PersonnelActionWorkspace({
   canReject,
   canCancel,
   canCancelApproved,
-  canEffectuate,
   canCorrect,
   canAudit,
 }: {
@@ -379,11 +379,11 @@ export function PersonnelActionWorkspace({
   canReject: boolean;
   canCancel: boolean;
   canCancelApproved: boolean;
-  canEffectuate: boolean;
   canCorrect: boolean;
   canAudit: boolean;
 }) {
   const [actions, setActions] = useState(initial.actions);
+  const [nextCursor, setNextCursor] = useState(initial.nextCursor);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'prepare' | 'detail' | 'transition' | 'history' | null>(
     null,
@@ -402,7 +402,7 @@ export function PersonnelActionWorkspace({
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [positions, setPositions] = useState<PositionOption[]>([]);
   const [transition, setTransition] = useState<
-    'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL' | 'EFFECTUATE'
+    'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL'
   >('RETURN');
   const [transitionReason, setTransitionReason] = useState('');
   const [history, setHistory] = useState<
@@ -421,6 +421,7 @@ export function PersonnelActionWorkspace({
     canReject: false,
     canCancelApproved: false,
   });
+  const [referenceLoading, setReferenceLoading] = useState(canPrepare || canCorrect);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -431,6 +432,7 @@ export function PersonnelActionWorkspace({
   useEffect(() => {
     if (!canPrepare && !canCorrect) return;
     let active = true;
+    setReferenceLoading(true);
     Promise.all([
       request(agencyId, '/employees'),
       request(agencyId, '/documents'),
@@ -444,9 +446,12 @@ export function PersonnelActionWorkspace({
         setUnits((unitValue as { units: UnitOption[] }).units);
         setPositions((positionValue as { positions: PositionOption[] }).positions);
       })
-      .catch((cause: unknown) =>
-        setError(errorMessage(cause, 'Reference values could not be loaded.')),
-      );
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause, 'Reference values could not be loaded.'));
+      })
+      .finally(() => {
+        if (active) setReferenceLoading(false);
+      });
     return () => {
       active = false;
     };
@@ -587,10 +592,6 @@ export function PersonnelActionWorkspace({
 
   async function recordTransition(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (transition === 'EFFECTUATE') {
-      await run('/effectuate', undefined, 'Personnel Action is ready for owner effectuation.');
-      return;
-    }
     if (transition === 'RETURN' || transition === 'ENDORSE') {
       await run(
         '/review',
@@ -627,6 +628,27 @@ export function PersonnelActionWorkspace({
     }
   }
 
+  async function loadMore(): Promise<void> {
+    if (!nextCursor) return;
+    setBusy(true);
+    setError('');
+    try {
+      const page = (await request(
+        agencyId,
+        `/personnel-actions?cursor=${encodeURIComponent(nextCursor)}`,
+      )) as PersonnelActionListResponse;
+      setActions((current) => [
+        ...current,
+        ...page.actions.filter((action) => !current.some(({ id }) => id === action.id)),
+      ]);
+      setNextCursor(page.nextCursor);
+    } catch (cause: unknown) {
+      setError(errorMessage(cause, 'More Personnel Actions could not be loaded.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const preparedByMe = selected?.preparedBy.id === membershipId;
   const stage = selected
     ? selected.status === 'DRAFT' || selected.status === 'RETURNED'
@@ -655,6 +677,7 @@ export function PersonnelActionWorkspace({
         </div>
         {canPrepare ? (
           <Button
+            disabled={referenceLoading}
             onClick={(event) => {
               const trigger = event.currentTarget as unknown as { focus(): void };
               openPrepare('create', undefined, () => trigger.focus());
@@ -663,7 +686,7 @@ export function PersonnelActionWorkspace({
             type="button"
             variant="primary"
           >
-            Prepare action
+            {referenceLoading ? 'Loading references…' : 'Prepare action'}
           </Button>
         ) : null}
       </header>
@@ -775,6 +798,13 @@ export function PersonnelActionWorkspace({
           </div>
         )}
       </section>
+      {nextCursor ? (
+        <div className="flex justify-center">
+          <Button disabled={busy} onClick={() => void loadMore()} type="button" variant="secondary">
+            {busy ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      ) : null}
 
       <Dialog
         onOpenChange={(open) => {
@@ -823,7 +853,7 @@ export function PersonnelActionWorkspace({
                     <Field htmlFor="action-employee" label="Employee">
                       <select
                         className={inputClass}
-                        disabled={mode !== 'create'}
+                        disabled={referenceLoading || mode !== 'create'}
                         id="action-employee"
                         onChange={(event) => setEmployeeId(targetValue(event))}
                         ref={employeeRef}
@@ -831,20 +861,12 @@ export function PersonnelActionWorkspace({
                         value={employeeId}
                       >
                         <option value="">Select an eligible Employee</option>
-                        {employees
-                          .filter(
-                            (employee) =>
-                              (actionType === 'SAME_ITEM_REINSTATEMENT'
-                                ? employee.serviceStatus === 'SEPARATED'
-                                : employee.serviceStatus === 'ACTIVE') ||
-                              employee.id === employeeId,
-                          )
-                          .map((employee) => (
-                            <option key={employee.id} value={employee.id}>
-                              {employee.employeeNumber} · {employee.legalName} ·{' '}
-                              {employee.serviceStatus}
-                            </option>
-                          ))}
+                        {employees.map((employee) => (
+                          <option key={employee.id} value={employee.id}>
+                            {employee.employeeNumber} · {employee.legalName} ·{' '}
+                            {employee.serviceStatus}
+                          </option>
+                        ))}
                       </select>
                     </Field>
                     <Field htmlFor="action-type" label="Canonical action type">
@@ -977,7 +999,12 @@ export function PersonnelActionWorkspace({
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button disabled={busy} size="default" type="submit" variant="primary">
+                <Button
+                  disabled={busy || referenceLoading}
+                  size="default"
+                  type="submit"
+                  variant="primary"
+                >
                   {busy ? 'Saving…' : mode === 'replace' ? 'Prepare replacement' : 'Save draft'}
                 </Button>
               </DialogFooter>
@@ -1153,16 +1180,6 @@ export function PersonnelActionWorkspace({
                     Cancel action
                   </Button>
                 ) : null}
-                {canEffectuate && selected.status === 'APPROVED' ? (
-                  <Button
-                    onClick={() => openTransition('EFFECTUATE')}
-                    size="default"
-                    type="button"
-                    variant="secondary"
-                  >
-                    Check effectuation
-                  </Button>
-                ) : null}
                 {canCorrect && selected.status === 'APPROVED' ? (
                   <Button
                     onClick={() => openPrepare('replace', selected)}
@@ -1204,24 +1221,16 @@ export function PersonnelActionWorkspace({
             <form onSubmit={recordTransition}>
               <DialogBody className="grid gap-5">
                 <ErrorMessage message={error} />
-                {transition === 'EFFECTUATE' ? (
-                  <p className="m-0 text-sm leading-6 text-muted">
-                    This check never mutates Employee, Service Segment, Position, or compensation
-                    facts. Before the proposed date it fails closed; on or after that date it
-                    remains pending the owning effectuation service.
-                  </p>
-                ) : (
-                  <Field htmlFor="action-transition-reason" label="Reason">
-                    <textarea
-                      autoFocus
-                      className={`${inputClass} min-h-24 py-3`}
-                      id="action-transition-reason"
-                      onChange={(event) => setTransitionReason(targetValue(event))}
-                      required
-                      value={transitionReason}
-                    />
-                  </Field>
-                )}
+                <Field htmlFor="action-transition-reason" label="Reason">
+                  <textarea
+                    autoFocus
+                    className={`${inputClass} min-h-24 py-3`}
+                    id="action-transition-reason"
+                    onChange={(event) => setTransitionReason(targetValue(event))}
+                    required
+                    value={transitionReason}
+                  />
+                </Field>
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
@@ -1230,11 +1239,7 @@ export function PersonnelActionWorkspace({
                   </Button>
                 </DialogClose>
                 <Button disabled={busy} size="default" type="submit" variant="primary">
-                  {busy
-                    ? 'Recording…'
-                    : transition === 'EFFECTUATE'
-                      ? 'Run eligibility check'
-                      : 'Record decision'}
+                  {busy ? 'Recording…' : 'Record decision'}
                 </Button>
               </DialogFooter>
             </form>

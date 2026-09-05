@@ -177,6 +177,25 @@ const REQUIRED_EVIDENCE: Record<
   STEP_INCREMENT: ['NOSI', 'CURRENT_COMPENSATION', 'PERFORMANCE_OR_SERVICE', 'SERVICE_CONTINUITY'],
 };
 
+const APPROVABLE_ACTIONS = new Set<PersonnelActionInput['actionType']>([
+  'SAME_ITEM_REINSTATEMENT',
+  'SEPARATION_RESIGNATION',
+  'SEPARATION_DISMISSAL',
+  'SEPARATION_DROPPING_FROM_ROLLS',
+  'SEPARATION_EXPIRATION',
+  'SEPARATION_TERMINATION',
+  'SEPARATION_RETIREMENT',
+  'SEPARATION_DEATH',
+  'SALARY_ADJUSTMENT',
+  'STEP_INCREMENT',
+]);
+
+export function personnelActionCanBeApproved(
+  actionType: PersonnelActionInput['actionType'],
+): boolean {
+  return APPROVABLE_ACTIONS.has(actionType);
+}
+
 const evidenceSelect = {
   id: true,
   evidenceType: true,
@@ -381,17 +400,26 @@ export class PersonnelActionsService {
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
   ) {}
 
-  async list(context: RequestContext): Promise<PersonnelActionSummary[]> {
+  async list(
+    context: RequestContext,
+    input: { cursor?: string | undefined; limit: number } = { limit: 50 },
+  ): Promise<{ actions: PersonnelActionSummary[]; nextCursor: string | null }> {
     this.assertPermission(context, 'personnel.actions.read', 'PERSONNEL_ACTION_READ_FORBIDDEN');
     const records = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.personnelAction.findMany({
         where: { agencyId: context.agencyId },
-        orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
-        take: 200,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: input.limit + 1,
+        ...(input.cursor ? { cursor: { id: input.cursor }, skip: 1 } : {}),
         select: actionSelect,
       }),
     );
-    return records.map(actionSummary);
+    const hasMore = records.length > input.limit;
+    const page = records.slice(0, input.limit);
+    return {
+      actions: page.map(actionSummary),
+      nextCursor: hasMore ? (page.at(-1)?.id ?? null) : null,
+    };
   }
 
   async findById(
@@ -485,7 +513,9 @@ export class PersonnelActionsService {
       };
       return {
         canApprove:
-          action.status === 'FOR_APPROVAL' && (await allowed('personnel.actions.approve')),
+          action.status === 'FOR_APPROVAL' &&
+          personnelActionCanBeApproved(action.actionType as PersonnelActionInput['actionType']) &&
+          (await allowed('personnel.actions.approve')),
         canReject: action.status === 'FOR_APPROVAL' && (await allowed('personnel.actions.reject')),
         canCancelApproved:
           action.status === 'APPROVED' && (await allowed('personnel.actions.cancel_approved')),
@@ -662,7 +692,18 @@ export class PersonnelActionsService {
           current,
           permission,
         );
-        await this.validateStoredAction(transaction, context, current, true);
+        if (input.decision === 'APPROVE') {
+          if (
+            !personnelActionCanBeApproved(current.actionType as PersonnelActionInput['actionType'])
+          ) {
+            throw new PersonnelActionServiceError(
+              'This action remains review-only until its typed assignment effect owner exists.',
+              409,
+              'PERSONNEL_ACTION_EFFECT_OWNER_MISSING',
+            );
+          }
+          await this.validateStoredAction(transaction, context, current, true);
+        }
         const nextStatus = input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
         const updated = await transaction.personnelAction.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: actionId } },
@@ -834,38 +875,6 @@ export class PersonnelActionsService {
     );
   }
 
-  async requestEffectuation(context: RequestContext, actionId: string): Promise<never> {
-    this.assertPermission(
-      context,
-      'personnel.actions.effectuate',
-      'PERSONNEL_ACTION_EFFECTUATE_FORBIDDEN',
-    );
-    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const current = await this.lockedAction(transaction, context.agencyId, actionId);
-      if (current.status !== 'APPROVED') throw this.workflowError('effectuate', current.status);
-      if (!current.currentVersion) throw this.versionMissing();
-      const today = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Manila',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).format(new Date());
-      if (today < formatDate(current.currentVersion.proposedEffectivity)) {
-        throw new PersonnelActionServiceError(
-          'The Personnel Action has not reached its proposed effectivity date.',
-          409,
-          'PERSONNEL_ACTION_NOT_YET_EFFECTIVE',
-        );
-      }
-      await this.validateStoredAction(transaction, context, current, true);
-      throw new PersonnelActionServiceError(
-        'The owning effectuation service for this action type is not available yet.',
-        409,
-        'PERSONNEL_ACTION_EFFECTUATION_PENDING_OWNER',
-      );
-    });
-  }
-
   private async validateStoredAction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -879,6 +888,7 @@ export class PersonnelActionsService {
       input,
       requireCompleteEvidence,
       action.currentVersion?.fromServiceSegmentId,
+      action.id,
     );
   }
 
@@ -888,6 +898,7 @@ export class PersonnelActionsService {
     input: PersonnelActionInput,
     requireCompleteEvidence: boolean,
     expectedSourceSegmentId?: string,
+    currentActionId?: string,
   ) {
     const effectivity = databaseDate(input.proposedEffectivity);
     const employee = await transaction.employee.findFirst({
@@ -909,16 +920,37 @@ export class PersonnelActionsService {
     });
     if (!employee) throw this.notFound('Employee');
     const requiredStatus = input.actionType === 'SAME_ITEM_REINSTATEMENT' ? 'SEPARATED' : 'ACTIVE';
-    if (employee.serviceStatus !== requiredStatus || !employee.currentServiceSegment) {
+    const sourceSegment =
+      employee.currentServiceSegment ??
+      (input.actionType === 'SAME_ITEM_REINSTATEMENT'
+        ? await transaction.serviceSegment.findFirst({
+            where: {
+              agencyId: context.agencyId,
+              employeeId: input.employeeId,
+              status: 'CLOSED',
+              effectiveTo: { not: null },
+            },
+            orderBy: [{ effectiveTo: 'desc' }, { effectiveFrom: 'desc' }],
+            select: {
+              id: true,
+              positionId: true,
+              organizationUnitId: true,
+              salaryGrade: true,
+              salaryStep: true,
+              status: true,
+            },
+          })
+        : null);
+    if (employee.serviceStatus !== requiredStatus || !sourceSegment) {
       throw new PersonnelActionServiceError(
-        `The Employee must have ${requiredStatus} service with a current Service Segment.`,
+        `The Employee must have ${requiredStatus} service and an applicable Service Segment.`,
         409,
         'PERSONNEL_ACTION_EMPLOYEE_STATE_INVALID',
       );
     }
-    if (expectedSourceSegmentId && employee.currentServiceSegment.id !== expectedSourceSegmentId) {
+    if (expectedSourceSegmentId && sourceSegment.id !== expectedSourceSegmentId) {
       throw new PersonnelActionServiceError(
-        'The Employee current Service Segment changed after this action version was prepared.',
+        'The Employee source Service Segment changed after this action version was prepared.',
         409,
         'PERSONNEL_ACTION_SOURCE_CHANGED',
       );
@@ -934,6 +966,29 @@ export class PersonnelActionsService {
           'PERSONNEL_ACTION_EVIDENCE_INCOMPLETE',
         );
       }
+      if (input.actionType === 'STEP_INCREMENT') {
+        await transaction.$queryRaw(
+          Prisma.sql`SELECT "id" FROM "employees" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${input.employeeId} AS uuid) FOR UPDATE`,
+        );
+        const duplicate = await transaction.personnelAction.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            employeeId: input.employeeId,
+            actionType: input.actionType,
+            ...(currentActionId ? { id: { not: currentActionId } } : {}),
+            status: { in: ['FOR_REVIEW', 'FOR_APPROVAL', 'APPROVED'] },
+            currentVersion: { is: { proposedEffectivity: effectivity } },
+          },
+          select: { id: true },
+        });
+        if (duplicate) {
+          throw new PersonnelActionServiceError(
+            'A Step Increment for this Employee and effectivity is already pending or approved.',
+            409,
+            'PERSONNEL_ACTION_DUPLICATE_INCREMENT',
+          );
+        }
+      }
     }
     this.assertPermission(
       context,
@@ -941,13 +996,6 @@ export class PersonnelActionsService {
       'PERSONNEL_ACTION_EVIDENCE_READ_FORBIDDEN',
     );
     for (const item of input.evidence) {
-      if (databaseDate(item.sourceDate) > effectivity) {
-        throw new PersonnelActionServiceError(
-          'Evidence source dates cannot be later than the proposed effectivity.',
-          409,
-          'PERSONNEL_ACTION_EVIDENCE_DATE_INVALID',
-        );
-      }
       const resolved = await this.documentsService.resolveExternalEvidenceInTransaction(
         transaction,
         context,
@@ -977,10 +1025,29 @@ export class PersonnelActionsService {
           'PERSONNEL_ACTION_EVIDENCE_INVALID',
         );
       }
+      if (resolved.document.documentType !== item.evidenceType) {
+        throw new PersonnelActionServiceError(
+          'Each evidence link must use a document of the matching canonical evidence type.',
+          409,
+          'PERSONNEL_ACTION_EVIDENCE_TYPE_INVALID',
+        );
+      }
+      if (
+        input.actionType === 'SALARY_ADJUSTMENT' &&
+        item.evidenceType === 'PAY_TABLE_VERSION' &&
+        resolved.document.documentNo?.trim().toLowerCase() !==
+          input.targetFacts.payTableVersion.toLowerCase()
+      ) {
+        throw new PersonnelActionServiceError(
+          'The salary adjustment must reference the exact pay-table document number.',
+          409,
+          'PERSONNEL_ACTION_PAY_TABLE_INVALID',
+        );
+      }
     }
 
-    await this.validateTarget(transaction, context.agencyId, input, employee.currentServiceSegment);
-    return employee.currentServiceSegment;
+    await this.validateTarget(transaction, context.agencyId, input, sourceSegment);
+    return sourceSegment;
   }
 
   private async validateTarget(
@@ -1006,21 +1073,39 @@ export class PersonnelActionsService {
           throw invalid('A Step Increment must advance the current salary step by exactly one.');
         }
         return;
-      case 'SALARY_ADJUSTMENT':
-        if (source.salaryGrade === null || source.salaryStep === null) {
+      case 'SALARY_ADJUSTMENT': {
+        if (
+          source.positionId === null ||
+          source.salaryGrade === null ||
+          source.salaryStep === null
+        ) {
           throw invalid('A Salary Adjustment requires current salary grade and step facts.');
         }
+        const authorizedPosition = await transaction.plantillaPositionVersion.findFirst({
+          where: {
+            agencyId,
+            positionId: source.positionId,
+            domainStatus: 'ACTIVE',
+            effectiveFrom: { lte: databaseDate(input.proposedEffectivity) },
+            OR: [
+              { effectiveTo: null },
+              { effectiveTo: { gte: databaseDate(input.proposedEffectivity) } },
+            ],
+          },
+          select: { salaryGrade: true },
+        });
         if (
-          input.targetFacts.newSalaryGrade === source.salaryGrade &&
-          input.targetFacts.newSalaryStep === source.salaryStep
+          !authorizedPosition ||
+          input.targetFacts.newSalaryGrade !== authorizedPosition.salaryGrade ||
+          input.targetFacts.newSalaryGrade === source.salaryGrade
         ) {
-          throw invalid('A Salary Adjustment must state a changed authorized fact.');
+          throw invalid(
+            'A Salary Adjustment must match the changed effective Plantilla salary grade.',
+          );
         }
         return;
+      }
       case 'REASSIGNMENT': {
-        if (input.targetFacts.appealState === 'STAYED') {
-          throw invalid('A stayed reassignment cannot be submitted for approval.');
-        }
         if (
           input.targetFacts.endDate &&
           (daysBetween(input.proposedEffectivity, input.targetFacts.endDate) < 0 ||
@@ -1069,11 +1154,13 @@ export class PersonnelActionsService {
         }
         return;
       }
-      case 'SECONDMENT':
-        if (daysBetween(input.proposedEffectivity, input.targetFacts.endDate) > 3 * 366) {
+      case 'SECONDMENT': {
+        const duration = daysBetween(input.proposedEffectivity, input.targetFacts.endDate);
+        if (duration < 0 || duration > 3 * 366) {
           throw invalid('The initial secondment period cannot exceed three years.');
         }
         return;
+      }
       case 'SAME_ITEM_REINSTATEMENT': {
         const position = await transaction.plantillaPosition.findFirst({
           where: { agencyId, id: input.targetFacts.originalPositionId },
@@ -1235,9 +1322,15 @@ export class PersonnelActionsService {
       select: { id: true, authorityDocumentId: true },
     });
     if (delegation?.authorityDocumentId) {
+      const authorityDocument = await transaction.document.findFirst({
+        where: { agencyId: context.agencyId, id: delegation.authorityDocumentId },
+        select: { currentVersionId: true },
+      });
       const pinnedAuthority = action.currentVersion.evidence.some(
         (item) =>
-          item.evidenceType === 'AUTHORITY' && item.document.id === delegation.authorityDocumentId,
+          item.evidenceType === 'AUTHORITY' &&
+          item.document.id === delegation.authorityDocumentId &&
+          item.documentVersion.id === authorityDocument?.currentVersionId,
       );
       if (pinnedAuthority) return delegation.id;
     }
