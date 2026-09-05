@@ -329,6 +329,8 @@ async function seed(): Promise<void> {
     'agency_administrator',
     'employee',
     'hrmo_administrator',
+    'personnel_records_officer',
+    'appointing_authority',
     'plantilla_officer',
     'budget_officer',
   ]) {
