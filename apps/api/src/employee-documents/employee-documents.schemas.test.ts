@@ -28,6 +28,23 @@ it('rejects unsupported personnel classifications and extra fields', () => {
   ).toBe(false);
 });
 
+it('rejects SALN contents from both Personnel Document paths', () => {
+  const metadata = {
+    personnelClassification: 'SALN',
+    purpose: 'COMPLIANCE_SUPPORT',
+  };
+  expect(
+    employeeDocumentLinkSchema.safeParse({
+      ...metadata,
+      documentId: '00000000-0000-4000-8000-000000000001',
+      documentVersionId: '00000000-0000-4000-8000-000000000002',
+    }).success,
+  ).toBe(false);
+  expect(
+    employeeDocumentUploadSchema.safeParse({ ...metadata, classification: 'CONFIDENTIAL' }).success,
+  ).toBe(false);
+});
+
 it('requires the shared Document classification for an employee upload', () => {
   expect(
     employeeDocumentUploadSchema.safeParse({

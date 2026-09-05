@@ -79,6 +79,16 @@ const destinations: readonly (Destination & {
       ),
   },
   {
+    href: '/my-saln',
+    label: 'My SALN Compliance',
+    icon: 'users',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) =>
+          code === 'personnel.saln_compliance.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
     href: '/personnel-baselines',
     label: 'Personnel Baselines',
     icon: 'position',
