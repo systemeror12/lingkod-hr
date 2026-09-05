@@ -16,6 +16,7 @@ import { GovernmentIdentifiersModule } from './government-identifiers/government
 import { PersonnelActionsModule } from './personnel-actions/personnel-actions.module';
 import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
+import { ServiceRecordsModule } from './service-records/service-records.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
     PersonnelActionsModule,
     PayrollBankAccountsModule,
     SalnComplianceModule,
+    ServiceRecordsModule,
   ],
   controllers: [HealthController],
 })

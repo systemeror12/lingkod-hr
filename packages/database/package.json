@@ -23,7 +23,7 @@
     "migrate:dev:loaded": "APP_ENV=development pnpm migrate:prepare && prisma migrate dev --schema prisma/schema.prisma",
     "test": "vitest run src --passWithNoTests",
     "test:e2e": "vitest run src --passWithNoTests",
-    "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@prisma/client": "6.19.3"

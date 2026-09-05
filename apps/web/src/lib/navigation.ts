@@ -100,6 +100,12 @@ const destinations: readonly (Destination & {
     icon: 'authority',
     permission: 'personnel.actions.read',
   },
+  {
+    href: '/service-records',
+    label: 'Service Records',
+    icon: 'position',
+    permission: 'personnel.service_records.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 
