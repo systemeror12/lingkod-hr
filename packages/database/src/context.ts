@@ -14,6 +14,7 @@ export type DatabaseCapability =
   | 'personnel-baseline-transition'
   | 'personnel-action-transition'
   | 'government-identifier-transition'
+  | 'payroll-bank-account-transition'
   | 'organization-unit-correction';
 
 export interface DatabaseContext {
@@ -111,6 +112,11 @@ export async function setDatabaseContext(
       set_config(
         'app.government_identifier_transition',
         ${hasCapability(context, 'government-identifier-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.payroll_bank_account_transition',
+        ${hasCapability(context, 'payroll-bank-account-transition') ? 'on' : ''},
         true
       )
   `;

@@ -8,6 +8,7 @@ import {
   getConfig,
   normalizeProtectedValue,
   parseProtectedValueKey,
+  sanitizeProtectedValueMetadata,
   type ProtectedValueKey,
 } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
@@ -115,20 +116,6 @@ export class GovernmentIdentifiersServiceError extends Error {
 
 const LIST_LIMIT = 200;
 const ENCRYPTION_VERSION = 1;
-const UNSAFE_AUDIT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-const SENSITIVE_AUDIT_KEYS = new Set([
-  'value',
-  'plaintext',
-  'revealedvalue',
-  'encryptedvalue',
-  'ciphertext',
-  'fullvalue',
-  'rawvalue',
-  'identifiervalue',
-  'sensitivevalue',
-  'secret',
-  'secretvalue',
-]);
 
 const identifierSelect = {
   id: true,
@@ -332,36 +319,8 @@ function auditMetadata(
   };
 }
 
-function isSensitiveAuditKey(key: string): boolean {
-  return SENSITIVE_AUDIT_KEYS.has(key.replaceAll('_', '').toLowerCase());
-}
-
-function sanitizeAuditValue(value: unknown, depth: number): unknown {
-  if (depth > 5) return '[omitted]';
-  if (value === null || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (typeof value === 'string') return value.length > 500 ? `${value.slice(0, 497)}…` : value;
-  if (Buffer.isBuffer(value)) return undefined;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => sanitizeAuditValue(item, depth + 1))
-      .filter((item): item is Exclude<unknown, undefined> => item !== undefined);
-  }
-  if (typeof value !== 'object') return undefined;
-
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (UNSAFE_AUDIT_KEYS.has(key) || isSensitiveAuditKey(key)) continue;
-    const sanitized = sanitizeAuditValue(item, depth + 1);
-    if (sanitized !== undefined) result[key] = sanitized;
-  }
-  return result;
-}
-
 export function sanitizeGovernmentIdentifierAuditMetadata(value: unknown): Prisma.InputJsonObject {
-  const sanitized = sanitizeAuditValue(value, 0);
-  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) return {};
-  return sanitized as Prisma.InputJsonObject;
+  return sanitizeProtectedValueMetadata(value) as Prisma.InputJsonObject;
 }
 
 function protectedValueMatchesRecord(

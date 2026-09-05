@@ -10,6 +10,22 @@ const INVALID_KEY_MESSAGE = 'Invalid protected value key.';
 const INVALID_INPUT_MESSAGE = 'Invalid protected value input.';
 const INVALID_ENVELOPE_MESSAGE = 'Invalid protected value envelope.';
 const DECRYPTION_FAILED_MESSAGE = 'Unable to decrypt protected value.';
+const UNSAFE_METADATA_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const PROTECTED_METADATA_KEYS = new Set([
+  'value',
+  'plaintext',
+  'revealedvalue',
+  'encryptedvalue',
+  'encryptedaccountnumber',
+  'ciphertext',
+  'fullvalue',
+  'rawvalue',
+  'identifiervalue',
+  'accountnumber',
+  'sensitivevalue',
+  'secret',
+  'secretvalue',
+]);
 
 export type ProtectedValueKey = Buffer;
 export type ProtectedValueEnvelope = Buffer;
@@ -147,6 +163,40 @@ function containsControlCharacters(value: string): boolean {
     const code = character.charCodeAt(0);
     return (code >= 0 && code <= 31) || (code >= 127 && code <= 159);
   });
+}
+
+function sanitizeMetadataValue(value: unknown, depth: number): unknown {
+  if (depth > 5) return '[omitted]';
+  if (value === null || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string') return value.length > 500 ? `${value.slice(0, 497)}…` : value;
+  if (Buffer.isBuffer(value)) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeMetadataValue(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+  if (typeof value !== 'object') return undefined;
+
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (
+      UNSAFE_METADATA_KEYS.has(key) ||
+      PROTECTED_METADATA_KEYS.has(key.replaceAll('_', '').toLowerCase())
+    ) {
+      continue;
+    }
+    const sanitized = sanitizeMetadataValue(item, depth + 1);
+    if (sanitized !== undefined) result[key] = sanitized;
+  }
+  return result;
+}
+
+export function sanitizeProtectedValueMetadata(value: unknown): Record<string, unknown> {
+  const sanitized = sanitizeMetadataValue(value, 0);
+  return sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
+    ? (sanitized as Record<string, unknown>)
+    : {};
 }
 
 export function normalizeProtectedValue(value: string): string {

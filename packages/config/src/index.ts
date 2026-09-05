@@ -14,4 +14,5 @@ export {
   maskProtectedValue,
   normalizeProtectedValue,
   parseProtectedValueKey,
+  sanitizeProtectedValueMetadata,
 } from './protected-values';

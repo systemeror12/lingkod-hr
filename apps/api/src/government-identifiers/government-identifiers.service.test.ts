@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import {
   sanitizeGovernmentIdentifierAuditMetadata,
@@ -6,6 +6,14 @@ import {
   GovernmentIdentifiersService,
   GovernmentIdentifiersServiceError,
 } from './government-identifiers.service';
+
+vi.mock('@lingkod-hr/config', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@lingkod-hr/config')>();
+  return {
+    ...original,
+    getConfig: () => ({ ...original.getConfig(), DATA_ENCRYPTION_KEY: undefined }),
+  };
+});
 
 const context: RequestContext = {
   requestId: 'government-identifiers-service-test',

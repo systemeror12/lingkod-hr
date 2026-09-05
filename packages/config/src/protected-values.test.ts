@@ -6,6 +6,7 @@ import {
   maskProtectedValue,
   normalizeProtectedValue,
   parseProtectedValueKey,
+  sanitizeProtectedValueMetadata,
 } from './protected-values';
 
 const hexKey = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
@@ -55,4 +56,19 @@ it('fails safely for tampered envelopes and bad keys', () => {
     /Invalid protected value key\./,
   );
   expect(() => parseProtectedValueKey('not-a-key')).toThrow(ProtectedValueError);
+});
+
+it('removes protected fields from nested metadata', () => {
+  expect(
+    sanitizeProtectedValueMetadata({
+      maskedValue: '******6789',
+      accountNumber: '0123456789',
+      after: { encryptedAccountNumber: 'ciphertext', reason: 'Correction' },
+      nested: [{ plaintext: 'secret', safe: true }],
+    }),
+  ).toEqual({
+    maskedValue: '******6789',
+    after: { reason: 'Correction' },
+    nested: [{ safe: true }],
+  });
 });
