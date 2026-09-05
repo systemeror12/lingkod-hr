@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Appointments
 
 ```sql
@@ -333,10 +332,9 @@ CREATE TABLE government_identifiers (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
   identifier_type text NOT NULL
-    CHECK (identifier_type IN ('GSIS','PHILHEALTH','PAGIBIG','TIN','OTHER')),
+    CHECK (identifier_type IN ('UMID','PAGIBIG','PHILHEALTH','PHILSYS_PCN','TIN')),
   encrypted_value bytea NOT NULL,
   masked_value text NOT NULL,
-  blind_index bytea,
   verified_at timestamptz,
   status text NOT NULL
     CHECK (status IN ('ACTIVE','REPLACED','INVALID')),

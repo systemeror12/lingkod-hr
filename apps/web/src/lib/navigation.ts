@@ -53,6 +53,59 @@ const destinations: readonly (Destination & {
     icon: 'position',
     permission: 'positions.items.read',
   },
+  {
+    href: '/employees',
+    label: 'Employees',
+    icon: 'users',
+    permission: 'personnel.employees.read',
+  },
+  {
+    href: '/pds',
+    label: 'My PDS',
+    icon: 'users',
+    permission: 'personnel.pds.read',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) => code === 'personnel.pds.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
+    href: '/my-documents',
+    label: 'My Documents',
+    icon: 'users',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) => code === 'personnel.documents.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
+    href: '/my-saln',
+    label: 'My SALN Compliance',
+    icon: 'users',
+    visible: (session) =>
+      session.permissions.some(
+        ({ code, scopePolicy }) =>
+          code === 'personnel.saln_compliance.read' && scopePolicy === 'OWN',
+      ),
+  },
+  {
+    href: '/personnel-baselines',
+    label: 'Personnel Baselines',
+    icon: 'position',
+    permission: 'personnel.baselines.read',
+  },
+  {
+    href: '/personnel-actions',
+    label: 'Personnel Actions',
+    icon: 'authority',
+    permission: 'personnel.actions.read',
+  },
+  {
+    href: '/service-records',
+    label: 'Service Records',
+    icon: 'position',
+    permission: 'personnel.service_records.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 

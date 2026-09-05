@@ -74,6 +74,11 @@ export interface InvitationResult {
   activationToken: string;
 }
 
+export interface EmployeeAccessClosure {
+  membershipIds: string[];
+  sessionIds: string[];
+}
+
 export interface PendingInvitation {
   id: string;
   email: string;
@@ -174,14 +179,16 @@ export class AuthService {
 
   async assertLoginAllowed(ipAddress: string): Promise<void> {
     const since = new Date(Date.now() - 15 * 60 * 1000);
-    const failures = await withDatabaseContext({ platformSecurity: true }, (transaction) =>
-      transaction.securityEvent.count({
-        where: {
-          eventType: 'LOGIN_FAILURE',
-          ipAddress: ipAddress ?? null,
-          occurredAt: { gte: since },
-        },
-      }),
+    const failures = await withDatabaseContext(
+      { capabilities: ['platform-security'] },
+      (transaction) =>
+        transaction.securityEvent.count({
+          where: {
+            eventType: 'LOGIN_FAILURE',
+            ipAddress: ipAddress ?? null,
+            occurredAt: { gte: since },
+          },
+        }),
     );
     if (failures >= 20) {
       throw new AuthServiceError(
@@ -434,7 +441,7 @@ export class AuthService {
   }
 
   async recordLoginFailure(requestId: string, reason: string, ipAddress?: string): Promise<void> {
-    await withDatabaseContext({ platformSecurity: true }, async (transaction) => {
+    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
       await transaction.securityEvent.create({
         data: {
           eventType: 'LOGIN_FAILURE',
@@ -628,6 +635,76 @@ export class AuthService {
     return this.oidc.providerLogoutUrl();
   }
 
+  /** Internal contract: the caller owns the transaction; Identity owns access closure. */
+  async deactivateEmployeeAccessInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    reason: string,
+    effectiveAt: Date,
+  ): Promise<EmployeeAccessClosure> {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "agency_memberships" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "employee_id" = CAST(${employeeId} AS uuid) FOR UPDATE`,
+    );
+    const memberships = await transaction.agencyMembership.findMany({
+      where: {
+        agencyId: context.agencyId,
+        employeeId,
+        status: { in: ['ACTIVE', 'LOCKED', 'SUSPENDED'] },
+      },
+      select: { id: true },
+    });
+    const membershipIds = memberships.map(({ id }) => id);
+    if (membershipIds.length === 0) return { membershipIds, sessionIds: [] };
+
+    await transaction.agencyMembership.updateMany({
+      where: { agencyId: context.agencyId, id: { in: membershipIds } },
+      data: {
+        status: 'DEACTIVATED',
+        deactivatedAt: effectiveAt,
+        deactivationReason: reason,
+      },
+    });
+    const sessions = await transaction.userSession.updateManyAndReturn({
+      where: {
+        agencyId: context.agencyId,
+        agencyMembershipId: { in: membershipIds },
+        revokedAt: null,
+      },
+      data: { revokedAt: effectiveAt, revocationReason: reason },
+      select: { id: true, userId: true, agencyMembershipId: true },
+    });
+    await transaction.auditEvent.createMany({
+      data: [
+        ...membershipIds.map((membershipId) => ({
+          agencyId: context.agencyId,
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          actorType: 'USER',
+          action: 'AGENCY_MEMBERSHIP_DEACTIVATED_FOR_SEPARATION',
+          entityType: 'AgencyMembership',
+          entityId: membershipId,
+          reason,
+          requestId: context.requestId,
+          metadata: { employeeId },
+        })),
+        ...sessions.map((session) => ({
+          agencyId: context.agencyId,
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          actorType: 'USER',
+          action: 'SESSION_REVOKED_FOR_SEPARATION',
+          entityType: 'UserSession',
+          entityId: session.id,
+          reason,
+          requestId: context.requestId,
+          metadata: { employeeId, membershipId: session.agencyMembershipId },
+        })),
+      ],
+    });
+    return { membershipIds, sessionIds: sessions.map(({ id }) => id) };
+  }
+
   async switchAgency(
     rawToken: string,
     session: AuthenticatedSession,
@@ -730,7 +807,7 @@ export class AuthService {
 
   async handleBackChannelLogout(token: string, requestId: string): Promise<void> {
     const identity = await this.oidc.verifyLogoutToken(token);
-    await withDatabaseContext({ platformSecurity: true }, async (transaction) => {
+    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
       try {
         await transaction.securityEvent.create({
           data: {

@@ -8,6 +8,15 @@ import { DocumentsModule } from './documents/documents.module';
 import { StaffingAuthoritiesModule } from './staffing-authorities/staffing-authorities.module';
 import { QualificationStandardsModule } from './qualification-standards/qualification-standards.module';
 import { PlantillaPositionsModule } from './plantilla-positions/plantilla-positions.module';
+import { EmployeesModule } from './employees/employees.module';
+import { PdsModule } from './pds/pds.module';
+import { EmployeeDocumentsModule } from './employee-documents/employee-documents.module';
+import { PersonnelBaselinesModule } from './personnel-baselines/personnel-baselines.module';
+import { GovernmentIdentifiersModule } from './government-identifiers/government-identifiers.module';
+import { PersonnelActionsModule } from './personnel-actions/personnel-actions.module';
+import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
+import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
+import { ServiceRecordsModule } from './service-records/service-records.module';
 
 @Module({
   imports: [
@@ -19,6 +28,15 @@ import { PlantillaPositionsModule } from './plantilla-positions/plantilla-positi
     StaffingAuthoritiesModule,
     QualificationStandardsModule,
     PlantillaPositionsModule,
+    EmployeesModule,
+    PdsModule,
+    EmployeeDocumentsModule,
+    PersonnelBaselinesModule,
+    GovernmentIdentifiersModule,
+    PersonnelActionsModule,
+    PayrollBankAccountsModule,
+    SalnComplianceModule,
+    ServiceRecordsModule,
   ],
   controllers: [HealthController],
 })

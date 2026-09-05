@@ -748,13 +748,17 @@ Lint
   ↓
 Type check
   ↓
+Build
+  ↓
+Start local infrastructure
+  ↓
+Migration validation
+  ↓
 Unit tests
   ↓
 Integration tests
   ↓
-Build
-  ↓
-Migration validation
+Browser acceptance tests
 ```
 
 Production deployments must use:

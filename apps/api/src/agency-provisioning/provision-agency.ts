@@ -140,7 +140,7 @@ export class AgencyProvisioningCommand {
     };
     try {
       provisioned = await this.dependencies.database.$transaction(async (transaction) => {
-        await setDatabaseContext(transaction, { operationalProvisioning: true });
+        await setDatabaseContext(transaction, { capabilities: ['operational-provisioning'] });
         const agency = await transaction.agency.create({
           data: {
             code: normalizedInput.code,
@@ -151,7 +151,7 @@ export class AgencyProvisioningCommand {
         });
         await setDatabaseContext(transaction, {
           agencyId: agency.id,
-          operationalProvisioning: true,
+          capabilities: ['operational-provisioning'],
         });
         const effectiveFrom = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
         const profile = await transaction.agencyProfileVersion.create({
@@ -282,7 +282,7 @@ export class AgencyProvisioningCommand {
       await this.dependencies.database.$transaction(async (transaction) => {
         await setDatabaseContext(transaction, {
           agencyId,
-          operationalProvisioning: true,
+          capabilities: ['operational-provisioning'],
         });
         const cancelledInvitation =
           await this.dependencies.invitationIssuer.cancelPendingInvitationInTransaction(

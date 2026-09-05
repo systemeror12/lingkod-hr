@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext as toDatabaseContext } from '../database-context';
 import {
   coverageEligibleParentIds,
   hasEligibleParentCoverage,
@@ -266,14 +267,6 @@ function normalizeIdempotencyKey(value: string | undefined): string | null {
     );
   }
   return normalized;
-}
-
-function toDatabaseContext(context: RequestContext) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-  };
 }
 
 function summaryFromRecord(record: {
@@ -1234,87 +1227,87 @@ export class OrganizationService {
     const costCenterCode = normalizeOptional(input.costCenterCode);
     const responsibilityCenterCode = normalizeOptional(input.responsibilityCenterCode);
 
-    return withDatabaseContext(toDatabaseContext(context), async (transaction) => {
-      if (!(await this.lockOrganizationUnit(transaction, context.agencyId, unitId))) {
-        throw this.unitNotFound();
-      }
-      const source = await transaction.organizationUnitVersion.findFirst({
-        where: {
-          id: versionId,
-          agencyId: context.agencyId,
-          organizationUnitId: unitId,
-          status: { in: [...PUBLISHED_STATES] },
-        },
-        select: unitVersionSelect,
-      });
-      if (!source) {
-        throw new OrganizationServiceError(
-          'Only an activated Organization Unit version can be corrected.',
-          409,
-          'ORGANIZATION_UNIT_CORRECTION_NOT_ALLOWED',
+    return withDatabaseContext(
+      toDatabaseContext(context, 'organization-unit-correction'),
+      async (transaction) => {
+        if (!(await this.lockOrganizationUnit(transaction, context.agencyId, unitId))) {
+          throw this.unitNotFound();
+        }
+        const source = await transaction.organizationUnitVersion.findFirst({
+          where: {
+            id: versionId,
+            agencyId: context.agencyId,
+            organizationUnitId: unitId,
+            status: { in: [...PUBLISHED_STATES] },
+          },
+          select: unitVersionSelect,
+        });
+        if (!source) {
+          throw new OrganizationServiceError(
+            'Only an activated Organization Unit version can be corrected.',
+            409,
+            'ORGANIZATION_UNIT_CORRECTION_NOT_ALLOWED',
+          );
+        }
+        await this.validateParent(
+          transaction,
+          context.agencyId,
+          unitId,
+          input.parentUnitId,
+          source.effectiveFrom,
+          source.effectiveTo,
         );
-      }
-      await this.validateParent(
-        transaction,
-        context.agencyId,
-        unitId,
-        input.parentUnitId,
-        source.effectiveFrom,
-        source.effectiveTo,
-      );
-      const latest = await transaction.organizationUnitVersion.findFirst({
-        where: { agencyId: context.agencyId, organizationUnitId: unitId },
-        orderBy: { versionNo: 'desc' },
-        select: { versionNo: true },
-      });
-      await transaction.$executeRaw(
-        Prisma.sql`SELECT set_config('app.organization_unit_correction', 'on', true)`,
-      );
-      await transaction.organizationUnitVersion.update({
-        where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
-        data: { status: 'VOIDED' },
-      });
-      const replacement = await transaction.organizationUnitVersion.create({
-        data: {
+        const latest = await transaction.organizationUnitVersion.findFirst({
+          where: { agencyId: context.agencyId, organizationUnitId: unitId },
+          orderBy: { versionNo: 'desc' },
+          select: { versionNo: true },
+        });
+        await transaction.organizationUnitVersion.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
+          data: { status: 'VOIDED' },
+        });
+        const replacement = await transaction.organizationUnitVersion.create({
+          data: {
+            agencyId: context.agencyId,
+            organizationUnitId: unitId,
+            versionNo: (latest?.versionNo ?? source.versionNo) + 1,
+            name: officialName,
+            parentUnitId: input.parentUnitId,
+            headPositionId: source.headPositionId,
+            costCenterCode,
+            responsibilityCenterCode,
+            effectiveFrom: source.effectiveFrom,
+            effectiveTo: source.effectiveTo,
+            status: source.status,
+            domainStatus: source.domainStatus,
+          },
+          select: unitVersionSelect,
+        });
+        await this.refreshCurrentProjection(transaction, context.agencyId, unitId);
+        const before = versionSummaryFromRecord(source);
+        const after = versionSummaryFromRecord(replacement);
+        await this.auditWriter.write(transaction, {
           agencyId: context.agencyId,
-          organizationUnitId: unitId,
-          versionNo: (latest?.versionNo ?? source.versionNo) + 1,
-          name: officialName,
-          parentUnitId: input.parentUnitId,
-          headPositionId: source.headPositionId,
-          costCenterCode,
-          responsibilityCenterCode,
-          effectiveFrom: source.effectiveFrom,
-          effectiveTo: source.effectiveTo,
-          status: source.status,
-          domainStatus: source.domainStatus,
-        },
-        select: unitVersionSelect,
-      });
-      await this.refreshCurrentProjection(transaction, context.agencyId, unitId);
-      const before = versionSummaryFromRecord(source);
-      const after = versionSummaryFromRecord(replacement);
-      await this.auditWriter.write(transaction, {
-        agencyId: context.agencyId,
-        actorUserId: context.userId,
-        actorMembershipId: context.membershipId,
-        actorType: 'USER',
-        action: 'ORGANIZATION_UNIT_CORRECTED',
-        entityType: 'OrganizationUnit',
-        entityId: unitId,
-        previousStatus: source.status,
-        newStatus: replacement.status,
-        reason,
-        requestId: context.requestId,
-        metadata: {
-          voidedVersionId: source.id,
-          replacementVersionId: replacement.id,
-          before: versionAuditData(before),
-          after: versionAuditData(after),
-        },
-      });
-      return after;
-    });
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          actorType: 'USER',
+          action: 'ORGANIZATION_UNIT_CORRECTED',
+          entityType: 'OrganizationUnit',
+          entityId: unitId,
+          previousStatus: source.status,
+          newStatus: replacement.status,
+          reason,
+          requestId: context.requestId,
+          metadata: {
+            voidedVersionId: source.id,
+            replacementVersionId: replacement.id,
+            before: versionAuditData(before),
+            after: versionAuditData(after),
+          },
+        });
+        return after;
+      },
+    );
   }
 
   async history(

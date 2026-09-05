@@ -32,6 +32,9 @@ model Agency {
   sessions                      UserSession[]
   securityEvents                SecurityEvent[]
   auditEvents                   AuditEvent[]
+  governmentIdentifiers         GovernmentIdentifier[]
+  payrollBankAccounts           PayrollBankAccount[]
+  salnComplianceRecords         SalnComplianceRecord[]
   organizationUnits             OrganizationUnit[]
   organizationUnitVersions      OrganizationUnitVersion[]
   documents                     Document[]
@@ -42,6 +45,35 @@ model Agency {
   plantillaPositions            PlantillaPosition[]
   plantillaPositionVersions     PlantillaPositionVersion[]
   positionDocuments             PositionDocument[]
+  employees                     Employee[]
+  employeeDocuments             EmployeeDocument[]
+  pdsVersions                   PdsVersion[]
+  pdsPersonalDetails            PdsPersonalDetails[]
+  pdsFamilyRecords              PdsFamilyRecord[]
+  pdsEducationRecords           PdsEducationRecord[]
+  pdsEligibilityRecords         PdsEligibilityRecord[]
+  pdsWorkExperienceRecords      PdsWorkExperienceRecord[]
+  pdsVoluntaryWorkRecords       PdsVoluntaryWorkRecord[]
+  pdsLearningDevelopmentRecords PdsLearningDevelopmentRecord[]
+  pdsWesArtifacts               PdsWesArtifact[]
+  pdsWesEntries                 PdsWesEntry[]
+  pdsOtherInformation           PdsOtherInformation[]
+  pdsDeclarationDetails         PdsDeclarationDetails[]
+  pdsReferenceRecords           PdsReferenceRecord[]
+  pdsCertificationDetails       PdsCertificationDetails[]
+  pdsPageSignatures             PdsPageSignature[]
+  pdsTransitionEvents           PdsTransitionEvent[]
+  pdsOutputArtifacts            PdsOutputArtifact[]
+  personnelBaselines            PersonnelBaseline[]
+  personnelActions              PersonnelAction[]
+  personnelActionVersions       PersonnelActionVersion[]
+  personnelActionEvidence       PersonnelActionEvidence[]
+  serviceSegments               ServiceSegment[]
+  positionIncumbencies          PositionIncumbency[]
+  separationCases               SeparationCase[]
+  separationEffects             SeparationEffect[]
+  serviceRecordSnapshots        ServiceRecordSnapshot[]
+  outboxEvents                  OutboxEvent[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -91,6 +123,9 @@ model OrganizationUnit {
   childVersions             OrganizationUnitVersion[]  @relation("OrganizationUnitVersionParent")
   primaryMemberships        AgencyMembership[]         @relation("AgencyMembershipPrimaryUnit")
   plantillaPositionVersions PlantillaPositionVersion[] @relation("PlantillaPositionOrganizationUnit")
+  serviceSegments           ServiceSegment[]           @relation("ServiceSegmentOrganizationUnit")
+  personnelBaselines        PersonnelBaseline[]        @relation("PersonnelBaselineOrganizationUnit")
+  personnelActionTargets    PersonnelActionVersion[]   @relation("PersonnelActionTargetOrganizationUnit")
 
   @@unique([agencyId, id])
   @@unique([agencyId, code])
@@ -185,6 +220,13 @@ model AgencyMembership {
   rolePermissionGrants                   RolePermission[]               @relation("RolePermissionGrantor")
   delegationsGiven                       DelegatedAuthority[]           @relation("DelegationDelegator")
   delegationsReceived                    DelegatedAuthority[]           @relation("DelegationDelegate")
+  preparedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionPreparer")
+  approvedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionApprover")
+  effectuatedPersonnelActions            PersonnelAction[]              @relation("PersonnelActionEffectuator")
+  initiatedSeparationCases               SeparationCase[]               @relation("SeparationCaseInitiator")
+  approvedSeparationCases                SeparationCase[]               @relation("SeparationCaseApprover")
+  createdPersonnelActionVersions         PersonnelActionVersion[]       @relation("PersonnelActionVersionCreator")
+  createdPersonnelActionEvidence         PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceCreator")
   sessions                               UserSession[]
   securityEvents                         SecurityEvent[]                @relation("SecurityEventMembership")
   auditEvents                            AuditEvent[]                   @relation("AuditEventMembership")
@@ -204,6 +246,25 @@ model AgencyMembership {
   updatedPlantillaPositions              PlantillaPosition[]            @relation("PlantillaPositionUpdater")
   createdPlantillaPositionVersions       PlantillaPositionVersion[]     @relation("PlantillaPositionVersionCreator")
   updatedPlantillaPositionVersions       PlantillaPositionVersion[]     @relation("PlantillaPositionVersionUpdater")
+  employee                               Employee?                      @relation("AgencyMembershipEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  createdEmployees                       Employee[]                     @relation("EmployeeCreator")
+  updatedEmployees                       Employee[]                     @relation("EmployeeUpdater")
+  createdEmployeeDocuments               EmployeeDocument[]             @relation("EmployeeDocumentCreator")
+  createdPdsVersions                     PdsVersion[]                   @relation("PdsVersionCreator")
+  updatedPdsVersions                     PdsVersion[]                   @relation("PdsVersionUpdater")
+  pdsTransitionEvents                    PdsTransitionEvent[]           @relation("PdsTransitionActor")
+  createdPersonnelBaselines              PersonnelBaseline[]            @relation("PersonnelBaselineCreator")
+  updatedPersonnelBaselines              PersonnelBaseline[]            @relation("PersonnelBaselineUpdater")
+  reviewedPersonnelBaselines             PersonnelBaseline[]            @relation("PersonnelBaselineReviewer")
+  effectuatedPersonnelBaselines          PersonnelBaseline[]            @relation("PersonnelBaselineEffectuator")
+  createdServiceSegments                 ServiceSegment[]               @relation("ServiceSegmentCreator")
+  createdPositionIncumbencies            PositionIncumbency[]           @relation("PositionIncumbencyCreator")
+  createdGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierCreator")
+  updatedGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierUpdater")
+  createdPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountCreator")
+  createdSalnComplianceRecords           SalnComplianceRecord[]         @relation("SalnComplianceCreator")
+  updatedPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountUpdater")
+  generatedServiceRecords                ServiceRecordSnapshot[]        @relation("ServiceRecordGenerator")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -308,11 +369,13 @@ model DelegatedAuthority {
   authorityDocumentId   String?  @map("authority_document_id") @db.Uuid
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  delegator  AgencyMembership @relation("DelegationDelegator", fields: [agencyId, delegatorMembershipId], references: [agencyId, id], onDelete: Restrict)
-  delegate   AgencyMembership @relation("DelegationDelegate", fields: [agencyId, delegateMembershipId], references: [agencyId, id], onDelete: Restrict)
-  permission Permission       @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+  agency                   Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  delegator                AgencyMembership  @relation("DelegationDelegator", fields: [agencyId, delegatorMembershipId], references: [agencyId, id], onDelete: Restrict)
+  delegate                 AgencyMembership  @relation("DelegationDelegate", fields: [agencyId, delegateMembershipId], references: [agencyId, id], onDelete: Restrict)
+  permission               Permission        @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+  personnelActionApprovals PersonnelAction[] @relation("PersonnelActionApprovalDelegation")
 
+  @@unique([agencyId, id])
   @@index([agencyId, delegateMembershipId, effectiveFrom, effectiveTo])
   @@map("delegated_authorities")
 }
@@ -402,16 +465,35 @@ model Document {
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion            Int      @default(1) @map("row_version")
 
-  agency                                Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  createdBy                             AgencyMembership               @relation("DocumentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  updatedBy                             AgencyMembership?              @relation("DocumentUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  currentVersion                        DocumentVersion?               @relation("DocumentCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
-  versions                              DocumentVersion[]              @relation("DocumentVersions")
-  staffingAuthorities                   StaffingAuthority[]            @relation("StaffingAuthorityEvidenceDocument")
-  staffingAuthorityRevocations          StaffingAuthority[]            @relation("StaffingAuthorityRevocationDocument")
-  qualificationStandardSourceVersions   QualificationStandardVersion[] @relation("QualificationStandardSourceDocument")
-  qualificationStandardApprovalVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalDocument")
-  positionDocuments                     PositionDocument[]             @relation("PositionDocumentDocuments")
+  agency                                  Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy                               AgencyMembership               @relation("DocumentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy                               AgencyMembership?              @relation("DocumentUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion                          DocumentVersion?               @relation("DocumentCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
+  versions                                DocumentVersion[]              @relation("DocumentVersions")
+  staffingAuthorities                     StaffingAuthority[]            @relation("StaffingAuthorityEvidenceDocument")
+  staffingAuthorityRevocations            StaffingAuthority[]            @relation("StaffingAuthorityRevocationDocument")
+  qualificationStandardSourceVersions     QualificationStandardVersion[] @relation("QualificationStandardSourceDocument")
+  qualificationStandardApprovalVersions   QualificationStandardVersion[] @relation("QualificationStandardApprovalDocument")
+  positionDocuments                       PositionDocument[]             @relation("PositionDocumentDocuments")
+  employeeDocuments                       EmployeeDocument[]             @relation("DocumentEmployeeDocuments")
+  pdsEducationEvidenceRecords             PdsEducationRecord[]           @relation("PdsEducationEvidenceDocument")
+  pdsEligibilityEvidenceRecords           PdsEligibilityRecord[]         @relation("PdsEligibilityEvidenceDocument")
+  pdsWorkExperienceEvidenceDocuments      PdsWorkExperienceRecord[]      @relation("PdsWorkExperienceEvidenceDocument")
+  pdsVoluntaryWorkEvidenceDocuments       PdsVoluntaryWorkRecord[]       @relation("PdsVoluntaryWorkEvidenceDocument")
+  pdsLearningDevelopmentEvidenceDocuments PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceDocument")
+  pdsWesEvidenceDocuments                 PdsWesArtifact[]               @relation("PdsWesEvidenceDocument")
+  pdsWesEmployeeSignatureDocuments        PdsWesArtifact[]               @relation("PdsWesEmployeeSignatureDocument")
+  pdsCertificationPhotoDocuments          PdsCertificationDetails[]      @relation("PdsCertificationPhotoDocument")
+  pdsEmployeeSignatureDocuments           PdsCertificationDetails[]      @relation("PdsEmployeeSignatureDocument")
+  pdsThumbmarkDocuments                   PdsCertificationDetails[]      @relation("PdsThumbmarkDocument")
+  pdsOathAdministratorSignatureDocuments  PdsCertificationDetails[]      @relation("PdsOathAdministratorSignatureDocument")
+  pdsPageSignatureDocuments               PdsPageSignature[]             @relation("PdsPageSignatureDocument")
+  personnelBaselineEvidenceDocuments      PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceDocument")
+  governmentIdentifierEvidenceDocuments   GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceDocument")
+  personnelActionEvidenceDocuments        PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceDocument")
+  payrollBankAccountEvidenceDocuments     PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceDocument")
+  salnAcknowledgmentDocuments             SalnComplianceRecord[]         @relation("SalnAcknowledgmentDocument")
+  serviceRecordCorrectionDocuments        ServiceRecordSnapshot[]        @relation("ServiceRecordCorrectionDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -440,6 +522,25 @@ model DocumentVersion {
   staffingAuthorityRevocationVersions           StaffingAuthority[]            @relation("StaffingAuthorityRevocationVersion")
   qualificationStandardSourceEvidenceVersions   QualificationStandardVersion[] @relation("QualificationStandardSourceVersion")
   qualificationStandardApprovalEvidenceVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalVersion")
+  employeeDocuments                             EmployeeDocument[]             @relation("DocumentVersionEmployeeDocuments")
+  pdsEducationEvidenceRecords                   PdsEducationRecord[]           @relation("PdsEducationEvidenceVersion")
+  pdsEligibilityEvidenceRecords                 PdsEligibilityRecord[]         @relation("PdsEligibilityEvidenceVersion")
+  pdsWorkExperienceEvidenceVersions             PdsWorkExperienceRecord[]      @relation("PdsWorkExperienceEvidenceVersion")
+  pdsVoluntaryWorkEvidenceVersions              PdsVoluntaryWorkRecord[]       @relation("PdsVoluntaryWorkEvidenceVersion")
+  pdsLearningDevelopmentEvidenceVersions        PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceVersion")
+  pdsWesEvidenceVersions                        PdsWesArtifact[]               @relation("PdsWesEvidenceVersion")
+  pdsWesEmployeeSignatureVersions               PdsWesArtifact[]               @relation("PdsWesEmployeeSignatureVersion")
+  pdsCertificationPhotoVersions                 PdsCertificationDetails[]      @relation("PdsCertificationPhotoVersion")
+  pdsEmployeeSignatureVersions                  PdsCertificationDetails[]      @relation("PdsEmployeeSignatureVersion")
+  pdsThumbmarkVersions                          PdsCertificationDetails[]      @relation("PdsThumbmarkVersion")
+  pdsOathAdministratorSignatureVersions         PdsCertificationDetails[]      @relation("PdsOathAdministratorSignatureVersion")
+  pdsPageSignatureVersions                      PdsPageSignature[]             @relation("PdsPageSignatureVersion")
+  personnelBaselineEvidenceVersions             PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceVersion")
+  governmentIdentifierEvidenceVersions          GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceVersion")
+  personnelActionEvidenceVersions               PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceVersion")
+  payrollBankAccountEvidenceVersions            PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceVersion")
+  salnAcknowledgmentVersions                    SalnComplianceRecord[]         @relation("SalnAcknowledgmentVersion")
+  serviceRecordCorrectionVersions               ServiceRecordSnapshot[]        @relation("ServiceRecordCorrectionVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -587,7 +688,11 @@ model PlantillaPosition {
   createdBy               AgencyMembership           @relation("PlantillaPositionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy               AgencyMembership           @relation("PlantillaPositionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   headOfOrganizationUnits OrganizationUnitVersion[]  @relation("OrganizationUnitHead")
-  documents               PositionDocument[]          @relation("PositionDocumentPositions")
+  documents               PositionDocument[]         @relation("PositionDocumentPositions")
+  serviceSegments         ServiceSegment[]           @relation("ServiceSegmentPosition")
+  incumbencies            PositionIncumbency[]       @relation("PositionIncumbencyPosition")
+  personnelBaselines      PersonnelBaseline[]        @relation("PersonnelBaselinePosition")
+  personnelActionTargets  PersonnelActionVersion[]   @relation("PersonnelActionTargetPosition")
 
   @@unique([agencyId, id])
   @@unique([agencyId, itemNumber])
@@ -604,9 +709,9 @@ model PositionDocument {
   effectiveFrom DateTime? @map("effective_from") @db.Date
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency   Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  agency   Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   position PlantillaPosition @relation("PositionDocumentPositions", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
-  document Document         @relation("PositionDocumentDocuments", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  document Document          @relation("PositionDocumentDocuments", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([agencyId, id])
   @@unique([positionId, documentId, documentType])
@@ -651,4 +756,976 @@ model PlantillaPositionVersion {
   @@unique([agencyId, positionId, id])
   @@index([agencyId, positionId, effectiveFrom])
   @@map("plantilla_position_versions")
+}
+
+model Employee {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  employeeNumber             String    @map("employee_number") @db.Citext
+  legalName                  String    @map("legal_name") @db.Citext
+  birthDate                  DateTime  @map("birth_date") @db.Date
+  sex                        String
+  civilStatus                String    @map("civil_status")
+  contactEmail               String    @map("contact_email") @db.Citext
+  serviceStatus              String    @default("PREBOARDING") @map("service_status")
+  firstGovernmentServiceDate DateTime? @map("first_government_service_date") @db.Date
+  agencyServiceStartDate     DateTime? @map("agency_service_start_date") @db.Date
+  currentServiceSegmentId    String?   @map("current_service_segment_id") @db.Uuid
+  createdByMembershipId      String    @map("created_by_membership_id") @db.Uuid
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId      String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  agency                 Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy              AgencyMembership        @relation("EmployeeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy              AgencyMembership        @relation("EmployeeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  memberships            AgencyMembership[]      @relation("AgencyMembershipEmployee")
+  documents              EmployeeDocument[]      @relation("EmployeeDocuments")
+  pdsVersions            PdsVersion[]
+  pdsWesArtifacts        PdsWesArtifact[]
+  pdsOutputArtifacts     PdsOutputArtifact[]
+  currentServiceSegment  ServiceSegment?         @relation("EmployeeCurrentServiceSegment", fields: [agencyId, currentServiceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  personnelBaselines     PersonnelBaseline[]     @relation("PersonnelBaselineEmployee")
+  personnelActions       PersonnelAction[]       @relation("PersonnelActionEmployee")
+  serviceSegments        ServiceSegment[]        @relation("ServiceSegmentEmployee")
+  positionIncumbencies   PositionIncumbency[]    @relation("PositionIncumbencyEmployee")
+  separationCases        SeparationCase[]        @relation("SeparationCaseEmployee")
+  governmentIdentifiers  GovernmentIdentifier[]  @relation("EmployeeGovernmentIdentifiers")
+  payrollBankAccounts    PayrollBankAccount[]    @relation("EmployeePayrollBankAccounts")
+  salnComplianceRecords  SalnComplianceRecord[]  @relation("EmployeeSalnComplianceRecords")
+  serviceRecordSnapshots ServiceRecordSnapshot[] @relation("EmployeeServiceRecords")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeNumber])
+  @@unique([agencyId, legalName, birthDate])
+  @@map("employees")
+}
+
+model EmployeeDocument {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  employeeId              String   @map("employee_id") @db.Uuid
+  documentId              String   @map("document_id") @db.Uuid
+  documentVersionId       String   @map("document_version_id") @db.Uuid
+  personnelClassification String   @map("personnel_classification")
+  purpose                 String
+  releaseState            String   @default("PENDING") @map("release_state")
+  createdByMembershipId   String   @map("created_by_membership_id") @db.Uuid
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee        Employee         @relation("EmployeeDocuments", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  document        Document         @relation("DocumentEmployeeDocuments", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion  @relation("DocumentVersionEmployeeDocuments", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  createdBy       AgencyMembership @relation("EmployeeDocumentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeId, documentVersionId, personnelClassification, purpose])
+  @@index([agencyId, employeeId, createdAt(sort: Desc)])
+  @@index([agencyId, employeeId, releaseState])
+  @@map("employee_documents")
+}
+
+model GovernmentIdentifier {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  identifierType            String    @map("identifier_type")
+  encryptedValue            Bytes     @map("encrypted_value")
+  encryptionVersion         Int       @default(1) @map("encryption_version") @db.SmallInt
+  maskedValue               String    @map("masked_value")
+  verifiedAt                DateTime? @map("verified_at") @db.Timestamptz(6)
+  status                    String    @default("ACTIVE")
+  effectiveFrom             DateTime  @map("effective_from") @db.Date
+  effectiveTo               DateTime? @map("effective_to") @db.Date
+  reason                    String?
+  evidenceDocumentId        String?   @map("evidence_document_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  replacesIdentifierId      String?   @map("replaces_identifier_id") @db.Uuid
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId     String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
+
+  agency                  Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                Employee               @relation("EmployeeGovernmentIdentifiers", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument        Document?              @relation("GovernmentIdentifierEvidenceDocument", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?       @relation("GovernmentIdentifierEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  replacesIdentifier      GovernmentIdentifier?  @relation("GovernmentIdentifierReplacement", fields: [agencyId, replacesIdentifierId], references: [agencyId, id], onDelete: Restrict)
+  replacedByIdentifiers   GovernmentIdentifier[] @relation("GovernmentIdentifierReplacement")
+  createdBy               AgencyMembership       @relation("GovernmentIdentifierCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy               AgencyMembership       @relation("GovernmentIdentifierUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, replacesIdentifierId])
+  @@index([agencyId, employeeId, identifierType, effectiveFrom(sort: Desc)])
+  @@index([agencyId, employeeId, status])
+  @@map("government_identifiers")
+}
+
+model PayrollBankAccount {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  bankCode                  String    @map("bank_code")
+  accountName               String    @map("account_name")
+  encryptedAccountNumber    Bytes     @map("encrypted_account_number")
+  encryptionVersion         Int       @default(1) @map("encryption_version") @db.SmallInt
+  maskedAccountNumber       String    @map("masked_account_number")
+  verificationState         String    @default("PENDING") @map("verification_state")
+  verifiedAt                DateTime? @map("verified_at") @db.Timestamptz(6)
+  status                    String    @default("PENDING_VERIFICATION")
+  effectiveFrom             DateTime  @map("effective_from") @db.Date
+  effectiveTo               DateTime? @map("effective_to") @db.Date
+  reason                    String?
+  evidenceDocumentId        String?   @map("evidence_document_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  predecessorAccountId      String?   @map("predecessor_account_id") @db.Uuid
+  transitionKind            String?   @map("transition_kind")
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId     String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
+
+  agency                  Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                Employee             @relation("EmployeePayrollBankAccounts", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument        Document?            @relation("PayrollBankAccountEvidenceDocument", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?     @relation("PayrollBankAccountEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  predecessorAccount      PayrollBankAccount?  @relation("PayrollBankAccountPredecessor", fields: [agencyId, predecessorAccountId], references: [agencyId, id], onDelete: Restrict)
+  successorAccounts       PayrollBankAccount[] @relation("PayrollBankAccountPredecessor")
+  createdBy               AgencyMembership     @relation("PayrollBankAccountCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy               AgencyMembership     @relation("PayrollBankAccountUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, predecessorAccountId])
+  @@index([agencyId, employeeId, effectiveFrom(sort: Desc)])
+  @@index([agencyId, employeeId, status])
+  @@map("payroll_bank_accounts")
+}
+
+model SalnComplianceRecord {
+  id                              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String    @map("agency_id") @db.Uuid
+  employeeId                      String    @map("employee_id") @db.Uuid
+  requirementReference            String    @map("requirement_reference")
+  filingYear                      Int       @map("filing_year") @db.SmallInt
+  filingType                      String    @map("filing_type")
+  status                          String
+  submittedAt                     DateTime? @map("submitted_at") @db.Timestamptz(6)
+  repositoryReference             String?   @map("repository_reference")
+  acknowledgmentDocumentId        String?   @map("acknowledgment_document_id") @db.Uuid
+  acknowledgmentDocumentVersionId String?   @map("acknowledgment_document_version_id") @db.Uuid
+  correctsRecordId                String?   @map("corrects_record_id") @db.Uuid
+  correctionReason                String?   @map("correction_reason")
+  createdByMembershipId           String    @map("created_by_membership_id") @db.Uuid
+  createdAt                       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency                        Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                      Employee              @relation("EmployeeSalnComplianceRecords", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  acknowledgmentDocument        Document?             @relation("SalnAcknowledgmentDocument", fields: [agencyId, acknowledgmentDocumentId], references: [agencyId, id], onDelete: Restrict, map: "saln_compliance_acknowledgment_document_fkey")
+  acknowledgmentDocumentVersion DocumentVersion?      @relation("SalnAcknowledgmentVersion", fields: [agencyId, acknowledgmentDocumentId, acknowledgmentDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "saln_compliance_acknowledgment_version_fkey")
+  correctsRecord                SalnComplianceRecord? @relation("SalnComplianceCorrection", fields: [agencyId, correctsRecordId], references: [agencyId, id], onDelete: Restrict)
+  correctedByRecord             SalnComplianceRecord? @relation("SalnComplianceCorrection")
+  createdBy                     AgencyMembership      @relation("SalnComplianceCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, correctsRecordId])
+  @@index([agencyId, employeeId, filingYear(sort: Desc)])
+  @@map("saln_compliance_records")
+}
+
+model PdsVersion {
+  id                              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String    @map("agency_id") @db.Uuid
+  employeeId                      String    @map("employee_id") @db.Uuid
+  versionNo                       Int       @map("version_no")
+  formVersion                     String    @map("form_version")
+  asOfDate                        DateTime  @map("as_of_date") @db.Date
+  status                          String
+  supersedesVersionId             String?   @map("supersedes_version_id") @db.Uuid
+  correctionReason                String?   @map("correction_reason")
+  createdByMembershipId           String    @map("created_by_membership_id") @db.Uuid
+  createdAt                       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId           String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                      Int       @default(1) @map("row_version")
+  employeeCertifiedAt             DateTime? @map("employee_certified_at") @db.Timestamptz(6)
+  employeeCertifiedByMembershipId String?   @map("employee_certified_by_membership_id") @db.Uuid
+  hrVerifiedAt                    DateTime? @map("hr_verified_at") @db.Timestamptz(6)
+  hrVerifiedByMembershipId        String?   @map("hr_verified_by_membership_id") @db.Uuid
+
+  agency                     Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                   Employee                       @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  supersedes                 PdsVersion?                    @relation("PdsVersionSupersession", fields: [agencyId, supersedesVersionId], references: [agencyId, id], onDelete: Restrict)
+  successorVersions          PdsVersion[]                   @relation("PdsVersionSupersession")
+  createdBy                  AgencyMembership               @relation("PdsVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy                  AgencyMembership               @relation("PdsVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  personalDetails            PdsPersonalDetails?
+  familyRecords              PdsFamilyRecord[]
+  educationRecords           PdsEducationRecord[]
+  eligibilityRecords         PdsEligibilityRecord[]
+  workExperienceRecords      PdsWorkExperienceRecord[]
+  voluntaryWorkRecords       PdsVoluntaryWorkRecord[]
+  learningDevelopmentRecords PdsLearningDevelopmentRecord[]
+  wesArtifacts               PdsWesArtifact[]
+  otherInformation           PdsOtherInformation?
+  declarationDetails         PdsDeclarationDetails?
+  referenceRecords           PdsReferenceRecord[]
+  certificationDetails       PdsCertificationDetails?
+  pageSignatures             PdsPageSignature[]
+  transitionEvents           PdsTransitionEvent[]
+  outputArtifacts            PdsOutputArtifact[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeId, versionNo])
+  @@unique([agencyId, id, employeeId])
+  @@index([agencyId, employeeId, status])
+  @@index([agencyId, supersedesVersionId])
+  @@map("pds_versions")
+}
+
+model PdsPersonalDetails {
+  agencyId               String    @map("agency_id") @db.Uuid
+  pdsVersionId           String    @id @map("pds_version_id") @db.Uuid
+  surname                String?
+  firstName              String?   @map("first_name")
+  nameExtension          String?   @map("name_extension")
+  middleName             String?   @map("middle_name")
+  birthDate              DateTime? @map("birth_date") @db.Date
+  birthPlace             String?   @map("birth_place")
+  sex                    String?
+  civilStatus            String?   @map("civil_status")
+  civilStatusDetail      String?   @map("civil_status_detail")
+  heightMeters           Decimal?  @map("height_meters") @db.Decimal(8, 3)
+  weightKilograms        Decimal?  @map("weight_kilograms") @db.Decimal(8, 3)
+  bloodType              String?   @map("blood_type")
+  umidIdNumber           String?   @map("umid_id_number")
+  pagibigIdNumber        String?   @map("pagibig_id_number")
+  philhealthNumber       String?   @map("philhealth_number")
+  philSysCardNumber      String?   @map("phil_sys_card_number")
+  tinNumber              String?   @map("tin_number")
+  agencyEmployeeNumber   String?   @map("agency_employee_number")
+  citizenship            String?
+  dualCitizenshipType    String?   @map("dual_citizenship_type")
+  dualCitizenshipCountry String?   @map("dual_citizenship_country")
+  residentialAddress     Json?     @map("residential_address")
+  permanentAddress       Json?     @map("permanent_address")
+  telephoneNumber        String?   @map("telephone_number")
+  mobileNumber           String?   @map("mobile_number")
+  emailAddress           String?   @map("email_address")
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_personal_details")
+}
+
+model PdsFamilyRecord {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String    @map("agency_id") @db.Uuid
+  pdsVersionId         String    @map("pds_version_id") @db.Uuid
+  relationshipType     String    @map("relationship_type")
+  sequenceNo           Int       @map("sequence_no")
+  fullName             String?   @map("full_name")
+  surname              String?
+  firstName            String?   @map("first_name")
+  middleName           String?   @map("middle_name")
+  nameExtension        String?   @map("name_extension")
+  birthDate            DateTime? @map("birth_date") @db.Date
+  occupation           String?
+  employerBusinessName String?   @map("employer_business_name")
+  businessAddress      Json?     @map("business_address")
+  telephoneNumber      String?   @map("telephone_number")
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([pdsVersionId, relationshipType, sequenceNo])
+  @@index([agencyId, pdsVersionId, relationshipType, sequenceNo])
+  @@map("pds_family_records")
+}
+
+model PdsEducationRecord {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String  @map("agency_id") @db.Uuid
+  pdsVersionId       String  @map("pds_version_id") @db.Uuid
+  level              String
+  sequenceNo         Int     @map("sequence_no")
+  schoolName         String  @map("school_name")
+  degreeCourse       String  @map("degree_course")
+  periodOfAttendance String  @map("period_of_attendance")
+  highestLevelUnits  String  @map("highest_level_units")
+  yearGraduated      Int?    @map("year_graduated")
+  honors             String
+  documentId         String? @map("document_id") @db.Uuid
+  documentVersionId  String? @map("document_version_id") @db.Uuid
+
+  agency          Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion      PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  document        Document?        @relation("PdsEducationEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion? @relation("PdsEducationEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([pdsVersionId, level, sequenceNo])
+  @@index([agencyId, pdsVersionId, level, sequenceNo])
+  @@map("pds_education_records")
+}
+
+model PdsEligibilityRecord {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String    @map("agency_id") @db.Uuid
+  pdsVersionId      String    @map("pds_version_id") @db.Uuid
+  sequenceNo        Int       @map("sequence_no")
+  eligibilityName   String    @map("eligibility_name")
+  rating            String?
+  examDate          DateTime? @map("exam_date") @db.Date
+  examPlace         String    @map("exam_place")
+  licenseNo         String?   @map("license_no")
+  validUntil        DateTime? @map("valid_until") @db.Date
+  documentId        String?   @map("document_id") @db.Uuid
+  documentVersionId String?   @map("document_version_id") @db.Uuid
+
+  agency          Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion      PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  document        Document?        @relation("PdsEligibilityEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion? @relation("PdsEligibilityEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_eligibility_records")
+}
+
+model PdsWorkExperienceRecord {
+  id                            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                      String    @map("agency_id") @db.Uuid
+  pdsVersionId                  String    @map("pds_version_id") @db.Uuid
+  sequenceNo                    Int       @map("sequence_no")
+  inclusiveFrom                 DateTime? @map("inclusive_from") @db.Date
+  inclusiveTo                   DateTime? @map("inclusive_to") @db.Date
+  positionTitle                 String?   @map("position_title")
+  departmentAgencyOfficeCompany String?   @map("department_agency_office_company")
+  monthlySalary                 Decimal?  @map("monthly_salary") @db.Decimal(14, 2)
+  salaryGradeStep               String?   @map("salary_grade_step")
+  appointmentStatus             String?   @map("appointment_status")
+  governmentService             String?   @map("government_service")
+  isCurrent                     Boolean   @default(false) @map("is_current")
+  documentId                    String?   @map("document_id") @db.Uuid
+  documentVersionId             String?   @map("document_version_id") @db.Uuid
+
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion       PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument Document?        @relation("PdsWorkExperienceEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion  DocumentVersion? @relation("PdsWorkExperienceEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  wesEntries       PdsWesEntry[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, id])
+  @@unique([agencyId, pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_work_experience_records")
+}
+
+model PdsVoluntaryWorkRecord {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  pdsVersionId            String    @map("pds_version_id") @db.Uuid
+  sequenceNo              Int       @map("sequence_no")
+  organizationNameAddress String?   @map("organization_name_address")
+  inclusiveFrom           DateTime? @map("inclusive_from") @db.Date
+  inclusiveTo             DateTime? @map("inclusive_to") @db.Date
+  hours                   Decimal?  @db.Decimal(12, 4)
+  positionNatureOfWork    String?   @map("position_nature_of_work")
+  documentId              String?   @map("document_id") @db.Uuid
+  documentVersionId       String?   @map("document_version_id") @db.Uuid
+
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion       PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument Document?        @relation("PdsVoluntaryWorkEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion  DocumentVersion? @relation("PdsVoluntaryWorkEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_voluntary_work_records")
+}
+
+model PdsLearningDevelopmentRecord {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String    @map("agency_id") @db.Uuid
+  pdsVersionId         String    @map("pds_version_id") @db.Uuid
+  sequenceNo           Int       @map("sequence_no")
+  interventionTitle    String?   @map("intervention_title")
+  attendanceFrom       DateTime? @map("attendance_from") @db.Date
+  attendanceTo         DateTime? @map("attendance_to") @db.Date
+  hours                Decimal?  @db.Decimal(12, 4)
+  type                 String?
+  conductedSponsoredBy String?   @map("conducted_sponsored_by")
+  documentId           String?   @map("document_id") @db.Uuid
+  documentVersionId    String?   @map("document_version_id") @db.Uuid
+
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion       PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument Document?        @relation("PdsLearningDevelopmentEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion  DocumentVersion? @relation("PdsLearningDevelopmentEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_learning_development_records")
+}
+
+model PdsWesArtifact {
+  id                                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                           String    @map("agency_id") @db.Uuid
+  employeeId                         String    @map("employee_id") @db.Uuid
+  pdsVersionId                       String    @map("pds_version_id") @db.Uuid
+  contextKey                         String    @default("DEFAULT") @map("context_key")
+  templateVersion                    String    @default("CS_FORM_212_ATTACHMENT_WES_ORAOHRA_2025_H2") @map("template_version")
+  status                             String    @default("DRAFT")
+  documentId                         String?   @map("document_id") @db.Uuid
+  documentVersionId                  String?   @map("document_version_id") @db.Uuid
+  employeeSignatureDocumentId        String?   @map("employee_signature_document_id") @db.Uuid
+  employeeSignatureDocumentVersionId String?   @map("employee_signature_document_version_id") @db.Uuid
+  signedAt                           DateTime? @map("signed_at") @db.Timestamptz(6)
+
+  agency                    Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                  Employee            @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  pdsVersion                PdsVersion          @relation(fields: [agencyId, pdsVersionId, employeeId], references: [agencyId, id, employeeId], onDelete: Restrict)
+  evidenceDocument          Document?           @relation("PdsWesEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion           DocumentVersion?    @relation("PdsWesEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  employeeSignatureDocument Document?           @relation("PdsWesEmployeeSignatureDocument", fields: [agencyId, employeeSignatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_wes_artifacts_employee_signature_document_fkey")
+  employeeSignatureVersion  DocumentVersion?    @relation("PdsWesEmployeeSignatureVersion", fields: [agencyId, employeeSignatureDocumentId, employeeSignatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_wes_artifacts_employee_signature_version_fkey")
+  entries                   PdsWesEntry[]
+  outputArtifacts           PdsOutputArtifact[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, id, pdsVersionId])
+  @@unique([agencyId, pdsVersionId, contextKey])
+  @@index([agencyId, employeeId, status])
+  @@map("pds_wes_artifacts")
+}
+
+model PdsWesEntry {
+  id                         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String  @map("agency_id") @db.Uuid
+  wesArtifactId              String  @map("wes_artifact_id") @db.Uuid
+  pdsVersionId               String  @map("pds_version_id") @db.Uuid
+  workExperienceId           String  @map("work_experience_id") @db.Uuid
+  sequenceNo                 Int     @map("sequence_no")
+  durationText               String  @map("duration_text")
+  position                   String
+  officeUnit                 String  @map("office_unit")
+  immediateSupervisor        String  @map("immediate_supervisor")
+  agencyOrganizationLocation String  @map("agency_organization_location")
+  accomplishments            String?
+  actualDuties               String  @map("actual_duties")
+
+  agency         Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  wesArtifact    PdsWesArtifact          @relation(fields: [agencyId, wesArtifactId, pdsVersionId], references: [agencyId, id, pdsVersionId], onDelete: Cascade)
+  workExperience PdsWorkExperienceRecord @relation(fields: [agencyId, pdsVersionId, workExperienceId], references: [agencyId, pdsVersionId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([wesArtifactId, sequenceNo])
+  @@unique([wesArtifactId, workExperienceId])
+  @@index([agencyId, pdsVersionId, wesArtifactId, sequenceNo])
+  @@map("pds_wes_entries")
+}
+
+model PdsOtherInformation {
+  id                      String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String  @map("agency_id") @db.Uuid
+  pdsVersionId            String  @map("pds_version_id") @db.Uuid
+  skillsAndHobbies        String? @map("skills_and_hobbies")
+  nonAcademicDistinctions String? @map("non_academic_distinctions")
+  associationMemberships  String? @map("association_memberships")
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_other_information")
+}
+
+model PdsDeclarationDetails {
+  id                               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                         String    @map("agency_id") @db.Uuid
+  pdsVersionId                     String    @map("pds_version_id") @db.Uuid
+  relatedWithinThirdDegree         Boolean?  @map("related_within_third_degree")
+  relatedWithinFourthDegreeLgu     Boolean?  @map("related_within_fourth_degree_lgu")
+  relationshipDetails              String?   @map("related_within_third_degree_details")
+  relatedWithinFourthDegreeDetails String?   @map("related_within_fourth_degree_details")
+  foundGuiltyAdministrativeOffense Boolean?  @map("administrative_offense")
+  administrativeOffenseDetails     String?   @map("administrative_offense_details")
+  criminallyCharged                Boolean?  @map("criminal_charge")
+  criminalChargeDetails            String?   @map("criminal_case_details")
+  criminalChargeDateFiled          DateTime? @map("criminal_case_date") @db.Date
+  criminalChargeDateFiledUnknown   Boolean?  @map("criminal_case_date_unknown")
+  criminalChargeStatus             String?   @map("criminal_case_status")
+  convictedOfCrime                 Boolean?  @map("conviction")
+  convictionDetails                String?   @map("conviction_details")
+  separatedFromService             Boolean?  @map("separated_from_service")
+  separationMode                   String?   @map("separation_mode")
+  separationDetails                String?   @map("separation_details")
+  candidateInLastElection          Boolean?  @map("election_candidacy")
+  candidacyDetails                 String?   @map("election_candidacy_details")
+  resignedBeforeElection           Boolean?  @map("resigned_before_election")
+  resignationDetails               String?   @map("resigned_before_election_details")
+  immigrantOrPermanentResident     Boolean?  @map("immigrant_permanent_resident")
+  immigrantCountry                 String?   @map("immigrant_permanent_resident_country")
+  immigrantDetails                 String?   @map("immigrant_permanent_resident_details")
+  indigenousGroupMember            Boolean?  @map("indigenous_group_member")
+  indigenousGroupDetails           String?   @map("indigenous_group")
+  personWithDisability             Boolean?  @map("person_with_disability")
+  disabilitySpecification          String?   @map("disability_specification")
+  disabilityIdNumber               String?   @map("disability_id_number")
+  soloParent                       Boolean?  @map("solo_parent")
+  soloParentSpecification          String?   @map("solo_parent_specification")
+  soloParentIdNumber               String?   @map("solo_parent_id_number")
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_declaration_details")
+}
+
+model PdsReferenceRecord {
+  id           String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId     String @map("agency_id") @db.Uuid
+  pdsVersionId String @map("pds_version_id") @db.Uuid
+  sequenceNo   Int    @map("sequence_no")
+  name         String
+  address      String
+  contact      String
+
+  agency     Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, sequenceNo])
+  @@index([agencyId, pdsVersionId, sequenceNo])
+  @@map("pds_reference_records")
+}
+
+model PdsCertificationDetails {
+  id                                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                            String    @map("agency_id") @db.Uuid
+  pdsVersionId                        String    @map("pds_version_id") @db.Uuid
+  truthDeclarationAccepted            Boolean?  @map("truth_declaration_accepted")
+  verificationAuthorizationAccepted   Boolean?  @map("authorization_accepted")
+  misrepresentationWarningAccepted    Boolean?  @map("misrepresentation_warning_accepted")
+  photoDocumentId                     String?   @map("photo_document_id") @db.Uuid
+  photoDocumentVersionId              String?   @map("photo_document_version_id") @db.Uuid
+  governmentIdType                    String?   @map("government_id_type")
+  governmentIdNumber                  String?   @map("government_id_number")
+  governmentIdIssuedAt                DateTime? @map("government_id_issued_at") @db.Date
+  governmentIdIssuedPlace             String?   @map("government_id_issued_place")
+  employeeSignatureDocumentId         String?   @map("employee_signature_document_id") @db.Uuid
+  employeeSignatureDocumentVersionId  String?   @map("employee_signature_document_version_id") @db.Uuid
+  employeeSignatureDate               DateTime? @map("employee_date_accomplished") @db.Date
+  thumbmarkDocumentId                 String?   @map("thumbmark_document_id") @db.Uuid
+  thumbmarkDocumentVersionId          String?   @map("thumbmark_document_version_id") @db.Uuid
+  subscribedAndSwornText              String?   @map("subscribed_and_sworn_text")
+  subscribedAndSwornAt                DateTime? @map("subscribed_and_sworn_at") @db.Timestamptz(6)
+  oathAdministeredBy                  String?   @map("oath_administered_by")
+  oathAdminSignatureDocumentId        String?   @map("oath_administrator_signature_document_id") @db.Uuid
+  oathAdminSignatureDocumentVersionId String?   @map("oath_administrator_signature_document_version_id") @db.Uuid
+  oathAdministeredAt                  DateTime? @map("oath_administered_at") @db.Timestamptz(6)
+
+  agency                                    Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion                                PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  photoDocument                             Document?        @relation("PdsCertificationPhotoDocument", fields: [agencyId, photoDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_photo_document_fkey")
+  photoDocumentVersion                      DocumentVersion? @relation("PdsCertificationPhotoVersion", fields: [agencyId, photoDocumentId, photoDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_photo_version_fkey")
+  employeeSignatureDocument                 Document?        @relation("PdsEmployeeSignatureDocument", fields: [agencyId, employeeSignatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_employee_signature_document_fkey")
+  employeeSignatureDocumentVersion          DocumentVersion? @relation("PdsEmployeeSignatureVersion", fields: [agencyId, employeeSignatureDocumentId, employeeSignatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_employee_signature_version_fkey")
+  thumbmarkDocument                         Document?        @relation("PdsThumbmarkDocument", fields: [agencyId, thumbmarkDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_thumbmark_document_fkey")
+  thumbmarkDocumentVersion                  DocumentVersion? @relation("PdsThumbmarkVersion", fields: [agencyId, thumbmarkDocumentId, thumbmarkDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_thumbmark_version_fkey")
+  oathAdministratorSignatureDocument        Document?        @relation("PdsOathAdministratorSignatureDocument", fields: [agencyId, oathAdminSignatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_certification_details_oath_signature_document_fkey")
+  oathAdministratorSignatureDocumentVersion DocumentVersion? @relation("PdsOathAdministratorSignatureVersion", fields: [agencyId, oathAdminSignatureDocumentId, oathAdminSignatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_certification_details_oath_signature_version_fkey")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId])
+  @@map("pds_certification_details")
+}
+
+model PdsPageSignature {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  pdsVersionId               String    @map("pds_version_id") @db.Uuid
+  pageKey                    String    @map("page_key")
+  signatureDocumentId        String?   @map("signature_document_id") @db.Uuid
+  signatureDocumentVersionId String?   @map("signature_document_version_id") @db.Uuid
+  signedAt                   DateTime? @map("signed_at") @db.Timestamptz(6)
+  signatureDate              DateTime? @map("signature_date") @db.Date
+
+  agency                   Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion               PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  signatureDocument        Document?        @relation("PdsPageSignatureDocument", fields: [agencyId, signatureDocumentId], references: [agencyId, id], onDelete: Restrict, map: "pds_page_signatures_document_fkey")
+  signatureDocumentVersion DocumentVersion? @relation("PdsPageSignatureVersion", fields: [agencyId, signatureDocumentId, signatureDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "pds_page_signatures_version_evidence_fkey")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, pageKey])
+  @@map("pds_page_signatures")
+}
+
+model PdsTransitionEvent {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId          String   @map("agency_id") @db.Uuid
+  pdsVersionId      String   @map("pds_version_id") @db.Uuid
+  fromStatus        String   @map("from_status")
+  toStatus          String   @map("to_status")
+  action            String
+  actorUserId       String   @map("actor_user_id") @db.Uuid
+  actorMembershipId String   @map("actor_membership_id") @db.Uuid
+  reason            String?
+  occurredAt        DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  submittedSnapshot Json?    @map("submitted_snapshot")
+
+  agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  pdsVersion PdsVersion       @relation(fields: [agencyId, pdsVersionId], references: [agencyId, id], onDelete: Restrict)
+  actor      AgencyMembership @relation("PdsTransitionActor", fields: [agencyId, actorMembershipId, actorUserId], references: [agencyId, id, userId], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, pdsVersionId, occurredAt])
+  @@map("pds_transition_events")
+}
+
+model PdsOutputArtifact {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String   @map("agency_id") @db.Uuid
+  employeeId         String   @map("employee_id") @db.Uuid
+  pdsVersionId       String   @map("pds_version_id") @db.Uuid
+  wesArtifactId      String?  @map("wes_artifact_id") @db.Uuid
+  outputKey          String   @map("output_key")
+  outputType         String   @map("output_type")
+  formVersion        String   @map("form_version")
+  templateVersion    String?  @map("template_version")
+  sourceArtifactId   String   @map("source_artifact_id")
+  sourceArtifactHash String   @map("source_artifact_hash")
+  generatedAt        DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+  dataAsOfDate       DateTime @map("data_as_of_date") @db.Date
+  status             String   @default("RELEASED")
+  renderingMetadata  Json     @map("rendering_metadata")
+  signatureMetadata  Json     @map("signature_metadata")
+  renderedContent    Json     @map("rendered_content")
+
+  agency      Agency          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee    Employee        @relation(fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  pdsVersion  PdsVersion      @relation(fields: [agencyId, pdsVersionId, employeeId], references: [agencyId, id, employeeId], onDelete: Restrict)
+  wesArtifact PdsWesArtifact? @relation(fields: [agencyId, wesArtifactId, pdsVersionId], references: [agencyId, id, pdsVersionId], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, pdsVersionId, outputKey])
+  @@index([agencyId, employeeId, status])
+  @@map("pds_output_artifacts")
+}
+
+model PersonnelBaseline {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  employeeId                 String    @map("employee_id") @db.Uuid
+  authorityDocumentId        String    @map("authority_document_id") @db.Uuid
+  authorityEvidenceVersionId String    @map("authority_evidence_version_id") @db.Uuid
+  firstGovernmentServiceDate DateTime  @map("first_government_service_date") @db.Date
+  agencyServiceStartDate     DateTime  @map("agency_service_start_date") @db.Date
+  organizationUnitId         String    @map("organization_unit_id") @db.Uuid
+  appointmentStatus          String    @map("appointment_status")
+  salaryGrade                Int?      @map("salary_grade")
+  salaryStep                 Int?      @map("salary_step")
+  positionId                 String?   @map("position_id") @db.Uuid
+  status                     String
+  reason                     String
+  reviewedByMembershipId     String?   @map("reviewed_by_membership_id") @db.Uuid
+  reviewedAt                 DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  effectuatedByMembershipId  String?   @map("effectuated_by_membership_id") @db.Uuid
+  effectuatedAt              DateTime? @map("effectuated_at") @db.Timestamptz(6)
+  serviceSegmentId           String?   @map("service_segment_id") @db.Uuid
+  positionIncumbencyId       String?   @map("position_incumbency_id") @db.Uuid
+  supersedesBaselineId       String?   @map("supersedes_baseline_id") @db.Uuid
+  createdByMembershipId      String    @map("created_by_membership_id") @db.Uuid
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId      String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  agency                   Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                 Employee            @relation("PersonnelBaselineEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  authorityDocument        Document            @relation("PersonnelBaselineEvidenceDocument", fields: [agencyId, authorityDocumentId], references: [agencyId, id], onDelete: Restrict)
+  authorityEvidenceVersion DocumentVersion     @relation("PersonnelBaselineEvidenceVersion", fields: [agencyId, authorityDocumentId, authorityEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  organizationUnit         OrganizationUnit    @relation("PersonnelBaselineOrganizationUnit", fields: [agencyId, organizationUnitId], references: [agencyId, id], onDelete: Restrict)
+  position                 PlantillaPosition?  @relation("PersonnelBaselinePosition", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  reviewedBy               AgencyMembership?   @relation("PersonnelBaselineReviewer", fields: [agencyId, reviewedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  effectuatedBy            AgencyMembership?   @relation("PersonnelBaselineEffectuator", fields: [agencyId, effectuatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  serviceSegment           ServiceSegment?     @relation("PersonnelBaselineServiceSegment", fields: [agencyId, serviceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  positionIncumbency       PositionIncumbency? @relation("PersonnelBaselinePositionIncumbency", fields: [agencyId, positionIncumbencyId], references: [agencyId, id], onDelete: Restrict)
+  supersedesBaseline       PersonnelBaseline?  @relation("PersonnelBaselineCorrection", fields: [agencyId, supersedesBaselineId], references: [agencyId, id], onDelete: Restrict)
+  successors               PersonnelBaseline[] @relation("PersonnelBaselineCorrection")
+  createdBy                AgencyMembership    @relation("PersonnelBaselineCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy                AgencyMembership    @relation("PersonnelBaselineUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, serviceSegmentId])
+  @@unique([agencyId, positionIncumbencyId])
+  @@index([agencyId, status, createdAt])
+  @@index([agencyId, employeeId, agencyServiceStartDate])
+  @@map("personnel_baselines")
+}
+
+model PersonnelAction {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  actionType                String    @map("action_type")
+  status                    String
+  currentVersionId          String?   @map("current_version_id") @db.Uuid
+  preparedByMembershipId    String    @map("prepared_by_membership_id") @db.Uuid
+  approvedByMembershipId    String?   @map("approved_by_membership_id") @db.Uuid
+  approvalDelegationId      String?   @map("approval_delegation_id") @db.Uuid
+  approvedAt                DateTime? @map("approved_at") @db.Timestamptz(6)
+  cancelledAt               DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  effectuatedByMembershipId String?   @map("effectuated_by_membership_id") @db.Uuid
+  effectuatedAt             DateTime? @map("effectuated_at") @db.Timestamptz(6)
+  effectuationKey           String?   @map("effectuation_key")
+  supersedesActionId        String?   @map("supersedes_action_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
+
+  agency             Agency                   @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee           Employee                 @relation("PersonnelActionEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion     PersonnelActionVersion?  @relation("PersonnelActionCurrentVersion", fields: [agencyId, id, currentVersionId], references: [agencyId, actionId, id], onDelete: Restrict)
+  versions           PersonnelActionVersion[] @relation("PersonnelActionVersions")
+  preparedBy         AgencyMembership         @relation("PersonnelActionPreparer", fields: [agencyId, preparedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy         AgencyMembership?        @relation("PersonnelActionApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  effectuatedBy      AgencyMembership?        @relation("PersonnelActionEffectuator", fields: [agencyId, effectuatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvalDelegation DelegatedAuthority?      @relation("PersonnelActionApprovalDelegation", fields: [agencyId, approvalDelegationId], references: [agencyId, id], onDelete: Restrict)
+  supersedesAction   PersonnelAction?         @relation("PersonnelActionSupersession", fields: [agencyId, supersedesActionId], references: [agencyId, id], onDelete: Restrict)
+  successorActions   PersonnelAction[]        @relation("PersonnelActionSupersession")
+  serviceSegments    ServiceSegment[]         @relation("ServiceSegmentPersonnelAction")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, id, currentVersionId])
+  @@index([agencyId, status, createdAt(sort: Desc)])
+  @@index([agencyId, employeeId, createdAt(sort: Desc)])
+  @@map("personnel_actions")
+}
+
+model PersonnelActionVersion {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String   @map("agency_id") @db.Uuid
+  actionId                 String   @map("action_id") @db.Uuid
+  versionNo                Int      @map("version_no")
+  proposedEffectivity      DateTime @map("proposed_effectivity") @db.Date
+  fromServiceSegmentId     String   @map("from_service_segment_id") @db.Uuid
+  targetPositionId         String?  @map("target_position_id") @db.Uuid
+  targetOrganizationUnitId String?  @map("target_organization_unit_id") @db.Uuid
+  targetFacts              Json     @map("target_facts")
+  reason                   String
+  createdByMembershipId    String   @map("created_by_membership_id") @db.Uuid
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency                 Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  action                 PersonnelAction           @relation("PersonnelActionVersions", fields: [agencyId, actionId], references: [agencyId, id], onDelete: Restrict)
+  currentForAction       PersonnelAction?          @relation("PersonnelActionCurrentVersion")
+  fromServiceSegment     ServiceSegment            @relation("PersonnelActionSourceServiceSegment", fields: [agencyId, fromServiceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  targetPosition         PlantillaPosition?        @relation("PersonnelActionTargetPosition", fields: [agencyId, targetPositionId], references: [agencyId, id], onDelete: Restrict)
+  targetOrganizationUnit OrganizationUnit?         @relation("PersonnelActionTargetOrganizationUnit", fields: [agencyId, targetOrganizationUnitId], references: [agencyId, id], onDelete: Restrict)
+  evidence               PersonnelActionEvidence[] @relation("PersonnelActionVersionEvidence")
+  createdBy              AgencyMembership          @relation("PersonnelActionVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([actionId, versionNo])
+  @@unique([agencyId, id])
+  @@unique([agencyId, actionId, id])
+  @@index([agencyId, actionId, versionNo])
+  @@map("personnel_action_versions")
+}
+
+model PersonnelActionEvidence {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  actionVersionId       String   @map("action_version_id") @db.Uuid
+  evidenceType          String   @map("evidence_type")
+  documentId            String   @map("document_id") @db.Uuid
+  documentVersionId     String   @map("document_version_id") @db.Uuid
+  sourceDate            DateTime @map("source_date") @db.Date
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  actionVersion   PersonnelActionVersion @relation("PersonnelActionVersionEvidence", fields: [agencyId, actionVersionId], references: [agencyId, id], onDelete: Restrict)
+  document        Document               @relation("PersonnelActionEvidenceDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion        @relation("PersonnelActionEvidenceVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  createdBy       AgencyMembership       @relation("PersonnelActionEvidenceCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([actionVersionId, evidenceType, documentVersionId])
+  @@index([agencyId, actionVersionId, evidenceType])
+  @@map("personnel_action_evidence")
+}
+
+model ServiceSegment {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  employeeId            String    @map("employee_id") @db.Uuid
+  appointmentId         String?   @map("appointment_id") @db.Uuid
+  personnelActionId     String?   @map("personnel_action_id") @db.Uuid
+  positionId            String?   @map("position_id") @db.Uuid
+  organizationUnitId    String    @map("organization_unit_id") @db.Uuid
+  segmentType           String    @default("PRIMARY") @map("segment_type")
+  appointmentStatus     String    @map("appointment_status")
+  salaryGrade           Int?      @map("salary_grade")
+  salaryStep            Int?      @map("salary_step")
+  effectiveFrom         DateTime  @map("effective_from") @db.Date
+  effectiveTo           DateTime? @map("effective_to") @db.Date
+  status                String
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency             Agency                   @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee           Employee                 @relation("ServiceSegmentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  currentForEmployee Employee[]               @relation("EmployeeCurrentServiceSegment")
+  position           PlantillaPosition?       @relation("ServiceSegmentPosition", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  organizationUnit   OrganizationUnit         @relation("ServiceSegmentOrganizationUnit", fields: [agencyId, organizationUnitId], references: [agencyId, id], onDelete: Restrict)
+  personnelBaseline  PersonnelBaseline?       @relation("PersonnelBaselineServiceSegment")
+  personnelAction    PersonnelAction?         @relation("ServiceSegmentPersonnelAction", fields: [agencyId, personnelActionId], references: [agencyId, id], onDelete: Restrict)
+  actionSourceFor    PersonnelActionVersion[] @relation("PersonnelActionSourceServiceSegment")
+  positionIncumbency PositionIncumbency?      @relation("PositionIncumbencyServiceSegment")
+  createdBy          AgencyMembership         @relation("ServiceSegmentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  separationCases    SeparationCase[]         @relation("SeparationCaseServiceSegment")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, effectiveFrom])
+  @@index([agencyId, positionId, effectiveFrom])
+  @@map("service_segments")
+}
+
+model PositionIncumbency {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  positionId            String    @map("position_id") @db.Uuid
+  employeeId            String    @map("employee_id") @db.Uuid
+  serviceSegmentId      String    @map("service_segment_id") @db.Uuid
+  effectiveFrom         DateTime  @map("effective_from") @db.Date
+  effectiveTo           DateTime? @map("effective_to") @db.Date
+  status                String
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency            Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  position          PlantillaPosition  @relation("PositionIncumbencyPosition", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  employee          Employee           @relation("PositionIncumbencyEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  serviceSegment    ServiceSegment     @relation("PositionIncumbencyServiceSegment", fields: [agencyId, serviceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  personnelBaseline PersonnelBaseline? @relation("PersonnelBaselinePositionIncumbency")
+  createdBy         AgencyMembership   @relation("PositionIncumbencyCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  separationCases   SeparationCase[]   @relation("SeparationCasePositionIncumbency")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, serviceSegmentId])
+  @@index([agencyId, positionId, effectiveFrom])
+  @@map("position_incumbencies")
+}
+
+model SeparationCase {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  employeeId              String    @map("employee_id") @db.Uuid
+  separationType          String    @map("separation_type")
+  proposedEffectiveDate   DateTime  @map("proposed_effective_date") @db.Date
+  approvedEffectiveDate   DateTime? @map("approved_effective_date") @db.Date
+  status                  String
+  reason                  String?
+  initiatedByMembershipId String    @map("initiated_by_membership_id") @db.Uuid
+  approvedByMembershipId  String?   @map("approved_by_membership_id") @db.Uuid
+  serviceSegmentId        String?   @map("service_segment_id") @db.Uuid
+  positionIncumbencyId    String?   @map("position_incumbency_id") @db.Uuid
+  effectuatedAt           DateTime? @map("effectuated_at") @db.Timestamptz(6)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency             Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee           Employee            @relation("SeparationCaseEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  initiatedBy        AgencyMembership    @relation("SeparationCaseInitiator", fields: [agencyId, initiatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy         AgencyMembership?   @relation("SeparationCaseApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  serviceSegment     ServiceSegment?     @relation("SeparationCaseServiceSegment", fields: [agencyId, serviceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  positionIncumbency PositionIncumbency? @relation("SeparationCasePositionIncumbency", fields: [agencyId, positionIncumbencyId], references: [agencyId, id], onDelete: Restrict)
+  effects            SeparationEffect[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@map("separation_cases")
+}
+
+model SeparationEffect {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId         String    @map("agency_id") @db.Uuid
+  separationCaseId String    @map("separation_case_id") @db.Uuid
+  effectType       String    @map("effect_type")
+  targetType       String    @map("target_type")
+  targetId         String    @map("target_id") @db.Uuid
+  appliedAt        DateTime? @map("applied_at") @db.Timestamptz(6)
+  status           String
+  failureReason    String?   @map("failure_reason")
+
+  agency         Agency         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  separationCase SeparationCase @relation(fields: [agencyId, separationCaseId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([separationCaseId, effectType, targetId])
+  @@index([agencyId, separationCaseId])
+  @@map("separation_effects")
+}
+
+model ServiceRecordSnapshot {
+  id                                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                            String   @map("agency_id") @db.Uuid
+  employeeId                          String   @map("employee_id") @db.Uuid
+  asOfDate                            DateTime @map("as_of_date") @db.Date
+  renderingContractVersion            String   @map("rendering_contract_version")
+  snapshot                            Json
+  generatedByMembershipId             String   @map("generated_by_membership_id") @db.Uuid
+  generatedAt                         DateTime @default(now()) @map("generated_at") @db.Timestamptz(6)
+  supersedesSnapshotId                String?  @map("supersedes_snapshot_id") @db.Uuid
+  correctionReason                    String?  @map("correction_reason")
+  correctionEvidenceDocumentId        String?  @map("correction_evidence_document_id") @db.Uuid
+  correctionEvidenceDocumentVersionId String?  @map("correction_evidence_document_version_id") @db.Uuid
+
+  agency                    Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                  Employee               @relation("EmployeeServiceRecords", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  generatedBy               AgencyMembership       @relation("ServiceRecordGenerator", fields: [agencyId, generatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  supersedesSnapshot        ServiceRecordSnapshot? @relation("ServiceRecordReplacement", fields: [agencyId, supersedesSnapshotId], references: [agencyId, id], onDelete: Restrict)
+  replacementSnapshot       ServiceRecordSnapshot? @relation("ServiceRecordReplacement")
+  correctionEvidence        Document?              @relation("ServiceRecordCorrectionDocument", fields: [agencyId, correctionEvidenceDocumentId], references: [agencyId, id], onDelete: Restrict, map: "service_record_snapshots_correction_document_fkey")
+  correctionEvidenceVersion DocumentVersion?       @relation("ServiceRecordCorrectionVersion", fields: [agencyId, correctionEvidenceDocumentId, correctionEvidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "service_record_snapshots_correction_version_fkey")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, supersedesSnapshotId])
+  @@index([agencyId, employeeId, generatedAt(sort: Desc)])
+  @@map("service_record_snapshots")
+}
+
+model OutboxEvent {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId       String    @map("agency_id") @db.Uuid
+  eventType      String    @map("event_type")
+  aggregateType  String    @map("aggregate_type")
+  aggregateId    String    @map("aggregate_id") @db.Uuid
+  idempotencyKey String    @map("idempotency_key")
+  payload        Json      @default("{}")
+  status         String    @default("PENDING")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  agency Agency @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, eventType, aggregateType, aggregateId, idempotencyKey])
+  @@index([agencyId, status, createdAt])
+  @@map("outbox_events")
 }

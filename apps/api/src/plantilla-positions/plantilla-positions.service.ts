@@ -2,11 +2,11 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import {
   DocumentsService,
   LINKABLE_EXTERNAL_EVIDENCE_STATUSES,
   type DocumentClassification,
-  type DocumentSummary,
 } from '../documents/documents.service';
 
 export const PLANTILLA_POSITION_VERSION_STATES = [
@@ -297,16 +297,14 @@ type PositionEvidenceRecord = Prisma.PositionDocumentGetPayload<{
 }>;
 
 function databaseContext(context: RequestContext, transition = false) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-    ...(transition ? { plantillaPositionTransition: true } : {}),
-  };
+  return requestDatabaseContext(
+    context,
+    ...(transition ? (['plantilla-position-transition'] as const) : []),
+  );
 }
 
 function evidenceDatabaseContext(context: RequestContext) {
-  return { ...databaseContext(context), plantillaPositionEvidenceTransition: true };
+  return requestDatabaseContext(context, 'plantilla-position-evidence-transition');
 }
 
 function toDatabaseDate(value: string): Date {
@@ -609,12 +607,24 @@ export class PlantillaPositionsService {
     try {
       return await withDatabaseContext(evidenceDatabaseContext(context), async (transaction) => {
         await this.lockPosition(transaction, context.agencyId, positionId);
-        const document = await this.documentsService.findDocumentForLinkingInTransaction(
+        const evidenceResult = await this.documentsService.resolveExternalEvidenceInTransaction(
           transaction,
           context,
-          input.documentId,
+          {
+            documentId: input.documentId,
+            allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
+              agencyId: context.agencyId,
+            }),
+            requirement: 'LINKABLE_STATUS',
+          },
         );
-        this.assertLinkableDocument(context, document);
+        if (evidenceResult.ok === false && evidenceResult.reason === 'DOCUMENT_NOT_FOUND') {
+          throw this.evidenceDocumentNotFound();
+        }
+        if (evidenceResult.ok === false && evidenceResult.reason === 'SENSITIVE_FORBIDDEN') {
+          throw this.evidenceSensitiveForbidden();
+        }
+        if (!evidenceResult.ok) throw this.evidenceDocumentIneligible();
         const link = await transaction.positionDocument.create({
           data: {
             agencyId: context.agencyId,
@@ -1180,6 +1190,133 @@ export class PlantillaPositionsService {
     );
   }
 
+  /** Internal contract: Personnel Baselines own the transaction; Plantilla owns this transition. */
+  async occupyInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    return this.transitionInTransaction(
+      transaction,
+      context,
+      positionId,
+      { effectiveDate, reason },
+      {
+        action: 'PLANTILLA_POSITION_OCCUPIED',
+        from: ['VACANT'],
+        to: 'OCCUPIED',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
+  async lockInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+  ): Promise<void> {
+    await this.lockPosition(transaction, context.agencyId, positionId);
+  }
+
+  /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
+  async vacateInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    return this.transitionInTransaction(
+      transaction,
+      context,
+      positionId,
+      { effectiveDate, reason },
+      {
+        action: 'PLANTILLA_POSITION_VACATED',
+        from: ['OCCUPIED'],
+        to: 'VACANT',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  /** Internal contract: same-item reinstatement corrects the invalid vacancy in place. */
+  async restoreOccupancyInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<PlantillaPositionSummary> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    const completed = await transaction.auditEvent.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        action: 'PLANTILLA_POSITION_OCCUPANCY_RESTORED',
+        entityId: positionId,
+        idempotencyKey,
+      },
+      select: { id: true },
+    });
+    if (completed) return positionSummary(record, toDatabaseDate(manilaToday()));
+    const source = record.versions.find(
+      (version) =>
+        version.status === 'ACTIVE' &&
+        version.domainStatus === 'VACANT' &&
+        version.effectiveFrom.getTime() === effectiveFrom.getTime(),
+    );
+    if (!source) throw this.transitionNotAllowed(record.status);
+    const input = this.inputFromVersion(source, effectiveFrom);
+    await this.validateReferences(transaction, context, input, effectiveFrom, {
+      requireActiveAuthority: true,
+    });
+    const latest = Math.max(...record.versions.map(({ versionNo }) => versionNo));
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
+      data: { status: 'VOIDED' },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(context, positionId, input, effectiveFrom, {
+        versionNo: latest + 1,
+        status: 'ACTIVE',
+        domainStatus: 'OCCUPIED',
+        effectiveTo: source.effectiveTo,
+      }),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_OCCUPANCY_RESTORED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'VACANT',
+      newStatus: 'OCCUPIED',
+      reason,
+      requestId: context.requestId,
+      idempotencyKey,
+      metadata: {
+        voidedVersionId: source.id,
+        replacementVersionId: replacement.id,
+        effectiveDate,
+      },
+    });
+    return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+  }
+
   private async transition(
     context: RequestContext,
     positionId: string,
@@ -1195,123 +1332,152 @@ export class PlantillaPositionsService {
   ): Promise<PlantillaPositionSummary> {
     const reason = input.reason.trim();
     if (!reason) throw this.transitionReasonRequired();
-    const effectiveFrom = toDatabaseDate(input.effectiveDate);
+    toDatabaseDate(input.effectiveDate);
     const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
 
-    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
-      await this.lockPosition(transaction, context.agencyId, positionId);
-      const record = await this.positionRecord(transaction, context.agencyId, positionId);
-      if (!record) throw this.notFound();
-      if (idempotencyKey) {
-        const completed = await transaction.auditEvent.findFirst({
-          where: {
-            agencyId: context.agencyId,
-            action: options.action,
-            entityId: positionId,
-            idempotencyKey,
-          },
-          select: { reason: true, metadata: true },
-        });
-        if (completed) {
-          if (
-            completed.reason !== reason ||
-            this.metadataString(completed.metadata, 'effectiveDate') !== input.effectiveDate
-          ) {
-            throw this.idempotencyConflict();
-          }
-          return positionSummary(record, toDatabaseDate(manilaToday()));
-        }
-      }
-      if (draftVersion(record.versions)) throw this.transitionDraftConflict();
+    return withDatabaseContext(databaseContext(context, true), (transaction) =>
+      this.transitionInTransaction(
+        transaction,
+        context,
+        positionId,
+        input,
+        options,
+        idempotencyKey,
+      ),
+    );
+  }
 
-      const current = effectiveVersion(record.versions, effectiveFrom);
-      if (
-        !current ||
-        current.status !== 'ACTIVE' ||
-        !options.from.includes(current.domainStatus as PlantillaPositionLifecycleStatus)
-      ) {
-        throw this.transitionNotAllowed(current?.domainStatus ?? null);
-      }
-      if (effectiveFrom <= current.effectiveFrom) throw this.transitionDateInvalid();
+  private async transitionInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    input: PlantillaPositionTransitionInput,
+    options: {
+      action: string;
+      from: readonly PlantillaPositionLifecycleStatus[];
+      to: PlantillaPositionLifecycleStatus;
+      evidencePurpose?: PlantillaPositionEvidencePurpose;
+      skipReferenceValidation?: boolean;
+    },
+    rawIdempotencyKey?: string | null,
+  ): Promise<PlantillaPositionSummary> {
+    const reason = input.reason.trim();
+    if (!reason) throw this.transitionReasonRequired();
+    const effectiveFrom = toDatabaseDate(input.effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey ?? undefined);
 
-      if (!options.skipReferenceValidation) {
-        const versionInput = this.inputFromVersion(current, effectiveFrom);
-        await this.validateReferences(transaction, context, versionInput, effectiveFrom, {
-          requireActiveAuthority: true,
-        });
-      }
-
-      const evidence = options.evidencePurpose
-        ? await this.requiredEvidence(
-            transaction,
-            context,
-            positionId,
-            options.evidencePurpose,
-            effectiveFrom,
-          )
-        : null;
-      const latest = record.versions.reduce(
-        (maxVersion, version) => Math.max(maxVersion, version.versionNo),
-        current.versionNo,
-      );
-
-      await transaction.plantillaPositionVersion.update({
-        where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
-        data: { status: 'SUPERSEDED', effectiveTo: addDays(effectiveFrom, -1) },
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    if (idempotencyKey) {
+      const completed = await transaction.auditEvent.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          action: options.action,
+          entityId: positionId,
+          idempotencyKey,
+        },
+        select: { reason: true, metadata: true },
       });
-      const next = await transaction.plantillaPositionVersion.create({
-        data: this.versionData(
+      if (completed) {
+        if (
+          completed.reason !== reason ||
+          this.metadataString(completed.metadata, 'effectiveDate') !== input.effectiveDate
+        ) {
+          throw this.idempotencyConflict();
+        }
+        return positionSummary(record, toDatabaseDate(manilaToday()));
+      }
+    }
+    if (draftVersion(record.versions)) throw this.transitionDraftConflict();
+
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (
+      !current ||
+      current.status !== 'ACTIVE' ||
+      !options.from.includes(current.domainStatus as PlantillaPositionLifecycleStatus)
+    ) {
+      throw this.transitionNotAllowed(current?.domainStatus ?? null);
+    }
+    if (effectiveFrom <= current.effectiveFrom) throw this.transitionDateInvalid();
+
+    if (!options.skipReferenceValidation) {
+      const versionInput = this.inputFromVersion(current, effectiveFrom);
+      await this.validateReferences(transaction, context, versionInput, effectiveFrom, {
+        requireActiveAuthority: true,
+      });
+    }
+
+    const evidence = options.evidencePurpose
+      ? await this.requiredEvidence(
+          transaction,
           context,
           positionId,
-          this.inputFromVersion(current, effectiveFrom),
+          options.evidencePurpose,
           effectiveFrom,
-          {
-            versionNo: latest + 1,
-            status: 'ACTIVE',
-            domainStatus: options.to,
-          },
-        ),
-        select: { id: true },
-      });
-      const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
-      if (!refreshed) throw this.notFound();
-      await this.auditWriter.write(transaction, {
-        agencyId: context.agencyId,
-        actorUserId: context.userId,
-        actorMembershipId: context.membershipId,
-        actorType: 'USER',
-        action: options.action,
-        entityType: 'PlantillaPosition',
-        entityId: positionId,
-        previousStatus: current.domainStatus,
-        newStatus: options.to,
-        reason,
-        requestId: context.requestId,
-        occurredAt: new Date(),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-        metadata: {
-          before: {
-            lifecycleStatus: current.domainStatus,
-            versionState: current.status,
-            versionId: current.id,
-            effectiveDate: formatDate(current.effectiveFrom),
-          },
-          after: {
-            lifecycleStatus: options.to,
-            versionState: 'ACTIVE',
-            versionId: next.id,
-            effectiveDate: formatDate(effectiveFrom),
-          },
-          predecessorId: current.id,
+        )
+      : null;
+    const latest = record.versions.reduce(
+      (maxVersion, version) => Math.max(maxVersion, version.versionNo),
+      current.versionNo,
+    );
+
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+      data: { status: 'SUPERSEDED', effectiveTo: addDays(effectiveFrom, -1) },
+    });
+    const next = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(
+        context,
+        positionId,
+        this.inputFromVersion(current, effectiveFrom),
+        effectiveFrom,
+        {
+          versionNo: latest + 1,
+          status: 'ACTIVE',
+          domainStatus: options.to,
+        },
+      ),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: options.action,
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: current.domainStatus,
+      newStatus: options.to,
+      reason,
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        before: {
+          lifecycleStatus: current.domainStatus,
+          versionState: current.status,
+          versionId: current.id,
+          effectiveDate: formatDate(current.effectiveFrom),
+        },
+        after: {
+          lifecycleStatus: options.to,
+          versionState: 'ACTIVE',
           versionId: next.id,
           effectiveDate: formatDate(effectiveFrom),
-          staffingAuthorityId: current.staffingAuthority.id,
-          authorityReference: current.staffingAuthority.referenceNo,
-          ...(evidence ? { evidence: evidenceAuditMetadata(evidence) } : {}),
         },
-      });
-      return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+        predecessorId: current.id,
+        versionId: next.id,
+        effectiveDate: formatDate(effectiveFrom),
+        staffingAuthorityId: current.staffingAuthority.id,
+        authorityReference: current.staffingAuthority.referenceNo,
+        ...(evidence ? { evidence: evidenceAuditMetadata(evidence) } : {}),
+      },
     });
+    return positionSummary(refreshed, toDatabaseDate(manilaToday()));
   }
 
   private versionData(
@@ -1440,15 +1606,17 @@ export class PlantillaPositionsService {
       !authority.evidenceValidationReason
     )
       throw this.staffingAuthorityEvidenceRequired();
-    const evidence = await this.documentsService.findDocumentForLinkingInTransaction(
+    const evidence = await this.documentsService.resolveExternalEvidenceInTransaction(
       transaction,
       context,
-      authority.documentId,
-      authority.evidenceVersionId,
+      {
+        documentId: authority.documentId,
+        versionId: authority.evidenceVersionId,
+        allowSensitive: true,
+        requirement: 'NOT_VOIDED',
+      },
     );
-    if (!evidence || evidence.status === 'VOIDED' || !evidence.currentVersion) {
-      throw this.staffingAuthorityEvidenceRequired();
-    }
+    if (!evidence.ok) throw this.staffingAuthorityEvidenceRequired();
   }
 
   private async requiredEvidence(
@@ -1526,29 +1694,6 @@ export class PlantillaPositionsService {
       where: { id: evidenceId, agencyId, positionId },
       select: positionEvidenceSelect,
     });
-  }
-
-  private assertLinkableDocument(
-    context: RequestContext,
-    document: DocumentSummary | null,
-  ): asserts document is DocumentSummary {
-    if (!document) throw this.evidenceDocumentNotFound();
-    if (
-      document.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', {
-        agencyId: context.agencyId,
-      })
-    ) {
-      throw this.evidenceSensitiveForbidden();
-    }
-    if (
-      !document.currentVersion ||
-      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
-        document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
-      )
-    ) {
-      throw this.evidenceDocumentIneligible();
-    }
   }
 
   private evidenceDate(value: string): Date {

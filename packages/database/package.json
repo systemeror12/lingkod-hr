@@ -13,7 +13,8 @@
   "scripts": {
     "build": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json",
     "generate": "prisma generate --schema prisma/schema.prisma",
-    "e2e:seed:shell": "tsx scripts/seed-protected-shell-e2e.ts",
+    "e2e:seed:shell": "tsx scripts/run-with-root-env.ts e2e:seed:shell:loaded",
+    "e2e:seed:shell:loaded": "tsx scripts/seed-protected-shell-e2e.ts",
     "lint": "eslint .",
     "migrate:prepare": "prisma generate --schema prisma/schema.prisma && tsx scripts/migrate-prepare.ts",
     "migrate:deploy": "tsx scripts/run-with-root-env.ts migrate:deploy:loaded",
@@ -22,7 +23,7 @@
     "migrate:dev:loaded": "APP_ENV=development pnpm migrate:prepare && prisma migrate dev --schema prisma/schema.prisma",
     "test": "vitest run src --passWithNoTests",
     "test:e2e": "vitest run src --passWithNoTests",
-    "typecheck": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@prisma/client": "6.19.3"

@@ -34,9 +34,12 @@ DATABASE_E2E_ADMIN_URL=postgresql://hris_local:local_only@localhost:55432/hris \
 pnpm validate
 ```
 
-The CI workflow runs the focused gate, the wider repository validation, and
-the full Chromium suite. Browser binaries are installed by CI, so no shared
-developer browser or credential is required.
+The CI workflow runs formatting, lint, typechecking, and the production build
+before installing Chromium or starting Docker. It then applies migrations,
+runs the repository tests with the runtime, migration, operational, and
+administrative database roles, and runs the complete Chromium suite once. The
+suite includes this Phase 3 journey. Failed runs retain suite-wide browser
+evidence for 14 days; successful runs do not upload it.
 
 ## Evidence map
 
@@ -47,7 +50,7 @@ developer browser or credential is required.
 | API denial, permission, record scope, validation, conflict, and sanitization                        | API assertions in `apps/web/e2e/phase-3.spec.ts` plus the API controller/service tests under `apps/api/src`                                                        |
 | PostgreSQL RLS, Agency-safe relationships and uniqueness, transactional audit, append-only evidence | `packages/database/src/organization-unit-isolation.test.ts`, `packages/database/src/audit-event-isolation.test.ts`, and the Organization service integration tests |
 | Rail, dialogs, keyboard/focus behavior, narrow-width interaction, and token contrast                | `apps/web/e2e/phase-3.spec.ts` and the focused slice specs under `apps/web/e2e`                                                                                    |
-| Visual validation                                                                                   | Playwright screenshots in the ignored `apps/web/test-results/<test-name>/` directory; CI retains the report/artifacts for a failed run                             |
+| Visual validation                                                                                   | Playwright screenshots in the ignored `apps/web/test-results/<test-name>/` directory; CI retains the suite-wide browser evidence for 14 days after a failed run     |
 | Manual identity-provider smoke                                                                      | [`phase-3-manual-smoke.md`](phase-3-manual-smoke.md), deliberately excluded from CI                                                                                |
 
 Test data is synthetic, generated with a run suffix, isolated by Agency

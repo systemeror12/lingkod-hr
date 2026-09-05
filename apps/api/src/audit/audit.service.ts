@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import { auditEventCursorSchema } from './audit.schemas';
 
 export const ORGANIZATION_UNIT_AUDIT_ENTITY = 'OrganizationUnit';
@@ -249,14 +250,6 @@ function decodeCursor(value: string): { id: string; occurredAt: Date } {
   }
 }
 
-function databaseContext(context: RequestContext) {
-  return {
-    agencyId: context.agencyId,
-    userId: context.userId,
-    membershipId: context.membershipId,
-  };
-}
-
 @Injectable()
 export class AuditService {
   async list(context: RequestContext, query: AuditEventListQuery = {}): Promise<AuditEventList> {
@@ -267,7 +260,7 @@ export class AuditService {
     }
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
 
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const where: Prisma.AuditEventWhereInput = {
         agencyId: context.agencyId,
         ...auditEventFilter(),
@@ -301,7 +294,7 @@ export class AuditService {
 
   async findById(context: RequestContext, id: string): Promise<AuditEventDetail | null> {
     this.assertReadAccess(context);
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const record = await transaction.auditEvent.findFirst({
         where: {
           id,

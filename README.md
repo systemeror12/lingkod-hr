@@ -209,6 +209,15 @@ cd apps/web
 pnpm exec playwright test e2e/audit.spec.ts --headed --project=chromium
 ```
 
+#### Playwright port hotspot
+
+When another worktree owns the E2E ports, change only these values before the
+Playwright command:
+
+```bash
+PLAYWRIGHT_OIDC_PORT=4200 PLAYWRIGHT_API_PORT=3201 PLAYWRIGHT_APP_PORT=3200
+```
+
 To inspect the running application without the E2E test runner, use Playwright
 directly. This does not run database setup or create the E2E services:
 

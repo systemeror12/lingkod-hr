@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/setup@v2
@@ -21,6 +26,14 @@ jobs:
           install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check formatting
+        run: pnpm format:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
       - name: Install Playwright Chromium
         run: pnpm --filter @lingkod-hr/web exec playwright install --with-deps chromium
       - name: Start local infrastructure
@@ -32,7 +45,7 @@ jobs:
           DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
           DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
         run: pnpm db:migrate
-      - name: Test Phase 3 acceptance gate
+      - name: Test repository
         env:
           DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
           DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
@@ -40,17 +53,8 @@ jobs:
           DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
           DATABASE_E2E: 'true'
           DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
-        run: pnpm test:e2e:phase3
-      - name: Validate repository
-        env:
-          DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
-          DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
-          DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
-          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
-          DATABASE_E2E: 'true'
-          DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
-        run: pnpm validate
-      - name: Test protected browser entry
+        run: pnpm test
+      - name: Test browser suite
         env:
           DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
           DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
@@ -60,14 +64,15 @@ jobs:
           DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
         run: pnpm --filter @lingkod-hr/web test:e2e
       - name: Upload browser evidence
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: phase-3-browser-evidence
+          name: browser-evidence
           path: |
             apps/web/test-results
             apps/web/playwright-report
           if-no-files-found: ignore
+          retention-days: 14
       - name: Stop local infrastructure
         if: always()
         run: docker compose -f infrastructure/compose.yaml down
