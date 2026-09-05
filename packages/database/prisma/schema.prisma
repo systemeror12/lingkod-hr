@@ -33,6 +33,7 @@ model Agency {
   securityEvents                SecurityEvent[]
   auditEvents                   AuditEvent[]
   governmentIdentifiers         GovernmentIdentifier[]
+  payrollBankAccounts           PayrollBankAccount[]
   organizationUnits             OrganizationUnit[]
   organizationUnitVersions      OrganizationUnitVersion[]
   documents                     Document[]
@@ -245,6 +246,8 @@ model AgencyMembership {
   createdPositionIncumbencies            PositionIncumbency[]           @relation("PositionIncumbencyCreator")
   createdGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierCreator")
   updatedGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierUpdater")
+  createdPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountCreator")
+  updatedPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountUpdater")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -468,6 +471,7 @@ model Document {
   pdsPageSignatureDocuments               PdsPageSignature[]             @relation("PdsPageSignatureDocument")
   personnelBaselineEvidenceDocuments      PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceDocument")
   governmentIdentifierEvidenceDocuments   GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceDocument")
+  payrollBankAccountEvidenceDocuments     PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -511,6 +515,7 @@ model DocumentVersion {
   pdsPageSignatureVersions                      PdsPageSignature[]             @relation("PdsPageSignatureVersion")
   personnelBaselineEvidenceVersions             PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceVersion")
   governmentIdentifierEvidenceVersions          GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceVersion")
+  payrollBankAccountEvidenceVersions            PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -746,19 +751,20 @@ model Employee {
   updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion                 Int       @default(1) @map("row_version")
 
-  agency                Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  createdBy             AgencyMembership     @relation("EmployeeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  updatedBy             AgencyMembership     @relation("EmployeeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  memberships           AgencyMembership[]   @relation("AgencyMembershipEmployee")
-  documents             EmployeeDocument[]   @relation("EmployeeDocuments")
+  agency                Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  createdBy             AgencyMembership       @relation("EmployeeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy             AgencyMembership       @relation("EmployeeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  memberships           AgencyMembership[]     @relation("AgencyMembershipEmployee")
+  documents             EmployeeDocument[]     @relation("EmployeeDocuments")
   pdsVersions           PdsVersion[]
   pdsWesArtifacts       PdsWesArtifact[]
   pdsOutputArtifacts    PdsOutputArtifact[]
-  currentServiceSegment ServiceSegment?      @relation("EmployeeCurrentServiceSegment", fields: [agencyId, currentServiceSegmentId], references: [agencyId, id], onDelete: Restrict)
-  personnelBaselines    PersonnelBaseline[]  @relation("PersonnelBaselineEmployee")
-  serviceSegments       ServiceSegment[]     @relation("ServiceSegmentEmployee")
-  positionIncumbencies  PositionIncumbency[] @relation("PositionIncumbencyEmployee")
+  currentServiceSegment ServiceSegment?        @relation("EmployeeCurrentServiceSegment", fields: [agencyId, currentServiceSegmentId], references: [agencyId, id], onDelete: Restrict)
+  personnelBaselines    PersonnelBaseline[]    @relation("PersonnelBaselineEmployee")
+  serviceSegments       ServiceSegment[]       @relation("ServiceSegmentEmployee")
+  positionIncumbencies  PositionIncumbency[]   @relation("PositionIncumbencyEmployee")
   governmentIdentifiers GovernmentIdentifier[] @relation("EmployeeGovernmentIdentifiers")
+  payrollBankAccounts   PayrollBankAccount[]   @relation("EmployeePayrollBankAccounts")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -813,20 +819,61 @@ model GovernmentIdentifier {
   updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion                Int       @default(1) @map("row_version")
 
-  agency                  Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  employee                Employee             @relation("EmployeeGovernmentIdentifiers", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
-  evidenceDocument        Document?            @relation("GovernmentIdentifierEvidenceDocument", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
-  evidenceDocumentVersion DocumentVersion?     @relation("GovernmentIdentifierEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
-  replacesIdentifier      GovernmentIdentifier? @relation("GovernmentIdentifierReplacement", fields: [agencyId, replacesIdentifierId], references: [agencyId, id], onDelete: Restrict)
+  agency                  Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                Employee               @relation("EmployeeGovernmentIdentifiers", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument        Document?              @relation("GovernmentIdentifierEvidenceDocument", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?       @relation("GovernmentIdentifierEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  replacesIdentifier      GovernmentIdentifier?  @relation("GovernmentIdentifierReplacement", fields: [agencyId, replacesIdentifierId], references: [agencyId, id], onDelete: Restrict)
   replacedByIdentifiers   GovernmentIdentifier[] @relation("GovernmentIdentifierReplacement")
-  createdBy               AgencyMembership     @relation("GovernmentIdentifierCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  updatedBy               AgencyMembership     @relation("GovernmentIdentifierUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  createdBy               AgencyMembership       @relation("GovernmentIdentifierCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy               AgencyMembership       @relation("GovernmentIdentifierUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([agencyId, id])
   @@unique([agencyId, replacesIdentifierId])
   @@index([agencyId, employeeId, identifierType, effectiveFrom(sort: Desc)])
   @@index([agencyId, employeeId, status])
   @@map("government_identifiers")
+}
+
+model PayrollBankAccount {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  bankCode                  String    @map("bank_code")
+  accountName               String    @map("account_name")
+  encryptedAccountNumber    Bytes     @map("encrypted_account_number")
+  encryptionVersion         Int       @default(1) @map("encryption_version") @db.SmallInt
+  maskedAccountNumber       String    @map("masked_account_number")
+  verificationState         String    @default("PENDING") @map("verification_state")
+  verifiedAt                DateTime? @map("verified_at") @db.Timestamptz(6)
+  status                    String    @default("PENDING_VERIFICATION")
+  effectiveFrom             DateTime  @map("effective_from") @db.Date
+  effectiveTo               DateTime? @map("effective_to") @db.Date
+  reason                    String?
+  evidenceDocumentId        String?   @map("evidence_document_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  predecessorAccountId      String?   @map("predecessor_account_id") @db.Uuid
+  transitionKind            String?   @map("transition_kind")
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId     String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
+
+  agency                  Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee                Employee             @relation("EmployeePayrollBankAccounts", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocument        Document?            @relation("PayrollBankAccountEvidenceDocument", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?     @relation("PayrollBankAccountEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  predecessorAccount      PayrollBankAccount?  @relation("PayrollBankAccountPredecessor", fields: [agencyId, predecessorAccountId], references: [agencyId, id], onDelete: Restrict)
+  successorAccounts       PayrollBankAccount[] @relation("PayrollBankAccountPredecessor")
+  createdBy               AgencyMembership     @relation("PayrollBankAccountCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy               AgencyMembership     @relation("PayrollBankAccountUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, predecessorAccountId])
+  @@index([agencyId, employeeId, effectiveFrom(sort: Desc)])
+  @@index([agencyId, employeeId, status])
+  @@map("payroll_bank_accounts")
 }
 
 model PdsVersion {

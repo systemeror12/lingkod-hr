@@ -50,6 +50,7 @@ export default defineConfig({
         OIDC_CLIENT_ID: 'local-client',
         OIDC_CLIENT_SECRET: 'local-client-secret',
         OIDC_REDIRECT_URI: `${apiUrl}/api/v1/auth/callback`,
+        DATA_ENCRYPTION_KEY: process.env.DATA_ENCRYPTION_KEY || Buffer.alloc(32, 7).toString('hex'),
       },
     },
     {

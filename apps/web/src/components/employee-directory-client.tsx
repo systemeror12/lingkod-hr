@@ -6,6 +6,7 @@ import { useState, type FormEvent } from 'react';
 import { Button, buttonVariants } from './ui/button';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import { GovernmentIdentifiersSection } from './government-identifiers-client';
+import { PayrollBankAccountsSection } from './payroll-bank-accounts-client';
 import {
   EmployeeInitials,
   EmployeePageTitle,
@@ -254,6 +255,10 @@ export function EmployeeDetailView({
   canManageIdentifiers,
   canRevealIdentifiers,
   canReadIdentifierHistory,
+  canReadBankAccounts,
+  canManageBankAccounts,
+  canRevealBankAccounts,
+  canReadBankAccountHistory,
 }: {
   agencyId: string;
   initial: EmployeeDetailData;
@@ -267,6 +272,10 @@ export function EmployeeDetailView({
   canManageIdentifiers: boolean;
   canRevealIdentifiers: boolean;
   canReadIdentifierHistory: boolean;
+  canReadBankAccounts: boolean;
+  canManageBankAccounts: boolean;
+  canRevealBankAccounts: boolean;
+  canReadBankAccountHistory: boolean;
 }) {
   const [detail, setDetail] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -448,6 +457,15 @@ export function EmployeeDetailView({
           canManage={canManageIdentifiers}
           canReveal={canRevealIdentifiers}
           canReadHistory={canReadIdentifierHistory}
+        />
+        <PayrollBankAccountsSection
+          agencyId={agencyId}
+          employeeId={detail.id}
+          canReadEvidence={canReadDocuments}
+          canRead={canReadBankAccounts}
+          canManage={canManageBankAccounts}
+          canReveal={canRevealBankAccounts}
+          canReadHistory={canReadBankAccountHistory}
         />
         <div className="border-t border-line bg-pale-blue px-6 py-4 text-xs leading-5 text-[#34557e] min-[700px]:px-8">
           Appointments, positions, salary, supervisors, separation, and retirement remain outside

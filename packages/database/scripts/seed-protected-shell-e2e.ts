@@ -140,6 +140,10 @@ async function seed(): Promise<void> {
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'PdsVersion' },
     });
+    await transaction.auditEvent.deleteMany({
+      where: { agencyId: agency.id, entityType: 'PayrollBankAccount' },
+    });
+    await transaction.payrollBankAccount.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsFamilyRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsPersonalDetails.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsVersion.deleteMany({ where: { agencyId: agency.id } });
@@ -329,6 +333,7 @@ async function seed(): Promise<void> {
     'agency_administrator',
     'employee',
     'hrmo_administrator',
+    'payroll_preparer',
     'plantilla_officer',
     'budget_officer',
   ]) {
