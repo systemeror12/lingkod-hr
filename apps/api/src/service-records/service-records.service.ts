@@ -408,7 +408,7 @@ export class ServiceRecordsService {
       where: {
         agencyId: context.agencyId,
         employeeId,
-        status: { in: ['APPROVED', 'SUPERSEDED'] },
+        status: { in: ['APPROVED', 'EFFECTIVE', 'SUPERSEDED'] },
         currentVersion: { is: { proposedEffectivity: { lte: asOfDate } } },
       },
       orderBy: { createdAt: 'asc' },
