@@ -122,9 +122,6 @@ async function seed(): Promise<void> {
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'PlantillaPosition' },
     });
-    await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
-    await transaction.plantillaPositionVersion.deleteMany({ where: { agencyId: agency.id } });
-    await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'OrganizationUnit' },
     });
@@ -143,6 +140,29 @@ async function seed(): Promise<void> {
     await transaction.auditEvent.deleteMany({
       where: { agencyId: agency.id, entityType: 'PayrollBankAccount' },
     });
+    await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.separationEffect.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.separationCase.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.personnelActionEvidence.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.personnelAction.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentVersionId: null },
+    });
+    await transaction.personnelActionVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.personnelAction.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.positionIncumbency.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.employee.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentServiceSegmentId: null },
+    });
+    await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.plantillaPosition.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentVersionId: null },
+    });
+    await transaction.plantillaPositionVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });
     await transaction.payrollBankAccount.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsFamilyRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.pdsPersonalDetails.deleteMany({ where: { agencyId: agency.id } });
@@ -326,6 +346,72 @@ async function seed(): Promise<void> {
     await transaction.plantillaPosition.update({
       where: { id: position.id },
       data: { currentVersionId: positionVersion.id },
+    });
+
+    const actionEmployee = await transaction.employee.create({
+      data: {
+        agencyId: agency.id,
+        employeeNumber: 'E2E-PA-001',
+        legalName: 'E2E Separation Candidate',
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: 'e2e.separation@example.test',
+        serviceStatus: 'ACTIVE',
+        firstGovernmentServiceDate: new Date('2020-01-01'),
+        agencyServiceStartDate: new Date('2020-01-01'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const actionSegment = await transaction.serviceSegment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: actionEmployee.id,
+        organizationUnitId: unit.id,
+        appointmentStatus: 'PERMANENT',
+        salaryGrade: 11,
+        salaryStep: 2,
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.employee.update({
+      where: { id: actionEmployee.id },
+      data: { currentServiceSegmentId: actionSegment.id },
+    });
+    const action = await transaction.personnelAction.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: actionEmployee.id,
+        actionType: 'SEPARATION_RESIGNATION',
+        status: 'APPROVED',
+        preparedByMembershipId: membership.id,
+        approvedByMembershipId: membership.id,
+        approvedAt: new Date(),
+      },
+    });
+    const actionVersion = await transaction.personnelActionVersion.create({
+      data: {
+        agencyId: agency.id,
+        actionId: action.id,
+        versionNo: 1,
+        proposedEffectivity: new Date(),
+        fromServiceSegmentId: actionSegment.id,
+        targetFacts: {
+          acceptanceDate: '2026-09-01',
+          noticeDate: '2026-08-01',
+          withdrawalState: 'NONE',
+          mutuallyAgreedEarlier: false,
+        },
+        reason: 'Protected shell effectuation modal fixture.',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.personnelAction.update({
+      where: { id: action.id },
+      data: { currentVersionId: actionVersion.id },
     });
   });
   // One protected-shell identity exercises the browser critical path; production role grants remain distinct.

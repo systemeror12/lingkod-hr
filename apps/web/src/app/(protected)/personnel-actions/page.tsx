@@ -73,6 +73,7 @@ export default async function PersonnelActionsPage() {
       canCancelApproved={hasPermission(session, 'personnel.actions.cancel_approved')}
       canCorrect={hasPermission(session, 'personnel.actions.correct')}
       canEndorse={hasPermission(session, 'personnel.actions.endorse')}
+      canEffectuate={hasPermission(session, 'personnel.actions.effectuate')}
       canPrepare={hasPermission(session, 'personnel.actions.create')}
       canReject={hasPermission(session, 'personnel.actions.reject')}
       canReturn={hasPermission(session, 'personnel.actions.return')}

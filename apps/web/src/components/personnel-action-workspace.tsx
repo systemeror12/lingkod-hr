@@ -40,12 +40,14 @@ type ActionStatus =
   | 'RETURNED'
   | 'REJECTED'
   | 'CANCELLED'
-  | 'SUPERSEDED';
+  | 'SUPERSEDED'
+  | 'EFFECTIVE';
 
 interface PersonnelAction {
   id: string;
   actionType: ActionType;
   status: ActionStatus;
+  effectuationAvailable: boolean;
   employee: { id: string; employeeNumber: string; legalName: string; serviceStatus: string };
   currentVersion: {
     id: string;
@@ -79,6 +81,7 @@ interface PersonnelAction {
   approvedBy: { id: string; displayName: string } | null;
   approvalDelegationId: string | null;
   approvedAt: string | null;
+  effectuatedAt: string | null;
   supersedesActionId: string | null;
   rowVersion: number;
 }
@@ -228,6 +231,11 @@ const CONTRACTS: Record<ActionType, Contract> = {
         kind: 'select',
         options: ['NONE', 'PENDING', 'DENIED'],
       },
+      {
+        name: 'mutuallyAgreedEarlier',
+        label: 'Earlier date mutually agreed in writing',
+        kind: 'boolean',
+      },
     ],
     evidence: ['WRITTEN_RESIGNATION', 'ACCEPTANCE', 'NOTICE', 'WITHDRAWAL_STATE'],
   },
@@ -324,7 +332,7 @@ function errorMessage(value: unknown, fallback: string): string {
 }
 
 function statusClass(status: ActionStatus): string {
-  if (status === 'APPROVED') return 'bg-[#e8f3ed] text-[#316647]';
+  if (status === 'APPROVED' || status === 'EFFECTIVE') return 'bg-[#e8f3ed] text-[#316647]';
   if (status === 'REJECTED' || status === 'CANCELLED' || status === 'SUPERSEDED')
     return 'bg-[#f0f2f5] text-muted';
   if (status === 'FOR_APPROVAL') return 'bg-[#e8edf8] text-[#315f99]';
@@ -366,6 +374,7 @@ export function PersonnelActionWorkspace({
   canCancel,
   canCancelApproved,
   canCorrect,
+  canEffectuate,
   canAudit,
 }: {
   agencyId: string;
@@ -380,6 +389,7 @@ export function PersonnelActionWorkspace({
   canCancel: boolean;
   canCancelApproved: boolean;
   canCorrect: boolean;
+  canEffectuate: boolean;
   canAudit: boolean;
 }) {
   const [actions, setActions] = useState(initial.actions);
@@ -402,7 +412,7 @@ export function PersonnelActionWorkspace({
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [positions, setPositions] = useState<PositionOption[]>([]);
   const [transition, setTransition] = useState<
-    'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL'
+    'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL' | 'EFFECTUATE'
   >('RETURN');
   const [transitionReason, setTransitionReason] = useState('');
   const [history, setHistory] = useState<
@@ -573,7 +583,10 @@ export function PersonnelActionWorkspace({
     try {
       const next = (await request(agencyId, `/personnel-actions/${selected.id}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(path === '/effectuate' ? { 'idempotency-key': `web-${selected.id}` } : {}),
+        },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })) as PersonnelAction;
       replaceAction(next);
@@ -592,6 +605,10 @@ export function PersonnelActionWorkspace({
 
   async function recordTransition(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (transition === 'EFFECTUATE') {
+      await run('/effectuate', undefined, 'Personnel Action effectuated.');
+      return;
+    }
     if (transition === 'RETURN' || transition === 'ENDORSE') {
       await run(
         '/review',
@@ -1180,7 +1197,19 @@ export function PersonnelActionWorkspace({
                     Cancel action
                   </Button>
                 ) : null}
-                {canCorrect && selected.status === 'APPROVED' ? (
+                {canEffectuate &&
+                selected.status === 'APPROVED' &&
+                selected.effectuationAvailable ? (
+                  <Button
+                    onClick={() => openTransition('EFFECTUATE')}
+                    size="default"
+                    type="button"
+                    variant="primary"
+                  >
+                    Effectuate action
+                  </Button>
+                ) : null}
+                {canCorrect && ['APPROVED', 'EFFECTIVE'].includes(selected.status) ? (
                   <Button
                     onClick={() => openPrepare('replace', selected)}
                     size="default"
@@ -1212,8 +1241,9 @@ export function PersonnelActionWorkspace({
               <div>
                 <DialogTitle>{transitionLabel(transition)} Personnel Action</DialogTitle>
                 <DialogDescription id="personnel-action-transition-description">
-                  Record the accountable reason against exact version{' '}
-                  {selected.currentVersion.versionNo}.
+                  {transition === 'EFFECTUATE'
+                    ? `Apply exact version ${selected.currentVersion.versionNo} to service and Plantilla records on its stated date.`
+                    : `Record the accountable reason against exact version ${selected.currentVersion.versionNo}.`}
                 </DialogDescription>
               </div>
               <CloseButton busy={busy} label="Close Personnel Action transition" />
@@ -1221,16 +1251,23 @@ export function PersonnelActionWorkspace({
             <form onSubmit={recordTransition}>
               <DialogBody className="grid gap-5">
                 <ErrorMessage message={error} />
-                <Field htmlFor="action-transition-reason" label="Reason">
-                  <textarea
-                    autoFocus
-                    className={`${inputClass} min-h-24 py-3`}
-                    id="action-transition-reason"
-                    onChange={(event) => setTransitionReason(targetValue(event))}
-                    required
-                    value={transitionReason}
-                  />
-                </Field>
+                {transition === 'EFFECTUATE' ? (
+                  <p className="m-0 text-sm leading-6 text-ink">
+                    This closes or restores the Employee’s preserved service history and updates the
+                    occupied Plantilla Position atomically. The approved version remains immutable.
+                  </p>
+                ) : (
+                  <Field htmlFor="action-transition-reason" label="Reason">
+                    <textarea
+                      autoFocus
+                      className={`${inputClass} min-h-24 py-3`}
+                      id="action-transition-reason"
+                      onChange={(event) => setTransitionReason(targetValue(event))}
+                      required
+                      value={transitionReason}
+                    />
+                  </Field>
+                )}
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
@@ -1239,7 +1276,13 @@ export function PersonnelActionWorkspace({
                   </Button>
                 </DialogClose>
                 <Button disabled={busy} size="default" type="submit" variant="primary">
-                  {busy ? 'Recording…' : 'Record decision'}
+                  {busy
+                    ? transition === 'EFFECTUATE'
+                      ? 'Effectuating…'
+                      : 'Recording…'
+                    : transition === 'EFFECTUATE'
+                      ? 'Confirm effectuation'
+                      : 'Record decision'}
                 </Button>
               </DialogFooter>
             </form>
@@ -1439,7 +1482,9 @@ function transitionLabel(value: string): string {
           ? 'Reject'
           : value === 'CANCEL'
             ? 'Cancel'
-            : 'Check';
+            : value === 'EFFECTUATE'
+              ? 'Effectuate'
+              : 'Check';
 }
 
 async function request(agencyId: string, path: string, init?: RequestInit): Promise<unknown> {

@@ -18,6 +18,9 @@ it('keeps assignment overlays review-only until their effect owner exists', () =
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const actionId = '00000000-0000-4000-8000-000000000009';
 const documentsService = {} as ConstructorParameters<typeof PersonnelActionsService>[1];
+const plantillaPositionsService = {} as ConstructorParameters<typeof PersonnelActionsService>[2];
+const authService = {} as ConstructorParameters<typeof PersonnelActionsService>[3];
+const separationsService = {} as ConstructorParameters<typeof PersonnelActionsService>[4];
 
 function context(permissions: RequestContext['permissions']): RequestContext {
   return {
@@ -31,7 +34,13 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 function service(): PersonnelActionsService {
-  return new PersonnelActionsService(personnelActionAuditWriter, documentsService);
+  return new PersonnelActionsService(
+    personnelActionAuditWriter,
+    documentsService,
+    plantillaPositionsService,
+    authService,
+    separationsService,
+  );
 }
 
 const input = {
@@ -55,6 +64,11 @@ it.each([
         reason: 'Missing evidence.',
       }),
     'PERSONNEL_ACTION_REVIEW_FORBIDDEN',
+  ],
+  [
+    'effectuate',
+    () => service().effectuate(context([]), actionId),
+    'PERSONNEL_ACTION_EFFECTUATE_FORBIDDEN',
   ],
 ] as const)('rechecks the %s permission before touching the database', async (_, work, code) => {
   await expect(work()).rejects.toMatchObject({ code, statusCode: 403 });

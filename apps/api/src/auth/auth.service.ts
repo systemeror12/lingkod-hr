@@ -74,6 +74,11 @@ export interface InvitationResult {
   activationToken: string;
 }
 
+export interface EmployeeAccessClosure {
+  membershipIds: string[];
+  sessionIds: string[];
+}
+
 export interface PendingInvitation {
   id: string;
   email: string;
@@ -628,6 +633,76 @@ export class AuthService {
       },
     );
     return this.oidc.providerLogoutUrl();
+  }
+
+  /** Internal contract: the caller owns the transaction; Identity owns access closure. */
+  async deactivateEmployeeAccessInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    reason: string,
+    effectiveAt: Date,
+  ): Promise<EmployeeAccessClosure> {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "agency_memberships" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "employee_id" = CAST(${employeeId} AS uuid) FOR UPDATE`,
+    );
+    const memberships = await transaction.agencyMembership.findMany({
+      where: {
+        agencyId: context.agencyId,
+        employeeId,
+        status: { in: ['ACTIVE', 'LOCKED', 'SUSPENDED'] },
+      },
+      select: { id: true },
+    });
+    const membershipIds = memberships.map(({ id }) => id);
+    if (membershipIds.length === 0) return { membershipIds, sessionIds: [] };
+
+    await transaction.agencyMembership.updateMany({
+      where: { agencyId: context.agencyId, id: { in: membershipIds } },
+      data: {
+        status: 'DEACTIVATED',
+        deactivatedAt: effectiveAt,
+        deactivationReason: reason,
+      },
+    });
+    const sessions = await transaction.userSession.updateManyAndReturn({
+      where: {
+        agencyId: context.agencyId,
+        agencyMembershipId: { in: membershipIds },
+        revokedAt: null,
+      },
+      data: { revokedAt: effectiveAt, revocationReason: reason },
+      select: { id: true, userId: true, agencyMembershipId: true },
+    });
+    await transaction.auditEvent.createMany({
+      data: [
+        ...membershipIds.map((membershipId) => ({
+          agencyId: context.agencyId,
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          actorType: 'USER',
+          action: 'AGENCY_MEMBERSHIP_DEACTIVATED_FOR_SEPARATION',
+          entityType: 'AgencyMembership',
+          entityId: membershipId,
+          reason,
+          requestId: context.requestId,
+          metadata: { employeeId },
+        })),
+        ...sessions.map((session) => ({
+          agencyId: context.agencyId,
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          actorType: 'USER',
+          action: 'SESSION_REVOKED_FOR_SEPARATION',
+          entityType: 'UserSession',
+          entityId: session.id,
+          reason,
+          requestId: context.requestId,
+          metadata: { employeeId, membershipId: session.agencyMembershipId },
+        })),
+      ],
+    });
+    return { membershipIds, sessionIds: sessions.map(({ id }) => id) };
   }
 
   async switchAgency(

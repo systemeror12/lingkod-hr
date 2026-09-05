@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpException,
   Inject,
   Param,
@@ -20,6 +21,7 @@ import {
   personnelActionCreateSchema,
   personnelActionDecisionSchema,
   personnelActionIdSchema,
+  personnelActionIdempotencyKeySchema,
   personnelActionListSchema,
   personnelActionReasonSchema,
   personnelActionReviewSchema,
@@ -245,6 +247,30 @@ export class PersonnelActionsController {
     if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     try {
       return await this.service.replace(context, this.parseId(actionId, context), parsed.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/personnel-actions/:actionId/effectuate')
+  @RequirePermission('personnel.actions.effectuate')
+  async effectuate(
+    @Param('agencyId') agencyId: string,
+    @Param('actionId') actionId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<PersonnelActionSummary> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedKey = idempotencyKey
+      ? personnelActionIdempotencyKeySchema.safeParse(idempotencyKey)
+      : { success: true as const, data: undefined };
+    if (!parsedKey.success) throw this.invalidInput(parsedKey.error.issues, context);
+    try {
+      return await this.service.effectuate(
+        context,
+        this.parseId(actionId, context),
+        parsedKey.data,
+      );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

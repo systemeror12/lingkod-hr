@@ -37,6 +37,7 @@ function serviceMock() {
     decide: vi.fn(),
     cancel: vi.fn(),
     replace: vi.fn(),
+    effectuate: vi.fn(),
   };
 }
 
@@ -95,3 +96,18 @@ it.each(['review', 'decide', 'cancel'] as const)(
     expect(permission).toBeUndefined();
   },
 );
+
+it('forwards effectuation with its idempotency key', async () => {
+  const service = serviceMock();
+  service.effectuate.mockResolvedValue({ id: actionId, status: 'EFFECTIVE' });
+  const controller = new PersonnelActionsController(service as never);
+
+  await expect(
+    controller.effectuate(agencyId, actionId, 'personnel-action-effectuation', context),
+  ).resolves.toMatchObject({ status: 'EFFECTIVE' });
+  expect(service.effectuate).toHaveBeenCalledWith(
+    context,
+    actionId,
+    'personnel-action-effectuation',
+  );
+});

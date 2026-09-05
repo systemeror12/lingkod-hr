@@ -1213,6 +1213,110 @@ export class PlantillaPositionsService {
     );
   }
 
+  /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
+  async lockInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+  ): Promise<void> {
+    await this.lockPosition(transaction, context.agencyId, positionId);
+  }
+
+  /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
+  async vacateInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    return this.transitionInTransaction(
+      transaction,
+      context,
+      positionId,
+      { effectiveDate, reason },
+      {
+        action: 'PLANTILLA_POSITION_VACATED',
+        from: ['OCCUPIED'],
+        to: 'VACANT',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  /** Internal contract: same-item reinstatement corrects the invalid vacancy in place. */
+  async restoreOccupancyInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    idempotencyKey: string,
+  ): Promise<PlantillaPositionSummary> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    const completed = await transaction.auditEvent.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        action: 'PLANTILLA_POSITION_OCCUPANCY_RESTORED',
+        entityId: positionId,
+        idempotencyKey,
+      },
+      select: { id: true },
+    });
+    if (completed) return positionSummary(record, toDatabaseDate(manilaToday()));
+    const source = record.versions.find(
+      (version) =>
+        version.status === 'ACTIVE' &&
+        version.domainStatus === 'VACANT' &&
+        version.effectiveFrom.getTime() === effectiveFrom.getTime(),
+    );
+    if (!source) throw this.transitionNotAllowed(record.status);
+    const input = this.inputFromVersion(source, effectiveFrom);
+    await this.validateReferences(transaction, context, input, effectiveFrom, {
+      requireActiveAuthority: true,
+    });
+    const latest = Math.max(...record.versions.map(({ versionNo }) => versionNo));
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
+      data: { status: 'VOIDED' },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(context, positionId, input, effectiveFrom, {
+        versionNo: latest + 1,
+        status: 'ACTIVE',
+        domainStatus: 'OCCUPIED',
+        effectiveTo: source.effectiveTo,
+      }),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_OCCUPANCY_RESTORED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'VACANT',
+      newStatus: 'OCCUPIED',
+      reason,
+      requestId: context.requestId,
+      idempotencyKey,
+      metadata: {
+        voidedVersionId: source.id,
+        replacementVersionId: replacement.id,
+        effectiveDate,
+      },
+    });
+    return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+  }
+
   private async transition(
     context: RequestContext,
     positionId: string,
