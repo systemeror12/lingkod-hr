@@ -992,11 +992,13 @@ Install dependencies
 → Check formatting
 → Lint
 → Type-check
+→ Build
+→ Start local infrastructure
+→ Validate migrations
 → Unit tests
 → Integration tests
 → RLS/constraint tests
-→ Build
-→ Validate migrations
+→ Browser acceptance tests
 → Deploy
 → Smoke tests
 ```

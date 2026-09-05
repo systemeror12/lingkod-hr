@@ -20,8 +20,13 @@ pnpm validate
 pnpm --filter @lingkod-hr/web test:e2e
 ```
 
-CI runs all three commands and retains `apps/web/test-results` and
-`apps/web/playwright-report` as the `phase-5-browser-evidence` artifact.
+CI runs formatting, lint, typechecking, and the production build before
+installing Chromium or starting Docker. It then applies migrations, runs the
+repository tests with all required database roles, and runs the complete
+Chromium suite once, including the Phase 3 and Phase 5 journeys. Browser
+retries are disabled. Failed runs retain `apps/web/test-results` and
+`apps/web/playwright-report` as the suite-wide `browser-evidence` artifact for
+14 days; successful runs do not upload it.
 
 ## Evidence map
 
