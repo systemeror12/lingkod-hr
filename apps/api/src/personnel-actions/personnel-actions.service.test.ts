@@ -48,6 +48,11 @@ it.each([
   ['create', () => service().create(context([]), input), 'PERSONNEL_ACTION_CREATE_FORBIDDEN'],
   ['submit', () => service().submit(context([]), actionId), 'PERSONNEL_ACTION_SUBMIT_FORBIDDEN'],
   [
+    'effectuate',
+    () => service().effectuate(context([]), actionId),
+    'PERSONNEL_ACTION_EFFECTUATE_FORBIDDEN',
+  ],
+  [
     'review',
     () =>
       service().review(context([]), actionId, {

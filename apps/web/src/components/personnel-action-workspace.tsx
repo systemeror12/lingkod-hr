@@ -37,6 +37,7 @@ type ActionStatus =
   | 'FOR_REVIEW'
   | 'FOR_APPROVAL'
   | 'APPROVED'
+  | 'EFFECTIVE'
   | 'RETURNED'
   | 'REJECTED'
   | 'CANCELLED'
@@ -79,6 +80,12 @@ interface PersonnelAction {
   approvedBy: { id: string; displayName: string } | null;
   approvalDelegationId: string | null;
   approvedAt: string | null;
+  effectuatedAt: string | null;
+  effect: {
+    serviceSegmentId: string;
+    salaryGrade: number | null;
+    salaryStep: number | null;
+  } | null;
   supersedesActionId: string | null;
   rowVersion: number;
 }
@@ -361,6 +368,7 @@ export function PersonnelActionWorkspace({
   canSubmit,
   canReturn,
   canEndorse,
+  canEffectuate,
   canApprove,
   canReject,
   canCancel,
@@ -375,6 +383,7 @@ export function PersonnelActionWorkspace({
   canSubmit: boolean;
   canReturn: boolean;
   canEndorse: boolean;
+  canEffectuate: boolean;
   canApprove: boolean;
   canReject: boolean;
   canCancel: boolean;
@@ -402,7 +411,7 @@ export function PersonnelActionWorkspace({
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [positions, setPositions] = useState<PositionOption[]>([]);
   const [transition, setTransition] = useState<
-    'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL'
+    'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL' | 'EFFECTUATE'
   >('RETURN');
   const [transitionReason, setTransitionReason] = useState('');
   const [history, setHistory] = useState<
@@ -606,6 +615,10 @@ export function PersonnelActionWorkspace({
         { decision: transition, reason: transitionReason },
         'Authority decision recorded.',
       );
+      return;
+    }
+    if (transition === 'EFFECTUATE') {
+      await run('/effectuate', undefined, 'Personnel Action effectuated.');
       return;
     }
     await run('/cancel', { reason: transitionReason }, 'Personnel Action cancelled.');
@@ -1074,6 +1087,12 @@ export function PersonnelActionWorkspace({
                     label="Delegation"
                     value={selected.approvalDelegationId ?? 'Direct or pending'}
                   />
+                  {selected.effect ? (
+                    <DetailRow
+                      label="Effective result"
+                      value={`SG ${selected.effect.salaryGrade ?? '—'}, Step ${selected.effect.salaryStep ?? '—'}`}
+                    />
+                  ) : null}
                 </DetailGroup>
                 <DetailGroup title="Target facts">
                   {Object.entries(selected.currentVersion.targetFacts).map(([key, value]) => (
@@ -1180,7 +1199,7 @@ export function PersonnelActionWorkspace({
                     Cancel action
                   </Button>
                 ) : null}
-                {canCorrect && selected.status === 'APPROVED' ? (
+                {canCorrect && ['APPROVED', 'EFFECTIVE'].includes(selected.status) ? (
                   <Button
                     onClick={() => openPrepare('replace', selected)}
                     size="default"
@@ -1188,6 +1207,19 @@ export function PersonnelActionWorkspace({
                     variant="secondary"
                   >
                     Prepare replacement
+                  </Button>
+                ) : null}
+                {canEffectuate &&
+                selected.status === 'APPROVED' &&
+                (selected.actionType === 'SALARY_ADJUSTMENT' ||
+                  selected.actionType === 'STEP_INCREMENT') ? (
+                  <Button
+                    onClick={() => openTransition('EFFECTUATE')}
+                    size="default"
+                    type="button"
+                    variant="primary"
+                  >
+                    Effectuate action
                   </Button>
                 ) : null}
                 {canAudit ? (
@@ -1212,8 +1244,9 @@ export function PersonnelActionWorkspace({
               <div>
                 <DialogTitle>{transitionLabel(transition)} Personnel Action</DialogTitle>
                 <DialogDescription id="personnel-action-transition-description">
-                  Record the accountable reason against exact version{' '}
-                  {selected.currentVersion.versionNo}.
+                  {transition === 'EFFECTUATE'
+                    ? `Confirm the effective-dated compensation facts for exact version ${selected.currentVersion.versionNo}.`
+                    : `Record the accountable reason against exact version ${selected.currentVersion.versionNo}.`}
                 </DialogDescription>
               </div>
               <CloseButton busy={busy} label="Close Personnel Action transition" />
@@ -1221,16 +1254,29 @@ export function PersonnelActionWorkspace({
             <form onSubmit={recordTransition}>
               <DialogBody className="grid gap-5">
                 <ErrorMessage message={error} />
-                <Field htmlFor="action-transition-reason" label="Reason">
-                  <textarea
-                    autoFocus
-                    className={`${inputClass} min-h-24 py-3`}
-                    id="action-transition-reason"
-                    onChange={(event) => setTransitionReason(targetValue(event))}
-                    required
-                    value={transitionReason}
-                  />
-                </Field>
+                {transition === 'EFFECTUATE' ? (
+                  <div className="grid gap-2 text-sm leading-6 text-ink">
+                    <DetailRow
+                      label="Effectivity"
+                      value={dateLabel(selected.currentVersion.proposedEffectivity)}
+                    />
+                    <DetailRow
+                      label="New compensation"
+                      value={`SG ${selected.actionType === 'SALARY_ADJUSTMENT' ? String(selected.currentVersion.targetFacts.newSalaryGrade) : (selected.currentVersion.fromServiceSegment.salaryGrade ?? '—')}, Step ${String(selected.currentVersion.targetFacts.newSalaryStep)}`}
+                    />
+                  </div>
+                ) : (
+                  <Field htmlFor="action-transition-reason" label="Reason">
+                    <textarea
+                      autoFocus
+                      className={`${inputClass} min-h-24 py-3`}
+                      id="action-transition-reason"
+                      onChange={(event) => setTransitionReason(targetValue(event))}
+                      required
+                      value={transitionReason}
+                    />
+                  </Field>
+                )}
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
@@ -1239,7 +1285,11 @@ export function PersonnelActionWorkspace({
                   </Button>
                 </DialogClose>
                 <Button disabled={busy} size="default" type="submit" variant="primary">
-                  {busy ? 'Recording…' : 'Record decision'}
+                  {busy
+                    ? 'Recording…'
+                    : transition === 'EFFECTUATE'
+                      ? 'Confirm effectuation'
+                      : 'Record decision'}
                 </Button>
               </DialogFooter>
             </form>
@@ -1439,7 +1489,9 @@ function transitionLabel(value: string): string {
           ? 'Reject'
           : value === 'CANCEL'
             ? 'Cancel'
-            : 'Check';
+            : value === 'EFFECTUATE'
+              ? 'Effectuate'
+              : 'Check';
 }
 
 async function request(agencyId: string, path: string, init?: RequestInit): Promise<unknown> {

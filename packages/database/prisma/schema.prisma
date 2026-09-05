@@ -218,6 +218,7 @@ model AgencyMembership {
   delegationsReceived                    DelegatedAuthority[]           @relation("DelegationDelegate")
   preparedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionPreparer")
   approvedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionApprover")
+  effectuatedPersonnelActions            PersonnelAction[]              @relation("PersonnelActionEffectuator")
   createdPersonnelActionVersions         PersonnelActionVersion[]       @relation("PersonnelActionVersionCreator")
   createdPersonnelActionEvidence         PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceCreator")
   sessions                               UserSession[]
@@ -1433,21 +1434,24 @@ model PersonnelBaseline {
 }
 
 model PersonnelAction {
-  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agencyId               String    @map("agency_id") @db.Uuid
-  employeeId             String    @map("employee_id") @db.Uuid
-  actionType             String    @map("action_type")
-  status                 String
-  currentVersionId       String?   @map("current_version_id") @db.Uuid
-  preparedByMembershipId String    @map("prepared_by_membership_id") @db.Uuid
-  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
-  approvalDelegationId   String?   @map("approval_delegation_id") @db.Uuid
-  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
-  cancelledAt            DateTime? @map("cancelled_at") @db.Timestamptz(6)
-  supersedesActionId     String?   @map("supersedes_action_id") @db.Uuid
-  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  rowVersion             Int       @default(1) @map("row_version")
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  actionType                String    @map("action_type")
+  status                    String
+  currentVersionId          String?   @map("current_version_id") @db.Uuid
+  preparedByMembershipId    String    @map("prepared_by_membership_id") @db.Uuid
+  approvedByMembershipId    String?   @map("approved_by_membership_id") @db.Uuid
+  approvalDelegationId      String?   @map("approval_delegation_id") @db.Uuid
+  approvedAt                DateTime? @map("approved_at") @db.Timestamptz(6)
+  cancelledAt               DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  effectuatedByMembershipId String?   @map("effectuated_by_membership_id") @db.Uuid
+  effectuatedAt             DateTime? @map("effectuated_at") @db.Timestamptz(6)
+  effectuationKey           String?   @map("effectuation_key")
+  supersedesActionId        String?   @map("supersedes_action_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                Int       @default(1) @map("row_version")
 
   agency             Agency                   @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   employee           Employee                 @relation("PersonnelActionEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
@@ -1455,6 +1459,7 @@ model PersonnelAction {
   versions           PersonnelActionVersion[] @relation("PersonnelActionVersions")
   preparedBy         AgencyMembership         @relation("PersonnelActionPreparer", fields: [agencyId, preparedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   approvedBy         AgencyMembership?        @relation("PersonnelActionApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  effectuatedBy      AgencyMembership?        @relation("PersonnelActionEffectuator", fields: [agencyId, effectuatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   approvalDelegation DelegatedAuthority?      @relation("PersonnelActionApprovalDelegation", fields: [agencyId, approvalDelegationId], references: [agencyId, id], onDelete: Restrict)
   supersedesAction   PersonnelAction?         @relation("PersonnelActionSupersession", fields: [agencyId, supersedesActionId], references: [agencyId, id], onDelete: Restrict)
   successorActions   PersonnelAction[]        @relation("PersonnelActionSupersession")
