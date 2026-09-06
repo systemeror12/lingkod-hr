@@ -238,7 +238,7 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   await expect(activationDialog).toBeVisible();
   releaseActivation();
 
-  await expect(page.getByRole('status')).toContainText(`${rootName} is now active.`);
+  await expect(page.getByText(`${rootName} is now active.`, { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Effective hierarchy' })).toBeVisible();
   await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
   await page.getByRole('button', { name: new RegExp(rootName) }).click();
@@ -342,6 +342,8 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
 test('keeps a missing Unit explicit across reload and returns to the dated Tree', async ({
   page,
 }) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto(
     '/organization?asOf=2026-08-15&unit=00000000-0000-4000-8000-000000000000&view=form',
   );

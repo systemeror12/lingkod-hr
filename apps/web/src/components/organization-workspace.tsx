@@ -1970,6 +1970,7 @@ export function OrganizationWorkspace({
         {successor && successorValues ? (
           <DialogContent
             aria-busy={successorSubmitting}
+            aria-describedby="organization-successor-description"
             onEscapeKeyDown={(event) => {
               if (successorSubmitting) event.preventDefault();
             }}
@@ -1984,7 +1985,7 @@ export function OrganizationWorkspace({
                   Organization change / Successor draft
                 </p>
                 <DialogTitle>Review Organization Unit successor</DialogTitle>
-                <DialogDescription>
+                <DialogDescription id="organization-successor-description">
                   Edit the proposed values and effective date. The current version remains unchanged
                   until activation.
                 </DialogDescription>

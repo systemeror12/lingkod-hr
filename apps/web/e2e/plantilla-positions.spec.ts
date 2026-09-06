@@ -49,9 +49,6 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await expect(page.getByRole('status')).toContainText(
     `Proposed position “${itemNumber}” was created.`,
   );
-  const result = page.getByRole('button', { name: new RegExp(itemNumber) });
-  await expect(result).toBeVisible();
-  await result.click();
   await expect(
     page.getByRole('heading', { name: 'Human Resource Management Officer III' }),
   ).toBeVisible();
@@ -170,7 +167,6 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
   await expect(page.getByRole('status')).toContainText(
     `Proposed position “${itemNumber}” was created.`,
   );
-  await page.getByRole('button', { name: new RegExp(itemNumber) }).click();
   await expect(page.getByRole('button', { name: 'Authorize position' })).toBeVisible();
 
   async function linkEvidence(purpose: 'CREATION' | 'FREEZE' | 'ABOLITION'): Promise<void> {

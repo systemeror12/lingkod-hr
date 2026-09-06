@@ -75,20 +75,23 @@ function InlineRecord({
   const callbacks = useRef({ onOpenAutoFocus, onCloseAutoFocus });
   callbacks.current = { onOpenAutoFocus, onCloseAutoFocus };
   useEffect(() => {
-    const event = new Event('openAutoFocus', { cancelable: true });
-    callbacks.current.onOpenAutoFocus?.(event);
-    if (!event.defaultPrevented) {
-      const element = ref.current as unknown as {
-        focus(): void;
-        querySelector(selector: string): { focus(): void } | null;
-      } | null;
-      (
-        element?.querySelector(
-          'input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
-        ) ?? element
-      )?.focus();
-    }
+    const frame = setTimeout(() => {
+      const event = new Event('openAutoFocus', { cancelable: true });
+      callbacks.current.onOpenAutoFocus?.(event);
+      if (!event.defaultPrevented) {
+        const element = ref.current as unknown as {
+          focus(): void;
+          querySelector(selector: string): { focus(): void } | null;
+        } | null;
+        (
+          element?.querySelector(
+            'input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+          ) ?? element
+        )?.focus();
+      }
+    });
     return () => {
+      clearTimeout(frame);
       callbacks.current.onCloseAutoFocus?.(new Event('closeAutoFocus', { cancelable: true }));
     };
   }, []);

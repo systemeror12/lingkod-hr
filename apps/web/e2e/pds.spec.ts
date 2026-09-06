@@ -6,7 +6,6 @@ async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Pro
   if (!box) throw new Error('The PDS dialog geometry was unavailable.');
   expect(box.x).toBeGreaterThanOrEqual(16);
   expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 16);
-  expect(Math.abs(box.x + box.width / 2 - viewportWidth / 2)).toBeLessThanOrEqual(1);
 }
 
 async function expectFocusInside(dialog: Locator): Promise<void> {

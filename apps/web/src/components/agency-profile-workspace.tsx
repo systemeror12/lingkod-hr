@@ -321,6 +321,7 @@ function ProfileDialog({
     >
       <DialogContent
         aria-busy={submitting}
+        aria-describedby="agency-profile-dialog-description"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           onRestoreFocus();
@@ -338,7 +339,7 @@ function ProfileDialog({
             <DialogTitle>
               {mode === 'activate' ? 'Review activation' : 'Edit draft successor'}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription id="agency-profile-dialog-description">
               {mode === 'activate'
                 ? 'Confirm when this version becomes authoritative. Prior versions remain available for every as-of read.'
                 : 'Edit the successor fields before activation. Activated versions cannot be rewritten.'}

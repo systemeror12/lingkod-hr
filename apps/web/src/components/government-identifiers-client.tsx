@@ -258,6 +258,7 @@ export function GovernmentIdentifiersSection({
   const replaceOpener = useRef<HTMLButtonElement | null>(null);
   const invalidateOpener = useRef<HTMLButtonElement | null>(null);
   const historyOpener = useRef<HTMLButtonElement | null>(null);
+  const historyCloseRef = useRef<HTMLButtonElement | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
 
   const endpoint = `/api/v1/agencies/${agencyId}/employees/${employeeId}/government-identifiers`;
@@ -1134,6 +1135,10 @@ export function GovernmentIdentifiersSection({
       <Dialog presentation="form" open={Boolean(historyTarget)} onOpenChange={closeHistory}>
         <DialogContent
           aria-describedby="government-identifier-history-description"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            (historyCloseRef.current as { focus(): void } | null)?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             restoreFocus(historyOpener, sectionRef);
@@ -1149,7 +1154,11 @@ export function GovernmentIdentifiersSection({
               </DialogDescription>
             </div>
             <DialogClose asChild>
-              <Button aria-label="Close government identifier history dialog" type="button">
+              <Button
+                ref={historyCloseRef}
+                aria-label="Close government identifier history dialog"
+                type="button"
+              >
                 <span aria-hidden="true" className="text-xl leading-none">
                   ×
                 </span>

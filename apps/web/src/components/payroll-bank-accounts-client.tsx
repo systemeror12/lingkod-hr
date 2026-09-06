@@ -225,8 +225,6 @@ export function PayrollBankAccountsSection({
   useEffect(() => {
     if (!historyId) {
       setBusy(false);
-      setAction(null);
-      setRevealed(null);
       return;
     }
     if (loading) return;
@@ -241,6 +239,13 @@ export function PayrollBankAccountsSection({
       historyRequest.current += 1;
     };
   }, [historyId, loading, canReadHistory]);
+
+  useEffect(() => {
+    if (historyId || action?.kind !== 'history') return;
+    setAction(null);
+    setRevealed(null);
+    setHistory([]);
+  }, [action?.kind, historyId]);
 
   const evidenceDialogOpen =
     createOpen || ['activate', 'replace', 'correct'].includes(action?.kind ?? '');

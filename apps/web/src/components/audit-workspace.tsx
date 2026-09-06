@@ -301,6 +301,7 @@ export function AuditWorkspace({
       ) : null}
       <DialogContent
         aria-busy={detailLoading}
+        aria-describedby="audit-event-detail-description"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           closeRef.current?.focus();
@@ -316,7 +317,7 @@ export function AuditWorkspace({
               Audit evidence / Read only
             </p>
             <DialogTitle>Audit Event detail</DialogTitle>
-            <DialogDescription>
+            <DialogDescription id="audit-event-detail-description">
               Inspect persisted evidence from the active Agency Context.
             </DialogDescription>
           </div>

@@ -311,7 +311,7 @@ test.describe('Phase 3 acceptance gate', () => {
       await expect(event).toContainText('ORGANIZATION_UNIT_CREATED');
       await expect(event).toContainText('None → DRAFT');
       await event.click();
-      const auditDialog = hrmoPage.getByRole('dialog', { name: 'Audit Event detail' });
+      const auditDialog = hrmoPage.getByRole('region', { name: 'Audit Event detail' });
       await expect(auditDialog).toBeVisible();
       await expect(auditDialog).toContainText(unitName);
       await expect(auditDialog).toContainText('None → DRAFT');

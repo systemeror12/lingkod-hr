@@ -166,6 +166,8 @@ test('creates an Employee and links an Agency Membership', async ({ page }) => {
 test('keeps Employee creation values after a network failure and permits retry', async ({
   page,
 }) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/employees/new');
   await page.getByLabel('Employee number').fill(`RETRY-${Date.now()}`);
   await page.getByLabel('Legal name').fill('Retry Employee');
