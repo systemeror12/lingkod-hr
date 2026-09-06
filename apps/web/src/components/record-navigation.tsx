@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { recordHref } from '../lib/navigation';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { buttonVariants } from './ui/button';
@@ -24,8 +23,8 @@ export function useRecordNavigation() {
 
 export function RecordReturn({ href, children }: { href: string; children: string }) {
   return (
-    <Link className={buttonVariants({ variant: 'secondary', size: 'default' })} href={href}>
+    <a className={buttonVariants({ variant: 'secondary', size: 'default' })} href={href}>
       {children}
-    </Link>
+    </a>
   );
 }

@@ -166,6 +166,8 @@ const evidencePurposeLabels: Record<EvidencePurpose, string> = {
   OTHER: 'Other position evidence',
 };
 
+let restoreTransitionFocusOnMount = false;
+
 const transitionConfig: Record<
   TransitionTarget,
   {
@@ -934,6 +936,15 @@ export function PlantillaPositionWorkspace({
     return () => clearTimeout(frame);
   }, [selectedDetail, transitionFocusPending]);
 
+  useEffect(() => {
+    if (!restoreTransitionFocusOnMount || !selectedDetail) return;
+    restoreTransitionFocusOnMount = false;
+    const frame = setTimeout(() => {
+      (transitionActionsRef.current as unknown as { focus(): void } | null)?.focus();
+    }, 0);
+    return () => clearTimeout(frame);
+  }, [selectedDetail]);
+
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(`/api/v1/agencies/${agencyId}/plantilla-positions${path}`, {
       ...init,
@@ -1207,6 +1218,7 @@ export function PlantillaPositionWorkspace({
       setSuccess(
         `“${position.itemNumber}” was ${config.pastTense} effective ${dateLabel(effectiveDate)}.`,
       );
+      restoreTransitionFocusOnMount = true;
       setTransitionTarget(null);
       setTransitionFocusPending(true);
     } catch (requestError: unknown) {

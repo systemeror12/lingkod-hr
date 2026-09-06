@@ -319,6 +319,7 @@ export function OrganizationWorkspace({
   const [successor, setSuccessor] = useState<OrganizationUnitSuccessor | null>(null);
   const [successorValues, setSuccessorValues] = useState<SuccessorValues | null>(null);
   const [successorOpen, setSuccessorOpen] = useState(false);
+  const successorCloseAfterSave = useRef(false);
   const showSuccessor = navigation.search.get('section') === 'successor';
   useEffect(() => {
     if (!selectedId || !showSuccessor) {
@@ -846,7 +847,15 @@ export function OrganizationWorkspace({
     setSuccessorError('');
     try {
       const saved = await saveSuccessor();
-      if (saved) setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+      const closeAfterSave = successorCloseAfterSave.current;
+      successorCloseAfterSave.current = false;
+      if (saved) {
+        setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+        if (closeAfterSave) {
+          setSuccessorOpen(false);
+          navigation.navigate({ section: null });
+        }
+      }
     } finally {
       setSuccessorSubmitting(false);
     }
@@ -1972,7 +1981,10 @@ export function OrganizationWorkspace({
             aria-busy={successorSubmitting}
             aria-describedby="organization-successor-description"
             onEscapeKeyDown={(event) => {
-              if (successorSubmitting) event.preventDefault();
+              if (successorSubmitting) {
+                successorCloseAfterSave.current = true;
+                event.preventDefault();
+              }
             }}
             onOpenAutoFocus={(event) => {
               event.preventDefault();
