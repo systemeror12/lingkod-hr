@@ -194,7 +194,7 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     await expect(transitionDialog.getByLabel('Effective date')).toBeFocused();
     await transitionDialog.getByLabel('Reason').fill(reason);
     await transitionDialog.getByRole('button', { name: submitButton, exact: true }).click();
-    await expect(page.getByText(successText, { exact: true })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: successText })).toBeVisible();
     await expect(page.locator('[aria-label="Position lifecycle actions"]')).toBeFocused();
   }
 

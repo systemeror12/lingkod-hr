@@ -31,10 +31,13 @@ const dialogContentVariants = cva(
 
 const FormContext = createContext<string | null>(null);
 const FormCloseContext = createContext<(() => void) | null>(null);
+type FocusTarget = { focus(): void };
+const TriggerContext = createContext<{ current: FocusTarget | null } | null>(null);
 const focusableSelector =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 type FocusableElement = {
+  autofocus?: boolean;
   closest(selector: string): unknown;
   focus(): void;
   getAttribute(name: string): string | null;
@@ -59,12 +62,24 @@ export function Dialog({
   ...props
 }: ComponentPropsWithoutRef<typeof DialogPrimitive.Root> & { presentation?: 'dialog' | 'form' }) {
   const titleId = useId();
+  const triggerRef = useRef<FocusTarget | null>(null);
+  const previousOpen = useRef(Boolean(props.open));
+  useEffect(() => {
+    const open = Boolean(props.open);
+    const wasOpen = previousOpen.current;
+    previousOpen.current = open;
+    if (presentation !== 'form' || !wasOpen || open) return;
+    const frame = setTimeout(() => triggerRef.current?.focus(), 0);
+    return () => clearTimeout(frame);
+  }, [presentation, props.open]);
   return (
-    <FormContext.Provider value={presentation === 'form' && props.open ? titleId : null}>
-      <FormCloseContext.Provider value={() => props.onOpenChange?.(false)}>
-        <DialogPrimitive.Root {...props} />
-      </FormCloseContext.Provider>
-    </FormContext.Provider>
+    <TriggerContext.Provider value={triggerRef}>
+      <FormContext.Provider value={presentation === 'form' && props.open ? titleId : null}>
+        <FormCloseContext.Provider value={() => props.onOpenChange?.(false)}>
+          <DialogPrimitive.Root {...props} />
+        </FormCloseContext.Provider>
+      </FormContext.Provider>
+    </TriggerContext.Provider>
   );
 }
 
@@ -92,6 +107,7 @@ function InlineRecord({
   const titleId = useContext(FormContext);
   const ref = useRef<HTMLDivElement | null>(null);
   const close = useContext(FormCloseContext);
+  const triggerRef = useContext(TriggerContext);
   useImperativeHandle(contentRef, () => ref.current!);
   const callbacks = useRef({ onOpenAutoFocus, onCloseAutoFocus });
   callbacks.current = { onOpenAutoFocus, onCloseAutoFocus };
@@ -100,13 +116,9 @@ function InlineRecord({
       const event = new Event('openAutoFocus', { cancelable: true });
       callbacks.current.onOpenAutoFocus?.(event);
       if (!event.defaultPrevented) {
-        const element = ref.current as unknown as {
-          focus(): void;
-          querySelector(selector: string): { focus(): void } | null;
-        } | null;
-        (
-          element?.querySelector(`[autofocus]:not([disabled]), ${focusableSelector}`) ?? element
-        )?.focus();
+        const element = ref.current as unknown as InlineElement | null;
+        const candidates = Array.from(element?.querySelectorAll(focusableSelector) ?? []);
+        (candidates.find((candidate) => candidate.autofocus) ?? candidates[0] ?? element)?.focus();
       }
     });
     const browserDocument = (globalThis as unknown as { document: BrowserDocument }).document;
@@ -148,10 +160,13 @@ function InlineRecord({
       clearTimeout(frame);
       browserDocument.removeEventListener('keydown', keepFocusInside);
       const callback = callbacks.current.onCloseAutoFocus;
-      if (callback)
+      if (callback) {
         setTimeout(() => callback(new Event('closeAutoFocus', { cancelable: true })), 0);
+      } else {
+        setTimeout(() => triggerRef?.current?.focus(), 0);
+      }
     };
-  }, []);
+  }, [triggerRef]);
   return (
     <div
       {...contentProps}
@@ -177,7 +192,23 @@ function InlineRecord({
     </div>
   );
 }
-export const DialogTrigger = DialogPrimitive.Trigger;
+export const DialogTrigger = forwardRef<
+  ElementRef<typeof DialogPrimitive.Trigger>,
+  ComponentPropsWithoutRef<typeof DialogPrimitive.Trigger>
+>(({ ...props }, forwardedRef) => {
+  const triggerRef = useContext(TriggerContext);
+  return (
+    <DialogPrimitive.Trigger
+      {...props}
+      ref={(element) => {
+        if (triggerRef) triggerRef.current = element as unknown as FocusTarget | null;
+        if (typeof forwardedRef === 'function') forwardedRef(element);
+        else if (forwardedRef) forwardedRef.current = element;
+      }}
+    />
+  );
+});
+DialogTrigger.displayName = DialogPrimitive.Trigger.displayName;
 export const DialogClose = DialogPrimitive.Close;
 
 type DialogContentProps = ComponentPropsWithoutRef<typeof DialogPrimitive.Content> &

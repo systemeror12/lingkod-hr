@@ -2,14 +2,13 @@
 
 import Link from 'next/link';
 import { recordHref } from '../lib/navigation';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { buttonVariants } from './ui/button';
 
-/** Record selection belongs to the existing router; edits stay in the owning form. */
+/** Record selection stays in the current workspace; edits stay in the owning form. */
 export function useRecordNavigation() {
   const pathname = usePathname();
   const search = useSearchParams();
-  const router = useRouter();
   function href(values: Record<string, string | null>) {
     return recordHref(pathname, search.toString(), values);
   }
@@ -17,7 +16,10 @@ export function useRecordNavigation() {
     search,
     href,
     navigate(values: Record<string, string | null>) {
-      router.push(href(values), { scroll: false });
+      const browser = globalThis as unknown as {
+        history: { pushState(state: unknown, title: string, url: string): void; state: unknown };
+      };
+      browser.history.pushState(browser.history.state, '', href(values));
     },
   };
 }
