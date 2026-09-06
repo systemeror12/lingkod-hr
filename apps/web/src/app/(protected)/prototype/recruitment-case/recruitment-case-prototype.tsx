@@ -744,141 +744,173 @@ export function RecruitmentCasePrototype() {
       </div>
 
       {variant === 'A' && (
-        <div className={styles.treeLayout}>
-          <section className={styles.treeSheet} aria-label="Recruitment record tree">
-            <div className={styles.sheetHeading}>
-              <h2>Case records</h2>
-              <span>1 case · {published ? 6 : 0} Applications</span>
-            </div>
-            <div className={styles.scroll}>
-              <table className={styles.treeTable}>
-                <caption className={styles.srOnly}>
-                  Expandable Recruitment Case records. Select a record to inspect its details.
-                </caption>
-                <thead>
-                  <tr>
-                    <th>Record</th>
-                    <th>Type</th>
-                    <th>Standing</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className={styles.rootRow}>
-                    <td>
-                      <button
-                        className={styles.expand}
-                        aria-label={
-                          expanded ? 'Collapse Recruitment Case' : 'Expand Recruitment Case'
-                        }
-                        aria-expanded={expanded}
-                        onClick={() => setExpanded(!expanded)}
-                      >
-                        {expanded ? '▾' : '▸'}
-                      </button>
-                      <strong>RTF-026-014</strong>
-                      <small>Administrative Officer II</small>
-                    </td>
-                    <td>Recruitment Case</td>
-                    <td>{snapshot.status}</td>
-                  </tr>
-                  {expanded &&
-                    stages.map((name, index) => (
-                      <Fragment key={name}>
-                        <tr data-selected={!inspectApplicant && stage === index}>
-                          <td>
-                            <div className={styles.branch}>
-                              {index === 2 ? (
-                                <button
-                                  className={styles.expand}
-                                  aria-label={
-                                    applicationsExpanded
-                                      ? 'Collapse Applications'
-                                      : 'Expand Applications'
-                                  }
-                                  aria-expanded={applicationsExpanded}
-                                  onClick={() => setApplicationsExpanded(!applicationsExpanded)}
-                                >
-                                  {applicationsExpanded ? '▾' : '▸'}
-                                </button>
-                              ) : (
-                                <span className={styles.twig} aria-hidden="true">
-                                  └
-                                </span>
-                              )}
+        <section className={styles.treeSheet} aria-label="Recruitment record tree">
+          <div className={styles.sheetHeading}>
+            <h2>Case records</h2>
+            <span>1 case · {published ? 6 : 0} Applications</span>
+          </div>
+          <div className={styles.scroll}>
+            <table className={styles.treeTable}>
+              <caption className={styles.srOnly}>
+                Expandable Recruitment Case records. Select a record to open Form view.
+              </caption>
+              <thead>
+                <tr>
+                  <th>Record</th>
+                  <th>Reference</th>
+                  <th>Type</th>
+                  <th>Evidence</th>
+                  <th>Standing</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className={styles.rootRow}>
+                  <td colSpan={5}>
+                    <button
+                      className={styles.expand}
+                      aria-label={
+                        expanded ? 'Collapse Recruitment Case' : 'Expand Recruitment Case'
+                      }
+                      aria-expanded={expanded}
+                      onClick={() => setExpanded(!expanded)}
+                    >
+                      {expanded ? '▾' : '▸'}
+                    </button>
+                    <strong>Administrative Officer II</strong>
+                    <span className={styles.groupMeta}>
+                      RTF-026-014 · {published ? 6 : 0} Applications
+                    </span>
+                  </td>
+                </tr>
+                {expanded &&
+                  stages.map((name, index) => (
+                    <Fragment key={name}>
+                      <tr data-selected={!inspectApplicant && stage === index}>
+                        <td>
+                          <div className={styles.branch}>
+                            {index === 2 ? (
                               <button
-                                className={styles.recordButton}
-                                onClick={() => openStage(index)}
-                                aria-pressed={!inspectApplicant && stage === index}
+                                className={styles.expand}
+                                aria-label={
+                                  applicationsExpanded
+                                    ? 'Collapse Applications'
+                                    : 'Expand Applications'
+                                }
+                                aria-expanded={applicationsExpanded}
+                                onClick={() => setApplicationsExpanded(!applicationsExpanded)}
                               >
-                                {name}
+                                {applicationsExpanded ? '▾' : '▸'}
                               </button>
-                            </div>
-                          </td>
-                          <td>
-                            {
-                              [
-                                'Request',
-                                'Publication',
-                                'Applications',
-                                'Board record',
-                                'Authority decision',
-                              ][index]
-                            }
-                          </td>
-                          <td>{stageStatus(index)}</td>
-                        </tr>
-                        {index === 2 &&
-                          applicationsExpanded &&
-                          visibleApplicants.map((person) => (
-                            <tr
-                              key={person.id}
-                              data-selected={inspectApplicant && applicantId === person.id}
+                            ) : (
+                              <span className={styles.twig} aria-hidden="true">
+                                └
+                              </span>
+                            )}
+                            <button
+                              className={styles.recordButton}
+                              onClick={() => {
+                                openStage(index);
+                                changeView('B');
+                              }}
+                              aria-pressed={!inspectApplicant && stage === index}
                             >
-                              <td>
-                                <button
-                                  className={styles.leaf}
-                                  aria-pressed={inspectApplicant && applicantId === person.id}
-                                  onClick={() => openApplicant(person.id)}
-                                >
-                                  <span aria-hidden="true">└</span>
-                                  <span>
-                                    {person.name}
-                                    <small>{person.id}</small>
-                                  </span>
-                                </button>
-                              </td>
-                              <td>Application</td>
-                              <td>{evaluated ? person.screening : 'Pending screening'}</td>
-                            </tr>
-                          ))}
-                        {index === 2 && applicationsExpanded && visibleApplicants.length === 0 && (
-                          <tr>
-                            <td colSpan={3} className={styles.empty}>
-                              {published
-                                ? 'No applicants match your search.'
-                                : 'No Applications received in this scenario.'}
+                              {name}
+                            </button>
+                          </div>
+                        </td>
+                        <td className={styles.reference}>
+                          {
+                            [
+                              'RTF-026-014',
+                              published
+                                ? republication
+                                  ? 'PUB-026-02'
+                                  : 'PUB-026-01'
+                                : 'Not published',
+                              published ? '6 Applications' : 'No Applications',
+                              snapshot.stage >= 3 ? 'BS-026-04' : 'Not started',
+                              selected
+                                ? 'SD-026-01'
+                                : scenario === 'noSelection'
+                                  ? 'SD-026-02'
+                                  : 'Not recorded',
+                            ][index]
+                          }
+                        </td>
+                        <td>
+                          {
+                            [
+                              'Request',
+                              'Publication',
+                              'Applications',
+                              'Board record',
+                              'Authority decision',
+                            ][index]
+                          }
+                        </td>
+                        <td>
+                          {
+                            [
+                              'Request v1',
+                              published ? 'Publication v1' : 'Pending',
+                              evaluated ? 'Screening results retained' : 'Pending',
+                              boardOutput ? 'CCER v1' : 'Pending board output',
+                              selected || scenario === 'noSelection' ? 'Decision v1' : 'Pending',
+                            ][index]
+                          }
+                        </td>
+                        <td>
+                          <span className={styles.tableStatus}>{stageStatus(index)}</span>
+                        </td>
+                      </tr>
+                      {index === 2 &&
+                        applicationsExpanded &&
+                        visibleApplicants.map((person) => (
+                          <tr
+                            key={person.id}
+                            data-selected={inspectApplicant && applicantId === person.id}
+                          >
+                            <td>
+                              <button
+                                className={styles.leaf}
+                                aria-pressed={inspectApplicant && applicantId === person.id}
+                                onClick={() => {
+                                  openApplicant(person.id);
+                                  changeView('B');
+                                }}
+                              >
+                                <span aria-hidden="true">└</span>
+                                <span>{person.name}</span>
+                              </button>
+                            </td>
+                            <td className={styles.reference}>{person.id}</td>
+                            <td>Application</td>
+                            <td>{evaluated ? person.evidence : 'Awaiting review'}</td>
+                            <td>
+                              <span className={styles.tableStatus}>
+                                {evaluated ? person.screening : 'Pending screening'}
+                              </span>
                             </td>
                           </tr>
-                        )}
-                      </Fragment>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-            <div className={styles.tableFooter}>
-              Published records and completed decisions retain their versions.
-            </div>
-          </section>
-          <aside className={styles.inspector} aria-label="Selected record">
-            <div className={styles.sheetHeading}>
-              <h2>{inspectApplicant ? 'Application preview' : 'Record preview'}</h2>
-              <button className={styles.recordButton} onClick={() => changeView('B')}>
-                Open form ↗
-              </button>
-            </div>
-            {inspectApplicant ? candidateDetail : panel(stage)}
-          </aside>
-        </div>
+                        ))}
+                      {index === 2 && applicationsExpanded && visibleApplicants.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className={styles.empty}>
+                            {published
+                              ? 'No applicants match your search.'
+                              : 'No Applications received in this scenario.'}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <div className={styles.tableFooter}>
+            Published records and completed decisions retain their versions.
+          </div>
+        </section>
       )}
 
       {variant === 'B' && (
