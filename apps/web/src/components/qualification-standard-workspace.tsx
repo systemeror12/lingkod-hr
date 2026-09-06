@@ -224,16 +224,22 @@ export function QualificationStandardWorkspace({
   const [standards, setStandards] = useState(initial.standards);
   const navigation = useRecordNavigation();
   const recordId = navigation.search.get('record');
+  const dialogRef = useRef<DialogKind | null>(null);
   useEffect(() => {
     let active = true;
+    if (!recordId) {
+      if (dialogRef.current === 'detail') {
+        dialogRef.current = null;
+        setDialog(null);
+        setSelected(null);
+        setDetail(null);
+      }
+      return;
+    }
     setDetail(null);
     setSelected(null);
     setError('');
-    if (!recordId) {
-      setDialog(null);
-      setSelected(null);
-      return;
-    }
+    dialogRef.current = 'detail';
     setDialog('detail');
     setDetailLoading(true);
     void request('/' + encodeURIComponent(recordId))
@@ -317,6 +323,7 @@ export function QualificationStandardWorkspace({
     standard: QualificationStandard | null,
     target: { focus(): void },
   ): void {
+    dialogRef.current = kind;
     returnFocusRef.current = target;
     resetAction();
     setSelected(standard);
@@ -325,6 +332,7 @@ export function QualificationStandardWorkspace({
 
   function closeDialog(force = false): void {
     if (busy && !force) return;
+    dialogRef.current = null;
     const focusTarget = returnFocusRef.current;
     navigation.navigate({ record: null, view: null });
     setDialog(null);
@@ -613,6 +621,7 @@ export function QualificationStandardWorkspace({
                   resetAction();
                   setValues(emptyValues());
                   returnFocusRef.current = event.currentTarget as unknown as { focus(): void };
+                  dialogRef.current = 'create';
                   setDialog('create');
                 }}
               >

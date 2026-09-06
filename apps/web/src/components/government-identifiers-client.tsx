@@ -258,8 +258,10 @@ export function GovernmentIdentifiersSection({
   const replaceOpener = useRef<HTMLButtonElement | null>(null);
   const invalidateOpener = useRef<HTMLButtonElement | null>(null);
   const historyOpener = useRef<HTMLButtonElement | null>(null);
+  const historyFocusId = useRef<string | null>(null);
   const historyCloseRef = useRef<HTMLButtonElement | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
+  const [historyFocusPending, setHistoryFocusPending] = useState(false);
 
   const endpoint = `/api/v1/agencies/${agencyId}/employees/${employeeId}/government-identifiers`;
   const navigation = useRecordNavigation();
@@ -278,6 +280,31 @@ export function GovernmentIdentifiersSection({
       historyRequest.current += 1;
     };
   }, [historyId, loading, canReadHistory]);
+
+  useEffect(() => {
+    if (!historyFocusPending || historyId) return;
+    const frame = setTimeout(() => {
+      const opener = historyOpener.current as unknown as {
+        isConnected?: boolean;
+        focus?: () => void;
+      } | null;
+      if (opener?.isConnected) {
+        opener.focus?.();
+      } else if (historyFocusId.current) {
+        const browser = globalThis as unknown as {
+          document: {
+            querySelector(selector: string): { focus?: () => void } | null;
+          };
+        };
+        browser.document
+          .querySelector(`[data-history-opener="${historyFocusId.current}"]`)
+          ?.focus?.();
+      }
+      historyFocusId.current = null;
+      setHistoryFocusPending(false);
+    }, 0);
+    return () => clearTimeout(frame);
+  }, [historyFocusPending, historyId]);
 
   async function refresh(showLoading = true): Promise<boolean> {
     if (!canRead) return true;
@@ -354,6 +381,7 @@ export function GovernmentIdentifiersSection({
 
   function closeHistory(open: boolean): void {
     if (open) return;
+    setHistoryFocusPending(true);
     navigation.navigate({ identifierHistory: null });
     setHistoryTarget(null);
     setHistoryEntries([]);
@@ -832,9 +860,11 @@ export function GovernmentIdentifiersSection({
                         variant="secondary"
                         disabled={busy}
                         onClick={(event) => {
+                          historyFocusId.current = identifier.id;
                           rememberOpener(historyOpener, event);
                           navigation.navigate({ identifierHistory: identifier.id });
                         }}
+                        data-history-opener={identifier.id}
                       >
                         View history
                       </Button>
@@ -1141,7 +1171,6 @@ export function GovernmentIdentifiersSection({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            restoreFocus(historyOpener, sectionRef);
           }}
           size="compact"
         >

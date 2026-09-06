@@ -904,6 +904,7 @@ export function PlantillaPositionWorkspace({
   const removeEvidenceReturnFocusRef = useRef<{ focus(): void } | null>(null);
   const transitionReturnFocusRef = useRef<{ focus(): void } | null>(null);
   const transitionActionsRef = useRef<HTMLDivElement | null>(null);
+  const [transitionFocusPending, setTransitionFocusPending] = useState(false);
 
   const selected =
     positions.find((position) => position.id === selectedId) ??
@@ -921,6 +922,17 @@ export function PlantillaPositionWorkspace({
     selectedDetail?.versions ?? (selected?.currentVersion ? [selected.currentVersion] : []);
   const evidence = selectedDetail?.evidence ?? [];
   const transitionDefaultDate = nextDate(effective?.effectiveFrom ?? asOf);
+
+  useEffect(() => {
+    if (!transitionFocusPending || !selectedDetail) return;
+    const frame = setTimeout(() => {
+      const target = transitionActionsRef.current as unknown as { focus(): void } | null;
+      if (!target) return;
+      target.focus();
+      setTransitionFocusPending(false);
+    }, 0);
+    return () => clearTimeout(frame);
+  }, [selectedDetail, transitionFocusPending]);
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(`/api/v1/agencies/${agencyId}/plantilla-positions${path}`, {
@@ -1196,10 +1208,7 @@ export function PlantillaPositionWorkspace({
         `“${position.itemNumber}” was ${config.pastTense} effective ${dateLabel(effectiveDate)}.`,
       );
       setTransitionTarget(null);
-      setTimeout(() => {
-        const target = transitionActionsRef.current as unknown as { focus(): void } | null;
-        target?.focus();
-      }, 0);
+      setTransitionFocusPending(true);
     } catch (requestError: unknown) {
       setTransitionError(
         requestError instanceof Error

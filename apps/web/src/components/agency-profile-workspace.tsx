@@ -279,7 +279,6 @@ function ProfileDialog({
   onClose,
   onSave,
   onActivate,
-  onRestoreFocus,
   registerField,
 }: {
   mode: 'edit' | 'activate' | null;
@@ -290,7 +289,6 @@ function ProfileDialog({
   onClose(): void;
   onSave(values: EditableProfile): void;
   onActivate(effectiveDate: string, reason: string): void;
-  onRestoreFocus(): void;
   registerField(field: string, element: FocusableField | null): void;
 }) {
   const [values, setValues] = useState<EditableProfile | null>(null);
@@ -322,10 +320,7 @@ function ProfileDialog({
       <DialogContent
         aria-busy={submitting}
         aria-describedby="agency-profile-dialog-description"
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          onRestoreFocus();
-        }}
+        onCloseAutoFocus={(event) => event.preventDefault()}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           firstFieldRef.current?.focus?.();
@@ -669,6 +664,15 @@ export function AgencyProfileWorkspace({
   const [notice, setNotice] = useState('');
   const fieldRefs = useRef<Record<string, FocusableField | null>>({});
   const returnFocusRef = useRef<FocusableField | null>(null);
+  const previousDialogMode = useRef(dialogMode);
+
+  useEffect(() => {
+    const wasOpen = previousDialogMode.current !== null;
+    previousDialogMode.current = dialogMode;
+    if (!wasOpen || dialogMode !== null) return;
+    const frame = setTimeout(() => restoreFocus(), 0);
+    return () => clearTimeout(frame);
+  }, [dialogMode]);
 
   const selected = data.versions.find((version) => version.id === selectedId) ?? null;
   const draft = data.draft;
@@ -1034,7 +1038,6 @@ export function AgencyProfileWorkspace({
         }}
         onSave={(values) => void saveDraft(values)}
         onActivate={(effectiveDate, reason) => void activate(effectiveDate, reason)}
-        onRestoreFocus={restoreFocus}
         registerField={(field, element) => {
           fieldRefs.current[field] = element;
         }}
