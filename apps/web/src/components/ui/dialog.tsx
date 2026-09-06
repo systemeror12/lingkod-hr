@@ -118,7 +118,13 @@ function InlineRecord({
       if (!event.defaultPrevented) {
         const element = ref.current as unknown as InlineElement | null;
         const candidates = Array.from(element?.querySelectorAll(focusableSelector) ?? []);
-        (candidates.find((candidate) => candidate.autofocus) ?? candidates[0] ?? element)?.focus();
+        (
+          candidates.find(
+            (candidate) => candidate.autofocus || candidate.getAttribute('data-autofocus') !== null,
+          ) ??
+          candidates[0] ??
+          element
+        )?.focus();
       }
     });
     const browserDocument = (globalThis as unknown as { document: BrowserDocument }).document;

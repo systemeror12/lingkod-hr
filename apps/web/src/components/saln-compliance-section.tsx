@@ -401,6 +401,7 @@ export function SalnComplianceSection({
                   Authorized requirement reference
                   <input
                     autoFocus
+                    data-autofocus=""
                     required
                     className={employeeInputClass}
                     value={values.requirementReference}

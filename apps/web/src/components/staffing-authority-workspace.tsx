@@ -870,6 +870,7 @@ export function StaffingAuthorityWorkspace({
                   <input
                     className={inputClass}
                     autoFocus={dialog === 'create' || dialog === 'edit'}
+                    data-autofocus={dialog === 'create' || dialog === 'edit' ? '' : undefined}
                     maxLength={200}
                     required
                     value={draft.referenceNo}

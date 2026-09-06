@@ -903,6 +903,7 @@ export function QualificationStandardWorkspace({
                     >
                       <input
                         autoFocus
+                        data-autofocus=""
                         className={inputClass}
                         id="qualification-standard-code"
                         maxLength={80}
