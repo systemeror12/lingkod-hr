@@ -31,6 +31,27 @@ const dialogContentVariants = cva(
 
 const FormContext = createContext<string | null>(null);
 const FormCloseContext = createContext<(() => void) | null>(null);
+const focusableSelector =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+type FocusableElement = {
+  closest(selector: string): unknown;
+  focus(): void;
+  getAttribute(name: string): string | null;
+};
+
+type InlineElement = {
+  contains(node: unknown): boolean;
+  focus(): void;
+  querySelector(selector: string): FocusableElement | null;
+  querySelectorAll(selector: string): ArrayLike<FocusableElement>;
+};
+
+type BrowserDocument = {
+  activeElement: unknown;
+  addEventListener(type: string, listener: (event: unknown) => void): void;
+  removeEventListener(type: string, listener: (event: unknown) => void): void;
+};
 
 /** Full record work uses the page; confirmations retain the modal focus boundary. */
 export function Dialog({
@@ -85,14 +106,51 @@ function InlineRecord({
         } | null;
         (
           element?.querySelector(
-            'input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+            `[autofocus]:not([disabled]), ${focusableSelector}`,
           ) ?? element
         )?.focus();
       }
     });
+    const browserDocument = (globalThis as unknown as { document: BrowserDocument }).document;
+    function focusable(): FocusableElement[] {
+      const element = ref.current as unknown as InlineElement | null;
+      return Array.from(element?.querySelectorAll(focusableSelector) ?? []).filter(
+        (candidate) =>
+          !candidate.closest('[hidden]') && candidate.getAttribute('aria-hidden') !== 'true',
+      );
+    }
+    function keepFocusInside(event: unknown): void {
+      const keyboard = event as {
+        defaultPrevented: boolean;
+        key: string;
+        preventDefault(): void;
+        shiftKey: boolean;
+      };
+      if (keyboard.key !== 'Tab' || keyboard.defaultPrevented) return;
+      const element = ref.current as unknown as InlineElement | null;
+      if (!element) return;
+      const active = browserDocument.activeElement;
+      const targets = focusable();
+      if (targets.length === 0) {
+        keyboard.preventDefault();
+        element.focus();
+        return;
+      }
+      const index = targets.indexOf(active as FocusableElement);
+      if (
+        !element.contains(active) ||
+        (keyboard.shiftKey ? index === 0 : index === targets.length - 1)
+      ) {
+        keyboard.preventDefault();
+        (keyboard.shiftKey ? targets[targets.length - 1] : targets[0])?.focus();
+      }
+    }
+    browserDocument.addEventListener('keydown', keepFocusInside);
     return () => {
       clearTimeout(frame);
-      callbacks.current.onCloseAutoFocus?.(new Event('closeAutoFocus', { cancelable: true }));
+      browserDocument.removeEventListener('keydown', keepFocusInside);
+      const callback = callbacks.current.onCloseAutoFocus;
+      if (callback) setTimeout(() => callback(new Event('closeAutoFocus', { cancelable: true })), 0);
     };
   }, []);
   return (

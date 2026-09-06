@@ -261,7 +261,7 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   await page.getByLabel('Activation reason').fill('Approved reporting placement');
   await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
 
-  await expect(page.getByRole('status')).toContainText(`${childName} is now active.`);
+  await expect(page.getByText(`${childName} is now active.`, { exact: true })).toBeVisible();
   await expect(selectedRecord).toContainText(rootName);
   await expect(selectedRecord).toContainText('0 children');
   await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
@@ -317,7 +317,7 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   await row.getByRole('button', { name: `Place and activate ${name}` }).click();
   await page.getByLabel('Activation reason').fill('Approved as an Agency root');
   await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
-  await expect(page.getByRole('status')).toContainText(`${name} is now active.`);
+  await expect(page.getByText(`${name} is now active.`, { exact: true })).toBeVisible();
 
   await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
   await page
@@ -347,12 +347,18 @@ test('keeps a missing Unit explicit across reload and returns to the dated Tree'
   await page.goto(
     '/organization?asOf=2026-08-15&unit=00000000-0000-4000-8000-000000000000&view=form',
   );
-  await expect(page.getByRole('alert')).toContainText('This Organization Unit is unavailable');
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'This Organization Unit is unavailable' }),
+  ).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('alert')).toContainText('This Organization Unit is unavailable');
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'This Organization Unit is unavailable' }),
+  ).toBeVisible();
   await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
   await expect(page).toHaveURL(/asOf=2026-08-15/);
   await expect(page.getByLabel('Hierarchy as of')).toHaveValue('2026-08-15');
   await page.goBack();
-  await expect(page.getByRole('alert')).toContainText('This Organization Unit is unavailable');
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'This Organization Unit is unavailable' }),
+  ).toBeVisible();
 });

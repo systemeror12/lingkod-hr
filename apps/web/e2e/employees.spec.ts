@@ -177,7 +177,9 @@ test('keeps Employee creation values after a network failure and permits retry',
     times: 1,
   });
   await page.getByRole('button', { name: 'Create employee', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Check the connection');
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'Check the connection' }),
+  ).toBeVisible();
   await expect(page.getByLabel('Legal name')).toHaveValue('Retry Employee');
   await expect(page.getByRole('button', { name: 'Create employee', exact: true })).toBeEnabled();
 });

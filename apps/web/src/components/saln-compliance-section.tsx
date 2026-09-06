@@ -159,7 +159,7 @@ export function SalnComplianceSection({
     historyRequest.current += 1;
     setBusy(false);
     if (!salnId && !salnHistory) {
-      setOpen(null);
+      setOpen((current) => (current === 'detail' || current === 'history' ? null : current));
       return;
     }
     if (loading) return;
