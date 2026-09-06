@@ -23,6 +23,15 @@ const destinations: readonly (Destination & {
   visible?: (session: ActiveSession) => boolean;
 })[] = [
   { href: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
+  ...(process.env.NODE_ENV === 'development'
+    ? [
+        {
+          href: '/prototype/recruitment-case',
+          label: 'Recruitment prototype',
+          icon: 'position' as const,
+        },
+      ]
+    : []),
   {
     href: '/users-access',
     label: 'Users & Access',
