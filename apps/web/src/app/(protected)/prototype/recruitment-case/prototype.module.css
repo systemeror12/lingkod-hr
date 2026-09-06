@@ -285,17 +285,6 @@
   font-size: 17px;
   vertical-align: middle;
 }
-.branch {
-  display: flex;
-  align-items: center;
-  padding-left: 18px;
-}
-.twig {
-  color: var(--line);
-  width: 28px;
-  text-align: center;
-  flex-shrink: 0;
-}
 .recordButton {
   padding: 5px 0;
   border: 0;
@@ -306,24 +295,6 @@
 }
 .recordButton[aria-pressed='true'] {
   font-weight: 700;
-}
-.leaf {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 4px 0 4px 56px;
-  color: var(--ink);
-  background: transparent;
-  border: 0;
-  text-align: left;
-  font-size: 12px;
-}
-.leaf > span:first-child {
-  color: var(--line);
-}
-.leaf[aria-pressed='true'] {
-  color: var(--focus);
-  font-weight: 650;
 }
 .tableFooter {
   color: var(--muted);
@@ -479,12 +450,6 @@
   color: var(--focus);
   font-weight: 700;
   border-bottom-color: var(--cobalt);
-}
-.currentDot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--cobalt);
 }
 .formBody {
   min-height: 320px;
@@ -758,4 +723,38 @@
   .rows li span {
     display: block;
   }
+}
+
+.sectionTitle {
+  color: var(--muted);
+  font-weight: 450;
+  font-size: 20px;
+}
+.submenus {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 20px;
+}
+.submenus button {
+  padding: 12px 15px;
+  white-space: nowrap;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.submenus button[aria-current='page'] {
+  border-bottom-color: var(--cobalt);
+  color: var(--focus);
+  font-weight: 700;
+}
+.related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  padding: 16px 32px;
+  border-top: 1px solid var(--line);
 }
