@@ -183,8 +183,7 @@
   font-size: 12px;
 }
 .treeSheet,
-.formSheet,
-.boardDetail {
+.formSheet {
   background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -387,10 +386,6 @@
 .dossier h3 {
   font-size: 20px;
   letter-spacing: -0.025em;
-}
-.boardDetail > .dossier {
-  border-top: 0;
-  margin: 0;
 }
 .field {
   display: flex;
@@ -665,9 +660,6 @@
   font-size: 11px;
   text-align: center;
   padding: 20px 12px;
-}
-.boardDetail {
-  margin-top: 12px;
 }
 .status {
   display: flex;

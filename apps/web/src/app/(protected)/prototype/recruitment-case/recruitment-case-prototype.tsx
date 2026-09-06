@@ -262,6 +262,7 @@ export function RecruitmentCasePrototype() {
     setApplicantId(id);
     setStage(2);
     setInspectApplicant(true);
+    changeView('B');
   }
 
   const visibleApplicants = published
@@ -874,10 +875,7 @@ export function RecruitmentCasePrototype() {
                               <button
                                 className={styles.leaf}
                                 aria-pressed={inspectApplicant && applicantId === person.id}
-                                onClick={() => {
-                                  openApplicant(person.id);
-                                  changeView('B');
-                                }}
+                                onClick={() => openApplicant(person.id)}
                               >
                                 <span aria-hidden="true">└</span>
                                 <span>{person.name}</span>
@@ -1094,25 +1092,6 @@ export function RecruitmentCasePrototype() {
               );
             })}
           </div>
-          {inspectApplicant && (
-            <div className={styles.boardDetail}>
-              <div className={styles.sheetHeading}>
-                <h2>{applicant.name} / Application file</h2>
-                <div>
-                  <button className={styles.recordButton} onClick={() => changeView('B')}>
-                    Open form ↗
-                  </button>
-                  <button
-                    className={styles.recordButton}
-                    onClick={() => setInspectApplicant(false)}
-                  >
-                    Close preview
-                  </button>
-                </div>
-              </div>
-              {candidateDetail}
-            </div>
-          )}
         </section>
       )}
       <div className={styles.status} role="status">
