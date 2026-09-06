@@ -227,10 +227,20 @@ export function RecruitmentCasePrototype() {
   const [applicationsExpanded, setApplicationsExpanded] = useState(true);
   const [inspectApplicant, setInspectApplicant] = useState(false);
   const [search, setSearch] = useState('');
-  const [workingNote, setWorkingNote] = useState(
-    'Confirm applicant-specific participation before the board session.',
-  );
-  const [savedNote, setSavedNote] = useState(workingNote);
+  const [notes, setNotes] = useState<Record<string, { draft: string; saved: string }>>({});
+  const recordId = inspectApplicant ? applicantId : 'RTF-026-014';
+  const workingNote = notes[recordId]?.draft ?? '';
+  const savedNote = notes[recordId]?.saved ?? '';
+  function setWorkingNote(draft: string) {
+    setNotes((current) => ({
+      ...current,
+      [recordId]: { draft, saved: current[recordId]?.saved ?? '' },
+    }));
+  }
+  function setSavedNote(saved: string) {
+    setNotes((current) => ({ ...current, [recordId]: { draft: saved, saved } }));
+  }
+  const applicantForm = variant === 'B' && inspectApplicant;
   const snapshot = scenarios[scenario];
   const applicant = applicants.find((person) => person.id === applicantId)!;
   const published = !['review', 'returned', 'rejected', 'blocked'].includes(scenario);
@@ -241,7 +251,7 @@ export function RecruitmentCasePrototype() {
 
   function loadScenario(value: Scenario) {
     setScenario(value);
-    setStage(scenarios[value].stage);
+    setStage(scenarios[value].stage === 2 ? 0 : scenarios[value].stage);
     setDocument(null);
     setHandoff(false);
     setInspectApplicant(false);
@@ -254,7 +264,7 @@ export function RecruitmentCasePrototype() {
   }
 
   function openStage(index: number) {
-    setStage(index);
+    setStage(index === 2 ? 0 : index);
     setInspectApplicant(false);
   }
 
@@ -367,49 +377,6 @@ export function RecruitmentCasePrototype() {
     </section>
   );
 
-  const candidateTable = (
-    <div className={styles.scroll}>
-      <table>
-        <caption>
-          {published ? 'Six mock Applications' : 'No Applications received'} ·{' '}
-          {evaluated ? 'Five qualified · one not qualified' : 'Screening pending'}
-        </caption>
-        <thead>
-          <tr>
-            <th>Applicant</th>
-            <th>Screening</th>
-            <th>Evidence / assessment</th>
-            <th>Interview</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(published ? applicants : []).map((person) => (
-            <tr key={person.id} data-selected={applicantId === person.id}>
-              <td>
-                <button
-                  className={styles.textButton}
-                  onClick={() => openApplicant(person.id)}
-                  aria-pressed={applicantId === person.id}
-                >
-                  {person.name}
-                </button>
-                <small>
-                  {person.id} · {person.source}
-                </small>
-              </td>
-              <td>{evaluated ? person.screening : 'Pending'}</td>
-              <td>
-                {evaluated ? person.evidence : 'Awaiting review'}
-                <small>{evaluated ? person.assessment : 'Not started'}</small>
-              </td>
-              <td>{evaluated ? person.interview : 'Not scheduled'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-
   function panel(index: number) {
     if (index === 0)
       return (
@@ -506,14 +473,6 @@ export function RecruitmentCasePrototype() {
             timestamps and channel evidence stay with each attempt.
           </p>
           {evidence(1)}
-        </section>
-      );
-    if (index === 2)
-      return (
-        <section className={styles.panel}>
-          <h2>Applicant evaluation</h2>
-          {candidateTable}
-          {candidateDetail}
         </section>
       );
     if (index === 3)
@@ -705,18 +664,30 @@ export function RecruitmentCasePrototype() {
             R
           </span>
           <div>
-            <strong>Administrative Officer II</strong>
-            <small>RTF-026-014 · OSEC-REF-ADOF2-014-2026 · SG 11</small>
+            <strong>{applicantForm ? applicant.name : 'Administrative Officer II'}</strong>
+            <small>
+              {applicantForm
+                ? `${applicant.id} · Application for Administrative Officer II`
+                : 'RTF-026-014 · OSEC-REF-ADOF2-014-2026 · SG 11'}
+            </small>
           </div>
         </div>
-        <span className={styles.badge}>{snapshot.status}</span>
+        <span className={styles.badge}>
+          {applicantForm
+            ? evaluated
+              ? applicant.screening
+              : 'Pending screening'
+            : snapshot.status}
+        </span>
       </div>
       <div className={styles.toolbar}>
         <span>
           {variant === 'A'
             ? 'Grouped by Recruitment Case'
             : variant === 'B'
-              ? 'Recruitment Case / Record details'
+              ? applicantForm
+                ? 'Application / Record details'
+                : 'Recruitment Case / Record details'
               : 'Applications / Grouped by progress'}
         </span>
         {variant !== 'B' && (
@@ -736,11 +707,15 @@ export function RecruitmentCasePrototype() {
           variant="secondary"
           size="default"
           onClick={() => {
+            if (variant === 'B') {
+              changeView('A');
+              return;
+            }
             openStage(snapshot.stage);
-            if (variant !== 'B') changeView('B');
+            changeView('B');
           }}
         >
-          Open current stage →
+          {variant === 'B' ? '← Back to Tree' : 'Open case form →'}
         </Button>
       </div>
 
@@ -810,6 +785,10 @@ export function RecruitmentCasePrototype() {
                             <button
                               className={styles.recordButton}
                               onClick={() => {
+                                if (index === 2) {
+                                  setApplicationsExpanded(!applicationsExpanded);
+                                  return;
+                                }
                                 openStage(index);
                                 changeView('B');
                               }}
@@ -912,12 +891,19 @@ export function RecruitmentCasePrototype() {
       )}
 
       {variant === 'B' && (
-        <article className={styles.formSheet} aria-label="Recruitment Case form">
+        <article
+          className={styles.formSheet}
+          aria-label={inspectApplicant ? 'Application form' : 'Recruitment Case form'}
+        >
           <div className={styles.formHeading}>
             <div>
-              <p className={styles.eyebrow}>Request to Fill · RTF-026-014</p>
-              <h2>Administrative Officer II</h2>
-              <p>Human Resource Management Officer I</p>
+              <p className={styles.eyebrow}>
+                {inspectApplicant
+                  ? `Application · ${applicant.id}`
+                  : 'Request to Fill · RTF-026-014'}
+              </p>
+              <h2>{inspectApplicant ? applicant.name : 'Administrative Officer II'}</h2>
+              <p>{inspectApplicant ? applicant.source : 'Human Resource Management Officer I'}</p>
             </div>
             <div className={styles.formStamp}>
               <span>Responsible officer</span>
@@ -925,64 +911,80 @@ export function RecruitmentCasePrototype() {
               <small>HR Division</small>
             </div>
           </div>
-          <div className={styles.formFields}>
-            <label>
-              Requesting Office
-              <input readOnly value="Administrative Service / HR Division" />
-            </label>
-            <label>
-              Plantilla Position
-              <input readOnly value="OSEC-REF-ADOF2-014-2026" />
-            </label>
-            <label>
-              Position classification
-              <input readOnly value="SG 11 · Permanent" />
-            </label>
-            <label>
-              Recruitable Vacancy
-              <input
-                readOnly
-                value={
-                  scenario === 'rejected'
-                    ? 'Authority not established'
-                    : selected
-                      ? 'Reserved for selected Application'
-                      : 'Verified in mock snapshot'
-                }
-              />
-            </label>
-          </div>
-          <nav className={styles.formTabs} aria-label="Case form sections">
-            {stages.map((name, index) => (
-              <button key={name} aria-pressed={stage === index} onClick={() => openStage(index)}>
-                {name}
-                {snapshot.stage === index && (
-                  <span className={styles.currentDot} aria-label="Current stage" />
+          {inspectApplicant ? (
+            <>
+              <div className={styles.formFields}>
+                <label>
+                  Applicant
+                  <input readOnly value={applicant.name} />
+                </label>
+                <label>
+                  Application reference
+                  <input readOnly value={applicant.id} />
+                </label>
+                <label>
+                  Position applied for
+                  <input readOnly value="Administrative Officer II · SG 11" />
+                </label>
+                <label>
+                  Recruitment Case
+                  <input readOnly value="RTF-026-014" />
+                </label>
+              </div>
+              <div className={styles.formBody}>{candidateDetail}</div>
+            </>
+          ) : (
+            <>
+              <div className={styles.formFields}>
+                <label>
+                  Requesting Office
+                  <input readOnly value="Administrative Service / HR Division" />
+                </label>
+                <label>
+                  Plantilla Position
+                  <input readOnly value="OSEC-REF-ADOF2-014-2026" />
+                </label>
+                <label>
+                  Position classification
+                  <input readOnly value="SG 11 · Permanent" />
+                </label>
+                <label>
+                  Recruitable Vacancy
+                  <input
+                    readOnly
+                    value={
+                      scenario === 'rejected'
+                        ? 'Authority not established'
+                        : selected
+                          ? 'Reserved for selected Application'
+                          : 'Verified in mock snapshot'
+                    }
+                  />
+                </label>
+              </div>
+              <nav className={styles.formTabs} aria-label="Case form sections">
+                {stages.map(
+                  (name, index) =>
+                    index !== 2 && (
+                      <button
+                        key={name}
+                        aria-pressed={stage === index}
+                        onClick={() => openStage(index)}
+                      >
+                        {name}
+                        {snapshot.stage === index && (
+                          <span className={styles.currentDot} aria-label="Current stage" />
+                        )}
+                      </button>
+                    ),
                 )}
-              </button>
-            ))}
-          </nav>
-          <div className={styles.formBody}>
-            {inspectApplicant ? (
-              <>
-                <div className={styles.applicationHeading}>
-                  <button
-                    className={styles.recordButton}
-                    onClick={() => setInspectApplicant(false)}
-                  >
-                    ← All Applications
-                  </button>
-                  <span>{applicant.id}</span>
-                </div>
-                {candidateDetail}
-              </>
-            ) : (
-              panel(stage)
-            )}
-          </div>
+              </nav>
+              <div className={styles.formBody}>{panel(stage === 2 ? 0 : stage)}</div>
+            </>
+          )}
           <footer className={styles.noteArea}>
             <div>
-              <h3>Working note</h3>
+              <h3>Working note · {recordId}</h3>
               <p>Private mock note. Separate from approvals and official evidence.</p>
             </div>
             <form
@@ -1095,8 +1097,14 @@ export function RecruitmentCasePrototype() {
         </section>
       )}
       <div className={styles.status} role="status">
-        <strong>Case standing</strong>
-        <span>{snapshot.note}</span>
+        <strong>{applicantForm ? 'Application standing' : 'Case standing'}</strong>
+        <span>
+          {applicantForm
+            ? evaluated
+              ? applicant.note
+              : 'Qualification screening is pending.'
+            : snapshot.note}
+        </span>
       </div>
 
       <Dialog
@@ -1153,7 +1161,12 @@ export function RecruitmentCasePrototype() {
               search,
               workingNote,
               savedNote,
-              applicantProgress: visibleApplicants.map((person) => ({
+              applicantProgress: (applicantForm
+                ? [applicant]
+                : variant === 'B'
+                  ? []
+                  : visibleApplicants
+              ).map((person) => ({
                 id: person.id,
                 lane: lanes[applicantLane(person)],
               })),
@@ -1166,7 +1179,7 @@ export function RecruitmentCasePrototype() {
               boardOutput,
               selected,
               republication,
-              applicants,
+              applicants: applicantForm ? [applicant] : variant === 'B' ? [] : applicants,
               boardMembers: members,
               documents,
             },

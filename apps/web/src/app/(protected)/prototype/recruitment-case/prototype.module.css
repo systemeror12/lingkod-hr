@@ -370,14 +370,6 @@
   padding: 10px 0;
   font-weight: 600;
 }
-.textButton {
-  border: 0;
-  background: none;
-  color: var(--focus);
-  font-weight: 650;
-  padding: 5px 0;
-  text-align: left;
-}
 .dossier {
   padding: 22px;
   border-top: 1px solid var(--line);
@@ -497,13 +489,6 @@
 .formBody {
   min-height: 320px;
   padding: 8px 10px;
-}
-.applicationHeading {
-  display: flex;
-  justify-content: space-between;
-  padding: 10px 22px 0;
-  color: var(--muted);
-  font-size: 11px;
 }
 .noteArea {
   display: grid;
