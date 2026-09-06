@@ -105,9 +105,7 @@ function InlineRecord({
           querySelector(selector: string): { focus(): void } | null;
         } | null;
         (
-          element?.querySelector(
-            `[autofocus]:not([disabled]), ${focusableSelector}`,
-          ) ?? element
+          element?.querySelector(`[autofocus]:not([disabled]), ${focusableSelector}`) ?? element
         )?.focus();
       }
     });
@@ -150,7 +148,8 @@ function InlineRecord({
       clearTimeout(frame);
       browserDocument.removeEventListener('keydown', keepFocusInside);
       const callback = callbacks.current.onCloseAutoFocus;
-      if (callback) setTimeout(() => callback(new Event('closeAutoFocus', { cancelable: true })), 0);
+      if (callback)
+        setTimeout(() => callback(new Event('closeAutoFocus', { cancelable: true })), 0);
     };
   }, []);
   return (
