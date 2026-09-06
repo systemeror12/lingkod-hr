@@ -167,6 +167,7 @@ const evidencePurposeLabels: Record<EvidencePurpose, string> = {
 };
 
 let restoreTransitionFocusOnMount = false;
+let pendingTransitionSuccess: { asOf: string; message: string } | null = null;
 
 const transitionConfig: Record<
   TransitionTarget,
@@ -945,6 +946,13 @@ export function PlantillaPositionWorkspace({
     return () => clearTimeout(frame);
   }, [selectedDetail]);
 
+  useEffect(() => {
+    if (!pendingTransitionSuccess || pendingTransitionSuccess.asOf !== asOf) return;
+    const pending = pendingTransitionSuccess;
+    pendingTransitionSuccess = null;
+    setSuccess(pending.message);
+  }, [asOf]);
+
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch(`/api/v1/agencies/${agencyId}/plantilla-positions${path}`, {
       ...init,
@@ -1213,15 +1221,16 @@ export function PlantillaPositionWorkspace({
         body: JSON.stringify({ effectiveDate, reason }),
       });
       await refresh(effectiveDate);
+      const successMessage = `“${position.itemNumber}” was ${config.pastTense} effective ${dateLabel(effectiveDate)}.`;
+      pendingTransitionSuccess = { asOf: effectiveDate, message: successMessage };
+      restoreTransitionFocusOnMount = true;
       navigation.navigate({ asOf: effectiveDate });
       await loadDetail(position.id, effectiveDate);
-      setSuccess(
-        `“${position.itemNumber}” was ${config.pastTense} effective ${dateLabel(effectiveDate)}.`,
-      );
-      restoreTransitionFocusOnMount = true;
+      setSuccess(successMessage);
       setTransitionTarget(null);
       setTransitionFocusPending(true);
     } catch (requestError: unknown) {
+      pendingTransitionSuccess = null;
       setTransitionError(
         requestError instanceof Error
           ? requestError.message
