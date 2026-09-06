@@ -1,8 +1,8 @@
 'use client';
 
-// Three throwaway Recruitment Case layouts at ?variant=A|B|C. No production mutations.
-import { useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+// Throwaway Tree, Form and Kanban views of one Recruitment Case at ?variant=A|B|C.
+import { Fragment, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,7 @@ import { Button } from '../../../../components/ui/button';
 import { PrototypeSwitcher } from '../../../../components/prototype-switcher';
 import styles from './prototype.module.css';
 
-const variants = { A: 'Stage workspace', B: 'Applicant workbench', C: 'Board briefing' };
+const variants = { A: 'Tree view', B: 'Form view', C: 'Kanban' };
 const stages = [
   'Request to Fill',
   'Publication',
@@ -213,7 +213,9 @@ const documents = [
 ] as const;
 
 export function RecruitmentCasePrototype() {
-  const query = useSearchParams().get('variant');
+  const router = useRouter();
+  const params = useSearchParams();
+  const query = params.get('variant');
   const variant = query === 'B' || query === 'C' ? query : 'A';
   const [scenario, setScenario] = useState<Scenario>('board');
   const [stage, setStage] = useState(3);
@@ -221,6 +223,14 @@ export function RecruitmentCasePrototype() {
   const [document, setDocument] = useState<number | null>(null);
   const evidenceInvoker = useRef<{ focus(): void } | null>(null);
   const [handoff, setHandoff] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const [applicationsExpanded, setApplicationsExpanded] = useState(true);
+  const [inspectApplicant, setInspectApplicant] = useState(false);
+  const [search, setSearch] = useState('');
+  const [workingNote, setWorkingNote] = useState(
+    'Confirm applicant-specific participation before the board session.',
+  );
+  const [savedNote, setSavedNote] = useState(workingNote);
   const snapshot = scenarios[scenario];
   const applicant = applicants.find((person) => person.id === applicantId)!;
   const published = !['review', 'returned', 'rejected', 'blocked'].includes(scenario);
@@ -234,6 +244,47 @@ export function RecruitmentCasePrototype() {
     setStage(scenarios[value].stage);
     setDocument(null);
     setHandoff(false);
+    setInspectApplicant(false);
+  }
+
+  function changeView(view: string) {
+    const next = new URLSearchParams(params.toString());
+    next.set('variant', view);
+    router.replace(`/prototype/recruitment-case?${next}`, { scroll: false });
+  }
+
+  function openStage(index: number) {
+    setStage(index);
+    setInspectApplicant(false);
+  }
+
+  function openApplicant(id: string) {
+    setApplicantId(id);
+    setStage(2);
+    setInspectApplicant(true);
+  }
+
+  const visibleApplicants = published
+    ? applicants.filter((person) =>
+        `${person.name} ${person.id}`.toLowerCase().includes(search.toLowerCase()),
+      )
+    : [];
+  const lanes = [
+    'Screening',
+    'Assessment & interview',
+    'Board review',
+    'Selection',
+    'Not qualified',
+  ];
+  function applicantLane(person: (typeof applicants)[number]) {
+    if (!evaluated) return 0;
+    if (person.screening === 'Not qualified') return 4;
+    if (snapshot.stage === 4) return 3;
+    return snapshot.stage === 3 ? 2 : 1;
+  }
+  function stageStatus(index: number) {
+    if (index === snapshot.stage) return snapshot.status;
+    return index < snapshot.stage ? 'Recorded' : 'Not started';
   }
 
   const context = (
@@ -319,7 +370,7 @@ export function RecruitmentCasePrototype() {
     <div className={styles.scroll}>
       <table>
         <caption>
-          Six mock Applications ·{' '}
+          {published ? 'Six mock Applications' : 'No Applications received'} ·{' '}
           {evaluated ? 'Five qualified · one not qualified' : 'Screening pending'}
         </caption>
         <thead>
@@ -331,12 +382,12 @@ export function RecruitmentCasePrototype() {
           </tr>
         </thead>
         <tbody>
-          {applicants.map((person) => (
+          {(published ? applicants : []).map((person) => (
             <tr key={person.id} data-selected={applicantId === person.id}>
               <td>
                 <button
                   className={styles.textButton}
-                  onClick={() => setApplicantId(person.id)}
+                  onClick={() => openApplicant(person.id)}
                   aria-pressed={applicantId === person.id}
                 >
                   {person.name}
@@ -634,176 +685,408 @@ export function RecruitmentCasePrototype() {
       </div>
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>Recruitment / RTF-026-014</p>
-          <h1>Administrative Officer II</h1>
-          <p>Human Resource Management Officer I · Administrative Service</p>
+          <p className={styles.eyebrow}>Human resources / Merit selection</p>
+          <h1>Recruitment</h1>
+          <p>Administrative Service · Reference Agency</p>
+        </div>
+        <nav className={styles.viewSwitch} aria-label="Recruitment views">
+          {Object.entries(variants).map(([key, name]) => (
+            <button key={key} aria-pressed={variant === key} onClick={() => changeView(key)}>
+              <span aria-hidden="true">{key === 'A' ? '☷' : key === 'B' ? '▤' : '▥'}</span>
+              {name}
+            </button>
+          ))}
+        </nav>
+      </header>
+      <div className={styles.caseBar}>
+        <div>
+          <span className={styles.recordIcon} aria-hidden="true">
+            R
+          </span>
+          <div>
+            <strong>Administrative Officer II</strong>
+            <small>RTF-026-014 · OSEC-REF-ADOF2-014-2026 · SG 11</small>
+          </div>
         </div>
         <span className={styles.badge}>{snapshot.status}</span>
-      </header>
-      <div className={styles.status} role="status">
-        {snapshot.note}
+      </div>
+      <div className={styles.toolbar}>
+        <span>
+          {variant === 'A'
+            ? 'Grouped by Recruitment Case'
+            : variant === 'B'
+              ? 'Recruitment Case / Record details'
+              : 'Applications / Grouped by progress'}
+        </span>
+        {variant !== 'B' && (
+          <label className={styles.search}>
+            Find applicant
+            <input
+              type="search"
+              placeholder="Name or application number"
+              value={search}
+              onChange={(event) =>
+                setSearch((event.currentTarget as unknown as { value: string }).value)
+              }
+            />
+          </label>
+        )}
+        <Button
+          variant="secondary"
+          size="default"
+          onClick={() => {
+            openStage(snapshot.stage);
+            if (variant !== 'B') changeView('B');
+          }}
+        >
+          Open current stage →
+        </Button>
       </div>
 
       {variant === 'A' && (
-        <div className={styles.stageLayout}>
-          <nav className={styles.stageNav} aria-label="Recruitment stages">
-            <p className={styles.eyebrow}>Case progression</p>
-            {stages.map((name, index) => (
-              <button
-                key={name}
-                aria-current={stage === index ? 'step' : undefined}
-                onClick={() => setStage(index)}
-              >
-                <span>{index + 1}</span>
-                <div>
-                  {name}
-                  <small>
-                    {index < snapshot.stage
-                      ? 'Earlier stage'
-                      : index === snapshot.stage
-                        ? 'Current stage'
-                        : 'Upcoming'}
-                  </small>
-                </div>
+        <div className={styles.treeLayout}>
+          <section className={styles.treeSheet} aria-label="Recruitment record tree">
+            <div className={styles.sheetHeading}>
+              <h2>Case records</h2>
+              <span>1 case · {published ? 6 : 0} Applications</span>
+            </div>
+            <div className={styles.scroll}>
+              <table className={styles.treeTable}>
+                <caption className={styles.srOnly}>
+                  Expandable Recruitment Case records. Select a record to inspect its details.
+                </caption>
+                <thead>
+                  <tr>
+                    <th>Record</th>
+                    <th>Type</th>
+                    <th>Standing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className={styles.rootRow}>
+                    <td>
+                      <button
+                        className={styles.expand}
+                        aria-label={
+                          expanded ? 'Collapse Recruitment Case' : 'Expand Recruitment Case'
+                        }
+                        aria-expanded={expanded}
+                        onClick={() => setExpanded(!expanded)}
+                      >
+                        {expanded ? '▾' : '▸'}
+                      </button>
+                      <strong>RTF-026-014</strong>
+                      <small>Administrative Officer II</small>
+                    </td>
+                    <td>Recruitment Case</td>
+                    <td>{snapshot.status}</td>
+                  </tr>
+                  {expanded &&
+                    stages.map((name, index) => (
+                      <Fragment key={name}>
+                        <tr data-selected={!inspectApplicant && stage === index}>
+                          <td>
+                            <div className={styles.branch}>
+                              {index === 2 ? (
+                                <button
+                                  className={styles.expand}
+                                  aria-label={
+                                    applicationsExpanded
+                                      ? 'Collapse Applications'
+                                      : 'Expand Applications'
+                                  }
+                                  aria-expanded={applicationsExpanded}
+                                  onClick={() => setApplicationsExpanded(!applicationsExpanded)}
+                                >
+                                  {applicationsExpanded ? '▾' : '▸'}
+                                </button>
+                              ) : (
+                                <span className={styles.twig} aria-hidden="true">
+                                  └
+                                </span>
+                              )}
+                              <button
+                                className={styles.recordButton}
+                                onClick={() => openStage(index)}
+                                aria-pressed={!inspectApplicant && stage === index}
+                              >
+                                {name}
+                              </button>
+                            </div>
+                          </td>
+                          <td>
+                            {
+                              [
+                                'Request',
+                                'Publication',
+                                'Applications',
+                                'Board record',
+                                'Authority decision',
+                              ][index]
+                            }
+                          </td>
+                          <td>{stageStatus(index)}</td>
+                        </tr>
+                        {index === 2 &&
+                          applicationsExpanded &&
+                          visibleApplicants.map((person) => (
+                            <tr
+                              key={person.id}
+                              data-selected={inspectApplicant && applicantId === person.id}
+                            >
+                              <td>
+                                <button
+                                  className={styles.leaf}
+                                  aria-pressed={inspectApplicant && applicantId === person.id}
+                                  onClick={() => openApplicant(person.id)}
+                                >
+                                  <span aria-hidden="true">└</span>
+                                  <span>
+                                    {person.name}
+                                    <small>{person.id}</small>
+                                  </span>
+                                </button>
+                              </td>
+                              <td>Application</td>
+                              <td>{evaluated ? person.screening : 'Pending screening'}</td>
+                            </tr>
+                          ))}
+                        {index === 2 && applicationsExpanded && visibleApplicants.length === 0 && (
+                          <tr>
+                            <td colSpan={3} className={styles.empty}>
+                              {published
+                                ? 'No applicants match your search.'
+                                : 'No Applications received in this scenario.'}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+            <div className={styles.tableFooter}>
+              Published records and completed decisions retain their versions.
+            </div>
+          </section>
+          <aside className={styles.inspector} aria-label="Selected record">
+            <div className={styles.sheetHeading}>
+              <h2>{inspectApplicant ? 'Application preview' : 'Record preview'}</h2>
+              <button className={styles.recordButton} onClick={() => changeView('B')}>
+                Open form ↗
               </button>
-            ))}
-          </nav>
-          <div>{panel(stage)}</div>
-          <aside className={styles.aside}>
-            <h2>Case record</h2>
-            {context}
-            <hr />
-            <h3>Next review</h3>
-            <p>{snapshot.note}</p>
-            <Button variant="secondary" size="default" onClick={() => setStage(snapshot.stage)}>
-              Open current stage
-            </Button>
-            <hr />
-            <p className={styles.caption}>
-              One Request to Fill. Publication attempts, decisions and corrections retain their own
-              history.
-            </p>
+            </div>
+            {inspectApplicant ? candidateDetail : panel(stage)}
           </aside>
         </div>
       )}
 
       {variant === 'B' && (
-        <>
-          <div className={styles.compactContext}>{context}</div>
-          <div className={styles.workbench}>
-            <nav className={styles.people} aria-label="Applicant files">
-              <h2>
-                Applications <span>6</span>
-              </h2>
-              {applicants.map((person) => (
-                <button
-                  key={person.id}
-                  aria-pressed={applicantId === person.id}
-                  onClick={() => setApplicantId(person.id)}
-                >
-                  <strong>{person.name}</strong>
-                  <small>
-                    {person.id} · {evaluated ? person.screening : 'Pending'}
-                  </small>
-                </button>
-              ))}
-            </nav>
+        <article className={styles.formSheet} aria-label="Recruitment Case form">
+          <div className={styles.formHeading}>
             <div>
-              {candidateDetail}
-              <section className={styles.panel}>
-                <h3>Review trail</h3>
-                <ul className={styles.rows}>
-                  <li>
-                    Application evidence<span>{published ? 'Document v1' : 'Not received'}</span>
-                  </li>
-                  <li>
-                    Qualification screening<span>{evaluated ? 'Result retained' : 'Pending'}</span>
-                  </li>
-                  <li>
-                    Assessment and interview
-                    <span>{evaluated ? applicant.assessment : 'Pending'}</span>
-                  </li>
-                  <li>
-                    Board consideration
-                    <span>
-                      {snapshot.stage >= 3 && applicant.screening === 'Qualified'
-                        ? 'See participation record'
-                        : 'Not available'}
-                    </span>
-                  </li>
-                </ul>
-              </section>
+              <p className={styles.eyebrow}>Request to Fill · RTF-026-014</p>
+              <h2>Administrative Officer II</h2>
+              <p>Human Resource Management Officer I</p>
             </div>
-            <aside className={styles.aside}>
-              <h2>Case controls</h2>
-              <p>{snapshot.note}</p>
-              {stages
-                .filter((_, index) => index !== 2)
-                .map((name) => (
+            <div className={styles.formStamp}>
+              <span>Responsible officer</span>
+              <strong>Marisol Santos</strong>
+              <small>HR Division</small>
+            </div>
+          </div>
+          <div className={styles.formFields}>
+            <label>
+              Requesting Office
+              <input readOnly value="Administrative Service / HR Division" />
+            </label>
+            <label>
+              Plantilla Position
+              <input readOnly value="OSEC-REF-ADOF2-014-2026" />
+            </label>
+            <label>
+              Position classification
+              <input readOnly value="SG 11 · Permanent" />
+            </label>
+            <label>
+              Recruitable Vacancy
+              <input
+                readOnly
+                value={
+                  scenario === 'rejected'
+                    ? 'Authority not established'
+                    : selected
+                      ? 'Reserved for selected Application'
+                      : 'Verified in mock snapshot'
+                }
+              />
+            </label>
+          </div>
+          <nav className={styles.formTabs} aria-label="Case form sections">
+            {stages.map((name, index) => (
+              <button key={name} aria-pressed={stage === index} onClick={() => openStage(index)}>
+                {name}
+                {snapshot.stage === index && (
+                  <span className={styles.currentDot} aria-label="Current stage" />
+                )}
+              </button>
+            ))}
+          </nav>
+          <div className={styles.formBody}>
+            {inspectApplicant ? (
+              <>
+                <div className={styles.applicationHeading}>
                   <button
-                    className={styles.control}
-                    key={name}
-                    onClick={() => setStage(stages.indexOf(name))}
-                    aria-pressed={stage === stages.indexOf(name)}
+                    className={styles.recordButton}
+                    onClick={() => setInspectApplicant(false)}
                   >
-                    {name} →
+                    ← All Applications
                   </button>
-                ))}
-            </aside>
+                  <span>{applicant.id}</span>
+                </div>
+                {candidateDetail}
+              </>
+            ) : (
+              panel(stage)
+            )}
           </div>
-          <div className={styles.caseDrawer}>
-            <p className={styles.eyebrow}>Case controls / {stages[stage]}</p>
-            {panel(stage)}
-          </div>
-        </>
+          <footer className={styles.noteArea}>
+            <div>
+              <h3>Working note</h3>
+              <p>Private mock note. Separate from approvals and official evidence.</p>
+            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                setSavedNote(workingNote);
+              }}
+            >
+              <label className={styles.srOnly} htmlFor="recruitment-note">
+                Working note
+              </label>
+              <textarea
+                id="recruitment-note"
+                rows={2}
+                value={workingNote}
+                onChange={(event) =>
+                  setWorkingNote((event.currentTarget as unknown as { value: string }).value)
+                }
+              />
+              <div>
+                <span role="status">
+                  {savedNote === workingNote ? 'Saved in this preview session' : 'Unsaved changes'}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="default"
+                  type="submit"
+                  disabled={savedNote === workingNote}
+                >
+                  Save note
+                </Button>
+              </div>
+            </form>
+          </footer>
+        </article>
       )}
 
       {variant === 'C' && (
-        <div className={styles.briefing}>
-          <article className={styles.brief}>
-            <div className={styles.briefTitle}>
-              <p className={styles.eyebrow}>
-                Reference Agency · briefing for the appointing authority
-              </p>
-              <h2>Record of merit selection</h2>
-              <p>RTF-026-014 · Printable System View · Mock briefing</p>
-            </div>
-            <section className={styles.summary}>
-              <h3>Decision before the authority</h3>
-              <p>{snapshot.note}</p>
-              <a className={styles.briefAction} href="#brief-selection">
-                Review decision and handoff ↓
-              </a>
-            </section>
-            {stages.map((name, index) => (
-              <div
-                key={name}
-                id={index === 4 ? 'brief-selection' : `brief-${index}`}
-                className={styles.briefSection}
-              >
-                <p className={styles.eyebrow}>
-                  {index + 1} / {name}
-                </p>
-                {panel(index)}
+        <section aria-label="Applicant kanban">
+          <div className={styles.boardIntro}>
+            <span>
+              {visibleApplicants.length} Applications {search && 'matching search'}
+            </span>
+            <p>Open a card to review its file. Progress follows recorded decisions.</p>
+          </div>
+          <div
+            className={styles.kanban}
+            tabIndex={0}
+            role="region"
+            aria-label="Applicant progress columns"
+          >
+            {lanes.map((name, index) => {
+              const people = visibleApplicants.filter((person) => applicantLane(person) === index);
+              return (
+                <section key={name} className={styles.lane} data-lane={index}>
+                  <header>
+                    <h2>{name}</h2>
+                    <span>{people.length}</span>
+                  </header>
+                  <div className={styles.laneCards}>
+                    {people.map((person) => (
+                      <button
+                        key={person.id}
+                        className={styles.applicantCard}
+                        aria-pressed={inspectApplicant && applicantId === person.id}
+                        onClick={() => openApplicant(person.id)}
+                      >
+                        <span className={styles.cardTop}>
+                          <span>{person.id}</span>
+                          <span>
+                            {person.source === 'Internal applicant' ? 'Internal' : 'External'}
+                          </span>
+                        </span>
+                        <strong>{person.name}</strong>
+                        <span className={styles.cardRole}>Administrative Officer II</span>
+                        <span className={styles.cardEvidence}>
+                          {evaluated ? person.evidence : 'Screening pending'}
+                        </span>
+                        <span className={styles.cardBottom}>
+                          <span className={styles.avatar}>
+                            {person.name
+                              .split(' ')
+                              .map((part) => part[0])
+                              .join('')}
+                          </span>
+                          <span>
+                            {selected && person.id === 'APP-001'
+                              ? 'Selected · SD-026-01'
+                              : scenario === 'noSelection' && index === 3
+                                ? 'No selection · SD-026-02'
+                                : index === 3
+                                  ? selected
+                                    ? 'Board output retained'
+                                    : 'Awaiting authority'
+                                  : person.id === 'APP-003' && index === 2
+                                    ? '1 recusal recorded'
+                                    : index === 4
+                                      ? 'Reason retained'
+                                      : lanes[index]}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                    {people.length === 0 && <p className={styles.empty}>No Applications</p>}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+          {inspectApplicant && (
+            <div className={styles.boardDetail}>
+              <div className={styles.sheetHeading}>
+                <h2>{applicant.name} / Application file</h2>
+                <div>
+                  <button className={styles.recordButton} onClick={() => changeView('B')}>
+                    Open form ↗
+                  </button>
+                  <button
+                    className={styles.recordButton}
+                    onClick={() => setInspectApplicant(false)}
+                  >
+                    Close preview
+                  </button>
+                </div>
               </div>
-            ))}
-          </article>
-          <aside className={styles.briefIndex}>
-            <h2>Briefing contents</h2>
-            {stages.map((name, index) => (
-              <a key={name} href={index === 4 ? '#brief-selection' : `#brief-${index}`}>
-                {index + 1}. {name}
-              </a>
-            ))}
-            <hr />
-            <h3>Reading the record</h3>
-            <p>Administrative approval authorizes the request.</p>
-            <p>The board provides an advisory recommendation.</p>
-            <p>The appointing authority records the Selection Decision.</p>
-            <p className={styles.caption}>This view is not a prescribed government form.</p>
-          </aside>
-        </div>
+              {candidateDetail}
+            </div>
+          )}
+        </section>
       )}
+      <div className={styles.status} role="status">
+        <strong>Case standing</strong>
+        <span>{snapshot.note}</span>
+      </div>
 
       <Dialog
         open={document !== null}
@@ -853,6 +1136,16 @@ export function RecruitmentCasePrototype() {
               scenario,
               snapshot,
               viewedStage: stages[stage],
+              expanded,
+              applicationsExpanded,
+              inspectApplicant,
+              search,
+              workingNote,
+              savedNote,
+              applicantProgress: visibleApplicants.map((person) => ({
+                id: person.id,
+                lane: lanes[applicantLane(person)],
+              })),
               applicantId,
               evidencePreview: document === null ? null : documents[document],
               handoffPreview: handoff,
