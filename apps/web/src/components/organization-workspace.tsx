@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { RecordReturn, useRecordNavigation } from './record-navigation';
 import {
   Dialog,
   DialogBody,
@@ -283,9 +284,21 @@ export function OrganizationWorkspace({
   const [successorDrafts, setSuccessorDrafts] = useState(initial.drafts ?? []);
   const [hierarchy, setHierarchy] = useState(initialHierarchy);
   const [asOf, setAsOf] = useState(initialHierarchy.asOf);
-  const [selectedId, setSelectedId] = useState(
-    initialHierarchy.units[0]?.id ?? initial.units[0]?.id ?? null,
-  );
+  const navigation = useRecordNavigation();
+  const selectedId = navigation.search.get('unit');
+  const showHistory = navigation.search.get('section') === 'history';
+  function setSelectedId(id: string) {
+    navigation.navigate({ unit: id, view: 'form', section: null });
+  }
+  const historyRequest = useRef(0);
+  useEffect(() => {
+    setHistory(null);
+    setHistoryError('');
+    if (selectedId) void loadHistory(selectedId);
+    return () => {
+      historyRequest.current += 1;
+    };
+  }, [selectedId, showHistory, asOf]);
   const [hierarchyLoading, setHierarchyLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
@@ -306,6 +319,40 @@ export function OrganizationWorkspace({
   const [successor, setSuccessor] = useState<OrganizationUnitSuccessor | null>(null);
   const [successorValues, setSuccessorValues] = useState<SuccessorValues | null>(null);
   const [successorOpen, setSuccessorOpen] = useState(false);
+  const successorCloseAfterSave = useRef(false);
+  const showSuccessor = navigation.search.get('section') === 'successor';
+  useEffect(() => {
+    if (!selectedId || !showSuccessor) {
+      setSuccessorOpen(false);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${encodeURIComponent(selectedId)}/history?asOf=${asOf}`,
+        { credentials: 'include' },
+      );
+      const value: unknown = await response.json();
+      if (!response.ok || !isOrganizationUnitHistory(value) || !value.current || !value.draft)
+        throw new Error('The successor draft is unavailable.');
+      if (!active) return;
+      setSuccessor({ current: value.current, draft: value.draft });
+      setSuccessorValues(successorValuesFromVersion(value.draft));
+      setSuccessorOpen(true);
+      const parents = await requestHierarchy(value.draft.effectiveFrom, selectedId);
+      if (active)
+        setSuccessorParentOptions(
+          parents.units.filter((unit) => parents.eligibleParentIds.includes(unit.id)),
+        );
+    })().catch((cause: unknown) => {
+      if (active)
+        setFormError(cause instanceof Error ? cause.message : 'The successor could not be loaded.');
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedId, showSuccessor, asOf]);
+
   const [successorReason, setSuccessorReason] = useState('');
   const [successorAuthority, setSuccessorAuthority] = useState('');
   const [successorMigrationPlan, setSuccessorMigrationPlan] = useState('');
@@ -340,23 +387,41 @@ export function OrganizationWorkspace({
   const transitionDateRef = useRef<{ focus(): void } | null>(null);
   const transitionReasonRef = useRef<{ focus(): void } | null>(null);
 
-  const drafts = units.filter((unit) => unit.status === 'DRAFT');
+  const drafts = units.filter(
+    (unit) => unit.status === 'DRAFT' && (!selectedId || unit.id === selectedId),
+  );
   const selectedListUnit = units.find((unit) => unit.id === selectedId) ?? null;
+  const selectedVersion =
+    history?.asOf === asOf && history.effective?.organizationUnitId === selectedId
+      ? history.effective
+      : null;
   const selected =
     hierarchy.units.find((unit) => unit.id === selectedId) ??
-    (selectedListUnit
+    (selectedVersion
       ? {
-          id: selectedListUnit.id,
-          code: selectedListUnit.code,
-          officialName: selectedListUnit.officialName,
-          unitType: selectedListUnit.unitType,
-          parentUnitId: selectedListUnit.parentUnitId,
-          effectiveFrom: selectedListUnit.effectiveDate,
-          effectiveTo: selectedListUnit.effectiveTo,
-          lifecycleStatus: selectedListUnit.lifecycleStatus,
+          id: selectedVersion.organizationUnitId,
+          code: selectedVersion.code,
+          officialName: selectedVersion.officialName,
+          unitType: selectedVersion.unitType,
+          parentUnitId: selectedVersion.parentUnitId,
+          effectiveFrom: selectedVersion.effectiveFrom,
+          effectiveTo: selectedVersion.effectiveTo,
+          lifecycleStatus: selectedVersion.lifecycleStatus,
           childCount: 0,
         }
-      : null);
+      : selectedListUnit?.status === 'DRAFT'
+        ? {
+            id: selectedListUnit.id,
+            code: selectedListUnit.code,
+            officialName: selectedListUnit.officialName,
+            unitType: selectedListUnit.unitType,
+            parentUnitId: selectedListUnit.parentUnitId,
+            effectiveFrom: selectedListUnit.effectiveDate,
+            effectiveTo: selectedListUnit.effectiveTo,
+            lifecycleStatus: selectedListUnit.lifecycleStatus,
+            childCount: 0,
+          }
+        : null);
   const parentNames = new Map(hierarchy.units.map((unit) => [unit.id, unit.officialName]));
 
   function handleOpenChange(nextOpen: boolean): void {
@@ -446,6 +511,7 @@ export function OrganizationWorkspace({
       }
       setUnits((current) => [value, ...current.filter((unit) => unit.id !== value.id)]);
       setHighlightedId(value.id);
+      setSelectedId(value.id);
       setSuccess(`Draft Organization Unit “${value.officialName}” was created.`);
       setOpen(false);
       setDraft(emptyDraft());
@@ -480,11 +546,7 @@ export function OrganizationWorkspace({
     try {
       const value = await requestHierarchy(date);
       setHierarchy(value);
-      setSelectedId((current) =>
-        value.units.some((unit) => unit.id === (preferredId ?? current))
-          ? (preferredId ?? current)
-          : (value.units[0]?.id ?? null),
-      );
+      if (preferredId) setSelectedId(preferredId);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The hierarchy could not be loaded.');
     } finally {
@@ -600,6 +662,7 @@ export function OrganizationWorkspace({
   }
 
   async function loadHistory(unitId: string, date = asOf): Promise<void> {
+    const requestId = ++historyRequest.current;
     setHistoryLoading(true);
     setHistoryError('');
     try {
@@ -611,12 +674,14 @@ export function OrganizationWorkspace({
       if (!response.ok || !isOrganizationUnitHistory(value)) {
         throw new Error('The Organization Unit history could not be loaded.');
       }
+      if (requestId !== historyRequest.current) return;
       setHistory(value);
     } catch (error) {
+      if (requestId !== historyRequest.current) return;
       setHistory(null);
       setHistoryError(error instanceof Error ? error.message : 'The history could not be loaded.');
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequest.current) setHistoryLoading(false);
     }
   }
 
@@ -653,6 +718,7 @@ export function OrganizationWorkspace({
         value.draft,
         ...current.filter((draft) => draft.organizationUnitId !== unitId),
       ]);
+      navigation.navigate({ unit: unitId, view: 'form', section: 'successor' });
       setSuccessorOpen(true);
       try {
         const eligibleHierarchy = await requestHierarchy(value.draft.effectiveFrom, unitId);
@@ -781,7 +847,15 @@ export function OrganizationWorkspace({
     setSuccessorError('');
     try {
       const saved = await saveSuccessor();
-      if (saved) setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+      const closeAfterSave = successorCloseAfterSave.current;
+      successorCloseAfterSave.current = false;
+      if (saved) {
+        setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+        if (closeAfterSave) {
+          setSuccessorOpen(false);
+          navigation.navigate({ section: null });
+        }
+      }
     } finally {
       setSuccessorSubmitting(false);
     }
@@ -939,21 +1013,19 @@ export function OrganizationWorkspace({
                     const date = (event.currentTarget as unknown as { value: string }).value;
                     setAsOf(date);
                     if (date) {
-                      const browser = globalThis as unknown as {
-                        location: { href: string };
-                        history: { replaceState(data: null, unused: string, url: URL): void };
-                      };
-                      const url = new URL(browser.location.href);
-                      url.searchParams.set('asOf', date);
-                      browser.history.replaceState(null, '', url);
-                      void loadHierarchy(date);
+                      setHierarchyLoading(true);
+                      navigation.navigate({ asOf: date });
                     }
                   }}
                 />
               </label>
             </header>
 
-            {rows.length === 0 ? (
+            {hierarchyLoading ? (
+              <p role="status" className="p-5 text-sm text-muted">
+                Loading effective hierarchy…
+              </p>
+            ) : rows.length === 0 && !selectedId ? (
               <div className="grid min-h-[240px] place-content-center gap-2 px-6 py-12">
                 <strong className="text-[15px] font-[650] text-midnight">
                   No active Organization Units on this date.
@@ -963,173 +1035,188 @@ export function OrganizationWorkspace({
                 </p>
               </div>
             ) : (
-              <div className="grid min-w-0 md:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)]">
-                <nav
-                  className="min-w-0 overflow-x-auto border-b border-line bg-[#fafbfd] md:border-r md:border-b-0"
-                  aria-label="Organization hierarchy"
-                >
-                  <div className="min-w-[280px] py-2">
-                    {rows.map(({ unit, depth }) => (
-                      <button
-                        className={`group relative grid w-full grid-cols-[18px_1fr_auto] items-center gap-2 border-l-[3px] bg-paper py-2.5 pr-4 text-left ${
-                          depth === 0
-                            ? 'border-midnight bg-midnight text-paper hover:bg-[#273650] aria-pressed:border-midnight aria-pressed:bg-midnight'
-                            : 'border-transparent hover:bg-pale-blue aria-pressed:border-cobalt aria-pressed:bg-pale-blue'
-                        }`}
-                        style={{ paddingLeft: `${12 + depth * 22}px` }}
-                        type="button"
-                        key={unit.id}
-                        aria-pressed={selectedId === unit.id}
-                        onClick={() => setSelectedId(unit.id)}
-                      >
-                        <span
-                          className={`h-px ${depth === 0 ? 'bg-[#aebbd0]' : 'bg-[#9aaabd]'}`}
-                          aria-hidden="true"
-                        />
-                        <span className="min-w-0">
-                          <strong
-                            className={`block truncate text-[13px] font-[660] ${depth === 0 ? 'text-paper' : 'text-midnight'}`}
-                          >
-                            {unit.officialName}
-                          </strong>
-                          <span
-                            className={`block truncate font-mono text-[10px] tracking-[0.04em] uppercase ${depth === 0 ? 'text-[#b7c3d5]' : 'text-muted'}`}
-                          >
-                            {unit.code} · {unitTypeLabel(unit.unitType)}
-                          </span>
-                        </span>
-                        <span
-                          className={`text-[10px] font-[650] ${depth === 0 ? 'text-[#dbe4f1]' : 'text-muted'}`}
+              <div className="grid min-w-0">
+                {!selectedId ? (
+                  <nav
+                    className="min-w-0 overflow-x-auto border-b border-line bg-[#fafbfd] md:border-r md:border-b-0"
+                    aria-label="Organization hierarchy"
+                  >
+                    <div className="min-w-[280px] py-2">
+                      {rows.map(({ unit, depth }) => (
+                        <button
+                          className={`group relative grid w-full grid-cols-[18px_1fr_auto] items-center gap-2 border-l-[3px] bg-paper py-2.5 pr-4 text-left ${
+                            depth === 0
+                              ? 'border-midnight bg-midnight text-paper hover:bg-[#273650] aria-pressed:border-midnight aria-pressed:bg-midnight'
+                              : 'border-transparent hover:bg-pale-blue aria-pressed:border-cobalt aria-pressed:bg-pale-blue'
+                          }`}
+                          style={{ paddingLeft: `${12 + depth * 22}px` }}
+                          type="button"
+                          key={unit.id}
+                          aria-pressed={selectedId === unit.id}
+                          onClick={() => setSelectedId(unit.id)}
                         >
-                          {unit.childCount}
-                        </span>
-                        {Array.from({ length: depth }, (_, connectorDepth) => (
                           <span
+                            className={`h-px ${depth === 0 ? 'bg-[#aebbd0]' : 'bg-[#9aaabd]'}`}
                             aria-hidden="true"
-                            className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#aeb8c7]"
-                            data-tree-connector="vertical"
-                            key={connectorDepth}
-                            style={{ left: `${12 + (connectorDepth + 1) * 22}px` }}
                           />
-                        ))}
-                      </button>
-                    ))}
-                  </div>
-                </nav>
-
-                <div
-                  className="grid min-h-[300px] content-start gap-6 p-5 sm:p-6"
-                  aria-label="Selected Organization Unit"
-                  aria-busy={hierarchyLoading}
-                  role="region"
-                >
-                  {selected ? (
-                    <>
-                      <div className="grid gap-2 border-b border-line pb-5">
-                        <span className="font-mono text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
-                          Selected unit / {selected.code}
-                        </span>
-                        <h3 className="m-0 text-xl font-[680] tracking-[-0.02em] text-midnight">
-                          {selected.officialName}
-                        </h3>
-                        <span className="w-fit rounded-full bg-[#e8f3ed] px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] text-[#316647] uppercase">
-                          {selected.lifecycleStatus}
-                        </span>
-                      </div>
-                      <dl className="m-0 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Type
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {unitTypeLabel(selected.unitType)}
-                          </dd>
-                        </div>
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Parent
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {selected.parentUnitId
-                              ? parentNames.get(selected.parentUnitId)
-                              : 'No parent · Agency root'}
-                          </dd>
-                        </div>
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Direct reports
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {selected.childCount === 1
-                              ? '1 child'
-                              : `${selected.childCount} children`}
-                          </dd>
-                        </div>
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Effective period
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {dateLabel(selected.effectiveFrom)} –{' '}
-                            {selected.effectiveTo ? dateLabel(selected.effectiveTo) : 'Present'}
-                          </dd>
-                        </div>
-                      </dl>
-                      {selectedListUnit ? (
-                        <div className="flex flex-wrap gap-2 border-t border-line pt-5">
-                          {canUpdate && selected.lifecycleStatus !== 'ABOLISHED' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-cobalt px-3 text-xs font-[670] text-white hover:bg-[#365f96]"
-                              type="button"
-                              onClick={() => void prepareSuccessor(selected.id)}
+                          <span className="min-w-0">
+                            <strong
+                              className={`block truncate text-[13px] font-[660] ${depth === 0 ? 'text-paper' : 'text-midnight'}`}
                             >
-                              Prepare change
-                            </button>
-                          ) : null}
-                          {canInactivate && selected.lifecycleStatus === 'ACTIVE' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={() => openTransition('INACTIVE')}
+                              {unit.officialName}
+                            </strong>
+                            <span
+                              className={`block truncate font-mono text-[10px] tracking-[0.04em] uppercase ${depth === 0 ? 'text-[#b7c3d5]' : 'text-muted'}`}
                             >
-                              Inactivate
-                            </button>
-                          ) : null}
-                          {canActivate && selected.lifecycleStatus === 'INACTIVE' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={() => openTransition('ACTIVE')}
-                            >
-                              Reactivate
-                            </button>
-                          ) : null}
-                          {canAbolish && selected.lifecycleStatus !== 'ABOLISHED' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-[#f5dfe0] px-3 text-xs font-[670] text-[#7a3036] hover:bg-[#ebcfd1]"
-                              type="button"
-                              onClick={() => openTransition('ABOLISHED')}
-                            >
-                              Abolish
-                            </button>
-                          ) : null}
-                          <button
-                            className="min-h-10 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
-                            type="button"
-                            onClick={() => void loadHistory(selected.id)}
+                              {unit.code} · {unitTypeLabel(unit.unitType)}
+                            </span>
+                          </span>
+                          <span
+                            className={`text-[10px] font-[650] ${depth === 0 ? 'text-[#dbe4f1]' : 'text-muted'}`}
                           >
-                            View history
-                          </button>
+                            {unit.childCount}
+                          </span>
+                          {Array.from({ length: depth }, (_, connectorDepth) => (
+                            <span
+                              aria-hidden="true"
+                              className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#aeb8c7]"
+                              data-tree-connector="vertical"
+                              key={connectorDepth}
+                              style={{ left: `${12 + (connectorDepth + 1) * 22}px` }}
+                            />
+                          ))}
+                        </button>
+                      ))}
+                    </div>
+                  </nav>
+                ) : null}
+
+                {selectedId ? (
+                  <div
+                    className="grid min-h-[300px] content-start gap-6 p-5 sm:p-6"
+                    aria-label="Selected Organization Unit"
+                    aria-busy={hierarchyLoading}
+                    role="region"
+                  >
+                    <RecordReturn href={navigation.href({ unit: null, view: null, section: null })}>
+                      ← Organization Units
+                    </RecordReturn>
+                    {selected ? (
+                      <>
+                        <div className="grid gap-2 border-b border-line pb-5">
+                          <span className="font-mono text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
+                            Selected unit / {selected.code} ·{' '}
+                            {selectedListUnit?.versionState ?? 'ACTIVE'}
+                          </span>
+                          <h3 className="m-0 text-xl font-[680] tracking-[-0.02em] text-midnight">
+                            {selected.officialName}
+                          </h3>
+                          <span className="w-fit rounded-full bg-[#e8f3ed] px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] text-[#316647] uppercase">
+                            {selected.lifecycleStatus}
+                          </span>
                         </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
+                        <dl className="m-0 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
+                          <div className="grid gap-1">
+                            <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                              Type
+                            </dt>
+                            <dd className="m-0 font-[620] text-ink">
+                              {unitTypeLabel(selected.unitType)}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1">
+                            <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                              Parent
+                            </dt>
+                            <dd className="m-0 font-[620] text-ink">
+                              {selected.parentUnitId
+                                ? parentNames.get(selected.parentUnitId)
+                                : 'No parent · Agency root'}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1">
+                            <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                              Direct reports
+                            </dt>
+                            <dd className="m-0 font-[620] text-ink">
+                              {selected.childCount === 1
+                                ? '1 child'
+                                : `${selected.childCount} children`}
+                            </dd>
+                          </div>
+                          <div className="grid gap-1">
+                            <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                              Effective period
+                            </dt>
+                            <dd className="m-0 font-[620] text-ink">
+                              {dateLabel(selected.effectiveFrom)} –{' '}
+                              {selected.effectiveTo ? dateLabel(selected.effectiveTo) : 'Present'}
+                            </dd>
+                          </div>
+                        </dl>
+                        {selectedListUnit && selectedListUnit.status !== 'DRAFT' ? (
+                          <div className="flex flex-wrap gap-2 border-t border-line pt-5">
+                            {canUpdate && selected.lifecycleStatus !== 'ABOLISHED' ? (
+                              <button
+                                className="min-h-10 rounded-[3px] bg-cobalt px-3 text-xs font-[670] text-white hover:bg-[#365f96]"
+                                type="button"
+                                onClick={() => void prepareSuccessor(selected.id)}
+                              >
+                                Prepare change
+                              </button>
+                            ) : null}
+                            {canInactivate && selected.lifecycleStatus === 'ACTIVE' ? (
+                              <button
+                                className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
+                                type="button"
+                                onClick={() => openTransition('INACTIVE')}
+                              >
+                                Inactivate
+                              </button>
+                            ) : null}
+                            {canActivate && selected.lifecycleStatus === 'INACTIVE' ? (
+                              <button
+                                className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
+                                type="button"
+                                onClick={() => openTransition('ACTIVE')}
+                              >
+                                Reactivate
+                              </button>
+                            ) : null}
+                            {canAbolish && selected.lifecycleStatus !== 'ABOLISHED' ? (
+                              <button
+                                className="min-h-10 rounded-[3px] bg-[#f5dfe0] px-3 text-xs font-[670] text-[#7a3036] hover:bg-[#ebcfd1]"
+                                type="button"
+                                onClick={() => openTransition('ABOLISHED')}
+                              >
+                                Abolish
+                              </button>
+                            ) : null}
+                            <button
+                              className="min-h-10 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
+                              type="button"
+                              onClick={() => navigation.navigate({ section: 'history' })}
+                            >
+                              View history
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : historyLoading ? (
+                      <p role="status">Loading Organization Unit…</p>
+                    ) : (
+                      <p role="alert">
+                        This Organization Unit is unavailable. It may be missing or outside your
+                        permitted scope.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
               </div>
             )}
           </section>
 
-          {history || historyLoading || historyError ? (
+          {selectedId && showHistory ? (
             <section
               className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
               aria-labelledby="organization-unit-history-heading"
@@ -1296,73 +1383,75 @@ export function OrganizationWorkspace({
             </section>
           ) : null}
 
-          <section
-            className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
-            aria-labelledby="organization-unit-register-heading"
-          >
-            <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="organization-unit-register-heading"
-                >
-                  Organization Unit register
-                </h2>
-                <span className="text-xs text-muted">
-                  All current lifecycle states in this Agency
+          {!selectedId ? (
+            <section
+              className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
+              aria-labelledby="organization-unit-register-heading"
+            >
+              <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
+                <div className="grid gap-1">
+                  <h2
+                    className="m-0 text-sm font-[670] text-midnight"
+                    id="organization-unit-register-heading"
+                  >
+                    Organization Unit register
+                  </h2>
+                  <span className="text-xs text-muted">
+                    All current lifecycle states in this Agency
+                  </span>
+                </div>
+                <span className="font-mono text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                  {registeredUnits.length} records
                 </span>
-              </div>
-              <span className="font-mono text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                {registeredUnits.length} records
-              </span>
-            </header>
-            {registeredUnits.length === 0 ? (
-              <div className="px-5 py-8 text-sm text-muted">
-                No activated Organization Units yet.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[700px] border-collapse text-left">
-                  <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                    <tr>
-                      <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Code</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Lifecycle</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
-                      <th className="border-b border-line px-5 py-3 text-right font-bold">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-[13px] text-ink">
-                    {registeredUnits.map((unit) => (
-                      <tr className="border-b border-line last:border-b-0" key={unit.id}>
-                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
-                          {unit.officialName}
+              </header>
+              {registeredUnits.length === 0 ? (
+                <div className="px-5 py-8 text-sm text-muted">
+                  No activated Organization Units yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[700px] border-collapse text-left">
+                    <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+                      <tr>
+                        <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
+                        <th className="border-b border-line px-5 py-3 font-bold">Code</th>
+                        <th className="border-b border-line px-5 py-3 font-bold">Lifecycle</th>
+                        <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
+                        <th className="border-b border-line px-5 py-3 text-right font-bold">
+                          Action
                         </th>
-                        <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-[#e8f3ed] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#316647] uppercase">
-                            {unit.status}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
-                        <td className="px-5 py-4 text-right">
-                          <button
-                            className="min-h-9 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
-                            type="button"
-                            onClick={() => setSelectedId(unit.id)}
-                          >
-                            Inspect record
-                          </button>
-                        </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+                    </thead>
+                    <tbody className="text-[13px] text-ink">
+                      {registeredUnits.map((unit) => (
+                        <tr className="border-b border-line last:border-b-0" key={unit.id}>
+                          <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
+                            {unit.officialName}
+                          </th>
+                          <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
+                          <td className="px-5 py-4">
+                            <span className="inline-flex rounded-full bg-[#e8f3ed] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#316647] uppercase">
+                              {unit.status}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
+                          <td className="px-5 py-4 text-right">
+                            <button
+                              className="min-h-9 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
+                              type="button"
+                              onClick={() => setSelectedId(unit.id)}
+                            >
+                              Inspect record
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          ) : null}
 
           <section
             className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
@@ -1415,7 +1504,13 @@ export function OrganizationWorkspace({
                         key={unit.id}
                       >
                         <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
-                          {unit.officialName}
+                          <button
+                            type="button"
+                            className="text-left text-cobalt hover:underline"
+                            onClick={() => setSelectedId(unit.id)}
+                          >
+                            {unit.officialName}
+                          </button>
                         </th>
                         <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
                         <td className="px-5 py-4">{unitTypeLabel(unit.unitType)}</td>
@@ -1444,32 +1539,40 @@ export function OrganizationWorkspace({
                         </td>
                       </tr>
                     ))}
-                    {successorDrafts.map((draft) => (
-                      <tr className="border-b border-line last:border-b-0" key={draft.id}>
-                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
-                          {draft.officialName}
-                        </th>
-                        <td className="px-5 py-4 font-mono text-xs">{draft.code}</td>
-                        <td className="px-5 py-4">{unitTypeLabel(draft.unitType)}</td>
-                        <td className="px-5 py-4 text-muted">{dateLabel(draft.effectiveFrom)}</td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-[#fff3d6] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#79531c] uppercase">
-                            DRAFT SUCCESSOR
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          {canUpdate || canActivate ? (
-                            <button
-                              className="min-h-9 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={() => void prepareSuccessor(draft.organizationUnitId)}
-                            >
-                              Review successor
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
+                    {successorDrafts
+                      .filter((draft) => !selectedId || draft.organizationUnitId === selectedId)
+                      .map((draft) => (
+                        <tr className="border-b border-line last:border-b-0" key={draft.id}>
+                          <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
+                            {draft.officialName}
+                          </th>
+                          <td className="px-5 py-4 font-mono text-xs">{draft.code}</td>
+                          <td className="px-5 py-4">{unitTypeLabel(draft.unitType)}</td>
+                          <td className="px-5 py-4 text-muted">{dateLabel(draft.effectiveFrom)}</td>
+                          <td className="px-5 py-4">
+                            <span className="inline-flex rounded-full bg-[#fff3d6] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#79531c] uppercase">
+                              DRAFT SUCCESSOR
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            {canUpdate || canActivate ? (
+                              <button
+                                className="min-h-9 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
+                                type="button"
+                                onClick={() =>
+                                  navigation.navigate({
+                                    unit: draft.organizationUnitId,
+                                    view: 'form',
+                                    section: 'successor',
+                                  })
+                                }
+                              >
+                                Review successor
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -1865,17 +1968,23 @@ export function OrganizationWorkspace({
         ) : null}
       </Dialog>
       <Dialog
+        presentation="form"
         open={successorOpen}
         onOpenChange={(nextOpen) => {
           if (!nextOpen && successorSubmitting) return;
           setSuccessorOpen(nextOpen);
+          if (!nextOpen) navigation.navigate({ section: null });
         }}
       >
         {successor && successorValues ? (
           <DialogContent
             aria-busy={successorSubmitting}
+            aria-describedby="organization-successor-description"
             onEscapeKeyDown={(event) => {
-              if (successorSubmitting) event.preventDefault();
+              if (successorSubmitting) {
+                successorCloseAfterSave.current = true;
+                event.preventDefault();
+              }
             }}
             onOpenAutoFocus={(event) => {
               event.preventDefault();
@@ -1888,7 +1997,7 @@ export function OrganizationWorkspace({
                   Organization change / Successor draft
                 </p>
                 <DialogTitle>Review Organization Unit successor</DialogTitle>
-                <DialogDescription>
+                <DialogDescription id="organization-successor-description">
                   Edit the proposed values and effective date. The current version remains unchanged
                   until activation.
                 </DialogDescription>

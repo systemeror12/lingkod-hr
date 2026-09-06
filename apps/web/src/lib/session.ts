@@ -31,6 +31,4 @@ export const getActiveSession = cache(async (): Promise<ActiveSession> => {
   return value;
 });
 
-export function hasPermission(session: ActiveSession, permission: string): boolean {
-  return session.permissions.some((grant) => grant.code === permission);
-}
+export { hasPermission } from './navigation';

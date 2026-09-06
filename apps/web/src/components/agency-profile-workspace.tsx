@@ -1,5 +1,7 @@
 'use client';
 
+import { useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState } from 'react';
 import {
   Dialog,
@@ -277,7 +279,6 @@ function ProfileDialog({
   onClose,
   onSave,
   onActivate,
-  onRestoreFocus,
   registerField,
 }: {
   mode: 'edit' | 'activate' | null;
@@ -288,7 +289,6 @@ function ProfileDialog({
   onClose(): void;
   onSave(values: EditableProfile): void;
   onActivate(effectiveDate: string, reason: string): void;
-  onRestoreFocus(): void;
   registerField(field: string, element: FocusableField | null): void;
 }) {
   const [values, setValues] = useState<EditableProfile | null>(null);
@@ -311,6 +311,7 @@ function ProfileDialog({
 
   return (
     <Dialog
+      presentation={mode === 'edit' ? 'form' : 'dialog'}
       open={mode !== null && draft !== null}
       onOpenChange={(open) => {
         if (!open && !submitting) onClose();
@@ -318,10 +319,8 @@ function ProfileDialog({
     >
       <DialogContent
         aria-busy={submitting}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          onRestoreFocus();
-        }}
+        aria-describedby="agency-profile-dialog-description"
+        onCloseAutoFocus={(event) => event.preventDefault()}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           firstFieldRef.current?.focus?.();
@@ -335,7 +334,7 @@ function ProfileDialog({
             <DialogTitle>
               {mode === 'activate' ? 'Review activation' : 'Edit draft successor'}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription id="agency-profile-dialog-description">
               {mode === 'activate'
                 ? 'Confirm when this version becomes authoritative. Prior versions remain available for every as-of read.'
                 : 'Edit the successor fields before activation. Activated versions cannot be rewritten.'}
@@ -650,9 +649,13 @@ export function AgencyProfileWorkspace({
   initial: AgencyProfileResponse;
 }) {
   const [data, setData] = useState(initial);
-  const [selectedId, setSelectedId] = useState(
-    initial.current?.id ?? initial.draft?.id ?? initial.versions[0]?.id ?? null,
-  );
+  const navigation = useRecordNavigation();
+  const selectedId =
+    navigation.search.get('agencyVersion') ?? data.current?.id ?? data.draft?.id ?? null;
+  function setSelectedId(id: string) {
+    navigation.navigate({ agencyVersion: id });
+  }
+
   const [dialogMode, setDialogMode] = useState<'edit' | 'activate' | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
@@ -661,8 +664,17 @@ export function AgencyProfileWorkspace({
   const [notice, setNotice] = useState('');
   const fieldRefs = useRef<Record<string, FocusableField | null>>({});
   const returnFocusRef = useRef<FocusableField | null>(null);
+  const previousDialogMode = useRef(dialogMode);
 
-  const selected = data.versions.find((version) => version.id === selectedId) ?? data.current;
+  useEffect(() => {
+    const wasOpen = previousDialogMode.current !== null;
+    previousDialogMode.current = dialogMode;
+    if (!wasOpen || dialogMode !== null) return;
+    const frame = setTimeout(() => restoreFocus(), 0);
+    return () => clearTimeout(frame);
+  }, [dialogMode]);
+
+  const selected = data.versions.find((version) => version.id === selectedId) ?? null;
   const draft = data.draft;
 
   function focusField(field: string): void {
@@ -830,6 +842,9 @@ export function AgencyProfileWorkspace({
 
   return (
     <div className="grid min-w-0 gap-7">
+      {navigation.search.has('agencyVersion') && !selected ? (
+        <p role="alert">This Agency Profile version is missing or unavailable.</p>
+      ) : null}
       {notice ? (
         <p
           className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
@@ -1023,7 +1038,6 @@ export function AgencyProfileWorkspace({
         }}
         onSave={(values) => void saveDraft(values)}
         onActivate={(effectiveDate, reason) => void activate(effectiveDate, reason)}
-        onRestoreFocus={restoreFocus}
         registerField={(field, element) => {
           fieldRefs.current[field] = element;
         }}

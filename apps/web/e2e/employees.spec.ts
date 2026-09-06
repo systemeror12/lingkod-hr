@@ -162,3 +162,24 @@ test('creates an Employee and links an Agency Membership', async ({ page }) => {
   await expect(page.getByText(employeeNumber, { exact: true })).toBeVisible();
   await expect(page.getByText('LINKED', { exact: true })).toBeVisible();
 });
+
+test('keeps Employee creation values after a network failure and permits retry', async ({
+  page,
+}) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/employees/new');
+  await page.getByLabel('Employee number').fill(`RETRY-${Date.now()}`);
+  await page.getByLabel('Legal name').fill('Retry Employee');
+  await page.getByLabel('Birth date').fill('1990-01-01');
+  await page.getByLabel('Contact email').fill('retry@example.test');
+  await page.route('**/api/v1/agencies/*/employees', (route) => route.abort('failed'), {
+    times: 1,
+  });
+  await page.getByRole('button', { name: 'Create employee', exact: true }).click();
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'Check the connection' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Legal name')).toHaveValue('Retry Employee');
+  await expect(page.getByRole('button', { name: 'Create employee', exact: true })).toBeEnabled();
+});

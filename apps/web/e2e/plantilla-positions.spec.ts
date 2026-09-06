@@ -49,9 +49,6 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await expect(page.getByRole('status')).toContainText(
     `Proposed position “${itemNumber}” was created.`,
   );
-  const result = page.getByRole('button', { name: new RegExp(itemNumber) });
-  await expect(result).toBeVisible();
-  await result.click();
   await expect(
     page.getByRole('heading', { name: 'Human Resource Management Officer III' }),
   ).toBeVisible();
@@ -170,7 +167,6 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
   await expect(page.getByRole('status')).toContainText(
     `Proposed position “${itemNumber}” was created.`,
   );
-  await page.getByRole('button', { name: new RegExp(itemNumber) }).click();
   await expect(page.getByRole('button', { name: 'Authorize position' })).toBeVisible();
 
   async function linkEvidence(purpose: 'CREATION' | 'FREEZE' | 'ABOLITION'): Promise<void> {
@@ -198,7 +194,7 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     await expect(transitionDialog.getByLabel('Effective date')).toBeFocused();
     await transitionDialog.getByLabel('Reason').fill(reason);
     await transitionDialog.getByRole('button', { name: submitButton, exact: true }).click();
-    await expect(page.getByRole('status')).toContainText(successText);
+    await expect(page.getByRole('status').filter({ hasText: successText })).toBeVisible();
     await expect(page.locator('[aria-label="Position lifecycle actions"]')).toBeFocused();
   }
 
@@ -294,7 +290,7 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     .first();
   await expect(auditEvent).toContainText('VACANT → ABOLISHED');
   await auditEvent.click();
-  const auditDialog = page.getByRole('dialog', { name: 'Audit Event detail' });
+  const auditDialog = page.getByRole('region', { name: 'Audit Event detail' });
   await expect(auditDialog).toContainText('PLANTILLA_POSITION_ABOLISHED');
   await expect(auditDialog).toContainText('ABOLISHED');
 });

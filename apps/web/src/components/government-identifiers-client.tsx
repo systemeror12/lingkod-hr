@@ -1,5 +1,7 @@
 'use client';
 
+import { useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from './ui/button';
 import {
@@ -256,9 +258,53 @@ export function GovernmentIdentifiersSection({
   const replaceOpener = useRef<HTMLButtonElement | null>(null);
   const invalidateOpener = useRef<HTMLButtonElement | null>(null);
   const historyOpener = useRef<HTMLButtonElement | null>(null);
+  const historyFocusId = useRef<string | null>(null);
+  const historyCloseRef = useRef<HTMLButtonElement | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
+  const [historyFocusPending, setHistoryFocusPending] = useState(false);
 
   const endpoint = `/api/v1/agencies/${agencyId}/employees/${employeeId}/government-identifiers`;
+  const navigation = useRecordNavigation();
+  const historyId = navigation.search.get('identifierHistory');
+  const historyRequest = useRef(0);
+  useEffect(() => {
+    setHistoryTarget(null);
+    if (!historyId || loading) return;
+    const target = identifiers.find((item) => item.id === historyId);
+    if (!canReadHistory || !target) {
+      setError('This identifier history is unavailable in your permitted scope.');
+      return;
+    }
+    void loadHistory(target);
+    return () => {
+      historyRequest.current += 1;
+    };
+  }, [historyId, loading, canReadHistory]);
+
+  useEffect(() => {
+    if (!historyFocusPending || historyId) return;
+    const frame = setTimeout(() => {
+      const opener = historyOpener.current as unknown as {
+        isConnected?: boolean;
+        focus?: () => void;
+      } | null;
+      if (opener?.isConnected) {
+        opener.focus?.();
+      } else if (historyFocusId.current) {
+        const browser = globalThis as unknown as {
+          document: {
+            querySelector(selector: string): { focus?: () => void } | null;
+          };
+        };
+        browser.document
+          .querySelector(`[data-history-opener="${historyFocusId.current}"]`)
+          ?.focus?.();
+      }
+      historyFocusId.current = null;
+      setHistoryFocusPending(false);
+    }, 0);
+    return () => clearTimeout(frame);
+  }, [historyFocusPending, historyId]);
 
   async function refresh(showLoading = true): Promise<boolean> {
     if (!canRead) return true;
@@ -335,6 +381,8 @@ export function GovernmentIdentifiersSection({
 
   function closeHistory(open: boolean): void {
     if (open) return;
+    setHistoryFocusPending(true);
+    navigation.navigate({ identifierHistory: null });
     setHistoryTarget(null);
     setHistoryEntries([]);
     setHistoryLoading(false);
@@ -347,122 +395,153 @@ export function GovernmentIdentifiersSection({
 
   async function submitCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     resetDialogState();
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        identifierType: createValues.identifierType,
-        value: createValues.value.trim(),
-        verifiedAt: dateInputTimestamp(createValues.verifiedAt),
-      }),
-    });
-    const value: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      setFields(fieldErrors(value));
-      setDialogError(errorMessage(value, 'The Government Identifier could not be saved.'));
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          identifierType: createValues.identifierType,
+          value: createValues.value.trim(),
+          verifiedAt: dateInputTimestamp(createValues.verifiedAt),
+        }),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setFields(fieldErrors(value));
+        setDialogError(errorMessage(value, 'The Government Identifier could not be saved.'));
+        setBusy(false);
+        return;
+      }
+      await refresh(false);
       setBusy(false);
-      return;
+      setCreateOpen(false);
+      setCreateValues({ identifierType: 'TIN', value: '', verifiedAt: '' });
+      setMessageTone('ok');
+      setMessage('Government identifier saved.');
+    } catch {
+      setDialogError('The request could not be confirmed. Check the connection and try again.');
+    } finally {
+      setBusy(false);
     }
-    await refresh(false);
-    setBusy(false);
-    setCreateOpen(false);
-    setCreateValues({ identifierType: 'TIN', value: '', verifiedAt: '' });
-    setMessageTone('ok');
-    setMessage('Government identifier saved.');
   }
 
   async function submitReplace(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     if (!replaceTarget) return;
     setBusy(true);
     resetDialogState();
-    const response = await fetch(`${endpoint}/${replaceTarget.id}/replace`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        identifierType: replaceTarget.identifierType,
-        value: replaceValues.value.trim(),
-        verifiedAt: dateInputTimestamp(replaceValues.verifiedAt),
-        reason: replaceValues.reason.trim(),
-      }),
-    });
-    const value: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      setFields(fieldErrors(value));
-      setDialogError(errorMessage(value, 'The Government Identifier could not be replaced.'));
+    try {
+      const response = await fetch(`${endpoint}/${replaceTarget.id}/replace`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          identifierType: replaceTarget.identifierType,
+          value: replaceValues.value.trim(),
+          verifiedAt: dateInputTimestamp(replaceValues.verifiedAt),
+          reason: replaceValues.reason.trim(),
+        }),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setFields(fieldErrors(value));
+        setDialogError(errorMessage(value, 'The Government Identifier could not be replaced.'));
+        setBusy(false);
+        return;
+      }
+      await refresh(false);
       setBusy(false);
-      return;
+      setReplaceTarget(null);
+      setReplaceValues({ value: '', verifiedAt: '', reason: '' });
+      setMessageTone('ok');
+      setMessage(`${formatIdentifierType(replaceTarget.identifierType)} identifier replaced.`);
+    } catch {
+      setDialogError('The request could not be confirmed. Check the connection and try again.');
+    } finally {
+      setBusy(false);
     }
-    await refresh(false);
-    setBusy(false);
-    setReplaceTarget(null);
-    setReplaceValues({ value: '', verifiedAt: '', reason: '' });
-    setMessageTone('ok');
-    setMessage(`${formatIdentifierType(replaceTarget.identifierType)} identifier replaced.`);
   }
 
   async function submitReveal(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     if (!revealTarget) return;
     setBusy(true);
     resetDialogState();
-    const response = await fetch(`${endpoint}/${revealTarget.id}/reveal`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ reason: revealReason.trim() }),
-    });
-    const value: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      setDialogError(errorMessage(value, 'The Government Identifier could not be revealed.'));
+    try {
+      const response = await fetch(`${endpoint}/${revealTarget.id}/reveal`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reason: revealReason.trim() }),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setDialogError(errorMessage(value, 'The Government Identifier could not be revealed.'));
+        setBusy(false);
+        return;
+      }
+      const revealed = parseRevealValue(value);
+      if (!revealed) {
+        setDialogError('The revealed Government Identifier value was missing.');
+        setBusy(false);
+        return;
+      }
+      setRevealedValue(revealed);
       setBusy(false);
-      return;
-    }
-    const revealed = parseRevealValue(value);
-    if (!revealed) {
-      setDialogError('The revealed Government Identifier value was missing.');
+      setMessageTone('ok');
+      setMessage(
+        `${formatIdentifierType(revealTarget.identifierType)} value revealed for this session.`,
+      );
+    } catch {
+      setDialogError('The request could not be confirmed. Check the connection and try again.');
+    } finally {
       setBusy(false);
-      return;
     }
-    setRevealedValue(revealed);
-    setBusy(false);
-    setMessageTone('ok');
-    setMessage(
-      `${formatIdentifierType(revealTarget.identifierType)} value revealed for this session.`,
-    );
   }
 
   async function submitInvalidate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     if (!invalidateTarget) return;
     setBusy(true);
     resetDialogState();
-    const response = await fetch(`${endpoint}/${invalidateTarget.id}/invalidate`, {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ reason: invalidateReason.trim() }),
-    });
-    const value: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      setFields(fieldErrors(value));
-      setDialogError(errorMessage(value, 'The Government Identifier could not be invalidated.'));
+    try {
+      const response = await fetch(`${endpoint}/${invalidateTarget.id}/invalidate`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ reason: invalidateReason.trim() }),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        setFields(fieldErrors(value));
+        setDialogError(errorMessage(value, 'The Government Identifier could not be invalidated.'));
+        setBusy(false);
+        return;
+      }
+      await refresh(false);
       setBusy(false);
-      return;
+      setInvalidateTarget(null);
+      setInvalidateReason('');
+      setMessageTone('ok');
+      setMessage(
+        `${formatIdentifierType(invalidateTarget.identifierType)} identifier invalidated.`,
+      );
+    } catch {
+      setDialogError('The request could not be confirmed. Check the connection and try again.');
+    } finally {
+      setBusy(false);
     }
-    await refresh(false);
-    setBusy(false);
-    setInvalidateTarget(null);
-    setInvalidateReason('');
-    setMessageTone('ok');
-    setMessage(`${formatIdentifierType(invalidateTarget.identifierType)} identifier invalidated.`);
   }
 
   async function loadHistory(identifier: GovernmentIdentifier): Promise<void> {
+    const requestId = ++historyRequest.current;
     setHistoryTarget(identifier);
     setHistoryEntries([]);
     setHistoryError(null);
@@ -474,15 +553,16 @@ export function GovernmentIdentifiersSection({
       const value: unknown = await response.json().catch(() => null);
       if (!response.ok)
         throw new Error(errorMessage(value, 'Government identifier history could not be loaded.'));
-      setHistoryEntries(parseHistory(value));
+      if (requestId === historyRequest.current) setHistoryEntries(parseHistory(value));
     } catch (caught: unknown) {
+      if (requestId !== historyRequest.current) return;
       setHistoryError(
         caught instanceof Error
           ? caught.message
           : 'Government identifier history could not be loaded.',
       );
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequest.current) setHistoryLoading(false);
     }
   }
 
@@ -780,9 +860,11 @@ export function GovernmentIdentifiersSection({
                         variant="secondary"
                         disabled={busy}
                         onClick={(event) => {
+                          historyFocusId.current = identifier.id;
                           rememberOpener(historyOpener, event);
-                          void loadHistory(identifier);
+                          navigation.navigate({ identifierHistory: identifier.id });
                         }}
+                        data-history-opener={identifier.id}
                       >
                         View history
                       </Button>
@@ -1080,12 +1162,15 @@ export function GovernmentIdentifiersSection({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(historyTarget)} onOpenChange={closeHistory}>
+      <Dialog presentation="form" open={Boolean(historyTarget)} onOpenChange={closeHistory}>
         <DialogContent
           aria-describedby="government-identifier-history-description"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            (historyCloseRef.current as { focus(): void } | null)?.focus();
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
-            restoreFocus(historyOpener, sectionRef);
           }}
           size="compact"
         >
@@ -1098,7 +1183,11 @@ export function GovernmentIdentifiersSection({
               </DialogDescription>
             </div>
             <DialogClose asChild>
-              <Button aria-label="Close government identifier history dialog" type="button">
+              <Button
+                ref={historyCloseRef}
+                aria-label="Close government identifier history dialog"
+                type="button"
+              >
                 <span aria-hidden="true" className="text-xl leading-none">
                   ×
                 </span>

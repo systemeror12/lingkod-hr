@@ -1,5 +1,7 @@
 import type { ActiveSession } from './session';
-import { hasPermission } from './session';
+export function hasPermission(session: ActiveSession, permission: string): boolean {
+  return session.permissions.some((grant) => grant.code === permission);
+}
 
 export type DestinationIcon =
   'dashboard' | 'users' | 'organization' | 'authority' | 'qualification' | 'position' | 'audit';
@@ -33,7 +35,9 @@ const destinations: readonly (Destination & {
     href: '/organization',
     label: 'Organization',
     icon: 'organization',
-    permission: 'organization.units.read',
+    visible: (session) =>
+      hasPermission(session, 'organization.units.read') ||
+      hasPermission(session, 'organization.agency.read'),
   },
   {
     href: '/staffing-authorities',
@@ -117,4 +121,22 @@ export function authorizedDestinations(session: ActiveSession): readonly Destina
         (visible === undefined || visible(session)),
     )
     .map(({ href, label, icon }) => ({ href, label, icon }));
+}
+
+export function isDestinationCurrent(pathname: string, destination: string): boolean {
+  return pathname === destination || pathname.startsWith(`${destination}/`);
+}
+
+/** Change record context without discarding the register's filters or effective date. */
+export function recordHref(
+  pathname: string,
+  search: string,
+  values: Record<string, string | null>,
+): string {
+  const next = new URLSearchParams(search);
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null || value === '') next.delete(key);
+    else next.set(key, value);
+  }
+  return `${pathname}${next.size ? `?${next}` : ''}`;
 }

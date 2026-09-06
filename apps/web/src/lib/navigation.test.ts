@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
-import { authorizedDestinations, canManageHrmoInvitations } from './navigation';
+import {
+  authorizedDestinations,
+  canManageHrmoInvitations,
+  isDestinationCurrent,
+  recordHref,
+} from './navigation';
 import type { ActiveSession } from './session';
 
 function session(roleCode: string, permissions: readonly string[]): ActiveSession {
@@ -41,4 +46,37 @@ it('shows My SALN Compliance only for own-record access', () => {
 
   expect(authorizedDestinations(own).some(({ href }) => href === '/my-saln')).toBe(true);
   expect(authorizedDestinations(agency).some(({ href }) => href === '/my-saln')).toBe(false);
+});
+
+it('keeps the authorized destination current on nested record routes only', () => {
+  expect(isDestinationCurrent('/employees/employee-1/pds', '/employees')).toBe(true);
+  expect(isDestinationCurrent('/employees', '/employees')).toBe(true);
+  expect(isDestinationCurrent('/employees-other', '/employees')).toBe(false);
+  expect(isDestinationCurrent('/my-documents', '/employees')).toBe(false);
+});
+
+it('retains register filters and effectivity while opening and leaving record history', () => {
+  const form = recordHref('/plantilla-positions', 'q=Engineer&asOf=2026-09-01', {
+    record: 'position-1',
+    view: 'form',
+    section: 'history',
+  });
+  expect(form).toBe(
+    '/plantilla-positions?q=Engineer&asOf=2026-09-01&record=position-1&view=form&section=history',
+  );
+  expect(
+    recordHref('/plantilla-positions', form.split('?')[1]!, {
+      record: null,
+      view: null,
+      section: null,
+    }),
+  ).toBe('/plantilla-positions?q=Engineer&asOf=2026-09-01');
+});
+
+it('retains Agency Profile navigation for memberships permitted only to read the profile', () => {
+  expect(
+    authorizedDestinations(session('profile_reader', ['organization.agency.read'])).some(
+      ({ href }) => href === '/organization',
+    ),
+  ).toBe(true);
 });

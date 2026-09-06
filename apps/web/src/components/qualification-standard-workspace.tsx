@@ -1,6 +1,9 @@
 'use client';
 
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Field, inputClass, FormError } from './ui/field';
+
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Dialog,
   DialogBody,
@@ -101,9 +104,6 @@ interface FormValues {
 type DialogKind =
   'create' | 'edit' | 'evidence' | 'activate' | 'successor' | 'correction' | 'detail';
 
-const inputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-
 function emptyValues(): FormValues {
   return {
     code: '',
@@ -198,34 +198,6 @@ function payload(values: FormValues, includeIdentity: boolean): Record<string, u
   return result;
 }
 
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className="grid gap-2 text-[13px] font-[620] text-ink" htmlFor={htmlFor}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function FormError({ message }: { message: string }) {
-  return message ? (
-    <p
-      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] leading-[1.5] text-[#9a3030]"
-      role="alert"
-    >
-      {message}
-    </p>
-  ) : null;
-}
-
 function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
 }
@@ -250,8 +222,49 @@ export function QualificationStandardWorkspace({
   canActivate: boolean;
 }) {
   const [standards, setStandards] = useState(initial.standards);
+  const navigation = useRecordNavigation();
+  const recordId = navigation.search.get('record');
+  const dialogRef = useRef<DialogKind | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (!recordId) {
+      if (dialogRef.current === 'detail') {
+        dialogRef.current = null;
+        setDialog(null);
+        setSelected(null);
+        setDetail(null);
+      }
+      return;
+    }
+    setDetail(null);
+    setSelected(null);
+    setError('');
+    dialogRef.current = 'detail';
+    setDialog('detail');
+    setDetailLoading(true);
+    void request('/' + encodeURIComponent(recordId))
+      .then((value) => {
+        if (!active) return;
+        const next = value as QualificationStandardDetail;
+        setDetail(next);
+        setSelected(next.standard);
+      })
+      .catch((error: unknown) => {
+        if (active)
+          setError(error instanceof Error ? error.message : 'This record is unavailable.');
+      })
+      .finally(() => {
+        if (active) setDetailLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [recordId]);
+
   const [dialog, setDialog] = useState<DialogKind | null>(null);
-  const [selected, setSelected] = useState<QualificationStandard | null>(null);
+  const [loadedSelected, setSelected] = useState<QualificationStandard | null>(null);
+  const selected =
+    loadedSelected && (!recordId || loadedSelected.id === recordId) ? loadedSelected : null;
   const [correctionVersion, setCorrectionVersion] = useState<QualificationStandardVersion | null>(
     null,
   );
@@ -259,7 +272,9 @@ export function QualificationStandardWorkspace({
   const [evidenceKind, setEvidenceKind] = useState<EvidenceKind>('SOURCE');
   const [documentId, setDocumentId] = useState('');
   const [reason, setReason] = useState('');
-  const [detail, setDetail] = useState<QualificationStandardDetail | null>(null);
+  const [loadedDetail, setDetail] = useState<QualificationStandardDetail | null>(null);
+  const detail =
+    loadedDetail && (!recordId || loadedDetail.standard.id === recordId) ? loadedDetail : null;
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -308,6 +323,7 @@ export function QualificationStandardWorkspace({
     standard: QualificationStandard | null,
     target: { focus(): void },
   ): void {
+    dialogRef.current = kind;
     returnFocusRef.current = target;
     resetAction();
     setSelected(standard);
@@ -316,7 +332,9 @@ export function QualificationStandardWorkspace({
 
   function closeDialog(force = false): void {
     if (busy && !force) return;
+    dialogRef.current = null;
     const focusTarget = returnFocusRef.current;
+    navigation.navigate({ record: null, view: null });
     setDialog(null);
     setSelected(null);
     setDetail(null);
@@ -331,17 +349,8 @@ export function QualificationStandardWorkspace({
     standard: QualificationStandard,
     target: { focus(): void },
   ): Promise<void> {
-    openDialog('detail', standard, target);
-    setDetailLoading(true);
-    try {
-      setDetail((await request('/' + standard.id)) as QualificationStandardDetail);
-    } catch (requestError: unknown) {
-      setError(
-        requestError instanceof Error ? requestError.message : 'The detail could not be loaded.',
-      );
-    } finally {
-      setDetailLoading(false);
-    }
+    returnFocusRef.current = target;
+    navigation.navigate({ record: standard.id, view: 'form' });
   }
 
   async function submitDraft(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -488,12 +497,106 @@ export function QualificationStandardWorkspace({
     setValues(versionValues(standard, version));
   }
 
+  function recordActions(standard: QualificationStandard) {
+    return (
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          size="default"
+          type="button"
+          variant="secondary"
+          onClick={(event) =>
+            void openDetail(standard, event.currentTarget as unknown as { focus(): void })
+          }
+        >
+          Details
+        </Button>
+        {standard.draft && canUpdate ? (
+          <Button
+            size="default"
+            type="button"
+            variant="secondary"
+            onClick={(event) => {
+              setValues(versionValues(standard, standard.draft as QualificationStandardVersion));
+              openDialog('edit', standard, event.currentTarget as unknown as { focus(): void });
+            }}
+          >
+            Edit Draft
+          </Button>
+        ) : null}
+        {standard.draft && canValidateEvidence ? (
+          <Button
+            size="default"
+            type="button"
+            variant="secondary"
+            onClick={(event) =>
+              openDialog('evidence', standard, event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Validate Evidence
+          </Button>
+        ) : null}
+        {standard.draft && canActivate ? (
+          <Button
+            className="min-h-9 px-3 text-xs"
+            size="default"
+            type="button"
+            variant="primary"
+            onClick={(event) =>
+              openDialog('activate', standard, event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Activate
+          </Button>
+        ) : null}
+        {standard.currentVersion && !standard.draft && canUpdate ? (
+          <Button
+            size="default"
+            type="button"
+            variant="secondary"
+            onClick={(event) =>
+              openDialog('successor', standard, event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Create Successor
+          </Button>
+        ) : null}
+        {standard.currentVersion && canUpdate ? (
+          <Button
+            className="border border-[#d9a5a5] bg-paper px-3 py-2 text-xs font-[650] text-[#9a3030] hover:bg-[#fff4f4]"
+            size="default"
+            type="button"
+            onClick={(event) =>
+              openCorrection(
+                standard,
+                standard.currentVersion as QualificationStandardVersion,
+                event.currentTarget as unknown as { focus(): void },
+              )
+            }
+          >
+            Correct Version
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
   const selectedTitle = selected?.code || 'Qualification Standard';
   const dialogDescriptionId = 'qualification-standard-dialog-description';
 
   return (
-    <Dialog open={dialog !== null} onOpenChange={(open) => !open && closeDialog()}>
-      <div className="grid min-w-0 gap-7">
+    <Dialog
+      presentation={
+        dialog === 'detail' || dialog === 'create' || dialog === 'edit' || dialog === 'correction'
+          ? 'form'
+          : 'dialog'
+      }
+      open={dialog !== null}
+      onOpenChange={(open) => !open && closeDialog()}
+    >
+      <div
+        hidden={dialog === 'detail' || dialog === 'create' || dialog === 'edit'}
+        className="min-w-0 space-y-5"
+      >
         <header className="flex flex-wrap items-end justify-between gap-5">
           <div className="grid max-w-[760px] gap-2">
             <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
@@ -518,6 +621,7 @@ export function QualificationStandardWorkspace({
                   resetAction();
                   setValues(emptyValues());
                   returnFocusRef.current = event.currentTarget as unknown as { focus(): void };
+                  dialogRef.current = 'create';
                   setDialog('create');
                 }}
               >
@@ -635,110 +739,7 @@ export function QualificationStandardWorkspace({
                           {standard.status}
                         </span>
                       </td>
-                      <td className="px-5 py-4 align-top">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button
-                            size="default"
-                            type="button"
-                            variant="secondary"
-                            onClick={(event) =>
-                              void openDetail(
-                                standard,
-                                event.currentTarget as unknown as { focus(): void },
-                              )
-                            }
-                          >
-                            Details
-                          </Button>
-                          {standard.draft && canUpdate ? (
-                            <Button
-                              size="default"
-                              type="button"
-                              variant="secondary"
-                              onClick={(event) => {
-                                setValues(
-                                  versionValues(
-                                    standard,
-                                    standard.draft as QualificationStandardVersion,
-                                  ),
-                                );
-                                openDialog(
-                                  'edit',
-                                  standard,
-                                  event.currentTarget as unknown as { focus(): void },
-                                );
-                              }}
-                            >
-                              Edit Draft
-                            </Button>
-                          ) : null}
-                          {standard.draft && canValidateEvidence ? (
-                            <Button
-                              size="default"
-                              type="button"
-                              variant="secondary"
-                              onClick={(event) =>
-                                openDialog(
-                                  'evidence',
-                                  standard,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Validate Evidence
-                            </Button>
-                          ) : null}
-                          {standard.draft && canActivate ? (
-                            <Button
-                              className="min-h-9 px-3 text-xs"
-                              size="default"
-                              type="button"
-                              variant="primary"
-                              onClick={(event) =>
-                                openDialog(
-                                  'activate',
-                                  standard,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Activate
-                            </Button>
-                          ) : null}
-                          {standard.currentVersion && !standard.draft && canUpdate ? (
-                            <Button
-                              size="default"
-                              type="button"
-                              variant="secondary"
-                              onClick={(event) =>
-                                openDialog(
-                                  'successor',
-                                  standard,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Create Successor
-                            </Button>
-                          ) : null}
-                          {standard.currentVersion && canUpdate ? (
-                            <Button
-                              className="border border-[#d9a5a5] bg-paper px-3 py-2 text-xs font-[650] text-[#9a3030] hover:bg-[#fff4f4]"
-                              size="default"
-                              type="button"
-                              onClick={(event) =>
-                                openCorrection(
-                                  standard,
-                                  standard.currentVersion as QualificationStandardVersion,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Correct Version
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
+                      <td className="px-5 py-4 align-top">{recordActions(standard)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -748,6 +749,13 @@ export function QualificationStandardWorkspace({
         </section>
       </div>
 
+      {dialog === 'detail' ? (
+        <div className="mb-4">
+          <RecordReturn href={navigation.href({ record: null, view: null })}>
+            ← Qualification Standards
+          </RecordReturn>
+        </div>
+      ) : null}
       <DialogContent
         aria-describedby={dialogDescriptionId}
         className={dialog === 'create' || dialog === 'edit' ? 'max-w-[980px]' : undefined}
@@ -801,7 +809,10 @@ export function QualificationStandardWorkspace({
         </DialogHeader>
 
         {dialog === 'detail' ? (
-          <DetailBody detail={detail} detailLoading={detailLoading} error={error} />
+          <>
+            {selected ? <div className="p-4">{recordActions(selected)}</div> : null}
+            <DetailBody detail={detail} detailLoading={detailLoading} error={error} />
+          </>
         ) : dialog === 'evidence' ? (
           <EvidenceForm
             busy={busy}
@@ -901,6 +912,7 @@ export function QualificationStandardWorkspace({
                     >
                       <input
                         autoFocus
+                        data-autofocus=""
                         className={inputClass}
                         id="qualification-standard-code"
                         maxLength={80}

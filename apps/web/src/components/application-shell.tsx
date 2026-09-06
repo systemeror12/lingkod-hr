@@ -1,10 +1,10 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import type { Destination, DestinationIcon } from '../lib/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { isDestinationCurrent, type Destination, type DestinationIcon } from '../lib/navigation';
 import type { ActiveSession } from '../lib/session';
 import { cn } from '../lib/class-names';
 import { Button } from './ui/button';
@@ -98,6 +98,17 @@ export function ApplicationShell({
   children: ReactNode;
 }) {
   const pathname = usePathname();
+  const search = useSearchParams().toString();
+  const mainRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const browser = globalThis as unknown as {
+      document: { activeElement: { isConnected: boolean } | null; body: unknown };
+    };
+    const active = browser.document.activeElement;
+    if (!active || !active.isConnected || active === browser.document.body) {
+      (mainRef.current as unknown as { focus(): void } | null)?.focus();
+    }
+  }, [pathname, search]);
   const [collapsed, setCollapsed] = useState(false);
   const roleNames =
     session.effectiveRoles.map(({ name }) => name).join(', ') || 'No effective role';
@@ -163,7 +174,7 @@ export function ApplicationShell({
           aria-label="Primary"
         >
           {destinations.map((destination) => {
-            const current = pathname === destination.href;
+            const current = isDestinationCurrent(pathname, destination.href);
             return (
               <Link
                 key={destination.href}
@@ -233,7 +244,11 @@ export function ApplicationShell({
           <span className="h-4 w-px bg-line" aria-hidden="true" />
           <span>{roleNames}</span>
         </header>
-        <main className="mx-auto w-full max-w-[1120px] px-[18px] pt-7 pb-12 min-[621px]:px-6 min-[621px]:pt-[34px] min-[621px]:pb-14 min-[980px]:px-10 min-[980px]:pt-[42px] min-[980px]:pb-16">
+        <main
+          ref={mainRef}
+          tabIndex={-1}
+          className="workspace w-full min-w-0 px-4 py-6 min-[621px]:px-6 min-[980px]:px-8"
+        >
           {children}
         </main>
       </section>

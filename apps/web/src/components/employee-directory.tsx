@@ -1,6 +1,4 @@
-export const employeeInputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-export const employeeLabelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
+export { inputClass as employeeInputClass, labelClass as employeeLabelClass } from './ui/field';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

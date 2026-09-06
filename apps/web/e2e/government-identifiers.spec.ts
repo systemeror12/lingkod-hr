@@ -272,7 +272,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   await expect(page.getByRole('button', { name: 'Reveal value' }).first()).toBeFocused();
 
   await page.getByRole('button', { name: 'View history' }).first().click();
-  const historyDialog = page.getByRole('dialog', { name: 'Government identifier history' });
+  const historyDialog = page.getByRole('region', { name: 'Government identifier history' });
   await expect(historyDialog).toBeVisible();
   await expect(historyDialog).toHaveAccessibleDescription(
     'Inspect retained events for the selected protected identifier without exposing its full value.',
