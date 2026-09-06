@@ -251,10 +251,9 @@ export function RecruitmentCasePrototype() {
 
   function loadScenario(value: Scenario) {
     setScenario(value);
-    setStage(scenarios[value].stage === 2 ? 0 : scenarios[value].stage);
+    if (!inspectApplicant) setStage(scenarios[value].stage === 2 ? 0 : scenarios[value].stage);
     setDocument(null);
     setHandoff(false);
-    setInspectApplicant(false);
   }
 
   function changeView(view: string) {
@@ -475,6 +474,18 @@ export function RecruitmentCasePrototype() {
           {evidence(1)}
         </section>
       );
+    if (index === 3 && !inspectApplicant)
+      return (
+        <section className={styles.panel}>
+          <h2>HRMPSB deliberation</h2>
+          <p>
+            Open an Application from Tree or Kanban to review that applicant's deliberation record.
+          </p>
+          <Button variant="secondary" size="default" onClick={() => changeView('A')}>
+            Browse Applications
+          </Button>
+        </section>
+      );
     if (index === 3)
       return (
         <section className={styles.panel}>
@@ -483,21 +494,9 @@ export function RecruitmentCasePrototype() {
             Session BS-026-04 ·{' '}
             {snapshot.stage >= 3 ? '05 Sep 2026 · roster snapshot v1' : 'Not started'}
           </p>
-          <label className={styles.field}>
-            Deliberation for
-            <select
-              value={applicantId}
-              onChange={(event) =>
-                setApplicantId((event.currentTarget as unknown as { value: string }).value)
-              }
-            >
-              {applicants.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <p>
+            Deliberation for <strong>{applicant.name}</strong> · {applicant.id}
+          </p>
           <div className={styles.notice}>
             <strong>
               {snapshot.stage < 3
@@ -516,7 +515,7 @@ export function RecruitmentCasePrototype() {
           </div>
           <div className={styles.scroll}>
             <table>
-              <caption>Mock Board Appointments and actual participation</caption>
+              <caption>Board participation for {applicant.name} · mock snapshot</caption>
               <thead>
                 <tr>
                   <th>Member / seat</th>
@@ -531,8 +530,22 @@ export function RecruitmentCasePrototype() {
                       {name}
                       <small>{seat}</small>
                     </td>
-                    <td>{snapshot.stage >= 3 ? attendance : 'Not recorded'}</td>
-                    <td>{snapshot.stage >= 3 ? conflict : 'Not recorded'}</td>
+                    <td>
+                      {snapshot.stage < 3 || applicant.screening === 'Not qualified'
+                        ? 'Not recorded for this Application'
+                        : name === 'Rosa Diaz' && applicantId === 'APP-003'
+                          ? 'Recused · excluded from quorum'
+                          : attendance}
+                    </td>
+                    <td>
+                      {snapshot.stage < 3 || applicant.screening === 'Not qualified'
+                        ? 'Not recorded'
+                        : name === 'Rosa Diaz'
+                          ? applicantId === 'APP-003'
+                            ? 'Conflict declared for this applicant'
+                            : 'None declared for this applicant'
+                          : conflict}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -544,11 +557,13 @@ export function RecruitmentCasePrototype() {
           </p>
           <h3>Board Recommendation</h3>
           <p>
-            {boardOutput
-              ? 'BR-026-01 · Ana Reyes recommended. CCER-026-01 v1 retains the comparative evaluation of five qualified applicants.'
-              : 'Not recorded. A completed recommendation will remain separate from the Selection Decision.'}
+            {evaluated && applicant.screening === 'Not qualified'
+              ? 'Not applicable. This Application did not qualify for deliberation.'
+              : boardOutput && applicantId === 'APP-001'
+                ? 'BR-026-01 · Recommended for this Application. Advisory only; the Selection Decision is separate.'
+                : 'No individual recommendation recorded for this Application in this mock snapshot.'}
           </p>
-          {boardOutput && evidence(3)}
+          {boardOutput && applicantId === 'APP-001' && evidence(3)}
         </section>
       );
     return (
@@ -931,7 +946,15 @@ export function RecruitmentCasePrototype() {
                   <input readOnly value="RTF-026-014" />
                 </label>
               </div>
-              <div className={styles.formBody}>{candidateDetail}</div>
+              <nav className={styles.formTabs} aria-label="Application form sections">
+                <button aria-pressed={stage !== 3} onClick={() => setStage(2)}>
+                  Application details
+                </button>
+                <button aria-pressed={stage === 3} onClick={() => setStage(3)}>
+                  HRMPSB deliberation
+                </button>
+              </nav>
+              <div className={styles.formBody}>{stage === 3 ? panel(3) : candidateDetail}</div>
             </>
           ) : (
             <>
