@@ -1,5 +1,7 @@
 'use client';
 
+import { useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from './ui/button';
 import {
@@ -217,6 +219,29 @@ export function PayrollBankAccountsSection({
     void refresh();
   }, [endpoint, canRead]);
 
+  const navigation = useRecordNavigation();
+  const historyId = navigation.search.get('bankHistory');
+  const historyRequest = useRef(0);
+  useEffect(() => {
+    if (!historyId) {
+      setBusy(false);
+      setAction(null);
+      setRevealed(null);
+      return;
+    }
+    if (loading) return;
+    const target = accounts.find((item) => item.id === historyId);
+    if (!canReadHistory || !target) {
+      setError('This bank account history is unavailable in your permitted scope.');
+      return;
+    }
+    setAction({ kind: 'history', target });
+    void loadHistory(target);
+    return () => {
+      historyRequest.current += 1;
+    };
+  }, [historyId, loading, canReadHistory]);
+
   const evidenceDialogOpen =
     createOpen || ['activate', 'replace', 'correct'].includes(action?.kind ?? '');
   useEffect(() => {
@@ -258,6 +283,7 @@ export function PayrollBankAccountsSection({
 
   function closeAction(open: boolean): void {
     if (open || busy) return;
+    navigation.navigate({ bankHistory: null });
     setAction(null);
     setValues(emptyValues);
     setDialogError(null);
@@ -282,11 +308,12 @@ export function PayrollBankAccountsSection({
     setRevealed(null);
     setHistory([]);
     setAction({ kind, target });
-    if (kind === 'history') void loadHistory(target);
+    if (kind === 'history') navigation.navigate({ bankHistory: target.id });
   }
 
   async function submitCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setDialogError(null);
     try {
@@ -320,7 +347,7 @@ export function PayrollBankAccountsSection({
 
   async function submitAction(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    if (!action || action.kind === 'history') return;
+    if (busy || !action || action.kind === 'history') return;
     setBusy(true);
     setDialogError(null);
     const bodies = {
@@ -388,6 +415,8 @@ export function PayrollBankAccountsSection({
   }
 
   async function loadHistory(target: PayrollBankAccount): Promise<void> {
+    const requestId = ++historyRequest.current;
+    setHistory([]);
     setBusy(true);
     try {
       const response = await fetch(
@@ -399,15 +428,16 @@ export function PayrollBankAccountsSection({
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok)
         throw new Error(errorMessage(body, 'Payroll bank account history could not be loaded.'));
-      setHistory(parseHistory(body));
+      if (requestId === historyRequest.current) setHistory(parseHistory(body));
     } catch (caught: unknown) {
+      if (requestId !== historyRequest.current) return;
       setDialogError(
         caught instanceof Error
           ? caught.message
           : 'Payroll bank account history could not be loaded.',
       );
     } finally {
-      setBusy(false);
+      if (requestId === historyRequest.current) setBusy(false);
     }
   }
 
@@ -603,7 +633,11 @@ export function PayrollBankAccountsSection({
         )}
       </section>
 
-      <Dialog open={Boolean(action)} onOpenChange={closeAction}>
+      <Dialog
+        presentation={action?.kind === 'history' ? 'form' : 'dialog'}
+        open={Boolean(action)}
+        onOpenChange={closeAction}
+      >
         <DialogContent
           aria-describedby="payroll-bank-account-action-description"
           onCloseAutoFocus={(event) => {

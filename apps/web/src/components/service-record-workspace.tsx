@@ -1,5 +1,7 @@
 'use client';
 
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { manilaToday } from '../lib/manila-date';
 import { Button } from './ui/button';
@@ -117,9 +119,38 @@ export function ServiceRecordWorkspace({
   initial: ServiceRecordListResponse;
 }) {
   const [records, setRecords] = useState(initial.records);
+  const navigation = useRecordNavigation();
+  const recordId = navigation.search.get('record');
+  const historyView = navigation.search.get('section') === 'history';
+  useEffect(() => {
+    let active = true;
+    setSelected(null);
+    setError('');
+    setDialog(null);
+    if (!recordId) return;
+    void api<ServiceRecord>(
+      `/api/v1/agencies/${agencyId}/service-records/${encodeURIComponent(recordId)}`,
+    )
+      .then((record) => {
+        if (!active) return;
+        setSelected(record);
+        setRecords((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+        setDialog(historyView ? 'history' : 'preview');
+      })
+      .catch((cause: unknown) => {
+        if (active)
+          setError(cause instanceof Error ? cause.message : 'This Service Record is unavailable.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [recordId, historyView]);
+
   const [nextCursor, setNextCursor] = useState(initial.nextCursor);
   const [dialog, setDialog] = useState<DialogKind>(null);
-  const [selected, setSelected] = useState<ServiceRecord | null>(null);
+  const [loadedSelected, setSelected] = useState<ServiceRecord | null>(null);
+  const selected =
+    loadedSelected && (!recordId || loadedSelected.id === recordId) ? loadedSelected : null;
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [documents, setDocuments] = useState<DocumentOption[]>([]);
   const [employeeId, setEmployeeId] = useState('');
@@ -162,6 +193,14 @@ export function ServiceRecordWorkspace({
   }, [agencyId, dialog, documents.length]);
 
   function open(kind: Exclude<DialogKind, null>, record: ServiceRecord | null = null) {
+    if (record && (kind === 'preview' || kind === 'history')) {
+      navigation.navigate({
+        record: record.id,
+        view: 'form',
+        section: kind === 'history' ? 'history' : null,
+      });
+      return;
+    }
     setSelected(record);
     setDialog(kind);
     setError('');
@@ -182,6 +221,7 @@ export function ServiceRecordWorkspace({
 
   async function generate(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
@@ -192,6 +232,7 @@ export function ServiceRecordWorkspace({
       setRecords((current) => [record, ...current]);
       setSelected(record);
       setDialog('preview');
+      navigation.navigate({ record: record.id, view: 'form', section: null });
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : 'Generation failed.');
     } finally {
@@ -201,7 +242,7 @@ export function ServiceRecordWorkspace({
 
   async function replace(event: FormEvent) {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -223,6 +264,7 @@ export function ServiceRecordWorkspace({
         ),
       ]);
       setSelected(replacement);
+      navigation.navigate({ record: replacement.id, view: 'form', section: null });
       setDialog('preview');
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : 'Replacement failed.');
@@ -232,14 +274,17 @@ export function ServiceRecordWorkspace({
   }
 
   async function loadMore() {
-    if (!nextCursor) return;
+    if (!nextCursor || busy) return;
     setBusy(true);
     setListError('');
     try {
       const page = await api<ServiceRecordListResponse>(
         `/api/v1/agencies/${agencyId}/service-records?cursor=${encodeURIComponent(nextCursor)}`,
       );
-      setRecords((current) => [...current, ...page.records]);
+      setRecords((current) => [
+        ...current,
+        ...page.records.filter((record) => !current.some((item) => item.id === record.id)),
+      ]);
       setNextCursor(page.nextCursor);
     } catch (cause: unknown) {
       setListError(cause instanceof Error ? cause.message : 'Loading failed.');
@@ -249,141 +294,160 @@ export function ServiceRecordWorkspace({
   }
 
   const employeeHistory = selected
-    ? records.filter(({ employee }) => employee.id === selected.employee.id)
+    ? records
+        .filter(({ employee }) => employee.id === selected.employee.id)
+        .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt) || b.id.localeCompare(a.id))
     : [];
 
   return (
     <>
-      <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-        <div>
-          <p className="m-0 mb-2 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase">
-            Personnel records
-          </p>
-          <h1 className="m-0 text-[30px] font-[720] tracking-[-.035em] text-midnight">
-            Service records
-          </h1>
-          <p className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted">
-            Reproduce effective-dated service history as immutable Printable System Views.
-          </p>
-        </div>
-        {canGenerate ? (
-          <Button
-            size="default"
-            type="button"
-            variant="primary"
-            onClick={(event) => {
-              rememberTrigger(event);
-              open('generate');
-            }}
-          >
-            Generate record
-          </Button>
-        ) : null}
-      </header>
+      {recordId ? (
+        <RecordReturn href={navigation.href({ record: null, view: null, section: null })}>
+          ← Service Records
+        </RecordReturn>
+      ) : null}
+      {recordId && !selected ? <p role="status">{error || 'Loading Service Record…'}</p> : null}
+      <div hidden={Boolean(recordId)} className="space-y-5">
+        <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
+          <div>
+            <p className="m-0 mb-2 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase">
+              Personnel records
+            </p>
+            <h1 className="m-0 text-[30px] font-[720] tracking-[-.035em] text-midnight">
+              Service records
+            </h1>
+            <p className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted">
+              Reproduce effective-dated service history as immutable Printable System Views.
+            </p>
+          </div>
+          {canGenerate ? (
+            <Button
+              size="default"
+              type="button"
+              variant="primary"
+              onClick={(event) => {
+                rememberTrigger(event);
+                open('generate');
+              }}
+            >
+              Generate record
+            </Button>
+          ) : null}
+        </header>
 
-      <section className="mb-5 grid gap-4 border-l-[3px] border-cobalt bg-[#edf3fb] px-5 py-4 min-[700px]:grid-cols-[1fr_auto] min-[700px]:items-center">
-        <p className="m-0 text-sm leading-6 text-ink">
-          Generated records are retained snapshots. Later source corrections do not rewrite them.
-        </p>
-        <strong className="font-mono text-2xl text-midnight">{records.length}</strong>
-      </section>
-
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        {records.length === 0 ? (
-          <p className="m-0 px-5 py-8 text-sm text-muted">
-            No Service Records are available in your permitted record scope.
+        <section className="mb-5 grid gap-4 border-l-[3px] border-cobalt bg-[#edf3fb] px-5 py-4 min-[700px]:grid-cols-[1fr_auto] min-[700px]:items-center">
+          <p className="m-0 text-sm leading-6 text-ink">
+            Generated records are retained snapshots. Later source corrections do not rewrite them.
           </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] border-collapse text-left">
-              <thead>
-                <tr className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
-                  <th className="px-5 py-3 font-bold">Employee</th>
-                  <th className="px-5 py-3 font-bold">As of</th>
-                  <th className="px-5 py-3 font-bold">Generated</th>
-                  <th className="px-5 py-3 font-bold">Record chain</th>
-                  <th className="px-5 py-3 font-bold">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.map((record) => (
-                  <tr key={record.id} className="border-b border-line last:border-0">
-                    <td className="px-5 py-4">
-                      <strong className="block text-sm font-[650] text-ink">
-                        {record.employee.legalName}
-                      </strong>
-                      <span className="font-mono text-xs text-muted">
-                        {record.employee.employeeNumber}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 font-mono text-xs text-ink">{record.asOfDate}</td>
-                    <td className="px-5 py-4 text-xs text-muted">
-                      {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
-                    </td>
-                    <td className="px-5 py-4 text-xs text-muted">
-                      {record.supersedesSnapshotId
-                        ? 'Replacement'
-                        : record.replacementSnapshotId
-                          ? 'Superseded'
-                          : 'Original'}
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="default"
-                          variant="secondary"
-                          onClick={(event) => {
-                            rememberTrigger(event);
-                            open('preview', record);
-                          }}
-                        >
-                          Preview
-                        </Button>
-                        <Button
-                          size="default"
-                          variant="secondary"
-                          onClick={(event) => {
-                            rememberTrigger(event);
-                            open('history', record);
-                          }}
-                        >
-                          History
-                        </Button>
-                        {canReplace && !record.replacementSnapshotId ? (
+          <strong className="font-mono text-2xl text-midnight">{records.length}</strong>
+        </section>
+
+        <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
+          {records.length === 0 ? (
+            <p className="m-0 px-5 py-8 text-sm text-muted">
+              No Service Records are available in your permitted record scope.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
+                    <th className="px-5 py-3 font-bold">Employee</th>
+                    <th className="px-5 py-3 font-bold">As of</th>
+                    <th className="px-5 py-3 font-bold">Generated</th>
+                    <th className="px-5 py-3 font-bold">Record chain</th>
+                    <th className="px-5 py-3 font-bold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((record) => (
+                    <tr key={record.id} className="border-b border-line last:border-0">
+                      <td className="px-5 py-4">
+                        <strong className="block text-sm font-[650] text-ink">
+                          {record.employee.legalName}
+                        </strong>
+                        <span className="font-mono text-xs text-muted">
+                          {record.employee.employeeNumber}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 font-mono text-xs text-ink">{record.asOfDate}</td>
+                      <td className="px-5 py-4 text-xs text-muted">
+                        {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
+                      </td>
+                      <td className="px-5 py-4 text-xs text-muted">
+                        {record.supersedesSnapshotId
+                          ? 'Replacement'
+                          : record.replacementSnapshotId
+                            ? 'Superseded'
+                            : 'Original'}
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="flex flex-wrap gap-2">
                           <Button
                             size="default"
                             variant="secondary"
                             onClick={(event) => {
                               rememberTrigger(event);
-                              open('replace', record);
+                              open('preview', record);
                             }}
                           >
-                            Replace
+                            Preview
                           </Button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          <Button
+                            size="default"
+                            variant="secondary"
+                            onClick={(event) => {
+                              rememberTrigger(event);
+                              open('history', record);
+                            }}
+                          >
+                            History
+                          </Button>
+                          {canReplace && !record.replacementSnapshotId ? (
+                            <Button
+                              size="default"
+                              variant="secondary"
+                              onClick={(event) => {
+                                rememberTrigger(event);
+                                open('replace', record);
+                              }}
+                            >
+                              Replace
+                            </Button>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+        {listError ? (
+          <p className="mt-4 text-center text-sm text-[#a73333]" role="alert">
+            {listError}
+          </p>
+        ) : null}
+        {nextCursor ? (
+          <div className="mt-4 flex justify-center">
+            <Button disabled={busy} size="default" variant="secondary" onClick={loadMore}>
+              {busy ? 'Loading…' : 'Load more'}
+            </Button>
           </div>
-        )}
-      </section>
-      {listError ? (
-        <p className="mt-4 text-center text-sm text-[#a73333]" role="alert">
-          {listError}
-        </p>
-      ) : null}
-      {nextCursor ? (
-        <div className="mt-4 flex justify-center">
-          <Button disabled={busy} size="default" variant="secondary" onClick={loadMore}>
-            {busy ? 'Loading…' : 'Load more'}
-          </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
-      <Dialog open={dialog !== null} onOpenChange={(value) => !value && !busy && setDialog(null)}>
+      <Dialog
+        presentation={dialog === 'preview' || dialog === 'history' ? 'form' : 'dialog'}
+        open={dialog !== null}
+        onOpenChange={(value) => {
+          if (!value && !busy) {
+            setDialog(null);
+            navigation.navigate({ record: null, view: null, section: null });
+          }
+        }}
+      >
         {dialog === 'generate' ? (
           <DialogContent
             aria-describedby="service-record-generate-description"
@@ -649,7 +713,10 @@ export function ServiceRecordWorkspace({
               <div>
                 <DialogTitle>Service Record history</DialogTitle>
                 <DialogDescription id="service-record-history-description">
-                  Loaded issued snapshots for {selected.employee.legalName} in your permitted scope.
+                  Loaded issued snapshots for {selected.employee.legalName} in your permitted scope.{' '}
+                  {nextCursor
+                    ? 'More snapshots may be available; load more history to continue.'
+                    : 'All permitted snapshots have been loaded.'}
                 </DialogDescription>
               </div>
               <DialogClose asChild>
@@ -682,6 +749,18 @@ export function ServiceRecordWorkspace({
               </ol>
             </DialogBody>
             <DialogFooter>
+              {nextCursor ? (
+                <Button
+                  disabled={busy}
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void loadMore()}
+                >
+                  {busy ? 'Loading…' : 'Load more history'}
+                </Button>
+              ) : null}
+              {listError ? <p role="alert">{listError}</p> : null}
+
               <DialogClose asChild>
                 <Button size="default" variant="secondary">
                   Close

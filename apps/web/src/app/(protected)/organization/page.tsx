@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { getConfig } from '@lingkod-hr/config';
 import { cookies } from 'next/headers';
 import {
@@ -67,7 +68,7 @@ export const dynamic = 'force-dynamic';
 export default async function OrganizationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ asOf?: string | string[] }>;
+  searchParams: Promise<{ asOf?: string | string[]; workspace?: string }>;
 }) {
   const session = await getActiveSession();
   const canReadProfile = hasPermission(session, 'organization.agency.read');
@@ -82,6 +83,7 @@ export default async function OrganizationPage({
     );
   }
 
+  const showProfile = (await searchParams).workspace === 'agency' || !canReadUnits;
   const config = getConfig();
   const cookieStore = await cookies();
   const requestOptions = {
@@ -166,17 +168,36 @@ export default async function OrganizationPage({
   }
 
   return (
-    <div className="grid min-w-0 gap-12">
-      {profile ? (
+    <div className="grid min-w-0 gap-5">
+      <nav
+        aria-label="Organization workspace"
+        className="flex gap-4 border-b border-line pb-3 text-sm text-cobalt"
+      >
+        {canReadUnits ? (
+          <Link href="/organization" aria-current={!showProfile ? 'page' : undefined}>
+            Organization Units
+          </Link>
+        ) : null}
+        {canReadProfile ? (
+          <Link
+            href="/organization?workspace=agency"
+            aria-current={showProfile ? 'page' : undefined}
+          >
+            Agency Profile
+          </Link>
+        ) : null}
+      </nav>
+      {profile && showProfile ? (
         <AgencyProfileWorkspace
           agencyId={session.agencyId}
           canUpdate={hasPermission(session, 'organization.agency.update')}
           initial={profile}
         />
       ) : null}
-      {initial && initialHierarchy ? (
-        <section className="grid min-w-0 gap-7 border-t border-line pt-10">
+      {initial && initialHierarchy && !showProfile ? (
+        <section className="grid min-w-0 gap-5">
           <OrganizationWorkspace
+            key={initialHierarchy.asOf}
             agencyId={session.agencyId}
             canAbolish={hasPermission(session, 'organization.units.abolish')}
             canActivate={hasPermission(session, 'organization.units.activate')}

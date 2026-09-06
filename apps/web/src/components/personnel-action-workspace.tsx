@@ -1,5 +1,9 @@
 'use client';
 
+import { Field, inputClass } from './ui/field';
+
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { manilaToday } from '../lib/manila-date';
 import { Button } from './ui/button';
@@ -301,27 +305,6 @@ const CONTRACTS: Record<ActionType, Contract> = {
   },
 };
 
-const inputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-const labelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
-
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className={labelClass} htmlFor={htmlFor}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
 function dateLabel(value: string): string {
   const date = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
   return Number.isNaN(date.getTime())
@@ -400,6 +383,51 @@ export function PersonnelActionWorkspace({
   const [actions, setActions] = useState(initial.actions);
   const [nextCursor, setNextCursor] = useState(initial.nextCursor);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const navigation = useRecordNavigation();
+  const recordId = navigation.search.get('record');
+  const historyView = navigation.search.get('section') === 'history';
+
+  useEffect(() => {
+    let active = true;
+    setSelectedId(null);
+    setAuthority({ canApprove: false, canReject: false, canCancelApproved: false });
+    setError('');
+    if (!recordId) {
+      setDialog(null);
+      return;
+    }
+    setDialog(null);
+    void (async () => {
+      const next = (await request(
+        agencyId,
+        `/personnel-actions/${encodeURIComponent(recordId)}`,
+      )) as PersonnelAction;
+      if (!active) return;
+      setActions((current) => [next, ...current.filter((item) => item.id !== next.id)]);
+      setSelectedId(next.id);
+      if (historyView) {
+        if (!canAudit) throw new Error('History is outside your permitted scope.');
+        const historyValue = (await request(
+          agencyId,
+          `/personnel-actions/${encodeURIComponent(recordId)}/history`,
+        )) as { entries: typeof history };
+        if (!active) return;
+        setHistory(historyValue.entries);
+        setDialog('history');
+      } else setDialog('detail');
+      const decision = (await request(
+        agencyId,
+        `/personnel-actions/${recordId}/authority`,
+      )) as typeof authority;
+      if (active) setAuthority(decision);
+    })().catch((cause: unknown) => {
+      if (active) setError(errorMessage(cause, 'This record is unavailable.'));
+    });
+    return () => {
+      active = false;
+    };
+  }, [recordId, historyView, canAudit]);
+
   const [dialog, setDialog] = useState<'prepare' | 'detail' | 'transition' | 'history' | null>(
     null,
   );
@@ -442,7 +470,8 @@ export function PersonnelActionWorkspace({
   const [success, setSuccess] = useState('');
   const returnFocusRef = useRef<(() => void) | null>(null);
   const employeeRef = useRef<{ focus(): void } | null>(null);
-  const selected = actions.find(({ id }) => id === selectedId) ?? null;
+  const selected =
+    actions.find(({ id }) => id === selectedId && (!recordId || id === recordId)) ?? null;
 
   useEffect(() => {
     if (!canPrepare && !canCorrect) return;
@@ -480,6 +509,7 @@ export function PersonnelActionWorkspace({
         : [next, ...current];
     });
     setSelectedId(next.id);
+    navigation.navigate({ record: next.id, view: 'form', section: null });
   }
 
   function openPrepare(nextMode: typeof mode, action?: PersonnelAction, restoreFocus?: () => void) {
@@ -503,18 +533,8 @@ export function PersonnelActionWorkspace({
     setDialog('transition');
   }
 
-  async function openDetail(action: PersonnelAction): Promise<void> {
-    setSelectedId(action.id);
-    setAuthority({ canApprove: false, canReject: false, canCancelApproved: false });
-    setError('');
-    setDialog('detail');
-    try {
-      setAuthority(
-        (await request(agencyId, `/personnel-actions/${action.id}/authority`)) as typeof authority,
-      );
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, 'Decision authority could not be checked.'));
-    }
+  function openDetail(record: PersonnelAction): void {
+    navigation.navigate({ record: record.id, view: 'form', section: null });
   }
 
   function targetPayload(): Record<string, unknown> {
@@ -546,6 +566,7 @@ export function PersonnelActionWorkspace({
 
   async function save(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
@@ -582,7 +603,7 @@ export function PersonnelActionWorkspace({
   }
 
   async function run(path: string, body: unknown, message: string): Promise<void> {
-    if (!selected) return;
+    if (!selected || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -634,20 +655,7 @@ export function PersonnelActionWorkspace({
   }
 
   async function openHistory(): Promise<void> {
-    if (!selected) return;
-    setBusy(true);
-    setError('');
-    try {
-      const value = (await request(agencyId, `/personnel-actions/${selected.id}/history`)) as {
-        entries: typeof history;
-      };
-      setHistory(value.entries);
-      setDialog('history');
-    } catch (cause: unknown) {
-      setError(errorMessage(cause, 'Personnel Action history could not be loaded.'));
-    } finally {
-      setBusy(false);
-    }
+    if (selected) navigation.navigate({ record: selected.id, view: 'form', section: 'history' });
   }
 
   async function loadMore(): Promise<void> {
@@ -684,153 +692,171 @@ export function PersonnelActionWorkspace({
 
   return (
     <div className="grid min-w-0 gap-7">
-      <header className="flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-        <div>
-          <p className="mb-2 text-[10px] font-bold tracking-[.12em] text-cobalt uppercase">
-            Personnel records / Phase 5
-          </p>
-          <h1 className="m-0 text-[30px] font-[700] tracking-[-.035em] text-midnight">
-            Personnel actions
-          </h1>
-          <p className="mt-2 max-w-[680px] text-sm leading-6 text-muted">
-            Prepare evidence-backed actions, resolve deficiencies, and record the applicable
-            authority’s decision without changing service facts before effectuation.
-          </p>
-        </div>
-        {canPrepare ? (
-          <Button
-            disabled={referenceLoading}
-            onClick={(event) => {
-              const trigger = event.currentTarget as unknown as { focus(): void };
-              openPrepare('create', undefined, () => trigger.focus());
-            }}
-            size="default"
-            type="button"
-            variant="primary"
-          >
-            {referenceLoading ? 'Loading references…' : 'Prepare action'}
-          </Button>
-        ) : null}
-      </header>
-
-      <section
-        className="grid grid-cols-2 border-y border-line bg-paper min-[700px]:grid-cols-4"
-        aria-label="Personnel Action authority chain"
-      >
-        {['Prepare', 'Review', 'Authority', 'Effectuation'].map((label, index) => (
-          <div className="border-r border-line px-4 py-4 last:border-r-0" key={label}>
-            <span className="font-mono text-[10px] font-bold text-cobalt">0{index + 1}</span>
-            <strong className="mt-1 block text-xs text-midnight">{label}</strong>
-            <span className="mt-1 block text-[11px] leading-4 text-muted">
-              {index === 0
-                ? 'Typed facts + evidence'
-                : index === 1
-                  ? 'Return or endorse'
-                  : index === 2
-                    ? 'Approve or reject'
-                    : 'Owned by effect service'}
-            </span>
-          </div>
-        ))}
-      </section>
-
-      {success ? (
-        <p
-          className="m-0 border border-[#b8d8c0] bg-[#f1faf3] px-4 py-3 text-sm text-[#316647]"
-          role="status"
-        >
-          {success}
-        </p>
+      {recordId ? (
+        <RecordReturn href={navigation.href({ record: null, view: null, section: null })}>
+          ← Personnel Actions
+        </RecordReturn>
       ) : null}
-      {error && dialog === null ? <ErrorMessage message={error} /> : null}
-
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        {actions.length === 0 ? (
-          <div className="px-5 py-10">
-            <strong className="block text-sm text-midnight">No Personnel Actions yet</strong>
-            <p className="m-0 mt-2 max-w-[560px] text-sm leading-6 text-muted">
-              Start when the Employee has a current Service Segment and the exact authority and
-              supporting evidence are available.
+      {recordId && error ? <p role="alert">{error}</p> : null}
+      {recordId && !selectedId && !error ? <p role="status">Loading record…</p> : null}
+      <div hidden={Boolean(recordId) || dialog === 'prepare'} className="space-y-5">
+        <header className="flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
+          <div>
+            <p className="mb-2 text-[10px] font-bold tracking-[.12em] text-cobalt uppercase">
+              Personnel records / Phase 5
+            </p>
+            <h1 className="m-0 text-[30px] font-[700] tracking-[-.035em] text-midnight">
+              Personnel actions
+            </h1>
+            <p className="mt-2 max-w-[680px] text-sm leading-6 text-muted">
+              Prepare evidence-backed actions, resolve deficiencies, and record the applicable
+              authority’s decision without changing service facts before effectuation.
             </p>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] border-collapse text-left">
-              <thead className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
-                <tr>
-                  <th className="px-5 py-3">Employee</th>
-                  <th className="px-5 py-3">Action</th>
-                  <th className="px-5 py-3">Effectivity</th>
-                  <th className="px-5 py-3">State</th>
-                  <th>
-                    <span className="sr-only">Open</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {actions.map((action) => (
-                  <tr
-                    className="border-b border-line last:border-0 hover:bg-[#f8fafd]"
-                    key={action.id}
-                  >
-                    <td className="px-5 py-4">
-                      <button
-                        className="text-left"
-                        onClick={() => void openDetail(action)}
-                        type="button"
-                      >
-                        <strong className="block text-sm text-ink">
-                          {action.employee.legalName}
-                        </strong>
-                        <span className="font-mono text-xs text-muted">
-                          {action.employee.employeeNumber}
-                        </span>
-                      </button>
-                    </td>
-                    <td className="px-5 py-4 text-sm text-ink">
-                      {CONTRACTS[action.actionType].label}
-                      <span className="mt-1 block font-mono text-[11px] text-muted">
-                        v{action.currentVersion.versionNo}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 text-xs text-muted">
-                      {dateLabel(action.currentVersion.proposedEffectivity)}
-                    </td>
-                    <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(action.status)}`}
-                      >
-                        {action.status.replaceAll('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-5">
-                      <button
-                        aria-label={`Open action for ${action.employee.legalName}`}
-                        className="text-lg text-cobalt"
-                        onClick={() => void openDetail(action)}
-                        type="button"
-                      >
-                        →
-                      </button>
-                    </td>
+          {canPrepare ? (
+            <Button
+              disabled={referenceLoading}
+              onClick={(event) => {
+                const trigger = event.currentTarget as unknown as { focus(): void };
+                openPrepare('create', undefined, () => trigger.focus());
+              }}
+              size="default"
+              type="button"
+              variant="primary"
+            >
+              {referenceLoading ? 'Loading references…' : 'Prepare action'}
+            </Button>
+          ) : null}
+        </header>
+
+        <section
+          className="grid grid-cols-2 border-y border-line bg-paper min-[700px]:grid-cols-4"
+          aria-label="Personnel Action authority chain"
+        >
+          {['Prepare', 'Review', 'Authority', 'Effectuation'].map((label, index) => (
+            <div className="border-r border-line px-4 py-4 last:border-r-0" key={label}>
+              <span className="font-mono text-[10px] font-bold text-cobalt">0{index + 1}</span>
+              <strong className="mt-1 block text-xs text-midnight">{label}</strong>
+              <span className="mt-1 block text-[11px] leading-4 text-muted">
+                {index === 0
+                  ? 'Typed facts + evidence'
+                  : index === 1
+                    ? 'Return or endorse'
+                    : index === 2
+                      ? 'Approve or reject'
+                      : 'Owned by effect service'}
+              </span>
+            </div>
+          ))}
+        </section>
+
+        {success ? (
+          <p
+            className="m-0 border border-[#b8d8c0] bg-[#f1faf3] px-4 py-3 text-sm text-[#316647]"
+            role="status"
+          >
+            {success}
+          </p>
+        ) : null}
+        {error && dialog === null ? <ErrorMessage message={error} /> : null}
+
+        <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
+          {actions.length === 0 ? (
+            <div className="px-5 py-10">
+              <strong className="block text-sm text-midnight">No Personnel Actions yet</strong>
+              <p className="m-0 mt-2 max-w-[560px] text-sm leading-6 text-muted">
+                Start when the Employee has a current Service Segment and the exact authority and
+                supporting evidence are available.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] border-collapse text-left">
+                <thead className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
+                  <tr>
+                    <th className="px-5 py-3">Employee</th>
+                    <th className="px-5 py-3">Action</th>
+                    <th className="px-5 py-3">Effectivity</th>
+                    <th className="px-5 py-3">State</th>
+                    <th>
+                      <span className="sr-only">Open</span>
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {actions.map((action) => (
+                    <tr
+                      className="border-b border-line last:border-0 hover:bg-[#f8fafd]"
+                      key={action.id}
+                    >
+                      <td className="px-5 py-4">
+                        <button
+                          className="text-left"
+                          onClick={() => void openDetail(action)}
+                          type="button"
+                        >
+                          <strong className="block text-sm text-ink">
+                            {action.employee.legalName}
+                          </strong>
+                          <span className="font-mono text-xs text-muted">
+                            {action.employee.employeeNumber}
+                          </span>
+                        </button>
+                      </td>
+                      <td className="px-5 py-4 text-sm text-ink">
+                        {CONTRACTS[action.actionType].label}
+                        <span className="mt-1 block font-mono text-[11px] text-muted">
+                          v{action.currentVersion.versionNo}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-xs text-muted">
+                        {dateLabel(action.currentVersion.proposedEffectivity)}
+                      </td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(action.status)}`}
+                        >
+                          {action.status.replaceAll('_', ' ')}
+                        </span>
+                      </td>
+                      <td className="px-5">
+                        <button
+                          aria-label={`Open action for ${action.employee.legalName}`}
+                          className="text-lg text-cobalt"
+                          onClick={() => void openDetail(action)}
+                          type="button"
+                        >
+                          →
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+        {nextCursor ? (
+          <div className="flex justify-center">
+            <Button
+              disabled={busy}
+              onClick={() => void loadMore()}
+              type="button"
+              variant="secondary"
+            >
+              {busy ? 'Loading…' : 'Load more'}
+            </Button>
           </div>
-        )}
-      </section>
-      {nextCursor ? (
-        <div className="flex justify-center">
-          <Button disabled={busy} onClick={() => void loadMore()} type="button" variant="secondary">
-            {busy ? 'Loading…' : 'Load more'}
-          </Button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       <Dialog
+        presentation={
+          dialog === 'detail' || dialog === 'prepare' || dialog === 'history' ? 'form' : 'dialog'
+        }
         onOpenChange={(open) => {
           if (!open && !busy) {
+            navigation.navigate({ record: null, view: null, section: null });
             setDialog(null);
             setError('');
           }

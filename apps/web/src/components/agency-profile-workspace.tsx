@@ -1,5 +1,7 @@
 'use client';
 
+import { useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState } from 'react';
 import {
   Dialog,
@@ -311,6 +313,7 @@ function ProfileDialog({
 
   return (
     <Dialog
+      presentation={mode === 'edit' ? 'form' : 'dialog'}
       open={mode !== null && draft !== null}
       onOpenChange={(open) => {
         if (!open && !submitting) onClose();
@@ -650,9 +653,13 @@ export function AgencyProfileWorkspace({
   initial: AgencyProfileResponse;
 }) {
   const [data, setData] = useState(initial);
-  const [selectedId, setSelectedId] = useState(
-    initial.current?.id ?? initial.draft?.id ?? initial.versions[0]?.id ?? null,
-  );
+  const navigation = useRecordNavigation();
+  const selectedId =
+    navigation.search.get('agencyVersion') ?? data.current?.id ?? data.draft?.id ?? null;
+  function setSelectedId(id: string) {
+    navigation.navigate({ agencyVersion: id });
+  }
+
   const [dialogMode, setDialogMode] = useState<'edit' | 'activate' | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
@@ -662,7 +669,7 @@ export function AgencyProfileWorkspace({
   const fieldRefs = useRef<Record<string, FocusableField | null>>({});
   const returnFocusRef = useRef<FocusableField | null>(null);
 
-  const selected = data.versions.find((version) => version.id === selectedId) ?? data.current;
+  const selected = data.versions.find((version) => version.id === selectedId) ?? null;
   const draft = data.draft;
 
   function focusField(field: string): void {
@@ -830,6 +837,9 @@ export function AgencyProfileWorkspace({
 
   return (
     <div className="grid min-w-0 gap-7">
+      {navigation.search.has('agencyVersion') && !selected ? (
+        <p role="alert">This Agency Profile version is missing or unavailable.</p>
+      ) : null}
       {notice ? (
         <p
           className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"

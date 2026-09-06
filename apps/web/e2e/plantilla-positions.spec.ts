@@ -294,7 +294,7 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     .first();
   await expect(auditEvent).toContainText('VACANT → ABOLISHED');
   await auditEvent.click();
-  const auditDialog = page.getByRole('dialog', { name: 'Audit Event detail' });
+  const auditDialog = page.getByRole('region', { name: 'Audit Event detail' });
   await expect(auditDialog).toContainText('PLANTILLA_POSITION_ABOLISHED');
   await expect(auditDialog).toContainText('ABOLISHED');
 });

@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useRecordNavigation } from './record-navigation';
+
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -166,6 +168,9 @@ export function EmployeeDocumentsSection({
   canRemoveOwn: boolean;
 }) {
   const [documents, setDocuments] = useState<EmployeeDocument[]>([]);
+  const navigation = useRecordNavigation();
+  const documentId = navigation.search.get('document');
+
   const [linkableDocuments, setLinkableDocuments] = useState<LinkableDocument[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');
@@ -177,9 +182,22 @@ export function EmployeeDocumentsSection({
   const [message, setMessage] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const uploadAttempt = useRef<{ file: unknown; metadata: string; key: string } | null>(null);
   const [detail, setDetail] = useState<EmployeeDocument | null>(null);
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<EmployeeDocument | null>(null);
+
+  useEffect(() => {
+    setAccessUrl(null);
+    if (!documentId) {
+      setDetail(null);
+      return;
+    }
+    if (loading) return;
+    const selected = documents.find((item) => item.id === documentId);
+    setDetail(selected ?? null);
+    if (!selected) setError('This Personnel Document is missing or outside your permitted scope.');
+  }, [documentId, documents, loading]);
 
   const endpoint = `/api/v1/agencies/${agencyId}/employees/${employeeId}/documents`;
 
@@ -235,6 +253,7 @@ export function EmployeeDocumentsSection({
 
   async function link(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     const form = event.currentTarget as unknown;
     setBusy(true);
     setError(null);
@@ -270,6 +289,7 @@ export function EmployeeDocumentsSection({
 
   async function upload(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     const formElement = event.currentTarget as unknown;
     const form = new FormData();
     const file = formFile(formElement);
@@ -279,17 +299,30 @@ export function EmployeeDocumentsSection({
     form.append('classification', formValue(formElement, 'classification'));
     form.append('personnelClassification', formValue(formElement, 'personnelClassification'));
     form.append('purpose', formValue(formElement, 'purpose'));
+    const metadata = JSON.stringify(
+      ['classification', 'personnelClassification', 'purpose'].map((name) =>
+        formValue(formElement, name),
+      ),
+    );
+    if (
+      !uploadAttempt.current ||
+      uploadAttempt.current.file !== file ||
+      uploadAttempt.current.metadata !== metadata
+    ) {
+      uploadAttempt.current = { file, metadata, key: crypto.randomUUID() };
+    }
     setBusy(true);
     setError(null);
     try {
       const response = await fetch(`${endpoint}/upload`, {
         method: 'POST',
-        headers: { 'idempotency-key': `employee-upload-${Date.now()}` },
+        headers: { 'idempotency-key': uploadAttempt.current.key },
         credentials: 'include',
         body: form,
       });
       const value: unknown = await response.json().catch(() => null);
       if (response.ok) {
+        uploadAttempt.current = null;
         setUploadOpen(false);
         setMessage('Own-record evidence uploaded and held pending release.');
         await refresh();
@@ -306,7 +339,7 @@ export function EmployeeDocumentsSection({
   }
 
   function inspect(document: EmployeeDocument): void {
-    setDetail(document);
+    navigation.navigate({ document: document.id });
     setAccessUrl(null);
     setError(null);
   }
@@ -719,9 +752,11 @@ export function EmployeeDocumentsSection({
       </div>
 
       <Dialog
+        presentation="form"
         open={Boolean(detail)}
         onOpenChange={(open) => {
           if (!open && !accessBusy) {
+            navigation.navigate({ document: null });
             setDetail(null);
             setAccessUrl(null);
           }

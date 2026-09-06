@@ -1,6 +1,8 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+
+import { useEffect, useRef, useState } from 'react';
 import {
   isAuditEventDetail,
   isAuditEventListResponse,
@@ -79,8 +81,23 @@ export function AuditWorkspace({
   const [hasMore, setHasMore] = useState(initial.hasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const [listError, setListError] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<AuditEventDetail | null>(null);
+  const navigation = useRecordNavigation();
+  const selectedId = navigation.search.get('record');
+  function setSelectedId(id: string | null) {
+    navigation.navigate({ record: id, view: id ? 'form' : null });
+  }
+  useEffect(() => {
+    if (selectedId) loadDetail(selectedId);
+    else {
+      setDetail(null);
+      setDetailError('');
+    }
+    return () => {
+      detailRequestRef.current += 1;
+    };
+  }, [selectedId]);
+  const [loadedDetail, setDetail] = useState<AuditEventDetail | null>(null);
+  const detail = loadedDetail?.id === selectedId ? loadedDetail : null;
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const closeRef = useRef<{ focus(): void } | null>(null);
@@ -93,12 +110,15 @@ export function AuditWorkspace({
 
   function openDetail(event: AuditEvent): void {
     setSelectedId(event.id);
+  }
+
+  function loadDetail(id: string): void {
     setDetail(null);
     setDetailError('');
     setDetailLoading(true);
     const requestNumber = detailRequestRef.current + 1;
     detailRequestRef.current = requestNumber;
-    void fetch(`/api/v1/agencies/${agencyId}/audit-events/${event.id}`, {
+    void fetch(`/api/v1/agencies/${agencyId}/audit-events/${encodeURIComponent(id)}`, {
       credentials: 'include',
     })
       .then(async (response) => {
@@ -164,8 +184,8 @@ export function AuditWorkspace({
   }
 
   return (
-    <Dialog open={Boolean(selectedId)} onOpenChange={handleDialogOpenChange}>
-      <div className="grid gap-7">
+    <Dialog presentation="form" open={Boolean(selectedId)} onOpenChange={handleDialogOpenChange}>
+      <div hidden={Boolean(selectedId)} className="space-y-5">
         <header className="grid max-w-[720px] gap-2">
           <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
             Evidence
@@ -272,6 +292,13 @@ export function AuditWorkspace({
         ) : null}
       </div>
 
+      {selectedId ? (
+        <div className="mb-4">
+          <RecordReturn href={navigation.href({ record: null, view: null })}>
+            ← Audit Log
+          </RecordReturn>
+        </div>
+      ) : null}
       <DialogContent
         aria-busy={detailLoading}
         onOpenAutoFocus={(event) => {

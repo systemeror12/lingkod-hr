@@ -40,7 +40,7 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
   const stamp = Date.now();
   const employeeNumber = `E2E-PDS-${stamp}`;
   const legalName = `E2E PDS Employee ${stamp}`;
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('region', { name: /(?:Create|Edit) Draft PDS/ });
   let createPayload: Record<string, unknown> | null = null;
 
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -405,10 +405,10 @@ test('completes the Revised 2026 PDS certification and correction journey', asyn
     .getByRole('dialog', { name: 'Submit PDS' })
     .getByRole('button', { name: 'Submit', exact: true })
     .click();
-  await expect(page.getByRole('dialog', { name: 'Edit Draft PDS' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Edit Draft PDS' })).toBeVisible();
   await expect(page.getByLabel('Height (metres)')).toBeFocused();
 
-  const editDialog = page.getByRole('dialog', { name: 'Edit Draft PDS' });
+  const editDialog = page.getByRole('region', { name: 'Edit Draft PDS' });
   await editDialog.getByLabel('Height (metres)').fill('1.62');
   await editDialog.getByLabel('Weight (kilograms)').fill('58');
   await editDialog.getByLabel('Blood type').fill('O+');

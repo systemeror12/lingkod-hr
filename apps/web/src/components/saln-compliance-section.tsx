@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useRecordNavigation } from './record-navigation';
+
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -149,6 +151,33 @@ export function SalnComplianceSection({
     void refresh();
   }, [endpoint, canRead]);
 
+  const navigation = useRecordNavigation();
+  const salnId = navigation.search.get('saln');
+  const salnHistory = navigation.search.get('salnHistory') === 'true';
+  const historyRequest = useRef(0);
+  useEffect(() => {
+    historyRequest.current += 1;
+    setBusy(false);
+    if (!salnId && !salnHistory) {
+      setOpen(null);
+      return;
+    }
+    if (loading) return;
+    if (salnHistory) {
+      if (canReadHistory) begin('history');
+      else setError('SALN history is outside your permitted scope.');
+      return;
+    }
+    const record = items.find((item) => item.id === salnId);
+    if (!record) {
+      setError('This SALN record is missing or outside your permitted scope.');
+      setSelected(null);
+      setOpen(null);
+      return;
+    }
+    begin('detail', record);
+  }, [salnId, salnHistory, loading, canReadHistory]);
+
   async function loadEvidence(): Promise<void> {
     if (!canReadEvidence || !employeeId || evidence.length > 0) return;
     const response = await fetch(`/api/v1/agencies/${agencyId}/employees/${employeeId}/documents`, {
@@ -179,17 +208,22 @@ export function SalnComplianceSection({
     setOpen(kind);
     if (kind === 'create' || kind === 'update' || kind === 'correct') void loadEvidence();
     if (kind === 'history') {
+      const requestId = ++historyRequest.current;
+      setHistory([]);
       setBusy(true);
       void fetch(`${endpoint}/history`, { credentials: 'include' })
         .then(async (response) => {
           const body: unknown = await response.json().catch(() => null);
           if (!response.ok) throw new Error(errorMessage(body));
-          setHistory(parseRecords(body));
+          if (requestId === historyRequest.current) setHistory(parseRecords(body));
         })
-        .catch((caught: unknown) =>
-          setError(caught instanceof Error ? caught.message : 'History could not be loaded.'),
-        )
-        .finally(() => setBusy(false));
+        .catch((caught: unknown) => {
+          if (requestId === historyRequest.current)
+            setError(caught instanceof Error ? caught.message : 'History could not be loaded.');
+        })
+        .finally(() => {
+          if (requestId === historyRequest.current) setBusy(false);
+        });
     }
   }
 
@@ -205,38 +239,45 @@ export function SalnComplianceSection({
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
-    const selectedEvidence = evidence.find(
-      ({ documentId, documentVersionId }) =>
-        `${documentId}:${documentVersionId}` === values.acknowledgment,
-    );
-    const payload = {
-      requirementReference: values.requirementReference,
-      filingYear: Number(values.filingYear),
-      filingType: values.filingType,
-      status: values.status,
-      submittedAt: dateTime(values.submittedAt),
-      repositoryReference: values.repositoryReference || null,
-      acknowledgmentDocumentId: selectedEvidence?.documentId ?? null,
-      acknowledgmentDocumentVersionId: selectedEvidence?.documentVersionId ?? null,
-      ...(open === 'correct' ? { reason: values.reason } : {}),
-    };
-    const transitionEndpoint =
-      selected && (open === 'correct' || open === 'update')
-        ? `${endpoint}/${selected.id}/${open}`
-        : endpoint;
-    const response = await fetch(transitionEndpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload),
-    });
-    const body: unknown = await response.json().catch(() => null);
-    if (response.ok) {
-      setOpen(null);
-      await refresh();
-    } else setError(errorMessage(body));
-    setBusy(false);
+    setError(null);
+    try {
+      const selectedEvidence = evidence.find(
+        ({ documentId, documentVersionId }) =>
+          `${documentId}:${documentVersionId}` === values.acknowledgment,
+      );
+      const payload = {
+        requirementReference: values.requirementReference,
+        filingYear: Number(values.filingYear),
+        filingType: values.filingType,
+        status: values.status,
+        submittedAt: dateTime(values.submittedAt),
+        repositoryReference: values.repositoryReference || null,
+        acknowledgmentDocumentId: selectedEvidence?.documentId ?? null,
+        acknowledgmentDocumentVersionId: selectedEvidence?.documentVersionId ?? null,
+        ...(open === 'correct' ? { reason: values.reason } : {}),
+      };
+      const transitionEndpoint =
+        selected && (open === 'correct' || open === 'update')
+          ? `${endpoint}/${selected.id}/${open}`
+          : endpoint;
+      const response = await fetch(transitionEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok) {
+        setOpen(null);
+        await refresh();
+      } else setError(errorMessage(body));
+    } catch {
+      setError('The SALN filing could not be saved. Check the connection and try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!canRead && !canManage) return null;
@@ -257,7 +298,10 @@ export function SalnComplianceSection({
         </div>
         <div className="flex gap-2">
           {canReadHistory ? (
-            <Button variant="secondary" onClick={() => begin('history')}>
+            <Button
+              variant="secondary"
+              onClick={() => navigation.navigate({ salnHistory: 'true', saln: null })}
+            >
               History
             </Button>
           ) : null}
@@ -289,7 +333,10 @@ export function SalnComplianceSection({
                 <p className="mt-1 mb-0 text-xs text-muted">{record.status.replaceAll('_', ' ')}</p>
               </div>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => begin('detail', record)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => navigation.navigate({ saln: record.id, salnHistory: null })}
+                >
                   Details
                 </Button>
                 {canManage ? (
@@ -309,9 +356,13 @@ export function SalnComplianceSection({
       )}
 
       <Dialog
+        presentation="form"
         open={open !== null}
         onOpenChange={(value) => {
-          if (!value && !busy) setOpen(null);
+          if (!value && !busy) {
+            navigation.navigate({ saln: null, salnHistory: null });
+            setOpen(null);
+          }
         }}
       >
         <DialogContent aria-describedby="saln-dialog-description" size="compact">

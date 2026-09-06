@@ -78,6 +78,18 @@ test('uses shared modals for generation, preview, replacement, and history', asy
     if (route.request().method() === 'POST') await route.fulfill({ json: record });
     else await route.continue();
   });
+  await page.route(`**/service-records/${snapshotId}`, (route) => route.fulfill({ json: record }));
+  await page.route(`**/service-records/${replacementId}`, (route) =>
+    route.fulfill({
+      json: {
+        ...record,
+        id: replacementId,
+        supersedesSnapshotId: snapshotId,
+        correctionReason: 'Corrected from retained evidence.',
+        generatedAt: '2026-09-05T08:00:00.000Z',
+      },
+    }),
+  );
   await page.route(`**/service-records/${snapshotId}/replace`, (route) =>
     route.fulfill({
       json: {
@@ -113,7 +125,7 @@ test('uses shared modals for generation, preview, replacement, and history', asy
   await trigger.click();
   await generate.getByLabel('Employee').selectOption(employeeId);
   await generate.getByRole('button', { name: 'Generate record' }).click();
-  const preview = page.getByRole('dialog', { name: 'Printable System View' });
+  const preview = page.getByRole('region', { name: 'Printable System View' });
   await expect(preview).toContainText('HR Officer');
   await expect(preview).toContainText('not an Exact Versioned Form');
   await preview.getByRole('button', { name: 'Close', exact: true }).click();
@@ -130,9 +142,11 @@ test('uses shared modals for generation, preview, replacement, and history', asy
   await preview.getByRole('button', { name: 'Close', exact: true }).click();
 
   await page.getByRole('button', { name: 'History' }).first().click();
-  const history = page.getByRole('dialog', { name: 'Service Record history' });
+  const history = page.getByRole('region', { name: 'Service Record history' });
   await expect(history).toContainText('Replacement');
   await expect(history).toContainText('Superseded');
   await page.setViewportSize({ width: 390, height: 844 });
-  await expectCenteredDialog(history, 390);
+  const historyBox = await history.boundingBox();
+  expect(historyBox).not.toBeNull();
+  expect(historyBox!.x + historyBox!.width).toBeLessThanOrEqual(390);
 });

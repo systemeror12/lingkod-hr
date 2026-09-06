@@ -5,7 +5,7 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
 }, testInfo) => {
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
-  await page.goto('/organization');
+  await page.goto('/organization?workspace=agency');
 
   await expect(page.getByRole('heading', { name: 'Agency record through time' })).toBeVisible();
   const rail = page.getByRole('navigation', { name: 'Agency Profile Versions' });
@@ -24,7 +24,7 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
 
   const editOpener = page.getByRole('button', { name: 'Continue draft' });
   await editOpener.click();
-  const editDialog = page.getByRole('dialog', { name: 'Edit draft successor' });
+  const editDialog = page.getByRole('region', { name: 'Edit draft successor' });
   await expect(editDialog).toBeVisible();
   await expect(editDialog).toHaveAccessibleDescription(
     'Edit the successor fields before activation. Activated versions cannot be rewritten.',

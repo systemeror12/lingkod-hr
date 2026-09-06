@@ -211,7 +211,7 @@ test('maintains masked payroll bank accounts through shared dialogs', async ({ p
   await expect(page.getByText('********9012', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'View history' }).first().click();
-  const historyDialog = page.getByRole('dialog', { name: 'History payroll bank account' });
+  const historyDialog = page.getByRole('region', { name: 'History payroll bank account' });
   await expect(historyDialog.getByText('********1234', { exact: true })).toBeVisible();
   await expect(historyDialog.getByText(accountNumber, { exact: true })).toHaveCount(0);
   await historyDialog.getByRole('button', { name: 'Close', exact: true }).click();

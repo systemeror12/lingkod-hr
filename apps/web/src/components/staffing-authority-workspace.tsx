@@ -1,6 +1,9 @@
 'use client';
 
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Field, inputClass, FormError } from './ui/field';
+
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Dialog,
   DialogBody,
@@ -87,9 +90,6 @@ const authorityTypes: readonly { value: AuthorityType; label: string }[] = [
   { value: 'OTHER', label: 'Other' },
 ];
 
-const inputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-
 function emptyDraft(): DraftValues {
   return {
     authorityType: 'LAW',
@@ -160,26 +160,6 @@ function draftValues(authority: StaffingAuthority): DraftValues {
   };
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="grid gap-2 text-[13px] font-[620] text-ink">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function FormError({ message }: { message: string }) {
-  return message ? (
-    <p
-      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] leading-[1.5] text-[#9a3030]"
-      role="alert"
-    >
-      {message}
-    </p>
-  ) : null;
-}
-
 function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
 }
@@ -208,14 +188,51 @@ export function StaffingAuthorityWorkspace({
   canRevoke: boolean;
 }) {
   const [authorities, setAuthorities] = useState(initial.authorities);
+  const navigation = useRecordNavigation();
+  const recordId = navigation.search.get('record');
+  useEffect(() => {
+    let active = true;
+    setDetail(null);
+    setSelected(null);
+    setError('');
+    if (!recordId) {
+      setDialog(null);
+      setSelected(null);
+      return;
+    }
+    setDialog('detail');
+    setDetailLoading(true);
+    void request('/' + encodeURIComponent(recordId))
+      .then((value) => {
+        if (!active) return;
+        const next = value as StaffingAuthorityDetail;
+        setDetail(next);
+        setSelected(next.authority);
+      })
+      .catch((error: unknown) => {
+        if (active)
+          setError(error instanceof Error ? error.message : 'This record is unavailable.');
+      })
+      .finally(() => {
+        if (active) setDetailLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [recordId]);
+
   const [dialog, setDialog] = useState<DialogKind | null>(null);
-  const [selected, setSelected] = useState<StaffingAuthority | null>(null);
+  const [loadedSelected, setSelected] = useState<StaffingAuthority | null>(null);
+  const selected =
+    loadedSelected && (!recordId || loadedSelected.id === recordId) ? loadedSelected : null;
   const [draft, setDraft] = useState(emptyDraft);
   const [documentId, setDocumentId] = useState('');
   const [reason, setReason] = useState('');
   const [revocationDate, setRevocationDate] = useState(manilaToday());
   const [successorId, setSuccessorId] = useState('');
-  const [detail, setDetail] = useState<StaffingAuthorityDetail | null>(null);
+  const [loadedDetail, setDetail] = useState<StaffingAuthorityDetail | null>(null);
+  const detail =
+    loadedDetail && (!recordId || loadedDetail.authority.id === recordId) ? loadedDetail : null;
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -267,6 +284,7 @@ export function StaffingAuthorityWorkspace({
 
   function closeDialog(force = false): void {
     if (busy && !force) return;
+    navigation.navigate({ record: null, view: null });
     setDialog(null);
     setSelected(null);
     setDetail(null);
@@ -277,18 +295,8 @@ export function StaffingAuthorityWorkspace({
     authority: StaffingAuthority,
     target: { focus(): void },
   ): Promise<void> {
-    openDialog('detail', authority, target);
-    setDetailLoading(true);
-    try {
-      const value = await request(`/${authority.id}`);
-      setDetail(value as StaffingAuthorityDetail);
-    } catch (requestError: unknown) {
-      setError(
-        requestError instanceof Error ? requestError.message : 'The detail could not be loaded.',
-      );
-    } finally {
-      setDetailLoading(false);
-    }
+    returnFocusRef.current = target;
+    navigation.navigate({ record: authority.id, view: 'form' });
   }
 
   async function submitDraft(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -431,11 +439,103 @@ export function StaffingAuthorityWorkspace({
     setDraft((current) => ({ ...current, [field]: value }));
   }
 
+  function recordActions(authority: StaffingAuthority) {
+    return (
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          size="default"
+          type="button"
+          variant="secondary"
+          onClick={(event) =>
+            void openDetail(authority, event.currentTarget as unknown as { focus(): void })
+          }
+        >
+          Details
+        </Button>
+        {authority.status === 'DRAFT' && canUpdate ? (
+          <Button
+            size="default"
+            type="button"
+            variant="secondary"
+            onClick={(event) => {
+              setDraft(draftValues(authority));
+              openDialog('edit', authority, event.currentTarget as unknown as { focus(): void });
+            }}
+          >
+            Edit Draft
+          </Button>
+        ) : null}
+        {authority.status === 'DRAFT' && canValidateEvidence ? (
+          <Button
+            size="default"
+            type="button"
+            variant="secondary"
+            onClick={(event) =>
+              openDialog('evidence', authority, event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Validate Evidence
+          </Button>
+        ) : null}
+        {authority.status === 'DRAFT' && canActivate ? (
+          <Button
+            className="min-h-9 px-3 text-xs"
+            size="default"
+            type="button"
+            variant="primary"
+            onClick={(event) =>
+              openDialog('activate', authority, event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Activate
+          </Button>
+        ) : null}
+        {authority.status === 'ACTIVE' && canSupersede ? (
+          <Button
+            size="default"
+            type="button"
+            variant="secondary"
+            onClick={(event) =>
+              openDialog(
+                'supersede',
+                authority,
+                event.currentTarget as unknown as { focus(): void },
+              )
+            }
+          >
+            Supersede
+          </Button>
+        ) : null}
+        {authority.status === 'ACTIVE' && canRevoke ? (
+          <Button
+            className="border border-[#d9a5a5] bg-paper px-3 py-2 text-xs font-[650] text-[#9a3030] hover:bg-[#fff4f4]"
+            size="default"
+            type="button"
+            onClick={(event) =>
+              openDialog('revoke', authority, event.currentTarget as unknown as { focus(): void })
+            }
+          >
+            Revoke
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
   const selectedTitle = selected?.referenceNo || 'Staffing Authority';
 
   return (
-    <Dialog open={dialog !== null} onOpenChange={(open) => !open && closeDialog()}>
-      <div className="grid min-w-0 gap-7">
+    <Dialog
+      presentation={
+        dialog === 'detail' || dialog === 'create' || dialog === 'edit' ? 'form' : 'dialog'
+      }
+      open={dialog !== null}
+      onOpenChange={(open) => !open && closeDialog()}
+    >
+      <div
+        hidden={dialog === 'detail' || dialog === 'create' || dialog === 'edit'}
+        className="min-w-0 space-y-5"
+      >
         <header className="flex flex-wrap items-end justify-between gap-5">
           <div className="grid max-w-[720px] gap-2">
             <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
@@ -568,105 +668,7 @@ export function StaffingAuthorityWorkspace({
                           {authority.status}
                         </span>
                       </td>
-                      <td className="px-5 py-4 align-top">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button
-                            size="default"
-                            type="button"
-                            variant="secondary"
-                            onClick={(event) =>
-                              void openDetail(
-                                authority,
-                                event.currentTarget as unknown as { focus(): void },
-                              )
-                            }
-                          >
-                            Details
-                          </Button>
-                          {authority.status === 'DRAFT' && canUpdate ? (
-                            <Button
-                              size="default"
-                              type="button"
-                              variant="secondary"
-                              onClick={(event) => {
-                                setDraft(draftValues(authority));
-                                openDialog(
-                                  'edit',
-                                  authority,
-                                  event.currentTarget as unknown as { focus(): void },
-                                );
-                              }}
-                            >
-                              Edit Draft
-                            </Button>
-                          ) : null}
-                          {authority.status === 'DRAFT' && canValidateEvidence ? (
-                            <Button
-                              size="default"
-                              type="button"
-                              variant="secondary"
-                              onClick={(event) =>
-                                openDialog(
-                                  'evidence',
-                                  authority,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Validate Evidence
-                            </Button>
-                          ) : null}
-                          {authority.status === 'DRAFT' && canActivate ? (
-                            <Button
-                              className="min-h-9 px-3 text-xs"
-                              size="default"
-                              type="button"
-                              variant="primary"
-                              onClick={(event) =>
-                                openDialog(
-                                  'activate',
-                                  authority,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Activate
-                            </Button>
-                          ) : null}
-                          {authority.status === 'ACTIVE' && canSupersede ? (
-                            <Button
-                              size="default"
-                              type="button"
-                              variant="secondary"
-                              onClick={(event) =>
-                                openDialog(
-                                  'supersede',
-                                  authority,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Supersede
-                            </Button>
-                          ) : null}
-                          {authority.status === 'ACTIVE' && canRevoke ? (
-                            <Button
-                              className="border border-[#d9a5a5] bg-paper px-3 py-2 text-xs font-[650] text-[#9a3030] hover:bg-[#fff4f4]"
-                              size="default"
-                              type="button"
-                              onClick={(event) =>
-                                openDialog(
-                                  'revoke',
-                                  authority,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                            >
-                              Revoke
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
+                      <td className="px-5 py-4 align-top">{recordActions(authority)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -676,6 +678,13 @@ export function StaffingAuthorityWorkspace({
         </section>
       </div>
 
+      {dialog === 'detail' ? (
+        <div className="mb-4">
+          <RecordReturn href={navigation.href({ record: null, view: null })}>
+            ← Staffing Authorities
+          </RecordReturn>
+        </div>
+      ) : null}
       <DialogContent aria-describedby="staffing-authority-dialog-description">
         <DialogHeader>
           <div className="grid min-w-0 gap-1.5">
@@ -727,6 +736,7 @@ export function StaffingAuthorityWorkspace({
 
         {dialog === 'detail' ? (
           <DialogBody>
+            {selected ? recordActions(selected) : null}
             {detailLoading ? (
               <p className="m-0 text-sm text-muted">Loading authority history…</p>
             ) : null}

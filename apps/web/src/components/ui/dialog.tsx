@@ -1,4 +1,10 @@
 import {
+  createContext,
+  useContext,
+  useId,
+  useEffect,
+  useRef,
+  useImperativeHandle,
   forwardRef,
   type ComponentPropsWithoutRef,
   type ElementRef,
@@ -23,7 +29,94 @@ const dialogContentVariants = cva(
   },
 );
 
-export const Dialog = DialogPrimitive.Root;
+const FormContext = createContext<string | null>(null);
+const FormCloseContext = createContext<(() => void) | null>(null);
+
+/** Full record work uses the page; confirmations retain the modal focus boundary. */
+export function Dialog({
+  presentation = 'dialog',
+  ...props
+}: ComponentPropsWithoutRef<typeof DialogPrimitive.Root> & { presentation?: 'dialog' | 'form' }) {
+  const titleId = useId();
+  return (
+    <FormContext.Provider value={presentation === 'form' && props.open ? titleId : null}>
+      <FormCloseContext.Provider value={() => props.onOpenChange?.(false)}>
+        <DialogPrimitive.Root {...props} />
+      </FormCloseContext.Provider>
+    </FormContext.Provider>
+  );
+}
+
+function InlineRecord({
+  children,
+  className,
+  busy,
+  descriptionId,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
+  contentRef,
+  onEscapeKeyDown,
+  contentProps,
+}: {
+  children: React.ReactNode;
+  className?: string | undefined;
+  busy?: React.AriaAttributes['aria-busy'];
+  descriptionId?: string | undefined;
+  onOpenAutoFocus?: ((event: Event) => void) | undefined;
+  onCloseAutoFocus?: ((event: Event) => void) | undefined;
+  contentRef: React.ForwardedRef<HTMLDivElement>;
+  onEscapeKeyDown?: ((event: KeyboardEvent) => void) | undefined;
+  contentProps: HTMLAttributes<HTMLDivElement>;
+}) {
+  const titleId = useContext(FormContext);
+  const ref = useRef<HTMLDivElement | null>(null);
+  const close = useContext(FormCloseContext);
+  useImperativeHandle(contentRef, () => ref.current!);
+  const callbacks = useRef({ onOpenAutoFocus, onCloseAutoFocus });
+  callbacks.current = { onOpenAutoFocus, onCloseAutoFocus };
+  useEffect(() => {
+    const event = new Event('openAutoFocus', { cancelable: true });
+    callbacks.current.onOpenAutoFocus?.(event);
+    if (!event.defaultPrevented) {
+      const element = ref.current as unknown as {
+        focus(): void;
+        querySelector(selector: string): { focus(): void } | null;
+      } | null;
+      (
+        element?.querySelector(
+          'input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+        ) ?? element
+      )?.focus();
+    }
+    return () => {
+      callbacks.current.onCloseAutoFocus?.(new Event('closeAutoFocus', { cancelable: true }));
+    };
+  }, []);
+  return (
+    <div
+      {...contentProps}
+      ref={ref}
+      role="region"
+      onKeyDown={(event) => {
+        contentProps.onKeyDown?.(event);
+        if (event.key === 'Escape') {
+          onEscapeKeyDown?.(event.nativeEvent);
+          if (!event.defaultPrevented && !event.nativeEvent.defaultPrevented) close?.();
+        }
+      }}
+      tabIndex={-1}
+      aria-labelledby={titleId ?? undefined}
+      aria-busy={busy}
+      aria-describedby={descriptionId}
+      className={cn(
+        'record-form flex min-w-0 flex-col rounded-[5px] border border-line bg-paper outline-none',
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;
 
@@ -33,21 +126,55 @@ type DialogContentProps = ComponentPropsWithoutRef<typeof DialogPrimitive.Conten
 export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, onPointerDownOutside, size, ...props }, ref) => (
-  <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-midnight/35 [padding:max(1rem,env(safe-area-inset-top))_max(1rem,env(safe-area-inset-right))_max(1rem,env(safe-area-inset-bottom))_max(1rem,env(safe-area-inset-left))]">
-      <DialogPrimitive.Content
-        ref={ref}
-        className={cn(dialogContentVariants({ size }), className)}
-        onPointerDownOutside={(event) => {
-          event.preventDefault();
-          onPointerDownOutside?.(event);
-        }}
-        {...props}
-      />
-    </DialogPrimitive.Overlay>
-  </DialogPrimitive.Portal>
-));
+>(({ className, onPointerDownOutside, size, ...props }, ref) => {
+  const inline = useContext(FormContext);
+  if (inline) {
+    // Portal sizing and outside-interaction handlers apply only to modal dialogs.
+    const {
+      onOpenAutoFocus,
+      onCloseAutoFocus,
+      onEscapeKeyDown,
+      onFocusOutside: _onFocusOutside,
+      onInteractOutside: _onInteractOutside,
+      forceMount: _forceMount,
+      asChild: _asChild,
+      ...contentProps
+    } = props;
+    void _onFocusOutside;
+    void _onInteractOutside;
+    void _forceMount;
+    void _asChild;
+    return (
+      <InlineRecord
+        contentRef={ref}
+        contentProps={contentProps}
+        className={className}
+        busy={props['aria-busy']}
+        descriptionId={props['aria-describedby']}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={onCloseAutoFocus}
+        onEscapeKeyDown={onEscapeKeyDown}
+      >
+        {props.children}
+      </InlineRecord>
+    );
+  }
+  return (
+    <DialogPrimitive.Portal>
+      <DialogPrimitive.Overlay className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-midnight/35 [padding:max(1rem,env(safe-area-inset-top))_max(1rem,env(safe-area-inset-right))_max(1rem,env(safe-area-inset-bottom))_max(1rem,env(safe-area-inset-left))]">
+        <DialogPrimitive.Content
+          ref={ref}
+          className={cn(dialogContentVariants({ size }), className)}
+          onPointerDownOutside={(event) => {
+            event.preventDefault();
+            onPointerDownOutside?.(event);
+          }}
+          {...props}
+        />
+      </DialogPrimitive.Overlay>
+    </DialogPrimitive.Portal>
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 export const DialogHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
@@ -67,13 +194,17 @@ DialogHeader.displayName = 'DialogHeader';
 export const DialogTitle = forwardRef<
   ElementRef<typeof DialogPrimitive.Title>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Title
-    ref={ref}
-    className={cn('m-0 text-xl font-[680] tracking-[-0.025em] text-midnight', className)}
-    {...props}
-  />
-));
+>(({ className, ...props }, ref) => {
+  const titleId = useContext(FormContext);
+  return (
+    <DialogPrimitive.Title
+      ref={ref}
+      className={cn('m-0 text-xl font-[680] tracking-[-0.025em] text-midnight', className)}
+      {...props}
+      {...(titleId ? { id: titleId } : {})}
+    />
+  );
+});
 DialogTitle.displayName = DialogPrimitive.Title.displayName;
 
 export const DialogDescription = forwardRef<

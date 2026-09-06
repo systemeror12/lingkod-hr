@@ -1,6 +1,9 @@
 'use client';
 
-import { useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Field, inputClass, FormError } from './ui/field';
+
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { manilaToday } from '../lib/manila-date';
 import { Button } from './ui/button';
 import {
@@ -153,10 +156,6 @@ interface CatalogOptions {
   authorities: StaffingAuthorityOption[];
 }
 
-const inputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-const labelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
-
 const evidencePurposeLabels: Record<EvidencePurpose, string> = {
   POSITION_DESCRIPTION: 'Position description',
   CREATION: 'Creation',
@@ -277,17 +276,6 @@ function StateBadge({ children, tone }: { children: ReactNode; tone: 'blue' | 'g
   );
 }
 
-function FormError({ message }: { message: string }) {
-  return message ? (
-    <p
-      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] leading-[1.5] text-[#9a3030]"
-      role="alert"
-    >
-      {message}
-    </p>
-  ) : null;
-}
-
 function VersionHistory({ versions }: { versions: PlantillaPositionVersion[] }) {
   return (
     <ol className="m-0 grid list-none gap-0 p-0">
@@ -324,23 +312,6 @@ function VersionHistory({ versions }: { versions: PlantillaPositionVersion[] }) 
         </li>
       ))}
     </ol>
-  );
-}
-
-function Field({
-  label,
-  children,
-  htmlFor,
-}: {
-  label: ReactNode;
-  children: ReactNode;
-  htmlFor?: string;
-}) {
-  return (
-    <label className={labelClass} htmlFor={htmlFor}>
-      {label}
-      {children}
-    </label>
   );
 }
 
@@ -893,9 +864,25 @@ export function PlantillaPositionWorkspace({
   canAbolish: boolean;
 }) {
   const [positions, setPositions] = useState(initial.positions);
-  const [selectedId, setSelectedId] = useState(initial.positions[0]?.id ?? '');
-  const [asOf, setAsOf] = useState(manilaToday());
-  const [query, setQuery] = useState('');
+  const navigation = useRecordNavigation();
+  const selectedId = navigation.search.get('record');
+  const asOf = navigation.search.get('asOf') || manilaToday();
+  const query = navigation.search.get('q') || '';
+  function setSelectedId(id: string) {
+    navigation.navigate({ record: id, view: 'form' });
+  }
+  function setQuery(value: string) {
+    navigation.navigate({ q: value });
+  }
+  const detailRequest = useRef(0);
+  useEffect(() => {
+    setDetail(null);
+    setError('');
+    if (selectedId) void loadDetail(selectedId);
+    return () => {
+      detailRequest.current += 1;
+    };
+  }, [selectedId, asOf]);
   const [detail, setDetail] = useState<PlantillaPositionDetail | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [options, setOptions] = useState<CatalogOptions | null>(null);
@@ -918,7 +905,9 @@ export function PlantillaPositionWorkspace({
   const transitionReturnFocusRef = useRef<{ focus(): void } | null>(null);
   const transitionActionsRef = useRef<HTMLDivElement | null>(null);
 
-  const selected = positions.find((position) => position.id === selectedId) ?? positions[0] ?? null;
+  const selected =
+    positions.find((position) => position.id === selectedId) ??
+    (detail?.position.id === selectedId ? detail.position : null);
   const matches = positions.filter((position) => {
     const version = position.currentVersion;
     return `${position.itemNumber} ${version?.title ?? ''} ${version?.organizationUnit.name ?? ''} ${version?.salaryGrade ?? ''}`
@@ -927,7 +916,7 @@ export function PlantillaPositionWorkspace({
   });
   const selectedDetail =
     detail && detail.position.id === selected?.id && detail.asOf === asOf ? detail : null;
-  const effective = selectedDetail?.effective ?? selected?.currentVersion ?? null;
+  const effective = selectedDetail ? selectedDetail.effective : null;
   const versions =
     selectedDetail?.versions ?? (selected?.currentVersion ? [selected.currentVersion] : []);
   const evidence = selectedDetail?.evidence ?? [];
@@ -959,12 +948,12 @@ export function PlantillaPositionWorkspace({
   }
 
   async function loadDetail(positionId: string, nextAsOf = asOf): Promise<void> {
+    const requestId = ++detailRequest.current;
     try {
-      setDetail(
-        (await request(
-          `/${positionId}?asOf=${encodeURIComponent(nextAsOf)}`,
-        )) as PlantillaPositionDetail,
-      );
+      const next = (await request(
+        `/${encodeURIComponent(positionId)}?asOf=${encodeURIComponent(nextAsOf)}`,
+      )) as PlantillaPositionDetail;
+      if (requestId === detailRequest.current) setDetail(next);
     } catch (requestError: unknown) {
       setError(
         requestError instanceof Error
@@ -1113,24 +1102,12 @@ export function PlantillaPositionWorkspace({
   }
 
   async function changeAsOf(value: string): Promise<void> {
-    setAsOf(value);
-    setError('');
-    try {
-      await refresh(value);
-      if (selected) await loadDetail(selected.id, value);
-    } catch (requestError: unknown) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : 'The effective catalog could not be loaded.',
-      );
-    }
+    if (value) navigation.navigate({ asOf: value });
   }
 
   async function selectPosition(positionId: string): Promise<void> {
     setSelectedId(positionId);
     setError('');
-    await loadDetail(positionId);
   }
 
   async function submitCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -1213,7 +1190,7 @@ export function PlantillaPositionWorkspace({
         body: JSON.stringify({ effectiveDate, reason }),
       });
       await refresh(effectiveDate);
-      setAsOf(effectiveDate);
+      navigation.navigate({ asOf: effectiveDate });
       await loadDetail(position.id, effectiveDate);
       setSuccess(
         `“${position.itemNumber}” was ${config.pastTense} effective ${dateLabel(effectiveDate)}.`,
@@ -1407,61 +1384,70 @@ export function PlantillaPositionWorkspace({
           </label>
         </div>
 
-        <div className="grid min-[900px]:grid-cols-[330px_minmax(0,1fr)]">
-          <section
-            className="border-b border-line min-[900px]:border-r min-[900px]:border-b-0"
-            aria-label="Plantilla Position search results"
-          >
-            <header className="flex min-h-11 items-center justify-between border-b border-line px-4">
-              <strong className="text-xs text-midnight">
-                {query ? 'Matching positions' : 'All positions'}
-              </strong>
-              <span className="font-mono text-[11px] text-muted">
-                {matches.length} {matches.length === 1 ? 'item' : 'items'}
-              </span>
-            </header>
-            <div className="max-h-[610px] overflow-y-auto">
-              {matches.length ? (
-                matches.map((position) => {
-                  const version = position.currentVersion;
-                  const isSelected = position.id === selected?.id;
-                  return (
-                    <button
-                      className={`relative grid w-full cursor-pointer gap-1.5 border-0 border-b border-line px-4 py-4 text-left last:border-b-0 ${isSelected ? "bg-[#edf3fb] before:absolute before:top-0 before:bottom-0 before:left-0 before:w-[3px] before:bg-cobalt before:content-['']" : 'bg-paper hover:bg-[#f8fafc]'}`}
-                      type="button"
-                      key={position.id}
-                      aria-pressed={isSelected}
-                      onClick={() => void selectPosition(position.id)}
-                    >
-                      <span className="flex items-center justify-between gap-3">
-                        <strong className="font-mono text-[11px] tracking-[0.02em] text-cobalt">
-                          {position.itemNumber}
-                        </strong>
-                        <span className="font-mono text-[11px] font-bold text-ink">
-                          SG {version?.salaryGrade ?? '—'}
-                        </span>
-                      </span>
-                      <strong className="text-[13px] leading-[1.4] font-[650] text-midnight">
-                        {version?.title ?? 'No effective definition'}
-                      </strong>
-                      <span className="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-muted">
-                        {version?.organizationUnit.name ?? 'Pending effectivity'}
-                      </span>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="grid min-h-[180px] place-content-center gap-1 px-5 text-center">
-                  <strong className="text-sm text-midnight">No position found</strong>
-                  <span className="text-xs text-muted">
-                    Try an Item Number, title, unit, or grade.
-                  </span>
-                </div>
-              )}
+        <div className="grid">
+          {selectedId ? (
+            <div className="p-4">
+              <RecordReturn href={navigation.href({ record: null, view: null })}>
+                ← Plantilla Positions
+              </RecordReturn>
             </div>
-          </section>
+          ) : null}
+          {!selectedId ? (
+            <section
+              className="border-b border-line"
+              aria-label="Plantilla Position search results"
+            >
+              <header className="flex min-h-11 items-center justify-between border-b border-line px-4">
+                <strong className="text-xs text-midnight">
+                  {query ? 'Matching positions' : 'All positions'}
+                </strong>
+                <span className="font-mono text-[11px] text-muted">
+                  {matches.length} {matches.length === 1 ? 'item' : 'items'}
+                </span>
+              </header>
+              <div className="max-h-[610px] overflow-y-auto">
+                {matches.length ? (
+                  matches.map((position) => {
+                    const version = position.currentVersion;
+                    const isSelected = position.id === selected?.id;
+                    return (
+                      <button
+                        className={`relative grid w-full cursor-pointer gap-1.5 border-0 border-b border-line px-4 py-4 text-left last:border-b-0 ${isSelected ? "bg-[#edf3fb] before:absolute before:top-0 before:bottom-0 before:left-0 before:w-[3px] before:bg-cobalt before:content-['']" : 'bg-paper hover:bg-[#f8fafc]'}`}
+                        type="button"
+                        key={position.id}
+                        aria-pressed={isSelected}
+                        onClick={() => void selectPosition(position.id)}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <strong className="font-mono text-[11px] tracking-[0.02em] text-cobalt">
+                            {position.itemNumber}
+                          </strong>
+                          <span className="font-mono text-[11px] font-bold text-ink">
+                            SG {version?.salaryGrade ?? '—'}
+                          </span>
+                        </span>
+                        <strong className="text-[13px] leading-[1.4] font-[650] text-midnight">
+                          {version?.title ?? 'No effective definition'}
+                        </strong>
+                        <span className="overflow-hidden text-xs text-ellipsis whitespace-nowrap text-muted">
+                          {version?.organizationUnit.name ?? 'Pending effectivity'}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="grid min-h-[180px] place-content-center gap-1 px-5 text-center">
+                    <strong className="text-sm text-midnight">No position found</strong>
+                    <span className="text-xs text-muted">
+                      Try an Item Number, title, unit, or grade.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </section>
+          ) : null}
 
-          {selected && effective ? (
+          {selectedId && selected && effective ? (
             <article className="min-w-0" aria-labelledby="selected-position-title">
               <header className="border-b border-line bg-midnight px-5 py-5 text-paper min-[621px]:px-7 min-[621px]:py-6">
                 <div className="flex flex-col gap-5 min-[621px]:flex-row min-[621px]:items-start min-[621px]:justify-between">
@@ -1857,14 +1843,19 @@ export function PlantillaPositionWorkspace({
                 </aside>
               </div>
             </article>
-          ) : (
-            <div className="grid min-h-[420px] place-content-center gap-2 p-8 text-center">
-              <strong className="text-sm text-midnight">No effective position selected</strong>
+          ) : selectedId ? (
+            <div
+              role="status"
+              className="grid min-h-[180px] place-content-center gap-2 p-8 text-center"
+            >
+              <strong className="text-sm text-midnight">
+                This position is unavailable on the selected date
+              </strong>
               <p className="m-0 max-w-[360px] text-xs leading-[1.6] text-muted">
                 Create a proposed position or choose a different effective date.
               </p>
             </div>
-          )}
+          ) : null}
         </div>
       </section>
 

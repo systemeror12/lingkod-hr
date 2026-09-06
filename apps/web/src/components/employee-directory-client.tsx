@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
+import { Field } from './ui/field';
 import { Button, buttonVariants } from './ui/button';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import { GovernmentIdentifiersSection } from './government-identifiers-client';
@@ -77,34 +78,41 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     setFields({});
-    const response = await fetch(`/api/v1/agencies/${agencyId}/employees`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        ...values,
-        employeeNumber: values.employeeNumber.trim(),
-        legalName: values.legalName.trim(),
-        contactEmail: values.contactEmail.trim(),
-      }),
-    });
-    const value: unknown = await response.json().catch(() => null);
-    if (
-      response.ok &&
-      value &&
-      typeof value === 'object' &&
-      typeof (value as { id?: unknown }).id === 'string'
-    ) {
-      router.push(`/employees/${(value as { id: string }).id}`);
-      return;
+    try {
+      const response = await fetch(`/api/v1/agencies/${agencyId}/employees`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          ...values,
+          employeeNumber: values.employeeNumber.trim(),
+          legalName: values.legalName.trim(),
+          contactEmail: values.contactEmail.trim(),
+        }),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (
+        response.ok &&
+        value &&
+        typeof value === 'object' &&
+        typeof (value as { id?: unknown }).id === 'string'
+      ) {
+        router.push(`/employees/${(value as { id: string }).id}`);
+        return;
+      }
+      setSubmitting(false);
+      const envelope = (value ?? {}) as ErrorEnvelope;
+      setFields(envelope.error?.fields ?? {});
+      setError(envelope.error?.message ?? 'The Employee record could not be saved.');
+    } catch {
+      setError('The Employee record could not be saved. Check the connection and try again.');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
-    const envelope = (value ?? {}) as ErrorEnvelope;
-    setFields(envelope.error?.fields ?? {});
-    setError(envelope.error?.message ?? 'The Employee record could not be saved.');
   }
 
   function fieldError(name: string): string | undefined {
@@ -136,8 +144,7 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
           </p>
         )}
         <div className="grid gap-5 px-6 py-7 min-[620px]:grid-cols-2 min-[700px]:px-8">
-          <label className={employeeLabelClass}>
-            Employee number
+          <Field label="Employee number" error={fieldError('employeeNumber')}>
             <input
               className={employeeInputClass}
               name="employeeNumber"
@@ -146,12 +153,8 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
               required
               maxLength={80}
             />
-            {fieldError('employeeNumber') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('employeeNumber')}</span>
-            )}
-          </label>
-          <label className={employeeLabelClass}>
-            Legal name
+          </Field>
+          <Field label="Legal name" error={fieldError('legalName')}>
             <input
               className={employeeInputClass}
               name="legalName"
@@ -161,12 +164,8 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
               required
               maxLength={300}
             />
-            {fieldError('legalName') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('legalName')}</span>
-            )}
-          </label>
-          <label className={employeeLabelClass}>
-            Birth date
+          </Field>
+          <Field label="Birth date" error={fieldError('birthDate')}>
             <input
               className={employeeInputClass}
               name="birthDate"
@@ -175,12 +174,8 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
               onChange={change('birthDate')}
               required
             />
-            {fieldError('birthDate') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('birthDate')}</span>
-            )}
-          </label>
-          <label className={employeeLabelClass}>
-            Sex
+          </Field>
+          <Field label="Sex" error={fieldError('sex')}>
             <select
               className={employeeInputClass}
               name="sex"
@@ -191,9 +186,8 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
               <option value="FEMALE">Female</option>
               <option value="MALE">Male</option>
             </select>
-          </label>
-          <label className={employeeLabelClass}>
-            Civil status
+          </Field>
+          <Field label="Civil status" error={fieldError('civilStatus')}>
             <select
               className={employeeInputClass}
               name="civilStatus"
@@ -206,9 +200,8 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
               <option value="WIDOWED">Widowed</option>
               <option value="SEPARATED">Separated</option>
             </select>
-          </label>
-          <label className={employeeLabelClass}>
-            Contact email
+          </Field>
+          <Field label="Contact email" error={fieldError('contactEmail')}>
             <input
               className={employeeInputClass}
               name="contactEmail"
@@ -219,10 +212,7 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
               required
               maxLength={320}
             />
-            {fieldError('contactEmail') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('contactEmail')}</span>
-            )}
-          </label>
+          </Field>
           <p className="mb-0 border-l-2 border-[#d99a32] bg-[#fff9ec] p-4 text-xs leading-5 text-[#70490f] min-[620px]:col-span-2">
             Email is contact information. It will not link or replace an Agency Membership.
           </p>
@@ -235,7 +225,7 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
             Cancel
           </Link>
           <Button type="submit" variant="primary" size="default" disabled={submitting}>
-            Create employee
+            {submitting ? 'Creating…' : 'Create employee'}
           </Button>
         </footer>
       </form>
@@ -315,28 +305,46 @@ export function EmployeeDetailView({
   }
 
   async function link(membershipId: string): Promise<void> {
+    if (busy) return;
     setBusy(true);
-    const response = await fetch(
-      `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ membershipId }),
-      },
-    );
-    await respond(response, 'Agency Membership linked to this Employee.');
-    setBusy(false);
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ membershipId }),
+        },
+      );
+      await respond(response, 'Agency Membership linked to this Employee.');
+    } catch {
+      setMessageTone('error');
+      setMessage(
+        'The membership change could not be confirmed. Check the connection and try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function unlink(): Promise<void> {
+    if (busy) return;
     setBusy(true);
-    const response = await fetch(
-      `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
-      { method: 'DELETE', credentials: 'include' },
-    );
-    await respond(response, 'Agency Membership unlinked from this Employee.');
-    setBusy(false);
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
+        { method: 'DELETE', credentials: 'include' },
+      );
+      await respond(response, 'Agency Membership unlinked from this Employee.');
+    } catch {
+      setMessageTone('error');
+      setMessage(
+        'The membership change could not be confirmed. Check the connection and try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
