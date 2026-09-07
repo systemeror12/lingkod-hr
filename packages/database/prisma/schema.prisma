@@ -74,6 +74,10 @@ model Agency {
   separationEffects             SeparationEffect[]
   serviceRecordSnapshots        ServiceRecordSnapshot[]
   outboxEvents                  OutboxEvent[]
+  approvalRouteVersions         ApprovalRouteVersion[]
+  approvalRequests              ApprovalRequest[]
+  approvalSteps                 ApprovalStep[]
+  approvalDecisions             ApprovalDecision[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -265,6 +269,9 @@ model AgencyMembership {
   createdSalnComplianceRecords           SalnComplianceRecord[]         @relation("SalnComplianceCreator")
   updatedPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountUpdater")
   generatedServiceRecords                ServiceRecordSnapshot[]        @relation("ServiceRecordGenerator")
+  requestedApprovalRequests              ApprovalRequest[]              @relation("ApprovalRequestRequester")
+  assignedApprovalSteps                  ApprovalStep[]                 @relation("ApprovalStepAssignee")
+  approvalDecisions                      ApprovalDecision[]             @relation("ApprovalDecisionDecider")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -317,6 +324,10 @@ model Permission {
 
   roles                RolePermission[]
   delegatedAuthorities DelegatedAuthority[]
+  approvalSteps        ApprovalStep[]
+  approvalApproveSteps ApprovalStep[]       @relation("ApprovalStepApprovePermission")
+  approvalReturnSteps  ApprovalStep[]       @relation("ApprovalStepReturnPermission")
+  approvalRejectSteps  ApprovalStep[]       @relation("ApprovalStepRejectPermission")
 
   @@map("permissions")
 }
@@ -369,11 +380,12 @@ model DelegatedAuthority {
   authorityDocumentId   String?  @map("authority_document_id") @db.Uuid
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency                   Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  delegator                AgencyMembership  @relation("DelegationDelegator", fields: [agencyId, delegatorMembershipId], references: [agencyId, id], onDelete: Restrict)
-  delegate                 AgencyMembership  @relation("DelegationDelegate", fields: [agencyId, delegateMembershipId], references: [agencyId, id], onDelete: Restrict)
-  permission               Permission        @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
-  personnelActionApprovals PersonnelAction[] @relation("PersonnelActionApprovalDelegation")
+  agency                   Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  delegator                AgencyMembership   @relation("DelegationDelegator", fields: [agencyId, delegatorMembershipId], references: [agencyId, id], onDelete: Restrict)
+  delegate                 AgencyMembership   @relation("DelegationDelegate", fields: [agencyId, delegateMembershipId], references: [agencyId, id], onDelete: Restrict)
+  permission               Permission         @relation(fields: [permissionCode], references: [code], onDelete: Restrict)
+  personnelActionApprovals PersonnelAction[]  @relation("PersonnelActionApprovalDelegation")
+  approvalDecisions        ApprovalDecision[] @relation("ApprovalDecisionDelegation")
 
   @@unique([agencyId, id])
   @@index([agencyId, delegateMembershipId, effectiveFrom, effectiveTo])
@@ -449,6 +461,103 @@ model AuditEvent {
   @@unique([agencyId, action, entityId, idempotencyKey])
   @@index([agencyId, occurredAt(sort: Desc)])
   @@map("audit_events")
+}
+
+model ApprovalRouteVersion {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId       String    @map("agency_id") @db.Uuid
+  routeCode      String    @map("route_code") @db.Citext
+  versionNo      Int       @map("version_no")
+  domain         String
+  stepDefinition Json      @map("step_definition")
+  effectiveFrom  DateTime  @map("effective_from") @db.Date
+  effectiveTo    DateTime? @map("effective_to") @db.Date
+  status         String
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency   Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requests ApprovalRequest[]
+
+  @@unique([agencyId, routeCode, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, routeCode, status, effectiveFrom])
+  @@map("approval_route_versions")
+}
+
+model ApprovalRequest {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  routeVersionId          String    @map("route_version_id") @db.Uuid
+  subjectType             String    @map("subject_type")
+  subjectId               String    @map("subject_id") @db.Uuid
+  requestedByMembershipId String    @map("requested_by_membership_id") @db.Uuid
+  status                  String
+  currentStepNo           Int?      @map("current_step_no")
+  requestedAt             DateTime  @default(now()) @map("requested_at") @db.Timestamptz(6)
+  completedAt             DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  agency       Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  routeVersion ApprovalRouteVersion @relation(fields: [agencyId, routeVersionId], references: [agencyId, id], onDelete: Restrict)
+  requestedBy  AgencyMembership     @relation("ApprovalRequestRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  steps        ApprovalStep[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, status, requestedAt])
+  @@index([agencyId, subjectType, subjectId])
+  @@map("approval_requests")
+}
+
+model ApprovalStep {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  approvalRequestId      String    @map("approval_request_id") @db.Uuid
+  stepNo                 Int       @map("step_no")
+  stepMode               String    @map("step_mode")
+  requiredPermission     String    @map("required_permission") @db.Citext
+  approvePermission      String    @map("approve_permission") @db.Citext
+  returnPermission       String    @map("return_permission") @db.Citext
+  rejectPermission       String    @map("reject_permission") @db.Citext
+  assignedMembershipId   String?   @map("assigned_membership_id") @db.Uuid
+  assignedRoleCode       String?   @map("assigned_role_code") @db.Citext
+  requiresSeparateReview Boolean   @default(true) @map("requires_separate_review")
+  status                 String
+  activatedAt            DateTime? @map("activated_at") @db.Timestamptz(6)
+  completedAt            DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  agency                  Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  approvalRequest         ApprovalRequest    @relation(fields: [agencyId, approvalRequestId], references: [agencyId, id], onDelete: Restrict)
+  permission              Permission         @relation(fields: [requiredPermission], references: [code], onDelete: Restrict)
+  approvePermissionRecord Permission         @relation("ApprovalStepApprovePermission", fields: [approvePermission], references: [code], onDelete: Restrict)
+  returnPermissionRecord  Permission         @relation("ApprovalStepReturnPermission", fields: [returnPermission], references: [code], onDelete: Restrict)
+  rejectPermissionRecord  Permission         @relation("ApprovalStepRejectPermission", fields: [rejectPermission], references: [code], onDelete: Restrict)
+  assignedMembership      AgencyMembership?  @relation("ApprovalStepAssignee", fields: [agencyId, assignedMembershipId], references: [agencyId, id], onDelete: Restrict)
+  decisions               ApprovalDecision[]
+
+  @@unique([approvalRequestId, stepNo, assignedMembershipId])
+  @@unique([agencyId, id])
+  @@index([agencyId, approvalRequestId, stepNo, status])
+  @@map("approval_steps")
+}
+
+model ApprovalDecision {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  approvalStepId        String   @map("approval_step_id") @db.Uuid
+  decidedByMembershipId String   @map("decided_by_membership_id") @db.Uuid
+  decision              String
+  comments              String?
+  decidedAt             DateTime @default(now()) @map("decided_at") @db.Timestamptz(6)
+  delegatedAuthorityId  String?  @map("delegated_authority_id") @db.Uuid
+  requestId             String?  @map("request_id")
+
+  agency             Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  approvalStep       ApprovalStep        @relation(fields: [agencyId, approvalStepId], references: [agencyId, id], onDelete: Restrict)
+  decidedBy          AgencyMembership    @relation("ApprovalDecisionDecider", fields: [agencyId, decidedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  delegatedAuthority DelegatedAuthority? @relation("ApprovalDecisionDelegation", fields: [agencyId, delegatedAuthorityId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, approvalStepId, decidedAt])
+  @@map("approval_decisions")
 }
 
 model Document {
