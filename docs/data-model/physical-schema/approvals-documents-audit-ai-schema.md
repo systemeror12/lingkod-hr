@@ -66,8 +66,12 @@ CREATE TABLE approval_steps (
   step_mode text NOT NULL
     CHECK (step_mode IN ('SEQUENTIAL','PARALLEL_ANY','PARALLEL_ALL')),
   required_permission citext NOT NULL REFERENCES permissions(code),
+  approve_permission citext NOT NULL REFERENCES permissions(code),
+  return_permission citext NOT NULL REFERENCES permissions(code),
+  reject_permission citext NOT NULL REFERENCES permissions(code),
   assigned_membership_id uuid,
   assigned_role_code citext,
+  requires_separate_review boolean NOT NULL DEFAULT true,
   status text NOT NULL
     CHECK (status IN ('PENDING','ACTIVE','APPROVED','REJECTED','RETURNED','SKIPPED','EXPIRED')),
   activated_at timestamptz,
@@ -106,6 +110,12 @@ CREATE TABLE approval_decisions (
 ```
 
 Approval decisions are immutable.
+
+The three decision permissions are snapshotted with the resolved step. When a
+route omits an outcome-specific permission, the application uses
+`required_permission` for that outcome. The generic approval service checks the
+permission for the requested outcome and the current or delegated authority
+before appending the decision.
 
 The generic approval service must call the owning domain service after completion.
 
