@@ -218,6 +218,21 @@ async function seed(): Promise<void> {
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.approvalDecision.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.approvalRouteVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.vacancyPublicationEvidence.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.vacancyPublication.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.requestMspRebaseline.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.requestApprovalRouteBinding.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.requestToFill.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.boardAppointment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.boardDefinition.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.meritSelectionCriteriaSet.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.agencyMeritSelectionPlanVersion.deleteMany({
+      where: { agencyId: agency.id },
+    });
     await transaction.serviceRecordSnapshot.deleteMany({ where: { agencyId: agency.id } });
     await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationEffect.deleteMany({ where: { agencyId: agency.id } });
@@ -298,6 +313,12 @@ async function seed(): Promise<void> {
               'E2E-ACTION-PERFORMANCE_OR_SERVICE',
               'E2E-ACTION-SERVICE_CONTINUITY',
               'E2E-PDS-EVIDENCE',
+              'E2E-CS-FORM-9',
+              'E2E-CSC-FIELD-OFFICE-POSTING',
+              'E2E-CSC-JOB-PORTAL-POSTING',
+              'E2E-AGENCY-POSTING-1',
+              'E2E-AGENCY-POSTING-2',
+              'E2E-AGENCY-POSTING-3',
             ],
           },
         },
@@ -316,6 +337,12 @@ async function seed(): Promise<void> {
             'E2E-ACTION-PERFORMANCE_OR_SERVICE',
             'E2E-ACTION-SERVICE_CONTINUITY',
             'E2E-PDS-EVIDENCE',
+            'E2E-CS-FORM-9',
+            'E2E-CSC-FIELD-OFFICE-POSTING',
+            'E2E-CSC-JOB-PORTAL-POSTING',
+            'E2E-AGENCY-POSTING-1',
+            'E2E-AGENCY-POSTING-2',
+            'E2E-AGENCY-POSTING-3',
           ],
         },
       },
@@ -435,6 +462,109 @@ async function seed(): Promise<void> {
         updatedByMembershipId: membership.id,
       },
     });
+    const formNo9Evidence = await evidence('E2E-CS-FORM-9', 'CS_FORM_NO_9');
+    const fieldOfficePosting = await evidence('E2E-CSC-FIELD-OFFICE-POSTING', 'VACANCY_POSTING');
+    const jobPortalPosting = await evidence('E2E-CSC-JOB-PORTAL-POSTING', 'VACANCY_POSTING');
+    const agencyPostingOne = await evidence('E2E-AGENCY-POSTING-1', 'VACANCY_POSTING');
+    const agencyPostingTwo = await evidence('E2E-AGENCY-POSTING-2', 'VACANCY_POSTING');
+    const agencyPostingThree = await evidence('E2E-AGENCY-POSTING-3', 'VACANCY_POSTING');
+    const meritPlan = await transaction.agencyMeritSelectionPlanVersion.create({
+      data: {
+        agencyId: agency.id,
+        planCode: 'E2E-MSP-2026',
+        versionNo: 1,
+        applicability: {},
+        effectiveFrom: new Date('2026-01-01'),
+        approvalDocumentVersionId: authorityEvidence.currentVersionId,
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const criteriaSet = await transaction.meritSelectionCriteriaSet.create({
+      data: {
+        agencyId: agency.id,
+        planVersionId: meritPlan.id,
+        criteriaCode: 'E2E-MSP-CRITERIA',
+        applicability: {},
+        criteriaDefinition: {
+          minimumQualification: 'The approved Qualification Standard Version.',
+        },
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const board = await transaction.boardDefinition.create({
+      data: {
+        agencyId: agency.id,
+        planVersionId: meritPlan.id,
+        boardCode: 'E2E-HRMPSB',
+        versionNo: 1,
+        applicability: {},
+        seatDefinition: { seats: [{ seatCode: 'HRMO', required: true }] },
+        quorumDefinition: { minimum: 1 },
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.boardAppointment.create({
+      data: {
+        agencyId: agency.id,
+        boardDefinitionId: board.id,
+        seatCode: 'HRMO',
+        membershipId: membership.id,
+        appointmentKind: 'REGULAR',
+        effectiveFrom: new Date('2026-01-01'),
+        authorityDocumentVersionId: authorityEvidence.currentVersionId,
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    const routeStep = (permission: string) => ({
+      steps: [
+        {
+          stepNo: 1,
+          stepMode: 'SEQUENTIAL',
+          requiredPermission: permission,
+          approvePermission: permission,
+          returnPermission: permission,
+          rejectPermission: permission,
+          assignment: { kind: 'MEMBERSHIP', membershipId: membership.id },
+          requiresSeparateReview: false,
+        },
+      ],
+    });
+    await transaction.approvalRouteVersion.createMany({
+      data: [
+        {
+          agencyId: agency.id,
+          routeCode: 'RECRUITMENT_REQUEST_REVIEW',
+          versionNo: 1,
+          domain: 'recruitment',
+          stepDefinition: routeStep('recruitment.requests.approve'),
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+        },
+        {
+          agencyId: agency.id,
+          routeCode: 'RECRUITMENT_VACANCY_PUBLICATION',
+          versionNo: 1,
+          domain: 'recruitment',
+          stepDefinition: routeStep('recruitment.vacancies.publish'),
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+        },
+      ],
+    });
+    void criteriaSet;
+    void formNo9Evidence;
+    void fieldOfficePosting;
+    void jobPortalPosting;
+    void agencyPostingOne;
+    void agencyPostingTwo;
+    void agencyPostingThree;
     const position = await transaction.plantillaPosition.create({
       data: {
         agencyId: agency.id,

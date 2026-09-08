@@ -129,7 +129,21 @@ export interface ApprovalCompletionHandler {
     context: RequestContext,
     request: ApprovalCompletionRequest,
   ): Promise<void>;
+  onDecision?(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    request: ApprovalCompletionRequest,
+    outcome: 'RETURNED' | 'REJECTED',
+  ): Promise<void>;
 }
+
+export type ApprovalCompletionCallback = ApprovalCompletionHandler['complete'];
+export type ApprovalDecisionCallback = (
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  request: ApprovalCompletionRequest,
+  outcome: 'RETURNED' | 'REJECTED',
+) => Promise<void>;
 
 export const APPROVAL_COMPLETION_HANDLER = Symbol('APPROVAL_COMPLETION_HANDLER');
 
@@ -142,6 +156,42 @@ export const approvalCompletionHandler: ApprovalCompletionHandler = {
     );
   },
 };
+
+/** Domains register their completion behavior without making Approval depend on them. */
+@Injectable()
+export class ApprovalCompletionRegistry implements ApprovalCompletionHandler {
+  private readonly callbacks = new Map<string, ApprovalCompletionCallback>();
+  private readonly decisionCallbacks = new Map<string, ApprovalDecisionCallback>();
+
+  register(subjectType: string, callback: ApprovalCompletionCallback): void {
+    this.callbacks.set(subjectType, callback);
+  }
+
+  registerDecision(subjectType: string, callback: ApprovalDecisionCallback): void {
+    this.decisionCallbacks.set(subjectType, callback);
+  }
+
+  async complete(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    request: ApprovalCompletionRequest,
+  ): Promise<void> {
+    const callback = this.callbacks.get(request.subjectType);
+    if (!callback) {
+      return approvalCompletionHandler.complete(transaction, context, request);
+    }
+    await callback(transaction, context, request);
+  }
+
+  async onDecision(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    request: ApprovalCompletionRequest,
+    outcome: 'RETURNED' | 'REJECTED',
+  ): Promise<void> {
+    await this.decisionCallbacks.get(request.subjectType)?.(transaction, context, request, outcome);
+  }
+}
 
 export interface ApprovalAuditWriter {
   write(
@@ -440,6 +490,20 @@ export class ApprovalsService {
       }),
     );
     return record ? routeSummary(record) : null;
+  }
+
+  /** Internal contract: an owning domain binds one exact active route version before approval. */
+  async resolveActiveRoute(
+    context: RequestContext,
+    routeCode: string,
+    effectiveDate?: string,
+  ): Promise<ApprovalRouteSummary> {
+    this.assertPermission(context, 'approvals.routes.read', 'APPROVAL_ROUTE_READ_FORBIDDEN');
+    const asOf = approvalDate(effectiveDate);
+    const route = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      this.resolveRoute(transaction, context.agencyId, routeCode, asOf),
+    );
+    return routeSummary(route);
   }
 
   async createRoute(
@@ -1111,6 +1175,20 @@ export class ApprovalsService {
             subjectId: updated.subjectId,
             routeVersionId: updated.routeVersionId,
           });
+        }
+        if (nextRequestStatus === 'RETURNED' || nextRequestStatus === 'REJECTED') {
+          await this.completionHandler.onDecision?.(
+            transaction,
+            context,
+            {
+              approvalRequestId: updated.id,
+              agencyId: updated.agencyId,
+              subjectType: updated.subjectType,
+              subjectId: updated.subjectId,
+              routeVersionId: updated.routeVersionId,
+            },
+            nextRequestStatus,
+          );
         }
         await this.writeAudit(transaction, context, {
           action: `APPROVAL_REQUEST_${decision === 'APPROVE' ? 'APPROVED' : decision === 'RETURN' ? 'RETURNED' : 'REJECTED'}`,

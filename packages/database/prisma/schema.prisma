@@ -22,8 +22,8 @@ model Agency {
   createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  currentProfile                AgencyProfileVersion?          @relation("AgencyCurrentProfile", fields: [id, currentProfileVersionId], references: [agencyId, id], onDelete: Restrict, map: "agencies_current_profile_fkey")
-  profiles                      AgencyProfileVersion[]         @relation("AgencyProfiles")
+  currentProfile                AgencyProfileVersion?             @relation("AgencyCurrentProfile", fields: [id, currentProfileVersionId], references: [agencyId, id], onDelete: Restrict, map: "agencies_current_profile_fkey")
+  profiles                      AgencyProfileVersion[]            @relation("AgencyProfiles")
   memberships                   AgencyMembership[]
   invitations                   Invitation[]
   roles                         Role[]
@@ -78,6 +78,15 @@ model Agency {
   approvalRequests              ApprovalRequest[]
   approvalSteps                 ApprovalStep[]
   approvalDecisions             ApprovalDecision[]
+  meritSelectionPlans           AgencyMeritSelectionPlanVersion[]
+  meritSelectionCriteriaSets    MeritSelectionCriteriaSet[]
+  boardDefinitions              BoardDefinition[]
+  boardAppointments             BoardAppointment[]
+  requestsToFill                RequestToFill[]
+  requestApprovalRouteBindings  RequestApprovalRouteBinding[]
+  requestMspRebaselines         RequestMspRebaseline[]
+  vacancyPublications           VacancyPublication[]
+  vacancyPublicationEvidence    VacancyPublicationEvidence[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -130,6 +139,7 @@ model OrganizationUnit {
   serviceSegments           ServiceSegment[]           @relation("ServiceSegmentOrganizationUnit")
   personnelBaselines        PersonnelBaseline[]        @relation("PersonnelBaselineOrganizationUnit")
   personnelActionTargets    PersonnelActionVersion[]   @relation("PersonnelActionTargetOrganizationUnit")
+  requestsToFill            RequestToFill[]            @relation("RequestToFillRequestingUnit")
 
   @@unique([agencyId, id])
   @@unique([agencyId, code])
@@ -215,63 +225,80 @@ model AgencyMembership {
   deactivationReason        String?   @map("deactivation_reason")
   createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency                                 Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  user                                   User                           @relation(fields: [userId], references: [id], onDelete: Restrict)
-  primaryOrganizationUnit                OrganizationUnit?              @relation("AgencyMembershipPrimaryUnit", fields: [agencyId, primaryOrganizationUnitId], references: [agencyId, id], onDelete: Restrict)
-  membershipRoles                        MembershipRole[]               @relation("MembershipRoleMembership")
-  assignedRoleChanges                    MembershipRole[]               @relation("MembershipRoleAssigner")
-  invitedUsers                           Invitation[]                   @relation("InvitationInviter")
-  rolePermissionGrants                   RolePermission[]               @relation("RolePermissionGrantor")
-  delegationsGiven                       DelegatedAuthority[]           @relation("DelegationDelegator")
-  delegationsReceived                    DelegatedAuthority[]           @relation("DelegationDelegate")
-  preparedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionPreparer")
-  approvedPersonnelActions               PersonnelAction[]              @relation("PersonnelActionApprover")
-  effectuatedPersonnelActions            PersonnelAction[]              @relation("PersonnelActionEffectuator")
-  initiatedSeparationCases               SeparationCase[]               @relation("SeparationCaseInitiator")
-  approvedSeparationCases                SeparationCase[]               @relation("SeparationCaseApprover")
-  createdPersonnelActionVersions         PersonnelActionVersion[]       @relation("PersonnelActionVersionCreator")
-  createdPersonnelActionEvidence         PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceCreator")
+  agency                                 Agency                            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  user                                   User                              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  primaryOrganizationUnit                OrganizationUnit?                 @relation("AgencyMembershipPrimaryUnit", fields: [agencyId, primaryOrganizationUnitId], references: [agencyId, id], onDelete: Restrict)
+  membershipRoles                        MembershipRole[]                  @relation("MembershipRoleMembership")
+  assignedRoleChanges                    MembershipRole[]                  @relation("MembershipRoleAssigner")
+  invitedUsers                           Invitation[]                      @relation("InvitationInviter")
+  rolePermissionGrants                   RolePermission[]                  @relation("RolePermissionGrantor")
+  delegationsGiven                       DelegatedAuthority[]              @relation("DelegationDelegator")
+  delegationsReceived                    DelegatedAuthority[]              @relation("DelegationDelegate")
+  preparedPersonnelActions               PersonnelAction[]                 @relation("PersonnelActionPreparer")
+  approvedPersonnelActions               PersonnelAction[]                 @relation("PersonnelActionApprover")
+  effectuatedPersonnelActions            PersonnelAction[]                 @relation("PersonnelActionEffectuator")
+  initiatedSeparationCases               SeparationCase[]                  @relation("SeparationCaseInitiator")
+  approvedSeparationCases                SeparationCase[]                  @relation("SeparationCaseApprover")
+  createdPersonnelActionVersions         PersonnelActionVersion[]          @relation("PersonnelActionVersionCreator")
+  createdPersonnelActionEvidence         PersonnelActionEvidence[]         @relation("PersonnelActionEvidenceCreator")
   sessions                               UserSession[]
-  securityEvents                         SecurityEvent[]                @relation("SecurityEventMembership")
-  auditEvents                            AuditEvent[]                   @relation("AuditEventMembership")
-  createdDocuments                       Document[]                     @relation("DocumentCreator")
-  updatedDocuments                       Document[]                     @relation("DocumentUpdater")
-  createdDocumentVersions                DocumentVersion[]              @relation("DocumentVersionCreator")
-  createdStaffingAuthorities             StaffingAuthority[]            @relation("StaffingAuthorityCreator")
-  updatedStaffingAuthorities             StaffingAuthority[]            @relation("StaffingAuthorityUpdater")
-  validatedStaffingAuthorities           StaffingAuthority[]            @relation("StaffingAuthorityEvidenceValidator")
-  createdQualificationStandards          QualificationStandard[]        @relation("QualificationStandardCreator")
-  updatedQualificationStandards          QualificationStandard[]        @relation("QualificationStandardUpdater")
-  createdQualificationStandardVersions   QualificationStandardVersion[] @relation("QualificationStandardVersionCreator")
-  updatedQualificationStandardVersions   QualificationStandardVersion[] @relation("QualificationStandardVersionUpdater")
-  validatedQualificationSourceVersions   QualificationStandardVersion[] @relation("QualificationStandardSourceValidator")
-  validatedQualificationApprovalVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalValidator")
-  createdPlantillaPositions              PlantillaPosition[]            @relation("PlantillaPositionCreator")
-  updatedPlantillaPositions              PlantillaPosition[]            @relation("PlantillaPositionUpdater")
-  createdPlantillaPositionVersions       PlantillaPositionVersion[]     @relation("PlantillaPositionVersionCreator")
-  updatedPlantillaPositionVersions       PlantillaPositionVersion[]     @relation("PlantillaPositionVersionUpdater")
-  employee                               Employee?                      @relation("AgencyMembershipEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
-  createdEmployees                       Employee[]                     @relation("EmployeeCreator")
-  updatedEmployees                       Employee[]                     @relation("EmployeeUpdater")
-  createdEmployeeDocuments               EmployeeDocument[]             @relation("EmployeeDocumentCreator")
-  createdPdsVersions                     PdsVersion[]                   @relation("PdsVersionCreator")
-  updatedPdsVersions                     PdsVersion[]                   @relation("PdsVersionUpdater")
-  pdsTransitionEvents                    PdsTransitionEvent[]           @relation("PdsTransitionActor")
-  createdPersonnelBaselines              PersonnelBaseline[]            @relation("PersonnelBaselineCreator")
-  updatedPersonnelBaselines              PersonnelBaseline[]            @relation("PersonnelBaselineUpdater")
-  reviewedPersonnelBaselines             PersonnelBaseline[]            @relation("PersonnelBaselineReviewer")
-  effectuatedPersonnelBaselines          PersonnelBaseline[]            @relation("PersonnelBaselineEffectuator")
-  createdServiceSegments                 ServiceSegment[]               @relation("ServiceSegmentCreator")
-  createdPositionIncumbencies            PositionIncumbency[]           @relation("PositionIncumbencyCreator")
-  createdGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierCreator")
-  updatedGovernmentIdentifiers           GovernmentIdentifier[]         @relation("GovernmentIdentifierUpdater")
-  createdPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountCreator")
-  createdSalnComplianceRecords           SalnComplianceRecord[]         @relation("SalnComplianceCreator")
-  updatedPayrollBankAccounts             PayrollBankAccount[]           @relation("PayrollBankAccountUpdater")
-  generatedServiceRecords                ServiceRecordSnapshot[]        @relation("ServiceRecordGenerator")
-  requestedApprovalRequests              ApprovalRequest[]              @relation("ApprovalRequestRequester")
-  assignedApprovalSteps                  ApprovalStep[]                 @relation("ApprovalStepAssignee")
-  approvalDecisions                      ApprovalDecision[]             @relation("ApprovalDecisionDecider")
+  securityEvents                         SecurityEvent[]                   @relation("SecurityEventMembership")
+  auditEvents                            AuditEvent[]                      @relation("AuditEventMembership")
+  createdDocuments                       Document[]                        @relation("DocumentCreator")
+  updatedDocuments                       Document[]                        @relation("DocumentUpdater")
+  createdDocumentVersions                DocumentVersion[]                 @relation("DocumentVersionCreator")
+  createdStaffingAuthorities             StaffingAuthority[]               @relation("StaffingAuthorityCreator")
+  updatedStaffingAuthorities             StaffingAuthority[]               @relation("StaffingAuthorityUpdater")
+  validatedStaffingAuthorities           StaffingAuthority[]               @relation("StaffingAuthorityEvidenceValidator")
+  createdQualificationStandards          QualificationStandard[]           @relation("QualificationStandardCreator")
+  updatedQualificationStandards          QualificationStandard[]           @relation("QualificationStandardUpdater")
+  createdQualificationStandardVersions   QualificationStandardVersion[]    @relation("QualificationStandardVersionCreator")
+  updatedQualificationStandardVersions   QualificationStandardVersion[]    @relation("QualificationStandardVersionUpdater")
+  validatedQualificationSourceVersions   QualificationStandardVersion[]    @relation("QualificationStandardSourceValidator")
+  validatedQualificationApprovalVersions QualificationStandardVersion[]    @relation("QualificationStandardApprovalValidator")
+  createdPlantillaPositions              PlantillaPosition[]               @relation("PlantillaPositionCreator")
+  updatedPlantillaPositions              PlantillaPosition[]               @relation("PlantillaPositionUpdater")
+  createdPlantillaPositionVersions       PlantillaPositionVersion[]        @relation("PlantillaPositionVersionCreator")
+  updatedPlantillaPositionVersions       PlantillaPositionVersion[]        @relation("PlantillaPositionVersionUpdater")
+  employee                               Employee?                         @relation("AgencyMembershipEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  createdEmployees                       Employee[]                        @relation("EmployeeCreator")
+  updatedEmployees                       Employee[]                        @relation("EmployeeUpdater")
+  createdEmployeeDocuments               EmployeeDocument[]                @relation("EmployeeDocumentCreator")
+  createdPdsVersions                     PdsVersion[]                      @relation("PdsVersionCreator")
+  updatedPdsVersions                     PdsVersion[]                      @relation("PdsVersionUpdater")
+  pdsTransitionEvents                    PdsTransitionEvent[]              @relation("PdsTransitionActor")
+  createdPersonnelBaselines              PersonnelBaseline[]               @relation("PersonnelBaselineCreator")
+  updatedPersonnelBaselines              PersonnelBaseline[]               @relation("PersonnelBaselineUpdater")
+  reviewedPersonnelBaselines             PersonnelBaseline[]               @relation("PersonnelBaselineReviewer")
+  effectuatedPersonnelBaselines          PersonnelBaseline[]               @relation("PersonnelBaselineEffectuator")
+  createdServiceSegments                 ServiceSegment[]                  @relation("ServiceSegmentCreator")
+  createdPositionIncumbencies            PositionIncumbency[]              @relation("PositionIncumbencyCreator")
+  createdGovernmentIdentifiers           GovernmentIdentifier[]            @relation("GovernmentIdentifierCreator")
+  updatedGovernmentIdentifiers           GovernmentIdentifier[]            @relation("GovernmentIdentifierUpdater")
+  createdPayrollBankAccounts             PayrollBankAccount[]              @relation("PayrollBankAccountCreator")
+  createdSalnComplianceRecords           SalnComplianceRecord[]            @relation("SalnComplianceCreator")
+  updatedPayrollBankAccounts             PayrollBankAccount[]              @relation("PayrollBankAccountUpdater")
+  generatedServiceRecords                ServiceRecordSnapshot[]           @relation("ServiceRecordGenerator")
+  requestedApprovalRequests              ApprovalRequest[]                 @relation("ApprovalRequestRequester")
+  assignedApprovalSteps                  ApprovalStep[]                    @relation("ApprovalStepAssignee")
+  approvalDecisions                      ApprovalDecision[]                @relation("ApprovalDecisionDecider")
+  createdMeritSelectionPlans             AgencyMeritSelectionPlanVersion[] @relation("MeritSelectionPlanCreator")
+  updatedMeritSelectionPlans             AgencyMeritSelectionPlanVersion[] @relation("MeritSelectionPlanUpdater")
+  createdMeritSelectionCriteriaSets      MeritSelectionCriteriaSet[]       @relation("MeritSelectionCriteriaSetCreator")
+  updatedMeritSelectionCriteriaSets      MeritSelectionCriteriaSet[]       @relation("MeritSelectionCriteriaSetUpdater")
+  createdBoardDefinitions                BoardDefinition[]                 @relation("BoardDefinitionCreator")
+  updatedBoardDefinitions                BoardDefinition[]                 @relation("BoardDefinitionUpdater")
+  createdBoardAppointments               BoardAppointment[]                @relation("BoardAppointmentCreator")
+  boardAppointments                      BoardAppointment[]                @relation("BoardAppointmentMember")
+  requestApprovalRouteBindings           RequestApprovalRouteBinding[]     @relation("RequestApprovalRouteBindingMember")
+  createdRequestsToFill                  RequestToFill[]                   @relation("RequestToFillCreator")
+  updatedRequestsToFill                  RequestToFill[]                   @relation("RequestToFillUpdater")
+  requestedRequestsToFill                RequestToFill[]                   @relation("RequestToFillRequester")
+  authorizedRequestMspRebaselines        RequestMspRebaseline[]            @relation("RequestMspRebaselineAuthorizer")
+  createdVacancyPublications             VacancyPublication[]              @relation("VacancyPublicationCreator")
+  updatedVacancyPublications             VacancyPublication[]              @relation("VacancyPublicationUpdater")
+  certifiedVacancyPublications           VacancyPublication[]              @relation("VacancyPublicationCertifier")
+  createdVacancyPublicationEvidence      VacancyPublicationEvidence[]      @relation("VacancyPublicationEvidenceCreator")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -475,8 +502,10 @@ model ApprovalRouteVersion {
   status         String
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency   Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  requests ApprovalRequest[]
+  agency                       Agency                        @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requests                     ApprovalRequest[]
+  requestApprovalRouteBindings RequestApprovalRouteBinding[]
+  vacancyPublications          VacancyPublication[]
 
   @@unique([agencyId, routeCode, versionNo])
   @@unique([agencyId, id])
@@ -560,6 +589,281 @@ model ApprovalDecision {
   @@map("approval_decisions")
 }
 
+model AgencyMeritSelectionPlanVersion {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  planCode                  String    @map("plan_code") @db.Citext
+  versionNo                 Int       @map("version_no")
+  applicability             Json      @default("{}")
+  effectiveFrom             DateTime  @map("effective_from") @db.Date
+  effectiveTo               DateTime? @map("effective_to") @db.Date
+  approvalDocumentVersionId String?   @map("approval_document_version_id") @db.Uuid
+  status                    String
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId     String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  agency                  Agency                      @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  approvalDocumentVersion DocumentVersion?            @relation("MeritSelectionPlanApprovalVersion", fields: [agencyId, approvalDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy               AgencyMembership            @relation("MeritSelectionPlanCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy               AgencyMembership            @relation("MeritSelectionPlanUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  criteriaSets            MeritSelectionCriteriaSet[]
+  boardDefinitions        BoardDefinition[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, planCode, versionNo])
+  @@index([agencyId, status, effectiveFrom])
+  @@map("agency_merit_selection_plan_versions")
+}
+
+model MeritSelectionCriteriaSet {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  planVersionId         String   @map("plan_version_id") @db.Uuid
+  criteriaCode          String   @map("criteria_code") @db.Citext
+  applicability         Json     @default("{}")
+  criteriaDefinition    Json     @map("criteria_definition")
+  status                String
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  agency    Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  plan      AgencyMeritSelectionPlanVersion @relation(fields: [agencyId, planVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy AgencyMembership                @relation("MeritSelectionCriteriaSetCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy AgencyMembership                @relation("MeritSelectionCriteriaSetUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, planVersionId, criteriaCode])
+  @@index([agencyId, status])
+  @@map("merit_selection_criteria_sets")
+}
+
+model BoardDefinition {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  planVersionId         String   @map("plan_version_id") @db.Uuid
+  boardCode             String   @map("board_code") @db.Citext
+  versionNo             Int      @map("version_no")
+  applicability         Json     @default("{}")
+  seatDefinition        Json     @map("seat_definition")
+  quorumDefinition      Json     @map("quorum_definition")
+  status                String
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  agency       Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  plan         AgencyMeritSelectionPlanVersion @relation(fields: [agencyId, planVersionId], references: [agencyId, id], onDelete: Restrict)
+  appointments BoardAppointment[]
+  createdBy    AgencyMembership                @relation("BoardDefinitionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy    AgencyMembership                @relation("BoardDefinitionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, planVersionId, boardCode, versionNo])
+  @@index([agencyId, status])
+  @@map("board_definitions")
+}
+
+model BoardAppointment {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  boardDefinitionId          String    @map("board_definition_id") @db.Uuid
+  seatCode                   String    @map("seat_code") @db.Citext
+  membershipId               String    @map("membership_id") @db.Uuid
+  appointmentKind            String    @map("appointment_kind")
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  authorityDocumentVersionId String?   @map("authority_document_version_id") @db.Uuid
+  status                     String
+  createdByMembershipId      String    @map("created_by_membership_id") @db.Uuid
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency                   Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  board                    BoardDefinition  @relation(fields: [agencyId, boardDefinitionId], references: [agencyId, id], onDelete: Restrict)
+  membership               AgencyMembership @relation("BoardAppointmentMember", fields: [agencyId, membershipId], references: [agencyId, id], onDelete: Restrict)
+  authorityDocumentVersion DocumentVersion? @relation("BoardAppointmentAuthorityVersion", fields: [agencyId, authorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy                AgencyMembership @relation("BoardAppointmentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, boardDefinitionId, seatCode, membershipId, effectiveFrom])
+  @@index([agencyId, boardDefinitionId, seatCode, effectiveFrom])
+  @@map("board_appointments")
+}
+
+model RequestToFill {
+  id                             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String    @map("agency_id") @db.Uuid
+  requestNo                      Int       @default(autoincrement()) @map("request_no")
+  positionId                     String    @map("position_id") @db.Uuid
+  requestingUnitId               String    @map("requesting_unit_id") @db.Uuid
+  requestedByMembershipId        String    @map("requested_by_membership_id") @db.Uuid
+  justification                  String
+  qualificationStandardVersionId String    @map("qualification_standard_version_id") @db.Uuid
+  mspPlanVersionId               String?   @map("msp_plan_version_id") @db.Uuid
+  criteriaSetId                  String?   @map("criteria_set_id") @db.Uuid
+  boardDefinitionId              String?   @map("board_definition_id") @db.Uuid
+  bindingSetNo                   Int       @default(0) @map("binding_set_no")
+  bindingsResolvedAt             DateTime? @map("bindings_resolved_at") @db.Timestamptz(6)
+  bindingFrozenAt                DateTime? @map("binding_frozen_at") @db.Timestamptz(6)
+  approvalRequestId              String?   @map("approval_request_id") @db.Uuid
+  status                         String
+  submittedAt                    DateTime? @map("submitted_at") @db.Timestamptz(6)
+  approvedAt                     DateTime? @map("approved_at") @db.Timestamptz(6)
+  closedAt                       DateTime? @map("closed_at") @db.Timestamptz(6)
+  cancelledAt                    DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  createdByMembershipId          String    @map("created_by_membership_id") @db.Uuid
+  createdAt                      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId          String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                     Int       @default(1) @map("row_version")
+
+  agency                Agency                        @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  position              PlantillaPosition             @relation("RequestToFillPosition", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  requestingUnit        OrganizationUnit              @relation("RequestToFillRequestingUnit", fields: [agencyId, requestingUnitId], references: [agencyId, id], onDelete: Restrict)
+  requestedBy           AgencyMembership              @relation("RequestToFillRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  qualificationStandard QualificationStandardVersion  @relation("RequestToFillQualification", fields: [agencyId, qualificationStandardVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy             AgencyMembership              @relation("RequestToFillCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy             AgencyMembership              @relation("RequestToFillUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  routeBindings         RequestApprovalRouteBinding[]
+  rebaselines           RequestMspRebaseline[]
+  publications          VacancyPublication[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, requestNo])
+  @@index([agencyId, status, createdAt])
+  @@index([agencyId, positionId, status])
+  @@map("requests_to_fill")
+}
+
+model RequestApprovalRouteBinding {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String   @map("agency_id") @db.Uuid
+  requestToFillId        String   @map("request_to_fill_id") @db.Uuid
+  bindingSetNo           Int      @map("binding_set_no")
+  checkpointCode         String   @map("checkpoint_code")
+  approvalRouteVersionId String   @map("approval_route_version_id") @db.Uuid
+  boundByMembershipId    String   @map("bound_by_membership_id") @db.Uuid
+  boundAt                DateTime @default(now()) @map("bound_at") @db.Timestamptz(6)
+
+  agency       Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request      RequestToFill        @relation(fields: [agencyId, requestToFillId], references: [agencyId, id], onDelete: Restrict)
+  routeVersion ApprovalRouteVersion @relation(fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  boundBy      AgencyMembership     @relation("RequestApprovalRouteBindingMember", fields: [agencyId, boundByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, requestToFillId, bindingSetNo, checkpointCode])
+  @@index([agencyId, requestToFillId, bindingSetNo])
+  @@map("request_approval_route_bindings")
+}
+
+model RequestMspRebaseline {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  requestToFillId            String   @map("request_to_fill_id") @db.Uuid
+  fromMspPlanVersionId       String?  @map("from_msp_plan_version_id") @db.Uuid
+  fromCriteriaSetId          String?  @map("from_criteria_set_id") @db.Uuid
+  fromBoardDefinitionId      String?  @map("from_board_definition_id") @db.Uuid
+  toMspPlanVersionId         String?  @map("to_msp_plan_version_id") @db.Uuid
+  toCriteriaSetId            String?  @map("to_criteria_set_id") @db.Uuid
+  toBoardDefinitionId        String?  @map("to_board_definition_id") @db.Uuid
+  reason                     String
+  authorizedByMembershipId   String   @map("authorized_by_membership_id") @db.Uuid
+  authorityDocumentVersionId String?  @map("authority_document_version_id") @db.Uuid
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency                   Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request                  RequestToFill    @relation(fields: [agencyId, requestToFillId], references: [agencyId, id], onDelete: Restrict)
+  authorizedBy             AgencyMembership @relation("RequestMspRebaselineAuthorizer", fields: [agencyId, authorizedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  authorityDocumentVersion DocumentVersion? @relation("RequestMspRebaselineAuthorityVersion", fields: [agencyId, authorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, requestToFillId, createdAt])
+  @@map("request_msp_rebaselines")
+}
+
+model VacancyPublication {
+  id                             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String    @map("agency_id") @db.Uuid
+  publicationNo                  Int       @default(autoincrement()) @map("publication_no")
+  requestToFillId                String    @map("request_to_fill_id") @db.Uuid
+  qualificationStandardVersionId String    @map("qualification_standard_version_id") @db.Uuid
+  formDocumentVersionId          String    @map("form_document_version_id") @db.Uuid
+  approvalRouteVersionId         String    @map("approval_route_version_id") @db.Uuid
+  approvalRequestId              String?   @map("approval_request_id") @db.Uuid
+  openingDate                    DateTime  @map("opening_date") @db.Date
+  closingDate                    DateTime  @map("closing_date") @db.Date
+  channels                       Json      @default("[]")
+  positionDetails                Json      @default("{}") @map("position_details")
+  applicationRequirements        Json      @default("[]") @map("application_requirements")
+  contactDetails                 Json      @default("{}") @map("contact_details")
+  hrmoCertification              Json?     @map("hrmo_certification")
+  certifiedByMembershipId        String?   @map("certified_by_membership_id") @db.Uuid
+  certifiedAt                    DateTime? @map("certified_at") @db.Timestamptz(6)
+  publishedAt                    DateTime? @map("published_at") @db.Timestamptz(6)
+  republicationOfId              String?   @map("republication_of_id") @db.Uuid
+  republicationReason            String?   @map("republication_reason")
+  republicationAuthorityDocumentVersionId String? @map("republication_authority_document_version_id") @db.Uuid
+  status                         String
+  closedAt                       DateTime? @map("closed_at") @db.Timestamptz(6)
+  closureReason                  String?   @map("closure_reason")
+  closureAuthorityDocumentVersionId String? @map("closure_authority_document_version_id") @db.Uuid
+  cancellationReason             String?   @map("cancellation_reason")
+  cancellationAuthorityDocumentVersionId String? @map("cancellation_authority_document_version_id") @db.Uuid
+  createdByMembershipId          String    @map("created_by_membership_id") @db.Uuid
+  createdAt                      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId          String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                     Int       @default(1) @map("row_version")
+
+  agency                Agency                       @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request               RequestToFill                @relation(fields: [agencyId, requestToFillId], references: [agencyId, id], onDelete: Restrict)
+  qualificationStandard QualificationStandardVersion @relation("VacancyPublicationQualification", fields: [agencyId, qualificationStandardVersionId], references: [agencyId, id], onDelete: Restrict)
+  formDocumentVersion   DocumentVersion              @relation("VacancyPublicationFormVersion", fields: [agencyId, formDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  republicationAuthorityDocumentVersion DocumentVersion? @relation("VacancyPublicationRepublicationAuthorityVersion", fields: [agencyId, republicationAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  closureAuthorityDocumentVersion DocumentVersion? @relation("VacancyPublicationClosureAuthorityVersion", fields: [agencyId, closureAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  cancellationAuthorityDocumentVersion DocumentVersion? @relation("VacancyPublicationCancellationAuthorityVersion", fields: [agencyId, cancellationAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalRouteVersion  ApprovalRouteVersion         @relation(fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  certifiedBy           AgencyMembership?            @relation("VacancyPublicationCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  createdBy             AgencyMembership             @relation("VacancyPublicationCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy             AgencyMembership             @relation("VacancyPublicationUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  republicationOf       VacancyPublication?          @relation("VacancyPublicationLineage", fields: [agencyId, republicationOfId], references: [agencyId, id], onDelete: Restrict)
+  republications        VacancyPublication[]         @relation("VacancyPublicationLineage")
+  evidence              VacancyPublicationEvidence[]
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, publicationNo])
+  @@index([agencyId, status, openingDate])
+  @@index([agencyId, requestToFillId, status])
+  @@map("vacancy_publications")
+}
+
+model VacancyPublicationEvidence {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  publicationId             String    @map("publication_id") @db.Uuid
+  channelType               String    @map("channel_type")
+  location                  String
+  reference                 String?
+  publishedAt               DateTime  @map("published_at") @db.Timestamptz(6)
+  removedAt                 DateTime? @map("removed_at") @db.Timestamptz(6)
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency                  Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  publication             VacancyPublication @relation(fields: [agencyId, publicationId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?   @relation("VacancyPublicationEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy               AgencyMembership   @relation("VacancyPublicationEvidenceCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, publicationId, channelType])
+  @@map("vacancy_publication_evidence")
+}
+
 model Document {
   id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId              String   @map("agency_id") @db.Uuid
@@ -623,33 +927,41 @@ model DocumentVersion {
   issuedAt              DateTime? @map("issued_at") @db.Timestamptz(6)
   signatureMetadata     Json?     @map("signature_metadata")
 
-  agency                                        Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  document                                      Document                       @relation("DocumentVersions", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
-  currentForDocuments                           Document[]                     @relation("DocumentCurrentVersion")
-  createdBy                                     AgencyMembership               @relation("DocumentVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  staffingAuthorityEvidenceVersions             StaffingAuthority[]            @relation("StaffingAuthorityEvidenceVersion")
-  staffingAuthorityRevocationVersions           StaffingAuthority[]            @relation("StaffingAuthorityRevocationVersion")
-  qualificationStandardSourceEvidenceVersions   QualificationStandardVersion[] @relation("QualificationStandardSourceVersion")
-  qualificationStandardApprovalEvidenceVersions QualificationStandardVersion[] @relation("QualificationStandardApprovalVersion")
-  employeeDocuments                             EmployeeDocument[]             @relation("DocumentVersionEmployeeDocuments")
-  pdsEducationEvidenceRecords                   PdsEducationRecord[]           @relation("PdsEducationEvidenceVersion")
-  pdsEligibilityEvidenceRecords                 PdsEligibilityRecord[]         @relation("PdsEligibilityEvidenceVersion")
-  pdsWorkExperienceEvidenceVersions             PdsWorkExperienceRecord[]      @relation("PdsWorkExperienceEvidenceVersion")
-  pdsVoluntaryWorkEvidenceVersions              PdsVoluntaryWorkRecord[]       @relation("PdsVoluntaryWorkEvidenceVersion")
-  pdsLearningDevelopmentEvidenceVersions        PdsLearningDevelopmentRecord[] @relation("PdsLearningDevelopmentEvidenceVersion")
-  pdsWesEvidenceVersions                        PdsWesArtifact[]               @relation("PdsWesEvidenceVersion")
-  pdsWesEmployeeSignatureVersions               PdsWesArtifact[]               @relation("PdsWesEmployeeSignatureVersion")
-  pdsCertificationPhotoVersions                 PdsCertificationDetails[]      @relation("PdsCertificationPhotoVersion")
-  pdsEmployeeSignatureVersions                  PdsCertificationDetails[]      @relation("PdsEmployeeSignatureVersion")
-  pdsThumbmarkVersions                          PdsCertificationDetails[]      @relation("PdsThumbmarkVersion")
-  pdsOathAdministratorSignatureVersions         PdsCertificationDetails[]      @relation("PdsOathAdministratorSignatureVersion")
-  pdsPageSignatureVersions                      PdsPageSignature[]             @relation("PdsPageSignatureVersion")
-  personnelBaselineEvidenceVersions             PersonnelBaseline[]            @relation("PersonnelBaselineEvidenceVersion")
-  governmentIdentifierEvidenceVersions          GovernmentIdentifier[]         @relation("GovernmentIdentifierEvidenceVersion")
-  personnelActionEvidenceVersions               PersonnelActionEvidence[]      @relation("PersonnelActionEvidenceVersion")
-  payrollBankAccountEvidenceVersions            PayrollBankAccount[]           @relation("PayrollBankAccountEvidenceVersion")
-  salnAcknowledgmentVersions                    SalnComplianceRecord[]         @relation("SalnAcknowledgmentVersion")
-  serviceRecordCorrectionVersions               ServiceRecordSnapshot[]        @relation("ServiceRecordCorrectionVersion")
+  agency                                        Agency                            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  document                                      Document                          @relation("DocumentVersions", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  currentForDocuments                           Document[]                        @relation("DocumentCurrentVersion")
+  createdBy                                     AgencyMembership                  @relation("DocumentVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  staffingAuthorityEvidenceVersions             StaffingAuthority[]               @relation("StaffingAuthorityEvidenceVersion")
+  staffingAuthorityRevocationVersions           StaffingAuthority[]               @relation("StaffingAuthorityRevocationVersion")
+  qualificationStandardSourceEvidenceVersions   QualificationStandardVersion[]    @relation("QualificationStandardSourceVersion")
+  qualificationStandardApprovalEvidenceVersions QualificationStandardVersion[]    @relation("QualificationStandardApprovalVersion")
+  employeeDocuments                             EmployeeDocument[]                @relation("DocumentVersionEmployeeDocuments")
+  pdsEducationEvidenceRecords                   PdsEducationRecord[]              @relation("PdsEducationEvidenceVersion")
+  pdsEligibilityEvidenceRecords                 PdsEligibilityRecord[]            @relation("PdsEligibilityEvidenceVersion")
+  pdsWorkExperienceEvidenceVersions             PdsWorkExperienceRecord[]         @relation("PdsWorkExperienceEvidenceVersion")
+  pdsVoluntaryWorkEvidenceVersions              PdsVoluntaryWorkRecord[]          @relation("PdsVoluntaryWorkEvidenceVersion")
+  pdsLearningDevelopmentEvidenceVersions        PdsLearningDevelopmentRecord[]    @relation("PdsLearningDevelopmentEvidenceVersion")
+  pdsWesEvidenceVersions                        PdsWesArtifact[]                  @relation("PdsWesEvidenceVersion")
+  pdsWesEmployeeSignatureVersions               PdsWesArtifact[]                  @relation("PdsWesEmployeeSignatureVersion")
+  pdsCertificationPhotoVersions                 PdsCertificationDetails[]         @relation("PdsCertificationPhotoVersion")
+  pdsEmployeeSignatureVersions                  PdsCertificationDetails[]         @relation("PdsEmployeeSignatureVersion")
+  pdsThumbmarkVersions                          PdsCertificationDetails[]         @relation("PdsThumbmarkVersion")
+  pdsOathAdministratorSignatureVersions         PdsCertificationDetails[]         @relation("PdsOathAdministratorSignatureVersion")
+  pdsPageSignatureVersions                      PdsPageSignature[]                @relation("PdsPageSignatureVersion")
+  personnelBaselineEvidenceVersions             PersonnelBaseline[]               @relation("PersonnelBaselineEvidenceVersion")
+  governmentIdentifierEvidenceVersions          GovernmentIdentifier[]            @relation("GovernmentIdentifierEvidenceVersion")
+  personnelActionEvidenceVersions               PersonnelActionEvidence[]         @relation("PersonnelActionEvidenceVersion")
+  payrollBankAccountEvidenceVersions            PayrollBankAccount[]              @relation("PayrollBankAccountEvidenceVersion")
+  salnAcknowledgmentVersions                    SalnComplianceRecord[]            @relation("SalnAcknowledgmentVersion")
+  serviceRecordCorrectionVersions               ServiceRecordSnapshot[]           @relation("ServiceRecordCorrectionVersion")
+  meritSelectionPlanApprovalVersions            AgencyMeritSelectionPlanVersion[] @relation("MeritSelectionPlanApprovalVersion")
+  vacancyPublicationFormVersions                VacancyPublication[]              @relation("VacancyPublicationFormVersion")
+  vacancyPublicationEvidenceVersions            VacancyPublicationEvidence[]      @relation("VacancyPublicationEvidenceVersion")
+  vacancyPublicationClosureAuthorityVersions    VacancyPublication[]              @relation("VacancyPublicationClosureAuthorityVersion")
+  vacancyPublicationCancellationAuthorityVersions VacancyPublication[]            @relation("VacancyPublicationCancellationAuthorityVersion")
+  vacancyPublicationRepublicationAuthorityVersions VacancyPublication[]           @relation("VacancyPublicationRepublicationAuthorityVersion")
+  boardAppointmentAuthorityVersions             BoardAppointment[]                @relation("BoardAppointmentAuthorityVersion")
+  requestMspRebaselineAuthorityVersions         RequestMspRebaseline[]            @relation("RequestMspRebaselineAuthorityVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -757,18 +1069,20 @@ model QualificationStandardVersion {
   updatedAt                               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion                              Int       @default(1) @map("row_version")
 
-  agency                      Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  qualificationStandard       QualificationStandard      @relation("QualificationStandardVersions", fields: [agencyId, qualificationStandardId], references: [agencyId, id], onDelete: Restrict)
-  currentForStandards         QualificationStandard[]    @relation("QualificationStandardCurrentVersion")
-  positionVersions            PlantillaPositionVersion[] @relation("PlantillaPositionQualificationStandardVersion")
-  sourceDocument              Document?                  @relation("QualificationStandardSourceDocument", fields: [agencyId, sourceDocumentId], references: [agencyId, id], onDelete: Restrict, map: "qualification_standard_versions_source_document_fkey")
-  sourceEvidenceVersion       DocumentVersion?           @relation("QualificationStandardSourceVersion", fields: [agencyId, sourceDocumentId, sourceEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "qualification_standard_versions_source_version_fkey")
-  sourceEvidenceValidatedBy   AgencyMembership?          @relation("QualificationStandardSourceValidator", fields: [agencyId, sourceEvidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  approvalDocument            Document?                  @relation("QualificationStandardApprovalDocument", fields: [agencyId, approvalDocumentId], references: [agencyId, id], onDelete: Restrict, map: "qualification_standard_versions_approval_document_fkey")
-  approvalEvidenceVersion     DocumentVersion?           @relation("QualificationStandardApprovalVersion", fields: [agencyId, approvalDocumentId, approvalEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "qualification_standard_versions_approval_version_fkey")
-  approvalEvidenceValidatedBy AgencyMembership?          @relation("QualificationStandardApprovalValidator", fields: [agencyId, approvalEvidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  createdBy                   AgencyMembership           @relation("QualificationStandardVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  updatedBy                   AgencyMembership           @relation("QualificationStandardVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  agency                       Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  qualificationStandard        QualificationStandard      @relation("QualificationStandardVersions", fields: [agencyId, qualificationStandardId], references: [agencyId, id], onDelete: Restrict)
+  currentForStandards          QualificationStandard[]    @relation("QualificationStandardCurrentVersion")
+  positionVersions             PlantillaPositionVersion[] @relation("PlantillaPositionQualificationStandardVersion")
+  sourceDocument               Document?                  @relation("QualificationStandardSourceDocument", fields: [agencyId, sourceDocumentId], references: [agencyId, id], onDelete: Restrict, map: "qualification_standard_versions_source_document_fkey")
+  sourceEvidenceVersion        DocumentVersion?           @relation("QualificationStandardSourceVersion", fields: [agencyId, sourceDocumentId, sourceEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "qualification_standard_versions_source_version_fkey")
+  sourceEvidenceValidatedBy    AgencyMembership?          @relation("QualificationStandardSourceValidator", fields: [agencyId, sourceEvidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvalDocument             Document?                  @relation("QualificationStandardApprovalDocument", fields: [agencyId, approvalDocumentId], references: [agencyId, id], onDelete: Restrict, map: "qualification_standard_versions_approval_document_fkey")
+  approvalEvidenceVersion      DocumentVersion?           @relation("QualificationStandardApprovalVersion", fields: [agencyId, approvalDocumentId, approvalEvidenceVersionId], references: [agencyId, documentId, id], onDelete: Restrict, map: "qualification_standard_versions_approval_version_fkey")
+  approvalEvidenceValidatedBy  AgencyMembership?          @relation("QualificationStandardApprovalValidator", fields: [agencyId, approvalEvidenceValidatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  createdBy                    AgencyMembership           @relation("QualificationStandardVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy                    AgencyMembership           @relation("QualificationStandardVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  requestQualificationBindings RequestToFill[]            @relation("RequestToFillQualification")
+  publicationQualifications    VacancyPublication[]       @relation("VacancyPublicationQualification")
 
   @@unique([qualificationStandardId, versionNo])
   @@unique([agencyId, id])
@@ -802,6 +1116,7 @@ model PlantillaPosition {
   incumbencies            PositionIncumbency[]       @relation("PositionIncumbencyPosition")
   personnelBaselines      PersonnelBaseline[]        @relation("PersonnelBaselinePosition")
   personnelActionTargets  PersonnelActionVersion[]   @relation("PersonnelActionTargetPosition")
+  requestsToFill          RequestToFill[]            @relation("RequestToFillPosition")
 
   @@unique([agencyId, id])
   @@unique([agencyId, itemNumber])

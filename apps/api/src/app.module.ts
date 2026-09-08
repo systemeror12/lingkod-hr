@@ -18,6 +18,7 @@ import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
+import { RecruitmentModule } from './recruitment/recruitment.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ApprovalModule } from './approvals/approval.module';
     SalnComplianceModule,
     ServiceRecordsModule,
     ApprovalModule,
+    RecruitmentModule,
   ],
   controllers: [HealthController],
 })
