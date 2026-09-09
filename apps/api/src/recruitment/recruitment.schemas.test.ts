@@ -5,6 +5,7 @@ import {
   vacancyPublicationCancelSchema,
   vacancyPublicationCloseSchema,
   vacancyPublicationCreateSchema,
+  vacancyPublicationCorrectionSchema,
   vacancyPublicationRepublishSchema,
 } from './recruitment.schemas';
 
@@ -78,6 +79,39 @@ it('accepts only calendar dates and supported publication channel shapes', () =>
       contactDetails: {},
     }).success,
   ).toBe(false);
+});
+
+it('requires evidence versions and permits returned-draft channel corrections', () => {
+  const evidence = {
+    channelType: 'CSC_FIELD_OFFICE' as const,
+    location: 'CSC Field Office',
+    publishedAt: '2026-09-08T00:00:00.000Z',
+  };
+  expect(
+    vacancyPublicationCreateSchema.safeParse({
+      requestToFillId: uuid,
+      formDocumentVersionId: uuid,
+      openingDate: '2026-09-08',
+      closingDate: '2026-09-18',
+      channels: [],
+      positionDetails: {},
+      applicationRequirements: [],
+      contactDetails: {},
+      evidence: [evidence],
+    }).success,
+  ).toBe(false);
+  expect(
+    vacancyPublicationCorrectionSchema.parse({
+      formDocumentVersionId: uuid,
+      openingDate: '2026-09-08',
+      closingDate: '2026-09-18',
+      channels: [{ type: 'CSC_FIELD_OFFICE', location: 'CSC Field Office' }],
+      positionDetails: {},
+      applicationRequirements: [],
+      contactDetails: {},
+      evidence: [{ ...evidence, evidenceDocumentVersionId: uuid }],
+    }),
+  ).toMatchObject({ channels: expect.any(Array), evidence: expect.any(Array) });
 });
 
 it('requires authority evidence for cancellation and republication', () => {

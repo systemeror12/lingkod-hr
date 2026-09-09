@@ -58,7 +58,7 @@ const publicationEvidenceSchema = z
     location: z.string().trim().min(1).max(300),
     reference: z.string().trim().max(1000).optional(),
     publishedAt: z.string().datetime(),
-    evidenceDocumentVersionId: recruitmentIdSchema.optional(),
+    evidenceDocumentVersionId: recruitmentIdSchema,
   })
   .strict();
 
@@ -82,10 +82,12 @@ export const vacancyPublicationCorrectionSchema = z
     formDocumentVersionId: recruitmentIdSchema,
     openingDate: recruitmentDateSchema,
     closingDate: recruitmentDateSchema,
+    channels: z.array(channelSchema).max(20).optional(),
     positionDetails: jsonObjectSchema,
     applicationRequirements: z.array(z.unknown()).max(100),
     contactDetails: jsonObjectSchema,
     hrmoCertification: jsonObjectSchema.optional(),
+    evidence: z.array(publicationEvidenceSchema).max(50).optional(),
   })
   .strict();
 

@@ -499,11 +499,23 @@ export class ApprovalsService {
     effectiveDate?: string,
   ): Promise<ApprovalRouteSummary> {
     this.assertPermission(context, 'approvals.routes.read', 'APPROVAL_ROUTE_READ_FORBIDDEN');
-    const asOf = approvalDate(effectiveDate);
+    if (effectiveDate) approvalDate(effectiveDate);
     const route = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
-      this.resolveRoute(transaction, context.agencyId, routeCode, asOf),
+      this.resolveActiveRouteInTransaction(transaction, context, routeCode, effectiveDate),
     );
-    return routeSummary(route);
+    return route;
+  }
+
+  /** Internal contract: resolve a route without opening a second transaction. */
+  async resolveActiveRouteInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    routeCode: string,
+    effectiveDate?: string,
+  ): Promise<ApprovalRouteSummary> {
+    this.assertPermission(context, 'approvals.routes.read', 'APPROVAL_ROUTE_READ_FORBIDDEN');
+    const asOf = approvalDate(effectiveDate);
+    return routeSummary(await this.resolveRoute(transaction, context.agencyId, routeCode, asOf));
   }
 
   async createRoute(
@@ -793,91 +805,113 @@ export class ApprovalsService {
         'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
       );
     }
-    const effectiveDate = approvalDate(input.effectiveDate);
-    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    approvalDate(input.effectiveDate);
     return withDatabaseContext(
       requestDatabaseContext(context, 'approval-transition'),
-      async (transaction) => {
-        const previous = await this.idempotentEvent(
-          transaction,
-          context,
-          'APPROVAL_REQUEST_CREATED',
-          idempotencyKey,
-        );
-        if (previous) {
-          if (
-            metadataString(previous.metadata, 'subjectType') !== input.subjectType ||
-            metadataString(previous.metadata, 'subjectId') !== input.subjectId ||
-            metadataString(previous.metadata, 'routeCode') !== input.routeCode
-          ) {
-            throw this.idempotencyConflict();
-          }
-          const existing = await this.requireRequest(
-            transaction,
-            context.agencyId,
-            previous.entityId,
-          );
-          return requestSummary(existing);
-        }
-        const route = await this.resolveRoute(
+      (transaction) =>
+        this.createRequestInTransaction(transaction, context, input, rawIdempotencyKey),
+    );
+  }
+
+  /** Internal contract: create an Approval Request in the caller's transaction. */
+  async createRequestInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: ApprovalRequestInput,
+    rawIdempotencyKey?: string,
+    boundRouteVersionId?: string,
+  ): Promise<ApprovalRequestSummary> {
+    this.assertPermission(
+      context,
+      'approvals.requests.create',
+      'APPROVAL_REQUEST_CREATE_FORBIDDEN',
+    );
+    if (!isApprovalSubjectType(input.subjectType)) {
+      throw new ApprovalServiceError(
+        'Board Recommendations and Selection Decisions use their Recruitment-owned records.',
+        400,
+        'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+      );
+    }
+    const effectiveDate = approvalDate(input.effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    const previous = await this.idempotentEvent(
+      transaction,
+      context,
+      'APPROVAL_REQUEST_CREATED',
+      idempotencyKey,
+    );
+    if (previous) {
+      if (
+        metadataString(previous.metadata, 'subjectType') !== input.subjectType ||
+        metadataString(previous.metadata, 'subjectId') !== input.subjectId ||
+        metadataString(previous.metadata, 'routeCode') !== input.routeCode
+      ) {
+        throw this.idempotencyConflict();
+      }
+      const existing = await this.requireRequest(transaction, context.agencyId, previous.entityId);
+      return requestSummary(existing);
+    }
+    const route = boundRouteVersionId
+      ? await this.requireBoundRoute(
           transaction,
           context.agencyId,
+          boundRouteVersionId,
           input.routeCode,
           effectiveDate,
-        );
-        const definition = routeDefinition(route.stepDefinition);
-        const assignments = await this.resolveAssignments(
-          transaction,
-          context.agencyId,
-          definition,
-          effectiveDate,
-          context.membershipId,
-        );
-        const request = await transaction.approvalRequest.create({
-          data: {
-            agencyId: context.agencyId,
-            routeVersionId: route.id,
-            subjectType: input.subjectType,
-            subjectId: input.subjectId,
-            requestedByMembershipId: context.membershipId,
-            status: 'PENDING',
-            steps: {
-              create: assignments.map((assignment) => ({
-                stepNo: assignment.step.stepNo,
-                stepMode: assignment.step.stepMode,
-                requiredPermission: assignment.step.requiredPermission,
-                approvePermission: decisionPermission(assignment.step, 'APPROVE'),
-                returnPermission: decisionPermission(assignment.step, 'RETURN'),
-                rejectPermission: decisionPermission(assignment.step, 'REJECT'),
-                assignedMembershipId: assignment.membershipId,
-                assignedRoleCode: assignment.roleCode,
-                requiresSeparateReview: assignment.step.requiresSeparateReview,
-                status: 'PENDING',
-              })),
-            },
-          },
-          include: requestInclude,
-        });
-        await this.writeAudit(transaction, context, {
-          action: 'APPROVAL_REQUEST_CREATED',
-          entityType: 'ApprovalRequest',
-          entityId: request.id,
-          previousStatus: null,
-          newStatus: 'PENDING',
-          reason: 'Approval Request created with a server-resolved route snapshot.',
-          metadata: {
-            subjectType: request.subjectType,
-            subjectId: request.subjectId,
-            routeCode: input.routeCode,
-            routeVersionId: request.routeVersionId,
-            assignedMembershipIds: assignments.map(({ membershipId }) => membershipId),
-            effectiveDate: formatDate(effectiveDate),
-          },
-          idempotencyKey,
-        });
-        return requestSummary(request);
-      },
+        )
+      : await this.resolveRoute(transaction, context.agencyId, input.routeCode, effectiveDate);
+    const definition = routeDefinition(route.stepDefinition);
+    const assignments = await this.resolveAssignments(
+      transaction,
+      context.agencyId,
+      definition,
+      effectiveDate,
+      context.membershipId,
     );
+    const request = await transaction.approvalRequest.create({
+      data: {
+        agencyId: context.agencyId,
+        routeVersionId: route.id,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        requestedByMembershipId: context.membershipId,
+        status: 'PENDING',
+        steps: {
+          create: assignments.map((assignment) => ({
+            stepNo: assignment.step.stepNo,
+            stepMode: assignment.step.stepMode,
+            requiredPermission: assignment.step.requiredPermission,
+            approvePermission: decisionPermission(assignment.step, 'APPROVE'),
+            returnPermission: decisionPermission(assignment.step, 'RETURN'),
+            rejectPermission: decisionPermission(assignment.step, 'REJECT'),
+            assignedMembershipId: assignment.membershipId,
+            assignedRoleCode: assignment.roleCode,
+            requiresSeparateReview: assignment.step.requiresSeparateReview,
+            status: 'PENDING',
+          })),
+        },
+      },
+      include: requestInclude,
+    });
+    await this.writeAudit(transaction, context, {
+      action: 'APPROVAL_REQUEST_CREATED',
+      entityType: 'ApprovalRequest',
+      entityId: request.id,
+      previousStatus: null,
+      newStatus: 'PENDING',
+      reason: 'Approval Request created with a server-resolved route snapshot.',
+      metadata: {
+        subjectType: request.subjectType,
+        subjectId: request.subjectId,
+        routeCode: input.routeCode,
+        routeVersionId: request.routeVersionId,
+        assignedMembershipIds: assignments.map(({ membershipId }) => membershipId),
+        effectiveDate: formatDate(effectiveDate),
+      },
+      idempotencyKey,
+    });
+    return requestSummary(request);
   }
 
   async submit(
@@ -890,67 +924,78 @@ export class ApprovalsService {
       'approvals.requests.submit',
       'APPROVAL_REQUEST_SUBMIT_FORBIDDEN',
     );
-    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
     return withDatabaseContext(
       requestDatabaseContext(context, 'approval-transition'),
-      async (transaction) => {
-        const previous = await this.idempotentEvent(
-          transaction,
-          context,
-          'APPROVAL_REQUEST_SUBMITTED',
-          idempotencyKey,
-          requestId,
-        );
-        if (previous)
-          return requestSummary(
-            await this.requireRequest(transaction, context.agencyId, requestId),
-          );
-        const current = await this.lockRequest(transaction, context.agencyId, requestId);
-        if (!current) throw this.notFound('Approval Request');
-        if (current.requestedByMembershipId !== context.membershipId) {
-          throw new ApprovalServiceError(
-            'Only the Approval Request drafter can submit it.',
-            403,
-            'APPROVAL_REQUEST_DRAFTER_REQUIRED',
-          );
-        }
-        if (!['PENDING', 'RETURNED'].includes(current.status)) {
-          throw this.requestWorkflowError('submit', current.status);
-        }
-        const stepNo = current.currentStepNo ?? 1;
-        const step = current.steps.find(({ stepNo: candidate }) => candidate === stepNo);
-        if (!step || !['PENDING', 'RETURNED'].includes(step.status)) {
-          throw new ApprovalServiceError(
-            'The Approval Request has no resumable current step.',
-            409,
-            'APPROVAL_STEP_INVALID',
-          );
-        }
-        await transaction.approvalStep.update({
-          where: { agencyId_id: { agencyId: context.agencyId, id: step.id } },
-          data: {
-            status: 'ACTIVE',
-            activatedAt: step.activatedAt ?? new Date(),
-            completedAt: null,
-          },
-        });
-        await transaction.approvalRequest.update({
-          where: { agencyId_id: { agencyId: context.agencyId, id: requestId } },
-          data: { status: 'IN_PROGRESS', currentStepNo: stepNo },
-        });
-        await this.writeAudit(transaction, context, {
-          action: 'APPROVAL_REQUEST_SUBMITTED',
-          entityType: 'ApprovalRequest',
-          entityId: requestId,
-          previousStatus: current.status,
-          newStatus: 'IN_PROGRESS',
-          reason: 'Approval Request submitted for assigned review.',
-          metadata: { currentStepNo: stepNo },
-          idempotencyKey,
-        });
-        return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
-      },
+      (transaction) => this.submitInTransaction(transaction, context, requestId, rawIdempotencyKey),
     );
+  }
+
+  /** Internal contract: submit an Approval Request in the caller's transaction. */
+  async submitInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    requestId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<ApprovalRequestSummary> {
+    this.assertPermission(
+      context,
+      'approvals.requests.submit',
+      'APPROVAL_REQUEST_SUBMIT_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    const previous = await this.idempotentEvent(
+      transaction,
+      context,
+      'APPROVAL_REQUEST_SUBMITTED',
+      idempotencyKey,
+      requestId,
+    );
+    if (previous)
+      return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
+    const current = await this.lockRequest(transaction, context.agencyId, requestId);
+    if (!current) throw this.notFound('Approval Request');
+    if (current.requestedByMembershipId !== context.membershipId) {
+      throw new ApprovalServiceError(
+        'Only the Approval Request drafter can submit it.',
+        403,
+        'APPROVAL_REQUEST_DRAFTER_REQUIRED',
+      );
+    }
+    if (!['PENDING', 'RETURNED'].includes(current.status)) {
+      throw this.requestWorkflowError('submit', current.status);
+    }
+    const stepNo = current.currentStepNo ?? 1;
+    const step = current.steps.find(({ stepNo: candidate }) => candidate === stepNo);
+    if (!step || !['PENDING', 'RETURNED'].includes(step.status)) {
+      throw new ApprovalServiceError(
+        'The Approval Request has no resumable current step.',
+        409,
+        'APPROVAL_STEP_INVALID',
+      );
+    }
+    await transaction.approvalStep.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: step.id } },
+      data: {
+        status: 'ACTIVE',
+        activatedAt: step.activatedAt ?? new Date(),
+        completedAt: null,
+      },
+    });
+    await transaction.approvalRequest.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: requestId } },
+      data: { status: 'IN_PROGRESS', currentStepNo: stepNo },
+    });
+    await this.writeAudit(transaction, context, {
+      action: 'APPROVAL_REQUEST_SUBMITTED',
+      entityType: 'ApprovalRequest',
+      entityId: requestId,
+      previousStatus: current.status,
+      newStatus: 'IN_PROGRESS',
+      reason: 'Approval Request submitted for assigned review.',
+      metadata: { currentStepNo: stepNo },
+      idempotencyKey,
+    });
+    return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
   }
 
   async approve(
@@ -1296,6 +1341,34 @@ export class ApprovalsService {
     if (!route) {
       throw new ApprovalServiceError(
         'Exactly one active Approval Route Version must apply to the request date.',
+        409,
+        'APPROVAL_ROUTE_RESOLUTION_FAILED',
+      );
+    }
+    return route;
+  }
+
+  private async requireBoundRoute(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    routeVersionId: string,
+    routeCode: string,
+    asOf: Date,
+  ): Promise<RouteRecord> {
+    const route = await transaction.approvalRouteVersion.findFirst({
+      where: {
+        agencyId,
+        id: routeVersionId,
+        routeCode,
+        status: 'ACTIVE',
+        effectiveFrom: { lte: asOf },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+      },
+      select: routeSelect,
+    });
+    if (!route) {
+      throw new ApprovalServiceError(
+        'The bound Approval Route Version is no longer active for the request date.',
         409,
         'APPROVAL_ROUTE_RESOLUTION_FAILED',
       );
