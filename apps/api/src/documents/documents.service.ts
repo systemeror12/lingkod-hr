@@ -58,6 +58,16 @@ export interface LinkableDocumentVersionSummary {
   version: DocumentVersionSummary;
 }
 
+export interface FinalizedDocumentVersionSummary {
+  id: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: DocumentClassification;
+  status: string;
+  issuedAt: string;
+}
+
 export interface DocumentAccess {
   document: DocumentSummary;
   accessUrl: string;
@@ -700,6 +710,48 @@ export class DocumentsService {
         (currentVersion.issuedAt !== null || linkableStatus));
     if (!eligible) return { ok: false, reason: 'STATUS_INELIGIBLE' };
     return { ok: true, document: { ...document, currentVersion } };
+  }
+
+  /** Internal contract: another domain may validate an exact finalized version without owning Documents. */
+  async resolveFinalizedVersionInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    versionId: string,
+  ): Promise<FinalizedDocumentVersionSummary | null> {
+    const record = await transaction.documentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: versionId },
+      select: {
+        id: true,
+        documentId: true,
+        issuedAt: true,
+        document: {
+          select: {
+            documentNo: true,
+            documentType: true,
+            classification: true,
+            status: true,
+          },
+        },
+      },
+    });
+    if (
+      !record ||
+      !record.issuedAt ||
+      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
+        record.document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
+      )
+    ) {
+      return null;
+    }
+    return {
+      id: record.id,
+      documentId: record.documentId,
+      documentNo: record.document.documentNo,
+      documentType: record.document.documentType,
+      classification: record.document.classification as DocumentClassification,
+      status: record.document.status,
+      issuedAt: record.issuedAt.toISOString(),
+    };
   }
 
   /** Internal contract: personnel own-record links may use only their uploaded version. */

@@ -174,6 +174,40 @@ export interface PlantillaPositionSuccessor {
   draft: PlantillaPositionVersionSummary;
 }
 
+export type RecruitableVacancyRejectionReason =
+  | 'POSITION_NOT_VACANT'
+  | 'POSITION_NOT_AUTHORIZED'
+  | 'POSITION_NOT_PLANTILLA'
+  | 'POSITION_FROZEN'
+  | 'POSITION_ABOLISHED'
+  | 'POSITION_VERSION_MISSING'
+  | 'POSITION_AUTHORITY_INVALID'
+  | 'POSITION_QUALIFICATION_INVALID';
+
+export type RecruitableVacancyResolution =
+  | {
+      eligible: true;
+      positionId: string;
+      itemNumber: string;
+      positionVersionId: string;
+      positionVersionNo: number;
+      title: string;
+      parentheticalTitle: string | null;
+      salaryGrade: number;
+      organizationUnitId: string;
+      organizationUnitCode: string;
+      organizationUnitName: string;
+      qualificationStandardVersionId: string;
+      staffingAuthorityId: string;
+      effectiveFrom: string;
+      employmentCategory: PlantillaPositionEmploymentCategory;
+    }
+  | {
+      eligible: false;
+      positionId: string;
+      reason: RecruitableVacancyRejectionReason;
+    };
+
 export interface PlantillaPositionAuditWriter {
   write(
     transaction: Prisma.TransactionClient,
@@ -221,7 +255,8 @@ const versionSelect = {
     select: {
       id: true,
       code: true,
-      currentVersion: { select: { name: true } },
+      currentVersion: { select: { name: true, status: true, domainStatus: true } },
+      status: true,
     },
   },
   qualificationStandardVersion: {
@@ -230,7 +265,9 @@ const versionSelect = {
       versionNo: true,
       effectiveFrom: true,
       effectiveTo: true,
-      qualificationStandard: { select: { code: true, name: true } },
+      status: true,
+      domainStatus: true,
+      qualificationStandard: { select: { code: true, name: true, status: true } },
     },
   },
   staffingAuthority: {
@@ -239,6 +276,9 @@ const versionSelect = {
       referenceNo: true,
       authorityType: true,
       effectiveDate: true,
+      status: true,
+      supersededEffectiveDate: true,
+      revokedEffectiveDate: true,
     },
   },
 } as const;
@@ -510,6 +550,90 @@ export class PlantillaPositionsService {
       });
       return records.map((record) => positionSummary(record, asOf));
     });
+  }
+
+  /** Internal contract: Recruitment may open a case only from this resolved vacancy. */
+  async resolveRecruitableVacancy(
+    context: RequestContext,
+    positionId: string,
+    asOfValue = manilaToday(),
+  ): Promise<RecruitableVacancyResolution | null> {
+    this.assertPermission(context, 'positions.items.read', 'PLANTILLA_POSITION_READ_FORBIDDEN');
+    return withDatabaseContext(databaseContext(context), (transaction) =>
+      this.resolveRecruitableVacancyInTransaction(transaction, context, positionId, asOfValue),
+    );
+  }
+
+  /** Internal contract: an owning workflow may revalidate the same vacancy inside its transaction. */
+  async resolveRecruitableVacancyInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    asOfValue = manilaToday(),
+  ): Promise<RecruitableVacancyResolution | null> {
+    const asOf = toDatabaseDate(asOfValue);
+    const record = await transaction.plantillaPosition.findFirst({
+      where: { agencyId: context.agencyId, id: positionId },
+      select: positionSelect,
+    });
+    if (!record) return null;
+
+    const current = effectiveVersion(record.versions, asOf);
+    if (!current) return { eligible: false, positionId, reason: 'POSITION_VERSION_MISSING' };
+    if (record.status === 'FROZEN' || current.domainStatus === 'FROZEN') {
+      return { eligible: false, positionId, reason: 'POSITION_FROZEN' };
+    }
+    if (record.status === 'ABOLISHED' || current.domainStatus === 'ABOLISHED') {
+      return { eligible: false, positionId, reason: 'POSITION_ABOLISHED' };
+    }
+    if (record.status !== 'VACANT' || current.domainStatus !== 'VACANT') {
+      return { eligible: false, positionId, reason: 'POSITION_NOT_VACANT' };
+    }
+    if (current.employmentCategory !== 'PLANTILLA') {
+      return { eligible: false, positionId, reason: 'POSITION_NOT_PLANTILLA' };
+    }
+    if (
+      current.organizationUnit.status !== 'ACTIVE' ||
+      current.organizationUnit.currentVersion?.status !== 'ACTIVE' ||
+      current.organizationUnit.currentVersion.domainStatus !== 'ACTIVE'
+    ) {
+      return { eligible: false, positionId, reason: 'POSITION_NOT_AUTHORIZED' };
+    }
+    if (
+      current.staffingAuthority.status !== 'ACTIVE' ||
+      current.staffingAuthority.effectiveDate > asOf ||
+      (current.staffingAuthority.supersededEffectiveDate !== null &&
+        current.staffingAuthority.supersededEffectiveDate <= asOf) ||
+      (current.staffingAuthority.revokedEffectiveDate !== null &&
+        current.staffingAuthority.revokedEffectiveDate <= asOf)
+    ) {
+      return { eligible: false, positionId, reason: 'POSITION_AUTHORITY_INVALID' };
+    }
+    if (
+      current.qualificationStandardVersion.status !== 'ACTIVE' ||
+      current.qualificationStandardVersion.domainStatus !== 'ACTIVE' ||
+      current.qualificationStandardVersion.qualificationStandard.status !== 'ACTIVE'
+    ) {
+      return { eligible: false, positionId, reason: 'POSITION_QUALIFICATION_INVALID' };
+    }
+    return {
+      eligible: true,
+      positionId: record.id,
+      itemNumber: record.itemNumber,
+      positionVersionId: current.id,
+      positionVersionNo: current.versionNo,
+      title: current.positionTitle,
+      parentheticalTitle: current.parentheticalTitle,
+      salaryGrade: current.salaryGrade,
+      organizationUnitId: current.organizationUnit.id,
+      organizationUnitCode: current.organizationUnit.code,
+      organizationUnitName:
+        current.organizationUnit.currentVersion?.name ?? current.organizationUnit.code,
+      qualificationStandardVersionId: current.qualificationStandardVersion.id,
+      staffingAuthorityId: current.staffingAuthority.id,
+      effectiveFrom: formatDate(current.effectiveFrom),
+      employmentCategory: current.employmentCategory as PlantillaPositionEmploymentCategory,
+    };
   }
 
   async findById(

@@ -58,6 +58,14 @@ const destinations: readonly (Destination & {
     permission: 'positions.items.read',
   },
   {
+    href: '/recruitment',
+    label: 'Recruitment',
+    icon: 'authority',
+    visible: (session) =>
+      hasPermission(session, 'recruitment.requests.read') ||
+      hasPermission(session, 'recruitment.vacancies.read'),
+  },
+  {
     href: '/employees',
     label: 'Employees',
     icon: 'users',

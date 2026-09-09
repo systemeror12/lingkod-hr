@@ -5,7 +5,7 @@ import {
   APPROVAL_AUDIT_WRITER,
   APPROVAL_COMPLETION_HANDLER,
   approvalAuditWriter,
-  approvalCompletionHandler,
+  ApprovalCompletionRegistry,
   ApprovalsService,
 } from './approval.service';
 
@@ -14,9 +14,10 @@ import {
   controllers: [ApprovalController],
   providers: [
     ApprovalsService,
+    ApprovalCompletionRegistry,
     { provide: APPROVAL_AUDIT_WRITER, useValue: approvalAuditWriter },
-    { provide: APPROVAL_COMPLETION_HANDLER, useValue: approvalCompletionHandler },
+    { provide: APPROVAL_COMPLETION_HANDLER, useExisting: ApprovalCompletionRegistry },
   ],
-  exports: [ApprovalsService],
+  exports: [ApprovalsService, ApprovalCompletionRegistry],
 })
 export class ApprovalModule {}
