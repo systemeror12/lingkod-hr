@@ -15,7 +15,7 @@ async function expectStatus(page: Page, status: string): Promise<void> {
 }
 
 test('drives the protected Request to Fill and publication journey', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   resetFixture();
 
   await page.goto('/dashboard');
@@ -84,4 +84,67 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   await page.getByRole('button', { name: 'Approve and publish' }).click();
   await expectStatus(page, 'PUBLISHED');
   await expect(page.getByText(/Republication of/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByRole('button', { name: 'New application' }).click();
+  await page.getByLabel('First name').fill('Ana');
+  await page.getByLabel('Last name').fill('Reyes');
+  await page.getByLabel('Email').fill('ana.reyes@example.test');
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Record Application' }).click();
+  await expectStatus(page, 'RECEIVED');
+  const applicationHeading = await page.getByRole('heading', { name: /APP-\d+/ }).textContent();
+  const applicationNo = applicationHeading?.match(/APP-\d+/)?.[0];
+  if (!applicationNo) throw new Error('The recorded Application number was not shown.');
+
+  let linkedEvidence = 0;
+  for (const [purpose, documentNo] of [
+    ['EDUCATION', 'E2E-APPLICANT-EDUCATION'],
+    ['ELIGIBILITY', 'E2E-APPLICANT-ELIGIBILITY'],
+  ] as const) {
+    await page.getByLabel('Purpose').selectOption(purpose);
+    const option = page
+      .getByLabel('Finalized Document Version')
+      .locator('option')
+      .filter({ hasText: documentNo });
+    const documentVersionId = await option.getAttribute('value');
+    if (!documentVersionId) throw new Error(`The ${documentNo} fixture was not available.`);
+    await page.getByLabel('Finalized Document Version').selectOption(documentVersionId);
+    await page.getByRole('button', { name: 'Link evidence' }).click();
+    linkedEvidence += 1;
+    await expect(page.getByRole('button', { name: 'Remove' })).toHaveCount(linkedEvidence);
+  }
+
+  await page.getByLabel('Education result').selectOption('MEETS');
+  await page.getByLabel('Eligibility result').selectOption('MEETS');
+  await page.getByRole('checkbox', { name: 'Education evidence E2E-APPLICANT-EDUCATION' }).check();
+  await page
+    .getByRole('checkbox', { name: 'Eligibility evidence E2E-APPLICANT-ELIGIBILITY' })
+    .check();
+  await page
+    .getByLabel('Screening reason')
+    .fill('Education and eligibility evidence satisfy the bound Qualification Standard Version.');
+  await page.getByRole('button', { name: 'Record screening' }).click();
+  await expectStatus(page, 'QUALIFIED');
+  await expect(page.getByRole('button', { name: 'Record correction' })).toBeVisible();
+
+  await page.getByLabel('Eligibility result').selectOption('DOES_NOT_MEET');
+  await page
+    .getByLabel('Correction reason')
+    .fill('The eligibility certificate was issued after the application closing date.');
+  await page.getByRole('button', { name: 'Record correction' }).click();
+  await expectStatus(page, 'NOT_QUALIFIED');
+
+  await page
+    .getByLabel('Lifecycle reason')
+    .fill('Notice and screening history handled for this Application.');
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: 'Close application' }).click();
+  await expectStatus(page, 'CLOSED');
+
+  await page.getByRole('button', { name: 'Kanban' }).click();
+  await expect(page.getByRole('button', { name: new RegExp(applicationNo) })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Ana Reyes/ })).toBeVisible();
+  await page.getByRole('button', { name: 'Tree' }).click();
+  await expect(page.getByRole('button', { name: applicationNo })).toBeVisible();
 });
