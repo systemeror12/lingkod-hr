@@ -6,6 +6,8 @@ export const APPLICATION_STATUSES = [
   'INCOMPLETE',
   'QUALIFIED',
   'NOT_QUALIFIED',
+  'FOR_ASSESSMENT',
+  'FOR_INTERVIEW',
   'WITHDRAWN',
   'CLOSED',
 ] as const;

@@ -92,6 +92,10 @@ model Agency {
   applicationDocuments          ApplicationDocument[]
   applicationScreenings         ApplicationScreening[]
   applicationScreeningEvidence  ApplicationScreeningEvidence[]
+  assessments                   Assessment[]
+  assessmentResultVersions      AssessmentResultVersion[]
+  interviews                    Interview[]
+  interviewFeedbackVersions     InterviewFeedbackVersion[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -310,6 +314,12 @@ model AgencyMembership {
   updatedApplications                    Application[]                     @relation("ApplicationUpdater")
   linkedApplicationDocuments             ApplicationDocument[]             @relation("ApplicationDocumentLinker")
   screenedApplications                   ApplicationScreening[]            @relation("ApplicationScreeningScreener")
+  createdAssessments                     Assessment[]                      @relation("AssessmentCreator")
+  updatedAssessments                     Assessment[]                      @relation("AssessmentUpdater")
+  evaluatedAssessmentResults             AssessmentResultVersion[]         @relation("AssessmentResultEvaluator")
+  createdInterviews                      Interview[]                       @relation("InterviewCreator")
+  updatedInterviews                      Interview[]                       @relation("InterviewUpdater")
+  submittedInterviewFeedback             InterviewFeedbackVersion[]        @relation("InterviewFeedbackInterviewer")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -641,10 +651,13 @@ model MeritSelectionCriteriaSet {
   updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
   updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  agency    Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  plan      AgencyMeritSelectionPlanVersion @relation(fields: [agencyId, planVersionId], references: [agencyId, id], onDelete: Restrict)
-  createdBy AgencyMembership                @relation("MeritSelectionCriteriaSetCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  updatedBy AgencyMembership                @relation("MeritSelectionCriteriaSetUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  agency         Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  plan           AgencyMeritSelectionPlanVersion @relation(fields: [agencyId, planVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy      AgencyMembership                @relation("MeritSelectionCriteriaSetCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy      AgencyMembership                @relation("MeritSelectionCriteriaSetUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  assessments    Assessment[]                    @relation("AssessmentCriteriaSet")
+  interviews     Interview[]                     @relation("InterviewCriteriaSet")
+  requestToFills RequestToFill[]                 @relation("RequestToFillCriteriaSet")
 
   @@unique([agencyId, id])
   @@unique([agencyId, planVersionId, criteriaCode])
@@ -737,6 +750,7 @@ model RequestToFill {
   requestingUnit        OrganizationUnit              @relation("RequestToFillRequestingUnit", fields: [agencyId, requestingUnitId], references: [agencyId, id], onDelete: Restrict)
   requestedBy           AgencyMembership              @relation("RequestToFillRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   qualificationStandard QualificationStandardVersion  @relation("RequestToFillQualification", fields: [agencyId, qualificationStandardVersionId], references: [agencyId, id], onDelete: Restrict)
+  criteriaSet           MeritSelectionCriteriaSet?    @relation("RequestToFillCriteriaSet", fields: [agencyId, criteriaSetId], references: [agencyId, id], onDelete: Restrict)
   createdBy             AgencyMembership              @relation("RequestToFillCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy             AgencyMembership              @relation("RequestToFillUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   routeBindings         RequestApprovalRouteBinding[]
@@ -934,6 +948,8 @@ model Application {
   updatedBy                              AgencyMembership             @relation("ApplicationUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   documents                              ApplicationDocument[]
   screenings                             ApplicationScreening[]
+  assessments                            Assessment[]
+  interviews                             Interview[]
 
   @@unique([agencyId, id])
   @@unique([agencyId, applicationNo])
@@ -1014,6 +1030,124 @@ model ApplicationScreeningEvidence {
   @@unique([screeningId, area, applicationDocumentId])
   @@index([agencyId, screeningId])
   @@map("application_screening_evidence")
+}
+
+model Assessment {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  applicationId         String    @map("application_id") @db.Uuid
+  criteriaSetId         String    @map("criteria_set_id") @db.Uuid
+  stageCode             String    @map("stage_code") @db.Citext
+  stageType             String    @map("stage_type")
+  scheduledAt           DateTime? @map("scheduled_at") @db.Timestamptz(6)
+  status                String
+  outcomeReason         String?   @map("outcome_reason")
+  completedAt           DateTime? @map("completed_at") @db.Timestamptz(6)
+  outcomeAt             DateTime? @map("outcome_at") @db.Timestamptz(6)
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int       @default(1) @map("row_version")
+
+  agency      Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  application Application               @relation(fields: [agencyId, applicationId], references: [agencyId, id], onDelete: Restrict)
+  criteriaSet MeritSelectionCriteriaSet @relation("AssessmentCriteriaSet", fields: [agencyId, criteriaSetId], references: [agencyId, id], onDelete: Restrict)
+  createdBy   AgencyMembership          @relation("AssessmentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy   AgencyMembership          @relation("AssessmentUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  results     AssessmentResultVersion[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, applicationId, status, createdAt])
+  @@map("assessments")
+}
+
+model AssessmentResultVersion {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  assessmentId              String   @map("assessment_id") @db.Uuid
+  criterionCode             String   @map("criterion_code") @db.Citext
+  evaluatedByMembershipId   String   @map("evaluated_by_membership_id") @db.Uuid
+  versionNo                 Int      @map("version_no")
+  score                     Decimal  @db.Decimal(12, 4)
+  rating                    String?
+  comments                  String?
+  evidenceDocumentVersionId String?  @map("evidence_document_version_id") @db.Uuid
+  replacesResultId          String?  @map("replaces_result_id") @db.Uuid
+  correctionReason          String?  @map("correction_reason")
+  recordedAt                DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  agency                  Agency                   @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  assessment              Assessment               @relation(fields: [agencyId, assessmentId], references: [agencyId, id], onDelete: Restrict)
+  evaluatedBy             AgencyMembership         @relation("AssessmentResultEvaluator", fields: [agencyId, evaluatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?         @relation("AssessmentResultEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  replaces                AssessmentResultVersion? @relation("AssessmentResultReplacement", fields: [agencyId, replacesResultId], references: [agencyId, id], onDelete: Restrict)
+  replacedBy              AssessmentResultVersion? @relation("AssessmentResultReplacement")
+
+  @@unique([agencyId, id])
+  @@unique([assessmentId, criterionCode, evaluatedByMembershipId, versionNo])
+  @@unique([agencyId, replacesResultId])
+  @@index([agencyId, assessmentId, criterionCode])
+  @@map("assessment_result_versions")
+}
+
+model Interview {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  applicationId         String    @map("application_id") @db.Uuid
+  criteriaSetId         String    @map("criteria_set_id") @db.Uuid
+  stageCode             String    @map("stage_code") @db.Citext
+  scheduledAt           DateTime  @map("scheduled_at") @db.Timestamptz(6)
+  locationOrLink        String?   @map("location_or_link")
+  panelName             String?   @map("panel_name")
+  status                String
+  outcomeReason         String?   @map("outcome_reason")
+  completedAt           DateTime? @map("completed_at") @db.Timestamptz(6)
+  outcomeAt             DateTime? @map("outcome_at") @db.Timestamptz(6)
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int       @default(1) @map("row_version")
+
+  agency      Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  application Application                @relation(fields: [agencyId, applicationId], references: [agencyId, id], onDelete: Restrict)
+  criteriaSet MeritSelectionCriteriaSet  @relation("InterviewCriteriaSet", fields: [agencyId, criteriaSetId], references: [agencyId, id], onDelete: Restrict)
+  createdBy   AgencyMembership           @relation("InterviewCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy   AgencyMembership           @relation("InterviewUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  feedback    InterviewFeedbackVersion[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, applicationId, status, createdAt])
+  @@map("interviews")
+}
+
+model InterviewFeedbackVersion {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  interviewId               String   @map("interview_id") @db.Uuid
+  interviewerMembershipId   String   @map("interviewer_membership_id") @db.Uuid
+  versionNo                 Int      @map("version_no")
+  score                     Decimal? @db.Decimal(12, 4)
+  recommendation            String
+  comments                  String?
+  evidenceDocumentVersionId String?  @map("evidence_document_version_id") @db.Uuid
+  replacesFeedbackId        String?  @map("replaces_feedback_id") @db.Uuid
+  correctionReason          String?  @map("correction_reason")
+  submittedAt               DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  agency                  Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  interview               Interview                 @relation(fields: [agencyId, interviewId], references: [agencyId, id], onDelete: Restrict)
+  interviewer             AgencyMembership          @relation("InterviewFeedbackInterviewer", fields: [agencyId, interviewerMembershipId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion?          @relation("InterviewFeedbackEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  replaces                InterviewFeedbackVersion? @relation("InterviewFeedbackReplacement", fields: [agencyId, replacesFeedbackId], references: [agencyId, id], onDelete: Restrict)
+  replacedBy              InterviewFeedbackVersion? @relation("InterviewFeedbackReplacement")
+
+  @@unique([agencyId, id])
+  @@unique([interviewId, interviewerMembershipId, versionNo])
+  @@unique([agencyId, replacesFeedbackId])
+  @@index([agencyId, interviewId, interviewerMembershipId])
+  @@map("interview_feedback_versions")
 }
 
 model Document {
@@ -1118,6 +1252,8 @@ model DocumentVersion {
   applicationDocuments                             ApplicationDocument[]             @relation("ApplicationDocumentVersion")
   applicationLateAcceptanceAuthorityVersions       Application[]                     @relation("ApplicationLateAcceptanceAuthorityVersion")
   applicationScreeningCorrectionAuthorityVersions  ApplicationScreening[]            @relation("ApplicationScreeningCorrectionAuthorityVersion")
+  assessmentResultEvidenceVersions                 AssessmentResultVersion[]         @relation("AssessmentResultEvidenceVersion")
+  interviewFeedbackEvidenceVersions                InterviewFeedbackVersion[]        @relation("InterviewFeedbackEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])

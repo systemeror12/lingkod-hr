@@ -222,6 +222,10 @@ async function seed(): Promise<void> {
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRouteVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.assessmentResultVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.assessment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.interviewFeedbackVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.interview.deleteMany({ where: { agencyId: agency.id } });
     await transaction.applicationScreeningEvidence.deleteMany({ where: { agencyId: agency.id } });
     await transaction.applicationScreening.deleteMany({ where: { agencyId: agency.id } });
     await transaction.applicationDocument.deleteMany({ where: { agencyId: agency.id } });
@@ -502,7 +506,67 @@ async function seed(): Promise<void> {
         criteriaCode: 'E2E-MSP-CRITERIA',
         applicability: {},
         criteriaDefinition: {
-          minimumQualification: 'The approved Qualification Standard Version.',
+          stages: [
+            {
+              stageCode: 'WRITTEN_EXAM',
+              stageType: 'ASSESSMENT',
+              label: 'Written examination',
+              criteria: [
+                {
+                  criterionCode: 'JOB_KNOWLEDGE',
+                  label: 'Job knowledge',
+                  criterionType: 'NUMERIC',
+                  weight: 70,
+                  minimumScore: 0,
+                  maximumScore: 100,
+                  passingScore: 70,
+                  evidenceRequired: false,
+                  commentsRequired: false,
+                  evaluatorRoleCodes: ['hrmo_administrator', 'recruitment_officer'],
+                },
+                {
+                  criterionCode: 'DOCUMENTATION',
+                  label: 'Documentation quality',
+                  criterionType: 'RATING_SCALE',
+                  weight: 30,
+                  ratingScale: [
+                    { code: 'LOW', label: 'Low', value: 0 },
+                    { code: 'SATISFACTORY', label: 'Satisfactory', value: 50 },
+                    { code: 'HIGH', label: 'High', value: 100 },
+                  ],
+                  passingScore: 50,
+                  evidenceRequired: true,
+                  commentsRequired: false,
+                  evaluatorRoleCodes: ['hrmo_administrator', 'recruitment_officer'],
+                },
+              ],
+              aggregation: {
+                method: 'WEIGHTED_AVERAGE',
+                evaluatorMethod: 'MEAN',
+                rounding: { mode: 'HALF_UP', decimals: 2 },
+                passingScore: 70,
+                tieBreakers: ['JOB_KNOWLEDGE'],
+              },
+            },
+            {
+              stageCode: 'PANEL_INTERVIEW',
+              stageType: 'INTERVIEW',
+              label: 'Panel interview',
+              feedback: {
+                minimumScore: 0,
+                maximumScore: 100,
+                passingScore: 70,
+                evidenceRequired: false,
+                commentsRequired: true,
+                evaluatorRoleCodes: ['hrmo_administrator', 'recruitment_officer'],
+              },
+              aggregation: {
+                evaluatorMethod: 'MEAN',
+                rounding: { mode: 'HALF_UP', decimals: 2 },
+                passingScore: 70,
+              },
+            },
+          ],
         },
         status: 'ACTIVE',
         createdByMembershipId: membership.id,
