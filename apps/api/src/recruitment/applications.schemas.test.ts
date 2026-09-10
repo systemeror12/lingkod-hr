@@ -112,7 +112,7 @@ it('requires a screening reason and one unique record per area', () => {
   ).toBe(false);
 });
 
-it('requires a correction reason and authority when replacing completed screening', () => {
+it('requires a correction reason when replacing completed screening', () => {
   expect(
     applicationScreeningCorrectionSchema.safeParse({
       result: 'NOT_QUALIFIED',
@@ -135,10 +135,16 @@ it('requires a correction reason and authority when replacing completed screenin
   ).toMatchObject({ correctionReason: expect.any(String) });
 });
 
-it('keeps withdrawal evidence optional but validated when supplied', () => {
-  expect(applicationWithdrawalSchema.parse({ reason: 'Applicant withdrew.' })).toEqual({
-    reason: 'Applicant withdrew.',
-  });
+it('requires withdrawal evidence and a reason', () => {
+  expect(applicationWithdrawalSchema.safeParse({ reason: 'Applicant withdrew.' }).success).toBe(
+    false,
+  );
+  expect(
+    applicationWithdrawalSchema.parse({
+      reason: 'Applicant withdrew.',
+      evidenceDocumentVersionId: uuid2,
+    }),
+  ).toEqual({ reason: 'Applicant withdrew.', evidenceDocumentVersionId: uuid2 });
   expect(
     applicationWithdrawalSchema.safeParse({
       reason: 'Applicant withdrew.',

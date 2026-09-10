@@ -97,6 +97,7 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   const applicationNo = applicationHeading?.match(/APP-\d+/)?.[0];
   if (!applicationNo) throw new Error('The recorded Application number was not shown.');
 
+  let linkedEvidence = 0;
   for (const [purpose, documentNo] of [
     ['EDUCATION', 'E2E-APPLICANT-EDUCATION'],
     ['ELIGIBILITY', 'E2E-APPLICANT-ELIGIBILITY'],
@@ -110,7 +111,8 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
     if (!documentVersionId) throw new Error(`The ${documentNo} fixture was not available.`);
     await page.getByLabel('Finalized Document Version').selectOption(documentVersionId);
     await page.getByRole('button', { name: 'Link evidence' }).click();
-    await expect(page.getByText(new RegExp(documentNo)).first()).toBeVisible();
+    linkedEvidence += 1;
+    await expect(page.getByRole('button', { name: 'Remove' })).toHaveCount(linkedEvidence);
   }
 
   await page.getByLabel('Education result').selectOption('MEETS');

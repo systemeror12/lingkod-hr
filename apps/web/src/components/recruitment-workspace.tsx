@@ -1533,10 +1533,8 @@ function ApplicationDraft({
   const [submitting, setSubmitting] = useState(false);
   const publication = open.find((record) => record.id === vacancyPublicationId);
   const today = manilaToday();
-  const withinPeriod =
-    publication !== undefined &&
-    publication.openingDate <= today &&
-    today <= publication.closingDate;
+  const beforeOpening = publication !== undefined && today < publication.openingDate;
+  const lateAcceptanceRequired = publication !== undefined && today > publication.closingDate;
   const authorityOptions = documents.filter(
     (document) => document.status !== 'VOIDED' && document.version.issuedAt,
   );
@@ -1559,12 +1557,12 @@ function ApplicationDraft({
           privacyNoticeVersion,
           consentedAt: new Date().toISOString(),
         },
-        ...(withinPeriod
-          ? {}
-          : {
+        ...(lateAcceptanceRequired
+          ? {
               lateAcceptanceReason,
               lateAcceptanceAuthorityDocumentVersionId: lateAuthorityDocumentVersionId,
-            }),
+            }
+          : {}),
         documents: [],
       });
       if (isObject(response) && typeof response.id === 'string')
@@ -1680,7 +1678,13 @@ function ApplicationDraft({
                 The Applicant was given this privacy notice version and consented to its processing.
               </span>
             </label>
-            {publication && !withinPeriod ? (
+            {publication && beforeOpening ? (
+              <p className="m-0 rounded-[3px] border border-[#c7d6e8] bg-[#f4f7fb] px-4 py-3 text-sm text-ink">
+                This Vacancy Publication opens on {dateLabel(publication.openingDate)}. Intake is
+                not yet accepted.
+              </p>
+            ) : null}
+            {publication && lateAcceptanceRequired ? (
               <div className="grid gap-4 rounded-[3px] border border-[#decba7] bg-[#fff8e9] p-4">
                 <strong className="text-sm font-[680] text-[#755421]">
                   Authorized late handling required
@@ -1726,8 +1730,10 @@ function ApplicationDraft({
                   busy ||
                   submitting ||
                   !publication ||
+                  beforeOpening ||
                   !consented ||
-                  (!withinPeriod && (!lateAcceptanceReason || !lateAuthorityDocumentVersionId))
+                  (lateAcceptanceRequired &&
+                    (!lateAcceptanceReason || !lateAuthorityDocumentVersionId))
                 }
                 size="default"
                 type="submit"
@@ -1757,12 +1763,14 @@ function ScreeningEditor({
   record,
   agencyId,
   mode,
+  canDisqualify,
   busy,
   onCommand,
 }: {
   record: VacancyApplication;
   agencyId: string;
   mode: 'screen' | 'correct';
+  canDisqualify: boolean;
   busy: boolean;
   onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
 }) {
@@ -1922,6 +1930,7 @@ function ScreeningEditor({
                 (entry.result === 'MEETS' || entry.result === 'DOES_NOT_MEET') &&
                 entry.evidenceDocumentVersionIds.length === 0,
             ) ||
+            (derived === 'NOT_QUALIFIED' && !canDisqualify) ||
             !SCREENING_MANAGED_STATUSES.includes(record.status)
           }
           onClick={() => {
@@ -1956,6 +1965,9 @@ function ScreeningEditor({
         </Button>
         <span className="text-xs text-muted">
           Recorded outcome: <strong className="text-ink">{derived.replaceAll('_', ' ')}</strong>
+          {derived === 'NOT_QUALIFIED' && !canDisqualify
+            ? ' · Your Membership cannot record a not-qualified result.'
+            : ''}
         </span>
       </div>
     </div>
@@ -1981,6 +1993,7 @@ function ApplicationDetail({
   const [documentVersionId, setDocumentVersionId] = useState('');
   const [note, setNote] = useState('');
   const [lifecycleReason, setLifecycleReason] = useState('');
+  const [withdrawalDocumentVersionId, setWithdrawalDocumentVersionId] = useState('');
   const linkable = documents.filter(
     (document) => document.status !== 'VOIDED' && document.version.issuedAt,
   );
@@ -2083,12 +2096,15 @@ function ApplicationDetail({
           ) : null}
           {editable && permissions.withdrawApplication ? (
             <Button
-              disabled={busy || !lifecycleReason}
+              disabled={busy || !lifecycleReason || !withdrawalDocumentVersionId}
               onClick={() => {
                 if (!confirmAction('Withdraw this Application?')) return;
                 void onCommand(
                   `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/withdraw`,
-                  { reason: lifecycleReason },
+                  {
+                    reason: lifecycleReason,
+                    evidenceDocumentVersionId: withdrawalDocumentVersionId,
+                  },
                 );
               }}
               size="default"
@@ -2118,15 +2134,37 @@ function ApplicationDetail({
         (permissions.updateApplication ||
           permissions.withdrawApplication ||
           permissions.closeApplication) ? (
-          <Field label="Lifecycle reason" htmlFor="application-lifecycle-reason">
-            <input
-              className={inputClass}
-              id="application-lifecycle-reason"
-              value={lifecycleReason}
-              onChange={(event) => setLifecycleReason(inputValue(event))}
-              placeholder="Required for reopening, withdrawal, or closure"
-            />
-          </Field>
+          <div className="grid gap-3 min-[720px]:grid-cols-2">
+            <Field label="Lifecycle reason" htmlFor="application-lifecycle-reason">
+              <input
+                className={inputClass}
+                id="application-lifecycle-reason"
+                value={lifecycleReason}
+                onChange={(event) => setLifecycleReason(inputValue(event))}
+                placeholder="Required for reopening, withdrawal, or closure"
+              />
+            </Field>
+            {permissions.withdrawApplication ? (
+              <Field
+                label="Withdrawal evidence document version"
+                htmlFor="application-withdrawal-evidence"
+              >
+                <select
+                  className={inputClass}
+                  id="application-withdrawal-evidence"
+                  value={withdrawalDocumentVersionId}
+                  onChange={(event) => setWithdrawalDocumentVersionId(inputValue(event))}
+                >
+                  <option value="">Select finalized withdrawal evidence</option>
+                  {linkable.map((document) => (
+                    <option key={document.version.id} value={document.version.id}>
+                      {document.documentNo ?? document.documentType} · v{document.version.versionNo}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+          </div>
         ) : null}
       </Panel>
 
@@ -2295,6 +2333,7 @@ function ApplicationDetail({
         {permissions.screenApplication && editable ? (
           <ScreeningEditor
             agencyId={agencyId}
+            canDisqualify={permissions.disqualifyApplication}
             key={record.latestScreening?.id ?? 'new-screening'}
             record={record}
             mode={record.latestScreening ? 'correct' : 'screen'}

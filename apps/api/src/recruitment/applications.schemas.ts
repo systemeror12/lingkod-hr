@@ -151,13 +151,9 @@ export const applicationScreeningCorrectionSchema = z
   .strict()
   .superRefine(assertUniqueScreeningAreas);
 
-export const applicationReasonSchema = z
-  .object({ reason: z.string().trim().min(1).max(1000) })
-  .strict();
-
 export const applicationWithdrawalSchema = z
   .object({
     reason: z.string().trim().min(1).max(1000),
-    evidenceDocumentVersionId: recruitmentIdSchema.optional(),
+    evidenceDocumentVersionId: recruitmentIdSchema,
   })
   .strict();

@@ -624,9 +624,16 @@ export class ApplicationsService {
           );
         }
         const today = manilaToday();
-        const open =
-          formatDate(publication.openingDate) <= today &&
-          today <= formatDate(publication.closingDate);
+        const opening = formatDate(publication.openingDate);
+        const closing = formatDate(publication.closingDate);
+        if (today < opening) {
+          throw new RecruitmentServiceError(
+            'The Vacancy Publication has not opened for intake.',
+            409,
+            'RECRUITMENT_PUBLICATION_NOT_YET_OPEN',
+          );
+        }
+        const open = today <= closing;
         if (!open) {
           if (
             input.lateAcceptanceReason === undefined ||
@@ -1145,19 +1152,17 @@ export class ApplicationsService {
         if (!isScreeningManaged(current.status)) {
           throw this.workflowError('withdraw', current.status);
         }
-        if (input.evidenceDocumentVersionId) {
-          await this.linkDocumentInTransaction(
-            transaction,
-            context,
-            applicationId,
-            {
-              documentVersionId: input.evidenceDocumentVersionId,
-              purpose: 'OTHER',
-              note: 'Withdrawal evidence',
-            },
-            null,
-          );
-        }
+        await this.linkDocumentInTransaction(
+          transaction,
+          context,
+          applicationId,
+          {
+            documentVersionId: input.evidenceDocumentVersionId,
+            purpose: 'OTHER',
+            note: 'Withdrawal evidence',
+          },
+          null,
+        );
         await transaction.application.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
           data: {
@@ -1278,23 +1283,34 @@ export class ApplicationsService {
       select: { id: true },
     });
     if (existing) return { applicantId: existing.id, createdApplicant: false };
-    const created = await transaction.applicant.create({
-      data: {
-        agencyId: context.agencyId,
-        firstName: applicant.firstName,
-        middleName: applicant.middleName ?? null,
-        lastName: applicant.lastName,
-        suffix: applicant.suffix ?? null,
-        emailNormalized: email,
-        mobileNumber: mobile,
-        privacyNoticeVersion: applicant.privacyNoticeVersion,
-        consentedAt: new Date(applicant.consentedAt),
-        deduplicationKey,
-        createdByMembershipId: context.membershipId,
-      },
-      select: { id: true },
-    });
-    return { applicantId: created.id, createdApplicant: true };
+    try {
+      const created = await transaction.applicant.create({
+        data: {
+          agencyId: context.agencyId,
+          firstName: applicant.firstName,
+          middleName: applicant.middleName ?? null,
+          lastName: applicant.lastName,
+          suffix: applicant.suffix ?? null,
+          emailNormalized: email,
+          mobileNumber: mobile,
+          privacyNoticeVersion: applicant.privacyNoticeVersion,
+          consentedAt: new Date(applicant.consentedAt),
+          deduplicationKey,
+          createdByMembershipId: context.membershipId,
+        },
+        select: { id: true },
+      });
+      return { applicantId: created.id, createdApplicant: true };
+    } catch (error) {
+      if (this.isPrismaError(error, 'P2002')) {
+        const raced = await transaction.applicant.findFirst({
+          where: { agencyId: context.agencyId, deduplicationKey },
+          select: { id: true },
+        });
+        if (raced) return { applicantId: raced.id, createdApplicant: false };
+      }
+      throw error;
+    }
   }
 
   private deduplicationKey(
