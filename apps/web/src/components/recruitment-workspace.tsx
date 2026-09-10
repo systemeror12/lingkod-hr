@@ -6,9 +6,9 @@ import { useRecordNavigation } from './record-navigation';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 
-type Section = 'requests' | 'publications';
-type View = 'tree' | 'form';
-type NewRecord = 'request' | 'publication' | null;
+type Section = 'requests' | 'publications' | 'applications';
+type View = 'tree' | 'form' | 'kanban';
+type NewRecord = 'request' | 'publication' | 'application' | null;
 
 export interface PlantillaPositionOption {
   id: string;
@@ -126,11 +126,135 @@ export interface VacancyPublication {
   updatedAt: string;
 }
 
+export interface ApplicationScreeningRecord {
+  id: string;
+  versionNo: number;
+  result: string;
+  reason: string;
+  areaResults: Array<{
+    area: string;
+    result: string;
+    evidenceDocumentVersionIds: string[];
+    note: string | null;
+  }>;
+  screenedByMembershipId: string;
+  screenedAt: string;
+  replacesScreeningId: string | null;
+  correctionReason: string | null;
+  correctionAuthorityDocumentVersionId: string | null;
+}
+
+export interface VacancyApplication {
+  id: string;
+  applicationNo: string;
+  publicationId: string;
+  publicationNo: string;
+  publicationStatus: string;
+  openingDate: string;
+  closingDate: string;
+  requestToFillId: string;
+  requestNo: string;
+  position: RecruitmentRequest['position'];
+  applicant: {
+    id: string;
+    firstName: string;
+    middleName: string | null;
+    lastName: string;
+    suffix: string | null;
+    fullName: string;
+    email: string | null;
+    mobileNumber: string | null;
+    privacyNoticeVersion: string;
+    consentedAt: string;
+    createdAt: string;
+  };
+  qualificationStandard: {
+    id: string;
+    versionNo: number;
+    code: string;
+    name: string;
+    effectiveFrom: string;
+    educationRequirement: string | null;
+    trainingHoursRequired: number | null;
+    experienceMonthsRequired: number | null;
+    eligibilityRequirement: string | null;
+    licenseRequirements: unknown;
+    competencyRequirements: unknown;
+    specialRequirements: string | null;
+    applicableAreas: string[];
+  };
+  status: string;
+  receivedAt: string;
+  receivedByMembershipId: string;
+  lateAcceptance: { reason: string; authorityDocumentVersionId: string } | null;
+  withdrawnAt: string | null;
+  withdrawalReason: string | null;
+  closedAt: string | null;
+  closureReason: string | null;
+  documents: Array<{
+    id: string;
+    documentId: string;
+    documentNo: string | null;
+    documentType: string;
+    classification: string;
+    documentVersionId: string;
+    versionNo: number;
+    purpose: string;
+    note: string | null;
+    linkedAt: string;
+  }>;
+  screenings: ApplicationScreeningRecord[];
+  latestScreening: ApplicationScreeningRecord | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const APPLICATION_DOCUMENT_PURPOSES = [
+  'PRIVACY_CONSENT',
+  'EDUCATION',
+  'TRAINING',
+  'EXPERIENCE',
+  'ELIGIBILITY',
+  'LICENSE',
+  'COMPETENCY',
+  'SPECIAL_REQUIREMENT',
+  'OTHER',
+] as const;
+
+const SCREENING_MANAGED_STATUSES = ['RECEIVED', 'INCOMPLETE', 'QUALIFIED', 'NOT_QUALIFIED'];
+
+function areaLabel(area: string): string {
+  return area
+    .replaceAll('_', ' ')
+    .toLowerCase()
+    .replace(/^\w/, (value) => value.toUpperCase());
+}
+
+function derivedScreeningResult(
+  areaResults: Array<{ area: string; result: string }>,
+  applicableAreas: string[],
+): string {
+  const applicable = areaResults.filter((entry) => applicableAreas.includes(entry.area));
+  if (applicable.some((entry) => entry.result === 'UNVERIFIED')) return 'INCOMPLETE';
+  if (applicable.some((entry) => entry.result === 'DOES_NOT_MEET')) return 'NOT_QUALIFIED';
+  return 'QUALIFIED';
+}
+
+function evidenceSummary(record: VacancyApplication): string {
+  const latest = record.latestScreening;
+  if (!latest)
+    return `${record.documents.length} document${record.documents.length === 1 ? '' : 's'}`;
+  if (latest.result === 'INCOMPLETE') return 'Missing evidence';
+  if (latest.result === 'NOT_QUALIFIED') return 'Does not meet';
+  return 'Evidence complete';
+}
+
 interface Props {
   agencyId: string;
   displayName: string;
   initialRequests: RecruitmentRequest[];
   initialPublications: VacancyPublication[];
+  initialApplications: VacancyApplication[];
   positions: PlantillaPositionOption[];
   documents: DocumentOption[];
   initialSection: Section;
@@ -153,6 +277,13 @@ interface Props {
   canRepublishPublication: boolean;
   canReadRequests: boolean;
   canReadPublications: boolean;
+  canReadApplications: boolean;
+  canCreateApplication: boolean;
+  canUpdateApplication: boolean;
+  canScreenApplication: boolean;
+  canDisqualifyApplication: boolean;
+  canWithdrawApplication: boolean;
+  canCloseApplication: boolean;
 }
 
 interface Permissions {
@@ -168,6 +299,11 @@ interface Permissions {
   closePublication: boolean;
   cancelPublication: boolean;
   republishPublication: boolean;
+  updateApplication: boolean;
+  screenApplication: boolean;
+  disqualifyApplication: boolean;
+  withdrawApplication: boolean;
+  closeApplication: boolean;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -303,6 +439,18 @@ async function sendCommand(path: string, body?: unknown): Promise<unknown> {
       'Idempotency-Key': randomKey('recruitment'),
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const value: unknown = await response.json().catch(() => null);
+  if (!response.ok)
+    throw new Error(errorMessage(value, 'The Recruitment command could not be completed.'));
+  return value;
+}
+
+async function sendDelete(path: string): Promise<unknown> {
+  const response = await fetch(path, {
+    method: 'DELETE',
+    credentials: 'include',
+    headers: { 'Idempotency-Key': randomKey('recruitment') },
   });
   const value: unknown = await response.json().catch(() => null);
   if (!response.ok)
@@ -1227,19 +1375,996 @@ function PublicationDetail({
   );
 }
 
+function ApplicationTree({
+  records,
+  selectedId,
+  onSelect,
+}: {
+  records: VacancyApplication[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto" aria-label="Applications">
+      {records.length === 0 ? (
+        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+          No Applications received yet.
+        </p>
+      ) : (
+        <table className="w-full min-w-[760px] border-collapse text-left">
+          <thead>
+            <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+              <th className="px-3 py-2">Record</th>
+              <th className="px-3 py-2">Reference</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2">Evidence</th>
+              <th className="px-3 py-2">Standing</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.map((record) => (
+              <tr
+                className={`border-b border-line/70 align-top ${selectedId === record.id ? 'bg-[#f1f5fb]' : ''}`}
+                key={record.id}
+              >
+                <td className="px-3 py-2">
+                  <button
+                    className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
+                    type="button"
+                    onClick={() => onSelect(record.id)}
+                  >
+                    {record.applicationNo}
+                  </button>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">
+                  {record.applicant.fullName}
+                  {record.applicant.email ? (
+                    <span className="block text-xs text-muted">{record.applicant.email}</span>
+                  ) : null}
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">
+                  {record.position.title}
+                  <span className="block text-xs text-muted">{record.publicationNo}</span>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">{evidenceSummary(record)}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge status={record.status} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+const KANBAN_COLUMNS = [
+  ['RECEIVED', 'Received'],
+  ['INCOMPLETE', 'Incomplete'],
+  ['QUALIFIED', 'Qualified'],
+  ['NOT_QUALIFIED', 'Not qualified'],
+  ['WITHDRAWN', 'Withdrawn'],
+  ['CLOSED', 'Closed'],
+] as const;
+
+function ApplicationKanban({
+  records,
+  selectedId,
+  onSelect,
+}: {
+  records: VacancyApplication[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2" aria-label="Application board">
+      {KANBAN_COLUMNS.map(([status, label]) => {
+        const cards = records.filter((record) => record.status === status);
+        return (
+          <section
+            className="grid min-w-[230px] flex-1 content-start gap-2 rounded-[3px] border border-line bg-canvas/60 p-3"
+            key={status}
+          >
+            <h3 className="m-0 flex items-center justify-between gap-2 text-[11px] font-bold tracking-[0.06em] text-muted uppercase">
+              {label}
+              <span className="rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] text-ink">
+                {cards.length}
+              </span>
+            </h3>
+            {cards.length === 0 ? (
+              <p className="m-0 rounded-[3px] border border-dashed border-line px-3 py-4 text-center text-xs text-muted">
+                No Applications
+              </p>
+            ) : (
+              cards.map((record) => (
+                <button
+                  className={`grid gap-1.5 rounded-[3px] border bg-paper px-3 py-3 text-left transition-colors ${selectedId === record.id ? 'border-cobalt bg-[#f1f5fb]' : 'border-line hover:border-[#aebed3]'}`}
+                  key={record.id}
+                  type="button"
+                  onClick={() => onSelect(record.id)}
+                >
+                  <span className="text-xs font-bold text-cobalt">{record.applicationNo}</span>
+                  <strong className="text-sm font-[680] text-midnight">
+                    {record.applicant.fullName}
+                  </strong>
+                  <span className="text-xs text-muted">
+                    {record.position.title} · {evidenceSummary(record)}
+                  </span>
+                </button>
+              ))
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function ApplicationDraft({
+  agencyId,
+  publications,
+  documents,
+  busy,
+  error,
+  onError,
+  onCreated,
+}: {
+  agencyId: string;
+  publications: VacancyPublication[];
+  documents: DocumentOption[];
+  busy: boolean;
+  error: string;
+  onError: (message: string) => void;
+  onCreated: (record: VacancyApplication) => Promise<void>;
+}) {
+  const open = publications.filter((record) => record.status === 'PUBLISHED');
+  const [vacancyPublicationId, setVacancyPublicationId] = useState(open[0]?.id ?? '');
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [suffix, setSuffix] = useState('');
+  const [email, setEmail] = useState('');
+  const [mobileNumber, setMobileNumber] = useState('');
+  const [privacyNoticeVersion, setPrivacyNoticeVersion] = useState('Privacy Notice v1');
+  const [consented, setConsented] = useState(false);
+  const [lateAcceptanceReason, setLateAcceptanceReason] = useState('');
+  const [lateAuthorityDocumentVersionId, setLateAuthorityDocumentVersionId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const publication = open.find((record) => record.id === vacancyPublicationId);
+  const today = manilaToday();
+  const withinPeriod =
+    publication !== undefined &&
+    publication.openingDate <= today &&
+    today <= publication.closingDate;
+  const authorityOptions = documents.filter(
+    (document) => document.status !== 'VOIDED' && document.version.issuedAt,
+  );
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!publication || submitting) return;
+    setSubmitting(true);
+    onError('');
+    try {
+      const response = await sendCommand(`/api/v1/agencies/${agencyId}/recruitment/applications`, {
+        vacancyPublicationId,
+        applicant: {
+          firstName,
+          lastName,
+          ...(middleName ? { middleName } : {}),
+          ...(suffix ? { suffix } : {}),
+          ...(email ? { email } : {}),
+          ...(mobileNumber ? { mobileNumber } : {}),
+          privacyNoticeVersion,
+          consentedAt: new Date().toISOString(),
+        },
+        ...(withinPeriod
+          ? {}
+          : {
+              lateAcceptanceReason,
+              lateAcceptanceAuthorityDocumentVersionId: lateAuthorityDocumentVersionId,
+            }),
+        documents: [],
+      });
+      if (isObject(response) && typeof response.id === 'string')
+        await onCreated(response as unknown as VacancyApplication);
+    } catch (caught: unknown) {
+      onError(caught instanceof Error ? caught.message : 'The Application could not be recorded.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Panel
+      title="Record an Application"
+      description="Normal intake is accepted only while the Vacancy Publication is open. Intake beyond the period requires an explicit late-handling reason and finalized authority evidence."
+    >
+      <form className="grid max-w-[900px] gap-5" onSubmit={submit}>
+        {error ? <FormError message={error} /> : null}
+        {open.length === 0 ? (
+          <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-4 text-sm text-muted">
+            No open Vacancy Publication is available for intake.
+          </p>
+        ) : (
+          <>
+            <Field label="Open Vacancy Publication" htmlFor="application-publication">
+              <select
+                className={inputClass}
+                id="application-publication"
+                value={vacancyPublicationId}
+                onChange={(event) => setVacancyPublicationId(inputValue(event))}
+              >
+                {open.map((record) => (
+                  <option key={record.id} value={record.id}>
+                    {record.publicationNo} · {record.position.itemNumber} · {record.position.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="grid gap-4 min-[720px]:grid-cols-2">
+              <Field label="First name" htmlFor="application-first-name">
+                <input
+                  className={inputClass}
+                  id="application-first-name"
+                  required
+                  value={firstName}
+                  onChange={(event) => setFirstName(inputValue(event))}
+                />
+              </Field>
+              <Field label="Middle name" htmlFor="application-middle-name">
+                <input
+                  className={inputClass}
+                  id="application-middle-name"
+                  value={middleName}
+                  onChange={(event) => setMiddleName(inputValue(event))}
+                />
+              </Field>
+              <Field label="Last name" htmlFor="application-last-name">
+                <input
+                  className={inputClass}
+                  id="application-last-name"
+                  required
+                  value={lastName}
+                  onChange={(event) => setLastName(inputValue(event))}
+                />
+              </Field>
+              <Field label="Suffix" htmlFor="application-suffix">
+                <input
+                  className={inputClass}
+                  id="application-suffix"
+                  value={suffix}
+                  onChange={(event) => setSuffix(inputValue(event))}
+                  placeholder="Jr., III, or leave blank"
+                />
+              </Field>
+              <Field label="Email" htmlFor="application-email">
+                <input
+                  className={inputClass}
+                  id="application-email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(inputValue(event))}
+                />
+              </Field>
+              <Field label="Mobile number" htmlFor="application-mobile">
+                <input
+                  className={inputClass}
+                  id="application-mobile"
+                  value={mobileNumber}
+                  onChange={(event) => setMobileNumber(inputValue(event))}
+                />
+              </Field>
+            </div>
+            <Field label="Privacy notice version" htmlFor="application-privacy-notice">
+              <input
+                className={inputClass}
+                id="application-privacy-notice"
+                required
+                value={privacyNoticeVersion}
+                onChange={(event) => setPrivacyNoticeVersion(inputValue(event))}
+              />
+            </Field>
+            <label className="flex items-start gap-3 text-[13px] leading-[1.6] text-ink">
+              <input
+                checked={consented}
+                className="mt-1 h-4 w-4"
+                required
+                type="checkbox"
+                onChange={(event) =>
+                  setConsented((event.target as unknown as { checked: boolean }).checked)
+                }
+              />
+              <span>
+                The Applicant was given this privacy notice version and consented to its processing.
+              </span>
+            </label>
+            {publication && !withinPeriod ? (
+              <div className="grid gap-4 rounded-[3px] border border-[#decba7] bg-[#fff8e9] p-4">
+                <strong className="text-sm font-[680] text-[#755421]">
+                  Authorized late handling required
+                </strong>
+                <p className="m-0 text-xs leading-[1.6] text-[#755421]">
+                  The publication period has elapsed. Record the source-backed basis and finalized
+                  authority evidence together.
+                </p>
+                <Field label="Late handling basis" htmlFor="application-late-reason">
+                  <input
+                    className={inputClass}
+                    id="application-late-reason"
+                    required
+                    value={lateAcceptanceReason}
+                    onChange={(event) => setLateAcceptanceReason(inputValue(event))}
+                  />
+                </Field>
+                <Field
+                  label="Late handling authority document version"
+                  htmlFor="application-late-authority"
+                >
+                  <select
+                    className={inputClass}
+                    id="application-late-authority"
+                    required
+                    value={lateAuthorityDocumentVersionId}
+                    onChange={(event) => setLateAuthorityDocumentVersionId(inputValue(event))}
+                  >
+                    <option value="">Select finalized authority evidence</option>
+                    {authorityOptions.map((document) => (
+                      <option key={document.version.id} value={document.version.id}>
+                        {document.documentNo ?? document.documentType} · v
+                        {document.version.versionNo}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                disabled={
+                  busy ||
+                  submitting ||
+                  !publication ||
+                  !consented ||
+                  (!withinPeriod && (!lateAcceptanceReason || !lateAuthorityDocumentVersionId))
+                }
+                size="default"
+                type="submit"
+                variant="primary"
+              >
+                {busy || submitting ? 'Recording…' : 'Record Application'}
+              </Button>
+              <span className="text-xs text-muted">
+                Evidence documents are linked on the Application record before screening.
+              </span>
+            </div>
+          </>
+        )}
+      </form>
+    </Panel>
+  );
+}
+
+interface AreaEntry {
+  area: string;
+  result: string;
+  evidenceDocumentVersionIds: string[];
+  note: string;
+}
+
+function ScreeningEditor({
+  record,
+  agencyId,
+  mode,
+  busy,
+  onCommand,
+}: {
+  record: VacancyApplication;
+  agencyId: string;
+  mode: 'screen' | 'correct';
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+}) {
+  const source = mode === 'correct' ? record.latestScreening : null;
+  const [entries, setEntries] = useState<AreaEntry[]>(() =>
+    record.qualificationStandard.applicableAreas.map((area) => {
+      const existing = source?.areaResults.find((entry) => entry.area === area);
+      return {
+        area,
+        result: existing?.result ?? 'UNVERIFIED',
+        evidenceDocumentVersionIds: existing?.evidenceDocumentVersionIds ?? [],
+        note: existing?.note ?? '',
+      };
+    }),
+  );
+  const [reason, setReason] = useState(source?.reason ?? '');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionAuthorityDocumentVersionId, setCorrectionAuthorityDocumentVersionId] =
+    useState('');
+  const authorityOptions = record.documents;
+  const derived = derivedScreeningResult(entries, record.qualificationStandard.applicableAreas);
+
+  function updateEntry(area: string, patch: Partial<AreaEntry>) {
+    setEntries((current) =>
+      current.map((entry) => (entry.area === area ? { ...entry, ...patch } : entry)),
+    );
+  }
+
+  function toggleEvidence(area: string, documentVersionId: string) {
+    setEntries((current) =>
+      current.map((entry) => {
+        if (entry.area !== area) return entry;
+        const selected = entry.evidenceDocumentVersionIds.includes(documentVersionId);
+        return {
+          ...entry,
+          evidenceDocumentVersionIds: selected
+            ? entry.evidenceDocumentVersionIds.filter((value) => value !== documentVersionId)
+            : [...entry.evidenceDocumentVersionIds, documentVersionId],
+        };
+      }),
+    );
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3">
+        {entries.map((entry) => (
+          <div className="grid gap-2 rounded-[3px] border border-line p-3" key={entry.area}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <strong className="text-[13px] font-[680] text-midnight">
+                {areaLabel(entry.area)}
+              </strong>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                Result
+                <select
+                  aria-label={`${areaLabel(entry.area)} result`}
+                  className={`${inputClass} min-h-8 w-auto py-1`}
+                  value={entry.result}
+                  onChange={(event) => updateEntry(entry.area, { result: inputValue(event) })}
+                >
+                  <option value="MEETS">Meets</option>
+                  <option value="DOES_NOT_MEET">Does not meet</option>
+                  <option value="UNVERIFIED">Unverified</option>
+                </select>
+              </label>
+            </div>
+            {entry.result === 'MEETS' || entry.result === 'DOES_NOT_MEET' ? (
+              <div className="grid gap-1">
+                <span className="text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
+                  Evidence
+                </span>
+                {record.documents.length === 0 ? (
+                  <span className="text-xs text-[#9a3030]">
+                    Link at least one evidence document before assessing this area.
+                  </span>
+                ) : (
+                  record.documents.map((document) => (
+                    <label className="flex items-center gap-2 text-xs text-ink" key={document.id}>
+                      <input
+                        aria-label={`${areaLabel(entry.area)} evidence ${
+                          document.documentNo ?? document.documentType
+                        }`}
+                        checked={entry.evidenceDocumentVersionIds.includes(
+                          document.documentVersionId,
+                        )}
+                        className="h-3.5 w-3.5"
+                        type="checkbox"
+                        onChange={() => toggleEvidence(entry.area, document.documentVersionId)}
+                      />
+                      {document.documentNo ?? document.documentType} · v{document.versionNo} ·{' '}
+                      {document.purpose.replaceAll('_', ' ')}
+                    </label>
+                  ))
+                )}
+              </div>
+            ) : null}
+            <input
+              aria-label={`${areaLabel(entry.area)} note`}
+              className={`${inputClass} min-h-8 py-1 text-xs`}
+              placeholder="Optional note for this area"
+              value={entry.note}
+              onChange={(event) => updateEntry(entry.area, { note: inputValue(event) })}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 min-[720px]:grid-cols-2">
+        <Field label="Screening reason" htmlFor={`application-reason-${mode}`}>
+          <input
+            className={inputClass}
+            id={`application-reason-${mode}`}
+            required
+            value={reason}
+            onChange={(event) => setReason(inputValue(event))}
+          />
+        </Field>
+        {mode === 'correct' ? (
+          <Field label="Correction reason" htmlFor="application-correction-reason">
+            <input
+              className={inputClass}
+              id="application-correction-reason"
+              required
+              value={correctionReason}
+              onChange={(event) => setCorrectionReason(inputValue(event))}
+            />
+          </Field>
+        ) : null}
+      </div>
+      {mode === 'correct' ? (
+        <Field
+          label="Correction authority evidence (optional)"
+          htmlFor="application-correction-authority"
+        >
+          <select
+            className={inputClass}
+            id="application-correction-authority"
+            value={correctionAuthorityDocumentVersionId}
+            onChange={(event) => setCorrectionAuthorityDocumentVersionId(inputValue(event))}
+          >
+            <option value="">No additional authority evidence</option>
+            {authorityOptions.map((document) => (
+              <option key={document.documentVersionId} value={document.documentVersionId}>
+                {document.documentNo ?? document.documentType} · v{document.versionNo}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          disabled={
+            busy ||
+            !reason ||
+            (mode === 'correct' && !correctionReason) ||
+            entries.some(
+              (entry) =>
+                (entry.result === 'MEETS' || entry.result === 'DOES_NOT_MEET') &&
+                entry.evidenceDocumentVersionIds.length === 0,
+            ) ||
+            !SCREENING_MANAGED_STATUSES.includes(record.status)
+          }
+          onClick={() => {
+            const body = {
+              result: derived,
+              reason,
+              areaResults: entries.map((entry) => ({
+                area: entry.area,
+                result: entry.result,
+                evidenceDocumentVersionIds: entry.evidenceDocumentVersionIds,
+                ...(entry.note ? { note: entry.note } : {}),
+              })),
+              ...(mode === 'correct'
+                ? {
+                    correctionReason,
+                    ...(correctionAuthorityDocumentVersionId
+                      ? { correctionAuthorityDocumentVersionId }
+                      : {}),
+                  }
+                : {}),
+            };
+            const target =
+              mode === 'correct' && record.latestScreening
+                ? `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/screenings/${record.latestScreening.id}/correct`
+                : `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/screen`;
+            void onCommand(target, body);
+          }}
+          size="default"
+          variant="primary"
+        >
+          {busy ? 'Saving…' : mode === 'correct' ? 'Record correction' : 'Record screening'}
+        </Button>
+        <span className="text-xs text-muted">
+          Recorded outcome: <strong className="text-ink">{derived.replaceAll('_', ' ')}</strong>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ApplicationDetail({
+  record,
+  agencyId,
+  documents,
+  permissions,
+  busy,
+  onCommand,
+}: {
+  record: VacancyApplication;
+  agencyId: string;
+  documents: DocumentOption[];
+  permissions: Permissions;
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+}) {
+  const [purpose, setPurpose] = useState<string>('EDUCATION');
+  const [documentVersionId, setDocumentVersionId] = useState('');
+  const [note, setNote] = useState('');
+  const [lifecycleReason, setLifecycleReason] = useState('');
+  const linkable = documents.filter(
+    (document) => document.status !== 'VOIDED' && document.version.issuedAt,
+  );
+  const editable = SCREENING_MANAGED_STATUSES.includes(record.status);
+  const qualification = record.qualificationStandard;
+  const requirements: Array<[string, string | null]> = [
+    ['Education', qualification.educationRequirement],
+    [
+      'Training',
+      qualification.trainingHoursRequired === null
+        ? null
+        : `${qualification.trainingHoursRequired} hours`,
+    ],
+    [
+      'Experience',
+      qualification.experienceMonthsRequired === null
+        ? null
+        : `${qualification.experienceMonthsRequired} months`,
+    ],
+    ['Eligibility', qualification.eligibilityRequirement],
+    [
+      'Licenses',
+      Array.isArray(qualification.licenseRequirements) && qualification.licenseRequirements.length
+        ? qualification.licenseRequirements
+            .map((item) => (typeof item === 'string' ? item : JSON.stringify(item)))
+            .join(' · ')
+        : null,
+    ],
+    [
+      'Competencies',
+      Array.isArray(qualification.competencyRequirements) &&
+      qualification.competencyRequirements.length
+        ? qualification.competencyRequirements
+            .map((item) => (typeof item === 'string' ? item : JSON.stringify(item)))
+            .join(' · ')
+        : null,
+    ],
+    ['Special requirements', qualification.specialRequirements],
+  ];
+
+  return (
+    <div className="grid gap-5">
+      <Panel
+        title={`${record.applicationNo} · ${record.applicant.fullName}`}
+        description={`${record.position.itemNumber} · ${record.position.title} · ${record.publicationNo}`}
+      >
+        <div className="grid gap-4 min-[720px]:grid-cols-2">
+          <dl className="m-0">
+            <DetailRow label="Standing">
+              <StatusBadge status={record.status} />
+            </DetailRow>
+            <DetailRow label="Applicant">
+              {record.applicant.fullName}
+              {record.applicant.email ? ` · ${record.applicant.email}` : ''}
+              {record.applicant.mobileNumber ? ` · ${record.applicant.mobileNumber}` : ''}
+            </DetailRow>
+            <DetailRow label="Privacy notice">
+              {record.applicant.privacyNoticeVersion} · consented{' '}
+              {dateTimeLabel(record.applicant.consentedAt)}
+            </DetailRow>
+            <DetailRow label="Received">{dateTimeLabel(record.receivedAt)}</DetailRow>
+          </dl>
+          <dl className="m-0">
+            <DetailRow label="Publication">
+              {record.publicationNo} · {dateLabel(record.openingDate)} —{' '}
+              {dateLabel(record.closingDate)}
+            </DetailRow>
+            <DetailRow label="Bound Qualification Standard">
+              {qualification.code} · v{qualification.versionNo} · {qualification.name}
+            </DetailRow>
+            <DetailRow label="Late acceptance">
+              {record.lateAcceptance
+                ? `${record.lateAcceptance.reason} · authority ${record.lateAcceptance.authorityDocumentVersionId}`
+                : 'Not applicable'}
+            </DetailRow>
+            <DetailRow label="Lineage">
+              {record.withdrawalReason
+                ? `Withdrawn: ${record.withdrawalReason}`
+                : record.closureReason
+                  ? `Closed: ${record.closureReason}`
+                  : 'Application retained on the record'}
+            </DetailRow>
+          </dl>
+        </div>
+        <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+          {record.status === 'INCOMPLETE' && permissions.updateApplication ? (
+            <Button
+              disabled={busy || !lifecycleReason}
+              onClick={() =>
+                onCommand(
+                  `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/reopen`,
+                  { reason: lifecycleReason },
+                )
+              }
+              size="default"
+              variant="primary"
+            >
+              Complete application
+            </Button>
+          ) : null}
+          {editable && permissions.withdrawApplication ? (
+            <Button
+              disabled={busy || !lifecycleReason}
+              onClick={() => {
+                if (!confirmAction('Withdraw this Application?')) return;
+                void onCommand(
+                  `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/withdraw`,
+                  { reason: lifecycleReason },
+                );
+              }}
+              size="default"
+              variant="secondary"
+            >
+              Withdraw
+            </Button>
+          ) : null}
+          {record.status === 'NOT_QUALIFIED' && permissions.closeApplication ? (
+            <Button
+              disabled={busy || !lifecycleReason}
+              onClick={() => {
+                if (!confirmAction('Close this Application?')) return;
+                void onCommand(
+                  `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/close`,
+                  { reason: lifecycleReason },
+                );
+              }}
+              size="default"
+              variant="secondary"
+            >
+              Close application
+            </Button>
+          ) : null}
+        </div>
+        {editable &&
+        (permissions.updateApplication ||
+          permissions.withdrawApplication ||
+          permissions.closeApplication) ? (
+          <Field label="Lifecycle reason" htmlFor="application-lifecycle-reason">
+            <input
+              className={inputClass}
+              id="application-lifecycle-reason"
+              value={lifecycleReason}
+              onChange={(event) => setLifecycleReason(inputValue(event))}
+              placeholder="Required for reopening, withdrawal, or closure"
+            />
+          </Field>
+        ) : null}
+      </Panel>
+
+      <Panel
+        title="Bound Qualification Standard"
+        description="Screening compares evidence with this exact Qualification Standard Version bound to the Recruitment Case."
+      >
+        <div className="grid gap-4 min-[720px]:grid-cols-2">
+          <dl className="m-0">
+            {requirements.map(([label, value]) => (
+              <DetailRow key={label} label={label}>
+                {value ?? '—'}
+              </DetailRow>
+            ))}
+          </dl>
+          <div className="grid content-start gap-2 text-sm text-ink">
+            <strong className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+              Applicable screening areas
+            </strong>
+            {qualification.applicableAreas.map((area) => (
+              <span key={area}>{areaLabel(area)}</span>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
+      <Panel
+        title="Application evidence"
+        description="Finalized Agency Document Versions linked to this Application. Evidence cannot be removed once a completed screening cites it."
+      >
+        <div className="grid gap-2">
+          {record.documents.length ? (
+            record.documents.map((document) => (
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line px-3 py-2 text-xs"
+                key={document.id}
+              >
+                <span className="font-[650] text-ink">
+                  {document.documentNo ?? document.documentType} · v{document.versionNo} ·{' '}
+                  {document.purpose.replaceAll('_', ' ')}
+                </span>
+                <span className="flex items-center gap-3 text-muted">
+                  {dateTimeLabel(document.linkedAt)}
+                  {permissions.updateApplication &&
+                  (record.status === 'RECEIVED' || record.status === 'INCOMPLETE') ? (
+                    <button
+                      className="rounded-[2px] text-[#9a3030] underline-offset-2 hover:underline"
+                      type="button"
+                      onClick={() =>
+                        void onCommand(
+                          `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/documents/${document.id}`,
+                          undefined,
+                          'DELETE',
+                        )
+                      }
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </span>
+              </div>
+            ))
+          ) : (
+            <span className="text-sm text-muted">No evidence linked yet.</span>
+          )}
+        </div>
+        {editable && permissions.updateApplication ? (
+          <div className="grid gap-3 border-t border-line pt-4 min-[720px]:grid-cols-3">
+            <Field label="Purpose" htmlFor="application-document-purpose">
+              <select
+                className={inputClass}
+                id="application-document-purpose"
+                value={purpose}
+                onChange={(event) => setPurpose(inputValue(event))}
+              >
+                {APPLICATION_DOCUMENT_PURPOSES.map((value) => (
+                  <option key={value} value={value}>
+                    {value.replaceAll('_', ' ')}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Finalized Document Version" htmlFor="application-document-version">
+              <select
+                className={inputClass}
+                id="application-document-version"
+                value={documentVersionId}
+                onChange={(event) => setDocumentVersionId(inputValue(event))}
+              >
+                <option value="">Select finalized evidence</option>
+                {linkable.map((document) => (
+                  <option key={document.version.id} value={document.version.id}>
+                    {document.documentNo ?? document.documentType} · v{document.version.versionNo}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Note" htmlFor="application-document-note">
+              <input
+                className={inputClass}
+                id="application-document-note"
+                value={note}
+                onChange={(event) => setNote(inputValue(event))}
+              />
+            </Field>
+            <div>
+              <Button
+                disabled={busy || !documentVersionId}
+                onClick={() =>
+                  onCommand(
+                    `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/documents`,
+                    {
+                      documentVersionId,
+                      purpose,
+                      ...(note ? { note } : {}),
+                    },
+                  )
+                }
+                size="default"
+                variant="secondary"
+              >
+                Link evidence
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Panel>
+
+      <Panel
+        title="Qualification screening"
+        description="Assess each applicable area against the bound standard. The recorded outcome follows from the area results and requires supporting evidence; completed results are never overwritten."
+      >
+        {record.latestScreening ? (
+          <div className="grid gap-3 border-b border-line pb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={record.latestScreening.result} />
+              <span className="text-xs text-muted">
+                v{record.latestScreening.versionNo} ·{' '}
+                {dateTimeLabel(record.latestScreening.screenedAt)}
+              </span>
+            </div>
+            <p className="m-0 text-sm leading-[1.6] text-ink">{record.latestScreening.reason}</p>
+            <div className="grid gap-1">
+              {record.latestScreening.areaResults.map((entry) => (
+                <span className="text-xs text-muted" key={entry.area}>
+                  <strong className="text-ink">{areaLabel(entry.area)}</strong>{' '}
+                  {entry.result.replaceAll('_', ' ')}
+                  {entry.evidenceDocumentVersionIds.length
+                    ? ` · ${entry.evidenceDocumentVersionIds.length} evidence document(s)`
+                    : ''}
+                  {entry.note ? ` · ${entry.note}` : ''}
+                </span>
+              ))}
+            </div>
+            {record.latestScreening.correctionReason ? (
+              <span className="text-xs text-[#755421]">
+                Correction basis: {record.latestScreening.correctionReason}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <p className="m-0 border-b border-line pb-4 text-sm text-muted">
+            No screening result recorded yet.
+          </p>
+        )}
+        {permissions.screenApplication && editable ? (
+          <ScreeningEditor
+            agencyId={agencyId}
+            key={record.latestScreening?.id ?? 'new-screening'}
+            record={record}
+            mode={record.latestScreening ? 'correct' : 'screen'}
+            busy={busy}
+            onCommand={onCommand}
+          />
+        ) : null}
+      </Panel>
+
+      {record.screenings.length > 1 ? (
+        <Panel
+          title="Screening history"
+          description="Every completed result is preserved. Corrections append a linked replacement version."
+        >
+          <div className="grid gap-3">
+            {record.screenings
+              .slice(0, -1)
+              .reverse()
+              .map((screening) => (
+                <div
+                  className="grid gap-1 rounded-[3px] border border-line px-3 py-3 text-xs"
+                  key={screening.id}
+                >
+                  <strong className="text-ink">
+                    v{screening.versionNo} · {screening.result.replaceAll('_', ' ')} ·{' '}
+                    {dateTimeLabel(screening.screenedAt)}
+                  </strong>
+                  <span className="text-muted">{screening.reason}</span>
+                </div>
+              ))}
+          </div>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
 export function RecruitmentWorkspace(props: Props) {
   const navigation = useRecordNavigation();
   const search = navigation.search;
   const section: Section =
-    search.get('section') === 'publications' ? 'publications' : props.initialSection;
-  const view: View = search.get('view') === 'form' ? 'form' : props.initialView;
+    search.get('section') === 'publications'
+      ? 'publications'
+      : search.get('section') === 'applications'
+        ? 'applications'
+        : props.initialSection;
+  const applicationsOnly = section === 'applications';
+  const requestedView = search.get('view');
+  const view: View =
+    requestedView === 'kanban' && applicationsOnly
+      ? 'kanban'
+      : requestedView === 'form'
+        ? 'form'
+        : requestedView === 'tree'
+          ? 'tree'
+          : applicationsOnly && props.initialView === 'kanban'
+            ? 'kanban'
+            : props.initialView === 'form'
+              ? 'form'
+              : 'tree';
   const selectedId = search.get('selected') ?? props.initialSelected ?? null;
   const newRecord: NewRecord =
-    search.get('new') === 'request' || search.get('new') === 'publication'
+    search.get('new') === 'request' ||
+    search.get('new') === 'publication' ||
+    search.get('new') === 'application'
       ? (search.get('new') as NewRecord)
       : props.initialNew;
   const [requests, setRequests] = useState(props.initialRequests);
   const [publications, setPublications] = useState(props.initialPublications);
+  const [applications, setApplications] = useState(props.initialApplications);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const permissions: Permissions = {
@@ -1255,6 +2380,11 @@ export function RecruitmentWorkspace(props: Props) {
     closePublication: props.canClosePublication,
     cancelPublication: props.canCancelPublication,
     republishPublication: props.canRepublishPublication,
+    updateApplication: props.canUpdateApplication,
+    screenApplication: props.canScreenApplication,
+    disqualifyApplication: props.canDisqualifyApplication,
+    withdrawApplication: props.canWithdrawApplication,
+    closeApplication: props.canCloseApplication,
   };
 
   const selectedRequest = useMemo(
@@ -1265,6 +2395,10 @@ export function RecruitmentWorkspace(props: Props) {
     () => publications.find((record) => record.id === selectedId) ?? null,
     [publications, selectedId],
   );
+  const selectedApplication = useMemo(
+    () => applications.find((record) => record.id === selectedId) ?? null,
+    [applications, selectedId],
+  );
   const republishSource =
     newRecord === 'publication' &&
     selectedPublication &&
@@ -1273,7 +2407,7 @@ export function RecruitmentWorkspace(props: Props) {
       : null;
 
   async function refresh() {
-    const [nextRequests, nextPublications] = await Promise.all([
+    const [nextRequests, nextPublications, nextApplications] = await Promise.all([
       props.canReadRequests
         ? fetchList<RecruitmentRequest>(
             `/api/v1/agencies/${props.agencyId}/recruitment/requests-to-fill`,
@@ -1286,16 +2420,27 @@ export function RecruitmentWorkspace(props: Props) {
             'publications',
           )
         : Promise.resolve(publications),
+      props.canReadApplications
+        ? fetchList<VacancyApplication>(
+            `/api/v1/agencies/${props.agencyId}/recruitment/applications`,
+            'applications',
+          )
+        : Promise.resolve(applications),
     ]);
     setRequests(nextRequests);
     setPublications(nextPublications);
+    setApplications(nextApplications);
   }
 
-  async function command(path: string, body?: unknown) {
+  async function command(path: string, body?: unknown, method: 'POST' | 'DELETE' = 'POST') {
     setBusy(true);
     setError('');
     try {
-      await sendCommand(path, body);
+      if (method === 'DELETE') {
+        await sendDelete(path);
+      } else {
+        await sendCommand(path, body);
+      }
       await refresh();
     } catch (caught: unknown) {
       setError(
@@ -1318,9 +2463,35 @@ export function RecruitmentWorkspace(props: Props) {
     navigation.navigate({ section: 'publications', view: 'form', selected: record.id, new: null });
   }
 
+  async function createdApplication(record: VacancyApplication) {
+    setApplications((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+    navigation.navigate({ section: 'applications', view: 'form', selected: record.id, new: null });
+  }
+
   const canCreateInSection =
-    section === 'requests' ? props.canCreateRequest : props.canCreatePublication;
-  const hasSectionRead = section === 'requests' ? props.canReadRequests : props.canReadPublications;
+    section === 'requests'
+      ? props.canCreateRequest
+      : section === 'publications'
+        ? props.canCreatePublication
+        : props.canCreateApplication;
+  const hasSectionRead =
+    section === 'requests'
+      ? props.canReadRequests
+      : section === 'publications'
+        ? props.canReadPublications
+        : props.canReadApplications;
+  const sectionTitle =
+    section === 'requests'
+      ? 'Requests to Fill'
+      : section === 'publications'
+        ? 'Vacancy Publications'
+        : 'Applications';
+  const newLabel =
+    section === 'requests'
+      ? 'New request to fill'
+      : section === 'publications'
+        ? 'New publication'
+        : 'New application';
 
   return (
     <div className="grid gap-6">
@@ -1334,8 +2505,9 @@ export function RecruitmentWorkspace(props: Props) {
               Recruitment
             </h1>
             <p className="m-0 max-w-[720px] text-sm leading-[1.6] text-muted">
-              Open a controlled Request to Fill from a Recruitable Vacancy, resolve its governing
-              configuration, and publish an evidence-backed vacancy package.
+              Open a controlled Request to Fill from a Recruitable Vacancy, publish an
+              evidence-backed vacancy package, and screen applicant evidence against the bound
+              Qualification Standard Version.
             </p>
           </div>
           {canCreateInSection ? (
@@ -1345,13 +2517,18 @@ export function RecruitmentWorkspace(props: Props) {
                   section,
                   view: 'form',
                   selected: null,
-                  new: section === 'requests' ? 'request' : 'publication',
+                  new:
+                    section === 'requests'
+                      ? 'request'
+                      : section === 'publications'
+                        ? 'publication'
+                        : 'application',
                 })
               }
               size="default"
               variant="primary"
             >
-              {section === 'requests' ? 'New request to fill' : 'New publication'}
+              {newLabel}
             </Button>
           ) : null}
         </div>
@@ -1381,6 +2558,17 @@ export function RecruitmentWorkspace(props: Props) {
               Vacancy Publications
             </button>
           ) : null}
+          {props.canReadApplications ? (
+            <button
+              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'applications' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
+              type="button"
+              onClick={() =>
+                navigation.navigate({ section: 'applications', selected: null, new: null })
+              }
+            >
+              Applications
+            </button>
+          ) : null}
         </nav>
         <div
           className="flex items-center gap-1 rounded-[3px] border border-line bg-paper p-1"
@@ -1402,6 +2590,16 @@ export function RecruitmentWorkspace(props: Props) {
           >
             Form
           </button>
+          {applicationsOnly ? (
+            <button
+              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'kanban' ? 'bg-canvas text-ink' : 'text-muted'}`}
+              type="button"
+              aria-pressed={view === 'kanban'}
+              onClick={() => navigation.navigate({ view: 'kanban', new: null })}
+            >
+              Kanban
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -1415,8 +2613,8 @@ export function RecruitmentWorkspace(props: Props) {
       ) : null}
       {hasSectionRead && view === 'tree' ? (
         <Panel
-          title={section === 'requests' ? 'Requests to Fill' : 'Vacancy Publications'}
-          description="Select a record to inspect its status, immutable bindings, approval evidence, and next permitted action."
+          title={sectionTitle}
+          description="Select a record to inspect its status, evidence, and next permitted action."
         >
           {section === 'requests' ? (
             <RequestTree
@@ -1424,13 +2622,31 @@ export function RecruitmentWorkspace(props: Props) {
               selectedId={selectedId}
               onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
             />
-          ) : (
+          ) : section === 'publications' ? (
             <PublicationTree
               records={publications}
               selectedId={selectedId}
               onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
             />
+          ) : (
+            <ApplicationTree
+              records={applications}
+              selectedId={selectedId}
+              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
+            />
           )}
+        </Panel>
+      ) : null}
+      {hasSectionRead && view === 'kanban' && applicationsOnly ? (
+        <Panel
+          title="Applications"
+          description="Tree and Kanban show the same Applications. Open a card to record evidence and screening on its Form."
+        >
+          <ApplicationKanban
+            records={applications}
+            selectedId={selectedId}
+            onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
+          />
         </Panel>
       ) : null}
       {hasSectionRead && view === 'form' && newRecord === 'request' ? (
@@ -1455,6 +2671,17 @@ export function RecruitmentWorkspace(props: Props) {
           error={error}
           onError={setError}
           onCreated={createdPublication}
+        />
+      ) : null}
+      {hasSectionRead && view === 'form' && newRecord === 'application' ? (
+        <ApplicationDraft
+          agencyId={props.agencyId}
+          publications={publications}
+          documents={props.documents}
+          busy={busy}
+          error={error}
+          onError={setError}
+          onCreated={createdApplication}
         />
       ) : null}
       {hasSectionRead &&
@@ -1495,8 +2722,23 @@ export function RecruitmentWorkspace(props: Props) {
       {hasSectionRead &&
       view === 'form' &&
       !newRecord &&
+      section === 'applications' &&
+      selectedApplication ? (
+        <ApplicationDetail
+          record={selectedApplication}
+          agencyId={props.agencyId}
+          documents={props.documents}
+          permissions={permissions}
+          busy={busy}
+          onCommand={command}
+        />
+      ) : null}
+      {hasSectionRead &&
+      view === 'form' &&
+      !newRecord &&
       !selectedRequest &&
-      !selectedPublication ? (
+      !selectedPublication &&
+      !selectedApplication ? (
         <Panel title="Select a Recruitment record">
           <p className="m-0 text-sm text-muted">
             Choose a record from Tree view or start a new controlled case.

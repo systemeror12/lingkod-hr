@@ -222,6 +222,11 @@ async function seed(): Promise<void> {
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRouteVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.applicationScreeningEvidence.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.applicationScreening.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.applicationDocument.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.application.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.applicant.deleteMany({ where: { agencyId: agency.id } });
     await transaction.vacancyPublicationEvidence.deleteMany({ where: { agencyId: agency.id } });
     await transaction.vacancyPublication.deleteMany({ where: { agencyId: agency.id } });
     await transaction.requestMspRebaseline.deleteMany({ where: { agencyId: agency.id } });
@@ -319,6 +324,8 @@ async function seed(): Promise<void> {
               'E2E-AGENCY-POSTING-1',
               'E2E-AGENCY-POSTING-2',
               'E2E-AGENCY-POSTING-3',
+              'E2E-APPLICANT-EDUCATION',
+              'E2E-APPLICANT-ELIGIBILITY',
             ],
           },
         },
@@ -343,6 +350,8 @@ async function seed(): Promise<void> {
             'E2E-AGENCY-POSTING-1',
             'E2E-AGENCY-POSTING-2',
             'E2E-AGENCY-POSTING-3',
+            'E2E-APPLICANT-EDUCATION',
+            'E2E-APPLICANT-ELIGIBILITY',
           ],
         },
       },
@@ -468,6 +477,11 @@ async function seed(): Promise<void> {
     const agencyPostingOne = await evidence('E2E-AGENCY-POSTING-1', 'VACANCY_POSTING');
     const agencyPostingTwo = await evidence('E2E-AGENCY-POSTING-2', 'VACANCY_POSTING');
     const agencyPostingThree = await evidence('E2E-AGENCY-POSTING-3', 'VACANCY_POSTING');
+    const applicantEducation = await evidence('E2E-APPLICANT-EDUCATION', 'TRANSCRIPT_OF_RECORDS');
+    const applicantEligibility = await evidence(
+      'E2E-APPLICANT-ELIGIBILITY',
+      'CERTIFICATE_OF_ELIGIBILITY',
+    );
     const meritPlan = await transaction.agencyMeritSelectionPlanVersion.create({
       data: {
         agencyId: agency.id,
@@ -565,6 +579,8 @@ async function seed(): Promise<void> {
     void agencyPostingOne;
     void agencyPostingTwo;
     void agencyPostingThree;
+    void applicantEducation;
+    void applicantEligibility;
     const position = await transaction.plantillaPosition.create({
       data: {
         agencyId: agency.id,
