@@ -850,16 +850,17 @@ model VacancyPublicationEvidence {
   reference                 String?
   publishedAt               DateTime  @map("published_at") @db.Timestamptz(6)
   removedAt                 DateTime? @map("removed_at") @db.Timestamptz(6)
-  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  evidenceDocumentVersionId String    @map("evidence_document_version_id") @db.Uuid
   createdByMembershipId     String    @map("created_by_membership_id") @db.Uuid
   createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   agency                  Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   publication             VacancyPublication @relation(fields: [agencyId, publicationId], references: [agencyId, id], onDelete: Restrict)
-  evidenceDocumentVersion DocumentVersion?   @relation("VacancyPublicationEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion    @relation("VacancyPublicationEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
   createdBy               AgencyMembership   @relation("VacancyPublicationEvidenceCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([agencyId, id])
+  @@unique([agencyId, publicationId, channelType, location])
   @@index([agencyId, publicationId, channelType])
   @@map("vacancy_publication_evidence")
 }

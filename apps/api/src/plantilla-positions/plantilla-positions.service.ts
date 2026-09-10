@@ -572,6 +572,10 @@ export class PlantillaPositionsService {
     asOfValue = manilaToday(),
   ): Promise<RecruitableVacancyResolution | null> {
     const asOf = toDatabaseDate(asOfValue);
+    const locked = await transaction.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`SELECT "id" FROM "plantilla_positions" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${positionId} AS uuid) FOR UPDATE`,
+    );
+    if (locked.length !== 1) return null;
     const record = await transaction.plantillaPosition.findFirst({
       where: { agencyId: context.agencyId, id: positionId },
       select: positionSelect,

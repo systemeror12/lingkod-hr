@@ -149,6 +149,7 @@ export interface VacancyPublicationSummary {
     location: string;
     reference: string | null;
     publishedAt: string;
+    removedAt: string | null;
     evidenceDocumentVersionId: string | null;
   }>;
   createdAt: string;
@@ -339,6 +340,7 @@ const publicationSelect = {
       location: true,
       reference: true,
       publishedAt: true,
+      removedAt: true,
       evidenceDocumentVersionId: true,
     },
   },
@@ -553,6 +555,7 @@ function publicationSummary(record: PublicationRecord): VacancyPublicationSummar
       location: evidence.location,
       reference: evidence.reference,
       publishedAt: evidence.publishedAt.toISOString(),
+      removedAt: evidence.removedAt?.toISOString() ?? null,
       evidenceDocumentVersionId: evidence.evidenceDocumentVersionId,
     })),
     createdAt: record.createdAt.toISOString(),
@@ -563,6 +566,7 @@ function publicationSummary(record: PublicationRecord): VacancyPublicationSummar
 function safeAuditMetadata(value: Prisma.InputJsonObject): Prisma.InputJsonObject {
   const allowed = new Set([
     'requestNo',
+    'requestToFillId',
     'publicationNo',
     'positionId',
     'positionVersionId',
@@ -626,7 +630,33 @@ function requiredBoardSeats(value: Prisma.JsonValue): string[] {
   return object.seats.flatMap((seat) => {
     if (typeof seat !== 'object' || seat === null || Array.isArray(seat)) return [];
     const item = seat as Record<string, Prisma.JsonValue>;
-    return typeof item.seatCode === 'string' && item.required !== false ? [item.seatCode] : [];
+    return typeof item.seatCode === 'string' && item.seatCode.trim() && item.required !== false
+      ? [item.seatCode.trim()]
+      : [];
+  });
+}
+
+function boardSeatCodes(value: Prisma.JsonValue): string[] {
+  const object = jsonObject(value);
+  if (!object || !Array.isArray(object.seats)) return [];
+  return object.seats.flatMap((seat) => {
+    if (typeof seat !== 'object' || seat === null || Array.isArray(seat)) return [];
+    const item = seat as Record<string, Prisma.JsonValue>;
+    return typeof item.seatCode === 'string' && item.seatCode.trim() ? [item.seatCode.trim()] : [];
+  });
+}
+
+function hasMalformedBoardSeatDefinition(value: Prisma.JsonValue): boolean {
+  const object = jsonObject(value);
+  if (!object || !Array.isArray(object.seats)) return true;
+  return object.seats.some((seat) => {
+    if (typeof seat !== 'object' || seat === null || Array.isArray(seat)) return true;
+    const item = seat as Record<string, Prisma.JsonValue>;
+    return (
+      typeof item.seatCode !== 'string' ||
+      !item.seatCode.trim() ||
+      (item.required !== undefined && typeof item.required !== 'boolean')
+    );
   });
 }
 
@@ -637,6 +667,10 @@ function isCsFormNo9(documentType: string): boolean {
     .trim()
     .toUpperCase();
   return /^CS FORM (?:NO |NUMBER )?9$/.test(normalized);
+}
+
+function isKnownPrismaError(error: unknown, code: string): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
 }
 
 @Injectable()
@@ -725,14 +759,6 @@ export class RecruitmentService {
       'recruitment.requests.create',
       'RECRUITMENT_REQUEST_CREATE_FORBIDDEN',
     );
-    const vacancy = await this.requireVacancy(context, input.positionId);
-    if (input.requestingUnitId !== vacancy.organizationUnitId) {
-      throw new RecruitmentServiceError(
-        'The requesting office must own the Plantilla Position vacancy.',
-        403,
-        'RECRUITMENT_REQUESTING_UNIT_FORBIDDEN',
-      );
-    }
     return withDatabaseContext(
       requestDatabaseContext(context, 'recruitment-transition'),
       async (transaction) => {
@@ -752,20 +778,38 @@ export class RecruitmentService {
           );
           return requestSummary(existing);
         }
-        const record = await transaction.requestToFill.create({
-          data: {
-            agencyId: context.agencyId,
-            positionId: input.positionId,
-            requestingUnitId: input.requestingUnitId,
-            requestedByMembershipId: context.membershipId,
-            justification: input.justification.trim(),
-            qualificationStandardVersionId: vacancy.qualificationStandardVersionId,
-            status: 'DRAFT',
-            createdByMembershipId: context.membershipId,
-            updatedByMembershipId: context.membershipId,
-          },
-          select: { id: true },
-        });
+        const vacancy = await this.requireVacancyInTransaction(
+          transaction,
+          context,
+          input.positionId,
+        );
+        if (input.requestingUnitId !== vacancy.organizationUnitId) {
+          throw new RecruitmentServiceError(
+            'The requesting office must own the Plantilla Position vacancy.',
+            403,
+            'RECRUITMENT_REQUESTING_UNIT_FORBIDDEN',
+          );
+        }
+        let record: { id: string };
+        try {
+          record = await transaction.requestToFill.create({
+            data: {
+              agencyId: context.agencyId,
+              positionId: input.positionId,
+              requestingUnitId: input.requestingUnitId,
+              requestedByMembershipId: context.membershipId,
+              justification: input.justification.trim(),
+              qualificationStandardVersionId: vacancy.qualificationStandardVersionId,
+              status: 'DRAFT',
+              createdByMembershipId: context.membershipId,
+              updatedByMembershipId: context.membershipId,
+            },
+            select: { id: true },
+          });
+        } catch (error) {
+          if (isKnownPrismaError(error, 'P2002')) throw this.activeRequestConflict();
+          throw error;
+        }
         await this.writeAudit(transaction, context, {
           action: 'REQUEST_TO_FILL_CREATED',
           entityType: 'RequestToFill',
@@ -794,7 +838,6 @@ export class RecruitmentService {
       'recruitment.requests.submit',
       'RECRUITMENT_REQUEST_SUBMIT_FORBIDDEN',
     );
-    const vacancy = await this.requireRequestVacancy(context, requestId);
     return withDatabaseContext(
       requestDatabaseContext(context, 'recruitment-transition'),
       async (transaction) => {
@@ -807,6 +850,11 @@ export class RecruitmentService {
             'RECRUITMENT_REQUEST_DRAFTER_REQUIRED',
           );
         if (current.status !== 'DRAFT') throw this.workflowError('submit', current.status);
+        const vacancy = await this.requireVacancyInTransaction(
+          transaction,
+          context,
+          current.positionId,
+        );
         if (
           current.requestingUnitId !== vacancy.organizationUnitId ||
           current.qualificationStandardVersionId !== vacancy.qualificationStandardVersionId
@@ -852,50 +900,58 @@ export class RecruitmentService {
       'recruitment.requests.review',
       'RECRUITMENT_REQUEST_REVIEW_FORBIDDEN',
     );
-    const existing = await this.findRequestForCommand(context, requestId);
-    if (!existing) throw this.notFound('Request to Fill');
-    if (existing.status === 'FOR_REVIEW' && existing.approvalRequestId) return existing;
-    if (existing.status !== 'SUBMITTED') throw this.workflowError('review', existing.status);
-    const vacancy = await this.requireVacancy(context, existing.position.id);
-    const asOf = manilaToday();
-    const configuration = await withDatabaseContext(
-      requestDatabaseContext(context),
-      (transaction) => this.resolveConfiguration(transaction, context.agencyId, vacancy, asOf),
-    );
-    this.assertRequestVacancyUnchanged(existing, vacancy);
-    const requestRoute = await this.approvals.resolveActiveRoute(
-      context,
-      REQUEST_TO_FILL_ROUTE_CODE,
-      asOf,
-    );
-    const publicationRoute = await this.approvals.resolveActiveRoute(
-      context,
-      VACANCY_PUBLICATION_ROUTE_CODE,
-      asOf,
-    );
-    const approval = await this.approvals.createRequest(
-      context,
-      {
-        routeCode: REQUEST_TO_FILL_ROUTE_CODE,
-        subjectType: 'REQUEST_TO_FILL',
-        subjectId: requestId,
-        effectiveDate: asOf,
-      },
-      rawIdempotencyKey ? `${rawIdempotencyKey}:approval-create` : undefined,
-    );
-    await this.approvals.submit(
-      context,
-      approval.id,
-      rawIdempotencyKey ? `${rawIdempotencyKey}:approval-submit` : undefined,
-    );
     return withDatabaseContext(
-      requestDatabaseContext(context, 'recruitment-transition'),
+      requestDatabaseContext(context, 'approval-transition', 'recruitment-transition'),
       async (transaction) => {
         const current = await this.lockRequest(transaction, context.agencyId, requestId);
         if (!current) throw this.notFound('Request to Fill');
-        if (current.status === 'FOR_REVIEW' && current.approvalRequestId === approval.id)
+        if (current.status === 'FOR_REVIEW' && current.approvalRequestId)
           return requestSummary(current);
         if (current.status !== 'SUBMITTED') throw this.workflowError('review', current.status);
+        const vacancy = await this.requireVacancyInTransaction(
+          transaction,
+          context,
+          current.positionId,
+        );
+        const asOf = manilaToday();
+        const configuration = await this.resolveConfiguration(
+          transaction,
+          context.agencyId,
+          vacancy,
+          asOf,
+        );
+        const currentSummary = requestSummary(current);
+        this.assertRequestVacancyUnchanged(currentSummary, vacancy);
+        const requestRoute = await this.approvals.resolveActiveRouteInTransaction(
+          transaction,
+          context,
+          REQUEST_TO_FILL_ROUTE_CODE,
+          asOf,
+        );
+        const publicationRoute = await this.approvals.resolveActiveRouteInTransaction(
+          transaction,
+          context,
+          VACANCY_PUBLICATION_ROUTE_CODE,
+          asOf,
+        );
+        const approval = await this.approvals.createRequestInTransaction(
+          transaction,
+          context,
+          {
+            routeCode: REQUEST_TO_FILL_ROUTE_CODE,
+            subjectType: 'REQUEST_TO_FILL',
+            subjectId: requestId,
+            effectiveDate: asOf,
+          },
+          rawIdempotencyKey ? `${rawIdempotencyKey}:approval-create` : undefined,
+          requestRoute.id,
+        );
+        await this.approvals.submitInTransaction(
+          transaction,
+          context,
+          approval.id,
+          rawIdempotencyKey ? `${rawIdempotencyKey}:approval-submit` : undefined,
+        );
         const bindingSetNo = current.bindingSetNo + 1;
         const now = new Date();
         await transaction.requestToFill.update({
@@ -967,43 +1023,6 @@ export class RecruitmentService {
       'recruitment.requests.rebaseline',
       'RECRUITMENT_REQUEST_REBASELINE_FORBIDDEN',
     );
-    const current = await this.requireCommandRequest(context, requestId);
-    if (current.status !== 'FOR_REVIEW') throw this.workflowError('rebaseline', current.status);
-    if (!current.approvalRequestId || current.governingConfiguration.frozenAt) {
-      throw new RecruitmentServiceError(
-        'Only an unfrozen Request to Fill under active review can be rebaselined.',
-        409,
-        'RECRUITMENT_REBASELINE_NOT_ALLOWED',
-      );
-    }
-    const vacancy = await this.requireVacancy(context, current.position.id);
-    const asOf = manilaToday();
-    const configuration = await withDatabaseContext(
-      requestDatabaseContext(context),
-      (transaction) => this.resolveConfiguration(transaction, context.agencyId, vacancy, asOf),
-    );
-    this.assertRequestVacancyUnchanged(current, vacancy);
-    const requestRoute = await this.approvals.resolveActiveRoute(
-      context,
-      REQUEST_TO_FILL_ROUTE_CODE,
-      asOf,
-    );
-    const publicationRoute = await this.approvals.resolveActiveRoute(
-      context,
-      VACANCY_PUBLICATION_ROUTE_CODE,
-      asOf,
-    );
-    if (
-      configuration.planId === current.governingConfiguration.mspPlanVersionId &&
-      configuration.criteriaSetId === current.governingConfiguration.criteriaSetId &&
-      configuration.boardId === current.governingConfiguration.boardDefinitionId
-    ) {
-      throw new RecruitmentServiceError(
-        'The replacement governing configuration must differ from the bound configuration.',
-        409,
-        'RECRUITMENT_REBASELINE_UNCHANGED',
-      );
-    }
     return withDatabaseContext(
       requestDatabaseContext(context, 'recruitment-transition'),
       async (transaction) => {
@@ -1011,6 +1030,46 @@ export class RecruitmentService {
         if (!locked) throw this.notFound('Request to Fill');
         if (locked.status !== 'FOR_REVIEW' || !locked.approvalRequestId || locked.bindingFrozenAt) {
           throw this.workflowError('rebaseline', locked.status);
+        }
+        const vacancy = await this.requireVacancyInTransaction(
+          transaction,
+          context,
+          locked.positionId,
+        );
+        this.assertRequestVacancyUnchanged(requestSummary(locked), vacancy);
+        const asOf = manilaToday();
+        const configuration = await this.resolveConfiguration(
+          transaction,
+          context.agencyId,
+          vacancy,
+          asOf,
+        );
+        if (
+          configuration.planId === locked.mspPlanVersionId &&
+          configuration.criteriaSetId === locked.criteriaSetId &&
+          configuration.boardId === locked.boardDefinitionId
+        ) {
+          throw new RecruitmentServiceError(
+            'The replacement governing configuration must differ from the bound configuration.',
+            409,
+            'RECRUITMENT_REBASELINE_UNCHANGED',
+          );
+        }
+        const currentBindings = locked.routeBindings.filter(
+          (binding) => binding.bindingSetNo === locked.bindingSetNo,
+        );
+        const requestRoute = currentBindings.find(
+          (binding) => binding.checkpointCode === 'REQUEST_TO_FILL_REVIEW',
+        );
+        const publicationRoute = currentBindings.find(
+          (binding) => binding.checkpointCode === 'VACANCY_PUBLICATION',
+        );
+        if (!requestRoute || !publicationRoute) {
+          throw new RecruitmentServiceError(
+            'The Request to Fill has incomplete Approval Route bindings.',
+            409,
+            'RECRUITMENT_APPROVAL_ROUTE_INVALID',
+          );
         }
         await this.requireFinalizedDocumentVersion(
           transaction,
@@ -1054,7 +1113,7 @@ export class RecruitmentService {
               requestToFillId: requestId,
               bindingSetNo,
               checkpointCode: 'REQUEST_TO_FILL_REVIEW',
-              approvalRouteVersionId: requestRoute.id,
+              approvalRouteVersionId: requestRoute.approvalRouteVersionId,
               boundByMembershipId: context.membershipId,
             },
             {
@@ -1062,7 +1121,7 @@ export class RecruitmentService {
               requestToFillId: requestId,
               bindingSetNo,
               checkpointCode: 'VACANCY_PUBLICATION',
-              approvalRouteVersionId: publicationRoute.id,
+              approvalRouteVersionId: publicationRoute.approvalRouteVersionId,
               boundByMembershipId: context.membershipId,
             },
           ],
@@ -1180,6 +1239,13 @@ export class RecruitmentService {
       'recruitment.requests.cancel',
       'RECRUITMENT_REQUEST_CANCEL_FORBIDDEN',
     );
+    const normalizedReason = reason.trim();
+    if (!normalizedReason)
+      throw new RecruitmentServiceError(
+        'A cancellation reason is required.',
+        400,
+        'RECRUITMENT_REASON_REQUIRED',
+      );
     const current = await this.requireCommandRequest(context, requestId);
     if (!['DRAFT', 'SUBMITTED'].includes(current.status))
       throw this.workflowError('cancel', current.status);
@@ -1187,7 +1253,10 @@ export class RecruitmentService {
       requestDatabaseContext(context, 'recruitment-transition'),
       async (transaction) => {
         const locked = await this.lockRequest(transaction, context.agencyId, requestId);
-        if (!locked || ['CANCELLED', 'CLOSED', 'REJECTED'].includes(locked.status)) return;
+        if (!locked) return;
+        if (locked.status === 'CANCELLED') return;
+        if (!['DRAFT', 'SUBMITTED'].includes(locked.status))
+          throw this.workflowError('cancel', locked.status);
         const activePublication = await transaction.vacancyPublication.findFirst({
           where: {
             agencyId: context.agencyId,
@@ -1218,7 +1287,7 @@ export class RecruitmentService {
           entityId: requestId,
           previousStatus: locked.status,
           newStatus: 'CANCELLED',
-          reason: reason.trim(),
+          reason: normalizedReason,
           metadata: {},
           idempotencyKey: rawIdempotencyKey,
         });
@@ -1368,7 +1437,6 @@ export class RecruitmentService {
           transaction,
           context,
           input,
-          request,
           routeBinding.routeVersionId,
           openingDate,
           closingDate,
@@ -1390,13 +1458,19 @@ export class RecruitmentService {
       'RECRUITMENT_PUBLICATION_CREATE_FORBIDDEN',
     );
     const { openingDate, closingDate } = this.publicationDates(input);
-    const request = await this.requireApprovedRequest(
-      context,
-      (await this.requireCommandPublication(context, publicationId)).requestToFillId,
-    );
+    const publication = await this.requireCommandPublication(context, publicationId);
     return withDatabaseContext(
       requestDatabaseContext(context, 'recruitment-transition'),
       async (transaction) => {
+        const lockedRequest = await this.lockRequest(
+          transaction,
+          context.agencyId,
+          publication.requestToFillId,
+        );
+        if (!lockedRequest) throw this.notFound('Request to Fill');
+        if (lockedRequest.status !== 'APPROVED')
+          throw this.workflowError('correct publication', lockedRequest.status);
+        const request = requestSummary(lockedRequest);
         const current = await this.lockPublication(transaction, context.agencyId, publicationId);
         if (!current) throw this.notFound('Vacancy Publication');
         if (current.status !== 'DRAFT') throw this.workflowError('correct', current.status);
@@ -1423,6 +1497,7 @@ export class RecruitmentService {
             formDocumentVersionId: input.formDocumentVersionId,
             openingDate,
             closingDate,
+            ...(input.channels ? { channels: inputJson(input.channels) } : {}),
             positionDetails: inputJson(input.positionDetails),
             applicationRequirements: inputJson(input.applicationRequirements),
             contactDetails: inputJson(input.contactDetails),
@@ -1433,6 +1508,26 @@ export class RecruitmentService {
             rowVersion: { increment: 1 },
           },
         });
+        if (input.evidence) {
+          this.assertUniquePublicationEvidence(input.evidence);
+          await transaction.vacancyPublicationEvidence.deleteMany({
+            where: { agencyId: context.agencyId, publicationId },
+          });
+          if (input.evidence.length) {
+            await transaction.vacancyPublicationEvidence.createMany({
+              data: input.evidence.map((evidence) => ({
+                agencyId: context.agencyId,
+                publicationId,
+                channelType: evidence.channelType,
+                location: evidence.location,
+                reference: evidence.reference ?? null,
+                publishedAt: new Date(evidence.publishedAt),
+                evidenceDocumentVersionId: evidence.evidenceDocumentVersionId,
+                createdByMembershipId: context.membershipId,
+              })),
+            });
+          }
+        }
         await this.writeAudit(transaction, context, {
           action: 'VACANCY_PUBLICATION_CORRECTED',
           entityType: 'VacancyPublication',
@@ -1443,6 +1538,9 @@ export class RecruitmentService {
           metadata: safeAuditMetadata({
             formDocumentVersionId: input.formDocumentVersionId,
             requestNo: request.requestNo,
+            ...(input.channels
+              ? { channelTypes: input.channels.map((channel) => channel.type) }
+              : {}),
           }),
           idempotencyKey: rawIdempotencyKey,
         });
@@ -1466,52 +1564,56 @@ export class RecruitmentService {
     const current = await this.findPublicationForCommand(context, publicationId);
     if (!current) throw this.notFound('Vacancy Publication');
     if (current.status !== 'DRAFT') throw this.workflowError('submit', current.status);
-    const route = await this.approvals.resolveActiveRoute(
-      context,
-      VACANCY_PUBLICATION_ROUTE_CODE,
-      current.openingDate,
-    );
-    if (route.id !== current.approvalRouteVersionId)
-      throw new RecruitmentServiceError(
-        'The bound publication Approval Route is no longer the exact active route for the opening date.',
-        409,
-        'RECRUITMENT_APPROVAL_ROUTE_CHANGED',
-      );
     await withDatabaseContext(
-      requestDatabaseContext(context, 'recruitment-transition'),
+      requestDatabaseContext(context, 'approval-transition', 'recruitment-transition'),
       async (transaction) => {
+        const request = await this.lockRequest(
+          transaction,
+          context.agencyId,
+          current.requestToFillId,
+        );
+        if (!request) throw this.notFound('Request to Fill');
         const locked = await this.lockPublication(transaction, context.agencyId, publicationId);
         if (!locked) throw this.notFound('Vacancy Publication');
+        if (request.status !== 'APPROVED')
+          throw this.workflowError('submit publication', request.status);
+        if (locked.status !== 'DRAFT') throw this.workflowError('submit', locked.status);
+        const route = await this.approvals.resolveActiveRouteInTransaction(
+          transaction,
+          context,
+          VACANCY_PUBLICATION_ROUTE_CODE,
+          formatDate(locked.openingDate),
+        );
+        if (route.id !== locked.approvalRouteVersionId)
+          throw new RecruitmentServiceError(
+            'The bound publication Approval Route is no longer the exact active route for the opening date.',
+            409,
+            'RECRUITMENT_APPROVAL_ROUTE_CHANGED',
+          );
         await this.validatePublicationForSubmission(
           transaction,
           context,
           locked,
           locked.republicationOfId !== null,
         );
-      },
-    );
-    const approval = await this.approvals.createRequest(
-      context,
-      {
-        routeCode: VACANCY_PUBLICATION_ROUTE_CODE,
-        subjectType: 'VACANCY_PUBLICATION',
-        subjectId: publicationId,
-        effectiveDate: current.openingDate,
-      },
-      rawIdempotencyKey ? `${rawIdempotencyKey}:approval-create` : undefined,
-    );
-    await this.approvals.submit(
-      context,
-      approval.id,
-      rawIdempotencyKey ? `${rawIdempotencyKey}:approval-submit` : undefined,
-    );
-    await withDatabaseContext(
-      requestDatabaseContext(context, 'recruitment-transition'),
-      async (transaction) => {
-        const locked = await this.lockPublication(transaction, context.agencyId, publicationId);
-        if (!locked) throw this.notFound('Vacancy Publication');
-        if (locked.status === 'FOR_APPROVAL' && locked.approvalRequestId === approval.id) return;
-        if (locked.status !== 'DRAFT') throw this.workflowError('submit', locked.status);
+        const approval = await this.approvals.createRequestInTransaction(
+          transaction,
+          context,
+          {
+            routeCode: VACANCY_PUBLICATION_ROUTE_CODE,
+            subjectType: 'VACANCY_PUBLICATION',
+            subjectId: publicationId,
+            effectiveDate: formatDate(locked.openingDate),
+          },
+          rawIdempotencyKey ? `${rawIdempotencyKey}:approval-create` : undefined,
+          locked.approvalRouteVersionId,
+        );
+        await this.approvals.submitInTransaction(
+          transaction,
+          context,
+          approval.id,
+          rawIdempotencyKey ? `${rawIdempotencyKey}:approval-submit` : undefined,
+        );
         await transaction.vacancyPublication.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: publicationId } },
           data: {
@@ -1678,14 +1780,14 @@ export class RecruitmentService {
     }
     if (!['CLOSED', 'CANCELLED'].includes(source.status))
       throw this.workflowError('republish', source.status);
-    if (input.requestToFillId !== source.requestToFillId)
+    const { openingDate, closingDate } = this.publicationDates(input);
+    const request = await this.requireApprovedRequest(context, input.requestToFillId);
+    if (request.position.id !== source.position.id)
       throw new RecruitmentServiceError(
-        'A republication must retain the original Request to Fill.',
+        'A republication must retain the original Plantilla Position.',
         400,
         'RECRUITMENT_REPUBLICATION_REQUEST_INVALID',
       );
-    const { openingDate, closingDate } = this.publicationDates(input);
-    const request = await this.requireApprovedRequest(context, input.requestToFillId);
     const routeBinding = request.routeBindings.find(
       (binding) =>
         binding.checkpointCode === 'VACANCY_PUBLICATION' &&
@@ -1708,6 +1810,32 @@ export class RecruitmentService {
     await withDatabaseContext(
       requestDatabaseContext(context, 'recruitment-transition'),
       async (transaction) => {
+        const lockedRequest = await this.lockRequest(
+          transaction,
+          context.agencyId,
+          input.requestToFillId,
+        );
+        if (!lockedRequest) throw this.notFound('Request to Fill');
+        if (lockedRequest.status !== 'APPROVED')
+          throw this.workflowError('republish', lockedRequest.status);
+        const freshRequest = requestSummary(lockedRequest);
+        if (freshRequest.position.id !== source.position.id)
+          throw new RecruitmentServiceError(
+            'A republication must retain the original Plantilla Position.',
+            400,
+            'RECRUITMENT_REPUBLICATION_REQUEST_INVALID',
+          );
+        const freshRouteBinding = freshRequest.routeBindings.find(
+          (binding) =>
+            binding.checkpointCode === 'VACANCY_PUBLICATION' &&
+            binding.bindingSetNo === freshRequest.governingConfiguration.bindingSetNo,
+        );
+        if (!freshRouteBinding)
+          throw new RecruitmentServiceError(
+            'The approved Request to Fill has no bound publication Approval Route.',
+            409,
+            'RECRUITMENT_APPROVAL_ROUTE_MISSING',
+          );
         const locked = await this.lockPublication(transaction, context.agencyId, publicationId);
         if (!locked) throw this.notFound('Vacancy Publication');
         if (locked.status === 'REPUBLISHED') {
@@ -1732,8 +1860,7 @@ export class RecruitmentService {
           transaction,
           context,
           input,
-          request,
-          routeBinding.routeVersionId,
+          freshRouteBinding.routeVersionId,
           openingDate,
           closingDate,
           rawIdempotencyKey ? `${rawIdempotencyKey}:new` : undefined,
@@ -1784,7 +1911,6 @@ export class RecruitmentService {
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     input: PublicationCreateInput,
-    request: RequestToFillSummary,
     approvalRouteVersionId: string,
     openingDate: Date,
     closingDate: Date,
@@ -1799,9 +1925,47 @@ export class RecruitmentService {
       'VACANCY_PUBLICATION_CREATED',
       rawIdempotencyKey,
     );
-    if (previous)
-      return publicationSummary(
-        await this.requirePublication(transaction, context.agencyId, previous.entityId),
+    if (previous) {
+      const existing = await this.requirePublication(
+        transaction,
+        context.agencyId,
+        previous.entityId,
+      );
+      if (
+        existing.requestToFillId !== input.requestToFillId ||
+        existing.approvalRouteVersionId !== approvalRouteVersionId ||
+        existing.formDocumentVersionId !== input.formDocumentVersionId ||
+        existing.openingDate.getTime() !== openingDate.getTime() ||
+        existing.closingDate.getTime() !== closingDate.getTime() ||
+        existing.republicationOfId !== (republicationOfId ?? null) ||
+        existing.republicationReason !== (republicationReason ?? null) ||
+        existing.republicationAuthorityDocumentVersionId !==
+          (republicationAuthorityDocumentVersionId ?? null)
+      ) {
+        throw this.idempotencyConflict();
+      }
+      return publicationSummary(existing);
+    }
+    const lockedRequest = await this.lockRequest(
+      transaction,
+      context.agencyId,
+      input.requestToFillId,
+    );
+    if (!lockedRequest) throw this.notFound('Request to Fill');
+    if (lockedRequest.status !== 'APPROVED')
+      throw this.workflowError('create publication', lockedRequest.status);
+    const request = requestSummary(lockedRequest);
+    const boundRoute = request.routeBindings.find(
+      (binding) =>
+        binding.checkpointCode === 'VACANCY_PUBLICATION' &&
+        binding.bindingSetNo === request.governingConfiguration.bindingSetNo &&
+        binding.routeVersionId === approvalRouteVersionId,
+    );
+    if (!boundRoute)
+      throw new RecruitmentServiceError(
+        'The approved Request to Fill has no bound publication Approval Route.',
+        409,
+        'RECRUITMENT_APPROVAL_ROUTE_INVALID',
       );
     if (!republicationOfId) {
       const prior = await transaction.vacancyPublication.findFirst({
@@ -1825,44 +1989,51 @@ export class RecruitmentService {
         );
       }
     }
-    const record = await transaction.vacancyPublication.create({
-      data: {
-        agencyId: context.agencyId,
-        requestToFillId: input.requestToFillId,
-        qualificationStandardVersionId: request.qualificationStandard.id,
-        formDocumentVersionId: input.formDocumentVersionId,
-        approvalRouteVersionId,
-        openingDate,
-        closingDate,
-        channels: inputJson(input.channels),
-        positionDetails: inputJson(
-          Object.keys(input.positionDetails).length
-            ? input.positionDetails
-            : {
-                positionId: request.position.id,
-                itemNumber: request.position.itemNumber,
-                title: request.position.title,
-                salaryGrade: request.position.salaryGrade,
-                qualificationStandardVersionId: request.qualificationStandard.id,
-              },
-        ),
-        applicationRequirements: inputJson(input.applicationRequirements),
-        contactDetails: inputJson(input.contactDetails),
-        ...(input.hrmoCertification
-          ? { hrmoCertification: inputJson(input.hrmoCertification) }
-          : {}),
-        ...(republicationOfId ? { republicationOfId } : {}),
-        ...(republicationReason ? { republicationReason } : {}),
-        ...(republicationAuthorityDocumentVersionId
-          ? { republicationAuthorityDocumentVersionId }
-          : {}),
-        status: 'DRAFT',
-        createdByMembershipId: context.membershipId,
-        updatedByMembershipId: context.membershipId,
-      },
-      select: { id: true },
-    });
+    let record: { id: string };
+    try {
+      record = await transaction.vacancyPublication.create({
+        data: {
+          agencyId: context.agencyId,
+          requestToFillId: input.requestToFillId,
+          qualificationStandardVersionId: request.qualificationStandard.id,
+          formDocumentVersionId: input.formDocumentVersionId,
+          approvalRouteVersionId,
+          openingDate,
+          closingDate,
+          channels: inputJson(input.channels),
+          positionDetails: inputJson(
+            Object.keys(input.positionDetails).length
+              ? input.positionDetails
+              : {
+                  positionId: request.position.id,
+                  itemNumber: request.position.itemNumber,
+                  title: request.position.title,
+                  salaryGrade: request.position.salaryGrade,
+                  qualificationStandardVersionId: request.qualificationStandard.id,
+                },
+          ),
+          applicationRequirements: inputJson(input.applicationRequirements),
+          contactDetails: inputJson(input.contactDetails),
+          ...(input.hrmoCertification
+            ? { hrmoCertification: inputJson(input.hrmoCertification) }
+            : {}),
+          ...(republicationOfId ? { republicationOfId } : {}),
+          ...(republicationReason ? { republicationReason } : {}),
+          ...(republicationAuthorityDocumentVersionId
+            ? { republicationAuthorityDocumentVersionId }
+            : {}),
+          status: 'DRAFT',
+          createdByMembershipId: context.membershipId,
+          updatedByMembershipId: context.membershipId,
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      if (isKnownPrismaError(error, 'P2002')) throw this.activePublicationConflict();
+      throw error;
+    }
     if (input.evidence?.length) {
+      this.assertUniquePublicationEvidence(input.evidence);
       await transaction.vacancyPublicationEvidence.createMany({
         data: input.evidence.map((evidence) => ({
           agencyId: context.agencyId,
@@ -1871,7 +2042,7 @@ export class RecruitmentService {
           location: evidence.location,
           reference: evidence.reference ?? null,
           publishedAt: new Date(evidence.publishedAt),
-          evidenceDocumentVersionId: evidence.evidenceDocumentVersionId ?? null,
+          evidenceDocumentVersionId: evidence.evidenceDocumentVersionId,
           createdByMembershipId: context.membershipId,
         })),
       });
@@ -1886,6 +2057,7 @@ export class RecruitmentService {
         ? 'Draft Vacancy Publication created as a linked republication.'
         : 'Draft Vacancy Publication created from an approved Request to Fill.',
       metadata: safeAuditMetadata({
+        requestToFillId: request.id,
         requestNo: request.requestNo,
         positionId: request.position.id,
         approvalRouteVersionId,
@@ -1918,13 +2090,37 @@ export class RecruitmentService {
     return result;
   }
 
-  private async requireRequestVacancy(
+  private async requireVacancyInTransaction(
+    transaction: Prisma.TransactionClient,
     context: RequestContext,
-    requestId: string,
+    positionId: string,
   ): Promise<Extract<RecruitableVacancyResolution, { eligible: true }>> {
-    const request = await this.findRequestForCommand(context, requestId);
-    if (!request) throw this.notFound('Request to Fill');
-    return this.requireVacancy(context, request.position.id);
+    this.assertPositionReadPermission(context);
+    const result = await this.plantillaPositions.resolveRecruitableVacancyInTransaction(
+      transaction,
+      context,
+      positionId,
+      manilaToday(),
+    );
+    if (!result) throw this.notFound('Plantilla Position');
+    if (!result.eligible) {
+      throw new RecruitmentServiceError(
+        `The Plantilla Position is not a Recruitable Vacancy (${result.reason}).`,
+        409,
+        `RECRUITMENT_${result.reason}`,
+      );
+    }
+    return result;
+  }
+
+  private assertPositionReadPermission(context: RequestContext): void {
+    if (!hasPermission(context, 'positions.items.read', { agencyId: context.agencyId })) {
+      throw new RecruitmentServiceError(
+        'The current Agency Membership lacks Plantilla Position read permission.',
+        403,
+        'PLANTILLA_POSITION_READ_FORBIDDEN',
+      );
+    }
   }
 
   private async requireApprovedRequest(
@@ -2090,10 +2286,16 @@ export class RecruitmentService {
         409,
         'RECRUITMENT_BOARD_RESOLUTION_FAILED',
       );
+    const allSeats = boardSeatCodes(board.seatDefinition);
     const seats = requiredBoardSeats(board.seatDefinition);
-    if (seats.length === 0) {
+    if (
+      hasMalformedBoardSeatDefinition(board.seatDefinition) ||
+      seats.length === 0 ||
+      new Set(allSeats).size !== allSeats.length ||
+      new Set(seats).size !== seats.length
+    ) {
       throw new RecruitmentServiceError(
-        'The HRMPSB Board Definition has no valid required seats.',
+        'The HRMPSB Board Definition must contain unique required seats.',
         409,
         'RECRUITMENT_BOARD_INVALID',
       );
@@ -2107,17 +2309,49 @@ export class RecruitmentService {
         OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
         membership: { status: 'ACTIVE' },
       },
-      select: { seatCode: true },
+      select: {
+        seatCode: true,
+        membershipId: true,
+        authorityDocumentVersionId: true,
+      },
     });
-    for (const seat of seats) {
-      const count = appointments.filter((appointment) => appointment.seatCode === seat).length;
-      if (count !== 1) {
+    const resolvedAppointments = [] as typeof appointments;
+    for (const seat of allSeats) {
+      const matching = appointments.filter((appointment) => appointment.seatCode === seat);
+      if (matching.length > 1 || (seats.includes(seat) && matching.length === 0)) {
         throw new RecruitmentServiceError(
           'Every required HRMPSB seat must resolve to exactly one active appointment.',
           409,
-          count === 0
+          matching.length === 0
             ? 'RECRUITMENT_BOARD_APPOINTMENT_MISSING'
             : 'RECRUITMENT_BOARD_APPOINTMENT_AMBIGUOUS',
+        );
+      }
+      if (matching[0]) resolvedAppointments.push(matching[0]);
+    }
+    if (
+      new Set(resolvedAppointments.map((appointment) => appointment.membershipId)).size !==
+      resolvedAppointments.length
+    ) {
+      throw new RecruitmentServiceError(
+        'One HRMPSB member cannot occupy more than one required seat.',
+        409,
+        'RECRUITMENT_BOARD_MEMBER_DUPLICATED',
+      );
+    }
+    for (const appointment of resolvedAppointments) {
+      if (
+        !appointment.authorityDocumentVersionId ||
+        !(await this.documents.resolveFinalizedVersionInTransaction(
+          transaction,
+          { agencyId },
+          appointment.authorityDocumentVersionId,
+        ))
+      ) {
+        throw new RecruitmentServiceError(
+          'Every active HRMPSB appointment must have finalized authority evidence.',
+          409,
+          'RECRUITMENT_BOARD_APPOINTMENT_AUTHORITY_INVALID',
         );
       }
     }
@@ -2137,6 +2371,12 @@ export class RecruitmentService {
         'A vacancy publication must remain open for at least ten calendar days.',
         409,
         'RECRUITMENT_PUBLICATION_MINIMUM_DAYS',
+      );
+    if (closing < date(manilaToday()))
+      throw new RecruitmentServiceError(
+        'A vacancy publication cannot be submitted after its closing date.',
+        409,
+        'RECRUITMENT_PUBLICATION_PERIOD_EXPIRED',
       );
     const maximumClosing = new Date(opening);
     maximumClosing.setUTCMonth(maximumClosing.getUTCMonth() + 9);
@@ -2184,17 +2424,32 @@ export class RecruitmentService {
         location: true,
         evidenceDocumentVersionId: true,
         publishedAt: true,
+        removedAt: true,
       },
     });
-    for (const channel of requiredChannels) {
-      if (
-        evidence.filter(
-          (item) =>
-            item.channelType === channel.type &&
-            item.location === channel.location &&
-            item.evidenceDocumentVersionId,
-        ).length !== 1
+    const requiredChannelKeySet = new Set(channelKeys);
+    if (
+      evidence.some(
+        (item) =>
+          ['CSC_FIELD_OFFICE', 'CSC_JOB_PORTAL', 'AGENCY_POSTING_PLACE'].includes(
+            item.channelType,
+          ) && !requiredChannelKeySet.has(`${item.channelType}:${item.location}`),
       )
+    ) {
+      throw new RecruitmentServiceError(
+        'Publication evidence must match a declared posting channel exactly.',
+        409,
+        'RECRUITMENT_PUBLICATION_EVIDENCE_INCOMPLETE',
+      );
+    }
+    for (const channel of requiredChannels) {
+      const matching = evidence.filter(
+        (item) =>
+          item.channelType === channel.type &&
+          item.location === channel.location &&
+          !item.removedAt,
+      );
+      if (matching.length !== 1 || !matching[0]?.evidenceDocumentVersionId)
         throw new RecruitmentServiceError(
           'Every required publication channel needs one finalized evidence document at its declared location.',
           409,
@@ -2219,6 +2474,16 @@ export class RecruitmentService {
       if (item.publishedAt < opening || item.publishedAt >= closingExclusive) {
         throw new RecruitmentServiceError(
           'Every publication evidence timestamp must fall within the declared posting period.',
+          409,
+          'RECRUITMENT_PUBLICATION_EVIDENCE_DATE_INVALID',
+        );
+      }
+      if (
+        (item.removedAt && item.removedAt < item.publishedAt) ||
+        (item.removedAt && item.removedAt < closingExclusive)
+      ) {
+        throw new RecruitmentServiceError(
+          'Every required publication channel must remain posted through the declared closing date.',
           409,
           'RECRUITMENT_PUBLICATION_EVIDENCE_DATE_INVALID',
         );
@@ -2457,12 +2722,35 @@ export class RecruitmentService {
     request: ApprovalCompletionRequest,
   ): Promise<void> {
     await this.enableRecruitmentTransition(transaction, context);
-    const current = await transaction.vacancyPublication.findFirst({
+    const candidate = await transaction.vacancyPublication.findFirst({
       where: { agencyId: context.agencyId, id: request.subjectId },
-      select: publicationSelect,
+      select: { requestToFillId: true },
     });
+    if (!candidate)
+      throw new RecruitmentServiceError(
+        'The Vacancy Publication is not ready for Approval completion.',
+        409,
+        'RECRUITMENT_COMPLETION_INVALID',
+      );
+    const requestRecord = await this.lockRequest(
+      transaction,
+      context.agencyId,
+      candidate.requestToFillId,
+    );
+    if (!requestRecord || requestRecord.status !== 'APPROVED')
+      throw new RecruitmentServiceError(
+        'The approved Request to Fill is missing for this publication.',
+        409,
+        'RECRUITMENT_REQUEST_BINDING_INVALID',
+      );
+    const current = await this.lockPublication(transaction, context.agencyId, request.subjectId);
+    if (!current)
+      throw new RecruitmentServiceError(
+        'The Vacancy Publication is not ready for Approval completion.',
+        409,
+        'RECRUITMENT_COMPLETION_INVALID',
+      );
     if (
-      !current ||
       current.approvalRequestId !== request.approvalRequestId ||
       current.status !== 'FOR_APPROVAL'
     )
@@ -2493,16 +2781,6 @@ export class RecruitmentService {
         rowVersion: { increment: 1 },
       },
     });
-    const requestRecord = await transaction.requestToFill.findFirst({
-      where: { agencyId: context.agencyId, id: current.requestToFillId, status: 'APPROVED' },
-      select: { id: true, bindingFrozenAt: true },
-    });
-    if (!requestRecord)
-      throw new RecruitmentServiceError(
-        'The approved Request to Fill is missing for this publication.',
-        409,
-        'RECRUITMENT_REQUEST_BINDING_INVALID',
-      );
     if (!requestRecord.bindingFrozenAt) {
       await transaction.requestToFill.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: requestRecord.id } },
@@ -2815,6 +3093,35 @@ export class RecruitmentService {
       409,
       'RECRUITMENT_INVALID_TRANSITION',
     );
+  }
+
+  private activeRequestConflict(): RecruitmentServiceError {
+    return new RecruitmentServiceError(
+      'This Plantilla Position already has an active Request to Fill.',
+      409,
+      'RECRUITMENT_ACTIVE_REQUEST',
+    );
+  }
+
+  private activePublicationConflict(): RecruitmentServiceError {
+    return new RecruitmentServiceError(
+      'This Request to Fill already has an active Vacancy Publication.',
+      409,
+      'RECRUITMENT_ACTIVE_PUBLICATION',
+    );
+  }
+
+  private assertUniquePublicationEvidence(
+    evidence: ReadonlyArray<{ channelType: string; location: string }>,
+  ): void {
+    const keys = evidence.map(({ channelType, location }) => `${channelType}:${location}`);
+    if (new Set(keys).size !== keys.length) {
+      throw new RecruitmentServiceError(
+        'Each publication channel and location may have only one evidence record.',
+        409,
+        'RECRUITMENT_PUBLICATION_EVIDENCE_INCOMPLETE',
+      );
+    }
   }
 
   private idempotencyConflict(): RecruitmentServiceError {
