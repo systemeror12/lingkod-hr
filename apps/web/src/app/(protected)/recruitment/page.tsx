@@ -101,6 +101,7 @@ export default async function RecruitmentPage({
   return (
     <RecruitmentWorkspace
       agencyId={session.agencyId}
+      membershipId={session.membershipId}
       displayName={session.identity.displayName}
       initialRequests={arrayValue<RecruitmentRequest>(requestValue, 'requests')}
       initialPublications={arrayValue<VacancyPublication>(publicationValue, 'publications')}
@@ -134,6 +135,8 @@ export default async function RecruitmentPage({
       canDisqualifyApplication={hasPermission(session, 'recruitment.applications.disqualify')}
       canWithdrawApplication={hasPermission(session, 'recruitment.applications.withdraw')}
       canCloseApplication={hasPermission(session, 'recruitment.applications.close')}
+      canManageAssessments={hasPermission(session, 'recruitment.assessments.manage')}
+      canManageInterviews={hasPermission(session, 'recruitment.interviews.manage')}
     />
   );
 }

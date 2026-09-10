@@ -7,6 +7,18 @@ import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
 import { RecruitmentServiceError } from './recruitment.service';
 import {
+  assessmentSelect,
+  assessmentSummary,
+  interviewSelect,
+  interviewSummary,
+  selectionPlanSummary,
+  completedStageCodes,
+  type AssessmentSummary,
+  type InterviewSummary,
+  type SelectionPlanSummary,
+} from './evaluations.summary';
+import { parseSelectionPlan, type SelectionPlan } from './selection-plan';
+import {
   APPLICATION_SCREENING_RESULTS,
   APPLICATION_STATUSES,
   SCREENING_AREAS,
@@ -121,6 +133,10 @@ export interface ApplicationSummary {
   documents: ApplicationDocumentSummary[];
   screenings: ApplicationScreeningSummary[];
   latestScreening: ApplicationScreeningSummary | null;
+  selectionPlan: SelectionPlanSummary | null;
+  selectionPlanIssue: string | null;
+  assessments: AssessmentSummary[];
+  interviews: InterviewSummary[];
   createdAt: string;
   updatedAt: string;
 }
@@ -138,11 +154,21 @@ const SCREENING_MANAGED_STATUSES = [
   'NOT_QUALIFIED',
 ] as const;
 
+const WITHDRAWABLE_STATUSES = [
+  ...SCREENING_MANAGED_STATUSES,
+  'FOR_ASSESSMENT',
+  'FOR_INTERVIEW',
+] as const;
+
 function isScreeningManaged(status: string): boolean {
   return SCREENING_MANAGED_STATUSES.includes(status as (typeof SCREENING_MANAGED_STATUSES)[number]);
 }
 
-const applicationSelect = {
+function isWithdrawable(status: string): boolean {
+  return WITHDRAWABLE_STATUSES.includes(status as (typeof WITHDRAWABLE_STATUSES)[number]);
+}
+
+export const applicationSelect = {
   id: true,
   agencyId: true,
   applicationNo: true,
@@ -201,6 +227,15 @@ const applicationSelect = {
       request: {
         select: {
           requestNo: true,
+          criteriaSetId: true,
+          criteriaSet: {
+            select: {
+              id: true,
+              criteriaCode: true,
+              planVersionId: true,
+              criteriaDefinition: true,
+            },
+          },
           position: {
             select: {
               id: true,
@@ -260,9 +295,17 @@ const applicationSelect = {
       },
     },
   },
+  assessments: {
+    orderBy: { createdAt: 'asc' as const },
+    select: assessmentSelect,
+  },
+  interviews: {
+    orderBy: { createdAt: 'asc' as const },
+    select: interviewSelect,
+  },
 } as const;
 
-type ApplicationRecord = Prisma.ApplicationGetPayload<{ select: typeof applicationSelect }>;
+export type ApplicationRecord = Prisma.ApplicationGetPayload<{ select: typeof applicationSelect }>;
 
 function manilaToday(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -430,7 +473,39 @@ function screeningSummary(
   };
 }
 
-function applicationSummary(record: ApplicationRecord): ApplicationSummary {
+function resolveSelectionPlan(record: ApplicationRecord): {
+  plan: SelectionPlan | null;
+  summary: SelectionPlanSummary | null;
+  issue: string | null;
+} {
+  const criteriaSet = record.publication.request.criteriaSet;
+  if (!criteriaSet) {
+    return {
+      plan: null,
+      summary: null,
+      issue: 'The Recruitment Case has no bound Merit Selection Criteria Set.',
+    };
+  }
+  const plan = parseSelectionPlan(criteriaSet.criteriaDefinition);
+  if (!plan) {
+    return {
+      plan: null,
+      summary: null,
+      issue: 'The bound Merit Selection Criteria Set is not a supported configuration.',
+    };
+  }
+  return {
+    plan,
+    summary: selectionPlanSummary(
+      criteriaSet,
+      plan,
+      completedStageCodes(record.assessments, record.interviews),
+    ),
+    issue: null,
+  };
+}
+
+export function applicationSummary(record: ApplicationRecord): ApplicationSummary {
   const version = record.publication.request.position.currentVersion;
   if (!version) {
     throw new RecruitmentServiceError(
@@ -440,6 +515,7 @@ function applicationSummary(record: ApplicationRecord): ApplicationSummary {
     );
   }
   const screenings = record.screenings.map(screeningSummary);
+  const selectionPlan = resolveSelectionPlan(record);
   return {
     id: record.id,
     applicationNo: `APP-${String(record.applicationNo).padStart(6, '0')}`,
@@ -491,6 +567,14 @@ function applicationSummary(record: ApplicationRecord): ApplicationSummary {
     })),
     screenings,
     latestScreening: screenings.at(-1) ?? null,
+    selectionPlan: selectionPlan.summary,
+    selectionPlanIssue: selectionPlan.issue,
+    assessments: record.assessments.map((assessment) =>
+      assessmentSummary(assessment, selectionPlan.plan),
+    ),
+    interviews: record.interviews.map((interview) =>
+      interviewSummary(interview, selectionPlan.plan),
+    ),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -1149,7 +1233,7 @@ export class ApplicationsService {
             await this.requireApplication(transaction, context.agencyId, applicationId),
           );
         }
-        if (!isScreeningManaged(current.status)) {
+        if (!isWithdrawable(current.status)) {
           throw this.workflowError('withdraw', current.status);
         }
         await this.linkDocumentInTransaction(

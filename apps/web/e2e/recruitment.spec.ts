@@ -14,8 +14,18 @@ async function expectStatus(page: Page, status: string): Promise<void> {
   await expect(page.getByText(status.replaceAll('_', ' '), { exact: true }).first()).toBeVisible();
 }
 
+async function selectEvidence(page: Page, documentNo: string): Promise<void> {
+  const option = page
+    .getByLabel('Finalized Document Version')
+    .locator('option')
+    .filter({ hasText: documentNo });
+  const documentVersionId = await option.getAttribute('value');
+  if (!documentVersionId) throw new Error(`The ${documentNo} fixture was not available.`);
+  await page.getByLabel('Finalized Document Version').selectOption(documentVersionId);
+}
+
 test('drives the protected Request to Fill and publication journey', async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   resetFixture();
 
   await page.goto('/dashboard');
@@ -103,13 +113,7 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
     ['ELIGIBILITY', 'E2E-APPLICANT-ELIGIBILITY'],
   ] as const) {
     await page.getByLabel('Purpose').selectOption(purpose);
-    const option = page
-      .getByLabel('Finalized Document Version')
-      .locator('option')
-      .filter({ hasText: documentNo });
-    const documentVersionId = await option.getAttribute('value');
-    if (!documentVersionId) throw new Error(`The ${documentNo} fixture was not available.`);
-    await page.getByLabel('Finalized Document Version').selectOption(documentVersionId);
+    await selectEvidence(page, documentNo);
     await page.getByRole('button', { name: 'Link evidence' }).click();
     linkedEvidence += 1;
     await expect(page.getByRole('button', { name: 'Remove' })).toHaveCount(linkedEvidence);
@@ -126,12 +130,93 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
     .fill('Education and eligibility evidence satisfy the bound Qualification Standard Version.');
   await page.getByRole('button', { name: 'Record screening' }).click();
   await expectStatus(page, 'QUALIFIED');
+
+  await expect(page.getByRole('heading', { name: 'Merit selection stages' })).toBeVisible();
+  await page.getByLabel('Assessment scheduled at').fill('2026-09-20T09:00');
+  await page.getByRole('button', { name: 'Schedule assessment' }).click();
+  await expectStatus(page, 'FOR_ASSESSMENT');
+
+  await page.getByRole('button', { name: 'Record assessment result' }).click();
+  await page.getByLabel('Criterion').selectOption('JOB_KNOWLEDGE');
+  await page.getByLabel('Score').fill('85');
+  await page.getByRole('button', { name: 'Save assessment result' }).click();
+
+  await page.getByRole('button', { name: 'Record assessment result' }).click();
+  await page.getByLabel('Criterion').selectOption('DOCUMENTATION');
+  await page.getByLabel('Rating').selectOption('SATISFACTORY');
+  const resultEvidenceOption = page
+    .getByLabel('Result evidence document version')
+    .locator('option')
+    .filter({ hasText: 'E2E-APPLICANT-EDUCATION' });
+  const resultEvidenceId = await resultEvidenceOption.getAttribute('value');
+  if (!resultEvidenceId) throw new Error('The assessment evidence fixture was not available.');
+  await page.getByLabel('Result evidence document version').selectOption(resultEvidenceId);
+  await page.getByRole('button', { name: 'Save assessment result' }).click();
+  await expect(page.getByText('74.50')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Complete assessment' }).click();
+  await expectStatus(page, 'COMPLETED');
+
+  await page.getByLabel('Interview scheduled at').fill('2026-09-21T09:00');
+  await page.getByRole('button', { name: 'Schedule interview' }).click();
+  await expectStatus(page, 'FOR_INTERVIEW');
+
+  await page.getByRole('button', { name: 'Record interview feedback' }).click();
+  await page.getByLabel('Feedback score').fill('80');
+  await page
+    .getByLabel('Feedback comments')
+    .fill('The panel recommends the applicant for the vacancy.');
+  await page.getByRole('button', { name: 'Submit feedback' }).click();
+  await expect(page.getByText('80.00')).toBeVisible();
+  await page.getByRole('button', { name: 'Complete interview' }).click();
+  await expectStatus(page, 'COMPLETED');
+
+  await page.getByRole('button', { name: 'Correct result' }).first().click();
+  await expect(page.getByLabel('Criterion')).toHaveValue('JOB_KNOWLEDGE');
+  await page.getByLabel('Score').fill('90');
+  await page
+    .getByLabel('Correction reason')
+    .fill('The answer sheet was scored against the wrong key.');
+  await page.getByRole('button', { name: 'Save correction' }).click();
+  await expect(page.getByText('78.00')).toBeVisible();
+  await expect(
+    page.getByText(/correction: The answer sheet was scored against the wrong key/),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'New application' }).click();
+  await page.getByLabel('First name').fill('Bea');
+  await page.getByLabel('Last name').fill('Cruz');
+  await page.getByLabel('Email').fill('bea.cruz@example.test');
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Record Application' }).click();
+  await expectStatus(page, 'RECEIVED');
+
+  await page.getByLabel('Purpose').selectOption('EDUCATION');
+  await selectEvidence(page, 'E2E-APPLICANT-EDUCATION');
+  await page.getByRole('button', { name: 'Link evidence' }).click();
+  await page.getByLabel('Purpose').selectOption('ELIGIBILITY');
+  await selectEvidence(page, 'E2E-APPLICANT-ELIGIBILITY');
+  await page.getByRole('button', { name: 'Link evidence' }).click();
+
+  await page.getByLabel('Education result').selectOption('MEETS');
+  await page.getByLabel('Eligibility result').selectOption('MEETS');
+  await page.getByRole('checkbox', { name: 'Education evidence E2E-APPLICANT-EDUCATION' }).check();
+  await page
+    .getByRole('checkbox', { name: 'Eligibility evidence E2E-APPLICANT-ELIGIBILITY' })
+    .check();
+  await page
+    .getByLabel('Screening reason')
+    .fill('Education and eligibility evidence satisfy the bound Qualification Standard Version.');
+  await page.getByRole('button', { name: 'Record screening' }).click();
+  await expectStatus(page, 'QUALIFIED');
   await expect(page.getByRole('button', { name: 'Record correction' })).toBeVisible();
 
   await page.getByLabel('Eligibility result').selectOption('DOES_NOT_MEET');
+  await expect(page.getByLabel('Eligibility result')).toHaveValue('DOES_NOT_MEET');
   await page
     .getByLabel('Correction reason')
     .fill('The eligibility certificate was issued after the application closing date.');
+  await expect(page.getByText('Recorded outcome: NOT QUALIFIED').first()).toBeVisible();
   await page.getByRole('button', { name: 'Record correction' }).click();
   await expectStatus(page, 'NOT_QUALIFIED');
 
@@ -145,6 +230,7 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   await page.getByRole('button', { name: 'Kanban' }).click();
   await expect(page.getByRole('button', { name: new RegExp(applicationNo) })).toBeVisible();
   await expect(page.getByRole('button', { name: /Ana Reyes/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Bea Cruz/ })).toBeVisible();
   await page.getByRole('button', { name: 'Tree' }).click();
   await expect(page.getByRole('button', { name: applicationNo })).toBeVisible();
 });

@@ -2,6 +2,12 @@
 
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { manilaToday } from '../lib/manila-date';
+import {
+  RecruitmentEvaluationPanels,
+  type AssessmentRecord,
+  type InterviewRecord,
+  type SelectionPlanRecord,
+} from './recruitment-evaluation-panels';
 import { useRecordNavigation } from './record-navigation';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
@@ -205,6 +211,10 @@ export interface VacancyApplication {
   }>;
   screenings: ApplicationScreeningRecord[];
   latestScreening: ApplicationScreeningRecord | null;
+  selectionPlan: SelectionPlanRecord | null;
+  selectionPlanIssue: string | null;
+  assessments: AssessmentRecord[];
+  interviews: InterviewRecord[];
   createdAt: string;
   updatedAt: string;
 }
@@ -251,6 +261,7 @@ function evidenceSummary(record: VacancyApplication): string {
 
 interface Props {
   agencyId: string;
+  membershipId: string;
   displayName: string;
   initialRequests: RecruitmentRequest[];
   initialPublications: VacancyPublication[];
@@ -284,6 +295,8 @@ interface Props {
   canDisqualifyApplication: boolean;
   canWithdrawApplication: boolean;
   canCloseApplication: boolean;
+  canManageAssessments: boolean;
+  canManageInterviews: boolean;
 }
 
 interface Permissions {
@@ -304,6 +317,8 @@ interface Permissions {
   disqualifyApplication: boolean;
   withdrawApplication: boolean;
   closeApplication: boolean;
+  manageAssessments: boolean;
+  manageInterviews: boolean;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -1443,6 +1458,8 @@ const KANBAN_COLUMNS = [
   ['RECEIVED', 'Received'],
   ['INCOMPLETE', 'Incomplete'],
   ['QUALIFIED', 'Qualified'],
+  ['FOR_ASSESSMENT', 'For assessment'],
+  ['FOR_INTERVIEW', 'For interview'],
   ['NOT_QUALIFIED', 'Not qualified'],
   ['WITHDRAWN', 'Withdrawn'],
   ['CLOSED', 'Closed'],
@@ -1977,6 +1994,7 @@ function ScreeningEditor({
 function ApplicationDetail({
   record,
   agencyId,
+  membershipId,
   documents,
   permissions,
   busy,
@@ -1984,6 +2002,7 @@ function ApplicationDetail({
 }: {
   record: VacancyApplication;
   agencyId: string;
+  membershipId: string;
   documents: DocumentOption[];
   permissions: Permissions;
   busy: boolean;
@@ -2367,6 +2386,17 @@ function ApplicationDetail({
           </div>
         </Panel>
       ) : null}
+
+      <RecruitmentEvaluationPanels
+        record={record}
+        agencyId={agencyId}
+        membershipId={membershipId}
+        documents={documents}
+        canManageAssessments={permissions.manageAssessments}
+        canManageInterviews={permissions.manageInterviews}
+        busy={busy}
+        onCommand={onCommand}
+      />
     </div>
   );
 }
@@ -2424,6 +2454,8 @@ export function RecruitmentWorkspace(props: Props) {
     disqualifyApplication: props.canDisqualifyApplication,
     withdrawApplication: props.canWithdrawApplication,
     closeApplication: props.canCloseApplication,
+    manageAssessments: props.canManageAssessments,
+    manageInterviews: props.canManageInterviews,
   };
 
   const selectedRequest = useMemo(
@@ -2766,6 +2798,7 @@ export function RecruitmentWorkspace(props: Props) {
         <ApplicationDetail
           record={selectedApplication}
           agencyId={props.agencyId}
+          membershipId={props.membershipId}
           documents={props.documents}
           permissions={permissions}
           busy={busy}
