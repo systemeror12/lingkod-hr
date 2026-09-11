@@ -12,9 +12,9 @@ import { useRecordNavigation } from './record-navigation';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 
-type Section = 'requests' | 'publications' | 'applications';
+type Section = 'requests' | 'publications' | 'applications' | 'sessions' | 'decisions';
 type View = 'tree' | 'form' | 'kanban';
-type NewRecord = 'request' | 'publication' | 'application' | null;
+type NewRecord = 'request' | 'publication' | 'application' | 'session' | null;
 
 export interface PlantillaPositionOption {
   id: string;
@@ -219,6 +219,174 @@ export interface VacancyApplication {
   updatedAt: string;
 }
 
+export interface BoardRosterMember {
+  id: string;
+  boardAppointmentId: string;
+  membershipId: string;
+  memberName: string;
+  seatCode: string;
+  boardRole: string;
+  appointmentKind: string;
+  isAlternate: boolean;
+  isVoting: boolean;
+}
+
+export interface BoardParticipation {
+  id: string;
+  rosterSnapshotMemberId: string;
+  membershipId: string;
+  boardRole: string;
+  attendanceStatus: string;
+  signedAt: string | null;
+  recordedAt: string;
+}
+
+export interface BoardConflict {
+  id: string;
+  participationId: string;
+  membershipId: string;
+  applicationId: string;
+  hasConflict: boolean;
+  details: string | null;
+  declaredAt: string;
+}
+
+export interface BoardQuorum {
+  id: string;
+  applicationId: string;
+  applicationNo: string;
+  applicantName: string;
+  applicationStatus: string;
+  votingSeats: number;
+  nationalFloor: number;
+  eligibleVotingMembers: number;
+  requiredVotingMembers: number;
+  presentVotingMembers: number;
+  satisfied: boolean;
+  frozenAt: string;
+}
+
+export interface BoardRecommendation {
+  id: string;
+  applicationId: string;
+  applicationNo: string;
+  applicantName: string;
+  rankNo: number | null;
+  recommendation: string;
+  compositeScore: number | null;
+  reason: string | null;
+  recordedByMembershipId: string;
+  recordedAt: string;
+}
+
+export interface BoardReport {
+  id: string;
+  versionNo: number;
+  reportDocumentVersionId: string;
+  reason: string | null;
+  issuedByMembershipId: string;
+  issuedAt: string;
+}
+
+export interface BoardDecisionReference {
+  id: string;
+  applicationId: string;
+  decision: string;
+  reason: string;
+  decidedByMembershipId: string;
+  decidedAt: string;
+}
+
+export interface BoardSession {
+  id: string;
+  publicationId: string;
+  publicationNo: string;
+  publicationStatus: string;
+  openingDate: string;
+  closingDate: string;
+  requestToFillId: string;
+  requestNo: string;
+  position: {
+    id: string;
+    itemNumber: string;
+    title: string | null;
+    salaryGrade: number | null;
+    organizationUnitId: string | null;
+  };
+  boardDefinitionId: string;
+  boardCode: string;
+  boardVersionNo: number;
+  sessionDate: string;
+  status: string;
+  rosterFrozenAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: string | null;
+  minutesDocumentVersionId: string | null;
+  roster: BoardRosterMember[];
+  participations: BoardParticipation[];
+  conflicts: BoardConflict[];
+  quorum: BoardQuorum[];
+  recommendations: BoardRecommendation[];
+  reports: BoardReport[];
+  decisions: BoardDecisionReference[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SelectionPackagePreview {
+  applicationId?: string;
+  applicationNo?: string;
+  publicationNo?: string;
+  position?: { itemNumber?: string; title?: string | null };
+  boardRecommendation?: { recommendation?: string; rankNo?: number | null };
+  report?: { versionNo?: number };
+  [key: string]: unknown;
+}
+
+export interface SelectionDecisionRecord {
+  id: string;
+  applicationId: string;
+  applicationNo: string;
+  applicantName: string;
+  applicationStatus: string;
+  decision: string;
+  reason: string;
+  authorityDocumentVersionId: string | null;
+  decidedByMembershipId: string;
+  decidedAt: string;
+  sessionId: string;
+  sessionStatus: string;
+  boardDefinitionCode: string;
+  boardDefinitionVersionNo: number;
+  boardRecommendation: {
+    id: string;
+    recommendation: string;
+    rankNo: number | null;
+    compositeScore: number | null;
+    reason: string | null;
+  };
+  report: { id: string; versionNo: number; reportDocumentVersionId: string } | null;
+  position: {
+    id: string;
+    itemNumber: string;
+    title: string | null;
+    salaryGrade: number | null;
+    organizationUnitId: string | null;
+  };
+  handoff: {
+    id: string;
+    positionId: string;
+    itemNumber: string;
+    handedOffAt: string;
+    acceptedAt: string | null;
+    selectionPackage: unknown;
+  } | null;
+}
+
+const BOARD_ATTENDANCE_STATUSES = ['PRESENT', 'ABSENT', 'RECUSED'] as const;
+
 const APPLICATION_DOCUMENT_PURPOSES = [
   'PRIVACY_CONSENT',
   'EDUCATION',
@@ -266,6 +434,8 @@ interface Props {
   initialRequests: RecruitmentRequest[];
   initialPublications: VacancyPublication[];
   initialApplications: VacancyApplication[];
+  initialSessions: BoardSession[];
+  initialDecisions: SelectionDecisionRecord[];
   positions: PlantillaPositionOption[];
   documents: DocumentOption[];
   initialSection: Section;
@@ -289,6 +459,7 @@ interface Props {
   canReadRequests: boolean;
   canReadPublications: boolean;
   canReadApplications: boolean;
+  canReadDeliberations: boolean;
   canCreateApplication: boolean;
   canUpdateApplication: boolean;
   canScreenApplication: boolean;
@@ -297,6 +468,10 @@ interface Props {
   canCloseApplication: boolean;
   canManageAssessments: boolean;
   canManageInterviews: boolean;
+  canSubmitDeliberations: boolean;
+  canRecommendBoard: boolean;
+  canSelectCandidate: boolean;
+  canDecideSelection: boolean;
 }
 
 interface Permissions {
@@ -319,6 +494,10 @@ interface Permissions {
   closeApplication: boolean;
   manageAssessments: boolean;
   manageInterviews: boolean;
+  submitDeliberations: boolean;
+  recommendBoard: boolean;
+  selectCandidate: boolean;
+  decideSelection: boolean;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -1460,6 +1639,11 @@ const KANBAN_COLUMNS = [
   ['QUALIFIED', 'Qualified'],
   ['FOR_ASSESSMENT', 'For assessment'],
   ['FOR_INTERVIEW', 'For interview'],
+  ['FOR_DELIBERATION', 'For deliberation'],
+  ['RECOMMENDED', 'Recommended'],
+  ['NOT_RECOMMENDED', 'Not recommended'],
+  ['SELECTED', 'Selected'],
+  ['NOT_SELECTED', 'Not selected'],
   ['NOT_QUALIFIED', 'Not qualified'],
   ['WITHDRAWN', 'Withdrawn'],
   ['CLOSED', 'Closed'],
@@ -1996,6 +2180,8 @@ function ApplicationDetail({
   agencyId,
   membershipId,
   documents,
+  sessions,
+  decisions,
   permissions,
   busy,
   onCommand,
@@ -2004,6 +2190,8 @@ function ApplicationDetail({
   agencyId: string;
   membershipId: string;
   documents: DocumentOption[];
+  sessions: BoardSession[];
+  decisions: SelectionDecisionRecord[];
   permissions: Permissions;
   busy: boolean;
   onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
@@ -2397,6 +2585,1169 @@ function ApplicationDetail({
         busy={busy}
         onCommand={onCommand}
       />
+
+      <ApplicationBoardPanel
+        record={record}
+        sessions={sessions}
+        decisions={decisions}
+        documents={documents}
+        permissions={permissions}
+        busy={busy}
+        onCommand={onCommand}
+        agencyId={agencyId}
+      />
+    </div>
+  );
+}
+
+function ApplicationBoardPanel({
+  record,
+  sessions,
+  decisions,
+  documents,
+  permissions,
+  busy,
+  onCommand,
+  agencyId,
+}: {
+  record: VacancyApplication;
+  sessions: BoardSession[];
+  decisions: SelectionDecisionRecord[];
+  documents: DocumentOption[];
+  permissions: Permissions;
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+  agencyId: string;
+}) {
+  const related = sessions.filter((session) => session.publicationId === record.publicationId);
+  const recordDecisions = decisions
+    .filter((decision) => decision.applicationId === record.id)
+    .sort((left, right) => right.decidedAt.localeCompare(left.decidedAt));
+  const latestDecision = recordDecisions[0] ?? null;
+  const canAct =
+    record.status === 'RECOMMENDED' && (permissions.selectCandidate || permissions.decideSelection);
+  if (related.length === 0 && !latestDecision) {
+    return (
+      <Panel
+        title="HRMPSB deliberation"
+        description="This Application is included in the board process when deliberation starts."
+      >
+        <p className="m-0 text-sm text-muted">
+          No Selection Board Session or Selection Decision references this Application yet.
+        </p>
+      </Panel>
+    );
+  }
+  return (
+    <Panel
+      title="HRMPSB deliberation"
+      description="Participation, conflict declarations, quorum, and the advisory recommendation for this Application. The Board Recommendation is advisory; the Selection Decision is separate."
+    >
+      <div className="grid gap-4">
+        {related.map((session) => {
+          const quorum = session.quorum.find((entry) => entry.applicationId === record.id) ?? null;
+          const recommendation =
+            session.recommendations.find((entry) => entry.applicationId === record.id) ?? null;
+          const conflicts = session.conflicts.filter(
+            (conflict) => conflict.applicationId === record.id,
+          );
+          return (
+            <div className="grid gap-3 rounded-[3px] border border-line px-4 py-4" key={session.id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="text-sm font-[680] text-midnight">
+                  {session.requestNo} · {dateLabel(session.sessionDate)} · {session.boardCode} v
+                  {session.boardVersionNo}
+                </strong>
+                <StatusBadge status={session.status} />
+              </div>
+              <span className="text-xs text-muted">
+                Eligible participation:{' '}
+                {quorum
+                  ? `${quorum.presentVotingMembers} of ${quorum.eligibleVotingMembers} present · requires ${quorum.requiredVotingMembers} · national floor ${quorum.nationalFloor} of ${quorum.votingSeats} voting seats`
+                  : 'quorum not yet frozen'}
+                {quorum ? ` · ${quorum.satisfied ? 'satisfied' : 'not satisfied'}` : ''}
+              </span>
+              <div className="grid gap-1">
+                {session.roster.map((member) => {
+                  const conflict = conflicts.find(
+                    ({ membershipId }) => membershipId === member.membershipId,
+                  );
+                  const participation = session.participations.find(
+                    ({ membershipId }) => membershipId === member.membershipId,
+                  );
+                  return (
+                    <span className="text-xs text-muted" key={member.id}>
+                      <strong className="text-ink">{member.memberName}</strong> · {member.seatCode}{' '}
+                      · {member.isAlternate ? 'Alternate' : 'Principal'} ·{' '}
+                      {participation?.attendanceStatus ?? 'Not recorded'}
+                      {conflict
+                        ? ` · ${conflict.hasConflict ? 'Conflicted (excluded)' : 'No conflict declared'}`
+                        : ''}
+                    </span>
+                  );
+                })}
+              </div>
+              {recommendation ? (
+                <span className="text-sm text-ink">
+                  Board Recommendation: {recommendation.recommendation.replaceAll('_', ' ')}
+                  {recommendation.rankNo ? ` · rank ${recommendation.rankNo}` : ''}
+                  {recommendation.reason ? ` · ${recommendation.reason}` : ''}
+                </span>
+              ) : (
+                <span className="text-xs text-muted">No Board Recommendation recorded yet.</span>
+              )}
+            </div>
+          );
+        })}
+
+        {latestDecision ? (
+          <div className="grid gap-2 rounded-[3px] border border-line px-4 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <strong className="text-sm font-[680] text-midnight">Selection Decision</strong>
+              <StatusBadge status={latestDecision.decision} />
+            </div>
+            <span className="text-sm text-ink">{latestDecision.reason}</span>
+            <span className="text-xs text-muted">
+              {dateTimeLabel(latestDecision.decidedAt)}
+              {latestDecision.handoff
+                ? ` · Plantilla Position ${latestDecision.handoff.itemNumber} reserved and handed to Appointment`
+                : ''}
+            </span>
+          </div>
+        ) : null}
+
+        {canAct ? (
+          <AuthorityActionPanel
+            applicationId={record.id}
+            canSelect={permissions.selectCandidate}
+            canDecide={permissions.decideSelection}
+            documents={documents}
+            busy={busy}
+            onCommand={onCommand}
+            agencyId={agencyId}
+          />
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+function AuthorityActionPanel({
+  applicationId,
+  canSelect,
+  canDecide,
+  documents,
+  busy,
+  onCommand,
+  agencyId,
+}: {
+  applicationId: string;
+  canSelect: boolean;
+  canDecide: boolean;
+  documents: DocumentOption[];
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+  agencyId: string;
+}) {
+  const [decision, setDecision] = useState(canSelect ? 'SELECTED' : 'NOT_SELECTED');
+  const [reason, setReason] = useState('');
+  const [authorityDocumentVersionId, setAuthorityDocumentVersionId] = useState('');
+  const linkable = documents.filter(
+    (document) => document.status !== 'VOIDED' && document.version.issuedAt,
+  );
+  return (
+    <div className="grid gap-4 rounded-[3px] border border-line bg-canvas/50 px-4 py-4 min-[900px]:grid-cols-2">
+      <div className="min-[900px]:col-span-2">
+        <strong className="text-sm font-[680] text-midnight">Appointing authority action</strong>
+        <p className="m-0 text-xs leading-[1.6] text-muted">
+          Selection does not issue an Appointment or establish service. A no-selection decision can
+          be closed afterwards; a returned board output reopens deliberation.
+        </p>
+      </div>
+      <Field label="Decision" htmlFor={`application-decision-${applicationId}`}>
+        <select
+          className={inputClass}
+          id={`application-decision-${applicationId}`}
+          value={decision}
+          onChange={(event) => setDecision(inputValue(event))}
+        >
+          {canSelect ? <option value="SELECTED">Select</option> : null}
+          {canDecide ? (
+            <>
+              <option value="NOT_SELECTED">No selection</option>
+              <option value="RETURNED">Return for further review</option>
+            </>
+          ) : null}
+        </select>
+      </Field>
+      <Field label="Recorded basis" htmlFor={`application-decision-reason-${applicationId}`}>
+        <input
+          className={inputClass}
+          id={`application-decision-reason-${applicationId}`}
+          value={reason}
+          onChange={(event) => setReason(inputValue(event))}
+        />
+      </Field>
+      <Field
+        label="Appointing authority evidence"
+        htmlFor={`application-decision-authority-${applicationId}`}
+      >
+        <select
+          className={inputClass}
+          id={`application-decision-authority-${applicationId}`}
+          value={authorityDocumentVersionId}
+          onChange={(event) => setAuthorityDocumentVersionId(inputValue(event))}
+        >
+          <option value="">Select finalized authority evidence</option>
+          {linkable.map((document) => (
+            <option key={document.version.id} value={document.version.id}>
+              {document.documentNo ?? document.documentType} · v{document.version.versionNo}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div className="flex items-end">
+        <Button
+          disabled={busy || !reason || (decision === 'SELECTED' && !authorityDocumentVersionId)}
+          onClick={() =>
+            onCommand(
+              `/api/v1/agencies/${agencyId}/recruitment/applications/${applicationId}/selection-decision`,
+              {
+                decision,
+                reason,
+                ...(decision === 'SELECTED' ? { authorityDocumentVersionId } : {}),
+              },
+            )
+          }
+          size="default"
+          variant="primary"
+        >
+          Record Selection Decision
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SessionTree({
+  records,
+  selectedId,
+  onSelect,
+}: {
+  records: BoardSession[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto" aria-label="HRMPSB Sessions">
+      {records.length === 0 ? (
+        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+          No HRMPSB Session has been convened yet.
+        </p>
+      ) : (
+        <table className="w-full min-w-[760px] border-collapse text-left">
+          <thead>
+            <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+              <th className="px-3 py-2">Record</th>
+              <th className="px-3 py-2">Vacancy</th>
+              <th className="px-3 py-2">Roster</th>
+              <th className="px-3 py-2">Applicants</th>
+              <th className="px-3 py-2">Standing</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.map((record) => (
+              <tr
+                className={`border-b border-line/70 align-top ${selectedId === record.id ? 'bg-[#f1f5fb]' : ''}`}
+                key={record.id}
+              >
+                <td className="px-3 py-2">
+                  <button
+                    className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
+                    type="button"
+                    onClick={() => onSelect(record.id)}
+                  >
+                    {record.requestNo} · {dateLabel(record.sessionDate)}
+                  </button>
+                  <span className="block text-xs text-muted">
+                    {record.boardCode} v{record.boardVersionNo}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">
+                  {record.publicationNo}
+                  <span className="block text-xs text-muted">
+                    {record.position.itemNumber} · {record.position.title ?? '—'}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">
+                  {record.roster.length} member{record.roster.length === 1 ? '' : 's'}
+                  <span className="block text-xs text-muted">
+                    {record.participations.length} participation recorded
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">{record.quorum.length}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge status={record.status} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function SelectionDecisionTree({
+  records,
+  selectedId,
+  onSelect,
+}: {
+  records: SelectionDecisionRecord[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="overflow-x-auto" aria-label="Selection Decisions">
+      {records.length === 0 ? (
+        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
+          No Selection Decision has been recorded yet.
+        </p>
+      ) : (
+        <table className="w-full min-w-[760px] border-collapse text-left">
+          <thead>
+            <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+              <th className="px-3 py-2">Record</th>
+              <th className="px-3 py-2">Application</th>
+              <th className="px-3 py-2">Vacancy</th>
+              <th className="px-3 py-2">Basis</th>
+              <th className="px-3 py-2">Standing</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.map((record) => (
+              <tr
+                className={`border-b border-line/70 align-top ${selectedId === record.id ? 'bg-[#f1f5fb]' : ''}`}
+                key={record.id}
+              >
+                <td className="px-3 py-2">
+                  <button
+                    className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
+                    type="button"
+                    onClick={() => onSelect(record.id)}
+                  >
+                    {record.applicationNo} · {dateLabel(record.decidedAt)}
+                  </button>
+                  <span className="block text-xs text-muted">
+                    {record.boardDefinitionCode} v{record.boardDefinitionVersionNo}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">{record.applicantName}</td>
+                <td className="px-3 py-2 text-[13px] text-ink">
+                  {record.position.itemNumber}
+                  <span className="block text-xs text-muted">{record.position.title ?? '—'}</span>
+                </td>
+                <td className="px-3 py-2 text-[13px] text-ink">
+                  {record.reason}
+                  {record.handoff ? (
+                    <span className="block text-xs text-muted">
+                      Handed off {dateTimeLabel(record.handoff.handedOffAt)}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="px-3 py-2">
+                  <StatusBadge status={record.decision} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function SessionDraft({
+  agencyId,
+  publications,
+  busy,
+  error,
+  onError,
+  onCreated,
+}: {
+  agencyId: string;
+  publications: VacancyPublication[];
+  busy: boolean;
+  error: string;
+  onError: (message: string) => void;
+  onCreated: (record: BoardSession) => Promise<void>;
+}) {
+  const eligible = publications.filter((record) => record.status === 'PUBLISHED');
+  const [vacancyPublicationId, setVacancyPublicationId] = useState(eligible[0]?.id ?? '');
+  const [sessionDate, setSessionDate] = useState(manilaToday());
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!vacancyPublicationId || submitting) return;
+    setSubmitting(true);
+    onError('');
+    try {
+      const response = await sendCommand(`/api/v1/agencies/${agencyId}/recruitment/sessions`, {
+        vacancyPublicationId,
+        sessionDate,
+      });
+      if (isObject(response) && typeof response.id === 'string')
+        await onCreated(response as unknown as BoardSession);
+    } catch (caught: unknown) {
+      onError(
+        caught instanceof Error ? caught.message : 'The HRMPSB Session could not be convened.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Panel
+      title="Convene an HRMPSB Session"
+      description="The bound Board Definition and its effective Board Appointments are resolved server-side. The roster snapshot is frozen when deliberation begins."
+    >
+      <form className="grid max-w-[900px] gap-5" onSubmit={submit}>
+        {error ? <FormError message={error} /> : null}
+        {eligible.length === 0 ? (
+          <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-4 text-sm text-muted">
+            No published Vacancy Publication is available for deliberation.
+          </p>
+        ) : (
+          <>
+            <Field label="Published vacancy" htmlFor="session-publication">
+              <select
+                className={inputClass}
+                id="session-publication"
+                value={vacancyPublicationId}
+                onChange={(event) => setVacancyPublicationId(inputValue(event))}
+              >
+                {eligible.map((record) => (
+                  <option key={record.id} value={record.id}>
+                    {record.publicationNo} · {record.position.itemNumber} · {record.position.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Session date" htmlFor="session-date">
+              <input
+                className={inputClass}
+                id="session-date"
+                required
+                type="date"
+                value={sessionDate}
+                onChange={(event) => setSessionDate(inputValue(event))}
+              />
+            </Field>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                disabled={busy || submitting || !vacancyPublicationId}
+                size="default"
+                type="submit"
+                variant="primary"
+              >
+                {busy || submitting ? 'Convening…' : 'Convene Session'}
+              </Button>
+              <span className="text-xs text-muted">
+                Participant attendance and conflict declarations are recorded on the draft Session.
+              </span>
+            </div>
+          </>
+        )}
+      </form>
+    </Panel>
+  );
+}
+
+function RecommendationEditor({
+  record,
+  applicationId,
+  busy,
+  onCommand,
+  agencyId,
+}: {
+  record: BoardSession;
+  applicationId: string;
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+  agencyId: string;
+}) {
+  const [rankNo, setRankNo] = useState('1');
+  const [recommendation, setRecommendation] = useState('RECOMMENDED');
+  const [reason, setReason] = useState('');
+  return (
+    <div className="grid gap-3 min-[720px]:grid-cols-[140px_180px_1fr_auto]">
+      <Field label="Rank" htmlFor={`recommendation-rank-${applicationId}`}>
+        <input
+          className={inputClass}
+          id={`recommendation-rank-${applicationId}`}
+          min={1}
+          type="number"
+          value={rankNo}
+          onChange={(event) => setRankNo(inputValue(event))}
+        />
+      </Field>
+      <Field label="Recommendation" htmlFor={`recommendation-value-${applicationId}`}>
+        <select
+          className={inputClass}
+          id={`recommendation-value-${applicationId}`}
+          value={recommendation}
+          onChange={(event) => setRecommendation(inputValue(event))}
+        >
+          <option value="RECOMMENDED">Recommended</option>
+          <option value="NOT_RECOMMENDED">Not recommended</option>
+        </select>
+      </Field>
+      <Field label="Board reason" htmlFor={`recommendation-reason-${applicationId}`}>
+        <input
+          className={inputClass}
+          id={`recommendation-reason-${applicationId}`}
+          value={reason}
+          onChange={(event) => setReason(inputValue(event))}
+        />
+      </Field>
+      <div className="flex items-end">
+        <Button
+          disabled={busy || (recommendation === 'NOT_RECOMMENDED' && !reason)}
+          onClick={() =>
+            onCommand(
+              `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/recommendations`,
+              {
+                applicationId,
+                recommendation,
+                rankNo: Number(rankNo) || 1,
+                ...(reason ? { reason } : {}),
+              },
+            )
+          }
+          size="default"
+          variant="primary"
+        >
+          Record
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ApplicantDeliberationPanel({
+  record,
+  applications,
+  permissions,
+  busy,
+  onCommand,
+  agencyId,
+}: {
+  record: BoardSession;
+  applications: VacancyApplication[];
+  permissions: Permissions;
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+  agencyId: string;
+}) {
+  const frozen = record.status === 'IN_PROGRESS' || record.status === 'COMPLETED';
+  const recommendationFor = (applicationId: string) =>
+    record.recommendations.find((entry) => entry.applicationId === applicationId) ?? null;
+  return (
+    <div className="grid gap-4">
+      {record.quorum.length === 0 ? (
+        <p className="m-0 text-sm text-muted">
+          Applicant-specific quorum is frozen when deliberation starts.
+        </p>
+      ) : (
+        record.quorum.map((quorum) => {
+          const recommendation = recommendationFor(quorum.applicationId);
+          return (
+            <div className="grid gap-3 rounded-[3px] border border-line px-4 py-4" key={quorum.id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <strong className="text-sm font-[680] text-midnight">
+                  {quorum.applicationNo} · {quorum.applicantName}
+                </strong>
+                <StatusBadge status={quorum.applicationStatus} />
+              </div>
+              <span className="text-xs text-muted">
+                {quorum.presentVotingMembers} of {quorum.eligibleVotingMembers} eligible voting
+                members present · requires {quorum.requiredVotingMembers} · national floor{' '}
+                {quorum.nationalFloor} of {quorum.votingSeats} voting seats ·{' '}
+                {quorum.satisfied ? 'quorum satisfied' : 'quorum not satisfied'}
+              </span>
+              {recommendation ? (
+                <span className="text-sm text-ink">
+                  Board Recommendation: {recommendation.recommendation.replaceAll('_', ' ')}
+                  {recommendation.rankNo ? ` · rank ${recommendation.rankNo}` : ''}
+                  {recommendation.reason ? ` · ${recommendation.reason}` : ''}
+                  <span className="block text-xs text-muted">
+                    Advisory only. The Selection Decision is separate.
+                  </span>
+                </span>
+              ) : frozen && permissions.recommendBoard ? (
+                <RecommendationEditor
+                  record={record}
+                  applicationId={quorum.applicationId}
+                  busy={busy}
+                  onCommand={onCommand}
+                  agencyId={agencyId}
+                />
+              ) : (
+                <span className="text-xs text-muted">
+                  No Board Recommendation recorded for this Application yet.
+                </span>
+              )}
+            </div>
+          );
+        })
+      )}
+      {!frozen && permissions.submitDeliberations ? (
+        <p className="m-0 text-xs text-muted">
+          {applications.length} qualified Application(s) are included when deliberation starts.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionDetail({
+  record,
+  applications,
+  documents,
+  permissions,
+  busy,
+  onCommand,
+  agencyId,
+}: {
+  record: BoardSession;
+  applications: VacancyApplication[];
+  documents: DocumentOption[];
+  permissions: Permissions;
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+  agencyId: string;
+}) {
+  const publicationApplications = applications.filter(
+    (application) => application.publicationId === record.publicationId,
+  );
+  const [attendance, setAttendance] = useState<Record<string, string>>({});
+  const [conflictParticipationId, setConflictParticipationId] = useState('');
+  const [conflictApplicationId, setConflictApplicationId] = useState('');
+  const [conflictValue, setConflictValue] = useState('true');
+  const [conflictDetails, setConflictDetails] = useState('');
+  const [reportDocumentVersionId, setReportDocumentVersionId] = useState('');
+  const [reportReason, setReportReason] = useState('');
+  const [minutesDocumentVersionId, setMinutesDocumentVersionId] = useState('');
+  const [cancelReason, setCancelReason] = useState('');
+  const linkable = documents.filter(
+    (document) => document.status !== 'VOIDED' && document.version.issuedAt,
+  );
+  const participationFor = (membershipId: string) =>
+    record.participations.find((entry) => entry.membershipId === membershipId) ?? null;
+  const draft = record.status === 'DRAFT';
+
+  return (
+    <div className="grid gap-5">
+      <Panel
+        title={`HRMPSB Session · ${record.requestNo}`}
+        description={`${record.sessionDate} · ${record.boardCode} v${record.boardVersionNo} · ${record.publicationNo}`}
+      >
+        <div className="grid gap-4 min-[720px]:grid-cols-2">
+          <dl className="m-0">
+            <DetailRow label="Standing">
+              <StatusBadge status={record.status} />
+            </DetailRow>
+            <DetailRow label="Vacancy">
+              {record.position.itemNumber} · {record.position.title ?? '—'} ·{' '}
+              {dateLabel(record.openingDate)} — {dateLabel(record.closingDate)}
+            </DetailRow>
+            <DetailRow label="Roster frozen">
+              {record.rosterFrozenAt ? dateTimeLabel(record.rosterFrozenAt) : 'Not yet frozen'}
+            </DetailRow>
+          </dl>
+          <dl className="m-0">
+            <DetailRow label="Deliberated applications">{record.quorum.length}</DetailRow>
+            <DetailRow label="Recommendations">{record.recommendations.length}</DetailRow>
+            <DetailRow label="Evaluation report">
+              {record.reports.length
+                ? `v${record.reports[record.reports.length - 1]?.versionNo} · ${dateTimeLabel(
+                    record.reports[record.reports.length - 1]?.issuedAt ?? null,
+                  )}`
+                : 'Not issued'}
+            </DetailRow>
+            <DetailRow label="Minutes">{record.minutesDocumentVersionId ?? 'Not linked'}</DetailRow>
+            {record.cancellationReason ? (
+              <DetailRow label="Cancellation">{record.cancellationReason}</DetailRow>
+            ) : null}
+          </dl>
+        </div>
+        <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+          {draft && permissions.submitDeliberations ? (
+            <Button
+              disabled={busy}
+              onClick={() =>
+                onCommand(
+                  `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/start`,
+                  {},
+                )
+              }
+              size="default"
+              variant="primary"
+            >
+              Start deliberation
+            </Button>
+          ) : null}
+        </div>
+      </Panel>
+
+      <Panel
+        title="Roster and attendance"
+        description="The roster snapshot copies each Board Appointment, seat, and voting standing. One person cannot hold two voting seats or act as both voting member and secretariat. Attendance is recorded before deliberation begins."
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+                <th className="px-3 py-2">Member</th>
+                <th className="px-3 py-2">Seat</th>
+                <th className="px-3 py-2">Role</th>
+                <th className="px-3 py-2">Appointment</th>
+                <th className="px-3 py-2">Attendance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {record.roster.map((member) => {
+                const participation = participationFor(member.membershipId);
+                return (
+                  <tr className="border-b border-line/70 align-top" key={member.id}>
+                    <td className="px-3 py-2 text-[13px] font-[650] text-ink">
+                      {member.memberName}
+                      {participation?.signedAt ? (
+                        <span className="block text-xs text-muted">
+                          Acknowledged {dateTimeLabel(participation.signedAt)}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2 text-[13px] text-ink">{member.seatCode}</td>
+                    <td className="px-3 py-2 text-[13px] text-ink">
+                      {member.boardRole.replaceAll('_', ' ')}
+                      {member.isVoting ? '' : ' · non-voting'}
+                    </td>
+                    <td className="px-3 py-2 text-[13px] text-ink">
+                      {member.isAlternate ? 'Alternate' : 'Principal'}
+                    </td>
+                    <td className="px-3 py-2">
+                      {participation ? (
+                        <StatusBadge status={participation.attendanceStatus} />
+                      ) : draft && permissions.submitDeliberations ? (
+                        <span className="flex items-center gap-2">
+                          <select
+                            aria-label={`Attendance for ${member.memberName}`}
+                            className={inputClass}
+                            value={attendance[member.id] ?? 'PRESENT'}
+                            onChange={(event) =>
+                              setAttendance((current) => ({
+                                ...current,
+                                [member.id]: inputValue(event),
+                              }))
+                            }
+                          >
+                            {BOARD_ATTENDANCE_STATUSES.map((value) => (
+                              <option key={value} value={value}>
+                                {value}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            disabled={busy}
+                            onClick={() =>
+                              onCommand(
+                                `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/participation`,
+                                {
+                                  rosterSnapshotMemberId: member.id,
+                                  attendanceStatus: attendance[member.id] ?? 'PRESENT',
+                                },
+                              )
+                            }
+                            size="default"
+                            variant="secondary"
+                          >
+                            Record
+                          </Button>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted">Not recorded</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="m-0 text-xs text-muted">
+          An alternate counts only through their own recorded participation and declaration.
+        </p>
+      </Panel>
+
+      <Panel
+        title="Conflict declarations and recusals"
+        description="A conflicted or recused participant is excluded from the affected applicant's evaluation and quorum."
+      >
+        <div className="grid gap-3">
+          {record.conflicts.length === 0 ? (
+            <span className="text-sm text-muted">No conflict declaration recorded.</span>
+          ) : (
+            record.conflicts.map((conflict) => (
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line px-3 py-2 text-xs"
+                key={conflict.id}
+              >
+                <span className="font-[650] text-ink">
+                  {record.roster.find(({ membershipId }) => membershipId === conflict.membershipId)
+                    ?.memberName ?? conflict.membershipId}{' '}
+                  ·{' '}
+                  {record.quorum.find(
+                    ({ applicationId }) => applicationId === conflict.applicationId,
+                  )?.applicationNo ?? conflict.applicationId}{' '}
+                  · {conflict.hasConflict ? 'Conflicted' : 'No conflict'}
+                </span>
+                <span className="text-muted">{conflict.details ?? ''}</span>
+              </div>
+            ))
+          )}
+          {draft && (permissions.recommendBoard || permissions.submitDeliberations) ? (
+            <div className="grid gap-3 border-t border-line pt-4 min-[900px]:grid-cols-2">
+              <Field label="Participant" htmlFor="conflict-participation">
+                <select
+                  className={inputClass}
+                  id="conflict-participation"
+                  value={conflictParticipationId}
+                  onChange={(event) => setConflictParticipationId(inputValue(event))}
+                >
+                  <option value="">Select a recorded participant</option>
+                  {record.participations.map((participation) => (
+                    <option key={participation.id} value={participation.id}>
+                      {record.roster.find(
+                        ({ membershipId }) => membershipId === participation.membershipId,
+                      )?.memberName ?? participation.membershipId}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Applicant" htmlFor="conflict-application">
+                <select
+                  className={inputClass}
+                  id="conflict-application"
+                  value={conflictApplicationId}
+                  onChange={(event) => setConflictApplicationId(inputValue(event))}
+                >
+                  <option value="">Select an Application</option>
+                  {publicationApplications.map((application) => (
+                    <option key={application.id} value={application.id}>
+                      {application.applicationNo} · {application.applicant.fullName}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Declaration" htmlFor="conflict-value">
+                <select
+                  className={inputClass}
+                  id="conflict-value"
+                  value={conflictValue}
+                  onChange={(event) => setConflictValue(inputValue(event))}
+                >
+                  <option value="true">Has a conflict of interest</option>
+                  <option value="false">No conflict of interest</option>
+                </select>
+              </Field>
+              <Field label="Details" htmlFor="conflict-details">
+                <input
+                  className={inputClass}
+                  id="conflict-details"
+                  value={conflictDetails}
+                  onChange={(event) => setConflictDetails(inputValue(event))}
+                />
+              </Field>
+              <div>
+                <Button
+                  disabled={busy || !conflictParticipationId || !conflictApplicationId}
+                  onClick={() =>
+                    onCommand(
+                      `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/conflicts`,
+                      {
+                        participationId: conflictParticipationId,
+                        applicationId: conflictApplicationId,
+                        hasConflict: conflictValue === 'true',
+                        ...(conflictDetails ? { details: conflictDetails } : {}),
+                      },
+                    )
+                  }
+                  size="default"
+                  variant="secondary"
+                >
+                  Declare
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </Panel>
+
+      <Panel
+        title="Applicant deliberations"
+        description="Quorum is validated per Application. Board Recommendations remain advisory and distinct from the Selection Decision."
+      >
+        <ApplicantDeliberationPanel
+          record={record}
+          applications={publicationApplications}
+          permissions={permissions}
+          busy={busy}
+          onCommand={onCommand}
+          agencyId={agencyId}
+        />
+      </Panel>
+
+      {record.status === 'IN_PROGRESS' && permissions.submitDeliberations ? (
+        <Panel
+          title="Board output"
+          description="Issue the versioned Comprehensive Candidate Evaluation Report, link the minutes, and complete the Session."
+        >
+          <div className="grid gap-4 min-[900px]:grid-cols-2">
+            <Field label="Evaluation report Document Version" htmlFor="session-report">
+              <select
+                className={inputClass}
+                id="session-report"
+                value={reportDocumentVersionId}
+                onChange={(event) => setReportDocumentVersionId(inputValue(event))}
+              >
+                <option value="">Select finalized report evidence</option>
+                {linkable.map((document) => (
+                  <option key={document.version.id} value={document.version.id}>
+                    {document.documentNo ?? document.documentType} · v{document.version.versionNo}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Report reason" htmlFor="session-report-reason">
+              <input
+                className={inputClass}
+                id="session-report-reason"
+                value={reportReason}
+                onChange={(event) => setReportReason(inputValue(event))}
+                placeholder="Required only for a corrected report version"
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button
+                disabled={busy || !reportDocumentVersionId}
+                onClick={() =>
+                  onCommand(
+                    `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/reports`,
+                    {
+                      reportDocumentVersionId,
+                      ...(reportReason ? { reason: reportReason } : {}),
+                    },
+                  )
+                }
+                size="default"
+                variant="secondary"
+              >
+                Issue report
+              </Button>
+            </div>
+            <Field label="Minutes Document Version" htmlFor="session-minutes">
+              <select
+                className={inputClass}
+                id="session-minutes"
+                value={minutesDocumentVersionId}
+                onChange={(event) => setMinutesDocumentVersionId(inputValue(event))}
+              >
+                <option value="">No minutes linked</option>
+                {linkable.map((document) => (
+                  <option key={document.version.id} value={document.version.id}>
+                    {document.documentNo ?? document.documentType} · v{document.version.versionNo}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex items-end">
+              <Button
+                disabled={busy || record.reports.length === 0}
+                onClick={() =>
+                  onCommand(
+                    `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/complete`,
+                    {
+                      ...(minutesDocumentVersionId ? { minutesDocumentVersionId } : {}),
+                    },
+                  )
+                }
+                size="default"
+                variant="primary"
+              >
+                Complete deliberation
+              </Button>
+            </div>
+          </div>
+          {record.reports.length === 0 ? (
+            <p className="m-0 text-xs text-muted">
+              The advisory Evaluation Report must be issued before the Session can complete.
+            </p>
+          ) : null}
+        </Panel>
+      ) : null}
+
+      {draft && permissions.submitDeliberations ? (
+        <Panel
+          title="Cancel Session"
+          description="A draft Session can be cancelled before deliberation begins."
+        >
+          <div className="grid gap-3 min-[900px]:grid-cols-[1fr_auto]">
+            <Field label="Cancellation reason" htmlFor="session-cancel-reason">
+              <input
+                className={inputClass}
+                id="session-cancel-reason"
+                value={cancelReason}
+                onChange={(event) => setCancelReason(inputValue(event))}
+              />
+            </Field>
+            <div className="flex items-end">
+              <Button
+                disabled={busy || !cancelReason}
+                onClick={() => {
+                  if (!confirmAction('Cancel this HRMPSB Session?')) return;
+                  void onCommand(
+                    `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/cancel`,
+                    { reason: cancelReason },
+                  );
+                }}
+                size="default"
+                variant="secondary"
+              >
+                Cancel Session
+              </Button>
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+function SelectionDecisionDetail({
+  record,
+  documents,
+  permissions,
+  busy,
+  onCommand,
+  agencyId,
+}: {
+  record: SelectionDecisionRecord;
+  documents: DocumentOption[];
+  permissions: Permissions;
+  busy: boolean;
+  onCommand: (path: string, body?: unknown, method?: 'POST' | 'DELETE') => Promise<void>;
+  agencyId: string;
+}) {
+  const [showPackage, setShowPackage] = useState(false);
+  const canDecide =
+    record.applicationStatus === 'RECOMMENDED' &&
+    (permissions.selectCandidate || permissions.decideSelection);
+  return (
+    <div className="grid gap-5">
+      <Panel
+        title={`Selection Decision · ${record.applicationNo}`}
+        description={`${record.applicantName} · ${record.position.itemNumber} · ${record.position.title ?? '—'}`}
+      >
+        <div className="grid gap-4 min-[720px]:grid-cols-2">
+          <dl className="m-0">
+            <DetailRow label="Decision">
+              <StatusBadge status={record.decision} />
+            </DetailRow>
+            <DetailRow label="Recorded basis">{record.reason}</DetailRow>
+            <DetailRow label="Decided">{dateTimeLabel(record.decidedAt)}</DetailRow>
+            <DetailRow label="Authority evidence">
+              {record.authorityDocumentVersionId ?? 'Not linked'}
+            </DetailRow>
+          </dl>
+          <dl className="m-0">
+            <DetailRow label="Board output">
+              {record.boardRecommendation.recommendation.replaceAll('_', ' ')}
+              {record.boardRecommendation.rankNo
+                ? ` · rank ${record.boardRecommendation.rankNo}`
+                : ''}
+            </DetailRow>
+            <DetailRow label="Evaluation report">
+              {record.report
+                ? `v${record.report.versionNo} · ${record.report.reportDocumentVersionId}`
+                : 'Not issued'}
+            </DetailRow>
+            <DetailRow label="Board Session">
+              {record.sessionId} · {record.boardDefinitionCode} v{record.boardDefinitionVersionNo}
+            </DetailRow>
+            <DetailRow label="Application standing">
+              <StatusBadge status={record.applicationStatus} />
+            </DetailRow>
+          </dl>
+        </div>
+        <p className="m-0 border-t border-line pt-4 text-xs text-muted">
+          The Selection Decision is the appointing authority&apos;s recruitment-domain choice. It
+          does not issue an Appointment, reserve Employee service, or occupy the Plantilla Position
+          beyond the Plantilla reservation.
+        </p>
+      </Panel>
+
+      {record.handoff ? (
+        <Panel
+          title="Selected-candidate handoff"
+          description="Immutable selected-candidate package handed to Appointment. Recruitment never inserts Appointment rows."
+        >
+          <div className="grid gap-3">
+            <DetailRow label="Reserved Plantilla Position">
+              {record.handoff.itemNumber} · reserved through Plantilla
+            </DetailRow>
+            <DetailRow label="Handed off">{dateTimeLabel(record.handoff.handedOffAt)}</DetailRow>
+            <DetailRow label="Appointment accepted">
+              {record.handoff.acceptedAt ? dateTimeLabel(record.handoff.acceptedAt) : 'Not yet'}
+            </DetailRow>
+            <div>
+              <Button
+                onClick={() => setShowPackage((current) => !current)}
+                size="default"
+                variant="secondary"
+              >
+                {showPackage
+                  ? 'Hide selected-candidate package'
+                  : 'Preview selected-candidate package'}
+              </Button>
+            </div>
+            {showPackage ? (
+              <pre className="m-0 max-h-[420px] overflow-auto rounded-[3px] border border-line bg-canvas p-4 text-xs leading-[1.6] text-ink">
+                {JSON.stringify(record.handoff.selectionPackage, null, 2)}
+              </pre>
+            ) : null}
+          </div>
+        </Panel>
+      ) : null}
+
+      {canDecide ? (
+        <Panel
+          title="Appointing authority action"
+          description="Select the recommended candidate, record no selection, or return the board output for further review. Each action records the required basis."
+        >
+          <AuthorityActionPanel
+            applicationId={record.applicationId}
+            canSelect={permissions.selectCandidate}
+            canDecide={permissions.decideSelection}
+            documents={documents}
+            busy={busy}
+            onCommand={onCommand}
+            agencyId={agencyId}
+          />
+        </Panel>
+      ) : null}
     </div>
   );
 }
@@ -2404,12 +3755,14 @@ function ApplicationDetail({
 export function RecruitmentWorkspace(props: Props) {
   const navigation = useRecordNavigation();
   const search = navigation.search;
+  const requestedSection = search.get('section');
   const section: Section =
-    search.get('section') === 'publications'
-      ? 'publications'
-      : search.get('section') === 'applications'
-        ? 'applications'
-        : props.initialSection;
+    requestedSection === 'publications' ||
+    requestedSection === 'applications' ||
+    requestedSection === 'sessions' ||
+    requestedSection === 'decisions'
+      ? requestedSection
+      : props.initialSection;
   const applicationsOnly = section === 'applications';
   const requestedView = search.get('view');
   const view: View =
@@ -2428,12 +3781,15 @@ export function RecruitmentWorkspace(props: Props) {
   const newRecord: NewRecord =
     search.get('new') === 'request' ||
     search.get('new') === 'publication' ||
-    search.get('new') === 'application'
+    search.get('new') === 'application' ||
+    search.get('new') === 'session'
       ? (search.get('new') as NewRecord)
       : props.initialNew;
   const [requests, setRequests] = useState(props.initialRequests);
   const [publications, setPublications] = useState(props.initialPublications);
   const [applications, setApplications] = useState(props.initialApplications);
+  const [sessions, setSessions] = useState(props.initialSessions);
+  const [decisions, setDecisions] = useState(props.initialDecisions);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const permissions: Permissions = {
@@ -2456,6 +3812,10 @@ export function RecruitmentWorkspace(props: Props) {
     closeApplication: props.canCloseApplication,
     manageAssessments: props.canManageAssessments,
     manageInterviews: props.canManageInterviews,
+    submitDeliberations: props.canSubmitDeliberations,
+    recommendBoard: props.canRecommendBoard,
+    selectCandidate: props.canSelectCandidate,
+    decideSelection: props.canDecideSelection,
   };
 
   const selectedRequest = useMemo(
@@ -2470,6 +3830,14 @@ export function RecruitmentWorkspace(props: Props) {
     () => applications.find((record) => record.id === selectedId) ?? null,
     [applications, selectedId],
   );
+  const selectedSession = useMemo(
+    () => sessions.find((record) => record.id === selectedId) ?? null,
+    [sessions, selectedId],
+  );
+  const selectedDecision = useMemo(
+    () => decisions.find((record) => record.id === selectedId) ?? null,
+    [decisions, selectedId],
+  );
   const republishSource =
     newRecord === 'publication' &&
     selectedPublication &&
@@ -2478,29 +3846,44 @@ export function RecruitmentWorkspace(props: Props) {
       : null;
 
   async function refresh() {
-    const [nextRequests, nextPublications, nextApplications] = await Promise.all([
-      props.canReadRequests
-        ? fetchList<RecruitmentRequest>(
-            `/api/v1/agencies/${props.agencyId}/recruitment/requests-to-fill`,
-            'requests',
-          )
-        : Promise.resolve(requests),
-      props.canReadPublications
-        ? fetchList<VacancyPublication>(
-            `/api/v1/agencies/${props.agencyId}/recruitment/vacancy-publications`,
-            'publications',
-          )
-        : Promise.resolve(publications),
-      props.canReadApplications
-        ? fetchList<VacancyApplication>(
-            `/api/v1/agencies/${props.agencyId}/recruitment/applications`,
-            'applications',
-          )
-        : Promise.resolve(applications),
-    ]);
+    const [nextRequests, nextPublications, nextApplications, nextSessions, nextDecisions] =
+      await Promise.all([
+        props.canReadRequests
+          ? fetchList<RecruitmentRequest>(
+              `/api/v1/agencies/${props.agencyId}/recruitment/requests-to-fill`,
+              'requests',
+            )
+          : Promise.resolve(requests),
+        props.canReadPublications
+          ? fetchList<VacancyPublication>(
+              `/api/v1/agencies/${props.agencyId}/recruitment/vacancy-publications`,
+              'publications',
+            )
+          : Promise.resolve(publications),
+        props.canReadApplications
+          ? fetchList<VacancyApplication>(
+              `/api/v1/agencies/${props.agencyId}/recruitment/applications`,
+              'applications',
+            )
+          : Promise.resolve(applications),
+        props.canReadDeliberations
+          ? fetchList<BoardSession>(
+              `/api/v1/agencies/${props.agencyId}/recruitment/sessions`,
+              'sessions',
+            )
+          : Promise.resolve(sessions),
+        props.canReadDeliberations
+          ? fetchList<SelectionDecisionRecord>(
+              `/api/v1/agencies/${props.agencyId}/recruitment/selection-decisions`,
+              'decisions',
+            )
+          : Promise.resolve(decisions),
+      ]);
     setRequests(nextRequests);
     setPublications(nextPublications);
     setApplications(nextApplications);
+    setSessions(nextSessions);
+    setDecisions(nextDecisions);
   }
 
   async function command(path: string, body?: unknown, method: 'POST' | 'DELETE' = 'POST') {
@@ -2539,30 +3922,47 @@ export function RecruitmentWorkspace(props: Props) {
     navigation.navigate({ section: 'applications', view: 'form', selected: record.id, new: null });
   }
 
+  async function createdSession(record: BoardSession) {
+    setSessions((current) => [record, ...current.filter((item) => item.id !== record.id)]);
+    navigation.navigate({ section: 'sessions', view: 'form', selected: record.id, new: null });
+  }
+
   const canCreateInSection =
     section === 'requests'
       ? props.canCreateRequest
       : section === 'publications'
         ? props.canCreatePublication
-        : props.canCreateApplication;
+        : section === 'applications'
+          ? props.canCreateApplication
+          : section === 'sessions'
+            ? props.canSubmitDeliberations
+            : false;
   const hasSectionRead =
     section === 'requests'
       ? props.canReadRequests
       : section === 'publications'
         ? props.canReadPublications
-        : props.canReadApplications;
+        : section === 'applications'
+          ? props.canReadApplications
+          : props.canReadDeliberations;
   const sectionTitle =
     section === 'requests'
       ? 'Requests to Fill'
       : section === 'publications'
         ? 'Vacancy Publications'
-        : 'Applications';
+        : section === 'applications'
+          ? 'Applications'
+          : section === 'sessions'
+            ? 'HRMPSB Sessions'
+            : 'Selection Decisions';
   const newLabel =
     section === 'requests'
       ? 'New request to fill'
       : section === 'publications'
         ? 'New publication'
-        : 'New application';
+        : section === 'applications'
+          ? 'New application'
+          : 'Convene HRMPSB Session';
 
   return (
     <div className="grid gap-6">
@@ -2593,7 +3993,9 @@ export function RecruitmentWorkspace(props: Props) {
                       ? 'request'
                       : section === 'publications'
                         ? 'publication'
-                        : 'application',
+                        : section === 'applications'
+                          ? 'application'
+                          : 'session',
                 })
               }
               size="default"
@@ -2638,6 +4040,28 @@ export function RecruitmentWorkspace(props: Props) {
               }
             >
               Applications
+            </button>
+          ) : null}
+          {props.canReadDeliberations ? (
+            <button
+              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'sessions' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
+              type="button"
+              onClick={() =>
+                navigation.navigate({ section: 'sessions', selected: null, new: null })
+              }
+            >
+              HRMPSB Sessions
+            </button>
+          ) : null}
+          {props.canReadDeliberations ? (
+            <button
+              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'decisions' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
+              type="button"
+              onClick={() =>
+                navigation.navigate({ section: 'decisions', selected: null, new: null })
+              }
+            >
+              Selection Decisions
             </button>
           ) : null}
         </nav>
@@ -2699,9 +4123,21 @@ export function RecruitmentWorkspace(props: Props) {
               selectedId={selectedId}
               onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
             />
-          ) : (
+          ) : section === 'applications' ? (
             <ApplicationTree
               records={applications}
+              selectedId={selectedId}
+              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
+            />
+          ) : section === 'sessions' ? (
+            <SessionTree
+              records={sessions}
+              selectedId={selectedId}
+              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
+            />
+          ) : (
+            <SelectionDecisionTree
+              records={decisions}
               selectedId={selectedId}
               onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
             />
@@ -2755,6 +4191,16 @@ export function RecruitmentWorkspace(props: Props) {
           onCreated={createdApplication}
         />
       ) : null}
+      {hasSectionRead && view === 'form' && newRecord === 'session' ? (
+        <SessionDraft
+          agencyId={props.agencyId}
+          publications={publications}
+          busy={busy}
+          error={error}
+          onError={setError}
+          onCreated={createdSession}
+        />
+      ) : null}
       {hasSectionRead &&
       view === 'form' &&
       !newRecord &&
@@ -2800,6 +4246,8 @@ export function RecruitmentWorkspace(props: Props) {
           agencyId={props.agencyId}
           membershipId={props.membershipId}
           documents={props.documents}
+          sessions={sessions}
+          decisions={decisions}
           permissions={permissions}
           busy={busy}
           onCommand={command}
@@ -2808,9 +4256,40 @@ export function RecruitmentWorkspace(props: Props) {
       {hasSectionRead &&
       view === 'form' &&
       !newRecord &&
+      section === 'sessions' &&
+      selectedSession ? (
+        <SessionDetail
+          record={selectedSession}
+          applications={applications}
+          documents={props.documents}
+          permissions={permissions}
+          busy={busy}
+          onCommand={command}
+          agencyId={props.agencyId}
+        />
+      ) : null}
+      {hasSectionRead &&
+      view === 'form' &&
+      !newRecord &&
+      section === 'decisions' &&
+      selectedDecision ? (
+        <SelectionDecisionDetail
+          record={selectedDecision}
+          documents={props.documents}
+          permissions={permissions}
+          busy={busy}
+          onCommand={command}
+          agencyId={props.agencyId}
+        />
+      ) : null}
+      {hasSectionRead &&
+      view === 'form' &&
+      !newRecord &&
       !selectedRequest &&
       !selectedPublication &&
-      !selectedApplication ? (
+      !selectedApplication &&
+      !selectedSession &&
+      !selectedDecision ? (
         <Panel title="Select a Recruitment record">
           <p className="m-0 text-sm text-muted">
             Choose a record from Tree view or start a new controlled case.

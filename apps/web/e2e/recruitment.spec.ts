@@ -24,6 +24,13 @@ async function selectEvidence(page: Page, documentNo: string): Promise<void> {
   await page.getByLabel('Finalized Document Version').selectOption(documentVersionId);
 }
 
+async function selectOptionByText(page: Page, label: string, text: string): Promise<void> {
+  const option = page.getByLabel(label).locator('option').filter({ hasText: text }).first();
+  const value = await option.getAttribute('value');
+  if (!value) throw new Error(`The ${text} fixture was not available for ${label}.`);
+  await page.getByLabel(label).selectOption(value);
+}
+
 test('drives the protected Request to Fill and publication journey', async ({ page }) => {
   test.setTimeout(240_000);
   resetFixture();
@@ -233,4 +240,72 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   await expect(page.getByRole('button', { name: /Bea Cruz/ })).toBeVisible();
   await page.getByRole('button', { name: 'Tree' }).click();
   await expect(page.getByRole('button', { name: applicationNo })).toBeVisible();
+});
+
+test('drives HRMPSB deliberation, the advisory report, and the Selection Decision', async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  resetFixture();
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/recruitment');
+  await expect(page.getByRole('heading', { name: 'Recruitment' })).toBeVisible();
+
+  // The seeded publication period has elapsed and screening is complete.
+  await page.getByRole('button', { name: 'HRMPSB Sessions' }).click();
+  await page.getByRole('button', { name: 'Convene HRMPSB Session' }).click();
+  await selectOptionByText(page, 'Published vacancy', 'HRM-000144');
+  await page.getByRole('button', { name: 'Convene Session' }).click();
+  await expectStatus(page, 'DRAFT');
+  await expect(page.getByRole('heading', { name: /HRMPSB Session/ })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Record', exact: true }).click();
+  await expect(page.getByText('PRESENT', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Start deliberation' }).click();
+  await expect(page.getByText(/quorum satisfied/)).toBeVisible();
+  await expect(page.getByText(/national floor 1 of 1 voting seats/)).toBeVisible();
+
+  await page.getByLabel('Board reason').fill('The Board recommends the highest-ranked applicant.');
+  await page.getByRole('button', { name: 'Record', exact: true }).click();
+  await expect(page.getByText(/Board Recommendation: RECOMMENDED/)).toBeVisible();
+
+  await selectOptionByText(page, 'Evaluation report Document Version', 'E2E-CS-FORM-9');
+  await page.getByRole('button', { name: 'Issue report' }).click();
+  await expect(page.getByText(/^v1 ·/).first()).toBeVisible();
+  await selectOptionByText(page, 'Minutes Document Version', 'E2E-CS-FORM-9');
+  await page.getByRole('button', { name: 'Complete deliberation' }).click();
+  await expectStatus(page, 'COMPLETED');
+
+  // The appointing authority records the separate Selection Decision.
+  await page.getByRole('button', { name: 'Tree' }).click();
+  await expect(page.getByRole('heading', { name: 'HRMPSB Sessions' })).toBeVisible();
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
+  await page
+    .getByRole('button', { name: /APP-\d+/ })
+    .first()
+    .click();
+  await expect(page.getByRole('heading', { name: 'HRMPSB deliberation' })).toBeVisible();
+  await expect(page.getByText(/Board Recommendation: RECOMMENDED/)).toBeVisible();
+  await page.getByLabel('Decision').selectOption('SELECTED');
+  await page
+    .getByLabel('Recorded basis')
+    .fill('The appointing authority selects the recommended applicant.');
+  await selectOptionByText(page, 'Appointing authority evidence', 'E2E-CS-FORM-9');
+  await page.getByRole('button', { name: 'Record Selection Decision' }).click();
+  await expectStatus(page, 'SELECTED');
+
+  await page.getByRole('button', { name: 'Tree' }).click();
+  await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
+  await page.getByRole('button', { name: 'Selection Decisions' }).click();
+  await expect(page.getByRole('heading', { name: 'Selection Decisions' })).toBeVisible();
+  await page
+    .getByRole('button', { name: /APP-\d+/ })
+    .first()
+    .click();
+  await page.getByRole('button', { name: 'Preview selected-candidate package' }).click();
+  await expect(page.getByText(/selectionDecisionId/)).toBeVisible();
+  await expect(page.getByText(/reserved through Plantilla/)).toBeVisible();
 });

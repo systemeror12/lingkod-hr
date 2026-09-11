@@ -660,6 +660,10 @@ function hasMalformedBoardSeatDefinition(value: Prisma.JsonValue): boolean {
   });
 }
 
+function isAlternateAppointmentKind(value: string): boolean {
+  return value.trim().toUpperCase().includes('ALTERNATE');
+}
+
 function isCsFormNo9(documentType: string): boolean {
   const normalized = documentType
     .replace(/[._-]+/g, ' ')
@@ -2312,29 +2316,38 @@ export class RecruitmentService {
       select: {
         seatCode: true,
         membershipId: true,
+        appointmentKind: true,
         authorityDocumentVersionId: true,
       },
     });
     const resolvedAppointments = [] as typeof appointments;
     for (const seat of allSeats) {
       const matching = appointments.filter((appointment) => appointment.seatCode === seat);
-      if (matching.length > 1 || (seats.includes(seat) && matching.length === 0)) {
+      const principals = matching.filter(
+        (appointment) => !isAlternateAppointmentKind(appointment.appointmentKind),
+      );
+      if (principals.length > 1 || (seats.includes(seat) && principals.length === 0)) {
         throw new RecruitmentServiceError(
-          'Every required HRMPSB seat must resolve to exactly one active appointment.',
+          'Every required HRMPSB seat must resolve to exactly one principal appointment.',
           409,
-          matching.length === 0
+          principals.length === 0
             ? 'RECRUITMENT_BOARD_APPOINTMENT_MISSING'
             : 'RECRUITMENT_BOARD_APPOINTMENT_AMBIGUOUS',
         );
       }
-      if (matching[0]) resolvedAppointments.push(matching[0]);
+      resolvedAppointments.push(...principals);
+      resolvedAppointments.push(
+        ...matching.filter((appointment) =>
+          isAlternateAppointmentKind(appointment.appointmentKind),
+        ),
+      );
     }
     if (
       new Set(resolvedAppointments.map((appointment) => appointment.membershipId)).size !==
       resolvedAppointments.length
     ) {
       throw new RecruitmentServiceError(
-        'One HRMPSB member cannot occupy more than one required seat.',
+        'One HRMPSB member cannot occupy more than one seat.',
         409,
         'RECRUITMENT_BOARD_MEMBER_DUPLICATED',
       );
