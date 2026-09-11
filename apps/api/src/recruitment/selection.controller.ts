@@ -76,8 +76,8 @@ export class SelectionController {
     }
   }
 
+  /** The service selects the required permission per decision outcome. */
   @Post(':agencyId/recruitment/applications/:applicationId/selection-decision')
-  @RequirePermission('recruitment.deliberations.read')
   async recordDecision(
     @Param('agencyId') agencyId: string,
     @Param('applicationId') applicationId: string,

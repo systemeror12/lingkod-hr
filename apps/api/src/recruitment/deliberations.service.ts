@@ -1060,6 +1060,39 @@ export class DeliberationsService {
         if (session.status !== 'IN_PROGRESS') {
           throw this.workflowError('record a Board Recommendation', session.status);
         }
+        const rosterMember = session.rosterMembers.find(
+          ({ membershipId }) => membershipId === context.membershipId,
+        );
+        if (!rosterMember?.isVoting) {
+          throw new RecruitmentServiceError(
+            'Only a voting participant of the frozen Board roster may recommend.',
+            403,
+            'RECRUITMENT_BOARD_MEMBER_NOT_IN_ROSTER',
+          );
+        }
+        const participation = session.participations.find(
+          ({ membershipId }) => membershipId === context.membershipId,
+        );
+        if (!participation || participation.attendanceStatus !== 'PRESENT') {
+          throw new RecruitmentServiceError(
+            'Only a present Board participant may recommend for an Application.',
+            403,
+            'RECRUITMENT_BOARD_MEMBER_NOT_PRESENT',
+          );
+        }
+        const conflicted = session.conflicts.some(
+          (conflict) =>
+            conflict.applicationId === input.applicationId &&
+            conflict.hasConflict &&
+            conflict.participation.membershipId === context.membershipId,
+        );
+        if (conflicted) {
+          throw new RecruitmentServiceError(
+            'A conflicted or recused Board participant cannot recommend for the affected applicant.',
+            403,
+            'RECRUITMENT_BOARD_MEMBER_CONFLICTED',
+          );
+        }
         const quorum = session.quorumSnapshots.find(
           ({ applicationId }) => applicationId === input.applicationId,
         );
@@ -1616,14 +1649,19 @@ export class DeliberationsService {
     context: RequestContext,
     session: SessionRecord,
   ): Promise<Prisma.InputJsonValue> {
-    const applications: ApplicationSummary[] = [];
-    for (const quorum of session.quorumSnapshots) {
-      const record = await transaction.application.findFirst({
-        where: { agencyId: context.agencyId, id: quorum.applicationId },
-        select: applicationSelect,
-      });
-      if (record) applications.push(applicationSummary(record));
-    }
+    const applicationIds = session.quorumSnapshots.map(({ applicationId }) => applicationId);
+    const applicationRecords =
+      applicationIds.length === 0
+        ? []
+        : await transaction.application.findMany({
+            where: { agencyId: context.agencyId, id: { in: applicationIds } },
+            select: applicationSelect,
+          });
+    const applicationById = new Map(applicationRecords.map((record) => [record.id, record]));
+    const applications: ApplicationSummary[] = applicationIds.flatMap((applicationId) => {
+      const record = applicationById.get(applicationId);
+      return record ? [applicationSummary(record)] : [];
+    });
     return {
       session: {
         id: session.id,

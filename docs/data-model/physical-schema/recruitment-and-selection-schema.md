@@ -601,7 +601,7 @@ CREATE TABLE selection_decisions (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   application_id uuid NOT NULL,
   decision text NOT NULL
-    CHECK (decision IN ('SELECTED','NOT_SELECTED')),
+    CHECK (decision IN ('SELECTED','NOT_SELECTED','RETURNED')),
   decided_by_membership_id uuid NOT NULL,
   decided_at timestamptz NOT NULL DEFAULT now(),
   reason text,
@@ -612,9 +612,13 @@ CREATE TABLE selection_decisions (
     REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, authority_document_version_id)
     REFERENCES document_versions (agency_id, id),
-  UNIQUE (application_id),
   UNIQUE (agency_id, id)
 );
+
+-- A return for further review stays repeatable; only a final decision is unique.
+CREATE UNIQUE INDEX selection_decisions_final_application_key
+  ON selection_decisions (application_id)
+  WHERE decision IN ('SELECTED', 'NOT_SELECTED');
 
 CREATE TABLE recruitment_appointment_handoffs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

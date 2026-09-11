@@ -133,6 +133,7 @@ interface Fixture {
   admin: PrismaClient;
   actor: RequestContext;
   chair: RequestContext;
+  alternate: RequestContext;
   deliberations: DeliberationsService;
   selection: SelectionService;
   evaluations: EvaluationsService;
@@ -499,6 +500,12 @@ async function setupFixture(label: string): Promise<Fixture> {
     admin,
     actor: context(agency.id, actor.userId, actor.membershipId, `deliberation-${suffix}`),
     chair: context(agency.id, chair.userId, chair.membershipId, `deliberation-chair-${suffix}`),
+    alternate: context(
+      agency.id,
+      boardAlternate.userId,
+      boardAlternate.membershipId,
+      `deliberation-alternate-${suffix}`,
+    ),
     deliberations,
     selection,
     evaluations,
@@ -635,7 +642,7 @@ it.skipIf(!enabled)(
       ]);
 
       await deliberations.recordRecommendation(
-        actor,
+        fixture.chair,
         session.id,
         {
           applicationId: ids.applicationOne,
@@ -647,7 +654,7 @@ it.skipIf(!enabled)(
         `recommend-1-${fixture.suffix}`,
       );
       await deliberations.recordRecommendation(
-        actor,
+        fixture.chair,
         session.id,
         {
           applicationId: ids.applicationTwo,
@@ -998,19 +1005,39 @@ it.skipIf(!enabled)(
 
       await expect(
         deliberations.recordRecommendation(
-          actor,
+          chair,
           session.id,
           {
             applicationId: ids.applicationOne,
             recommendation: 'NOT_RECOMMENDED',
             reason: 'No quorum.',
           },
-          `blocked-recommendation-${fixture.suffix}`,
+          `conflicted-recommendation-${fixture.suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'RECRUITMENT_BOARD_MEMBER_CONFLICTED' });
+      await expect(
+        deliberations.recordRecommendation(
+          fixture.alternate,
+          session.id,
+          {
+            applicationId: ids.applicationOne,
+            recommendation: 'NOT_RECOMMENDED',
+            reason: 'No quorum.',
+          },
+          `quorum-recommendation-${fixture.suffix}`,
         ),
       ).rejects.toMatchObject({ code: 'RECRUITMENT_QUORUM_NOT_SATISFIED' });
+      await expect(
+        deliberations.recordRecommendation(
+          actor,
+          session.id,
+          { applicationId: ids.applicationTwo, recommendation: 'RECOMMENDED', rankNo: 1 },
+          `outsider-recommendation-${fixture.suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'RECRUITMENT_BOARD_MEMBER_NOT_IN_ROSTER' });
 
       await deliberations.recordRecommendation(
-        actor,
+        chair,
         session.id,
         { applicationId: ids.applicationTwo, recommendation: 'RECOMMENDED', rankNo: 1 },
         `recommendation-${fixture.suffix}`,
