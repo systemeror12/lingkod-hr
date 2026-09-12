@@ -48,6 +48,20 @@ export const APPOINTMENT_LINK_ROLES = [
 
 export const APPOINTMENT_REGULATORY_STATUSES = ['REGULATED', 'ACCREDITED_OR_DEREGULATED'] as const;
 
+export const APPOINTMENT_EXTERNAL_SUBMISSION_EVENT_TYPES = [
+  'SUBMITTED',
+  'RECEIVED',
+  'RETURNED',
+  'RESUBMITTED',
+] as const;
+
+export const APPOINTMENT_EXTERNAL_ACTIONS = [
+  'APPROVED',
+  'DISAPPROVED',
+  'VALIDATED',
+  'INVALIDATED',
+] as const;
+
 export const appointmentIdSchema = z.string().uuid();
 export const appointmentIdempotencyKeySchema = z.string().trim().min(1).max(200);
 
@@ -132,5 +146,28 @@ export const appointmentSettingsSchema = z
   .object({
     regulatoryStatus: z.enum(APPOINTMENT_REGULATORY_STATUSES),
     statusEvidenceDocumentVersionId: appointmentIdSchema,
+  })
+  .strict();
+
+export const appointmentExternalSubmissionSchema = z
+  .object({
+    appointmentVersionId: appointmentIdSchema,
+    eventType: z.enum(APPOINTMENT_EXTERNAL_SUBMISSION_EVENT_TYPES),
+    externalReference: z.string().trim().min(1).max(200).optional(),
+    occurredAt: z.string().datetime(),
+    receivingOffice: z.string().trim().min(1).max(200),
+    reason: z.string().trim().min(1).max(1000).optional(),
+    evidenceDocumentVersionId: appointmentIdSchema,
+  })
+  .strict();
+
+export const appointmentExternalActionSchema = z
+  .object({
+    appointmentVersionId: appointmentIdSchema,
+    action: z.enum(APPOINTMENT_EXTERNAL_ACTIONS),
+    externalReference: z.string().trim().min(1).max(200),
+    actionAt: z.string().datetime(),
+    reason: z.string().trim().min(1).max(1000).optional(),
+    evidenceDocumentVersionId: appointmentIdSchema,
   })
   .strict();

@@ -22,6 +22,8 @@ const PREPARER_PERMISSIONS = [
   'appointments.records.issue',
   'appointments.records.cancel',
   'appointments.settings.manage',
+  'appointments.external_events.record',
+  'appointments.external_actions.record',
 ];
 
 const AUTHORITY_PERMISSIONS = [
@@ -392,6 +394,8 @@ async function setupFixture(label: string): Promise<Fixture> {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         for (const table of [
+          'appointment_external_submission_events',
+          'appointment_external_actions',
           'appointment_document_version_links',
           'appointment_versions',
           'appointments',
@@ -725,6 +729,197 @@ it.skipIf(!enabled)(
         authorityDocumentVersionId: ids.cancellationAuthorityVersion,
       });
       expect(cancelled.workflowStatus).toBe('CANCELLED');
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'tracks CSC submissions and official actions against the issued Appointment Version',
+  async () => {
+    const fixture = await setupFixture('EXTERNAL');
+    const { ids, admin, preparer, authority, appointments } = fixture;
+    try {
+      await appointments.configureSettings(preparer, {
+        regulatoryStatus: 'REGULATED',
+        statusEvidenceDocumentVersionId: ids.statusEvidenceVersion,
+      });
+      const created = await appointments.create(preparer, {
+        selectionDecisionId: ids.selectionDecision,
+        ...versionInput(fixture),
+      });
+      const draftVersionId = created.currentVersion?.id ?? '';
+
+      await expect(
+        appointments.recordExternalSubmission(preparer, created.id, {
+          appointmentVersionId: draftVersionId,
+          eventType: 'SUBMITTED',
+          occurredAt: '2026-10-02T01:00:00.000Z',
+          receivingOffice: 'CSC Field Office',
+          evidenceDocumentVersionId: ids.formVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_EXTERNAL_NOT_ISSUED', statusCode: 409 });
+
+      await appointments.submit(preparer, created.id);
+      await appointments.endorse(preparer, created.id);
+      const issued = await appointments.issue(authority, created.id, 'external-issue');
+      const versionId = issued.currentVersion?.id ?? '';
+      expect(issued.externalStanding).toBe('NOT_SUBMITTED');
+
+      await expect(
+        appointments.recordExternalSubmission(preparer, created.id, {
+          appointmentVersionId: versionId,
+          eventType: 'SUBMITTED',
+          occurredAt: '2026-10-02T01:00:00.000Z',
+          receivingOffice: 'CSC Field Office',
+          evidenceDocumentVersionId: ids.unfinalizedVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_EXTERNAL_EVIDENCE_INVALID', statusCode: 409 });
+
+      await expect(
+        appointments.recordExternalSubmission(preparer, created.id, {
+          appointmentVersionId: randomUUID(),
+          eventType: 'SUBMITTED',
+          occurredAt: '2026-10-02T01:00:00.000Z',
+          receivingOffice: 'CSC Field Office',
+          evidenceDocumentVersionId: ids.formVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_EXTERNAL_VERSION_INVALID', statusCode: 409 });
+
+      const submission = {
+        appointmentVersionId: versionId,
+        eventType: 'SUBMITTED' as const,
+        externalReference: 'CSC-2026-0001',
+        occurredAt: '2026-10-02T01:00:00.000Z',
+        receivingOffice: 'CSC Field Office',
+        evidenceDocumentVersionId: ids.formVersion,
+      };
+      const submitted = await appointments.recordExternalSubmission(
+        preparer,
+        created.id,
+        submission,
+        'external-submit',
+      );
+      expect(submitted.externalStanding).toBe('SUBMITTED');
+      expect(submitted.externalSubmissions).toHaveLength(1);
+      expect(submitted.externalSubmissions[0]).toMatchObject({
+        eventType: 'SUBMITTED',
+        externalReference: 'CSC-2026-0001',
+        receivingOffice: 'CSC Field Office',
+        occurredAt: '2026-10-02T01:00:00.000Z',
+        recordedByMembershipId: preparer.membershipId,
+        evidence: { documentVersionId: ids.formVersion, versionNo: 1 },
+      });
+      expect(submitted.externalActions).toHaveLength(0);
+
+      const replayed = await appointments.recordExternalSubmission(
+        preparer,
+        created.id,
+        submission,
+        'external-submit',
+      );
+      expect(replayed.externalSubmissions).toHaveLength(1);
+
+      const returned = await appointments.recordExternalSubmission(preparer, created.id, {
+        appointmentVersionId: versionId,
+        eventType: 'RETURNED',
+        externalReference: 'CSC-2026-0001',
+        occurredAt: '2026-10-03T01:00:00.000Z',
+        receivingOffice: 'CSC Field Office',
+        reason: 'Complete the missing attachment.',
+        evidenceDocumentVersionId: ids.formVersion,
+      });
+      expect(returned.externalStanding).toBe('RETURNED');
+
+      const resubmitted = await appointments.recordExternalSubmission(preparer, created.id, {
+        appointmentVersionId: versionId,
+        eventType: 'RESUBMITTED',
+        occurredAt: '2026-10-04T01:00:00.000Z',
+        receivingOffice: 'CSC Field Office',
+        evidenceDocumentVersionId: ids.formVersion,
+      });
+      expect(resubmitted.externalStanding).toBe('RESUBMITTED');
+
+      await expect(
+        appointments.recordExternalAction(preparer, created.id, {
+          appointmentVersionId: versionId,
+          action: 'VALIDATED',
+          externalReference: 'CSC-2026-0001',
+          actionAt: '2026-10-05T01:00:00.000Z',
+          evidenceDocumentVersionId: ids.formVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_EXTERNAL_ACTION_INVALID', statusCode: 409 });
+
+      const approved = await appointments.recordExternalAction(
+        preparer,
+        created.id,
+        {
+          appointmentVersionId: versionId,
+          action: 'APPROVED',
+          externalReference: 'CSC-2026-0001',
+          actionAt: '2026-10-05T01:00:00.000Z',
+          reason: 'The Commission approved the appointment.',
+          evidenceDocumentVersionId: ids.statusEvidenceVersion,
+        },
+        'external-approve',
+      );
+      expect(approved.externalStanding).toBe('APPROVED');
+      expect(approved.workflowStatus).toBe('ISSUED');
+      expect(approved.externalActions).toHaveLength(1);
+      expect(approved.externalActions[0]).toMatchObject({
+        action: 'APPROVED',
+        externalReference: 'CSC-2026-0001',
+        actionAt: '2026-10-05T01:00:00.000Z',
+      });
+      expect(approved.history.map((event) => event.action)).toEqual([
+        'APPOINTMENT_PREPARED',
+        'APPOINTMENT_SUBMITTED',
+        'APPOINTMENT_ENDORSED',
+        'APPOINTMENT_ISSUED',
+      ]);
+
+      const externalAuditEvents = await admin.auditEvent.findMany({
+        where: { agencyId: fixture.agencyId, action: { startsWith: 'APPOINTMENT_EXTERNAL_' } },
+        orderBy: { occurredAt: 'asc' },
+      });
+      expect(externalAuditEvents.map((event) => event.action)).toEqual([
+        'APPOINTMENT_EXTERNAL_SUBMISSION_RECORDED',
+        'APPOINTMENT_EXTERNAL_SUBMISSION_RECORDED',
+        'APPOINTMENT_EXTERNAL_SUBMISSION_RECORDED',
+        'APPOINTMENT_EXTERNAL_ACTION_RECORDED',
+      ]);
+
+      const listed = await appointments.list(preparer, { status: 'ISSUED', limit: 50, offset: 0 });
+      expect(listed.items.find((item) => item.id === created.id)?.externalStanding).toBe(
+        'APPROVED',
+      );
+
+      const correction = await appointments.correct(
+        preparer,
+        created.id,
+        {
+          ...versionInput(fixture, { salaryStep: 2 }),
+          reason: 'Correct the salary step while external tracking continues.',
+          authorityDocumentVersionId: ids.correctionAuthorityVersion,
+        },
+        'external-correction',
+      );
+      expect(correction.workflowStatus).toBe('DRAFT');
+
+      const resubmittedWhileCorrecting = await appointments.recordExternalSubmission(
+        preparer,
+        created.id,
+        {
+          appointmentVersionId: versionId,
+          eventType: 'RESUBMITTED',
+          occurredAt: '2026-10-06T01:00:00.000Z',
+          receivingOffice: 'CSC Field Office',
+          evidenceDocumentVersionId: ids.formVersion,
+        },
+      );
+      expect(resubmittedWhileCorrecting.workflowStatus).toBe('DRAFT');
+      expect(resubmittedWhileCorrecting.externalStanding).toBe('RESUBMITTED');
     } finally {
       await fixture.dispose();
     }

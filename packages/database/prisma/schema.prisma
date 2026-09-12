@@ -47,6 +47,8 @@ model Agency {
   appointments                  Appointment[]
   appointmentVersions           AppointmentVersion[]
   appointmentEvidenceLinks      AppointmentDocumentVersionLink[]
+  appointmentExternalSubmissions AppointmentExternalSubmissionEvent[]
+  appointmentExternalActions    AppointmentExternalAction[]
   plantillaPositionVersions     PlantillaPositionVersion[]
   positionDocuments             PositionDocument[]
   employees                     Employee[]
@@ -351,6 +353,8 @@ model AgencyMembership {
   issuedAppointmentVersions              AppointmentVersion[]               @relation("AppointmentVersionIssuer")
   createdAppointmentVersions             AppointmentVersion[]               @relation("AppointmentVersionCreator")
   updatedAppointmentVersions             AppointmentVersion[]               @relation("AppointmentVersionUpdater")
+  recordedAppointmentExternalSubmissions AppointmentExternalSubmissionEvent[] @relation("AppointmentExternalSubmissionRecorder")
+  recordedAppointmentExternalActions     AppointmentExternalAction[]           @relation("AppointmentExternalActionRecorder")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1532,6 +1536,8 @@ model DocumentVersion {
   appointmentSignatureEvidenceVersions             AppointmentVersion[]               @relation("AppointmentVersionSignatureEvidence")
   appointmentCorrectionAuthorityVersions           AppointmentVersion[]               @relation("AppointmentVersionCorrectionAuthority")
   appointmentEvidenceLinks                         AppointmentDocumentVersionLink[]   @relation("AppointmentEvidenceVersion")
+  appointmentExternalSubmissionEvidenceVersions    AppointmentExternalSubmissionEvent[] @relation("AppointmentExternalSubmissionEvidence")
+  appointmentExternalActionEvidenceVersions        AppointmentExternalAction[]           @relation("AppointmentExternalActionEvidence")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -2818,6 +2824,8 @@ model AppointmentVersion {
   replacementVersions               AppointmentVersion[]  @relation("AppointmentVersionReplacement")
   currentForAppointments             Appointment[]         @relation("AppointmentCurrentVersion")
   links                             AppointmentDocumentVersionLink[]
+  externalSubmissions               AppointmentExternalSubmissionEvent[] @relation("AppointmentExternalSubmissionVersion")
+  externalActions                   AppointmentExternalAction[]           @relation("AppointmentExternalActionVersion")
 
   @@unique([appointmentId, versionNo])
   @@unique([agencyId, appointmentId, id])
@@ -2839,4 +2847,47 @@ model AppointmentDocumentVersionLink {
   @@unique([appointmentVersionId, documentVersionId, linkRole])
   @@unique([agencyId, id])
   @@map("appointment_document_version_links")
+}
+
+model AppointmentExternalSubmissionEvent {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  appointmentVersionId      String   @map("appointment_version_id") @db.Uuid
+  eventType                 String   @map("event_type")
+  externalReference         String?  @map("external_reference")
+  occurredAt                DateTime @map("occurred_at") @db.Timestamptz(6)
+  receivingOffice           String   @map("receiving_office")
+  recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
+  reason                    String?
+  evidenceDocumentVersionId String   @map("evidence_document_version_id") @db.Uuid
+
+  agency                  Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointmentVersion      AppointmentVersion @relation("AppointmentExternalSubmissionVersion", fields: [agencyId, appointmentVersionId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy              AgencyMembership   @relation("AppointmentExternalSubmissionRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion    @relation("AppointmentExternalSubmissionEvidence", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, appointmentVersionId, occurredAt])
+  @@map("appointment_external_submission_events")
+}
+
+model AppointmentExternalAction {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  appointmentVersionId      String   @map("appointment_version_id") @db.Uuid
+  action                    String
+  externalReference         String   @map("external_reference")
+  actionAt                  DateTime @map("action_at") @db.Timestamptz(6)
+  recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
+  reason                    String?
+  evidenceDocumentVersionId String   @map("evidence_document_version_id") @db.Uuid
+
+  agency                  Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointmentVersion      AppointmentVersion @relation("AppointmentExternalActionVersion", fields: [agencyId, appointmentVersionId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy              AgencyMembership   @relation("AppointmentExternalActionRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion    @relation("AppointmentExternalActionEvidence", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, appointmentVersionId, actionAt])
+  @@map("appointment_external_actions")
 }

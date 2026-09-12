@@ -52,6 +52,8 @@ function serviceMock() {
     issue: vi.fn(),
     cancel: vi.fn(),
     correct: vi.fn(),
+    recordExternalSubmission: vi.fn(),
+    recordExternalAction: vi.fn(),
     getSettings: vi.fn(),
     configureSettings: vi.fn(),
   };
@@ -117,6 +119,42 @@ it('rejects Appointment commands outside the active Agency before the service ca
     response: { error: { code: 'APPOINTMENT_WRITE_FORBIDDEN' } },
   });
   expect(service.configureSettings).not.toHaveBeenCalled();
+
+  const submissionInput = {
+    appointmentVersionId: documentVersionId,
+    eventType: 'SUBMITTED',
+    occurredAt: '2026-10-02T01:00:00.000Z',
+    receivingOffice: 'CSC Field Office',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.recordExternalSubmission(
+      otherAgencyId,
+      appointmentId,
+      submissionInput,
+      context,
+      'sub-key',
+    ),
+  ).rejects.toMatchObject({
+    status: 403,
+    response: { error: { code: 'APPOINTMENT_WRITE_FORBIDDEN' } },
+  });
+  expect(service.recordExternalSubmission).not.toHaveBeenCalled();
+
+  const actionInput = {
+    appointmentVersionId: documentVersionId,
+    action: 'APPROVED',
+    externalReference: 'CSC-2026-0001',
+    actionAt: '2026-10-05T01:00:00.000Z',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.recordExternalAction(otherAgencyId, appointmentId, actionInput, context, 'act-key'),
+  ).rejects.toMatchObject({
+    status: 403,
+    response: { error: { code: 'APPOINTMENT_WRITE_FORBIDDEN' } },
+  });
+  expect(service.recordExternalAction).not.toHaveBeenCalled();
 });
 
 it('rejects malformed Appointment input before the service is called', async () => {
@@ -152,6 +190,46 @@ it('rejects malformed Appointment input before the service is called', async () 
     response: { error: { code: 'INVALID_IDEMPOTENCY_KEY' } },
   });
   expect(service.submit).not.toHaveBeenCalled();
+
+  await expect(
+    controller.recordExternalSubmission(
+      agencyId,
+      appointmentId,
+      {
+        appointmentVersionId: documentVersionId,
+        eventType: 'SUBMITTED',
+        occurredAt: '2026-10-02T01:00:00.000Z',
+        receivingOffice: '',
+        evidenceDocumentVersionId: documentVersionId,
+      },
+      context,
+      'sub-key',
+    ),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT' } },
+  });
+  expect(service.recordExternalSubmission).not.toHaveBeenCalled();
+
+  await expect(
+    controller.recordExternalAction(
+      agencyId,
+      appointmentId,
+      {
+        appointmentVersionId: documentVersionId,
+        action: 'APPROVED',
+        externalReference: '',
+        actionAt: '2026-10-05T01:00:00.000Z',
+        evidenceDocumentVersionId: documentVersionId,
+      },
+      context,
+      'act-key',
+    ),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT' } },
+  });
+  expect(service.recordExternalAction).not.toHaveBeenCalled();
 });
 
 it('validates and forwards Appointment commands', async () => {
@@ -165,6 +243,8 @@ it('validates and forwards Appointment commands', async () => {
   service.issue.mockResolvedValue({ id: appointmentId });
   service.cancel.mockResolvedValue({ id: appointmentId });
   service.correct.mockResolvedValue({ id: appointmentId });
+  service.recordExternalSubmission.mockResolvedValue({ id: appointmentId });
+  service.recordExternalAction.mockResolvedValue({ id: appointmentId });
   service.configureSettings.mockResolvedValue({ id: appointmentId });
   const controller = new AppointmentsController(service as never);
 
@@ -270,5 +350,45 @@ it('validates and forwards Appointment commands', async () => {
     context,
     { regulatoryStatus: 'REGULATED', statusEvidenceDocumentVersionId: documentVersionId },
     'settings-key',
+  );
+
+  const submissionInput = {
+    appointmentVersionId: documentVersionId,
+    eventType: 'SUBMITTED',
+    occurredAt: '2026-10-02T01:00:00.000Z',
+    receivingOffice: 'CSC Field Office',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.recordExternalSubmission(
+      agencyId,
+      appointmentId,
+      submissionInput,
+      context,
+      'sub-key',
+    ),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordExternalSubmission).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    submissionInput,
+    'sub-key',
+  );
+
+  const actionInput = {
+    appointmentVersionId: documentVersionId,
+    action: 'APPROVED',
+    externalReference: 'CSC-2026-0001',
+    actionAt: '2026-10-05T01:00:00.000Z',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.recordExternalAction(agencyId, appointmentId, actionInput, context, 'act-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordExternalAction).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    actionInput,
+    'act-key',
   );
 });
