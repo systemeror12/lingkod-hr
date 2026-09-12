@@ -7,7 +7,7 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   await expect(page.getByRole('heading', { name: 'Appointments', exact: true })).toBeVisible();
 
   const eligible = page.getByRole('region', { name: 'Eligible selections' });
-  await expect(eligible.getByText('Deliberation Candidate')).toBeVisible();
+  await expect(eligible.getByText('Appointment Candidate')).toBeVisible();
   await eligible.getByRole('button', { name: 'Prepare Appointment' }).click();
 
   const prepare = page.getByRole('region', { name: 'Prepare Appointment' });
@@ -16,7 +16,7 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   );
   await prepare.getByRole('button', { name: 'Prepare Draft' }).click();
 
-  const detail = page.getByRole('region', { name: 'Deliberation Candidate' });
+  const detail = page.getByRole('region', { name: 'Appointment Candidate' });
   await expect(detail.getByLabel('Workflow status')).toContainText('DRAFT');
   await expect(detail.getByLabel('Version v1')).toContainText('DRAFT');
   await expect(detail.getByLabel('Version v1').getByText('PDS', { exact: true })).toBeVisible();
