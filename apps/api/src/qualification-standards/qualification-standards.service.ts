@@ -472,7 +472,7 @@ export class QualificationStandardsService {
   constructor(
     @Inject(QUALIFICATION_STANDARD_AUDIT_WRITER)
     private readonly auditWriter: QualificationStandardAuditWriter,
-    private readonly documentsService: DocumentsService,
+    @Inject(DocumentsService) private readonly documentsService: DocumentsService,
   ) {}
 
   async list(context: RequestContext): Promise<QualificationStandardSummary[]> {
@@ -1139,46 +1139,75 @@ export class QualificationStandardsService {
       'qualification.standards.read',
       'QUALIFICATION_STANDARD_READ_FORBIDDEN',
     );
-    const actionDate = toDatabaseDate(actionDateValue);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const version = await transaction.qualificationStandardVersion.findFirst({
-        where: {
-          id: versionId,
-          agencyId: context.agencyId,
-          status: { in: ['ACTIVE', 'SUPERSEDED'] },
-        },
-        select: versionSelect,
-      });
-      if (!version) throw this.versionNotFound();
-      if (
-        version.effectiveFrom > actionDate ||
-        (version.effectiveTo !== null && version.effectiveTo < actionDate)
-      ) {
-        throw new QualificationStandardServiceError(
-          'The Qualification Standard Version is not effective for this date.',
-          409,
-          'QUALIFICATION_STANDARD_NOT_EFFECTIVE',
-        );
+      const result = await this.resolveUsableInTransaction(
+        transaction,
+        context,
+        versionId,
+        actionDateValue,
+      );
+      if (!result.usable) {
+        if (result.reason === 'NOT_FOUND') throw this.versionNotFound();
+        if (result.reason === 'NOT_EFFECTIVE') {
+          throw new QualificationStandardServiceError(
+            'The Qualification Standard Version is not effective for this date.',
+            409,
+            'QUALIFICATION_STANDARD_NOT_EFFECTIVE',
+          );
+        }
+        throw this.evidenceRequired();
       }
-      const source = await this.validatedEvidence(
-        transaction,
-        context,
-        version.sourceDocumentId,
-        version.sourceEvidenceVersionId,
-        version.sourceEvidenceValidatedAt,
-        version.sourceEvidenceValidationReason,
-      );
-      const approval = await this.validatedEvidence(
-        transaction,
-        context,
-        version.approvalDocumentId,
-        version.approvalEvidenceVersionId,
-        version.approvalEvidenceValidatedAt,
-        version.approvalEvidenceValidationReason,
-      );
-      if (!source || !approval) throw this.evidenceRequired();
-      return versionSummary(version, context);
+      return result.version;
     });
+  }
+
+  /**
+   * Internal contract: an owning workflow may revalidate a standard inside its
+   * transaction without holding Qualification Standard permissions.
+   */
+  async resolveUsableInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    versionId: string,
+    actionDateValue: string,
+  ): Promise<
+    | { usable: true; version: QualificationStandardVersionSummary }
+    | { usable: false; reason: 'NOT_FOUND' | 'NOT_EFFECTIVE' | 'EVIDENCE_REQUIRED' }
+  > {
+    const actionDate = toDatabaseDate(actionDateValue);
+    const version = await transaction.qualificationStandardVersion.findFirst({
+      where: {
+        id: versionId,
+        agencyId: context.agencyId,
+        status: { in: ['ACTIVE', 'SUPERSEDED'] },
+      },
+      select: versionSelect,
+    });
+    if (!version) return { usable: false, reason: 'NOT_FOUND' };
+    if (
+      version.effectiveFrom > actionDate ||
+      (version.effectiveTo !== null && version.effectiveTo < actionDate)
+    ) {
+      return { usable: false, reason: 'NOT_EFFECTIVE' };
+    }
+    const source = await this.validatedEvidence(
+      transaction,
+      context,
+      version.sourceDocumentId,
+      version.sourceEvidenceVersionId,
+      version.sourceEvidenceValidatedAt,
+      version.sourceEvidenceValidationReason,
+    );
+    const approval = await this.validatedEvidence(
+      transaction,
+      context,
+      version.approvalDocumentId,
+      version.approvalEvidenceVersionId,
+      version.approvalEvidenceValidatedAt,
+      version.approvalEvidenceValidationReason,
+    );
+    if (!source || !approval) return { usable: false, reason: 'EVIDENCE_REQUIRED' };
+    return { usable: true, version: versionSummary(version, context) };
   }
 
   private async standardRecord(

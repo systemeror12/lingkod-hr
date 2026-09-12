@@ -19,6 +19,7 @@ import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
 import { RecruitmentModule } from './recruitment/recruitment.module';
+import { AppointmentsModule } from './appointments/appointments.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { RecruitmentModule } from './recruitment/recruitment.module';
     ServiceRecordsModule,
     ApprovalModule,
     RecruitmentModule,
+    AppointmentsModule,
   ],
   controllers: [HealthController],
 })
