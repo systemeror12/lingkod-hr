@@ -222,6 +222,17 @@ async function seed(): Promise<void> {
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRouteVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.recruitmentAppointmentHandoff.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.selectionDecision.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.candidateEvaluationReportVersion.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.boardRecommendation.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.applicantQuorumSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.conflictDeclaration.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.boardMemberParticipation.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.boardRosterSnapshotMember.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.selectionBoardSession.deleteMany({ where: { agencyId: agency.id } });
     await transaction.assessmentResultVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.assessment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.interviewFeedbackVersion.deleteMany({ where: { agencyId: agency.id } });
@@ -645,6 +656,164 @@ async function seed(): Promise<void> {
     void agencyPostingThree;
     void applicantEducation;
     void applicantEligibility;
+
+    // A publication whose period has elapsed and an Application whose configured
+    // stages are complete, so the protected browser journey can deliberate and
+    // record the appointing authority Selection Decision without waiting.
+    const publicationRoute = await transaction.approvalRouteVersion.findFirstOrThrow({
+      where: { agencyId: agency.id, routeCode: 'RECRUITMENT_VACANCY_PUBLICATION', versionNo: 1 },
+    });
+    const deliberationPosition = await transaction.plantillaPosition.create({
+      data: {
+        agencyId: agency.id,
+        itemNumber: 'HRM-000144',
+        status: 'VACANT',
+        createdFromAuthorityId: authority.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const deliberationPositionVersion = await transaction.plantillaPositionVersion.create({
+      data: {
+        agencyId: agency.id,
+        positionId: deliberationPosition.id,
+        organizationUnitId: unit.id,
+        qualificationStandardVersionId: standardVersion.id,
+        staffingAuthorityId: authority.id,
+        versionNo: 1,
+        positionTitle: 'Human Resource Management Officer II',
+        salaryGrade: 15,
+        fundingSource: 'General Appropriations Act',
+        employmentCategory: 'PLANTILLA',
+        effectiveFrom: new Date('2026-01-01'),
+        status: 'ACTIVE',
+        domainStatus: 'VACANT',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.plantillaPosition.update({
+      where: { id: deliberationPosition.id },
+      data: { currentVersionId: deliberationPositionVersion.id, status: 'VACANT' },
+    });
+    const deliberationRequest = await transaction.requestToFill.create({
+      data: {
+        agencyId: agency.id,
+        positionId: deliberationPosition.id,
+        requestingUnitId: unit.id,
+        requestedByMembershipId: membership.id,
+        justification: 'Protected-shell deliberation fixture with an elapsed publication.',
+        qualificationStandardVersionId: standardVersion.id,
+        mspPlanVersionId: meritPlan.id,
+        criteriaSetId: criteriaSet.id,
+        boardDefinitionId: board.id,
+        bindingSetNo: 1,
+        bindingsResolvedAt: new Date('2026-01-01'),
+        bindingFrozenAt: new Date('2026-01-01'),
+        status: 'APPROVED',
+        submittedAt: new Date('2026-01-01'),
+        approvedAt: new Date('2026-01-01'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const deliberationPublication = await transaction.vacancyPublication.create({
+      data: {
+        agencyId: agency.id,
+        requestToFillId: deliberationRequest.id,
+        qualificationStandardVersionId: standardVersion.id,
+        formDocumentVersionId: formNo9Evidence.currentVersionId!,
+        approvalRouteVersionId: publicationRoute.id,
+        openingDate: new Date('2026-01-01'),
+        closingDate: new Date('2026-01-31'),
+        channels: [],
+        positionDetails: {},
+        applicationRequirements: [],
+        contactDetails: { name: 'Marisol Santos', email: 'marisol.santos@example.test' },
+        hrmoCertification: { certified: true },
+        certifiedByMembershipId: membership.id,
+        certifiedAt: new Date('2026-01-01'),
+        publishedAt: new Date('2026-01-01'),
+        status: 'PUBLISHED',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const deliberationApplicant = await transaction.applicant.create({
+      data: {
+        agencyId: agency.id,
+        firstName: 'Deliberation',
+        lastName: 'Candidate',
+        emailNormalized: 'deliberation.candidate@example.test',
+        privacyNoticeVersion: 'Privacy Notice v1',
+        consentedAt: new Date('2026-01-02'),
+        deduplicationKey: `deliberation-${agency.id}`,
+        createdByMembershipId: membership.id,
+      },
+    });
+    const deliberationApplication = await transaction.application.create({
+      data: {
+        agencyId: agency.id,
+        vacancyPublicationId: deliberationPublication.id,
+        applicantId: deliberationApplicant.id,
+        qualificationStandardVersionId: standardVersion.id,
+        status: 'FOR_INTERVIEW',
+        receivedAt: new Date('2026-01-02'),
+        receivedByMembershipId: membership.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const deliberationAssessment = await transaction.assessment.create({
+      data: {
+        agencyId: agency.id,
+        applicationId: deliberationApplication.id,
+        criteriaSetId: criteriaSet.id,
+        stageCode: 'WRITTEN_EXAM',
+        stageType: 'ASSESSMENT',
+        status: 'COMPLETED',
+        completedAt: new Date('2026-01-03'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.assessmentResultVersion.create({
+      data: {
+        agencyId: agency.id,
+        assessmentId: deliberationAssessment.id,
+        criterionCode: 'JOB_KNOWLEDGE',
+        evaluatedByMembershipId: membership.id,
+        versionNo: 1,
+        score: 85,
+        recordedAt: new Date('2026-01-03'),
+      },
+    });
+    const deliberationInterview = await transaction.interview.create({
+      data: {
+        agencyId: agency.id,
+        applicationId: deliberationApplication.id,
+        criteriaSetId: criteriaSet.id,
+        stageCode: 'PANEL_INTERVIEW',
+        scheduledAt: new Date('2026-01-04'),
+        status: 'COMPLETED',
+        completedAt: new Date('2026-01-04'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.interviewFeedbackVersion.create({
+      data: {
+        agencyId: agency.id,
+        interviewId: deliberationInterview.id,
+        interviewerMembershipId: membership.id,
+        versionNo: 1,
+        score: 80,
+        recommendation: 'PROCEED',
+        submittedAt: new Date('2026-01-04'),
+      },
+    });
+    void deliberationApplicant;
+
     const position = await transaction.plantillaPosition.create({
       data: {
         agencyId: agency.id,
@@ -889,6 +1058,7 @@ async function seed(): Promise<void> {
     'agency_administrator',
     'employee',
     'hrmo_administrator',
+    'hrmpsb_member',
     'personnel_records_officer',
     'appointing_authority',
     'payroll_preparer',

@@ -6,9 +6,11 @@ import { manilaToday } from '../../../lib/manila-date';
 import { ShellState } from '../../../components/shell-state';
 import {
   RecruitmentWorkspace,
+  type BoardSession,
   type DocumentOption,
   type PlantillaPositionOption,
   type RecruitmentRequest,
+  type SelectionDecisionRecord,
   type VacancyApplication,
   type VacancyPublication,
 } from '../../../components/recruitment-workspace';
@@ -46,7 +48,8 @@ export default async function RecruitmentPage({
   const canReadRequests = hasPermission(session, 'recruitment.requests.read');
   const canReadPublications = hasPermission(session, 'recruitment.vacancies.read');
   const canReadApplications = hasPermission(session, 'recruitment.applications.read');
-  if (!canReadRequests && !canReadPublications && !canReadApplications) {
+  const canReadDeliberations = hasPermission(session, 'recruitment.deliberations.read');
+  if (!canReadRequests && !canReadPublications && !canReadApplications && !canReadDeliberations) {
     return (
       <ShellState
         code="403"
@@ -60,31 +63,45 @@ export default async function RecruitmentPage({
   const cookie = (await cookies()).toString();
   const origin = new URL(config.APP_URL).origin;
   const base = `${config.API_URL}/api/v1/agencies/${session.agencyId}`;
-  const [requestValue, publicationValue, applicationValue, positionValue, documentValue] =
-    await Promise.all([
-      canReadRequests
-        ? getJson(`${base}/recruitment/requests-to-fill`, cookie, origin)
-        : Promise.resolve(null),
-      canReadPublications
-        ? getJson(`${base}/recruitment/vacancy-publications`, cookie, origin)
-        : Promise.resolve(null),
-      canReadApplications
-        ? getJson(`${base}/recruitment/applications`, cookie, origin)
-        : Promise.resolve(null),
-      hasPermission(session, 'positions.items.read')
-        ? getJson(`${base}/plantilla-positions?asOf=${manilaToday()}`, cookie, origin)
-        : Promise.resolve(null),
-      hasPermission(session, 'documents.evidence.read')
-        ? getJson(`${base}/documents/versions`, cookie, origin)
-        : Promise.resolve(null),
-    ]);
+  const [
+    requestValue,
+    publicationValue,
+    applicationValue,
+    sessionValue,
+    decisionValue,
+    positionValue,
+    documentValue,
+  ] = await Promise.all([
+    canReadRequests
+      ? getJson(`${base}/recruitment/requests-to-fill`, cookie, origin)
+      : Promise.resolve(null),
+    canReadPublications
+      ? getJson(`${base}/recruitment/vacancy-publications`, cookie, origin)
+      : Promise.resolve(null),
+    canReadApplications
+      ? getJson(`${base}/recruitment/applications`, cookie, origin)
+      : Promise.resolve(null),
+    canReadDeliberations
+      ? getJson(`${base}/recruitment/sessions`, cookie, origin)
+      : Promise.resolve(null),
+    canReadDeliberations
+      ? getJson(`${base}/recruitment/selection-decisions`, cookie, origin)
+      : Promise.resolve(null),
+    hasPermission(session, 'positions.items.read')
+      ? getJson(`${base}/plantilla-positions?asOf=${manilaToday()}`, cookie, origin)
+      : Promise.resolve(null),
+    hasPermission(session, 'documents.evidence.read')
+      ? getJson(`${base}/documents/versions`, cookie, origin)
+      : Promise.resolve(null),
+  ]);
   const params = await searchParams;
   const initialSection =
-    params.section === 'publications'
-      ? 'publications'
-      : params.section === 'applications'
-        ? 'applications'
-        : 'requests';
+    params.section === 'publications' ||
+    params.section === 'applications' ||
+    params.section === 'sessions' ||
+    params.section === 'decisions'
+      ? params.section
+      : 'requests';
   const initialView =
     params.view === 'kanban'
       ? 'kanban'
@@ -94,7 +111,10 @@ export default async function RecruitmentPage({
           ? 'tree'
           : 'tree';
   const initialNew =
-    params.new === 'request' || params.new === 'publication' || params.new === 'application'
+    params.new === 'request' ||
+    params.new === 'publication' ||
+    params.new === 'application' ||
+    params.new === 'session'
       ? params.new
       : null;
 
@@ -106,6 +126,8 @@ export default async function RecruitmentPage({
       initialRequests={arrayValue<RecruitmentRequest>(requestValue, 'requests')}
       initialPublications={arrayValue<VacancyPublication>(publicationValue, 'publications')}
       initialApplications={arrayValue<VacancyApplication>(applicationValue, 'applications')}
+      initialSessions={arrayValue<BoardSession>(sessionValue, 'sessions')}
+      initialDecisions={arrayValue<SelectionDecisionRecord>(decisionValue, 'decisions')}
       positions={arrayValue<PlantillaPositionOption>(positionValue, 'positions')}
       documents={arrayValue<DocumentOption>(documentValue, 'documents')}
       initialSection={initialSection}
@@ -137,6 +159,11 @@ export default async function RecruitmentPage({
       canCloseApplication={hasPermission(session, 'recruitment.applications.close')}
       canManageAssessments={hasPermission(session, 'recruitment.assessments.manage')}
       canManageInterviews={hasPermission(session, 'recruitment.interviews.manage')}
+      canReadDeliberations={canReadDeliberations}
+      canSubmitDeliberations={hasPermission(session, 'recruitment.deliberations.submit')}
+      canRecommendBoard={hasPermission(session, 'recruitment.deliberations.recommend')}
+      canSelectCandidate={hasPermission(session, 'recruitment.selection.select')}
+      canDecideSelection={hasPermission(session, 'recruitment.selection.decide')}
     />
   );
 }

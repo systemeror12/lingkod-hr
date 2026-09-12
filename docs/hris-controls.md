@@ -334,8 +334,10 @@ CLOSED
 | FOR_DELIBERATION | Do not recommend | NOT_RECOMMENDED | HRMPSB Member / Board | `recruitment.deliberations.recommend` | Reason and board record | Audit board result |
 | RECOMMENDED | Select | SELECTED | Appointing Authority | `recruitment.selection.select` | Authority and recommendation available | Start appointment preparation |
 | RECOMMENDED | Not select | NOT_SELECTED | Appointing Authority | `recruitment.selection.decide` | Decision basis recorded | Close application |
+| RECOMMENDED | Return for further review | FOR_DELIBERATION | Appointing Authority | `recruitment.selection.decide` | Return basis recorded | Reopen deliberation with a new Session |
 | Any open state | Withdraw | WITHDRAWN | Recruitment Officer | `recruitment.applications.withdraw` | Applicant withdrawal evidence | Stop evaluation |
 | NOT_QUALIFIED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
+| NOT_RECOMMENDED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
 | NOT_SELECTED | Close | CLOSED | Recruitment Officer | `recruitment.applications.close` | Notice handled | Archive |
 | SELECTED         | Close after service activation | CLOSED           | Recruitment Officer                 | `recruitment.applications.close`      | Idempotent Appointment handoff completed and Assumed Appointment Contract activated by Personnel and Plantilla | Preserve complete recruitment outcome links |
 

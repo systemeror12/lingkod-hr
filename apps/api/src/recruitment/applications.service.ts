@@ -160,6 +160,8 @@ const WITHDRAWABLE_STATUSES = [
   'FOR_INTERVIEW',
 ] as const;
 
+const CLOSABLE_STATUSES = ['NOT_QUALIFIED', 'NOT_RECOMMENDED', 'NOT_SELECTED'] as const;
+
 function isScreeningManaged(status: string): boolean {
   return SCREENING_MANAGED_STATUSES.includes(status as (typeof SCREENING_MANAGED_STATUSES)[number]);
 }
@@ -1305,7 +1307,7 @@ export class ApplicationsService {
             await this.requireApplication(transaction, context.agencyId, applicationId),
           );
         }
-        if (current.status !== 'NOT_QUALIFIED') {
+        if (!CLOSABLE_STATUSES.includes(current.status as (typeof CLOSABLE_STATUSES)[number])) {
           throw this.workflowError('close', current.status);
         }
         await transaction.application.update({
@@ -1322,7 +1324,7 @@ export class ApplicationsService {
           action: 'APPLICATION_CLOSED',
           entityType: 'Application',
           entityId: applicationId,
-          previousStatus: 'NOT_QUALIFIED',
+          previousStatus: current.status,
           newStatus: 'CLOSED',
           reason,
           metadata: safeApplicationAuditMetadata({

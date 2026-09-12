@@ -1341,6 +1341,29 @@ export class PlantillaPositionsService {
     );
   }
 
+  /** Internal contract: Recruitment owns the transaction; Plantilla owns this reservation. */
+  async reserveInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    return this.transitionInTransaction(
+      transaction,
+      context,
+      positionId,
+      { effectiveDate, reason },
+      {
+        action: 'PLANTILLA_POSITION_RESERVED',
+        from: ['VACANT'],
+        to: 'RESERVED',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
   /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
   async lockInTransaction(
     transaction: Prisma.TransactionClient,

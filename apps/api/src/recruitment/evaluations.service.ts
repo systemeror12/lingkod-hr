@@ -338,7 +338,12 @@ export class EvaluationsService {
         this.assertResultWindow(current, assessment.status);
         const { plan } = this.resolvePlan(current);
         const criterion = this.requireCriterion(plan, assessment.stageCode, input.criterionCode);
-        await this.assertEvaluatorEligible(transaction, context, criterion.evaluatorRoleCodes);
+        await this.assertEvaluatorEligible(
+          transaction,
+          context,
+          criterion.evaluatorRoleCodes,
+          current,
+        );
         await this.validateAssessmentResult(transaction, context, criterion, input);
         const existing = await transaction.assessmentResultVersion.findFirst({
           where: {
@@ -456,7 +461,12 @@ export class EvaluationsService {
         }
         const { plan } = this.resolvePlan(current);
         const criterion = this.requireCriterion(plan, assessment.stageCode, input.criterionCode);
-        await this.assertEvaluatorEligible(transaction, context, criterion.evaluatorRoleCodes);
+        await this.assertEvaluatorEligible(
+          transaction,
+          context,
+          criterion.evaluatorRoleCodes,
+          current,
+        );
         await this.validateAssessmentResult(transaction, context, criterion, input);
         const result = await transaction.assessmentResultVersion.create({
           data: {
@@ -747,7 +757,12 @@ export class EvaluationsService {
         this.assertFeedbackWindow(current, interview.status);
         const { plan } = this.resolvePlan(current);
         const stage = this.requireInterviewStage(plan, interview.stageCode);
-        await this.assertEvaluatorEligible(transaction, context, stage.feedback.evaluatorRoleCodes);
+        await this.assertEvaluatorEligible(
+          transaction,
+          context,
+          stage.feedback.evaluatorRoleCodes,
+          current,
+        );
         await this.validateInterviewFeedback(transaction, context, stage, input);
         const existing = await transaction.interviewFeedbackVersion.findFirst({
           where: {
@@ -853,7 +868,12 @@ export class EvaluationsService {
         }
         const { plan } = this.resolvePlan(current);
         const stage = this.requireInterviewStage(plan, interview.stageCode);
-        await this.assertEvaluatorEligible(transaction, context, stage.feedback.evaluatorRoleCodes);
+        await this.assertEvaluatorEligible(
+          transaction,
+          context,
+          stage.feedback.evaluatorRoleCodes,
+          current,
+        );
         await this.validateInterviewFeedback(transaction, context, stage, input);
         const feedback = await transaction.interviewFeedbackVersion.create({
           data: {
@@ -1210,6 +1230,7 @@ export class EvaluationsService {
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     roleCodes: string[],
+    application: ApplicationRecord,
   ): Promise<void> {
     const now = new Date();
     const role = await transaction.membershipRole.findFirst({
@@ -1227,6 +1248,33 @@ export class EvaluationsService {
         'The current Agency Membership is not an eligible evaluator for this configured stage.',
         409,
         'RECRUITMENT_EVALUATOR_NOT_ELIGIBLE',
+      );
+    }
+    const conflicted = await transaction.conflictDeclaration.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        applicationId: application.id,
+        hasConflict: true,
+        participation: { membershipId: context.membershipId },
+      },
+      select: { id: true },
+    });
+    const recused =
+      conflicted ??
+      (await transaction.boardMemberParticipation.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          membershipId: context.membershipId,
+          attendanceStatus: 'RECUSED',
+          session: { vacancyPublicationId: application.publication.id },
+        },
+        select: { id: true },
+      }));
+    if (conflicted || recused) {
+      throw new RecruitmentServiceError(
+        'A conflicted or recused Board participant cannot evaluate the affected applicant.',
+        403,
+        'RECRUITMENT_EVALUATOR_CONFLICTED',
       );
     }
   }
