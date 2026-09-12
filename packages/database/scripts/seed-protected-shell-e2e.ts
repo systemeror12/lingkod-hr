@@ -222,6 +222,14 @@ async function seed(): Promise<void> {
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRouteVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.appointment.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentVersionId: null },
+    });
+    await transaction.appointmentDocumentVersionLink.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.appointmentVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.appointment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.appointmentAgencySettings.deleteMany({ where: { agencyId: agency.id } });
     await transaction.recruitmentAppointmentHandoff.deleteMany({ where: { agencyId: agency.id } });
     await transaction.selectionDecision.deleteMany({ where: { agencyId: agency.id } });
     await transaction.candidateEvaluationReportVersion.deleteMany({
@@ -341,6 +349,13 @@ async function seed(): Promise<void> {
               'E2E-AGENCY-POSTING-3',
               'E2E-APPLICANT-EDUCATION',
               'E2E-APPLICANT-ELIGIBILITY',
+              'E2E-APPT-PDS',
+              'E2E-APPT-WES',
+              'E2E-APPT-ELIGIBILITY',
+              'E2E-APPT-POSITION-DESC',
+              'E2E-APPT-SELECTION-CERT',
+              'E2E-APPT-PUBLICATION-CERT',
+              'E2E-APPT-AUTHORITY',
             ],
           },
         },
@@ -367,6 +382,13 @@ async function seed(): Promise<void> {
             'E2E-AGENCY-POSTING-3',
             'E2E-APPLICANT-EDUCATION',
             'E2E-APPLICANT-ELIGIBILITY',
+            'E2E-APPT-PDS',
+            'E2E-APPT-WES',
+            'E2E-APPT-ELIGIBILITY',
+            'E2E-APPT-POSITION-DESC',
+            'E2E-APPT-SELECTION-CERT',
+            'E2E-APPT-PUBLICATION-CERT',
+            'E2E-APPT-AUTHORITY',
           ],
         },
       },
@@ -813,6 +835,170 @@ async function seed(): Promise<void> {
       },
     });
     void deliberationApplicant;
+
+    // A completed deliberation handoff and Reservation, so the protected browser
+    // journey can prepare, review, issue, and cancel an Appointment without
+    // replaying the whole Recruitment lifecycle first.
+    const appointmentEvidence = {
+      pds: await evidence('E2E-APPT-PDS', 'PDS'),
+      wes: await evidence('E2E-APPT-WES', 'WORK_EXPERIENCE_SHEET'),
+      eligibility: await evidence('E2E-APPT-ELIGIBILITY', 'CERTIFICATE_OF_ELIGIBILITY'),
+      positionDescription: await evidence('E2E-APPT-POSITION-DESC', 'POSITION_DESCRIPTION_FORM'),
+      selectionCertification: await evidence('E2E-APPT-SELECTION-CERT', 'SELECTION_CERTIFICATION'),
+      publicationCertification: await evidence(
+        'E2E-APPT-PUBLICATION-CERT',
+        'PUBLICATION_CERTIFICATION',
+      ),
+      authority: await evidence('E2E-APPT-AUTHORITY', 'APPOINTING_AUTHORITY'),
+    };
+    const selectionSession = await transaction.selectionBoardSession.create({
+      data: {
+        agencyId: agency.id,
+        vacancyPublicationId: deliberationPublication.id,
+        boardDefinitionId: board.id,
+        sessionDate: new Date('2026-01-05'),
+        status: 'COMPLETED',
+        rosterFrozenAt: new Date('2026-01-05'),
+        startedAt: new Date('2026-01-05'),
+        completedAt: new Date('2026-01-05'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const boardRecommendation = await transaction.boardRecommendation.create({
+      data: {
+        agencyId: agency.id,
+        sessionId: selectionSession.id,
+        applicationId: deliberationApplication.id,
+        rankNo: 1,
+        recommendation: 'RECOMMENDED',
+        compositeScore: 82.5,
+        reason: 'Highest overall rating for the contested item.',
+        recordedByMembershipId: membership.id,
+        recordedAt: new Date('2026-01-05'),
+      },
+    });
+    const evaluationReport = await transaction.candidateEvaluationReportVersion.create({
+      data: {
+        agencyId: agency.id,
+        sessionId: selectionSession.id,
+        versionNo: 1,
+        reportDocumentVersionId: appointmentEvidence.selectionCertification.currentVersionId!,
+        reportData: {
+          sessionDate: '2026-01-05',
+          recommendation: 'RECOMMENDED',
+          compositeScore: 82.5,
+        },
+        issuedByMembershipId: membership.id,
+        issuedAt: new Date('2026-01-05'),
+      },
+    });
+    const selectionDecision = await transaction.selectionDecision.create({
+      data: {
+        agencyId: agency.id,
+        applicationId: deliberationApplication.id,
+        sessionId: selectionSession.id,
+        boardRecommendationId: boardRecommendation.id,
+        decision: 'SELECTED',
+        reason: 'The appointing authority selected the Board-recommended candidate.',
+        authorityDocumentVersionId: authorityEvidence.currentVersionId,
+        decidedByMembershipId: membership.id,
+        decidedAt: new Date('2026-01-05'),
+      },
+    });
+    const reservationDate = new Date(`${manilaToday()}T00:00:00.000Z`);
+    await transaction.plantillaPositionVersion.update({
+      where: { id: deliberationPositionVersion.id },
+      data: { effectiveTo: new Date(reservationDate.getTime() - 86_400_000) },
+    });
+    const reservedVersion = await transaction.plantillaPositionVersion.create({
+      data: {
+        agencyId: agency.id,
+        positionId: deliberationPosition.id,
+        organizationUnitId: unit.id,
+        qualificationStandardVersionId: standardVersion.id,
+        staffingAuthorityId: authority.id,
+        versionNo: 2,
+        positionTitle: 'Human Resource Management Officer II',
+        salaryGrade: 15,
+        fundingSource: 'General Appropriations Act',
+        employmentCategory: 'PLANTILLA',
+        effectiveFrom: reservationDate,
+        status: 'ACTIVE',
+        domainStatus: 'RESERVED',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.plantillaPosition.update({
+      where: { id: deliberationPosition.id },
+      data: { currentVersionId: reservedVersion.id, status: 'RESERVED' },
+    });
+    await transaction.recruitmentAppointmentHandoff.create({
+      data: {
+        agencyId: agency.id,
+        selectionDecisionId: selectionDecision.id,
+        applicationId: deliberationApplication.id,
+        positionId: deliberationPosition.id,
+        idempotencyKey: 'E2E-APPOINTMENT-HANDOFF-1',
+        handedOffAt: new Date('2026-01-05'),
+        selectionPackage: {
+          selectionDecisionId: selectionDecision.id,
+          decision: 'SELECTED',
+          decidedAt: '2026-01-05T00:00:00.000Z',
+          decidedByMembershipId: membership.id,
+          applicationId: deliberationApplication.id,
+          applicationNo: 'APP-000001',
+          applicant: {
+            id: deliberationApplicant.id,
+            fullName: 'Deliberation Candidate',
+            email: 'deliberation.candidate@example.test',
+            mobileNumber: null,
+          },
+          publicationId: deliberationPublication.id,
+          publicationNo: 'PUB-000001',
+          requestToFillId: deliberationRequest.id,
+          requestNo: 'RTF-000001',
+          qualificationStandardVersionId: standardVersion.id,
+          mspPlanVersionId: meritPlan.id,
+          criteriaSetId: criteriaSet.id,
+          boardDefinitionId: board.id,
+          boardRecommendation: {
+            id: boardRecommendation.id,
+            recommendation: 'RECOMMENDED',
+            rankNo: 1,
+            compositeScore: 82.5,
+            reason: 'Highest overall rating for the contested item.',
+          },
+          report: {
+            id: evaluationReport.id,
+            versionNo: 1,
+            reportDocumentVersionId: evaluationReport.reportDocumentVersionId,
+          },
+          authorityDocumentVersionId: authorityEvidence.currentVersionId,
+          position: {
+            id: deliberationPosition.id,
+            itemNumber: 'HRM-000144',
+            status: 'RESERVED',
+            positionVersionId: reservedVersion.id,
+            title: 'Human Resource Management Officer II',
+            salaryGrade: 15,
+            organizationUnitId: unit.id,
+          },
+          documents: [],
+          reservedOn: manilaToday(),
+        },
+      },
+    });
+    await transaction.appointmentAgencySettings.create({
+      data: {
+        agencyId: agency.id,
+        regulatoryStatus: 'REGULATED',
+        statusEvidenceDocumentVersionId: appointmentEvidence.authority.currentVersionId!,
+        configuredByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
 
     const position = await transaction.plantillaPosition.create({
       data: {

@@ -271,6 +271,16 @@ export function selectionDecisionSummary(record: DecisionRecord) {
 
 export type SelectionDecisionSummary = ReturnType<typeof selectionDecisionSummary>;
 
+export interface HandoffPackageSummary {
+  handoffId: string;
+  selectionDecisionId: string;
+  applicationId: string;
+  positionId: string;
+  selectionPackage: Prisma.JsonValue;
+  handedOffAt: Date;
+  acceptedAt: Date | null;
+}
+
 @Injectable()
 export class SelectionService {
   constructor(
@@ -591,15 +601,7 @@ export class SelectionService {
     transaction: Prisma.TransactionClient,
     context: Pick<RequestContext, 'agencyId'>,
     selectionDecisionId: string,
-  ): Promise<{
-    handoffId: string;
-    selectionDecisionId: string;
-    applicationId: string;
-    positionId: string;
-    selectionPackage: Prisma.JsonValue;
-    handedOffAt: Date;
-    acceptedAt: Date | null;
-  } | null> {
+  ): Promise<HandoffPackageSummary | null> {
     const handoff = await transaction.recruitmentAppointmentHandoff.findFirst({
       where: { agencyId: context.agencyId, selectionDecisionId },
       select: {
@@ -621,6 +623,44 @@ export class SelectionService {
       selectionPackage: handoff.selectionPackage,
       handedOffAt: handoff.handedOffAt,
       acceptedAt: handoff.acceptedAt,
+    };
+  }
+
+  /**
+   * Internal contract: Appointment lists the immutable selected-candidate
+   * packages available for preparation without reading Recruitment tables.
+   */
+  async listHandoffPackagesInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    limit = 100,
+  ): Promise<{ packages: HandoffPackageSummary[]; hasMore: boolean }> {
+    const handoffs = await transaction.recruitmentAppointmentHandoff.findMany({
+      where: { agencyId: context.agencyId },
+      orderBy: { handedOffAt: 'desc' },
+      take: limit + 1,
+      select: {
+        id: true,
+        selectionDecisionId: true,
+        applicationId: true,
+        positionId: true,
+        selectionPackage: true,
+        handedOffAt: true,
+        acceptedAt: true,
+      },
+    });
+    const hasMore = handoffs.length > limit;
+    return {
+      packages: (hasMore ? handoffs.slice(0, limit) : handoffs).map((handoff) => ({
+        handoffId: handoff.id,
+        selectionDecisionId: handoff.selectionDecisionId,
+        applicationId: handoff.applicationId,
+        positionId: handoff.positionId,
+        selectionPackage: handoff.selectionPackage,
+        handedOffAt: handoff.handedOffAt,
+        acceptedAt: handoff.acceptedAt,
+      })),
+      hasMore,
     };
   }
 

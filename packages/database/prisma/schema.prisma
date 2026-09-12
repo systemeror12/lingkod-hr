@@ -43,6 +43,10 @@ model Agency {
   qualificationStandards        QualificationStandard[]
   qualificationStandardVersions QualificationStandardVersion[]
   plantillaPositions            PlantillaPosition[]
+  appointmentAgencySetting      AppointmentAgencySettings?
+  appointments                  Appointment[]
+  appointmentVersions           AppointmentVersion[]
+  appointmentEvidenceLinks      AppointmentDocumentVersionLink[]
   plantillaPositionVersions     PlantillaPositionVersion[]
   positionDocuments             PositionDocument[]
   employees                     Employee[]
@@ -339,6 +343,14 @@ model AgencyMembership {
   recordedBoardRecommendations           BoardRecommendation[]              @relation("BoardRecommendationRecorder")
   issuedCandidateEvaluationReports       CandidateEvaluationReportVersion[] @relation("CandidateEvaluationReportIssuer")
   selectionDecisions                     SelectionDecision[]                @relation("SelectionDecisionDecider")
+  configuredAppointmentSettings          AppointmentAgencySettings[]        @relation("AppointmentSettingConfigurator")
+  updatedAppointmentSettings             AppointmentAgencySettings[]        @relation("AppointmentSettingUpdater")
+  createdAppointments                    Appointment[]                      @relation("AppointmentCreator")
+  updatedAppointments                    Appointment[]                      @relation("AppointmentUpdater")
+  appointingAuthorityAppointmentVersions AppointmentVersion[]               @relation("AppointmentVersionAuthority")
+  issuedAppointmentVersions              AppointmentVersion[]               @relation("AppointmentVersionIssuer")
+  createdAppointmentVersions             AppointmentVersion[]               @relation("AppointmentVersionCreator")
+  updatedAppointmentVersions             AppointmentVersion[]               @relation("AppointmentVersionUpdater")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1400,6 +1412,7 @@ model RecruitmentAppointmentHandoff {
   selectionDecision SelectionDecision @relation(fields: [agencyId, selectionDecisionId], references: [agencyId, id], onDelete: Restrict)
   application       Application       @relation(fields: [agencyId, applicationId], references: [agencyId, id], onDelete: Restrict)
   position          PlantillaPosition @relation("RecruitmentAppointmentHandoffPosition", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  appointment       Appointment?      @relation("AppointmentRecruitmentHandoff")
 
   @@unique([agencyId, id])
   @@unique([agencyId, selectionDecisionId])
@@ -1514,6 +1527,11 @@ model DocumentVersion {
   selectionBoardSessionMinutesVersions             SelectionBoardSession[]            @relation("SelectionBoardSessionMinutesVersion")
   candidateEvaluationReportDocumentVersions        CandidateEvaluationReportVersion[] @relation("CandidateEvaluationReportDocumentVersion")
   selectionDecisionAuthorityVersions               SelectionDecision[]                @relation("SelectionDecisionAuthorityVersion")
+  appointmentSettingEvidenceVersions               AppointmentAgencySettings[]        @relation("AppointmentSettingEvidenceVersion")
+  appointmentFormVersions                          AppointmentVersion[]               @relation("AppointmentVersionDocument")
+  appointmentSignatureEvidenceVersions             AppointmentVersion[]               @relation("AppointmentVersionSignatureEvidence")
+  appointmentCorrectionAuthorityVersions           AppointmentVersion[]               @relation("AppointmentVersionCorrectionAuthority")
+  appointmentEvidenceLinks                         AppointmentDocumentVersionLink[]   @relation("AppointmentEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -1672,6 +1690,7 @@ model PlantillaPosition {
   personnelActionTargets  PersonnelActionVersion[]        @relation("PersonnelActionTargetPosition")
   requestsToFill          RequestToFill[]                 @relation("RequestToFillPosition")
   appointmentHandoffs     RecruitmentAppointmentHandoff[] @relation("RecruitmentAppointmentHandoffPosition")
+  appointments            Appointment[]                   @relation("AppointmentPosition")
 
   @@unique([agencyId, id])
   @@unique([agencyId, itemNumber])
@@ -2707,4 +2726,117 @@ model OutboxEvent {
   @@unique([agencyId, eventType, aggregateType, aggregateId, idempotencyKey])
   @@index([agencyId, status, createdAt])
   @@map("outbox_events")
+}
+
+model AppointmentAgencySettings {
+  id                              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String   @unique @map("agency_id") @db.Uuid
+  regulatoryStatus                String   @map("regulatory_status")
+  statusEvidenceDocumentVersionId String   @map("status_evidence_document_version_id") @db.Uuid
+  configuredByMembershipId        String   @map("configured_by_membership_id") @db.Uuid
+  configuredAt                    DateTime @default(now()) @map("configured_at") @db.Timestamptz(6)
+  updatedByMembershipId           String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt                       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                      Int      @default(1) @map("row_version")
+
+  agency                        Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  statusEvidenceDocumentVersion DocumentVersion  @relation("AppointmentSettingEvidenceVersion", fields: [agencyId, statusEvidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  configuredBy                  AgencyMembership @relation("AppointmentSettingConfigurator", fields: [agencyId, configuredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy                     AgencyMembership @relation("AppointmentSettingUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@map("appointment_agency_settings")
+}
+
+model Appointment {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String    @map("agency_id") @db.Uuid
+  recruitmentHandoffId        String    @map("recruitment_handoff_id") @db.Uuid
+  recruitmentSelectionPackage Json      @map("recruitment_selection_package")
+  positionId                  String    @map("position_id") @db.Uuid
+  appointeePersonKey          String    @map("appointee_person_key") @db.Uuid
+  workflowStatus              String    @map("workflow_status")
+  currentVersionId            String?   @map("current_version_id") @db.Uuid
+  issuedAt                    DateTime? @map("issued_at") @db.Timestamptz(6)
+  createdByMembershipId       String    @map("created_by_membership_id") @db.Uuid
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId       String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                  Int       @default(1) @map("row_version")
+
+  agency         Agency                        @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  handoff        RecruitmentAppointmentHandoff @relation("AppointmentRecruitmentHandoff", fields: [agencyId, recruitmentHandoffId], references: [agencyId, id], onDelete: Restrict)
+  position       PlantillaPosition             @relation("AppointmentPosition", fields: [agencyId, positionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy      AgencyMembership              @relation("AppointmentCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy      AgencyMembership              @relation("AppointmentUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion AppointmentVersion?           @relation("AppointmentCurrentVersion", fields: [agencyId, id, currentVersionId], references: [agencyId, appointmentId, id], onDelete: Restrict)
+  versions       AppointmentVersion[]          @relation("AppointmentVersions")
+
+  @@unique([agencyId, recruitmentHandoffId])
+  @@unique([agencyId, id])
+  @@index([agencyId, workflowStatus, createdAt])
+  @@map("appointments")
+}
+
+model AppointmentVersion {
+  id                                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                             String    @map("agency_id") @db.Uuid
+  appointmentId                        String    @map("appointment_id") @db.Uuid
+  versionNo                            Int       @map("version_no")
+  employmentStatus                     String    @map("employment_status")
+  natureOfAppointment                  String    @map("nature_of_appointment")
+  salaryGrade                          Int       @map("salary_grade")
+  salaryStep                           Int       @map("salary_step")
+  effectivityDate                      DateTime  @map("effectivity_date") @db.Date
+  appointingAuthorityMembershipId      String    @map("appointing_authority_membership_id") @db.Uuid
+  formVariant                          String    @map("form_variant")
+  signatureMethod                      String    @map("signature_method")
+  signatureEvidenceDocumentVersionId   String?   @map("signature_evidence_document_version_id") @db.Uuid
+  appointmentDocumentVersionId         String    @map("appointment_document_version_id") @db.Uuid
+  status                               String
+  issuedAt                             DateTime? @map("issued_at") @db.Timestamptz(6)
+  issuedByMembershipId                 String?   @map("issued_by_membership_id") @db.Uuid
+  replacesVersionId                    String?   @map("replaces_version_id") @db.Uuid
+  correctionReason                     String?   @map("correction_reason")
+  correctionAuthorityDocumentVersionId String?   @map("correction_authority_document_version_id") @db.Uuid
+  createdByMembershipId                String    @map("created_by_membership_id") @db.Uuid
+  createdAt                            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId                String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt                            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                           Int       @default(1) @map("row_version")
+
+  agency                            Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointment                       Appointment           @relation("AppointmentVersions", fields: [agencyId, appointmentId], references: [agencyId, id], onDelete: Restrict)
+  appointingAuthority               AgencyMembership      @relation("AppointmentVersionAuthority", fields: [agencyId, appointingAuthorityMembershipId], references: [agencyId, id], onDelete: Restrict)
+  appointmentDocumentVersion        DocumentVersion       @relation("AppointmentVersionDocument", fields: [agencyId, appointmentDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  signatureEvidenceDocumentVersion  DocumentVersion?      @relation("AppointmentVersionSignatureEvidence", fields: [agencyId, signatureEvidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  correctionAuthorityDocumentVersion DocumentVersion?     @relation("AppointmentVersionCorrectionAuthority", fields: [agencyId, correctionAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  issuedBy                          AgencyMembership?     @relation("AppointmentVersionIssuer", fields: [agencyId, issuedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  createdBy                         AgencyMembership      @relation("AppointmentVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy                         AgencyMembership      @relation("AppointmentVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  replacesVersion                   AppointmentVersion?   @relation("AppointmentVersionReplacement", fields: [agencyId, replacesVersionId], references: [agencyId, id], onDelete: Restrict)
+  replacementVersions               AppointmentVersion[]  @relation("AppointmentVersionReplacement")
+  currentForAppointments             Appointment[]         @relation("AppointmentCurrentVersion")
+  links                             AppointmentDocumentVersionLink[]
+
+  @@unique([appointmentId, versionNo])
+  @@unique([agencyId, appointmentId, id])
+  @@unique([agencyId, id])
+  @@map("appointment_versions")
+}
+
+model AppointmentDocumentVersionLink {
+  id                   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String @map("agency_id") @db.Uuid
+  appointmentVersionId String @map("appointment_version_id") @db.Uuid
+  documentVersionId    String @map("document_version_id") @db.Uuid
+  linkRole             String @map("link_role")
+
+  agency             Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointmentVersion AppointmentVersion @relation(fields: [agencyId, appointmentVersionId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion    DocumentVersion    @relation("AppointmentEvidenceVersion", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([appointmentVersionId, documentVersionId, linkRole])
+  @@unique([agencyId, id])
+  @@map("appointment_document_version_links")
 }

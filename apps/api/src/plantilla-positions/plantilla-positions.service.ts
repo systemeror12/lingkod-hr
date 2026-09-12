@@ -1364,6 +1364,129 @@ export class PlantillaPositionsService {
     );
   }
 
+  /** Internal contract: Appointment revalidates the Recruitment reservation through Plantilla. */
+  async resolveReservationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+  ): Promise<PlantillaPositionSummary | null> {
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    return record ? positionSummary(record, toDatabaseDate(manilaToday())) : null;
+  }
+
+  /**
+   * Internal contract: Appointment owns the transaction; Plantilla owns this release.
+   * Cancellation must always be able to free the item, so the release does not
+   * revalidate staffing authority or qualification of a reservation made earlier.
+   * A same-day release voids the never-effective reservation instead of dating a
+   * zero-day successor.
+   */
+  async releaseReservationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    if (idempotencyKey) {
+      const completed = await transaction.auditEvent.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          action: 'PLANTILLA_POSITION_RESERVATION_RELEASED',
+          entityId: positionId,
+          idempotencyKey,
+        },
+        select: { id: true },
+      });
+      if (completed) return positionSummary(record, toDatabaseDate(manilaToday()));
+    }
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (
+      current?.status !== 'ACTIVE' ||
+      current.domainStatus !== 'RESERVED' ||
+      current.effectiveFrom.getTime() !== effectiveFrom.getTime()
+    ) {
+      return this.transitionInTransaction(
+        transaction,
+        context,
+        positionId,
+        { effectiveDate, reason },
+        {
+          action: 'PLANTILLA_POSITION_RESERVATION_RELEASED',
+          from: ['RESERVED'],
+          to: 'VACANT',
+          skipReferenceValidation: true,
+        },
+        rawIdempotencyKey,
+      );
+    }
+    const latest = record.versions.reduce(
+      (maxVersion, version) => Math.max(maxVersion, version.versionNo),
+      current.versionNo,
+    );
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+      data: { status: 'VOIDED' },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(
+        context,
+        positionId,
+        this.inputFromVersion(current, effectiveFrom),
+        effectiveFrom,
+        {
+          versionNo: latest + 1,
+          status: 'ACTIVE',
+          domainStatus: 'VACANT',
+          effectiveTo: current.effectiveTo,
+        },
+      ),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_RESERVATION_RELEASED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'RESERVED',
+      newStatus: 'VACANT',
+      reason,
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        before: {
+          lifecycleStatus: current.domainStatus,
+          versionState: current.status,
+          versionId: current.id,
+          effectiveDate: formatDate(current.effectiveFrom),
+        },
+        after: {
+          lifecycleStatus: 'VACANT',
+          versionState: 'ACTIVE',
+          versionId: replacement.id,
+          effectiveDate: formatDate(effectiveFrom),
+        },
+        predecessorId: current.id,
+        versionId: replacement.id,
+        effectiveDate: formatDate(effectiveFrom),
+        sameDayRelease: true,
+      },
+    });
+    return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+  }
+
   /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
   async lockInTransaction(
     transaction: Prisma.TransactionClient,

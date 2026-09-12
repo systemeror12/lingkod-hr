@@ -1,0 +1,87 @@
+import { expect, test } from '@playwright/test';
+
+test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({ page }) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/appointments');
+  await expect(page.getByRole('heading', { name: 'Appointments', exact: true })).toBeVisible();
+
+  const eligible = page.getByRole('region', { name: 'Eligible selections' });
+  await expect(eligible.getByText('Deliberation Candidate')).toBeVisible();
+  await eligible.getByRole('button', { name: 'Prepare Appointment' }).click();
+
+  const prepare = page.getByRole('region', { name: 'Prepare Appointment' });
+  await expect(prepare.getByLabel('Appointment form (finalized Document Version)')).not.toHaveValue(
+    '',
+  );
+  await prepare.getByRole('button', { name: 'Prepare Draft' }).click();
+
+  const detail = page.getByRole('region', { name: 'Deliberation Candidate' });
+  await expect(detail.getByLabel('Workflow status')).toContainText('DRAFT');
+  await expect(detail.getByLabel('Version v1')).toContainText('DRAFT');
+  await expect(detail.getByLabel('Version v1').getByText('PDS', { exact: true })).toBeVisible();
+  await expect(
+    detail.getByLabel('Version v1').getByText('WORK EXPERIENCE SHEET', { exact: true }),
+  ).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Submit for review' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('FOR REVIEW');
+
+  await detail.getByRole('button', { name: 'Return for correction' }).click();
+  const returnDialog = page.getByRole('region', { name: 'Return for correction' });
+  await returnDialog
+    .getByLabel('Reason')
+    .fill('Correct the position title before the appointment is signed.');
+  await returnDialog.getByRole('button', { name: 'Return for correction' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('DRAFT');
+
+  await detail.getByRole('tab', { name: 'Review & issuance' }).click();
+  await expect(detail.getByText('APPOINTMENT RETURNED · DRAFT')).toBeVisible();
+  await expect(detail.getByText('APPOINTMENT SUBMITTED · FOR REVIEW')).toBeVisible();
+
+  await detail.getByRole('tab', { name: 'Preparation & evidence' }).click();
+  await detail.getByRole('button', { name: 'Submit for review' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('FOR REVIEW');
+  await detail.getByRole('button', { name: 'Endorse for signature' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('FOR SIGNATURE');
+
+  page.once('dialog', (dialog) => void dialog.accept());
+  await detail.getByRole('button', { name: 'Issue Appointment' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('ISSUED');
+  await expect(detail.getByLabel('Version v1')).toContainText('ISSUED');
+  await expect(detail.getByText('Current version v1 · ISSUED')).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Prepare linked correction' }).click();
+  const correction = page.getByRole('region', { name: 'Prepare a linked correction' });
+  await correction
+    .getByLabel('Reason')
+    .fill('Correct the salary step under the recorded correction authority.');
+  await correction
+    .getByLabel('Authority evidence (finalized Document Version)')
+    .selectOption({ index: 1 });
+  await correction.getByRole('button', { name: 'Prepare correction Draft' }).click();
+
+  await expect(detail.getByLabel('Workflow status')).toContainText('DRAFT');
+  await expect(detail.getByLabel('Version v1')).toContainText('ISSUED');
+  await expect(detail.getByLabel('Version v2')).toContainText('DRAFT');
+  await expect(detail.getByText('Current version v2 · DRAFT')).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Submit for review' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('FOR REVIEW');
+  await detail.getByRole('button', { name: 'Endorse for signature' }).click();
+  await expect(detail.getByLabel('Workflow status')).toContainText('FOR SIGNATURE');
+
+  await detail.getByRole('button', { name: 'Cancel Appointment' }).click();
+  const cancel = page.getByRole('region', { name: 'Cancel Appointment' });
+  await cancel
+    .getByLabel('Reason')
+    .fill('The appointee withdrew before assumption; release the reservation.');
+  await cancel
+    .getByLabel('Authority evidence (finalized Document Version)')
+    .selectOption({ index: 1 });
+  await cancel.getByRole('button', { name: 'Cancel Appointment' }).click();
+
+  await expect(detail.getByLabel('Workflow status')).toContainText('CANCELLED');
+  await expect(detail.getByLabel('Version v1')).toContainText('ISSUED');
+  await expect(detail.getByRole('button', { name: 'Cancel Appointment' })).toBeHidden();
+});
