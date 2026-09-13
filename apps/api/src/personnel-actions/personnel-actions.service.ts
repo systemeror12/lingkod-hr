@@ -3,14 +3,21 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import {
+  AppointmentsService,
+  type AppointmentNature,
+  type AssumedAppointmentContract,
+} from '../appointments/appointments.service';
 import { AuthService } from '../auth/auth.service';
 import { DocumentsService } from '../documents/documents.service';
 import { PlantillaPositionsService } from '../plantilla-positions/plantilla-positions.service';
 import { SeparationServiceError, SeparationsService } from '../separations/separations.service';
 import {
+  PERSONNEL_ACTION_MOVEMENT_TYPES,
   personnelActionCreateSchema,
   type PersonnelActionEvidenceInput,
   type PersonnelActionInput,
+  type PersonnelActionMovementType,
 } from './personnel-actions.schemas';
 
 export const PERSONNEL_ACTION_STATUSES = [
@@ -188,6 +195,16 @@ const REQUIRED_EVIDENCE: Record<
     'PAY_TABLE_VERSION',
   ],
   STEP_INCREMENT: ['NOSI', 'CURRENT_COMPENSATION', 'PERFORMANCE_OR_SERVICE', 'SERVICE_CONTINUITY'],
+  PROMOTION: ['AUTHORITY'],
+  TRANSFER: ['AUTHORITY'],
+  DEMOTION: ['AUTHORITY'],
+  RECLASSIFICATION: ['AUTHORITY'],
+  COMPARABLE_REINSTATEMENT: [
+    'EXECUTORY_DECISION',
+    'PRIOR_SEPARATION',
+    'NO_MISCONDUCT',
+    'AUTHORITY',
+  ],
 };
 
 const APPROVABLE_ACTIONS = new Set<PersonnelActionInput['actionType']>([
@@ -201,6 +218,7 @@ const APPROVABLE_ACTIONS = new Set<PersonnelActionInput['actionType']>([
   'SEPARATION_DEATH',
   'SALARY_ADJUSTMENT',
   'STEP_INCREMENT',
+  ...PERSONNEL_ACTION_MOVEMENT_TYPES,
 ]);
 
 const SERVICE_STATUS_ACTIONS = new Set<PersonnelActionInput['actionType']>([
@@ -218,10 +236,41 @@ const COMPENSATION_ACTIONS = new Set<PersonnelActionInput['actionType']>([
   'STEP_INCREMENT',
 ]);
 
+const MOVEMENT_ACTIONS = new Set<PersonnelActionInput['actionType']>(
+  PERSONNEL_ACTION_MOVEMENT_TYPES,
+);
+
+const MOVEMENT_NATURES: Record<PersonnelActionMovementType, AppointmentNature> = {
+  PROMOTION: 'PROMOTION',
+  TRANSFER: 'TRANSFER',
+  DEMOTION: 'DEMOTION',
+  RECLASSIFICATION: 'RECLASSIFICATION',
+  COMPARABLE_REINSTATEMENT: 'REINSTATEMENT',
+};
+
+function isMovementActionType(
+  actionType: PersonnelActionInput['actionType'],
+): actionType is PersonnelActionMovementType {
+  return (PERSONNEL_ACTION_MOVEMENT_TYPES as readonly string[]).includes(actionType);
+}
+
+type MovementPersonnelActionInput = Extract<
+  PersonnelActionInput,
+  { actionType: PersonnelActionMovementType }
+>;
+
+function isMovementInput(input: PersonnelActionInput): input is MovementPersonnelActionInput {
+  return isMovementActionType(input.actionType);
+}
+
 export function personnelActionCanBeEffectuated(
   actionType: PersonnelActionInput['actionType'],
 ): boolean {
-  return SERVICE_STATUS_ACTIONS.has(actionType) || COMPENSATION_ACTIONS.has(actionType);
+  return (
+    SERVICE_STATUS_ACTIONS.has(actionType) ||
+    COMPENSATION_ACTIONS.has(actionType) ||
+    MOVEMENT_ACTIONS.has(actionType)
+  );
 }
 
 export function personnelActionCanBeApproved(
@@ -476,6 +525,7 @@ export class PersonnelActionsService {
     private readonly plantillaPositionsService: PlantillaPositionsService,
     @Inject(AuthService) private readonly authService: AuthService,
     @Inject(SeparationsService) private readonly separationsService: SeparationsService,
+    @Inject(AppointmentsService) private readonly appointmentsService: AppointmentsService,
   ) {}
 
   async list(
@@ -609,7 +659,12 @@ export class PersonnelActionsService {
     return withDatabaseContext(
       requestDatabaseContext(context, 'personnel-action-transition'),
       async (transaction) => {
-        const source = await this.validateInput(transaction, context, input, false);
+        const { sourceSegment, targets } = await this.validateInput(
+          transaction,
+          context,
+          input,
+          false,
+        );
         const action = await transaction.personnelAction.create({
           data: {
             agencyId: context.agencyId,
@@ -626,7 +681,8 @@ export class PersonnelActionsService {
           action.id,
           1,
           input,
-          source.id,
+          sourceSegment.id,
+          targets,
         );
         const record = await transaction.personnelAction.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: action.id } },
@@ -667,14 +723,20 @@ export class PersonnelActionsService {
         }
         if (rowVersion !== undefined && current.rowVersion !== rowVersion)
           throw this.versionConflict();
-        const source = await this.validateInput(transaction, context, input, false);
+        const { sourceSegment, targets } = await this.validateInput(
+          transaction,
+          context,
+          input,
+          false,
+        );
         const version = await this.appendVersion(
           transaction,
           context,
           actionId,
           (current.currentVersion?.versionNo ?? 0) + 1,
           input,
-          source.id,
+          sourceSegment.id,
+          targets,
         );
         const updated = await transaction.personnelAction.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: actionId } },
@@ -907,8 +969,12 @@ export class PersonnelActionsService {
       }),
     );
     if (!action) throw this.notFound('Personnel Action');
-    if (COMPENSATION_ACTIONS.has(action.actionType as PersonnelActionInput['actionType'])) {
+    const actionType = action.actionType as PersonnelActionInput['actionType'];
+    if (COMPENSATION_ACTIONS.has(actionType)) {
       return this.effectuateCompensation(context, actionId, rawIdempotencyKey);
+    }
+    if (MOVEMENT_ACTIONS.has(actionType)) {
+      return this.effectuateMovement(context, actionId, rawIdempotencyKey);
     }
     return this.effectuateServiceStatus(context, actionId, rawIdempotencyKey);
   }
@@ -1328,6 +1394,227 @@ export class PersonnelActionsService {
     );
   }
 
+  private async effectuateMovement(
+    context: RequestContext,
+    actionId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PersonnelActionSummary> {
+    const idempotencyKey = rawIdempotencyKey?.trim() || `personnel-action:${actionId}`;
+    return withDatabaseContext(
+      requestDatabaseContext(
+        context,
+        'personnel-action-transition',
+        'plantilla-position-transition',
+      ),
+      async (transaction) => {
+        const current = await this.lockedAction(transaction, context.agencyId, actionId);
+        if (current.status === 'EFFECTIVE') {
+          if (current.effectuationKey !== idempotencyKey) {
+            throw new PersonnelActionServiceError(
+              'This Personnel Action was already effectuated with another idempotency key.',
+              409,
+              'PERSONNEL_ACTION_IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return actionSummary(current);
+        }
+        if (current.status !== 'APPROVED') throw this.workflowError('effectuate', current.status);
+        if (!current.currentVersion) throw this.versionMissing();
+        const input = inputFromAction(current);
+        if (!isMovementInput(input)) {
+          throw new PersonnelActionServiceError(
+            'Only appointment-backed position movements can use this effectuation path.',
+            409,
+            'PERSONNEL_ACTION_EFFECT_UNSUPPORTED',
+          );
+        }
+        if (input.proposedEffectivity > manilaToday()) {
+          throw new PersonnelActionServiceError(
+            'The Personnel Action cannot be effectuated before its applicable date.',
+            409,
+            'PERSONNEL_ACTION_EFFECTIVITY_PENDING',
+          );
+        }
+        const source = current.currentVersion.fromServiceSegment;
+        const effectivity = current.currentVersion.proposedEffectivity;
+        const comparable = input.actionType === 'COMPARABLE_REINSTATEMENT';
+        if (!source.positionId || effectivity <= source.effectiveFrom) {
+          throw new PersonnelActionServiceError(
+            'The action requires an applicable Plantilla-backed service period.',
+            409,
+            'PERSONNEL_ACTION_SERVICE_PERIOD_INVALID',
+          );
+        }
+        if (comparable) {
+          if (source.status !== 'CLOSED' || !source.effectiveTo) {
+            throw new PersonnelActionServiceError(
+              'Comparable reinstatement must follow the preserved closed Service Segment.',
+              409,
+              'PERSONNEL_ACTION_SERVICE_PERIOD_INVALID',
+            );
+          }
+        } else if (source.status !== 'ACTIVE') {
+          throw new PersonnelActionServiceError(
+            'The action requires an active source Service Segment.',
+            409,
+            'PERSONNEL_ACTION_SERVICE_PERIOD_INVALID',
+          );
+        }
+
+        await this.lockEmployee(transaction, context.agencyId, current.employeeId);
+        await this.lockServiceSegment(transaction, context.agencyId, source.id);
+        const { targets } = await this.validateMovementTarget(transaction, context, input, source);
+        const positionIds = [source.positionId, targets.targetPositionId].sort();
+        for (const positionId of positionIds) {
+          await this.plantillaPositionsService.lockInTransaction(transaction, context, positionId);
+        }
+        const { contract } = await this.validateStoredAction(transaction, context, current, true);
+        if (!contract) {
+          throw new PersonnelActionServiceError(
+            'The linked Appointment version is no longer an assumed Appointment.',
+            409,
+            'PERSONNEL_ACTION_APPOINTMENT_CONTRACT_INVALID',
+          );
+        }
+        await this.assertApprovalStillValid(transaction, current);
+
+        let sourceIncumbency: { id: string } | null = null;
+        if (!comparable) {
+          const incumbency = await transaction.positionIncumbency.findFirst({
+            where: {
+              agencyId: context.agencyId,
+              serviceSegmentId: source.id,
+              status: 'ACTIVE',
+            },
+            select: { id: true, effectiveFrom: true },
+          });
+          if (!incumbency || effectivity <= incumbency.effectiveFrom) {
+            throw new PersonnelActionServiceError(
+              'The action requires the applicable Position Incumbency.',
+              409,
+              'PERSONNEL_ACTION_INCUMBENCY_INVALID',
+            );
+          }
+          await this.lockPositionIncumbency(transaction, context.agencyId, incumbency.id);
+          sourceIncumbency = incumbency;
+        }
+
+        const reason = current.currentVersion.reason;
+        if (!comparable) {
+          if (!sourceIncumbency) throw new Error('The locked source incumbency was lost.');
+          const predecessorEnd = addDays(effectivity, -1);
+          await transaction.serviceSegment.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: source.id } },
+            data: { effectiveTo: predecessorEnd, status: 'CLOSED' },
+          });
+          await transaction.positionIncumbency.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: sourceIncumbency.id } },
+            data: { effectiveTo: predecessorEnd, status: 'ENDED' },
+          });
+          await this.plantillaPositionsService.vacateInTransaction(
+            transaction,
+            context,
+            source.positionId,
+            formatDate(effectivity),
+            reason,
+            `${idempotencyKey}:source-position`,
+          );
+        }
+        const successor = await transaction.serviceSegment.create({
+          data: {
+            agencyId: context.agencyId,
+            employeeId: current.employeeId,
+            appointmentId: contract.appointmentId,
+            personnelActionId: current.id,
+            positionId: targets.targetPositionId,
+            organizationUnitId: targets.targetOrganizationUnitId,
+            segmentType: source.segmentType,
+            appointmentStatus: contract.employmentStatus,
+            salaryGrade: contract.compensation.salaryGrade,
+            salaryStep: contract.compensation.salaryStep,
+            effectiveFrom: effectivity,
+            effectiveTo: null,
+            status: 'ACTIVE',
+            createdByMembershipId: context.membershipId,
+          },
+          select: { id: true },
+        });
+        await transaction.positionIncumbency.create({
+          data: {
+            agencyId: context.agencyId,
+            positionId: targets.targetPositionId,
+            employeeId: current.employeeId,
+            serviceSegmentId: successor.id,
+            effectiveFrom: effectivity,
+            effectiveTo: null,
+            status: 'ACTIVE',
+            createdByMembershipId: context.membershipId,
+          },
+        });
+        await this.plantillaPositionsService.occupyReservedInTransaction(
+          transaction,
+          context,
+          targets.targetPositionId,
+          formatDate(effectivity),
+          reason,
+          `${idempotencyKey}:target-position`,
+        );
+        await transaction.employee.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: current.employeeId } },
+          data: {
+            serviceStatus: 'ACTIVE',
+            currentServiceSegmentId: successor.id,
+            updatedByMembershipId: context.membershipId,
+          },
+        });
+        const effectuated = await transaction.personnelAction.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+          data: {
+            status: 'EFFECTIVE',
+            effectuatedByMembershipId: context.membershipId,
+            effectuatedAt: new Date(),
+            effectuationKey: idempotencyKey,
+          },
+          select: actionSelect,
+        });
+        await this.writeAudit(transaction, context, effectuated, {
+          action: 'PERSONNEL_ACTION_EFFECTUATED',
+          previousStatus: current.status,
+          newStatus: 'EFFECTIVE',
+          reason,
+          idempotencyKey,
+          serviceSegmentId: successor.id,
+          targetPositionId: targets.targetPositionId,
+          appointmentId: contract.appointmentId,
+          appointmentVersionId: contract.appointmentVersionId,
+        });
+        await transaction.outboxEvent.create({
+          data: {
+            agencyId: context.agencyId,
+            eventType: 'PERSONNEL_ACTION_EFFECTUATED',
+            aggregateType: 'PersonnelAction',
+            aggregateId: current.id,
+            idempotencyKey,
+            payload: {
+              actionId: current.id,
+              actionVersionId: current.currentVersion.id,
+              actionType: input.actionType,
+              employeeId: current.employeeId,
+              sourceServiceSegmentId: source.id,
+              successorServiceSegmentId: successor.id,
+              sourcePositionId: source.positionId,
+              targetPositionId: targets.targetPositionId,
+              appointmentId: contract.appointmentId,
+              appointmentVersionId: contract.appointmentVersionId,
+              effectivity: formatDate(effectivity),
+            },
+          },
+        });
+        return actionSummary(effectuated);
+      },
+    );
+  }
+
   async replace(
     context: RequestContext,
     actionId: string,
@@ -1351,7 +1638,12 @@ export class PersonnelActionsService {
             'PERSONNEL_ACTION_REPLACEMENT_EMPLOYEE_INVALID',
           );
         }
-        const sourceSegment = await this.validateInput(transaction, context, input, false);
+        const { sourceSegment, targets } = await this.validateInput(
+          transaction,
+          context,
+          input,
+          false,
+        );
         const replacement = await transaction.personnelAction.create({
           data: {
             agencyId: context.agencyId,
@@ -1370,6 +1662,7 @@ export class PersonnelActionsService {
           1,
           input,
           sourceSegment.id,
+          targets,
         );
         const record = await transaction.personnelAction.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: replacement.id } },
@@ -1393,9 +1686,9 @@ export class PersonnelActionsService {
     context: RequestContext,
     action: ActionRecord,
     requireCompleteEvidence: boolean,
-  ): Promise<void> {
+  ) {
     const input = inputFromAction(action);
-    await this.validateInput(
+    return this.validateInput(
       transaction,
       context,
       input,
@@ -1432,10 +1725,13 @@ export class PersonnelActionsService {
       },
     });
     if (!employee) throw this.notFound('Employee');
-    const requiredStatus = input.actionType === 'SAME_ITEM_REINSTATEMENT' ? 'SEPARATED' : 'ACTIVE';
+    const reinstatement =
+      input.actionType === 'SAME_ITEM_REINSTATEMENT' ||
+      input.actionType === 'COMPARABLE_REINSTATEMENT';
+    const requiredStatus = reinstatement ? 'SEPARATED' : 'ACTIVE';
     const sourceSegment =
       employee.currentServiceSegment ??
-      (input.actionType === 'SAME_ITEM_REINSTATEMENT'
+      (reinstatement
         ? await transaction.serviceSegment.findFirst({
             where: {
               agencyId: context.agencyId,
@@ -1457,7 +1753,7 @@ export class PersonnelActionsService {
     if (
       employee.serviceStatus !== requiredStatus ||
       !sourceSegment ||
-      (input.actionType !== 'SAME_ITEM_REINSTATEMENT' && sourceSegment.status !== 'ACTIVE')
+      (!reinstatement && sourceSegment.status !== 'ACTIVE')
     ) {
       throw new PersonnelActionServiceError(
         `The Employee must have ${requiredStatus} service and an applicable Service Segment.`,
@@ -1612,8 +1908,100 @@ export class PersonnelActionsService {
       }
     }
 
-    await this.validateTarget(transaction, context.agencyId, input, sourceSegment);
-    return sourceSegment;
+    let targets = targetReferences(input);
+    let contract: AssumedAppointmentContract | null = null;
+    if (isMovementInput(input)) {
+      ({ targets, contract } = await this.validateMovementTarget(
+        transaction,
+        context,
+        input,
+        sourceSegment,
+      ));
+    } else {
+      await this.validateTarget(transaction, context.agencyId, input, sourceSegment);
+    }
+    return { sourceSegment, targets, contract };
+  }
+
+  private async validateMovementTarget(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: MovementPersonnelActionInput,
+    source: { positionId: string | null; organizationUnitId: string },
+  ): Promise<{
+    targets: { targetPositionId: string; targetOrganizationUnitId: string };
+    contract: AssumedAppointmentContract;
+  }> {
+    const invalid = (message: string) =>
+      new PersonnelActionServiceError(message, 409, 'PERSONNEL_ACTION_TARGET_INVALID');
+    if (!source.positionId) {
+      throw invalid('A position movement requires a Plantilla-backed source Service Segment.');
+    }
+    const contract = await this.appointmentsService.resolveAssumedAppointmentContractInTransaction(
+      transaction,
+      context,
+      input.targetFacts.appointmentVersionId,
+    );
+    if (!contract) {
+      throw new PersonnelActionServiceError(
+        'The linked Appointment version is not an issued Appointment with a valid Assumption to Duty.',
+        409,
+        'PERSONNEL_ACTION_APPOINTMENT_CONTRACT_INVALID',
+      );
+    }
+    const expectedNature = MOVEMENT_NATURES[input.actionType];
+    if (contract.natureOfAppointment !== expectedNature) {
+      throw new PersonnelActionServiceError(
+        `A ${input.actionType.replaceAll('_', ' ').toLowerCase()} requires a ${expectedNature.replaceAll('_', ' ').toLowerCase()} Appointment.`,
+        409,
+        'PERSONNEL_ACTION_APPOINTMENT_NATURE_INVALID',
+      );
+    }
+    if (contract.assumption.currentVersion?.actualAssumptionDate !== input.proposedEffectivity) {
+      throw new PersonnelActionServiceError(
+        'Movement effectivity must be the Appointment assumption date.',
+        409,
+        'PERSONNEL_ACTION_EFFECTIVITY_INVALID',
+      );
+    }
+    if (contract.position.id === source.positionId) {
+      throw invalid('A position movement must appoint the Employee to a different Plantilla item.');
+    }
+    const effectivity = databaseDate(input.proposedEffectivity);
+    const positionVersion = await transaction.plantillaPositionVersion.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        positionId: contract.position.id,
+        status: 'ACTIVE',
+        domainStatus: 'RESERVED',
+        effectiveFrom: { lte: effectivity },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: effectivity } }],
+      },
+      select: { salaryGrade: true, organizationUnitId: true },
+    });
+    if (
+      !positionVersion ||
+      !contract.position.organizationUnitId ||
+      positionVersion.organizationUnitId !== contract.position.organizationUnitId
+    ) {
+      throw invalid(
+        'The Appointment target must be the reserved Plantilla item in the contracted Organization Unit.',
+      );
+    }
+    if (contract.compensation.salaryGrade !== positionVersion.salaryGrade) {
+      throw new PersonnelActionServiceError(
+        'The Appointment compensation must match the reserved Plantilla salary grade.',
+        409,
+        'PERSONNEL_ACTION_COMPENSATION_MISMATCH',
+      );
+    }
+    return {
+      targets: {
+        targetPositionId: contract.position.id,
+        targetOrganizationUnitId: positionVersion.organizationUnitId,
+      },
+      contract,
+    };
   }
 
   private async validateTarget(
@@ -1798,8 +2186,9 @@ export class PersonnelActionsService {
     versionNo: number,
     input: PersonnelActionInput,
     fromServiceSegmentId: string,
+    targets?: { targetPositionId: string | null; targetOrganizationUnitId: string | null },
   ) {
-    const targets = targetReferences(input);
+    const references = targets ?? targetReferences(input);
     const version = await transaction.personnelActionVersion.create({
       data: {
         agencyId: context.agencyId,
@@ -1807,7 +2196,7 @@ export class PersonnelActionsService {
         versionNo,
         proposedEffectivity: databaseDate(input.proposedEffectivity),
         fromServiceSegmentId,
-        ...targets,
+        ...references,
         targetFacts: input.targetFacts as Prisma.InputJsonValue,
         reason: input.reason.trim(),
         createdByMembershipId: context.membershipId,
@@ -2184,6 +2573,9 @@ export class PersonnelActionsService {
       replacementActionId?: string;
       idempotencyKey?: string;
       serviceSegmentId?: string;
+      targetPositionId?: string;
+      appointmentId?: string;
+      appointmentVersionId?: string;
     },
   ): Promise<void> {
     if (!record.currentVersion) throw this.versionMissing();
@@ -2212,6 +2604,9 @@ export class PersonnelActionsService {
         ...(event.replacementActionId ? { replacementActionId: event.replacementActionId } : {}),
         ...(event.idempotencyKey ? { idempotencyKey: event.idempotencyKey } : {}),
         ...(event.serviceSegmentId ? { serviceSegmentId: event.serviceSegmentId } : {}),
+        ...(event.targetPositionId ? { targetPositionId: event.targetPositionId } : {}),
+        ...(event.appointmentId ? { appointmentId: event.appointmentId } : {}),
+        ...(event.appointmentVersionId ? { appointmentVersionId: event.appointmentVersionId } : {}),
       },
     });
   }

@@ -96,6 +96,20 @@ export class AppointmentsController {
     }
   }
 
+  @Get(':agencyId/appointments/movement-candidates')
+  @RequirePermission('appointments.records.read')
+  async listMovementCandidates(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ) {
+    this.assertReadAgency(agencyId, context);
+    try {
+      return { candidates: await this.service.listMovementCandidates(context) };
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   @Post(':agencyId/appointments')
   @RequirePermission('appointments.records.create')
   async create(

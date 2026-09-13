@@ -5,6 +5,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { AuthService } from '../auth/auth.service';
+import { AppointmentsService } from '../appointments/appointments.service';
 import {
   plantillaPositionAuditWriter,
   PlantillaPositionsService,
@@ -355,6 +356,12 @@ it.skipIf(!enabled)(
         plantillaPositionsService,
         new AuthService(),
         new SeparationsService(separationAuditWriter),
+        new AppointmentsService(
+          documentsService,
+          plantillaPositionsService,
+          {} as never,
+          {} as never,
+        ),
       );
       const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [
         'personnel.actions.read',
@@ -601,6 +608,7 @@ it.skipIf(!enabled)(
         plantillaPositionsService,
         new AuthService(),
         new SeparationsService(separationAuditWriter),
+        {} as never,
       );
       await expect(
         failingService.effectuate(preparerContext, salaryAction.id, 'salary-effectuation-key'),
@@ -883,6 +891,7 @@ it.skipIf(!enabled)(
         plantillaService,
         new AuthService(),
         new SeparationsService(separationAuditWriter),
+        {} as never,
       );
       const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [
         'personnel.actions.read',
@@ -1187,6 +1196,7 @@ it.skipIf(!enabled)(
             } as never,
             new AuthService(),
             new SeparationsService(separationAuditWriter),
+            {} as never,
           );
           await expect(
             failingService.effectuate(preparerContext, prepared.id, `rollback-${suffix}`),

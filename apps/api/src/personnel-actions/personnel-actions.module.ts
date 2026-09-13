@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AppointmentsModule } from '../appointments/appointments.module';
 import { AuthModule } from '../auth/auth.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { PlantillaPositionsModule } from '../plantilla-positions/plantilla-positions.module';
@@ -11,7 +12,13 @@ import {
 } from './personnel-actions.service';
 
 @Module({
-  imports: [AuthModule, DocumentsModule, PlantillaPositionsModule, SeparationsModule],
+  imports: [
+    AppointmentsModule,
+    AuthModule,
+    DocumentsModule,
+    PlantillaPositionsModule,
+    SeparationsModule,
+  ],
   controllers: [PersonnelActionsController],
   providers: [
     PersonnelActionsService,

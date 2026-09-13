@@ -33,9 +33,26 @@ const ACTION_TYPES = [
   'SEPARATION_DEATH',
   'SALARY_ADJUSTMENT',
   'STEP_INCREMENT',
+  'PROMOTION',
+  'TRANSFER',
+  'DEMOTION',
+  'RECLASSIFICATION',
+  'COMPARABLE_REINSTATEMENT',
 ] as const;
 
 type ActionType = (typeof ACTION_TYPES)[number];
+
+const MOVEMENT_ACTION_TYPES = [
+  'PROMOTION',
+  'TRANSFER',
+  'DEMOTION',
+  'RECLASSIFICATION',
+  'COMPARABLE_REINSTATEMENT',
+] as const;
+
+function isMovementAction(actionType: ActionType): boolean {
+  return (MOVEMENT_ACTION_TYPES as readonly ActionType[]).includes(actionType);
+}
 type ActionStatus =
   | 'DRAFT'
   | 'FOR_REVIEW'
@@ -65,6 +82,8 @@ interface PersonnelAction {
       salaryStep: number | null;
     };
     targetFacts: Record<string, unknown>;
+    targetPositionId: string | null;
+    targetOrganizationUnitId: string | null;
     reason: string;
     evidence: Array<{
       id: string;
@@ -129,7 +148,28 @@ interface PositionOption {
   currentVersion: { title: string } | null;
 }
 
-type FieldKind = 'text' | 'date' | 'number' | 'boolean' | 'select' | 'unit' | 'position';
+interface AppointmentCandidate {
+  appointmentId: string;
+  appointmentVersionId: string;
+  applicationNo: string;
+  appointee: { personKey: string; fullName: string };
+  natureOfAppointment: string;
+  employmentStatus: string;
+  effectivityDate: string;
+  issuedAt: string | null;
+  actualAssumptionDate: string;
+  position: {
+    id: string;
+    itemNumber: string;
+    title: string | null;
+    salaryGrade: number | null;
+    organizationUnitId: string | null;
+  };
+  compensation: { salaryGrade: number; salaryStep: number };
+}
+
+type FieldKind =
+  'text' | 'date' | 'number' | 'boolean' | 'select' | 'unit' | 'position' | 'appointment';
 interface FieldSpec {
   name: string;
   label: string;
@@ -303,6 +343,66 @@ const CONTRACTS: Record<ActionType, Contract> = {
     fields: [{ name: 'newSalaryStep', label: 'New salary step', kind: 'number' }],
     evidence: ['NOSI', 'CURRENT_COMPENSATION', 'PERFORMANCE_OR_SERVICE', 'SERVICE_CONTINUITY'],
   },
+  PROMOTION: {
+    label: 'Promotion',
+    fields: [
+      {
+        name: 'appointmentVersionId',
+        label: 'Assumed Appointment',
+        kind: 'appointment',
+        options: ['PROMOTION'],
+      },
+    ],
+    evidence: ['AUTHORITY'],
+  },
+  TRANSFER: {
+    label: 'Transfer',
+    fields: [
+      {
+        name: 'appointmentVersionId',
+        label: 'Assumed Appointment',
+        kind: 'appointment',
+        options: ['TRANSFER'],
+      },
+    ],
+    evidence: ['AUTHORITY'],
+  },
+  DEMOTION: {
+    label: 'Demotion',
+    fields: [
+      {
+        name: 'appointmentVersionId',
+        label: 'Assumed Appointment',
+        kind: 'appointment',
+        options: ['DEMOTION'],
+      },
+    ],
+    evidence: ['AUTHORITY'],
+  },
+  RECLASSIFICATION: {
+    label: 'Reclassification',
+    fields: [
+      {
+        name: 'appointmentVersionId',
+        label: 'Assumed Appointment',
+        kind: 'appointment',
+        options: ['RECLASSIFICATION'],
+      },
+    ],
+    evidence: ['AUTHORITY'],
+  },
+  COMPARABLE_REINSTATEMENT: {
+    label: 'Comparable reinstatement',
+    fields: [
+      {
+        name: 'appointmentVersionId',
+        label: 'Assumed Appointment',
+        kind: 'appointment',
+        options: ['REINSTATEMENT'],
+      },
+    ],
+    evidence: ['EXECUTORY_DECISION', 'PRIOR_SEPARATION', 'NO_MISCONDUCT', 'AUTHORITY'],
+  },
 };
 
 function dateLabel(value: string): string {
@@ -364,6 +464,7 @@ export function PersonnelActionWorkspace({
   canCancelApproved,
   canCorrect,
   canAudit,
+  canLinkAppointments,
 }: {
   agencyId: string;
   membershipId: string;
@@ -379,6 +480,7 @@ export function PersonnelActionWorkspace({
   canCancelApproved: boolean;
   canCorrect: boolean;
   canAudit: boolean;
+  canLinkAppointments: boolean;
 }) {
   const [actions, setActions] = useState(initial.actions);
   const [nextCursor, setNextCursor] = useState(initial.nextCursor);
@@ -444,6 +546,7 @@ export function PersonnelActionWorkspace({
   const [documents, setDocuments] = useState<DocumentOption[]>([]);
   const [units, setUnits] = useState<UnitOption[]>([]);
   const [positions, setPositions] = useState<PositionOption[]>([]);
+  const [appointmentCandidates, setAppointmentCandidates] = useState<AppointmentCandidate[]>([]);
   const [transition, setTransition] = useState<
     'RETURN' | 'ENDORSE' | 'APPROVE' | 'REJECT' | 'CANCEL' | 'EFFECTUATE'
   >('RETURN');
@@ -482,13 +585,19 @@ export function PersonnelActionWorkspace({
       request(agencyId, '/documents'),
       request(agencyId, '/organization-units'),
       request(agencyId, '/plantilla-positions'),
+      canLinkAppointments
+        ? request(agencyId, '/appointments/movement-candidates')
+        : Promise.resolve({ candidates: [] }),
     ])
-      .then(([employeeValue, documentValue, unitValue, positionValue]) => {
+      .then(([employeeValue, documentValue, unitValue, positionValue, appointmentValue]) => {
         if (!active) return;
         setEmployees((employeeValue as { employees: EmployeeOption[] }).employees);
         setDocuments((documentValue as { documents: DocumentOption[] }).documents);
         setUnits((unitValue as { units: UnitOption[] }).units);
         setPositions((positionValue as { positions: PositionOption[] }).positions);
+        setAppointmentCandidates(
+          (appointmentValue as { candidates: AppointmentCandidate[] }).candidates,
+        );
       })
       .catch((cause: unknown) => {
         if (active) setError(errorMessage(cause, 'Reference values could not be loaded.'));
@@ -499,7 +608,7 @@ export function PersonnelActionWorkspace({
     return () => {
       active = false;
     };
-  }, [agencyId, canCorrect, canPrepare]);
+  }, [agencyId, canCorrect, canPrepare, canLinkAppointments]);
 
   function replaceAction(next: PersonnelAction): void {
     setActions((current) => {
@@ -929,7 +1038,9 @@ export function PersonnelActionWorkspace({
                         }}
                         value={actionType}
                       >
-                        {ACTION_TYPES.map((type) => (
+                        {ACTION_TYPES.filter(
+                          (type) => canLinkAppointments || !isMovementAction(type),
+                        ).map((type) => (
                           <option key={type} value={type}>
                             {CONTRACTS[type].label}
                           </option>
@@ -953,9 +1064,13 @@ export function PersonnelActionWorkspace({
                   <div className="grid gap-4 min-[700px]:grid-cols-2">
                     {CONTRACTS[actionType].fields.map((field) => (
                       <TargetField
+                        appointments={appointmentCandidates}
                         field={field}
                         facts={facts}
                         key={field.name}
+                        onAppointmentSelect={(candidate) =>
+                          setEffectivity(candidate.actualAssumptionDate)
+                        }
                         positions={positions}
                         setFacts={setFacts}
                         units={units}
@@ -1130,13 +1245,43 @@ export function PersonnelActionWorkspace({
                   ) : null}
                 </DetailGroup>
                 <DetailGroup title="Target facts">
-                  {Object.entries(selected.currentVersion.targetFacts).map(([key, value]) => (
+                  {selected.currentVersion.targetPositionId ? (
                     <DetailRow
-                      key={key}
-                      label={key.replaceAll(/([A-Z])/g, ' $1')}
-                      value={value === null ? 'Not applicable' : String(value)}
+                      label="Target Plantilla Position"
+                      value={selected.currentVersion.targetPositionId}
                     />
-                  ))}
+                  ) : null}
+                  {selected.currentVersion.targetOrganizationUnitId ? (
+                    <DetailRow
+                      label="Target Organization Unit"
+                      value={selected.currentVersion.targetOrganizationUnitId}
+                    />
+                  ) : null}
+                  {Object.entries(selected.currentVersion.targetFacts).map(([key, value]) => {
+                    const candidate =
+                      key === 'appointmentVersionId' && typeof value === 'string'
+                        ? appointmentCandidates.find(
+                            ({ appointmentVersionId }) => appointmentVersionId === value,
+                          )
+                        : undefined;
+                    return (
+                      <DetailRow
+                        key={key}
+                        label={
+                          key === 'appointmentVersionId'
+                            ? 'Assumed Appointment'
+                            : key.replaceAll(/([A-Z])/g, ' $1')
+                        }
+                        value={
+                          candidate
+                            ? `${candidate.appointee.fullName} · ${candidate.applicationNo} · ${candidate.natureOfAppointment.replaceAll('_', ' ')}`
+                            : value === null
+                              ? 'Not applicable'
+                              : String(value)
+                        }
+                      />
+                    );
+                  })}
                 </DetailGroup>
                 <DetailGroup title="Exact evidence">
                   {selected.currentVersion.evidence.map((item) => (
@@ -1279,10 +1424,12 @@ export function PersonnelActionWorkspace({
                 <DialogTitle>{transitionLabel(transition)} Personnel Action</DialogTitle>
                 <DialogDescription id="personnel-action-transition-description">
                   {transition === 'EFFECTUATE'
-                    ? selected.actionType === 'SALARY_ADJUSTMENT' ||
-                      selected.actionType === 'STEP_INCREMENT'
-                      ? `Confirm the effective-dated compensation facts for exact version ${selected.currentVersion.versionNo}.`
-                      : `Apply exact version ${selected.currentVersion.versionNo} to service and Plantilla records on its stated date.`
+                    ? isMovementAction(selected.actionType)
+                      ? `Consume exact version ${selected.currentVersion.versionNo}'s assumed Appointment to move the Employee into the reserved Plantilla item.`
+                      : selected.actionType === 'SALARY_ADJUSTMENT' ||
+                          selected.actionType === 'STEP_INCREMENT'
+                        ? `Confirm the effective-dated compensation facts for exact version ${selected.currentVersion.versionNo}.`
+                        : `Apply exact version ${selected.currentVersion.versionNo} to service and Plantilla records on its stated date.`
                     : `Record the accountable reason against exact version ${selected.currentVersion.versionNo}.`}
                 </DialogDescription>
               </div>
@@ -1303,6 +1450,27 @@ export function PersonnelActionWorkspace({
                         label="New compensation"
                         value={`SG ${selected.actionType === 'SALARY_ADJUSTMENT' ? String(selected.currentVersion.targetFacts.newSalaryGrade) : (selected.currentVersion.fromServiceSegment.salaryGrade ?? '—')}, Step ${String(selected.currentVersion.targetFacts.newSalaryStep)}`}
                       />
+                    </div>
+                  ) : isMovementAction(selected.actionType) ? (
+                    <div className="grid gap-2 text-sm leading-6 text-ink">
+                      <DetailRow
+                        label="Effectivity"
+                        value={dateLabel(selected.currentVersion.proposedEffectivity)}
+                      />
+                      <DetailRow
+                        label="Source Service Segment"
+                        value={selected.currentVersion.fromServiceSegment.id}
+                      />
+                      <DetailRow
+                        label="Target Plantilla Position"
+                        value={selected.currentVersion.targetPositionId ?? '—'}
+                      />
+                      <p className="m-0 text-sm leading-6 text-ink">
+                        {selected.actionType === 'COMPARABLE_REINSTATEMENT'
+                          ? 'This creates the successor Service Segment and Position Incumbency from the assumed Appointment and occupies the reserved target item. The preserved closed source Segment is not modified.'
+                          : 'This closes the source Service Segment and Position Incumbency on the day before effectivity, releases the source item, and occupies the reserved target item from the assumed Appointment.'}{' '}
+                        The approved version remains immutable.
+                      </p>
                     </div>
                   ) : (
                     <p className="m-0 text-sm leading-6 text-ink">
@@ -1406,12 +1574,16 @@ function TargetField({
   setFacts,
   units,
   positions,
+  appointments,
+  onAppointmentSelect,
 }: {
   field: FieldSpec;
   facts: Record<string, string>;
   setFacts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   units: UnitOption[];
   positions: PositionOption[];
+  appointments: AppointmentCandidate[];
+  onAppointmentSelect?: (candidate: AppointmentCandidate) => void;
 }) {
   const id = `target-${field.name}`;
   const value = facts[field.name] ?? '';
@@ -1420,7 +1592,8 @@ function TargetField({
     field.kind === 'select' ||
     field.kind === 'boolean' ||
     field.kind === 'unit' ||
-    field.kind === 'position'
+    field.kind === 'position' ||
+    field.kind === 'appointment'
   ) {
     const options = field.kind === 'boolean' ? ['true', 'false'] : (field.options ?? []);
     return (
@@ -1428,7 +1601,16 @@ function TargetField({
         <select
           className={inputClass}
           id={id}
-          onChange={(event) => update(targetValue(event))}
+          onChange={(event) => {
+            const next = targetValue(event);
+            update(next);
+            if (field.kind === 'appointment') {
+              const candidate = appointments.find(
+                ({ appointmentVersionId }) => appointmentVersionId === next,
+              );
+              if (candidate) onAppointmentSelect?.(candidate);
+            }
+          }}
           required
           value={value}
         >
@@ -1447,15 +1629,32 @@ function TargetField({
                     {position.itemNumber} · {position.currentVersion?.title ?? position.status}
                   </option>
                 ))
-              : options.map((option) => (
-                  <option key={option} value={option}>
-                    {field.kind === 'boolean'
-                      ? option === 'true'
-                        ? 'Yes'
-                        : 'No'
-                      : option.replaceAll('_', ' ')}
-                  </option>
-                ))}
+              : field.kind === 'appointment'
+                ? appointments
+                    .filter(
+                      ({ natureOfAppointment }) =>
+                        !field.options || field.options.includes(natureOfAppointment),
+                    )
+                    .map((candidate) => (
+                      <option
+                        key={candidate.appointmentVersionId}
+                        value={candidate.appointmentVersionId}
+                      >
+                        {candidate.appointee.fullName} · {candidate.applicationNo} ·{' '}
+                        {candidate.natureOfAppointment.replaceAll('_', ' ')} ·{' '}
+                        {candidate.position.itemNumber} · assumed{' '}
+                        {dateLabel(candidate.actualAssumptionDate)}
+                      </option>
+                    ))
+                : options.map((option) => (
+                    <option key={option} value={option}>
+                      {field.kind === 'boolean'
+                        ? option === 'true'
+                          ? 'Yes'
+                          : 'No'
+                        : option.replaceAll('_', ' ')}
+                    </option>
+                  ))}
         </select>
       </Field>
     );

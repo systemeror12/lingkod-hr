@@ -72,6 +72,14 @@ export const REQUIRED_APPOINTMENT_LINK_ROLES: readonly AppointmentLinkRole[] = [
   'AUTHORITY_OR_DELEGATION',
 ];
 
+export const MOVEMENT_APPOINTMENT_NATURES: readonly AppointmentNature[] = [
+  'PROMOTION',
+  'TRANSFER',
+  'DEMOTION',
+  'RECLASSIFICATION',
+  'REINSTATEMENT',
+];
+
 export interface AppointmentEvidenceSummary {
   id: string;
   linkRole: AppointmentLinkRole;
@@ -324,6 +332,20 @@ export interface EligibleSelectionSummary {
   appointment: { id: string; workflowStatus: AppointmentWorkflowStatus } | null;
 }
 
+export interface MovementAppointmentCandidateSummary {
+  appointmentId: string;
+  appointmentVersionId: string;
+  applicationNo: string;
+  appointee: { personKey: string; fullName: string };
+  natureOfAppointment: AppointmentNature;
+  employmentStatus: AppointmentEmploymentStatus;
+  effectivityDate: string;
+  issuedAt: string | null;
+  actualAssumptionDate: string;
+  position: AppointmentContractPosition;
+  compensation: { salaryGrade: number; salaryStep: number };
+}
+
 export class AppointmentServiceError extends Error {
   constructor(
     message: string,
@@ -474,6 +496,8 @@ const contractVersionSelect = {
       id: true,
       positionId: true,
       appointeePersonKey: true,
+      workflowStatus: true,
+      currentVersionId: true,
       recruitmentSelectionPackage: true,
     },
   },
@@ -1117,6 +1141,54 @@ export class AppointmentsService {
         }),
         hasMore,
       };
+    });
+  }
+
+  /**
+   * Internal selection surface for Personnel Action preparation: issued
+   * Appointments with a valid Assumption to Duty whose reserved item is still
+   * unconsumed. The projection carries only the facts the movement contract owns.
+   */
+  async listMovementCandidates(
+    context: RequestContext,
+  ): Promise<MovementAppointmentCandidateSummary[]> {
+    this.assertPermission(context, 'appointments.records.read', 'APPOINTMENT_READ_FORBIDDEN');
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const records = await transaction.appointmentVersion.findMany({
+        where: {
+          agencyId: context.agencyId,
+          status: 'ISSUED',
+          natureOfAppointment: { in: [...MOVEMENT_APPOINTMENT_NATURES] },
+          assumption: { status: 'ASSUMED' },
+          appointment: { workflowStatus: 'ISSUED', position: { status: 'RESERVED' } },
+        },
+        orderBy: [{ issuedAt: 'desc' }, { id: 'desc' }],
+        take: 100,
+        select: contractVersionSelect,
+      });
+      return records.flatMap((record): MovementAppointmentCandidateSummary[] => {
+        const assumption = record.assumption?.currentVersion;
+        if (!assumption) return [];
+        const view = selectionPackageView(record.appointment.recruitmentSelectionPackage);
+        return [
+          {
+            appointmentId: record.appointmentId,
+            appointmentVersionId: record.id,
+            applicationNo: view.applicationNo,
+            appointee: {
+              personKey: record.appointment.appointeePersonKey,
+              fullName: view.applicantName,
+            },
+            natureOfAppointment: record.natureOfAppointment as AppointmentNature,
+            employmentStatus: record.employmentStatus as AppointmentEmploymentStatus,
+            effectivityDate: formatDate(record.effectivityDate),
+            issuedAt: record.issuedAt ? formatDateTime(record.issuedAt) : null,
+            actualAssumptionDate: formatDate(assumption.actualAssumptionDate),
+            position: view.position,
+            compensation: { salaryGrade: record.salaryGrade, salaryStep: record.salaryStep },
+          },
+        ];
+      });
     });
   }
 
@@ -2603,8 +2675,11 @@ export class AppointmentsService {
 
   /**
    * Internal contract: the assumed-Appointment contract publishes only after a
-   * valid Assumption to Duty. Favorable CSC action is never required, and the
-   * external standing is recorded as derived context, not as a precondition.
+   * valid Assumption to Duty and only while the version remains the Appointment's
+   * current issued version. A corrected or cancelled Appointment leaves its old
+   * version ISSUED, so callers must never consume it. Favorable CSC action is
+   * never required, and the external standing is recorded as derived context,
+   * not as a precondition.
    */
   async resolveAssumedAppointmentContractInTransaction(
     transaction: Prisma.TransactionClient,
@@ -2615,7 +2690,14 @@ export class AppointmentsService {
       where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
       select: contractVersionSelect,
     });
-    if (!record || record.assumption?.status !== 'ASSUMED') return null;
+    if (
+      !record ||
+      record.appointment.workflowStatus !== 'ISSUED' ||
+      record.appointment.currentVersionId !== record.id ||
+      record.assumption?.status !== 'ASSUMED'
+    ) {
+      return null;
+    }
     const base = await this.contractBase(transaction, context, record);
     const assumption = assumptionSummary(record.assumption);
     if (!base.acknowledgment || !base.oath || !assumption) {
