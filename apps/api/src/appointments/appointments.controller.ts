@@ -19,6 +19,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import {
+  appointmentActivationSchema,
   appointmentAssumptionCancellationSchema,
   appointmentAssumptionCorrectionSchema,
   appointmentAssumptionFailureSchema,
@@ -453,6 +454,27 @@ export class AppointmentsController {
     const key = this.parseIdempotencyKey(idempotencyKey, context);
     try {
       return await this.service.recordAssumptionCancellation(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/activation')
+  @RequirePermission('personnel.employees.activate')
+  async activateService(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentActivationSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.activateService(context, id, parsed.data, key);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

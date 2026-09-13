@@ -147,6 +147,12 @@ export interface ApplicationPage {
   nextOffset: number | null;
 }
 
+export interface ActivationApplicationClosure {
+  applicationId: string;
+  publicationId: string;
+  requestToFillId: string;
+}
+
 const SCREENING_MANAGED_STATUSES = [
   'RECEIVED',
   'INCOMPLETE',
@@ -599,6 +605,9 @@ function safeApplicationAuditMetadata(value: Prisma.InputJsonObject): Prisma.Inp
     'result',
     'deduplicated',
     'lateAcceptance',
+    'appointmentId',
+    'serviceSegmentId',
+    'employeeId',
   ]);
   return Object.fromEntries(
     Object.entries(value).filter(([key]) => allowed.has(key)),
@@ -832,6 +841,77 @@ export class ApplicationsService {
         );
       },
     );
+  }
+
+  /**
+   * Internal contract: Appointment activation owns the transaction. The assumed
+   * Appointment Contract is the closure authority, so Recruitment closes the
+   * selected Application without a separate closure authority document.
+   */
+  async closeAfterActivationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: {
+      applicationId: string;
+      appointmentId: string;
+      serviceSegmentId: string;
+      reason: string;
+    },
+    rawIdempotencyKey?: string,
+  ): Promise<ActivationApplicationClosure> {
+    const current = await this.lockApplication(transaction, context.agencyId, input.applicationId);
+    if (!current) throw this.notFound('Application');
+    const publication = await transaction.vacancyPublication.findUnique({
+      where: {
+        agencyId_id: { agencyId: context.agencyId, id: current.vacancyPublicationId },
+      },
+      select: { requestToFillId: true },
+    });
+    if (!publication) throw this.notFound('Vacancy Publication');
+    const previous = await this.idempotentEvent(
+      transaction,
+      context,
+      'APPLICATION_CLOSED',
+      rawIdempotencyKey,
+      current.id,
+    );
+    if (!previous) {
+      if (current.status !== 'SELECTED') {
+        throw this.workflowError('close after activation', current.status);
+      }
+      await transaction.application.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+        data: {
+          status: 'CLOSED',
+          closedAt: new Date(),
+          closureReason: input.reason,
+          updatedByMembershipId: context.membershipId,
+          rowVersion: { increment: 1 },
+        },
+      });
+      await this.writeAudit(transaction, context, {
+        action: 'APPLICATION_CLOSED',
+        entityType: 'Application',
+        entityId: current.id,
+        previousStatus: current.status,
+        newStatus: 'CLOSED',
+        reason: input.reason,
+        metadata: safeApplicationAuditMetadata({
+          applicationId: current.id,
+          applicantId: current.applicantId,
+          publicationId: current.vacancyPublicationId,
+          requestToFillId: publication.requestToFillId,
+          appointmentId: input.appointmentId,
+          serviceSegmentId: input.serviceSegmentId,
+        }),
+        idempotencyKey: rawIdempotencyKey,
+      });
+    }
+    return {
+      applicationId: current.id,
+      publicationId: current.vacancyPublicationId,
+      requestToFillId: publication.requestToFillId,
+    };
   }
 
   async linkDocument(

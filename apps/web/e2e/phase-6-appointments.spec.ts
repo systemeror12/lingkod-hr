@@ -7,8 +7,9 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   await expect(page.getByRole('heading', { name: 'Appointments', exact: true })).toBeVisible();
 
   const eligible = page.getByRole('region', { name: 'Eligible selections' });
-  await expect(eligible.getByText('Appointment Candidate')).toBeVisible();
-  await eligible.getByRole('button', { name: 'Prepare Appointment' }).click();
+  const eligibleRow = eligible.getByRole('listitem').filter({ hasText: 'Appointment Candidate' });
+  await expect(eligibleRow).toBeVisible();
+  await eligibleRow.getByRole('button', { name: 'Prepare Appointment' }).click();
 
   const prepare = page.getByRole('region', { name: 'Prepare Appointment' });
   await expect(prepare.getByLabel('Appointment form (finalized Document Version)')).not.toHaveValue(
