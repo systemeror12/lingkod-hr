@@ -86,6 +86,12 @@ export default async function AppointmentsPage({
       canManageSettings={hasPermission(session, 'appointments.settings.manage')}
       canRecordExternalEvents={hasPermission(session, 'appointments.external_events.record')}
       canRecordExternalActions={hasPermission(session, 'appointments.external_actions.record')}
+      canRecordReceipt={hasPermission(session, 'appointments.assumption.create')}
+      canRecordOath={hasPermission(session, 'appointments.oath.record')}
+      canCertifyAssumption={hasPermission(session, 'appointments.assumption.certify')}
+      canCorrectAssumption={hasPermission(session, 'appointments.assumption.correct')}
+      canFailAssumption={hasPermission(session, 'appointments.assumption.fail')}
+      canCancelAssumption={hasPermission(session, 'appointments.assumption.cancel')}
       initialSelected={params.selected ?? null}
     />
   );

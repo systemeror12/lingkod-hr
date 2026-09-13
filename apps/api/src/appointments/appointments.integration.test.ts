@@ -24,12 +24,18 @@ const PREPARER_PERMISSIONS = [
   'appointments.settings.manage',
   'appointments.external_events.record',
   'appointments.external_actions.record',
+  'appointments.assumption.create',
+  'appointments.assumption.fail',
 ];
 
 const AUTHORITY_PERMISSIONS = [
   'appointments.records.read',
   'appointments.records.issue',
   'appointments.records.cancel',
+  'appointments.oath.record',
+  'appointments.assumption.certify',
+  'appointments.assumption.correct',
+  'appointments.assumption.cancel',
 ];
 
 const EVIDENCE_ROLES = [
@@ -397,9 +403,16 @@ async function setupFixture(label: string): Promise<Fixture> {
           'appointment_external_submission_events',
           'appointment_external_actions',
           'appointment_document_version_links',
+          'assumption_outcome_events',
+          'assumption_versions',
+          'assumptions_to_duty',
+          'oath_versions',
+          'oaths_of_office',
+          'appointment_acknowledgments',
           'appointment_versions',
           'appointments',
           'appointment_agency_settings',
+          'service_segments',
           'recruitment_appointment_handoffs',
           'plantilla_position_versions',
           'plantilla_positions',
@@ -920,6 +933,491 @@ it.skipIf(!enabled)(
       );
       expect(resubmittedWhileCorrecting.workflowStatus).toBe('DRAFT');
       expect(resubmittedWhileCorrecting.externalStanding).toBe('RESUBMITTED');
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'records the appointee acknowledgment, oath, and Assumption to Duty through corrections',
+  async () => {
+    const fixture = await setupFixture('OATH');
+    const { ids, admin, preparer, authority, appointments } = fixture;
+    try {
+      await appointments.configureSettings(preparer, {
+        regulatoryStatus: 'REGULATED',
+        statusEvidenceDocumentVersionId: ids.statusEvidenceVersion,
+      });
+      const created = await appointments.create(preparer, {
+        selectionDecisionId: ids.selectionDecision,
+        ...versionInput(fixture),
+      });
+      await appointments.submit(preparer, created.id);
+      await appointments.endorse(preparer, created.id);
+      const issued = await appointments.issue(authority, created.id, 'oath-issue');
+      const issuedVersionId = issued.currentVersion?.id ?? '';
+      expect(issued.workflowStatus).toBe('ISSUED');
+
+      const oathInput = {
+        oathDate: '2026-10-03',
+        administeredByMembershipId: authority.membershipId,
+        authority: 'City Mayor',
+        place: 'City Hall',
+        documentVersionId: ids.formVersion,
+      };
+      await expect(appointments.recordOath(authority, created.id, oathInput)).rejects.toMatchObject(
+        { code: 'APPOINTMENT_ASSUMPTION_NOT_READY', statusCode: 409 },
+      );
+
+      const receiptInput = {
+        acknowledgedAt: '2026-10-02T01:00:00.000Z',
+        evidenceDocumentVersionId: ids.formVersion,
+      };
+      await expect(
+        appointments.recordReceipt(preparer, created.id, {
+          ...receiptInput,
+          acknowledgedAt: '2000-01-01T00:00:00.000Z',
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_RECEIPT_DATE_INVALID', statusCode: 409 });
+      await expect(
+        appointments.recordReceipt(preparer, created.id, {
+          ...receiptInput,
+          evidenceDocumentVersionId: ids.unfinalizedVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_RECEIPT_EVIDENCE_INVALID', statusCode: 409 });
+
+      const receipt = await appointments.recordReceipt(
+        preparer,
+        created.id,
+        receiptInput,
+        'oath-receipt',
+      );
+      const receivedVersion = receipt.versions.find((version) => version.id === issuedVersionId);
+      expect(receivedVersion?.acknowledgment?.acknowledgedAt).toBe('2026-10-02T01:00:00.000Z');
+      expect(receivedVersion?.acknowledgment?.evidence.documentVersionId).toBe(ids.formVersion);
+      expect(receivedVersion?.assumption?.status).toBe('PENDING');
+      expect(receivedVersion?.assumption?.currentVersion).toBeNull();
+
+      const replayedReceipt = await appointments.recordReceipt(
+        preparer,
+        created.id,
+        receiptInput,
+        'oath-receipt',
+      );
+      expect(
+        await admin.auditEvent.count({
+          where: {
+            agencyId: fixture.agencyId,
+            action: 'APPOINTMENT_RECEIPT_RECORDED',
+            entityId: created.id,
+          },
+        }),
+      ).toBe(1);
+      expect(
+        replayedReceipt.versions.find((version) => version.id === issuedVersionId)?.assumption
+          ?.status,
+      ).toBe('PENDING');
+
+      await expect(
+        appointments.recordReceipt(preparer, created.id, receiptInput),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_RECEIPT_ALREADY_RECORDED',
+        statusCode: 409,
+      });
+
+      await expect(
+        appointments.recordOath(authority, created.id, { ...oathInput, oathDate: '2026-10-01' }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_OATH_DATE_INVALID', statusCode: 409 });
+      await expect(
+        appointments.recordOath(authority, created.id, {
+          ...oathInput,
+          documentVersionId: ids.unfinalizedVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_OATH_EVIDENCE_INVALID', statusCode: 409 });
+      await expect(
+        appointments.recordOath(authority, created.id, {
+          ...oathInput,
+          administeredByMembershipId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_OATH_ADMINISTRATOR_INVALID', statusCode: 409 });
+
+      const sworn = await appointments.recordOath(authority, created.id, oathInput, 'oath-record');
+      const oath = sworn.versions.find((version) => version.id === issuedVersionId)?.oath;
+      expect(oath?.versions).toHaveLength(1);
+      expect(oath?.currentVersion).toMatchObject({ versionNo: 1, oathDate: '2026-10-03' });
+      const firstOathVersionId = oath?.currentVersion?.id ?? '';
+
+      await expect(appointments.recordOath(authority, created.id, oathInput)).rejects.toMatchObject(
+        { code: 'APPOINTMENT_OATH_ALREADY_RECORDED', statusCode: 409 },
+      );
+
+      const correctedOathDetail = await appointments.correctOath(
+        authority,
+        created.id,
+        {
+          ...oathInput,
+          oathDate: '2026-10-04',
+          reason: 'Correct the recorded oath date.',
+          authorityDocumentVersionId: ids.correctionAuthorityVersion,
+        },
+        'oath-correct',
+      );
+      const correctedOath = correctedOathDetail.versions.find(
+        (version) => version.id === issuedVersionId,
+      )?.oath;
+      expect(correctedOath?.versions.map((version) => version.versionNo)).toEqual([1, 2]);
+      expect(correctedOath?.currentVersion).toMatchObject({
+        versionNo: 2,
+        oathDate: '2026-10-04',
+        replacesOathVersionId: firstOathVersionId,
+        correctionReason: 'Correct the recorded oath date.',
+        correctionAuthorityDocumentVersionId: ids.correctionAuthorityVersion,
+      });
+      const currentOathVersionId = correctedOath?.currentVersion?.id ?? '';
+
+      const assumptionInput = {
+        oathVersionId: currentOathVersionId,
+        actualAssumptionDate: '2026-10-05',
+        certifiedByMembershipId: authority.membershipId,
+        certifyingAuthority: 'City Mayor',
+        certifiedAt: '2026-10-05T01:00:00.000Z',
+        documentVersionId: ids.formVersion,
+      };
+      await expect(
+        appointments.recordAssumption(authority, created.id, {
+          ...assumptionInput,
+          oathVersionId: firstOathVersionId,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_OATH_MISMATCH', statusCode: 409 });
+      await expect(
+        appointments.recordAssumption(authority, created.id, {
+          ...assumptionInput,
+          actualAssumptionDate: '2026-10-03',
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_DATE_INVALID', statusCode: 409 });
+      await expect(
+        appointments.recordAssumption(authority, created.id, {
+          ...assumptionInput,
+          certifiedByMembershipId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_ASSUMPTION_CERTIFIER_INVALID',
+        statusCode: 409,
+      });
+
+      const assumedDetail = await appointments.recordAssumption(
+        authority,
+        created.id,
+        assumptionInput,
+        'assume-record',
+      );
+      expect(assumedDetail.workflowStatus).toBe('ISSUED');
+      const assumption = assumedDetail.versions.find(
+        (version) => version.id === issuedVersionId,
+      )?.assumption;
+      expect(assumption?.status).toBe('ASSUMED');
+      expect(assumption?.versions).toHaveLength(1);
+      expect(assumption?.currentVersion).toMatchObject({
+        versionNo: 1,
+        oathVersionId: currentOathVersionId,
+        actualAssumptionDate: '2026-10-05',
+      });
+      const firstAssumptionVersionId = assumption?.currentVersion?.id ?? '';
+
+      const issuedContract = await admin.$transaction((transaction) =>
+        appointments.resolveIssuedAppointmentContractInTransaction(
+          transaction,
+          { agencyId: fixture.agencyId },
+          issuedVersionId,
+        ),
+      );
+      expect(issuedContract).toMatchObject({
+        contractSchemaVersion: 1,
+        appointmentId: created.id,
+        appointmentVersionId: issuedVersionId,
+        fullName: 'Ana Reyes',
+        applicationNo: `APPT-APP-${fixture.suffix}`,
+        reservation: { status: 'RESERVED' },
+        externalStanding: 'NOT_SUBMITTED',
+      });
+      expect(issuedContract?.acknowledgment?.acknowledgedAt).toBe('2026-10-02T01:00:00.000Z');
+      expect(issuedContract?.oath?.currentVersion?.id).toBe(currentOathVersionId);
+
+      const assumedContract = await admin.$transaction((transaction) =>
+        appointments.resolveAssumedAppointmentContractInTransaction(
+          transaction,
+          { agencyId: fixture.agencyId },
+          issuedVersionId,
+        ),
+      );
+      expect(assumedContract?.assumption).toMatchObject({
+        status: 'ASSUMED',
+        currentVersion: { id: firstAssumptionVersionId },
+      });
+
+      const correctedAssumptionDetail = await appointments.correctAssumption(
+        authority,
+        created.id,
+        {
+          ...assumptionInput,
+          actualAssumptionDate: '2026-10-06',
+          reason: 'Correct the recorded assumption date.',
+          authorityDocumentVersionId: ids.correctionAuthorityVersion,
+        },
+        'assume-correct',
+      );
+      const correctedAssumption = correctedAssumptionDetail.versions.find(
+        (version) => version.id === issuedVersionId,
+      )?.assumption;
+      expect(correctedAssumption?.versions.map((version) => version.versionNo)).toEqual([1, 2]);
+      expect(correctedAssumption?.currentVersion).toMatchObject({
+        versionNo: 2,
+        actualAssumptionDate: '2026-10-06',
+        replacesAssumptionVersionId: firstAssumptionVersionId,
+        correctionReason: 'Correct the recorded assumption date.',
+      });
+
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.$executeRaw`
+          INSERT INTO "service_segments"
+            ("id", "agency_id", "employee_id", "appointment_id", "organization_unit_id",
+             "appointment_status", "effective_from", "status", "created_by_membership_id")
+          VALUES
+            (${randomUUID()}::uuid, ${fixture.agencyId}::uuid, ${randomUUID()}::uuid,
+             ${created.id}::uuid, ${ids.unit}::uuid, 'PERMANENT', '2026-10-06'::date,
+             'ACTIVE', ${preparer.membershipId}::uuid)
+        `;
+      });
+
+      await expect(
+        appointments.correctAssumption(authority, created.id, {
+          ...assumptionInput,
+          reason: 'Correct again after service began.',
+          authorityDocumentVersionId: ids.correctionAuthorityVersion,
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_ASSUMPTION_ACTIVATED',
+        statusCode: 409,
+      });
+
+      expect(correctedAssumptionDetail.history.map((event) => event.action)).toEqual([
+        'APPOINTMENT_PREPARED',
+        'APPOINTMENT_SUBMITTED',
+        'APPOINTMENT_ENDORSED',
+        'APPOINTMENT_ISSUED',
+      ]);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'records an evidenced failure to assume and releases the reservation',
+  async () => {
+    const fixture = await setupFixture('OUTCOME');
+    const { ids, admin, preparer, authority, appointments } = fixture;
+    try {
+      await appointments.configureSettings(preparer, {
+        regulatoryStatus: 'REGULATED',
+        statusEvidenceDocumentVersionId: ids.statusEvidenceVersion,
+      });
+      const created = await appointments.create(preparer, {
+        selectionDecisionId: ids.selectionDecision,
+        ...versionInput(fixture),
+      });
+      await appointments.submit(preparer, created.id);
+      await appointments.endorse(preparer, created.id);
+      await appointments.issue(authority, created.id, 'outcome-issue');
+      await appointments.recordReceipt(
+        preparer,
+        created.id,
+        {
+          acknowledgedAt: '2026-10-02T01:00:00.000Z',
+          evidenceDocumentVersionId: ids.formVersion,
+        },
+        'outcome-receipt',
+      );
+
+      const failureInput = {
+        noticeDate: '2026-10-03',
+        deadlineDate: '2026-10-05',
+        outcomeDate: '2026-10-06',
+        reason: 'The appointee did not report for duty.',
+        authorizedByMembershipId: preparer.membershipId,
+        authorityDocumentVersionId: ids.cancellationAuthorityVersion,
+        evidenceDocumentVersionId: ids.formVersion,
+      };
+      await expect(
+        appointments.recordAssumptionFailure(preparer, created.id, {
+          ...failureInput,
+          outcomeDate: '2000-01-01',
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_ASSUMPTION_OUTCOME_DATE_INVALID',
+        statusCode: 409,
+      });
+      await expect(
+        appointments.recordAssumptionFailure(preparer, created.id, {
+          ...failureInput,
+          evidenceDocumentVersionId: ids.unfinalizedVersion,
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_ASSUMPTION_OUTCOME_EVIDENCE_INVALID',
+        statusCode: 409,
+      });
+      await expect(
+        appointments.recordAssumptionFailure(preparer, created.id, {
+          ...failureInput,
+          authorizedByMembershipId: randomUUID(),
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_ASSUMPTION_OUTCOME_AUTHORIZER_INVALID',
+        statusCode: 409,
+      });
+
+      const failed = await appointments.recordAssumptionFailure(
+        preparer,
+        created.id,
+        failureInput,
+        'outcome-fail',
+      );
+      expect(failed.workflowStatus).toBe('ISSUED');
+      const assumption = failed.versions.find(
+        (version) => version.id === failed.currentVersion?.id,
+      )?.assumption;
+      expect(assumption?.status).toBe('DID_NOT_ASSUME');
+      expect(assumption?.currentVersion).toBeNull();
+      expect(assumption?.outcome).toMatchObject({
+        outcome: 'DID_NOT_ASSUME',
+        noticeDate: '2026-10-03',
+        deadlineDate: '2026-10-05',
+        outcomeDate: '2026-10-06',
+        reason: 'The appointee did not report for duty.',
+        authorizedByMembershipId: preparer.membershipId,
+        authorityDocumentVersionId: ids.cancellationAuthorityVersion,
+        evidenceDocumentVersionId: ids.formVersion,
+      });
+
+      const versions = await admin.plantillaPositionVersion.findMany({
+        where: { positionId: ids.position },
+        orderBy: { versionNo: 'asc' },
+      });
+      expect(versions.at(-1)?.domainStatus).toBe('VACANT');
+      const failureEvent = await admin.auditEvent.findFirst({
+        where: { agencyId: fixture.agencyId, action: 'APPOINTMENT_ASSUMPTION_FAILED' },
+      });
+      expect(failureEvent?.metadata).toMatchObject({ reservationReleased: true });
+
+      const replayed = await appointments.recordAssumptionFailure(
+        preparer,
+        created.id,
+        failureInput,
+        'outcome-fail',
+      );
+      expect(replayed.workflowStatus).toBe('ISSUED');
+      expect(
+        await admin.auditEvent.count({
+          where: {
+            agencyId: fixture.agencyId,
+            action: 'APPOINTMENT_ASSUMPTION_FAILED',
+            entityId: created.id,
+          },
+        }),
+      ).toBe(1);
+
+      await expect(
+        appointments.recordAssumption(authority, created.id, {
+          oathVersionId: randomUUID(),
+          actualAssumptionDate: '2026-10-06',
+          certifiedByMembershipId: authority.membershipId,
+          certifyingAuthority: 'City Mayor',
+          certifiedAt: '2026-10-06T01:00:00.000Z',
+          documentVersionId: ids.formVersion,
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_ASSUMPTION_NOT_PENDING',
+        statusCode: 409,
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'records a lawful pre-assumption cancellation and releases the reservation',
+  async () => {
+    const fixture = await setupFixture('CANCEL');
+    const { ids, admin, preparer, authority, appointments } = fixture;
+    try {
+      await appointments.configureSettings(preparer, {
+        regulatoryStatus: 'REGULATED',
+        statusEvidenceDocumentVersionId: ids.statusEvidenceVersion,
+      });
+      const created = await appointments.create(preparer, {
+        selectionDecisionId: ids.selectionDecision,
+        ...versionInput(fixture),
+      });
+      await appointments.submit(preparer, created.id);
+      await appointments.endorse(preparer, created.id);
+      await appointments.issue(authority, created.id, 'cancel-issue');
+      await appointments.recordReceipt(
+        preparer,
+        created.id,
+        {
+          acknowledgedAt: '2026-10-02T01:00:00.000Z',
+          evidenceDocumentVersionId: ids.formVersion,
+        },
+        'cancel-receipt',
+      );
+
+      const cancelled = await appointments.recordAssumptionCancellation(
+        authority,
+        created.id,
+        {
+          outcomeDate: '2026-10-06',
+          reason: 'The appointing authority cancelled before the assumption.',
+          authorizedByMembershipId: authority.membershipId,
+          authorityDocumentVersionId: ids.cancellationAuthorityVersion,
+          evidenceDocumentVersionId: ids.formVersion,
+        },
+        'outcome-cancel',
+      );
+      expect(cancelled.workflowStatus).toBe('CANCELLED');
+      const assumption = cancelled.versions.find(
+        (version) => version.id === cancelled.currentVersion?.id,
+      )?.assumption;
+      expect(assumption?.status).toBe('CANCELLED');
+      expect(assumption?.outcome).toMatchObject({
+        outcome: 'CANCELLED',
+        outcomeDate: '2026-10-06',
+        reason: 'The appointing authority cancelled before the assumption.',
+      });
+
+      const versions = await admin.plantillaPositionVersion.findMany({
+        where: { positionId: ids.position },
+        orderBy: { versionNo: 'asc' },
+      });
+      expect(versions.at(-1)?.domainStatus).toBe('VACANT');
+      const cancellationEvent = await admin.auditEvent.findFirst({
+        where: { agencyId: fixture.agencyId, action: 'APPOINTMENT_ASSUMPTION_CANCELLED' },
+      });
+      expect(cancellationEvent?.metadata).toMatchObject({ reservationReleased: true });
+      const appointmentCancellationEvent = await admin.auditEvent.findFirst({
+        where: { agencyId: fixture.agencyId, action: 'APPOINTMENT_CANCELLED' },
+      });
+      expect(appointmentCancellationEvent).toMatchObject({
+        previousStatus: 'ISSUED',
+        newStatus: 'CANCELLED',
+        entityId: created.id,
+      });
+      expect(appointmentCancellationEvent?.metadata).toMatchObject({
+        assumptionId: assumption?.id,
+        reservationReleased: true,
+      });
     } finally {
       await fixture.dispose();
     }

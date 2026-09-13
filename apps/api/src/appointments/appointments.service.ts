@@ -8,6 +8,8 @@ import { PlantillaPositionsService } from '../plantilla-positions/plantilla-posi
 import { QualificationStandardsService } from '../qualification-standards/qualification-standards.service';
 import { SelectionService } from '../recruitment/selection.service';
 import {
+  APPOINTMENT_ASSUMPTION_OUTCOMES,
+  APPOINTMENT_ASSUMPTION_STATUSES,
   APPOINTMENT_EMPLOYMENT_STATUSES,
   APPOINTMENT_EXTERNAL_ACTIONS,
   APPOINTMENT_EXTERNAL_SUBMISSION_EVENT_TYPES,
@@ -16,13 +18,20 @@ import {
   APPOINTMENT_REGULATORY_STATUSES,
   APPOINTMENT_SIGNATURE_METHODS,
   APPOINTMENT_WORKFLOW_STATUSES,
+  type appointmentAssumptionCancellationSchema,
+  type appointmentAssumptionCorrectionSchema,
+  type appointmentAssumptionFailureSchema,
+  type appointmentAssumptionSchema,
   type appointmentCancelSchema,
   type appointmentCorrectionSchema,
   type appointmentCreateSchema,
   type appointmentExternalActionSchema,
   type appointmentExternalSubmissionSchema,
   type appointmentListSchema,
+  type appointmentOathCorrectionSchema,
+  type appointmentOathSchema,
   type appointmentReasonSchema,
+  type appointmentReceiptSchema,
   type appointmentSettingsSchema,
   type appointmentUpdateSchema,
 } from './appointments.schemas';
@@ -40,6 +49,18 @@ export type AppointmentExternalSubmissionEventType =
 export type AppointmentExternalAction = (typeof APPOINTMENT_EXTERNAL_ACTIONS)[number];
 export type AppointmentExternalStanding =
   'NOT_SUBMITTED' | AppointmentExternalSubmissionEventType | AppointmentExternalAction;
+export type AppointmentAssumptionStatus = (typeof APPOINTMENT_ASSUMPTION_STATUSES)[number];
+export type AppointmentAssumptionOutcome = (typeof APPOINTMENT_ASSUMPTION_OUTCOMES)[number];
+
+const ASSUMPTION_LIFECYCLE_ACTIONS = [
+  'APPOINTMENT_RECEIPT_RECORDED',
+  'APPOINTMENT_OATH_RECORDED',
+  'APPOINTMENT_OATH_CORRECTED',
+  'APPOINTMENT_ASSUMPTION_RECORDED',
+  'APPOINTMENT_ASSUMPTION_CORRECTED',
+  'APPOINTMENT_ASSUMPTION_FAILED',
+  'APPOINTMENT_ASSUMPTION_CANCELLED',
+] as const;
 
 export const REQUIRED_APPOINTMENT_LINK_ROLES: readonly AppointmentLinkRole[] = [
   'PDS',
@@ -88,6 +109,9 @@ export interface AppointmentVersionSummary {
 
 export interface AppointmentVersionDetail extends AppointmentVersionSummary {
   evidence: AppointmentEvidenceSummary[];
+  acknowledgment: AppointmentAcknowledgmentSummary | null;
+  oath: AppointmentOathSummary | null;
+  assumption: AppointmentAssumptionSummary | null;
 }
 
 export interface AppointmentSummary {
@@ -156,6 +180,116 @@ export interface AppointmentExternalActionSummary {
   evidence: AppointmentExternalEvidenceSummary;
 }
 
+export interface AppointmentRecordedEvidenceSummary {
+  documentVersionId: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: string;
+  versionNo: number;
+  issuedAt: string;
+}
+
+export interface AppointmentAcknowledgmentSummary {
+  acknowledgedAt: string;
+  evidence: AppointmentRecordedEvidenceSummary;
+}
+
+export interface AppointmentOathVersionSummary {
+  id: string;
+  versionNo: number;
+  oathDate: string;
+  administeredByMembershipId: string;
+  authority: string;
+  place: string | null;
+  permittedVirtualMethod: string | null;
+  replacesOathVersionId: string | null;
+  correctionReason: string | null;
+  correctionAuthorityDocumentVersionId: string | null;
+  recordedAt: string;
+  evidence: AppointmentRecordedEvidenceSummary;
+}
+
+export interface AppointmentOathSummary {
+  id: string;
+  currentVersion: AppointmentOathVersionSummary | null;
+  versions: AppointmentOathVersionSummary[];
+}
+
+export interface AppointmentAssumptionVersionSummary {
+  id: string;
+  versionNo: number;
+  oathVersionId: string;
+  actualAssumptionDate: string;
+  certifiedByMembershipId: string;
+  certifyingAuthority: string;
+  certifiedAt: string;
+  replacesAssumptionVersionId: string | null;
+  correctionReason: string | null;
+  correctionAuthorityDocumentVersionId: string | null;
+  recordedAt: string;
+  evidence: AppointmentRecordedEvidenceSummary;
+}
+
+export interface AppointmentAssumptionOutcomeSummary {
+  id: string;
+  outcome: AppointmentAssumptionOutcome;
+  noticeDate: string | null;
+  deadlineDate: string | null;
+  outcomeDate: string;
+  reason: string;
+  authorizedByMembershipId: string;
+  authorityDocumentVersionId: string;
+  evidenceDocumentVersionId: string;
+  recordedAt: string;
+}
+
+export interface AppointmentAssumptionSummary {
+  id: string;
+  appointmentVersionId: string;
+  status: AppointmentAssumptionStatus;
+  currentVersion: AppointmentAssumptionVersionSummary | null;
+  versions: AppointmentAssumptionVersionSummary[];
+  outcome: AppointmentAssumptionOutcomeSummary | null;
+}
+
+export interface AppointmentContractPosition {
+  id: string;
+  itemNumber: string;
+  title: string | null;
+  salaryGrade: number | null;
+  organizationUnitId: string | null;
+}
+
+export interface IssuedAppointmentContract {
+  contractSchemaVersion: number;
+  appointmentId: string;
+  appointmentVersionId: string;
+  personKey: string;
+  fullName: string;
+  applicationNo: string;
+  employmentStatus: AppointmentEmploymentStatus;
+  natureOfAppointment: AppointmentNature;
+  formVariant: AppointmentFormVariant;
+  signatureMethod: AppointmentSignatureMethod;
+  issuedAt: string;
+  effectivityDate: string;
+  position: AppointmentContractPosition;
+  reservation: { id: string; status: string } | null;
+  compensation: { salaryGrade: number; salaryStep: number };
+  externalStanding: AppointmentExternalStanding;
+  acknowledgment: AppointmentAcknowledgmentSummary | null;
+  oath: AppointmentOathSummary | null;
+}
+
+export interface AssumedAppointmentContract extends IssuedAppointmentContract {
+  acknowledgment: AppointmentAcknowledgmentSummary;
+  oath: AppointmentOathSummary;
+  assumption: AppointmentAssumptionSummary;
+}
+
+export const APPOINTMENT_CONTRACT_SCHEMA_VERSION = 1;
+
 export interface AppointmentDetail extends AppointmentSummary {
   selectionPackage: unknown;
   versions: AppointmentVersionDetail[];
@@ -201,6 +335,16 @@ export class AppointmentServiceError extends Error {
   }
 }
 
+const evidenceDocumentVersionSelect = {
+  documentId: true,
+  versionNo: true,
+  issuedAt: true,
+  createdAt: true,
+  document: {
+    select: { documentNo: true, documentType: true, classification: true },
+  },
+};
+
 const versionCoreSelect = {
   id: true,
   appointmentId: true,
@@ -225,6 +369,79 @@ const versionCoreSelect = {
   updatedAt: true,
 } satisfies Prisma.AppointmentVersionSelect;
 
+const acknowledgmentSelect = {
+  id: true,
+  appointmentVersionId: true,
+  acknowledgedAt: true,
+  evidenceDocumentVersionId: true,
+  evidenceDocumentVersion: { select: evidenceDocumentVersionSelect },
+} satisfies Prisma.AppointmentAcknowledgmentSelect;
+
+const oathVersionSelect = {
+  id: true,
+  oathId: true,
+  versionNo: true,
+  oathDate: true,
+  administeredByMembershipId: true,
+  authority: true,
+  place: true,
+  permittedVirtualMethod: true,
+  documentVersionId: true,
+  replacesOathVersionId: true,
+  correctionReason: true,
+  correctionAuthorityDocumentVersionId: true,
+  recordedAt: true,
+  documentVersion: { select: evidenceDocumentVersionSelect },
+} satisfies Prisma.OathVersionSelect;
+
+const oathSelect = {
+  id: true,
+  appointmentVersionId: true,
+  currentVersionId: true,
+  currentVersion: { select: oathVersionSelect },
+  versions: { select: oathVersionSelect, orderBy: { versionNo: 'asc' as const } },
+} satisfies Prisma.OathOfOfficeSelect;
+
+const assumptionVersionSelect = {
+  id: true,
+  assumptionId: true,
+  versionNo: true,
+  oathVersionId: true,
+  actualAssumptionDate: true,
+  certifiedByMembershipId: true,
+  certifyingAuthority: true,
+  certifiedAt: true,
+  documentVersionId: true,
+  replacesAssumptionVersionId: true,
+  correctionReason: true,
+  correctionAuthorityDocumentVersionId: true,
+  recordedAt: true,
+  documentVersion: { select: evidenceDocumentVersionSelect },
+} satisfies Prisma.AssumptionVersionSelect;
+
+const assumptionOutcomeSelect = {
+  id: true,
+  outcome: true,
+  noticeDate: true,
+  deadlineDate: true,
+  outcomeDate: true,
+  reason: true,
+  authorizedByMembershipId: true,
+  authorityDocumentVersionId: true,
+  evidenceDocumentVersionId: true,
+  recordedAt: true,
+} satisfies Prisma.AssumptionOutcomeEventSelect;
+
+const assumptionSelect = {
+  id: true,
+  appointmentVersionId: true,
+  status: true,
+  currentVersionId: true,
+  currentVersion: { select: assumptionVersionSelect },
+  versions: { select: assumptionVersionSelect, orderBy: { versionNo: 'asc' as const } },
+  outcome: { select: assumptionOutcomeSelect },
+} satisfies Prisma.AssumptionToDutySelect;
+
 const versionDetailSelect = {
   ...versionCoreSelect,
   links: {
@@ -245,17 +462,25 @@ const versionDetailSelect = {
       },
     },
   },
+  acknowledgment: { select: acknowledgmentSelect },
+  oath: { select: oathSelect },
+  assumption: { select: assumptionSelect },
 } satisfies Prisma.AppointmentVersionSelect;
 
-const externalEvidenceSelect = {
-  documentId: true,
-  versionNo: true,
-  issuedAt: true,
-  createdAt: true,
-  document: {
-    select: { documentNo: true, documentType: true, classification: true },
+const contractVersionSelect = {
+  ...versionCoreSelect,
+  appointment: {
+    select: {
+      id: true,
+      positionId: true,
+      appointeePersonKey: true,
+      recruitmentSelectionPackage: true,
+    },
   },
-};
+  acknowledgment: { select: acknowledgmentSelect },
+  oath: { select: oathSelect },
+  assumption: { select: assumptionSelect },
+} satisfies Prisma.AppointmentVersionSelect;
 
 const externalSubmissionSelect = {
   id: true,
@@ -267,7 +492,7 @@ const externalSubmissionSelect = {
   recordedByMembershipId: true,
   reason: true,
   evidenceDocumentVersionId: true,
-  evidenceDocumentVersion: { select: externalEvidenceSelect },
+  evidenceDocumentVersion: { select: evidenceDocumentVersionSelect },
 } satisfies Prisma.AppointmentExternalSubmissionEventSelect;
 
 const externalActionSelect = {
@@ -279,7 +504,7 @@ const externalActionSelect = {
   recordedByMembershipId: true,
   reason: true,
   evidenceDocumentVersionId: true,
-  evidenceDocumentVersion: { select: externalEvidenceSelect },
+  evidenceDocumentVersion: { select: evidenceDocumentVersionSelect },
 } satisfies Prisma.AppointmentExternalActionSelect;
 
 const appointmentSelect = {
@@ -326,6 +551,21 @@ type ExternalSubmissionRecord = Prisma.AppointmentExternalSubmissionEventGetPayl
 type ExternalActionRecord = Prisma.AppointmentExternalActionGetPayload<{
   select: typeof externalActionSelect;
 }>;
+type AcknowledgmentRecord = Prisma.AppointmentAcknowledgmentGetPayload<{
+  select: typeof acknowledgmentSelect;
+}>;
+type OathVersionRecord = Prisma.OathVersionGetPayload<{ select: typeof oathVersionSelect }>;
+type OathRecord = Prisma.OathOfOfficeGetPayload<{ select: typeof oathSelect }>;
+type AssumptionVersionRecord = Prisma.AssumptionVersionGetPayload<{
+  select: typeof assumptionVersionSelect;
+}>;
+type AssumptionOutcomeRecord = Prisma.AssumptionOutcomeEventGetPayload<{
+  select: typeof assumptionOutcomeSelect;
+}>;
+type AssumptionRecord = Prisma.AssumptionToDutyGetPayload<{ select: typeof assumptionSelect }>;
+type ContractVersionRecord = Prisma.AppointmentVersionGetPayload<{
+  select: typeof contractVersionSelect;
+}>;
 
 const AUDIT_METADATA_KEYS = new Set([
   'selectionDecisionId',
@@ -346,6 +586,19 @@ const AUDIT_METADATA_KEYS = new Set([
   'externalReference',
   'receivingOffice',
   'externalStanding',
+  'oathId',
+  'oathVersionId',
+  'oathDate',
+  'predecessorOathVersionId',
+  'assumptionId',
+  'assumptionVersionId',
+  'predecessorAssumptionVersionId',
+  'actualAssumptionDate',
+  'outcome',
+  'outcomeDate',
+  'noticeDate',
+  'deadlineDate',
+  'authorityDocumentVersionId',
 ]);
 
 // External events are the source of truth: the standing is whichever supported
@@ -413,13 +666,17 @@ function nullableNumberField(
   return typeof item === 'number' ? item : null;
 }
 
-function manilaToday(): string {
+function manilaDate(value: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date());
+  }).format(value);
+}
+
+function manilaToday(): string {
+  return manilaDate(new Date());
 }
 
 function toDatabaseDate(value: string): Date {
@@ -469,6 +726,28 @@ function versionStatus(value: string): 'DRAFT' | 'ISSUED' | 'SUPERSEDED' {
   if (value === 'DRAFT' || value === 'ISSUED' || value === 'SUPERSEDED') return value;
   throw new AppointmentServiceError(
     'The stored Appointment version status is invalid.',
+    500,
+    'APPOINTMENT_DATA_INVALID',
+  );
+}
+
+function assumptionStatus(value: string): AppointmentAssumptionStatus {
+  if (APPOINTMENT_ASSUMPTION_STATUSES.includes(value as AppointmentAssumptionStatus)) {
+    return value as AppointmentAssumptionStatus;
+  }
+  throw new AppointmentServiceError(
+    'The stored Assumption to Duty status is invalid.',
+    500,
+    'APPOINTMENT_DATA_INVALID',
+  );
+}
+
+function assumptionOutcome(value: string): AppointmentAssumptionOutcome {
+  if (APPOINTMENT_ASSUMPTION_OUTCOMES.includes(value as AppointmentAssumptionOutcome)) {
+    return value as AppointmentAssumptionOutcome;
+  }
+  throw new AppointmentServiceError(
+    'The stored Assumption to Duty outcome is invalid.',
     500,
     'APPOINTMENT_DATA_INVALID',
   );
@@ -528,15 +807,24 @@ function versionDetail(record: AppointmentVersionDetailRecord): AppointmentVersi
       versionNo: link.documentVersion.versionNo,
       issuedAt: formatDateTime(link.documentVersion.issuedAt ?? link.documentVersion.createdAt),
     })),
+    acknowledgment: record.acknowledgment ? acknowledgmentSummary(record.acknowledgment) : null,
+    oath: oathSummary(record.oath),
+    assumption: assumptionSummary(record.assumption),
   };
 }
 
-function externalEvidence(
-  record: ExternalSubmissionRecord | ExternalActionRecord,
-): AppointmentExternalEvidenceSummary {
-  const version = record.evidenceDocumentVersion;
+function recordedEvidence(
+  documentVersionId: string,
+  version: {
+    documentId: string;
+    versionNo: number;
+    issuedAt: Date | null;
+    createdAt: Date;
+    document: { documentNo: string | null; documentType: string; classification: string };
+  },
+): AppointmentRecordedEvidenceSummary {
   return {
-    documentVersionId: record.evidenceDocumentVersionId,
+    documentVersionId,
     documentId: version.documentId,
     documentNo: version.document.documentNo,
     documentType: version.document.documentType,
@@ -544,6 +832,12 @@ function externalEvidence(
     versionNo: version.versionNo,
     issuedAt: formatDateTime(version.issuedAt ?? version.createdAt),
   };
+}
+
+function externalEvidence(
+  record: ExternalSubmissionRecord | ExternalActionRecord,
+): AppointmentExternalEvidenceSummary {
+  return recordedEvidence(record.evidenceDocumentVersionId, record.evidenceDocumentVersion);
 }
 
 function externalSubmissionSummary(
@@ -572,6 +866,87 @@ function externalActionSummary(record: ExternalActionRecord): AppointmentExterna
     recordedByMembershipId: record.recordedByMembershipId,
     reason: record.reason,
     evidence: externalEvidence(record),
+  };
+}
+
+function acknowledgmentSummary(record: AcknowledgmentRecord): AppointmentAcknowledgmentSummary {
+  return {
+    acknowledgedAt: formatDateTime(record.acknowledgedAt),
+    evidence: recordedEvidence(record.evidenceDocumentVersionId, record.evidenceDocumentVersion),
+  };
+}
+
+function oathVersionSummary(record: OathVersionRecord): AppointmentOathVersionSummary {
+  return {
+    id: record.id,
+    versionNo: record.versionNo,
+    oathDate: formatDate(record.oathDate),
+    administeredByMembershipId: record.administeredByMembershipId,
+    authority: record.authority,
+    place: record.place,
+    permittedVirtualMethod: record.permittedVirtualMethod,
+    replacesOathVersionId: record.replacesOathVersionId,
+    correctionReason: record.correctionReason,
+    correctionAuthorityDocumentVersionId: record.correctionAuthorityDocumentVersionId,
+    recordedAt: formatDateTime(record.recordedAt),
+    evidence: recordedEvidence(record.documentVersionId, record.documentVersion),
+  };
+}
+
+function oathSummary(record: OathRecord | null): AppointmentOathSummary | null {
+  if (!record) return null;
+  return {
+    id: record.id,
+    currentVersion: record.currentVersion ? oathVersionSummary(record.currentVersion) : null,
+    versions: record.versions.map(oathVersionSummary),
+  };
+}
+
+function assumptionVersionSummary(
+  record: AssumptionVersionRecord,
+): AppointmentAssumptionVersionSummary {
+  return {
+    id: record.id,
+    versionNo: record.versionNo,
+    oathVersionId: record.oathVersionId,
+    actualAssumptionDate: formatDate(record.actualAssumptionDate),
+    certifiedByMembershipId: record.certifiedByMembershipId,
+    certifyingAuthority: record.certifyingAuthority,
+    certifiedAt: formatDateTime(record.certifiedAt),
+    replacesAssumptionVersionId: record.replacesAssumptionVersionId,
+    correctionReason: record.correctionReason,
+    correctionAuthorityDocumentVersionId: record.correctionAuthorityDocumentVersionId,
+    recordedAt: formatDateTime(record.recordedAt),
+    evidence: recordedEvidence(record.documentVersionId, record.documentVersion),
+  };
+}
+
+function assumptionOutcomeSummary(
+  record: AssumptionOutcomeRecord,
+): AppointmentAssumptionOutcomeSummary {
+  return {
+    id: record.id,
+    outcome: assumptionOutcome(record.outcome),
+    noticeDate: record.noticeDate ? formatDate(record.noticeDate) : null,
+    deadlineDate: record.deadlineDate ? formatDate(record.deadlineDate) : null,
+    outcomeDate: formatDate(record.outcomeDate),
+    reason: record.reason,
+    authorizedByMembershipId: record.authorizedByMembershipId,
+    authorityDocumentVersionId: record.authorityDocumentVersionId,
+    evidenceDocumentVersionId: record.evidenceDocumentVersionId,
+    recordedAt: formatDateTime(record.recordedAt),
+  };
+}
+
+function assumptionSummary(record: AssumptionRecord | null): AppointmentAssumptionSummary | null {
+  if (!record) return null;
+  return {
+    id: record.id,
+    appointmentVersionId: record.appointmentVersionId,
+    status: assumptionStatus(record.status),
+    currentVersion: record.currentVersion ? assumptionVersionSummary(record.currentVersion) : null,
+    versions: record.versions.map(assumptionVersionSummary),
+    outcome: record.outcome ? assumptionOutcomeSummary(record.outcome) : null,
   };
 }
 
@@ -1267,44 +1642,27 @@ export class AppointmentsService {
             'APPOINTMENT_CANCELLATION_AUTHORITY_INVALID',
           );
         }
-        const reservation = await this.plantillaPositions.resolveReservationInTransaction(
+        const reservationReleased = await this.releaseReservationForAppointmentInTransaction(
           transaction,
           context,
-          record.positionId,
+          record,
+          `Appointment cancelled: ${input.reason}`,
+          idempotencyKey,
         );
-        const reservationReleased = reservation?.status === 'RESERVED';
-        if (reservationReleased) {
-          await this.plantillaPositions.releaseReservationInTransaction(
-            transaction,
-            context,
-            record.positionId,
-            manilaToday(),
-            `Appointment cancelled: ${input.reason}`,
-            idempotencyKey ? `${idempotencyKey}:position` : undefined,
-          );
-        }
-        await transaction.appointment.update({
-          where: { agencyId_id: { agencyId: context.agencyId, id: appointmentId } },
-          data: {
-            workflowStatus: 'CANCELLED',
-            updatedByMembershipId: context.membershipId,
-            rowVersion: { increment: 1 },
-          },
-        });
-        await this.writeAudit(transaction, context, {
-          action: 'APPOINTMENT_CANCELLED',
-          entityId: appointmentId,
-          previousStatus: record.workflowStatus,
-          newStatus: 'CANCELLED',
-          reason: input.reason,
-          metadata: {
+        await this.cancelAppointmentRecordInTransaction(
+          transaction,
+          context,
+          appointmentId,
+          record.workflowStatus,
+          input.reason,
+          {
             positionId: record.positionId,
             versionId: record.currentVersion?.id ?? null,
             reservationReleased,
             documentVersionId: input.authorityDocumentVersionId,
           },
           idempotencyKey,
-        });
+        );
         return this.detailInTransaction(transaction, context, appointmentId);
       },
     );
@@ -1575,6 +1933,561 @@ export class AppointmentsService {
     );
   }
 
+  async recordReceipt(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentReceiptSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.assumption.create',
+      'APPOINTMENT_RECEIPT_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_RECEIPT_RECORDED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedAppointment(record);
+        if (version.acknowledgment || version.assumption) {
+          throw new AppointmentServiceError(
+            'The issued Appointment already has a recorded acknowledgment.',
+            409,
+            'APPOINTMENT_RECEIPT_ALREADY_RECORDED',
+          );
+        }
+        const acknowledgedAt = new Date(input.acknowledgedAt);
+        if (!version.issuedAt || acknowledgedAt.getTime() < version.issuedAt.getTime()) {
+          throw new AppointmentServiceError(
+            'The acknowledgment cannot precede issuance of the Appointment.',
+            409,
+            'APPOINTMENT_RECEIPT_DATE_INVALID',
+          );
+        }
+        const evidence = await this.requireFinalizedEvidence(
+          transaction,
+          context,
+          input.evidenceDocumentVersionId,
+          'The acknowledgment evidence must be a finalized Document Version.',
+          'APPOINTMENT_RECEIPT_EVIDENCE_INVALID',
+        );
+        await transaction.appointmentAcknowledgment.create({
+          data: {
+            agencyId: context.agencyId,
+            appointmentVersionId: version.id,
+            acknowledgedAt,
+            evidenceDocumentVersionId: evidence.id,
+          },
+          select: { id: true },
+        });
+        const assumption = await transaction.assumptionToDuty.create({
+          data: {
+            agencyId: context.agencyId,
+            appointmentVersionId: version.id,
+            status: 'PENDING',
+            createdByMembershipId: context.membershipId,
+            updatedByMembershipId: context.membershipId,
+          },
+          select: { id: true },
+        });
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_RECEIPT_RECORDED',
+          entityId: appointmentId,
+          previousStatus: 'ISSUED',
+          newStatus: 'PENDING',
+          reason:
+            'The appointee acknowledged the issued Appointment and the pending Assumption to Duty opened.',
+          metadata: {
+            versionId: version.id,
+            assumptionId: assumption.id,
+            documentVersionId: evidence.id,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
+  async recordOath(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentOathSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(context, 'appointments.oath.record', 'APPOINTMENT_OATH_FORBIDDEN');
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_OATH_RECORDED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedAppointment(record);
+        this.requirePendingAssumption(version);
+        if (version.oath) {
+          throw new AppointmentServiceError(
+            'The Appointment already has a recorded oath of office.',
+            409,
+            'APPOINTMENT_OATH_ALREADY_RECORDED',
+          );
+        }
+        const oathDate = this.resolveOathDate(input.oathDate, version);
+        const evidence = await this.requireFinalizedEvidence(
+          transaction,
+          context,
+          input.documentVersionId,
+          'The oath evidence must be a finalized Document Version.',
+          'APPOINTMENT_OATH_EVIDENCE_INVALID',
+        );
+        await this.requireActiveMembership(
+          transaction,
+          context,
+          input.administeredByMembershipId,
+          'APPOINTMENT_OATH_ADMINISTRATOR_INVALID',
+          'The oath administrator is not an active Agency Membership.',
+        );
+        const oath = await transaction.oathOfOffice.create({
+          data: {
+            agencyId: context.agencyId,
+            appointmentVersionId: version.id,
+            createdByMembershipId: context.membershipId,
+            updatedByMembershipId: context.membershipId,
+          },
+          select: { id: true },
+        });
+        const recorded = await transaction.oathVersion.create({
+          data: {
+            agencyId: context.agencyId,
+            oathId: oath.id,
+            versionNo: 1,
+            oathDate,
+            administeredByMembershipId: input.administeredByMembershipId,
+            authority: input.authority,
+            place: input.place ?? null,
+            permittedVirtualMethod: input.permittedVirtualMethod ?? null,
+            documentVersionId: evidence.id,
+          },
+          select: { id: true },
+        });
+        await transaction.oathOfOffice.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: oath.id } },
+          data: {
+            currentVersionId: recorded.id,
+            updatedByMembershipId: context.membershipId,
+            rowVersion: { increment: 1 },
+          },
+        });
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_OATH_RECORDED',
+          entityId: appointmentId,
+          previousStatus: 'PENDING',
+          newStatus: 'PENDING',
+          reason: 'The oath of office was recorded from its exact evidence.',
+          metadata: {
+            versionId: version.id,
+            oathId: oath.id,
+            oathVersionId: recorded.id,
+            oathDate: input.oathDate,
+            documentVersionId: evidence.id,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
+  async correctOath(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentOathCorrectionSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(context, 'appointments.oath.record', 'APPOINTMENT_OATH_FORBIDDEN');
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_OATH_CORRECTED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedAppointment(record);
+        this.requirePendingAssumption(version);
+        const oath = version.oath;
+        const predecessor = oath?.currentVersion;
+        if (!oath || !predecessor) {
+          throw new AppointmentServiceError(
+            'The Appointment has no recorded oath to correct.',
+            409,
+            'APPOINTMENT_OATH_NOT_RECORDED',
+          );
+        }
+        const oathDate = this.resolveOathDate(input.oathDate, version);
+        const authority = await this.requireFinalizedEvidence(
+          transaction,
+          context,
+          input.authorityDocumentVersionId,
+          'The oath correction authority must be a finalized Document Version.',
+          'APPOINTMENT_OATH_CORRECTION_AUTHORITY_INVALID',
+        );
+        const evidence = await this.requireFinalizedEvidence(
+          transaction,
+          context,
+          input.documentVersionId,
+          'The oath evidence must be a finalized Document Version.',
+          'APPOINTMENT_OATH_EVIDENCE_INVALID',
+        );
+        await this.requireActiveMembership(
+          transaction,
+          context,
+          input.administeredByMembershipId,
+          'APPOINTMENT_OATH_ADMINISTRATOR_INVALID',
+          'The oath administrator is not an active Agency Membership.',
+        );
+        const recorded = await transaction.oathVersion.create({
+          data: {
+            agencyId: context.agencyId,
+            oathId: oath.id,
+            versionNo: predecessor.versionNo + 1,
+            oathDate,
+            administeredByMembershipId: input.administeredByMembershipId,
+            authority: input.authority,
+            place: input.place ?? null,
+            permittedVirtualMethod: input.permittedVirtualMethod ?? null,
+            documentVersionId: evidence.id,
+            replacesOathVersionId: predecessor.id,
+            correctionReason: input.reason,
+            correctionAuthorityDocumentVersionId: authority.id,
+          },
+          select: { id: true },
+        });
+        await transaction.oathOfOffice.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: oath.id } },
+          data: {
+            currentVersionId: recorded.id,
+            updatedByMembershipId: context.membershipId,
+            rowVersion: { increment: 1 },
+          },
+        });
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_OATH_CORRECTED',
+          entityId: appointmentId,
+          previousStatus: 'PENDING',
+          newStatus: 'PENDING',
+          reason: input.reason,
+          metadata: {
+            versionId: version.id,
+            oathId: oath.id,
+            oathVersionId: recorded.id,
+            predecessorOathVersionId: predecessor.id,
+            oathDate: input.oathDate,
+            documentVersionId: evidence.id,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
+  async recordAssumption(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentAssumptionSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.assumption.certify',
+      'APPOINTMENT_ASSUMPTION_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_ASSUMPTION_RECORDED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedAppointment(record);
+        const assumption = this.requirePendingAssumption(version);
+        const oath = version.oath?.currentVersion;
+        if (!oath) {
+          throw new AppointmentServiceError(
+            'Record the oath of office before the Assumption to Duty.',
+            409,
+            'APPOINTMENT_ASSUMPTION_OATH_REQUIRED',
+          );
+        }
+        if (input.oathVersionId !== oath.id) {
+          throw new AppointmentServiceError(
+            'The Assumption to Duty must link the current oath version.',
+            409,
+            'APPOINTMENT_ASSUMPTION_OATH_MISMATCH',
+          );
+        }
+        const prepared = await this.resolveAssumptionFacts(
+          transaction,
+          context,
+          version,
+          oath.oathDate,
+          input,
+        );
+        const recorded = await transaction.assumptionVersion.create({
+          data: {
+            agencyId: context.agencyId,
+            assumptionId: assumption.id,
+            versionNo: 1,
+            oathVersionId: oath.id,
+            actualAssumptionDate: prepared.actualAssumptionDate,
+            certifiedByMembershipId: input.certifiedByMembershipId,
+            certifyingAuthority: input.certifyingAuthority,
+            certifiedAt: prepared.certifiedAt,
+            documentVersionId: prepared.evidenceDocumentVersionId,
+          },
+          select: { id: true },
+        });
+        await transaction.assumptionToDuty.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: assumption.id } },
+          data: {
+            status: 'ASSUMED',
+            currentVersionId: recorded.id,
+            updatedByMembershipId: context.membershipId,
+            rowVersion: { increment: 1 },
+          },
+        });
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_ASSUMPTION_RECORDED',
+          entityId: appointmentId,
+          previousStatus: 'PENDING',
+          newStatus: 'ASSUMED',
+          reason: 'The actual Assumption to Duty was certified from its exact evidence.',
+          metadata: {
+            versionId: version.id,
+            assumptionId: assumption.id,
+            assumptionVersionId: recorded.id,
+            oathVersionId: oath.id,
+            actualAssumptionDate: input.actualAssumptionDate,
+            documentVersionId: prepared.evidenceDocumentVersionId,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
+  async correctAssumption(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentAssumptionCorrectionSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.assumption.correct',
+      'APPOINTMENT_ASSUMPTION_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_ASSUMPTION_CORRECTED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedAppointment(record);
+        const assumption = version.assumption;
+        const predecessor = assumption?.currentVersion;
+        if (!assumption || assumption.status !== 'ASSUMED' || !predecessor) {
+          throw new AppointmentServiceError(
+            'Only an assumed Assumption to Duty can be corrected.',
+            409,
+            'APPOINTMENT_ASSUMPTION_NOT_ASSUMED',
+          );
+        }
+        const oath = version.oath?.currentVersion;
+        if (!oath || input.oathVersionId !== oath.id) {
+          throw new AppointmentServiceError(
+            'The Assumption to Duty must link the current oath version.',
+            409,
+            'APPOINTMENT_ASSUMPTION_OATH_MISMATCH',
+          );
+        }
+        const activeService = await transaction.serviceSegment.findFirst({
+          where: { agencyId: context.agencyId, appointmentId },
+          select: { id: true },
+        });
+        if (activeService) {
+          throw new AppointmentServiceError(
+            'Active service already references this Appointment; correct the service through its owning contract.',
+            409,
+            'APPOINTMENT_ASSUMPTION_ACTIVATED',
+          );
+        }
+        const prepared = await this.resolveAssumptionFacts(
+          transaction,
+          context,
+          version,
+          oath.oathDate,
+          input,
+          input.authorityDocumentVersionId,
+        );
+        const recorded = await transaction.assumptionVersion.create({
+          data: {
+            agencyId: context.agencyId,
+            assumptionId: assumption.id,
+            versionNo: predecessor.versionNo + 1,
+            oathVersionId: oath.id,
+            actualAssumptionDate: prepared.actualAssumptionDate,
+            certifiedByMembershipId: input.certifiedByMembershipId,
+            certifyingAuthority: input.certifyingAuthority,
+            certifiedAt: prepared.certifiedAt,
+            documentVersionId: prepared.evidenceDocumentVersionId,
+            replacesAssumptionVersionId: predecessor.id,
+            correctionReason: input.reason,
+            correctionAuthorityDocumentVersionId: prepared.authorityDocumentVersionId,
+          },
+          select: { id: true },
+        });
+        await transaction.assumptionToDuty.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: assumption.id } },
+          data: {
+            currentVersionId: recorded.id,
+            updatedByMembershipId: context.membershipId,
+            rowVersion: { increment: 1 },
+          },
+        });
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_ASSUMPTION_CORRECTED',
+          entityId: appointmentId,
+          previousStatus: 'ASSUMED',
+          newStatus: 'ASSUMED',
+          reason: input.reason,
+          metadata: {
+            versionId: version.id,
+            assumptionId: assumption.id,
+            assumptionVersionId: recorded.id,
+            predecessorAssumptionVersionId: predecessor.id,
+            actualAssumptionDate: input.actualAssumptionDate,
+            documentVersionId: prepared.evidenceDocumentVersionId,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
+  async recordAssumptionFailure(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentAssumptionFailureSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.assumption.fail',
+      'APPOINTMENT_ASSUMPTION_OUTCOME_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition', 'plantilla-position-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_ASSUMPTION_FAILED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        return this.recordAssumptionOutcomeInTransaction(
+          transaction,
+          context,
+          appointmentId,
+          'DID_NOT_ASSUME',
+          input,
+          idempotencyKey,
+        );
+      },
+    );
+  }
+
+  async recordAssumptionCancellation(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentAssumptionCancellationSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.assumption.cancel',
+      'APPOINTMENT_ASSUMPTION_OUTCOME_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition', 'plantilla-position-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_ASSUMPTION_CANCELLED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        return this.recordAssumptionOutcomeInTransaction(
+          transaction,
+          context,
+          appointmentId,
+          'CANCELLED',
+          input,
+          idempotencyKey,
+        );
+      },
+    );
+  }
+
   async getSettings(context: RequestContext): Promise<AppointmentSettingsSummary | null> {
     this.assertPermission(context, 'appointments.records.read', 'APPOINTMENT_READ_FORBIDDEN');
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
@@ -1670,6 +2583,100 @@ export class AppointmentsService {
     );
   }
 
+  /**
+   * Internal contract: Personnel and downstream owners read the frozen issued
+   * Appointment facts through Appointment without touching its tables. The
+   * contract never asserts a caller permission; the owning command already did.
+   */
+  async resolveIssuedAppointmentContractInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentVersionId: string,
+  ): Promise<IssuedAppointmentContract | null> {
+    const record = await transaction.appointmentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
+      select: contractVersionSelect,
+    });
+    if (!record) return null;
+    return this.contractBase(transaction, context, record);
+  }
+
+  /**
+   * Internal contract: the assumed-Appointment contract publishes only after a
+   * valid Assumption to Duty. Favorable CSC action is never required, and the
+   * external standing is recorded as derived context, not as a precondition.
+   */
+  async resolveAssumedAppointmentContractInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentVersionId: string,
+  ): Promise<AssumedAppointmentContract | null> {
+    const record = await transaction.appointmentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
+      select: contractVersionSelect,
+    });
+    if (!record || record.assumption?.status !== 'ASSUMED') return null;
+    const base = await this.contractBase(transaction, context, record);
+    const assumption = assumptionSummary(record.assumption);
+    if (!base.acknowledgment || !base.oath || !assumption) {
+      throw new AppointmentServiceError(
+        'The stored Assumption to Duty is incomplete.',
+        500,
+        'APPOINTMENT_DATA_INVALID',
+      );
+    }
+    return { ...base, acknowledgment: base.acknowledgment, oath: base.oath, assumption };
+  }
+
+  private async contractBase(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    record: ContractVersionRecord,
+  ): Promise<IssuedAppointmentContract> {
+    if (!record.issuedAt) {
+      throw new AppointmentServiceError(
+        'The issued Appointment has no issue date.',
+        500,
+        'APPOINTMENT_DATA_INVALID',
+      );
+    }
+    const view = selectionPackageView(record.appointment.recruitmentSelectionPackage);
+    const reservation = await this.plantillaPositions.resolveReservationInTransaction(
+      transaction,
+      context,
+      record.appointment.positionId,
+    );
+    const versions = await transaction.appointmentVersion.findMany({
+      where: { agencyId: context.agencyId, appointmentId: record.appointmentId },
+      select: { id: true },
+    });
+    const externalStanding = await this.standingForVersionsInTransaction(
+      transaction,
+      context.agencyId,
+      versions.map((version) => version.id),
+    );
+    return {
+      contractSchemaVersion: APPOINTMENT_CONTRACT_SCHEMA_VERSION,
+      appointmentId: record.appointmentId,
+      appointmentVersionId: record.id,
+      personKey: record.appointment.appointeePersonKey,
+      fullName: view.applicantName,
+      applicationNo: view.applicationNo,
+      employmentStatus: record.employmentStatus as AppointmentEmploymentStatus,
+      natureOfAppointment: record.natureOfAppointment as AppointmentNature,
+      formVariant: record.formVariant as AppointmentFormVariant,
+      signatureMethod: record.signatureMethod as AppointmentSignatureMethod,
+      issuedAt: formatDateTime(record.issuedAt),
+      effectivityDate: formatDate(record.effectivityDate),
+      position: view.position,
+      reservation: reservation ? { id: reservation.id, status: reservation.status } : null,
+      compensation: { salaryGrade: record.salaryGrade, salaryStep: record.salaryStep },
+      externalStanding,
+      acknowledgment: record.acknowledgment ? acknowledgmentSummary(record.acknowledgment) : null,
+      oath: oathSummary(record.oath),
+    };
+  }
+
   private async detailInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -1689,7 +2696,10 @@ export class AppointmentsService {
         agencyId: context.agencyId,
         entityType: 'Appointment',
         entityId: appointmentId,
-        NOT: { action: { startsWith: 'APPOINTMENT_EXTERNAL_' } },
+        NOT: [
+          { action: { startsWith: 'APPOINTMENT_EXTERNAL_' } },
+          { action: { in: [...ASSUMPTION_LIFECYCLE_ACTIONS] } },
+        ],
       },
       orderBy: { occurredAt: 'asc' },
       select: {
@@ -1838,6 +2848,299 @@ export class AppointmentsService {
     return version;
   }
 
+  private requireIssuedAppointment(
+    record: AppointmentDetailRecord,
+  ): AppointmentVersionDetailRecord {
+    if (record.workflowStatus !== 'ISSUED') throw this.transitionNotAllowed(record);
+    const version = record.currentVersionId
+      ? record.versions.find((item) => item.id === record.currentVersionId)
+      : undefined;
+    if (!version || version.status !== 'ISSUED') throw this.versionNotFound();
+    return version;
+  }
+
+  private requirePendingAssumption(version: AppointmentVersionDetailRecord): AssumptionRecord {
+    const assumption = version.assumption;
+    if (!version.acknowledgment || !assumption) {
+      throw new AppointmentServiceError(
+        'Record the appointee acknowledgment before the oath or Assumption to Duty.',
+        409,
+        'APPOINTMENT_ASSUMPTION_NOT_READY',
+      );
+    }
+    if (assumption.status !== 'PENDING') {
+      throw new AppointmentServiceError(
+        `The Assumption to Duty is already ${assumption.status}.`,
+        409,
+        'APPOINTMENT_ASSUMPTION_NOT_PENDING',
+      );
+    }
+    return assumption;
+  }
+
+  private resolveOathDate(value: string, version: AppointmentVersionDetailRecord): Date {
+    const acknowledgedAt = version.acknowledgment?.acknowledgedAt;
+    if (!acknowledgedAt) {
+      throw new AppointmentServiceError(
+        'Record the appointee acknowledgment before the oath.',
+        409,
+        'APPOINTMENT_ASSUMPTION_NOT_READY',
+      );
+    }
+    const oathDate = toDatabaseDate(value);
+    if (manilaDate(oathDate) < manilaDate(acknowledgedAt)) {
+      throw new AppointmentServiceError(
+        'The oath cannot precede the appointee acknowledgment.',
+        409,
+        'APPOINTMENT_OATH_DATE_INVALID',
+      );
+    }
+    return oathDate;
+  }
+
+  private async resolveAssumptionFacts(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    version: AppointmentVersionDetailRecord,
+    oathDate: Date,
+    input: {
+      actualAssumptionDate: string;
+      certifiedByMembershipId: string;
+      certifyingAuthority: string;
+      certifiedAt: string;
+      documentVersionId: string;
+    },
+    authorityDocumentVersionId?: string,
+  ): Promise<{
+    actualAssumptionDate: Date;
+    certifiedAt: Date;
+    evidenceDocumentVersionId: string;
+    authorityDocumentVersionId: string | null;
+  }> {
+    if (!version.issuedAt) {
+      throw new AppointmentServiceError(
+        'The issued Appointment has no issue date.',
+        500,
+        'APPOINTMENT_DATA_INVALID',
+      );
+    }
+    const actualAssumptionDate = toDatabaseDate(input.actualAssumptionDate);
+    const certifiedAt = new Date(input.certifiedAt);
+    if (manilaDate(actualAssumptionDate) < manilaDate(version.issuedAt)) {
+      throw new AppointmentServiceError(
+        'The actual assumption date cannot precede issuance of the Appointment.',
+        409,
+        'APPOINTMENT_ASSUMPTION_DATE_INVALID',
+      );
+    }
+    if (manilaDate(actualAssumptionDate) < manilaDate(oathDate)) {
+      throw new AppointmentServiceError(
+        'The actual assumption date cannot precede the oath.',
+        409,
+        'APPOINTMENT_ASSUMPTION_DATE_INVALID',
+      );
+    }
+    if (certifiedAt.getTime() < version.issuedAt.getTime()) {
+      throw new AppointmentServiceError(
+        'The certification time cannot precede issuance of the Appointment.',
+        409,
+        'APPOINTMENT_ASSUMPTION_CERTIFICATION_INVALID',
+      );
+    }
+    await this.requireActiveMembership(
+      transaction,
+      context,
+      input.certifiedByMembershipId,
+      'APPOINTMENT_ASSUMPTION_CERTIFIER_INVALID',
+      'The certifying officer is not an active Agency Membership.',
+    );
+    const evidence = await this.requireFinalizedEvidence(
+      transaction,
+      context,
+      input.documentVersionId,
+      'The assumption evidence must be a finalized Document Version.',
+      'APPOINTMENT_ASSUMPTION_EVIDENCE_INVALID',
+    );
+    const authority = authorityDocumentVersionId
+      ? await this.requireFinalizedEvidence(
+          transaction,
+          context,
+          authorityDocumentVersionId,
+          'The assumption correction authority must be a finalized Document Version.',
+          'APPOINTMENT_ASSUMPTION_CORRECTION_AUTHORITY_INVALID',
+        )
+      : null;
+    return {
+      actualAssumptionDate,
+      certifiedAt,
+      evidenceDocumentVersionId: evidence.id,
+      authorityDocumentVersionId: authority?.id ?? null,
+    };
+  }
+
+  private async recordAssumptionOutcomeInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    appointmentId: string,
+    outcome: AppointmentAssumptionOutcome,
+    input: {
+      noticeDate?: string | undefined;
+      deadlineDate?: string | undefined;
+      outcomeDate: string;
+      reason: string;
+      authorizedByMembershipId: string;
+      authorityDocumentVersionId: string;
+      evidenceDocumentVersionId: string;
+    },
+    idempotencyKey: string | undefined,
+  ): Promise<AppointmentDetail> {
+    const record = await this.requireAppointment(transaction, context, appointmentId);
+    const version = this.requireIssuedAppointment(record);
+    const assumption = this.requirePendingAssumption(version);
+    if (outcome === 'CANCELLED') {
+      this.assertPermission(context, 'appointments.records.cancel', 'APPOINTMENT_CANCEL_FORBIDDEN');
+    }
+    if (!version.issuedAt) {
+      throw new AppointmentServiceError(
+        'The issued Appointment has no issue date.',
+        500,
+        'APPOINTMENT_DATA_INVALID',
+      );
+    }
+    await this.requireActiveMembership(
+      transaction,
+      context,
+      input.authorizedByMembershipId,
+      'APPOINTMENT_ASSUMPTION_OUTCOME_AUTHORIZER_INVALID',
+      'The outcome authorizer is not an active Agency Membership.',
+    );
+    const authority = await this.requireFinalizedEvidence(
+      transaction,
+      context,
+      input.authorityDocumentVersionId,
+      'The outcome authority must be a finalized Document Version.',
+      'APPOINTMENT_ASSUMPTION_OUTCOME_AUTHORITY_INVALID',
+    );
+    const evidence = await this.requireFinalizedEvidence(
+      transaction,
+      context,
+      input.evidenceDocumentVersionId,
+      'The outcome evidence must be a finalized Document Version.',
+      'APPOINTMENT_ASSUMPTION_OUTCOME_EVIDENCE_INVALID',
+    );
+    const outcomeDate = toDatabaseDate(input.outcomeDate);
+    if (manilaDate(outcomeDate) < manilaDate(version.issuedAt)) {
+      throw new AppointmentServiceError(
+        'The outcome date cannot precede issuance of the Appointment.',
+        409,
+        'APPOINTMENT_ASSUMPTION_OUTCOME_DATE_INVALID',
+      );
+    }
+    await transaction.assumptionOutcomeEvent.create({
+      data: {
+        agencyId: context.agencyId,
+        assumptionId: assumption.id,
+        outcome,
+        noticeDate: input.noticeDate ? toDatabaseDate(input.noticeDate) : null,
+        deadlineDate: input.deadlineDate ? toDatabaseDate(input.deadlineDate) : null,
+        outcomeDate,
+        reason: input.reason,
+        authorizedByMembershipId: input.authorizedByMembershipId,
+        authorityDocumentVersionId: authority.id,
+        evidenceDocumentVersionId: evidence.id,
+      },
+      select: { id: true },
+    });
+    const reservationReleased = await this.releaseReservationForAppointmentInTransaction(
+      transaction,
+      context,
+      record,
+      outcome === 'CANCELLED'
+        ? `Appointment cancelled: ${input.reason}`
+        : `Failure to assume: ${input.reason}`,
+      idempotencyKey,
+    );
+    const outcomeMetadata = {
+      versionId: version.id,
+      assumptionId: assumption.id,
+      outcome,
+      outcomeDate: input.outcomeDate,
+      ...(input.noticeDate ? { noticeDate: input.noticeDate } : {}),
+      ...(input.deadlineDate ? { deadlineDate: input.deadlineDate } : {}),
+      authorityDocumentVersionId: authority.id,
+      documentVersionId: evidence.id,
+      reservationReleased,
+    };
+    if (outcome === 'CANCELLED') {
+      await this.cancelAppointmentRecordInTransaction(
+        transaction,
+        context,
+        appointmentId,
+        record.workflowStatus,
+        input.reason,
+        {
+          positionId: record.positionId,
+          versionId: version.id,
+          assumptionId: assumption.id,
+          reservationReleased,
+          documentVersionId: authority.id,
+        },
+        idempotencyKey,
+      );
+    }
+    await transaction.assumptionToDuty.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: assumption.id } },
+      data: {
+        status: outcome,
+        updatedByMembershipId: context.membershipId,
+        rowVersion: { increment: 1 },
+      },
+    });
+    await this.writeAudit(transaction, context, {
+      action:
+        outcome === 'CANCELLED'
+          ? 'APPOINTMENT_ASSUMPTION_CANCELLED'
+          : 'APPOINTMENT_ASSUMPTION_FAILED',
+      entityId: appointmentId,
+      previousStatus: 'PENDING',
+      newStatus: outcome,
+      reason: input.reason,
+      metadata: outcomeMetadata,
+      idempotencyKey,
+    });
+    return this.detailInTransaction(transaction, context, appointmentId);
+  }
+
+  private async requireActiveMembership(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    membershipId: string,
+    code: string,
+    message: string,
+  ): Promise<void> {
+    const membership = await transaction.agencyMembership.findFirst({
+      where: { agencyId: context.agencyId, id: membershipId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (!membership) throw new AppointmentServiceError(message, 409, code);
+  }
+
+  private async requireFinalizedEvidence(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    documentVersionId: string,
+    message: string,
+    code: string,
+  ): Promise<{ id: string }> {
+    const evidence = await this.documentsService.resolveFinalizedVersionInTransaction(
+      transaction,
+      context,
+      documentVersionId,
+    );
+    if (!evidence) throw new AppointmentServiceError(message, 409, code);
+    return evidence;
+  }
+
   private async standingInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -1847,16 +3150,27 @@ export class AppointmentsService {
       where: { agencyId: context.agencyId, appointmentId },
       select: { id: true },
     });
-    const versionIds = versions.map((version) => version.id);
+    return this.standingForVersionsInTransaction(
+      transaction,
+      context.agencyId,
+      versions.map((version) => version.id),
+    );
+  }
+
+  private async standingForVersionsInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    versionIds: readonly string[],
+  ): Promise<AppointmentExternalStanding> {
     if (versionIds.length === 0) return 'NOT_SUBMITTED';
     const [submissions, actions] = await Promise.all([
       transaction.appointmentExternalSubmissionEvent.findMany({
-        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        where: { agencyId, appointmentVersionId: { in: [...versionIds] } },
         select: { eventType: true, occurredAt: true },
         orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
       }),
       transaction.appointmentExternalAction.findMany({
-        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        where: { agencyId, appointmentVersionId: { in: [...versionIds] } },
         select: { action: true, actionAt: true },
         orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
       }),
@@ -2186,6 +3500,58 @@ export class AppointmentsService {
         documentVersionId: link.documentVersionId,
         linkRole: link.linkRole,
       })),
+    });
+  }
+
+  private async releaseReservationForAppointmentInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    appointment: { positionId: string },
+    reason: string,
+    idempotencyKey: string | undefined,
+  ): Promise<boolean> {
+    const reservation = await this.plantillaPositions.resolveReservationInTransaction(
+      transaction,
+      context,
+      appointment.positionId,
+    );
+    if (reservation?.status !== 'RESERVED') return false;
+    await this.plantillaPositions.releaseReservationInTransaction(
+      transaction,
+      context,
+      appointment.positionId,
+      manilaToday(),
+      reason,
+      idempotencyKey ? `${idempotencyKey}:position` : undefined,
+    );
+    return true;
+  }
+
+  private async cancelAppointmentRecordInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    appointmentId: string,
+    previousStatus: string,
+    reason: string,
+    metadata: Prisma.InputJsonObject,
+    idempotencyKey: string | undefined,
+  ): Promise<void> {
+    await transaction.appointment.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: appointmentId } },
+      data: {
+        workflowStatus: 'CANCELLED',
+        updatedByMembershipId: context.membershipId,
+        rowVersion: { increment: 1 },
+      },
+    });
+    await this.writeAudit(transaction, context, {
+      action: 'APPOINTMENT_CANCELLED',
+      entityId: appointmentId,
+      previousStatus,
+      newStatus: 'CANCELLED',
+      reason,
+      metadata,
+      idempotencyKey,
     });
   }
 

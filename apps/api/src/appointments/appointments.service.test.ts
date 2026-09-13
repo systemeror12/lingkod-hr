@@ -203,6 +203,71 @@ it('requires the settings permission before configuring the Agency', async () =>
   });
 });
 
+it('rechecks the Oath and Assumption permissions before recording', async () => {
+  const instance = service();
+  const receipt = {
+    acknowledgedAt: '2026-10-02T01:00:00.000Z',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  const oath = {
+    oathDate: '2026-10-03',
+    administeredByMembershipId: documentVersionId,
+    authority: 'City Mayor',
+    documentVersionId,
+  };
+  const assumption = {
+    oathVersionId: documentVersionId,
+    actualAssumptionDate: '2026-10-04',
+    certifiedByMembershipId: documentVersionId,
+    certifyingAuthority: 'City Mayor',
+    certifiedAt: '2026-10-04T01:00:00.000Z',
+    documentVersionId,
+  };
+  const outcome = {
+    outcomeDate: '2026-10-05',
+    reason: 'The appointee did not report for duty.',
+    authorizedByMembershipId: documentVersionId,
+    authorityDocumentVersionId: documentVersionId,
+    evidenceDocumentVersionId: documentVersionId,
+  };
+
+  await expect(instance.recordReceipt(context([]), appointmentId, receipt)).rejects.toMatchObject({
+    code: 'APPOINTMENT_RECEIPT_FORBIDDEN',
+    statusCode: 403,
+  });
+  await expect(instance.recordOath(context([]), appointmentId, oath)).rejects.toMatchObject({
+    code: 'APPOINTMENT_OATH_FORBIDDEN',
+    statusCode: 403,
+  });
+  await expect(
+    instance.correctOath(context([]), appointmentId, {
+      ...oath,
+      reason: 'Correct the oath date.',
+      authorityDocumentVersionId: documentVersionId,
+    }),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_OATH_FORBIDDEN', statusCode: 403 });
+  await expect(
+    instance.recordAssumption(context([]), appointmentId, assumption),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_FORBIDDEN', statusCode: 403 });
+  await expect(
+    instance.correctAssumption(context([]), appointmentId, {
+      ...assumption,
+      reason: 'Correct the assumption date.',
+      authorityDocumentVersionId: documentVersionId,
+    }),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_FORBIDDEN', statusCode: 403 });
+  await expect(
+    instance.recordAssumptionFailure(context([]), appointmentId, {
+      noticeDate: '2026-10-03',
+      deadlineDate: '2026-10-05',
+      ...outcome,
+    }),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_OUTCOME_FORBIDDEN', statusCode: 403 });
+  await expect(
+    instance.recordAssumptionCancellation(context([]), appointmentId, outcome),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_OUTCOME_FORBIDDEN', statusCode: 403 });
+});
+
 it('uses a typed error for Appointment workflow failures', () => {
   expect(new AppointmentServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);
 });
