@@ -356,6 +356,7 @@ async function seed(): Promise<void> {
               'E2E-APPT-SELECTION-CERT',
               'E2E-APPT-PUBLICATION-CERT',
               'E2E-APPT-AUTHORITY',
+              'E2E-MOVE-AUTHORITY',
             ],
           },
         },
@@ -389,6 +390,7 @@ async function seed(): Promise<void> {
             'E2E-APPT-SELECTION-CERT',
             'E2E-APPT-PUBLICATION-CERT',
             'E2E-APPT-AUTHORITY',
+            'E2E-MOVE-AUTHORITY',
           ],
         },
       },
@@ -1380,6 +1382,306 @@ async function seed(): Promise<void> {
     await transaction.personnelAction.update({
       where: { id: separationAction.id },
       data: { currentVersionId: separationActionVersion.id },
+    });
+
+    // An issued and assumed PROMOTION contract with its approved position
+    // movement, so the protected browser journey can exercise the #108
+    // effectuation review, confirmation, result, and history surfaces.
+    const movementEvidence = await evidence('E2E-MOVE-AUTHORITY', 'AUTHORITY');
+    const movementSourcePosition = await transaction.plantillaPosition.create({
+      data: {
+        agencyId: agency.id,
+        itemNumber: 'E2E-MOVE-SRC',
+        status: 'OCCUPIED',
+        createdFromAuthorityId: authority.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const movementSourceVersion = await transaction.plantillaPositionVersion.create({
+      data: {
+        agencyId: agency.id,
+        positionId: movementSourcePosition.id,
+        organizationUnitId: unit.id,
+        qualificationStandardVersionId: standardVersion.id,
+        staffingAuthorityId: authority.id,
+        versionNo: 1,
+        positionTitle: 'Administrative Officer IV',
+        salaryGrade: 12,
+        fundingSource: 'General Appropriations Act',
+        employmentCategory: 'PLANTILLA',
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        domainStatus: 'OCCUPIED',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.plantillaPosition.update({
+      where: { id: movementSourcePosition.id },
+      data: { currentVersionId: movementSourceVersion.id },
+    });
+    const movementTargetPosition = await transaction.plantillaPosition.create({
+      data: {
+        agencyId: agency.id,
+        itemNumber: 'E2E-MOVE-TGT',
+        status: 'RESERVED',
+        createdFromAuthorityId: authority.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const movementTargetVersion = await transaction.plantillaPositionVersion.create({
+      data: {
+        agencyId: agency.id,
+        positionId: movementTargetPosition.id,
+        organizationUnitId: unit.id,
+        qualificationStandardVersionId: standardVersion.id,
+        staffingAuthorityId: authority.id,
+        versionNo: 1,
+        positionTitle: 'Human Resource Management Officer III',
+        salaryGrade: 13,
+        fundingSource: 'General Appropriations Act',
+        employmentCategory: 'PLANTILLA',
+        effectiveFrom: new Date('2026-01-01'),
+        status: 'ACTIVE',
+        domainStatus: 'RESERVED',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.plantillaPosition.update({
+      where: { id: movementTargetPosition.id },
+      data: { currentVersionId: movementTargetVersion.id, status: 'RESERVED' },
+    });
+    const movementEmployee = await transaction.employee.create({
+      data: {
+        agencyId: agency.id,
+        employeeNumber: 'E2E-MOVE-001',
+        legalName: 'E2E Movement Candidate',
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: 'e2e.movement@example.test',
+        serviceStatus: 'ACTIVE',
+        firstGovernmentServiceDate: new Date('2020-01-01'),
+        agencyServiceStartDate: new Date('2020-01-01'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const movementSegment = await transaction.serviceSegment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: movementEmployee.id,
+        positionId: movementSourcePosition.id,
+        organizationUnitId: unit.id,
+        appointmentStatus: 'PERMANENT',
+        salaryGrade: 12,
+        salaryStep: 2,
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.positionIncumbency.create({
+      data: {
+        agencyId: agency.id,
+        positionId: movementSourcePosition.id,
+        employeeId: movementEmployee.id,
+        serviceSegmentId: movementSegment.id,
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.employee.update({
+      where: { id: movementEmployee.id },
+      data: { currentServiceSegmentId: movementSegment.id },
+    });
+    const movementAssumptionDate = new Date(`${manilaToday()}T00:00:00.000Z`);
+    const movementSelectionPackage = {
+      selectionDecisionId: '88888888-8888-4888-8888-888888888888',
+      decision: 'SELECTED',
+      applicant: {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        fullName: 'E2E Movement Candidate',
+        email: 'e2e.movement@example.test',
+        mobileNumber: null,
+      },
+      applicationNo: 'E2E-MOVE-APP-1',
+      qualificationStandardVersionId: standardVersion.id,
+      position: {
+        id: movementTargetPosition.id,
+        itemNumber: 'E2E-MOVE-TGT',
+        positionVersionId: movementTargetVersion.id,
+        title: 'Human Resource Management Officer III',
+        salaryGrade: 13,
+        organizationUnitId: unit.id,
+      },
+      documents: [],
+    };
+    const movementHandoff = await transaction.recruitmentAppointmentHandoff.create({
+      data: {
+        agencyId: agency.id,
+        selectionDecisionId: '88888888-8888-4888-8888-888888888888',
+        applicationId: '99999999-9999-4999-8999-999999999999',
+        positionId: movementTargetPosition.id,
+        selectionPackage: movementSelectionPackage,
+        idempotencyKey: 'E2E-MOVEMENT-HANDOFF-1',
+        handedOffAt: new Date('2026-01-05'),
+      },
+    });
+    const movementAppointment = await transaction.appointment.create({
+      data: {
+        agencyId: agency.id,
+        recruitmentHandoffId: movementHandoff.id,
+        recruitmentSelectionPackage: movementSelectionPackage,
+        positionId: movementTargetPosition.id,
+        appointeePersonKey: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        workflowStatus: 'ISSUED',
+        issuedAt: new Date('2026-01-06'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const movementAppointmentVersion = await transaction.appointmentVersion.create({
+      data: {
+        agencyId: agency.id,
+        appointmentId: movementAppointment.id,
+        versionNo: 1,
+        employmentStatus: 'PERMANENT',
+        natureOfAppointment: 'PROMOTION',
+        salaryGrade: 13,
+        salaryStep: 3,
+        effectivityDate: movementAssumptionDate,
+        appointingAuthorityMembershipId: membership.id,
+        formVariant: 'CS_FORM_33_A_2025',
+        signatureMethod: 'WET_INK',
+        appointmentDocumentVersionId: movementEvidence.currentVersionId!,
+        status: 'ISSUED',
+        issuedAt: new Date('2026-01-06'),
+        issuedByMembershipId: membership.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.appointment.update({
+      where: { id: movementAppointment.id },
+      data: { currentVersionId: movementAppointmentVersion.id },
+    });
+    await transaction.appointmentAcknowledgment.create({
+      data: {
+        agencyId: agency.id,
+        appointmentVersionId: movementAppointmentVersion.id,
+        acknowledgedAt: new Date('2026-01-07'),
+        evidenceDocumentVersionId: movementEvidence.currentVersionId!,
+      },
+    });
+    const movementOath = await transaction.oathOfOffice.create({
+      data: {
+        agencyId: agency.id,
+        appointmentVersionId: movementAppointmentVersion.id,
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const movementOathVersion = await transaction.oathVersion.create({
+      data: {
+        agencyId: agency.id,
+        oathId: movementOath.id,
+        versionNo: 1,
+        oathDate: movementAssumptionDate,
+        administeredByMembershipId: membership.id,
+        authority: 'Agency Human Resource Management Officer',
+        documentVersionId: movementEvidence.currentVersionId!,
+      },
+    });
+    await transaction.oathOfOffice.update({
+      where: { id: movementOath.id },
+      data: { currentVersionId: movementOathVersion.id },
+    });
+    const movementAssumption = await transaction.assumptionToDuty.create({
+      data: {
+        agencyId: agency.id,
+        appointmentVersionId: movementAppointmentVersion.id,
+        status: 'PENDING',
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    const movementAssumptionVersion = await transaction.assumptionVersion.create({
+      data: {
+        agencyId: agency.id,
+        assumptionId: movementAssumption.id,
+        versionNo: 1,
+        oathVersionId: movementOathVersion.id,
+        actualAssumptionDate: movementAssumptionDate,
+        certifiedByMembershipId: membership.id,
+        certifyingAuthority: 'Agency Human Resource Management Officer',
+        certifiedAt: new Date(),
+        documentVersionId: movementEvidence.currentVersionId!,
+      },
+    });
+    await transaction.assumptionToDuty.update({
+      where: { id: movementAssumption.id },
+      data: { currentVersionId: movementAssumptionVersion.id, status: 'ASSUMED' },
+    });
+    const movementAction = await transaction.personnelAction.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: movementEmployee.id,
+        actionType: 'PROMOTION',
+        status: 'APPROVED',
+        preparedByMembershipId: preparerMembership.id,
+        approvedByMembershipId: membership.id,
+        approvedAt: new Date(),
+      },
+    });
+    const movementActionVersion = await transaction.personnelActionVersion.create({
+      data: {
+        agencyId: agency.id,
+        actionId: movementAction.id,
+        versionNo: 1,
+        proposedEffectivity: movementAssumptionDate,
+        fromServiceSegmentId: movementSegment.id,
+        targetPositionId: movementTargetPosition.id,
+        targetOrganizationUnitId: unit.id,
+        targetFacts: { appointmentVersionId: movementAppointmentVersion.id },
+        reason: 'Effectuate the Appointment-backed promotion on its assumption date.',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.personnelActionEvidence.create({
+      data: {
+        agencyId: agency.id,
+        actionVersionId: movementActionVersion.id,
+        evidenceType: 'AUTHORITY',
+        documentId: movementEvidence.id,
+        documentVersionId: movementEvidence.currentVersionId!,
+        sourceDate: new Date('2026-01-01'),
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.personnelAction.update({
+      where: { id: movementAction.id },
+      data: { currentVersionId: movementActionVersion.id },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        agencyId: agency.id,
+        actorUserId: user.id,
+        actorMembershipId: membership.id,
+        actorType: 'USER',
+        action: 'PERSONNEL_ACTION_APPROVED',
+        entityType: 'PersonnelAction',
+        entityId: movementAction.id,
+        previousStatus: 'FOR_APPROVAL',
+        newStatus: 'APPROVED',
+        reason: 'Protected shell movement effectuation fixture.',
+        requestId: 'protected-shell-seed',
+        metadata: { actionType: 'PROMOTION', versionId: movementActionVersion.id },
+      },
     });
   });
   // One protected-shell identity exercises the browser critical path; production role grants remain distinct.

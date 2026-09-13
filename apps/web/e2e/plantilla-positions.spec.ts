@@ -82,9 +82,11 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await linkDialog.getByLabel('Evidence purpose').selectOption('POSITION_DESCRIPTION');
   await linkDialog.getByLabel('Effectivity Optional').fill('2026-01-01');
   await linkDialog.getByRole('button', { name: 'Link evidence', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText(
-    'External Evidence E2E-PLANTILLA-AUTHORITY was linked',
-  );
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'External Evidence E2E-PLANTILLA-AUTHORITY was linked' }),
+  ).toBeVisible();
   const evidenceDocument = page.getByText('E2E-PLANTILLA-AUTHORITY', { exact: true });
   await expect(evidenceDocument).toBeVisible();
   const evidenceDocumentBox = await evidenceDocument.boundingBox();
@@ -124,14 +126,16 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
     .getByLabel('Reason for removal')
     .fill('The document was attached to the wrong controlled purpose.');
   await removeDialog.getByRole('button', { name: 'Remove link', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('position description link was removed');
+  await expect(
+    page.getByRole('status').filter({ hasText: 'position description link was removed' }),
+  ).toBeVisible();
   await expect(page.getByText('E2E-PLANTILLA-AUTHORITY', { exact: true })).toBeHidden();
   await expect(linkTrigger).toBeFocused();
 
   await page.getByRole('button', { name: 'Prepare successor' }).click();
-  await expect(page.getByRole('status')).toContainText(
-    `Draft successor prepared for “${itemNumber}”.`,
-  );
+  await expect(
+    page.getByRole('status').filter({ hasText: `Draft successor prepared for “${itemNumber}”.` }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Draft successor exists' })).toBeDisabled();
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -177,9 +181,11 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     });
     await linkDialog.getByLabel('Evidence purpose').selectOption(purpose);
     await linkDialog.getByRole('button', { name: 'Link evidence', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText(
-      'External Evidence E2E-PLANTILLA-AUTHORITY was linked',
-    );
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'External Evidence E2E-PLANTILLA-AUTHORITY was linked' }),
+    ).toBeVisible();
   }
 
   async function completeTransition(

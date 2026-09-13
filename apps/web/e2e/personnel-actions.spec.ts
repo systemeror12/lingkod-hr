@@ -92,3 +92,26 @@ test('reviews, confirms, and reports service-status effectuation in shared modal
   await detail.getByRole('button', { name: 'Close Personnel Action details' }).click();
   await expect(page.getByRole('status')).toHaveText('Personnel Action effectuated.');
 });
+
+test('effectuates an appointment-backed promotion into its reserved item', async ({ page }) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto('/personnel-actions');
+  await page.getByRole('button', { name: 'Open action for E2E Movement Candidate' }).click();
+
+  const detail = page.getByRole('region', { name: 'E2E Movement Candidate' });
+  await expect(detail.getByText('Assumed Appointment')).toBeVisible();
+  await detail.getByRole('button', { name: 'Effectuate action' }).click();
+  const confirmation = page.getByRole('dialog', { name: 'Effectuate Personnel Action' });
+  await expect(confirmation).toHaveAccessibleDescription(
+    "Consume exact version 1's assumed Appointment to move the Employee into the reserved Plantilla item.",
+  );
+  await expect(confirmation).toContainText('closes the source Service Segment');
+  await confirmation.getByRole('button', { name: 'Confirm effectuation' }).click();
+
+  await expect(detail.getByText('EFFECTIVE', { exact: true })).toBeVisible();
+  await expect(detail.getByText('Target Plantilla Position')).toBeVisible();
+  await detail.getByRole('button', { name: 'View history' }).click();
+  const history = page.getByRole('region', { name: 'Personnel Action history' });
+  await expect(history.getByText('PERSONNEL ACTION EFFECTUATED')).toBeVisible();
+});

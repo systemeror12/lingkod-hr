@@ -3,6 +3,7 @@ import { expect, it } from 'vitest';
 import {
   personnelActionAuditWriter,
   personnelActionCanBeApproved,
+  personnelActionCanBeEffectuated,
   PersonnelActionServiceError,
   PersonnelActionsService,
 } from './personnel-actions.service';
@@ -15,12 +16,26 @@ it('keeps assignment overlays review-only until their effect owner exists', () =
   expect(personnelActionCanBeApproved('STEP_INCREMENT')).toBe(true);
 });
 
+it('approves and effectuates appointment-backed position movements', () => {
+  for (const actionType of [
+    'PROMOTION',
+    'TRANSFER',
+    'DEMOTION',
+    'RECLASSIFICATION',
+    'COMPARABLE_REINSTATEMENT',
+  ] as const) {
+    expect(personnelActionCanBeApproved(actionType)).toBe(true);
+    expect(personnelActionCanBeEffectuated(actionType)).toBe(true);
+  }
+});
+
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const actionId = '00000000-0000-4000-8000-000000000009';
 const documentsService = {} as ConstructorParameters<typeof PersonnelActionsService>[1];
 const plantillaPositionsService = {} as ConstructorParameters<typeof PersonnelActionsService>[2];
 const authService = {} as ConstructorParameters<typeof PersonnelActionsService>[3];
 const separationsService = {} as ConstructorParameters<typeof PersonnelActionsService>[4];
+const appointmentsService = {} as ConstructorParameters<typeof PersonnelActionsService>[5];
 
 function context(permissions: RequestContext['permissions']): RequestContext {
   return {
@@ -40,6 +55,7 @@ function service(): PersonnelActionsService {
     plantillaPositionsService,
     authService,
     separationsService,
+    appointmentsService,
   );
 }
 
