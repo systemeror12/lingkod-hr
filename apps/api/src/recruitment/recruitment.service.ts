@@ -162,6 +162,11 @@ export interface RecruitmentPage<T> {
   nextOffset: number | null;
 }
 
+export interface ActivationPublicationClosure {
+  publicationId: string;
+  requestToFillId: string;
+}
+
 export class RecruitmentServiceError extends Error {
   constructor(
     message: string,
@@ -588,6 +593,10 @@ function safeAuditMetadata(value: Prisma.InputJsonObject): Prisma.InputJsonObjec
     'republicationOfId',
     'newPublicationId',
     'channelTypes',
+    'applicationId',
+    'appointmentId',
+    'serviceSegmentId',
+    'employeeId',
   ]);
   return Object.fromEntries(
     Object.entries(value).filter(([key]) => allowed.has(key)),
@@ -1365,6 +1374,122 @@ export class RecruitmentService {
     const result = await this.findRequest(context, requestId);
     if (!result) throw this.notFound('Request to Fill');
     return result;
+  }
+
+  /**
+   * Internal contract: Appointment activation owns the transaction. The assumed
+   * Appointment Contract is the closure authority, so the publication closes
+   * without early-closure evidence, and the fulfilled Request to Fill closes
+   * only after no other publication remains active.
+   */
+  async closePublicationAndRequestAfterActivationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: {
+      publicationId: string;
+      appointmentId: string;
+      serviceSegmentId: string;
+      reason: string;
+    },
+    rawIdempotencyKey?: string,
+  ): Promise<ActivationPublicationClosure> {
+    const reason = input.reason.trim();
+    if (!reason)
+      throw new RecruitmentServiceError(
+        'A close reason is required.',
+        400,
+        'RECRUITMENT_REASON_REQUIRED',
+      );
+    const current = await this.lockPublication(transaction, context.agencyId, input.publicationId);
+    if (!current) throw this.notFound('Vacancy Publication');
+    const previous = await this.idempotentEvent(
+      transaction,
+      context,
+      'VACANCY_PUBLICATION_CLOSED',
+      rawIdempotencyKey,
+      current.id,
+    );
+    if (!previous) {
+      if (current.status !== 'PUBLISHED') throw this.workflowError('close', current.status);
+      await transaction.vacancyPublication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+        data: {
+          status: 'CLOSED',
+          closedAt: new Date(),
+          closureReason: reason,
+          closureAuthorityDocumentVersionId: null,
+          updatedByMembershipId: context.membershipId,
+          rowVersion: { increment: 1 },
+        },
+      });
+      await this.writeAudit(transaction, context, {
+        action: 'VACANCY_PUBLICATION_CLOSED',
+        entityType: 'VacancyPublication',
+        entityId: current.id,
+        previousStatus: 'PUBLISHED',
+        newStatus: 'CLOSED',
+        reason,
+        metadata: safeAuditMetadata({
+          publicationNo: current.publicationNo,
+          requestToFillId: current.requestToFillId,
+          appointmentId: input.appointmentId,
+          serviceSegmentId: input.serviceSegmentId,
+        }),
+        idempotencyKey: rawIdempotencyKey,
+      });
+    }
+    const request = await this.lockRequest(transaction, context.agencyId, current.requestToFillId);
+    if (!request) throw this.notFound('Request to Fill');
+    const previousRequest = await this.idempotentEvent(
+      transaction,
+      context,
+      'REQUEST_TO_FILL_CLOSED',
+      rawIdempotencyKey,
+      request.id,
+    );
+    if (!previousRequest) {
+      if (request.status !== 'APPROVED') throw this.workflowError('close', request.status);
+      const activePublication = await transaction.vacancyPublication.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          requestToFillId: request.id,
+          status: { in: ['DRAFT', 'FOR_APPROVAL', 'PUBLISHED'] },
+        },
+        select: { id: true },
+      });
+      if (activePublication) {
+        throw new RecruitmentServiceError(
+          'A Request to Fill cannot be closed while its Vacancy Publication is active.',
+          409,
+          'RECRUITMENT_ACTIVE_PUBLICATION',
+        );
+      }
+      await transaction.requestToFill.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: request.id } },
+        data: {
+          status: 'CLOSED',
+          closedAt: new Date(),
+          updatedByMembershipId: context.membershipId,
+          rowVersion: { increment: 1 },
+        },
+      });
+      await this.writeAudit(transaction, context, {
+        action: 'REQUEST_TO_FILL_CLOSED',
+        entityType: 'RequestToFill',
+        entityId: request.id,
+        previousStatus: 'APPROVED',
+        newStatus: 'CLOSED',
+        reason,
+        metadata: safeAuditMetadata({
+          requestNo: request.requestNo,
+          publicationNo: current.publicationNo,
+          appointmentId: input.appointmentId,
+          serviceSegmentId: input.serviceSegmentId,
+        }),
+        idempotencyKey: rawIdempotencyKey,
+      });
+    }
+    return { publicationId: current.id, requestToFillId: current.requestToFillId };
   }
 
   async listPublications(

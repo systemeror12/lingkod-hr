@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EMPLOYEE_CIVIL_STATUSES, EMPLOYEE_SEXES } from '../employees/employees.schemas';
 
 export const APPOINTMENT_WORKFLOW_STATUSES = [
   'DRAFT',
@@ -254,3 +255,38 @@ export const appointmentAssumptionFailureSchema = z
 export const appointmentAssumptionCancellationSchema = z
   .object({ ...assumptionOutcomeFields })
   .strict();
+
+const activationEmployeeFields = {
+  employeeNumber: z.string().trim().min(1).max(80),
+  birthDate: z.string().date(),
+  sex: z.enum(EMPLOYEE_SEXES),
+  civilStatus: z.enum(EMPLOYEE_CIVIL_STATUSES),
+  contactEmail: z.string().trim().email().max(320),
+};
+
+export const appointmentActivationSchema = z
+  .object({
+    employeeId: appointmentIdSchema.optional(),
+    employee: z
+      .object({ ...activationEmployeeFields })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const provided = (value.employeeId ? 1 : 0) + (value.employee ? 1 : 0);
+    if (provided === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['employeeId'],
+        message: 'Link an Employee or create one from the appointee identity.',
+      });
+    }
+    if (provided > 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['employee'],
+        message: 'Activate service for either an existing Employee or a new one.',
+      });
+    }
+  });

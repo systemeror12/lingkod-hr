@@ -92,6 +92,7 @@ export default async function AppointmentsPage({
       canCorrectAssumption={hasPermission(session, 'appointments.assumption.correct')}
       canFailAssumption={hasPermission(session, 'appointments.assumption.fail')}
       canCancelAssumption={hasPermission(session, 'appointments.assumption.cancel')}
+      canActivateService={hasPermission(session, 'personnel.employees.activate')}
       initialSelected={params.selected ?? null}
     />
   );

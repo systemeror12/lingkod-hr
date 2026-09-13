@@ -52,6 +52,37 @@ export interface EmployeeDetail extends EmployeeSummary {
   linkableMemberships: EmployeeMembershipSummary[];
 }
 
+export interface ServiceActivationInput {
+  appointmentId: string;
+  appointmentVersionId: string;
+  employeeId?: string;
+  employee?: EmployeeInput;
+  organizationUnitId: string;
+  positionId: string;
+  appointmentStatus: string;
+  salaryGrade: number;
+  salaryStep: number;
+  effectiveFrom: string;
+}
+
+export interface ServiceActivationResult {
+  employeeId: string;
+  employeeNumber: string;
+  legalName: string;
+  serviceSegmentId: string;
+  created: boolean;
+}
+
+export interface EmployeeActivationSummary {
+  employeeId: string;
+  employeeNumber: string;
+  legalName: string;
+  serviceSegmentId: string;
+  effectiveFrom: string;
+  positionId: string | null;
+  appointmentStatus: string;
+}
+
 export interface EmployeeAuditWriter {
   write(
     transaction: Prisma.TransactionClient,
@@ -250,51 +281,10 @@ export class EmployeesService {
 
   async create(context: RequestContext, input: EmployeeInput): Promise<EmployeeSummary> {
     this.assertPermission(context, 'personnel.employees.create', 'EMPLOYEE_CREATE_FORBIDDEN');
-    const employeeNumber = input.employeeNumber.trim();
-    const legalName = input.legalName.trim();
-    const contactEmail = input.contactEmail.trim();
-    const birthDate = toDatabaseDate(input.birthDate);
+    toDatabaseDate(input.birthDate);
     try {
       return await withDatabaseContext(databaseContext(context), async (transaction) => {
-        const numberTaken = await transaction.employee.findFirst({
-          where: { agencyId: context.agencyId, employeeNumber },
-          select: { id: true },
-        });
-        if (numberTaken) throw this.numberConflict();
-        const personTaken = await transaction.employee.findFirst({
-          where: { agencyId: context.agencyId, legalName, birthDate },
-          select: { id: true },
-        });
-        if (personTaken) throw this.personConflict();
-        const created = await transaction.employee.create({
-          data: {
-            agencyId: context.agencyId,
-            employeeNumber,
-            legalName,
-            birthDate,
-            sex: input.sex,
-            civilStatus: input.civilStatus,
-            contactEmail,
-            createdByMembershipId: context.membershipId,
-            updatedByMembershipId: context.membershipId,
-          },
-          select: employeeSelect,
-        });
-        await this.auditWriter.write(transaction, {
-          agencyId: context.agencyId,
-          actorUserId: context.userId,
-          actorMembershipId: context.membershipId,
-          actorType: 'USER',
-          action: 'EMPLOYEE_CREATED',
-          entityType: 'Employee',
-          entityId: created.id,
-          previousStatus: 'None',
-          newStatus: 'PREBOARDING',
-          requestId: context.requestId,
-          occurredAt: new Date(),
-          metadata: { employeeNumber, legalName, serviceStatus: 'PREBOARDING' },
-        });
-        return employeeSummary(created);
+        return employeeSummary(await this.insertEmployee(transaction, context, input));
       });
     } catch (error: unknown) {
       if (error instanceof EmployeeServiceError) throw error;
@@ -302,6 +292,223 @@ export class EmployeesService {
         throw this.concurrentConflict();
       }
       throw error;
+    }
+  }
+
+  /**
+   * Internal contract: the Appointment activation orchestrator owns the
+   * transaction. Personnel creates or links the Employee, creates the initial
+   * Service Segment, and updates the Employee service projection; Position
+   * Incumbency and occupancy remain Plantilla effects.
+   */
+  async activateFromAssumptionInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: ServiceActivationInput,
+    idempotencyKey?: string,
+  ): Promise<ServiceActivationResult> {
+    this.assertPermission(context, 'personnel.employees.activate', 'EMPLOYEE_ACTIVATE_FORBIDDEN');
+    const effectiveFrom = toDatabaseDate(input.effectiveFrom);
+    let employeeId: string;
+    let created = false;
+
+    if (input.employeeId) {
+      employeeId = input.employeeId;
+      await this.lockEmployee(transaction, context.agencyId, input.employeeId);
+      const record = await this.employeeRecord(transaction, context.agencyId, input.employeeId);
+      if (!record) throw this.notFound();
+      if (record.serviceStatus !== 'PREBOARDING' || record.currentServiceSegment) {
+        throw this.activationNotAllowed(record.serviceStatus);
+      }
+    } else {
+      this.assertPermission(context, 'personnel.employees.create', 'EMPLOYEE_CREATE_FORBIDDEN');
+      if (!input.employee) {
+        throw new EmployeeServiceError(
+          'The Employee identity facts are required to create an Employee.',
+          400,
+          'EMPLOYEE_IDENTITY_REQUIRED',
+        );
+      }
+      const record = await this.insertEmployee(transaction, context, input.employee, {
+        appointmentId: input.appointmentId,
+        appointmentVersionId: input.appointmentVersionId,
+      });
+      employeeId = record.id;
+      created = true;
+    }
+
+    await this.assertNoServiceOverlap(transaction, context.agencyId, employeeId, effectiveFrom);
+
+    const serviceSegment = await transaction.serviceSegment.create({
+      data: {
+        agencyId: context.agencyId,
+        employeeId,
+        appointmentId: input.appointmentId,
+        personnelActionId: null,
+        positionId: input.positionId,
+        organizationUnitId: input.organizationUnitId,
+        segmentType: 'PRIMARY',
+        appointmentStatus: input.appointmentStatus,
+        salaryGrade: input.salaryGrade,
+        salaryStep: input.salaryStep,
+        effectiveFrom,
+        effectiveTo: null,
+        status: 'ACTIVE',
+        createdByMembershipId: context.membershipId,
+      },
+      select: { id: true },
+    });
+    const employee = await transaction.employee.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
+      data: {
+        serviceStatus: 'ACTIVE',
+        firstGovernmentServiceDate: effectiveFrom,
+        agencyServiceStartDate: effectiveFrom,
+        currentServiceSegmentId: serviceSegment.id,
+        updatedByMembershipId: context.membershipId,
+        rowVersion: { increment: 1 },
+      },
+      select: employeeSelect,
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'EMPLOYEE_SERVICE_ACTIVATED',
+      entityType: 'Employee',
+      entityId: employeeId,
+      previousStatus: 'PREBOARDING',
+      newStatus: 'ACTIVE',
+      reason: 'The assumed Appointment activated the Employee service.',
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        appointmentId: input.appointmentId,
+        appointmentVersionId: input.appointmentVersionId,
+        serviceSegmentId: serviceSegment.id,
+        positionId: input.positionId,
+        organizationUnitId: input.organizationUnitId,
+        appointmentStatus: input.appointmentStatus,
+        salaryGrade: input.salaryGrade,
+        salaryStep: input.salaryStep,
+        effectiveFrom: input.effectiveFrom,
+        created,
+      },
+    });
+    return {
+      employeeId,
+      employeeNumber: employee.employeeNumber,
+      legalName: employee.legalName,
+      serviceSegmentId: serviceSegment.id,
+      created,
+    };
+  }
+
+  /** Internal contract: Appointment reads the activated service summary for its detail view. */
+  async resolveActivationForAppointmentInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentId: string,
+  ): Promise<EmployeeActivationSummary | null> {
+    const segment = await transaction.serviceSegment.findFirst({
+      where: { agencyId: context.agencyId, appointmentId },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        employeeId: true,
+        positionId: true,
+        appointmentStatus: true,
+        effectiveFrom: true,
+        employee: { select: { employeeNumber: true, legalName: true } },
+      },
+    });
+    if (!segment || !segment.employee) return null;
+    return {
+      employeeId: segment.employeeId,
+      employeeNumber: segment.employee.employeeNumber,
+      legalName: segment.employee.legalName,
+      serviceSegmentId: segment.id,
+      effectiveFrom: formatDate(segment.effectiveFrom),
+      positionId: segment.positionId,
+      appointmentStatus: segment.appointmentStatus,
+    };
+  }
+
+  private async insertEmployee(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: EmployeeInput,
+    metadata: Prisma.InputJsonObject = {},
+  ): Promise<EmployeeRecord> {
+    const employeeNumber = input.employeeNumber.trim();
+    const legalName = input.legalName.trim();
+    const contactEmail = input.contactEmail.trim();
+    const birthDate = toDatabaseDate(input.birthDate);
+    const numberTaken = await transaction.employee.findFirst({
+      where: { agencyId: context.agencyId, employeeNumber },
+      select: { id: true },
+    });
+    if (numberTaken) throw this.numberConflict();
+    const personTaken = await transaction.employee.findFirst({
+      where: { agencyId: context.agencyId, legalName, birthDate },
+      select: { id: true },
+    });
+    if (personTaken) throw this.personConflict();
+    const created = await transaction.employee.create({
+      data: {
+        agencyId: context.agencyId,
+        employeeNumber,
+        legalName,
+        birthDate,
+        sex: input.sex,
+        civilStatus: input.civilStatus,
+        contactEmail,
+        createdByMembershipId: context.membershipId,
+        updatedByMembershipId: context.membershipId,
+      },
+      select: employeeSelect,
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'EMPLOYEE_CREATED',
+      entityType: 'Employee',
+      entityId: created.id,
+      previousStatus: 'None',
+      newStatus: 'PREBOARDING',
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      metadata: { employeeNumber, legalName, serviceStatus: 'PREBOARDING', ...metadata },
+    });
+    return created;
+  }
+
+  private async assertNoServiceOverlap(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    effectiveFrom: Date,
+  ): Promise<void> {
+    const overlap = await transaction.serviceSegment.findFirst({
+      where: {
+        agencyId,
+        employeeId,
+        segmentType: 'PRIMARY',
+        status: { not: 'VOIDED' },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: effectiveFrom } }],
+      },
+      select: { id: true },
+    });
+    if (overlap) {
+      throw new EmployeeServiceError(
+        'The Employee already has an overlapping primary Service Segment.',
+        409,
+        'EMPLOYEE_SERVICE_OVERLAP',
+      );
     }
   }
 
@@ -481,6 +688,14 @@ export class EmployeesService {
       'This Employee conflicts with an existing record in this Agency.',
       409,
       'EMPLOYEE_CONFLICT',
+    );
+  }
+
+  private activationNotAllowed(status: string): EmployeeServiceError {
+    return new EmployeeServiceError(
+      `The Employee service cannot be activated from ${status}.`,
+      409,
+      'EMPLOYEE_ACTIVATION_NOT_ALLOWED',
     );
   }
 

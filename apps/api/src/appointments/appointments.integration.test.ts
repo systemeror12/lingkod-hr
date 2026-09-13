@@ -2,12 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { expect, it } from 'vitest';
+import { ApprovalCompletionRegistry } from '../approvals/approval.service';
 import { DocumentsService } from '../documents/documents.service';
+import { EmployeesService, employeeAuditWriter } from '../employees/employees.service';
 import {
   plantillaPositionAuditWriter,
   PlantillaPositionsService,
 } from '../plantilla-positions/plantilla-positions.service';
 import type { QualificationStandardsService } from '../qualification-standards/qualification-standards.service';
+import { ApplicationsService } from '../recruitment/applications.service';
+import { RecruitmentService } from '../recruitment/recruitment.service';
 import { SelectionService } from '../recruitment/selection.service';
 import { AppointmentsService, type AppointmentLinkRole } from './appointments.service';
 
@@ -26,6 +30,8 @@ const PREPARER_PERMISSIONS = [
   'appointments.external_actions.record',
   'appointments.assumption.create',
   'appointments.assumption.fail',
+  'personnel.employees.create',
+  'personnel.employees.activate',
 ];
 
 const AUTHORITY_PERMISSIONS = [
@@ -89,6 +95,9 @@ function createFixtureIds() {
     handoff: randomUUID(),
     selectionDecision: randomUUID(),
     applicant: randomUUID(),
+    request: randomUUID(),
+    publication: randomUUID(),
+    application: randomUUID(),
   };
 }
 
@@ -102,11 +111,15 @@ interface Fixture {
   preparer: RequestContext;
   authority: RequestContext;
   appointments: AppointmentsService;
+  employees: EmployeesService;
   setQualificationUsable: (usable: boolean) => void;
   dispose: () => Promise<void>;
 }
 
-async function setupFixture(label: string): Promise<Fixture> {
+async function setupFixture(
+  label: string,
+  options: { recruitmentChain?: boolean } = {},
+): Promise<Fixture> {
   const runtimeUrl = process.env.DATABASE_URL;
   const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
   if (!runtimeUrl || !adminUrl) {
@@ -326,13 +339,58 @@ async function setupFixture(label: string): Promise<Fixture> {
       },
       documents: [],
     };
+    if (options.recruitmentChain) {
+      await transaction.$executeRaw`
+        INSERT INTO "applicants"
+          ("id", "agency_id", "first_name", "last_name", "privacy_notice_version",
+           "consented_at", "deduplication_key", "created_by_membership_id")
+        VALUES
+          (${ids.applicant}::uuid, ${agency.id}::uuid, 'Ana', 'Reyes', 'v1', now(),
+           ${`APPT-APPLICANT-${suffix}`}, ${preparer.membershipId}::uuid)
+      `;
+      await transaction.$executeRaw`
+        INSERT INTO "requests_to_fill"
+          ("id", "agency_id", "position_id", "requesting_unit_id",
+           "requested_by_membership_id", "justification", "qualification_standard_version_id",
+           "status", "approved_at", "created_by_membership_id", "updated_by_membership_id")
+        VALUES
+          (${ids.request}::uuid, ${agency.id}::uuid, ${ids.position}::uuid,
+           ${ids.unit}::uuid, ${preparer.membershipId}::uuid,
+           'Appointment activation fixture request.', ${ids.qualificationVersion}::uuid,
+           'APPROVED', now(), ${preparer.membershipId}::uuid, ${preparer.membershipId}::uuid)
+      `;
+      await transaction.$executeRaw`
+        INSERT INTO "vacancy_publications"
+          ("id", "agency_id", "request_to_fill_id", "qualification_standard_version_id",
+           "form_document_version_id", "approval_route_version_id", "opening_date",
+           "closing_date", "status", "published_at", "created_by_membership_id",
+           "updated_by_membership_id")
+        VALUES
+          (${ids.publication}::uuid, ${agency.id}::uuid, ${ids.request}::uuid,
+           ${ids.qualificationVersion}::uuid, ${ids.formVersion}::uuid, ${randomUUID()}::uuid,
+           '2026-07-01'::date, '2026-07-31'::date, 'PUBLISHED', now(),
+           ${preparer.membershipId}::uuid, ${preparer.membershipId}::uuid)
+      `;
+      await transaction.$executeRaw`
+        INSERT INTO "applications"
+          ("id", "agency_id", "vacancy_publication_id", "applicant_id",
+           "qualification_standard_version_id", "status", "received_at",
+           "received_by_membership_id", "created_by_membership_id", "updated_by_membership_id")
+        VALUES
+          (${ids.application}::uuid, ${agency.id}::uuid, ${ids.publication}::uuid,
+           ${ids.applicant}::uuid, ${ids.qualificationVersion}::uuid, 'SELECTED', now(),
+           ${preparer.membershipId}::uuid, ${preparer.membershipId}::uuid,
+           ${preparer.membershipId}::uuid)
+      `;
+    }
     await transaction.$executeRaw`
       INSERT INTO "recruitment_appointment_handoffs"
         ("id", "agency_id", "selection_decision_id", "application_id", "position_id",
          "selection_package", "idempotency_key", "handed_off_at")
       VALUES
         (${ids.handoff}::uuid, ${agency.id}::uuid, ${ids.selectionDecision}::uuid,
-         ${randomUUID()}::uuid, ${ids.position}::uuid,
+         ${options.recruitmentChain ? ids.application : randomUUID()}::uuid,
+         ${ids.position}::uuid,
          ${JSON.stringify(selectionPackage)}::jsonb, ${`APPT-HANDOFF-${suffix}`}, now())
     `;
   });
@@ -366,10 +424,21 @@ async function setupFixture(label: string): Promise<Fixture> {
   } as unknown as QualificationStandardsService;
   const plantilla = new PlantillaPositionsService(plantillaPositionAuditWriter, documents as never);
   const selection = new SelectionService(plantilla, documents as never);
+  const employees = new EmployeesService(employeeAuditWriter);
+  const applications = new ApplicationsService(documents as never);
+  const recruitment = new RecruitmentService(
+    plantilla,
+    documents as never,
+    {} as never,
+    new ApprovalCompletionRegistry(),
+  );
   const appointments = new AppointmentsService(
     documents as never,
+    employees,
     plantilla,
     qualificationStandards,
+    applications,
+    recruitment,
     selection,
   );
 
@@ -393,6 +462,7 @@ async function setupFixture(label: string): Promise<Fixture> {
       AUTHORITY_PERMISSIONS,
     ),
     appointments,
+    employees,
     setQualificationUsable: (usable: boolean) => {
       qualificationUsable = usable;
     },
@@ -412,8 +482,15 @@ async function setupFixture(label: string): Promise<Fixture> {
           'appointment_versions',
           'appointments',
           'appointment_agency_settings',
+          'position_incumbencies',
           'service_segments',
+          'employees',
+          'outbox_events',
           'recruitment_appointment_handoffs',
+          'applications',
+          'vacancy_publications',
+          'requests_to_fill',
+          'applicants',
           'plantilla_position_versions',
           'plantilla_positions',
           'staffing_authorities',
@@ -474,6 +551,64 @@ function versionInput(
       { linkRole: 'AUTHORITY_OR_DELEGATION', documentVersionId: fixture.ids.formVersion },
     ] as Array<{ linkRole: AppointmentLinkRole; documentVersionId: string }>,
     ...overrides,
+  };
+}
+
+interface AssumedAppointment {
+  appointmentId: string;
+  versionId: string;
+  oathVersionId: string;
+  assumptionVersionId: string;
+}
+
+async function assumeAppointment(fixture: Fixture, label: string): Promise<AssumedAppointment> {
+  const { ids, preparer, authority, appointments } = fixture;
+  await appointments.configureSettings(preparer, {
+    regulatoryStatus: 'REGULATED',
+    statusEvidenceDocumentVersionId: ids.statusEvidenceVersion,
+  });
+  const created = await appointments.create(preparer, {
+    selectionDecisionId: ids.selectionDecision,
+    ...versionInput(fixture),
+  });
+  await appointments.submit(preparer, created.id);
+  await appointments.endorse(preparer, created.id);
+  const issued = await appointments.issue(authority, created.id, `${label}-issue`);
+  const versionId = issued.currentVersion?.id ?? '';
+  await appointments.recordReceipt(preparer, created.id, {
+    acknowledgedAt: '2026-10-02T01:00:00.000Z',
+    evidenceDocumentVersionId: ids.formVersion,
+  });
+  const sworn = await appointments.recordOath(authority, created.id, {
+    oathDate: '2026-10-03',
+    administeredByMembershipId: authority.membershipId,
+    authority: 'City Mayor',
+    place: 'City Hall',
+    documentVersionId: ids.formVersion,
+  });
+  const oathVersionId =
+    sworn.versions.find((version) => version.id === versionId)?.oath?.currentVersion?.id ?? '';
+  const assumed = await appointments.recordAssumption(authority, created.id, {
+    oathVersionId,
+    actualAssumptionDate: '2026-10-05',
+    certifiedByMembershipId: authority.membershipId,
+    certifyingAuthority: 'City Mayor',
+    certifiedAt: '2026-10-05T01:00:00.000Z',
+    documentVersionId: ids.formVersion,
+  });
+  const assumptionVersionId =
+    assumed.versions.find((version) => version.id === versionId)?.assumption?.currentVersion?.id ??
+    '';
+  return { appointmentId: created.id, versionId, oathVersionId, assumptionVersionId };
+}
+
+function employeeInput(fixture: Fixture, prefix: string) {
+  return {
+    employeeNumber: `E2E-${prefix}-${fixture.suffix}`,
+    birthDate: '1990-05-15',
+    sex: 'FEMALE' as const,
+    civilStatus: 'SINGLE' as const,
+    contactEmail: `${prefix.toLowerCase()}-${fixture.suffix}@example.test`,
   };
 }
 
@@ -1418,6 +1553,416 @@ it.skipIf(!enabled)(
         assumptionId: assumption?.id,
         reservationReleased: true,
       });
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses activation from an issued Appointment with no Assumption to Duty',
+  async () => {
+    const fixture = await setupFixture('ACTIVATION-GATE', { recruitmentChain: true });
+    const { ids, admin, preparer, authority, appointments } = fixture;
+    try {
+      await appointments.configureSettings(preparer, {
+        regulatoryStatus: 'REGULATED',
+        statusEvidenceDocumentVersionId: ids.statusEvidenceVersion,
+      });
+      const created = await appointments.create(preparer, {
+        selectionDecisionId: ids.selectionDecision,
+        ...versionInput(fixture),
+      });
+      await appointments.submit(preparer, created.id);
+      await appointments.endorse(preparer, created.id);
+      await appointments.issue(authority, created.id, 'gate-issue');
+
+      await expect(
+        appointments.activateService(preparer, created.id, {
+          employee: employeeInput(fixture, 'GATE'),
+        }),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_SERVICE_ASSUMPTION_REQUIRED',
+        statusCode: 409,
+      });
+
+      expect(
+        await admin.serviceSegment.count({
+          where: { agencyId: fixture.agencyId, appointmentId: created.id },
+        }),
+      ).toBe(0);
+      expect(
+        await admin.positionIncumbency.count({
+          where: { agencyId: fixture.agencyId, positionId: ids.position },
+        }),
+      ).toBe(0);
+      const application = await admin.application.findUniqueOrThrow({
+        where: { id: ids.application },
+      });
+      expect(application.status).toBe('SELECTED');
+      const publication = await admin.vacancyPublication.findUniqueOrThrow({
+        where: { id: ids.publication },
+      });
+      expect(publication.status).toBe('PUBLISHED');
+      const request = await admin.requestToFill.findUniqueOrThrow({ where: { id: ids.request } });
+      expect(request.status).toBe('APPROVED');
+      const versions = await admin.plantillaPositionVersion.findMany({
+        where: { positionId: ids.position },
+        orderBy: { versionNo: 'asc' },
+      });
+      expect(versions.at(-1)?.domainStatus).toBe('RESERVED');
+      expect(
+        await admin.auditEvent.count({
+          where: { agencyId: fixture.agencyId, action: 'APPOINTMENT_SERVICE_ACTIVATED' },
+        }),
+      ).toBe(0);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'activates service from an assumed Appointment and closes the recruitment chain',
+  async () => {
+    const fixture = await setupFixture('ACTIVATE', { recruitmentChain: true });
+    const { ids, admin, preparer, authority, appointments } = fixture;
+    try {
+      const { appointmentId, oathVersionId, assumptionVersionId } = await assumeAppointment(
+        fixture,
+        'activate',
+      );
+
+      const activationInput = { employee: employeeInput(fixture, 'ACTIVATE') };
+      const activated = await appointments.activateService(
+        preparer,
+        appointmentId,
+        activationInput,
+        'activate-1',
+      );
+      expect(activated.activation).toMatchObject({
+        employeeNumber: `E2E-ACTIVATE-${fixture.suffix}`,
+        legalName: 'Ana Reyes',
+        effectiveFrom: '2026-10-05',
+        positionId: ids.position,
+        appointmentStatus: 'PERMANENT',
+      });
+      const employeeId = activated.activation?.employeeId ?? '';
+      const serviceSegmentId = activated.activation?.serviceSegmentId ?? '';
+
+      const employee = await admin.employee.findUniqueOrThrow({
+        where: { agencyId_id: { agencyId: fixture.agencyId, id: employeeId } },
+      });
+      expect(employee.serviceStatus).toBe('ACTIVE');
+      expect(employee.currentServiceSegmentId).toBe(serviceSegmentId);
+      expect(employee.firstGovernmentServiceDate?.toISOString().slice(0, 10)).toBe('2026-10-05');
+
+      const segment = await admin.serviceSegment.findUniqueOrThrow({
+        where: { id: serviceSegmentId },
+      });
+      expect(segment).toMatchObject({
+        appointmentId,
+        positionId: ids.position,
+        status: 'ACTIVE',
+        appointmentStatus: 'PERMANENT',
+      });
+
+      const incumbency = await admin.positionIncumbency.findFirstOrThrow({
+        where: { agencyId: fixture.agencyId, serviceSegmentId },
+      });
+      expect(incumbency).toMatchObject({ positionId: ids.position, employeeId, status: 'ACTIVE' });
+
+      const versions = await admin.plantillaPositionVersion.findMany({
+        where: { positionId: ids.position },
+        orderBy: { versionNo: 'asc' },
+      });
+      expect(versions.map((version) => version.status)).toEqual(['SUPERSEDED', 'ACTIVE']);
+      expect(versions.map((version) => version.domainStatus)).toEqual(['RESERVED', 'OCCUPIED']);
+      expect(versions[0]?.effectiveTo?.toISOString().slice(0, 10)).toBe('2026-10-04');
+
+      expect(
+        (await admin.application.findUniqueOrThrow({ where: { id: ids.application } })).status,
+      ).toBe('CLOSED');
+      expect(
+        (await admin.vacancyPublication.findUniqueOrThrow({ where: { id: ids.publication } }))
+          .status,
+      ).toBe('CLOSED');
+      expect(
+        (await admin.requestToFill.findUniqueOrThrow({ where: { id: ids.request } })).status,
+      ).toBe('CLOSED');
+
+      const outbox = await admin.outboxEvent.findFirstOrThrow({
+        where: { agencyId: fixture.agencyId, eventType: 'APPOINTMENT_SERVICE_ACTIVATED' },
+      });
+      expect(outbox.aggregateId).toBe(appointmentId);
+
+      const activationEvent = await admin.auditEvent.findFirstOrThrow({
+        where: {
+          agencyId: fixture.agencyId,
+          action: 'APPOINTMENT_SERVICE_ACTIVATED',
+          entityId: appointmentId,
+        },
+      });
+      expect(activationEvent.metadata).toMatchObject({
+        appointmentVersionId: activated.currentVersion?.id,
+        employeeId,
+        serviceSegmentId,
+        positionIncumbencyId: incumbency.id,
+        actualAssumptionDate: '2026-10-05',
+        applicationId: ids.application,
+        publicationId: ids.publication,
+        requestId: ids.request,
+      });
+      expect(activationEvent.metadata).not.toHaveProperty('contactEmail');
+      expect(activationEvent.metadata).not.toHaveProperty('birthDate');
+
+      const replayed = await appointments.activateService(
+        preparer,
+        appointmentId,
+        activationInput,
+        'activate-1',
+      );
+      expect(replayed.activation?.serviceSegmentId).toBe(serviceSegmentId);
+      expect(await admin.employee.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(await admin.positionIncumbency.count({ where: { agencyId: fixture.agencyId } })).toBe(
+        1,
+      );
+      expect(await admin.outboxEvent.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(
+        await admin.auditEvent.count({
+          where: {
+            agencyId: fixture.agencyId,
+            action: 'APPOINTMENT_SERVICE_ACTIVATED',
+            entityId: appointmentId,
+          },
+        }),
+      ).toBe(1);
+
+      await expect(
+        appointments.activateService(preparer, appointmentId, activationInput, 'activate-2'),
+      ).rejects.toMatchObject({
+        code: 'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
+        statusCode: 409,
+      });
+      const replayedWithoutKey = await appointments.activateService(
+        preparer,
+        appointmentId,
+        activationInput,
+      );
+      expect(replayedWithoutKey.id).toBe(appointmentId);
+
+      await expect(
+        appointments.correctAssumption(authority, appointmentId, {
+          oathVersionId,
+          actualAssumptionDate: '2026-10-06',
+          certifiedByMembershipId: authority.membershipId,
+          certifyingAuthority: 'City Mayor',
+          certifiedAt: '2026-10-06T01:00:00.000Z',
+          documentVersionId: ids.formVersion,
+          reason: 'Correct after activation.',
+          authorityDocumentVersionId: ids.correctionAuthorityVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_ACTIVATED', statusCode: 409 });
+      await expect(
+        appointments.recordAssumptionFailure(preparer, appointmentId, {
+          noticeDate: '2026-10-06',
+          deadlineDate: '2026-10-08',
+          outcomeDate: '2026-10-09',
+          reason: 'Attempted outcome after activation.',
+          authorizedByMembershipId: preparer.membershipId,
+          authorityDocumentVersionId: ids.cancellationAuthorityVersion,
+          evidenceDocumentVersionId: ids.formVersion,
+        }),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_ASSUMPTION_NOT_PENDING', statusCode: 409 });
+
+      const assumptionEvent = await admin.assumptionVersion.findUniqueOrThrow({
+        where: { id: assumptionVersionId },
+      });
+      expect(assumptionEvent.versionNo).toBe(1);
+      expect(
+        (await admin.application.findUniqueOrThrow({ where: { id: ids.application } })).status,
+      ).toBe('CLOSED');
+      expect(
+        await admin.auditEvent.count({
+          where: {
+            agencyId: fixture.agencyId,
+            action: { in: ['APPLICATION_REOPENED', 'APPLICATION_STATUS_CHANGED'] },
+          },
+        }),
+      ).toBe(0);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'links an existing preboarding Employee and rejects cross-agency activation',
+  async () => {
+    const fixture = await setupFixture('LINK', { recruitmentChain: true });
+    const other = await setupFixture('OTHER');
+    try {
+      const { admin, preparer, appointments, employees } = fixture;
+      const existing = await employees.create(preparer, {
+        legalName: 'Ana Reyes',
+        ...employeeInput(fixture, 'LINK'),
+      });
+      expect(existing.serviceStatus).toBe('PREBOARDING');
+      const otherEmployee = await other.employees.create(other.preparer, {
+        legalName: 'Other Candidate',
+        ...employeeInput(other, 'OTHER'),
+      });
+
+      const { appointmentId } = await assumeAppointment(fixture, 'link');
+
+      await expect(
+        other.appointments.activateService(
+          other.preparer,
+          appointmentId,
+          { employeeId: otherEmployee.id },
+          'cross-agency-appointment',
+        ),
+      ).rejects.toMatchObject({ code: 'APPOINTMENT_NOT_FOUND', statusCode: 404 });
+      await expect(
+        appointments.activateService(
+          preparer,
+          appointmentId,
+          { employeeId: otherEmployee.id },
+          'cross-agency-employee',
+        ),
+      ).rejects.toMatchObject({ code: 'EMPLOYEE_NOT_FOUND', statusCode: 404 });
+
+      const activated = await appointments.activateService(
+        preparer,
+        appointmentId,
+        { employeeId: existing.id },
+        'link-1',
+      );
+      expect(activated.activation).toMatchObject({
+        employeeId: existing.id,
+        employeeNumber: existing.employeeNumber,
+        effectiveFrom: '2026-10-05',
+      });
+      expect(
+        (
+          await admin.employee.findUniqueOrThrow({
+            where: { agencyId_id: { agencyId: fixture.agencyId, id: existing.id } },
+          })
+        ).serviceStatus,
+      ).toBe('ACTIVE');
+      expect(await admin.employee.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(
+        (
+          await other.admin.employee.findUniqueOrThrow({
+            where: {
+              agencyId_id: { agencyId: other.agencyId, id: otherEmployee.id },
+            },
+          })
+        ).serviceStatus,
+      ).toBe('PREBOARDING');
+    } finally {
+      await fixture.dispose();
+      await other.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'serializes concurrent activation attempts on one assumed Appointment',
+  async () => {
+    const fixture = await setupFixture('RACE', { recruitmentChain: true });
+    const { admin, preparer, appointments } = fixture;
+    try {
+      const { appointmentId } = await assumeAppointment(fixture, 'race');
+      const activationInput = { employee: employeeInput(fixture, 'RACE') };
+
+      const results = await Promise.allSettled([
+        appointments.activateService(preparer, appointmentId, activationInput, 'race-a'),
+        appointments.activateService(preparer, appointmentId, activationInput, 'race-b'),
+      ]);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      const failure = results.find((result) => result.status === 'rejected');
+      if (!failure || failure.status !== 'rejected') {
+        throw new Error('Expected one concurrent activation attempt to fail.');
+      }
+      expect(failure.reason).toMatchObject({
+        code: 'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
+        statusCode: 409,
+      });
+      expect(await admin.employee.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(await admin.positionIncumbency.count({ where: { agencyId: fixture.agencyId } })).toBe(
+        1,
+      );
+      expect(await admin.outboxEvent.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      expect(
+        await admin.auditEvent.count({
+          where: { agencyId: fixture.agencyId, action: 'APPOINTMENT_SERVICE_ACTIVATED' },
+        }),
+      ).toBe(1);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'rolls back every owner when the reserved position cannot be consumed',
+  async () => {
+    const fixture = await setupFixture('ROLLBACK', { recruitmentChain: true });
+    const { ids, admin, preparer, appointments } = fixture;
+    try {
+      const { appointmentId } = await assumeAppointment(fixture, 'rollback');
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.$executeRaw`
+          INSERT INTO "position_incumbencies"
+            ("id", "agency_id", "position_id", "employee_id", "service_segment_id",
+             "effective_from", "status", "created_by_membership_id")
+          VALUES
+            (${randomUUID()}::uuid, ${fixture.agencyId}::uuid, ${ids.position}::uuid,
+             ${randomUUID()}::uuid, ${randomUUID()}::uuid, '2026-09-01'::date, 'ACTIVE',
+             ${preparer.membershipId}::uuid)
+        `;
+      });
+
+      await expect(
+        appointments.activateService(
+          preparer,
+          appointmentId,
+          { employee: employeeInput(fixture, 'ROLLBACK') },
+          'rollback-1',
+        ),
+      ).rejects.toMatchObject({
+        code: 'PLANTILLA_POSITION_INCUMBENCY_CONFLICT',
+        statusCode: 409,
+      });
+
+      expect(await admin.employee.count({ where: { agencyId: fixture.agencyId } })).toBe(0);
+      expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(0);
+      expect(await admin.outboxEvent.count({ where: { agencyId: fixture.agencyId } })).toBe(0);
+      expect(
+        await admin.auditEvent.count({
+          where: { agencyId: fixture.agencyId, action: 'APPOINTMENT_SERVICE_ACTIVATED' },
+        }),
+      ).toBe(0);
+      expect(
+        (await admin.application.findUniqueOrThrow({ where: { id: ids.application } })).status,
+      ).toBe('SELECTED');
+      expect(
+        (await admin.vacancyPublication.findUniqueOrThrow({ where: { id: ids.publication } }))
+          .status,
+      ).toBe('PUBLISHED');
+      expect(
+        (await admin.requestToFill.findUniqueOrThrow({ where: { id: ids.request } })).status,
+      ).toBe('APPROVED');
+      const versions = await admin.plantillaPositionVersion.findMany({
+        where: { positionId: ids.position },
+        orderBy: { versionNo: 'asc' },
+      });
+      expect(versions.at(-1)?.domainStatus).toBe('RESERVED');
     } finally {
       await fixture.dispose();
     }

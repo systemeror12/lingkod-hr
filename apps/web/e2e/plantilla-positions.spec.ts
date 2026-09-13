@@ -46,9 +46,9 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await dialog.getByLabel('Applicable Staffing Authority').selectOption({ index: 1 });
   await dialog.getByRole('button', { name: 'Create proposed position' }).click();
 
-  await expect(page.getByRole('status')).toContainText(
-    `Proposed position “${itemNumber}” was created.`,
-  );
+  await expect(
+    page.getByRole('status').filter({ hasText: `Proposed position “${itemNumber}” was created.` }),
+  ).toBeVisible();
   await expect(
     page.getByRole('heading', { name: 'Human Resource Management Officer III' }),
   ).toBeVisible();
@@ -164,9 +164,9 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
   await createDialog.getByLabel('Applicable Staffing Authority').selectOption({ index: 1 });
   await createDialog.getByRole('button', { name: 'Create proposed position' }).click();
 
-  await expect(page.getByRole('status')).toContainText(
-    `Proposed position “${itemNumber}” was created.`,
-  );
+  await expect(
+    page.getByRole('status').filter({ hasText: `Proposed position “${itemNumber}” was created.` }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Authorize position' })).toBeVisible();
 
   async function linkEvidence(purpose: 'CREATION' | 'FREEZE' | 'ABOLITION'): Promise<void> {
