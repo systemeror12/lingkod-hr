@@ -1384,9 +1384,9 @@ async function seed(): Promise<void> {
       data: { currentVersionId: separationActionVersion.id },
     });
 
-    // An issued and assumed PROMOTION contract with its approved position
+    // An issued and assumed PROMOTION contract with its reviewed position
     // movement, so the protected browser journey can exercise the #108
-    // effectuation review, confirmation, result, and history surfaces.
+    // approval, confirmation, result, and history surfaces.
     const movementEvidence = await evidence('E2E-MOVE-AUTHORITY', 'AUTHORITY');
     const movementSourcePosition = await transaction.plantillaPosition.create({
       data: {
@@ -1634,10 +1634,8 @@ async function seed(): Promise<void> {
         agencyId: agency.id,
         employeeId: movementEmployee.id,
         actionType: 'PROMOTION',
-        status: 'APPROVED',
+        status: 'FOR_APPROVAL',
         preparedByMembershipId: preparerMembership.id,
-        approvedByMembershipId: membership.id,
-        approvedAt: new Date(),
       },
     });
     const movementActionVersion = await transaction.personnelActionVersion.create({
@@ -1672,15 +1670,31 @@ async function seed(): Promise<void> {
     await transaction.auditEvent.create({
       data: {
         agencyId: agency.id,
+        actorUserId: preparerUser.id,
+        actorMembershipId: preparerMembership.id,
+        actorType: 'USER',
+        action: 'PERSONNEL_ACTION_SUBMITTED',
+        entityType: 'PersonnelAction',
+        entityId: movementAction.id,
+        previousStatus: 'DRAFT',
+        newStatus: 'FOR_REVIEW',
+        reason: 'Effectuate the Appointment-backed promotion on its assumption date.',
+        requestId: 'protected-shell-seed',
+        metadata: { actionType: 'PROMOTION', versionId: movementActionVersion.id },
+      },
+    });
+    await transaction.auditEvent.create({
+      data: {
+        agencyId: agency.id,
         actorUserId: user.id,
         actorMembershipId: membership.id,
         actorType: 'USER',
-        action: 'PERSONNEL_ACTION_APPROVED',
+        action: 'PERSONNEL_ACTION_ENDORSED',
         entityType: 'PersonnelAction',
         entityId: movementAction.id,
-        previousStatus: 'FOR_APPROVAL',
-        newStatus: 'APPROVED',
-        reason: 'Protected shell movement effectuation fixture.',
+        previousStatus: 'FOR_REVIEW',
+        newStatus: 'FOR_APPROVAL',
+        reason: 'The assumed Appointment and reserved item were reviewed.',
         requestId: 'protected-shell-seed',
         metadata: { actionType: 'PROMOTION', versionId: movementActionVersion.id },
       },
