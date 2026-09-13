@@ -3,7 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
-import { AppointmentsService } from '../appointments/appointments.service';
+import { AppointmentReadModel, AppointmentsService } from '../appointments/appointments.service';
 import { AuthService } from '../auth/auth.service';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import {
@@ -589,14 +589,13 @@ async function setupMovementFixture(options: {
     plantillaPositionAuditWriter,
     documentsService,
   );
+  const appointmentReadModel = new AppointmentReadModel({} as never, plantillaService);
   const appointments = new AppointmentsService(
     documentsService,
-    {} as never,
     plantillaService,
     {} as never,
     {} as never,
-    {} as never,
-    {} as never,
+    appointmentReadModel,
   );
   const service = new PersonnelActionsService(
     personnelActionAuditWriter,

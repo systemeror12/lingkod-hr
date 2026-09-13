@@ -5,7 +5,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { AuthService } from '../auth/auth.service';
-import { AppointmentsService } from '../appointments/appointments.service';
+import { AppointmentReadModel, AppointmentsService } from '../appointments/appointments.service';
 import {
   plantillaPositionAuditWriter,
   PlantillaPositionsService,
@@ -350,6 +350,7 @@ it.skipIf(!enabled)(
         plantillaPositionAuditWriter,
         documentsService,
       );
+      const appointmentReadModel = new AppointmentReadModel({} as never, plantillaPositionsService);
       const service = new PersonnelActionsService(
         personnelActionAuditWriter,
         documentsService,
@@ -358,12 +359,10 @@ it.skipIf(!enabled)(
         new SeparationsService(separationAuditWriter),
         new AppointmentsService(
           documentsService,
-          {} as never,
           plantillaPositionsService,
           {} as never,
           {} as never,
-          {} as never,
-          {} as never,
+          appointmentReadModel,
         ),
       );
       const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [

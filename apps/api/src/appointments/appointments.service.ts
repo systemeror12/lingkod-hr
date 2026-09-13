@@ -4,18 +4,9 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
-import {
-  EmployeesService,
-  EmployeeServiceError,
-  type EmployeeActivationSummary,
-} from '../employees/employees.service';
-import {
-  PlantillaPositionsService,
-  PlantillaPositionServiceError,
-} from '../plantilla-positions/plantilla-positions.service';
+import { EmployeesService, type EmployeeActivationSummary } from '../employees/employees.service';
+import { PlantillaPositionsService } from '../plantilla-positions/plantilla-positions.service';
 import { QualificationStandardsService } from '../qualification-standards/qualification-standards.service';
-import { ApplicationsService } from '../recruitment/applications.service';
-import { RecruitmentService, RecruitmentServiceError } from '../recruitment/recruitment.service';
 import { SelectionService } from '../recruitment/selection.service';
 import {
   APPOINTMENT_ASSUMPTION_OUTCOMES,
@@ -28,7 +19,6 @@ import {
   APPOINTMENT_REGULATORY_STATUSES,
   APPOINTMENT_SIGNATURE_METHODS,
   APPOINTMENT_WORKFLOW_STATUSES,
-  type appointmentActivationSchema,
   type appointmentAssumptionCancellationSchema,
   type appointmentAssumptionCorrectionSchema,
   type appointmentAssumptionFailureSchema,
@@ -679,7 +669,9 @@ export function deriveAppointmentExternalStanding(
   return 'NOT_SUBMITTED';
 }
 
-function safeAuditMetadata(value: Prisma.InputJsonObject): Prisma.InputJsonObject {
+export function safeAppointmentAuditMetadata(
+  value: Prisma.InputJsonObject,
+): Prisma.InputJsonObject {
   return Object.fromEntries(
     Object.entries(value).filter(([key]) => AUDIT_METADATA_KEYS.has(key)),
   ) as Prisma.InputJsonObject;
@@ -1075,18 +1067,400 @@ function appointmentSummary(
   };
 }
 
+const appointmentActivationSelect = {
+  id: true,
+  workflowStatus: true,
+  positionId: true,
+  recruitmentHandoffId: true,
+  currentVersion: {
+    select: {
+      id: true,
+      status: true,
+      salaryGrade: true,
+      salaryStep: true,
+    },
+  },
+} satisfies Prisma.AppointmentSelect;
+
+export type AppointmentActivationRecord = Prisma.AppointmentGetPayload<{
+  select: typeof appointmentActivationSelect;
+}>;
+
+/**
+ * Appointment-owned transactional reads shared by Appointment workflows.
+ * This provider is intentionally not exported from AppointmentsModule.
+ */
+@Injectable()
+export class AppointmentReadModel {
+  constructor(
+    @Inject(EmployeesService) private readonly employeesService: EmployeesService,
+    @Inject(PlantillaPositionsService)
+    private readonly plantillaPositions: PlantillaPositionsService,
+  ) {}
+
+  async lockForActivation(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentId: string,
+  ): Promise<AppointmentActivationRecord> {
+    const locked = await transaction.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`SELECT "id" FROM "appointments" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${appointmentId} AS uuid) FOR UPDATE`,
+    );
+    if (locked.length !== 1) throw this.notFound();
+    const record = await transaction.appointment.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentId },
+      select: appointmentActivationSelect,
+    });
+    if (!record) throw this.notFound();
+    return record;
+  }
+
+  async requireAppointment(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentId: string,
+  ): Promise<AppointmentDetailRecord> {
+    const locked = await transaction.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`SELECT "id" FROM "appointments" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${appointmentId} AS uuid) FOR UPDATE`,
+    );
+    if (locked.length !== 1) throw this.notFound();
+    const record = await transaction.appointment.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentId },
+      select: appointmentDetailSelect,
+    });
+    if (!record) throw this.notFound();
+    return record;
+  }
+
+  async detailInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    appointmentId: string,
+  ): Promise<AppointmentDetail> {
+    const record = await transaction.appointment.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentId },
+      select: appointmentDetailSelect,
+    });
+    if (!record) throw this.notFound();
+    const settings = await transaction.appointmentAgencySettings.findFirst({
+      where: { agencyId: context.agencyId },
+      select: settingsSelect,
+    });
+    const history = await transaction.auditEvent.findMany({
+      where: {
+        agencyId: context.agencyId,
+        entityType: 'Appointment',
+        entityId: appointmentId,
+        NOT: [
+          { action: { startsWith: 'APPOINTMENT_EXTERNAL_' } },
+          { action: { in: [...ASSUMPTION_LIFECYCLE_ACTIONS] } },
+        ],
+      },
+      orderBy: { occurredAt: 'asc' },
+      select: {
+        id: true,
+        action: true,
+        previousStatus: true,
+        newStatus: true,
+        reason: true,
+        actorMembershipId: true,
+        occurredAt: true,
+      },
+    });
+    const [externalSubmissions, externalActions] = await Promise.all([
+      transaction.appointmentExternalSubmissionEvent.findMany({
+        where: { agencyId: context.agencyId, appointmentVersion: { appointmentId } },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+        select: externalSubmissionSelect,
+      }),
+      transaction.appointmentExternalAction.findMany({
+        where: { agencyId: context.agencyId, appointmentVersion: { appointmentId } },
+        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
+        select: externalActionSelect,
+      }),
+    ]);
+    const activation = await this.employeesService.resolveActivationForAppointmentInTransaction(
+      transaction,
+      context,
+      appointmentId,
+    );
+    return this.detail(record, settings, history, externalSubmissions, externalActions, activation);
+  }
+
+  async resolveIssuedContractInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentVersionId: string,
+  ): Promise<IssuedAppointmentContract | null> {
+    const record = await transaction.appointmentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
+      select: contractVersionSelect,
+    });
+    if (!record) return null;
+    return this.contractBase(transaction, context, record);
+  }
+
+  async resolveAssumedContractInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentVersionId: string,
+  ): Promise<AssumedAppointmentContract | null> {
+    const record = await transaction.appointmentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
+      select: contractVersionSelect,
+    });
+    if (
+      !record ||
+      record.appointment.workflowStatus !== 'ISSUED' ||
+      record.appointment.currentVersionId !== record.id ||
+      record.assumption?.status !== 'ASSUMED'
+    ) {
+      return null;
+    }
+    const base = await this.contractBase(transaction, context, record);
+    const assumption = assumptionSummary(record.assumption);
+    if (!base.acknowledgment || !base.oath || !assumption) {
+      throw new AppointmentServiceError(
+        'The stored Assumption to Duty is incomplete.',
+        500,
+        'APPOINTMENT_DATA_INVALID',
+      );
+    }
+    return { ...base, acknowledgment: base.acknowledgment, oath: base.oath, assumption };
+  }
+
+  async standingInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentId: string,
+  ): Promise<AppointmentExternalStanding> {
+    const versions = await transaction.appointmentVersion.findMany({
+      where: { agencyId: context.agencyId, appointmentId },
+      select: { id: true },
+    });
+    return this.standingForVersionsInTransaction(
+      transaction,
+      context.agencyId,
+      versions.map((version) => version.id),
+    );
+  }
+
+  async externalStandingsInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    appointmentIds: readonly string[],
+  ): Promise<Map<string, AppointmentExternalStanding>> {
+    const standings = new Map<string, AppointmentExternalStanding>();
+    if (appointmentIds.length === 0) return standings;
+    const versions = await transaction.appointmentVersion.findMany({
+      where: { agencyId: context.agencyId, appointmentId: { in: [...appointmentIds] } },
+      select: { id: true, appointmentId: true },
+    });
+    const appointmentByVersion = new Map(
+      versions.map((version) => [version.id, version.appointmentId]),
+    );
+    const versionIds = versions.map((version) => version.id);
+    if (versionIds.length === 0) return standings;
+    const [submissions, actions] = await Promise.all([
+      transaction.appointmentExternalSubmissionEvent.findMany({
+        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        select: { appointmentVersionId: true, eventType: true, occurredAt: true },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      }),
+      transaction.appointmentExternalAction.findMany({
+        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        select: { appointmentVersionId: true, action: true, actionAt: true },
+        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+    const byAppointment = new Map<
+      string,
+      {
+        submissions: Array<{ eventType: string; occurredAt: string }>;
+        actions: Array<{ action: string; actionAt: string }>;
+      }
+    >();
+    const bucket = (appointmentId: string) => {
+      const existing = byAppointment.get(appointmentId);
+      if (existing) return existing;
+      const created = { submissions: [], actions: [] };
+      byAppointment.set(appointmentId, created);
+      return created;
+    };
+    for (const submission of submissions) {
+      const appointmentId = appointmentByVersion.get(submission.appointmentVersionId);
+      if (!appointmentId) continue;
+      bucket(appointmentId).submissions.push({
+        eventType: submission.eventType,
+        occurredAt: submission.occurredAt.toISOString(),
+      });
+    }
+    for (const action of actions) {
+      const appointmentId = appointmentByVersion.get(action.appointmentVersionId);
+      if (!appointmentId) continue;
+      bucket(appointmentId).actions.push({
+        action: action.action,
+        actionAt: action.actionAt.toISOString(),
+      });
+    }
+    for (const appointmentId of appointmentIds) {
+      const entry = byAppointment.get(appointmentId);
+      standings.set(
+        appointmentId,
+        deriveAppointmentExternalStanding(entry?.submissions ?? [], entry?.actions ?? []),
+      );
+    }
+    return standings;
+  }
+
+  private async contractBase(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    record: ContractVersionRecord,
+  ): Promise<IssuedAppointmentContract> {
+    if (!record.issuedAt) {
+      throw new AppointmentServiceError(
+        'The issued Appointment has no issue date.',
+        500,
+        'APPOINTMENT_DATA_INVALID',
+      );
+    }
+    const view = selectionPackageView(record.appointment.recruitmentSelectionPackage);
+    const reservation = await this.plantillaPositions.resolveReservationInTransaction(
+      transaction,
+      context,
+      record.appointment.positionId,
+    );
+    const versions = await transaction.appointmentVersion.findMany({
+      where: { agencyId: context.agencyId, appointmentId: record.appointmentId },
+      select: { id: true },
+    });
+    const externalStanding = await this.standingForVersionsInTransaction(
+      transaction,
+      context.agencyId,
+      versions.map((version) => version.id),
+    );
+    return {
+      contractSchemaVersion: APPOINTMENT_CONTRACT_SCHEMA_VERSION,
+      appointmentId: record.appointmentId,
+      appointmentVersionId: record.id,
+      personKey: record.appointment.appointeePersonKey,
+      fullName: view.applicantName,
+      applicationNo: view.applicationNo,
+      employmentStatus: record.employmentStatus as AppointmentEmploymentStatus,
+      natureOfAppointment: record.natureOfAppointment as AppointmentNature,
+      formVariant: record.formVariant as AppointmentFormVariant,
+      signatureMethod: record.signatureMethod as AppointmentSignatureMethod,
+      issuedAt: formatDateTime(record.issuedAt),
+      effectivityDate: formatDate(record.effectivityDate),
+      position: view.position,
+      reservation: reservation ? { id: reservation.id, status: reservation.status } : null,
+      compensation: { salaryGrade: record.salaryGrade, salaryStep: record.salaryStep },
+      externalStanding,
+      acknowledgment: record.acknowledgment ? acknowledgmentSummary(record.acknowledgment) : null,
+      oath: oathSummary(record.oath),
+    };
+  }
+
+  private async standingForVersionsInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    versionIds: readonly string[],
+  ): Promise<AppointmentExternalStanding> {
+    if (versionIds.length === 0) return 'NOT_SUBMITTED';
+    const [submissions, actions] = await Promise.all([
+      transaction.appointmentExternalSubmissionEvent.findMany({
+        where: { agencyId, appointmentVersionId: { in: [...versionIds] } },
+        select: { eventType: true, occurredAt: true },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      }),
+      transaction.appointmentExternalAction.findMany({
+        where: { agencyId, appointmentVersionId: { in: [...versionIds] } },
+        select: { action: true, actionAt: true },
+        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+    return deriveAppointmentExternalStanding(
+      submissions.map((submission) => ({
+        eventType: submission.eventType,
+        occurredAt: submission.occurredAt.toISOString(),
+      })),
+      actions.map((action) => ({
+        action: action.action,
+        actionAt: action.actionAt.toISOString(),
+      })),
+    );
+  }
+
+  private detail(
+    record: AppointmentDetailRecord,
+    settings: SettingsRecord | null,
+    history: Array<{
+      id: string;
+      action: string;
+      previousStatus: string | null;
+      newStatus: string | null;
+      reason: string | null;
+      actorMembershipId: string | null;
+      occurredAt: Date;
+    }>,
+    externalSubmissions: ExternalSubmissionRecord[],
+    externalActions: ExternalActionRecord[],
+    activation: EmployeeActivationSummary | null,
+  ): AppointmentDetail {
+    const submissions = externalSubmissions.map(externalSubmissionSummary);
+    const actions = externalActions.map(externalActionSummary);
+    return {
+      ...appointmentSummary(
+        record,
+        deriveAppointmentExternalStanding(
+          submissions.map((submission) => ({
+            eventType: submission.eventType,
+            occurredAt: submission.occurredAt,
+          })),
+          actions.map((action) => ({
+            action: action.action,
+            actionAt: action.actionAt,
+          })),
+        ),
+      ),
+      selectionPackage: record.recruitmentSelectionPackage,
+      versions: record.versions.map(versionDetail),
+      history: history.map((event) => ({
+        id: event.id,
+        action: event.action,
+        previousStatus: event.previousStatus,
+        newStatus: event.newStatus,
+        reason: event.reason,
+        actorMembershipId: event.actorMembershipId,
+        occurredAt: formatDateTime(event.occurredAt),
+      })),
+      settings: settings ? settingsSummary(settings) : null,
+      externalSubmissions: submissions,
+      externalActions: actions,
+      activation,
+    };
+  }
+
+  private notFound(): AppointmentServiceError {
+    return new AppointmentServiceError(
+      'The Appointment could not be found.',
+      404,
+      'APPOINTMENT_NOT_FOUND',
+    );
+  }
+}
+
 @Injectable()
 export class AppointmentsService {
   constructor(
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
-    @Inject(EmployeesService) private readonly employeesService: EmployeesService,
     @Inject(PlantillaPositionsService)
     private readonly plantillaPositions: PlantillaPositionsService,
     @Inject(QualificationStandardsService)
     private readonly qualificationStandards: QualificationStandardsService,
-    @Inject(ApplicationsService) private readonly applicationsService: ApplicationsService,
-    @Inject(RecruitmentService) private readonly recruitmentService: RecruitmentService,
     @Inject(SelectionService) private readonly selectionService: SelectionService,
+    @Inject(AppointmentReadModel) private readonly readModel: AppointmentReadModel,
   ) {}
 
   async list(
@@ -2512,234 +2886,6 @@ export class AppointmentsService {
     );
   }
 
-  /**
-   * The activation orchestrator: one transaction consumes the reserved
-   * Plantilla Position, activates the Employee service through Personnel,
-   * creates the Plantilla Position Incumbency, and closes the Recruitment
-   * chain. Retrying with the same Idempotency-Key replays; a different key
-   * after activation is a conflict.
-   */
-  async activateService(
-    context: RequestContext,
-    appointmentId: string,
-    input: z.infer<typeof appointmentActivationSchema>,
-    rawIdempotencyKey?: string,
-  ): Promise<AppointmentDetail> {
-    this.assertPermission(
-      context,
-      'personnel.employees.activate',
-      'APPOINTMENT_SERVICE_ACTIVATE_FORBIDDEN',
-    );
-    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
-    try {
-      return await withDatabaseContext(
-        requestDatabaseContext(
-          context,
-          'appointment-transition',
-          'plantilla-position-transition',
-          'recruitment-transition',
-          'personnel-baseline-transition',
-        ),
-        async (transaction) => {
-          const record = await this.requireAppointment(transaction, context, appointmentId);
-          const completed = await transaction.auditEvent.findFirst({
-            where: {
-              agencyId: context.agencyId,
-              action: 'APPOINTMENT_SERVICE_ACTIVATED',
-              entityId: appointmentId,
-            },
-            select: { idempotencyKey: true },
-          });
-          if (completed) {
-            if (
-              idempotencyKey &&
-              completed.idempotencyKey &&
-              completed.idempotencyKey !== idempotencyKey
-            ) {
-              throw new AppointmentServiceError(
-                'The Appointment service is already activated.',
-                409,
-                'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
-              );
-            }
-            return this.detailInTransaction(transaction, context, appointmentId);
-          }
-          const version = this.requireIssuedAppointment(record);
-          const assumption = version.assumption;
-          if (!assumption || assumption.status !== 'ASSUMED' || !assumption.currentVersion) {
-            throw new AppointmentServiceError(
-              'Only an assumed Appointment Contract can activate service.',
-              409,
-              'APPOINTMENT_SERVICE_ASSUMPTION_REQUIRED',
-            );
-          }
-          const contract = await this.resolveAssumedAppointmentContractInTransaction(
-            transaction,
-            context,
-            version.id,
-          );
-          if (!contract) {
-            throw new AppointmentServiceError(
-              'The Assumed Appointment Contract is no longer valid.',
-              409,
-              'APPOINTMENT_SERVICE_ASSUMPTION_REQUIRED',
-            );
-          }
-          const effectiveDate = formatDate(assumption.currentVersion.actualAssumptionDate);
-          const reservation = await this.plantillaPositions.resolveReservedAssignmentInTransaction(
-            transaction,
-            context,
-            record.positionId,
-            effectiveDate,
-          );
-          if (!reservation) {
-            throw new AppointmentServiceError(
-              'The Plantilla Position is not reserved at the assumption date.',
-              409,
-              'APPOINTMENT_POSITION_NOT_RESERVED',
-            );
-          }
-          if (reservation.salaryGrade !== version.salaryGrade) {
-            throw new AppointmentServiceError(
-              'The salary grade does not match the reserved Plantilla Position.',
-              409,
-              'APPOINTMENT_SALARY_GRADE_MISMATCH',
-            );
-          }
-          const employeeSource = input.employeeId
-            ? { employeeId: input.employeeId }
-            : input.employee
-              ? { employee: { ...input.employee, legalName: contract.fullName } }
-              : {};
-          const personnel = await this.employeesService.activateFromAssumptionInTransaction(
-            transaction,
-            context,
-            {
-              appointmentId,
-              appointmentVersionId: version.id,
-              ...employeeSource,
-              organizationUnitId: reservation.organizationUnitId,
-              positionId: record.positionId,
-              appointmentStatus: contract.employmentStatus,
-              salaryGrade: version.salaryGrade,
-              salaryStep: version.salaryStep,
-              effectiveFrom: effectiveDate,
-            },
-            idempotencyKey ? `${idempotencyKey}:personnel` : undefined,
-          );
-          const assignment = await this.plantillaPositions.completeReservedAssignmentInTransaction(
-            transaction,
-            context,
-            record.positionId,
-            {
-              employeeId: personnel.employeeId,
-              serviceSegmentId: personnel.serviceSegmentId,
-              appointmentId,
-              appointmentVersionId: version.id,
-              effectiveDate,
-              expectedOrganizationUnitId: reservation.organizationUnitId,
-              expectedSalaryGrade: reservation.salaryGrade,
-              reason: `The assumed Appointment activated service effective ${effectiveDate}.`,
-            },
-            idempotencyKey ? `${idempotencyKey}:plantilla` : undefined,
-          );
-          const closureReason = `The assumed Appointment activated service effective ${effectiveDate}.`;
-          const handoff = record.recruitmentHandoffId
-            ? await this.selectionService.resolveHandoffApplicationInTransaction(
-                transaction,
-                context,
-                record.recruitmentHandoffId,
-              )
-            : null;
-          const applicationClosure = handoff
-            ? await this.applicationsService.closeAfterActivationInTransaction(
-                transaction,
-                context,
-                {
-                  applicationId: handoff.applicationId,
-                  appointmentId,
-                  serviceSegmentId: personnel.serviceSegmentId,
-                  reason: closureReason,
-                },
-                idempotencyKey ? `${idempotencyKey}:application` : undefined,
-              )
-            : null;
-          const publicationClosure = applicationClosure
-            ? await this.recruitmentService.closePublicationAndRequestAfterActivationInTransaction(
-                transaction,
-                context,
-                {
-                  publicationId: applicationClosure.publicationId,
-                  appointmentId,
-                  serviceSegmentId: personnel.serviceSegmentId,
-                  reason: closureReason,
-                },
-                idempotencyKey ? `${idempotencyKey}:recruitment` : undefined,
-              )
-            : null;
-          await this.writeAudit(transaction, context, {
-            action: 'APPOINTMENT_SERVICE_ACTIVATED',
-            entityId: appointmentId,
-            previousStatus: record.workflowStatus,
-            newStatus: record.workflowStatus,
-            reason: closureReason,
-            metadata: {
-              appointmentVersionId: version.id,
-              employeeId: personnel.employeeId,
-              employeeNumber: personnel.employeeNumber,
-              serviceSegmentId: personnel.serviceSegmentId,
-              positionId: record.positionId,
-              positionVersionId: assignment.versionId,
-              positionIncumbencyId: assignment.positionIncumbencyId,
-              actualAssumptionDate: effectiveDate,
-              handoffId: record.recruitmentHandoffId,
-              applicationId: applicationClosure?.applicationId ?? null,
-              publicationId: publicationClosure?.publicationId ?? null,
-              requestId: publicationClosure?.requestToFillId ?? null,
-            },
-            idempotencyKey,
-          });
-          await transaction.outboxEvent.create({
-            data: {
-              agencyId: context.agencyId,
-              eventType: 'APPOINTMENT_SERVICE_ACTIVATED',
-              aggregateType: 'Appointment',
-              aggregateId: appointmentId,
-              idempotencyKey: idempotencyKey ?? `appointment-service:${appointmentId}`,
-              payload: {
-                appointmentId,
-                appointmentVersionId: version.id,
-                employeeId: personnel.employeeId,
-                serviceSegmentId: personnel.serviceSegmentId,
-                positionId: record.positionId,
-                positionIncumbencyId: assignment.positionIncumbencyId,
-                actualAssumptionDate: effectiveDate,
-              },
-            },
-          });
-          return this.detailInTransaction(transaction, context, appointmentId);
-        },
-      );
-    } catch (error: unknown) {
-      if (error instanceof AppointmentServiceError) throw error;
-      if (
-        error instanceof EmployeeServiceError ||
-        error instanceof PlantillaPositionServiceError ||
-        error instanceof RecruitmentServiceError
-      ) {
-        throw new AppointmentServiceError(error.message, error.statusCode, error.code);
-      }
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new AppointmentServiceError(
-          'The Appointment service is already activated.',
-          409,
-          'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
-        );
-      }
-      throw error;
-    }
-  }
-
   async recordAssumptionFailure(
     context: RequestContext,
     appointmentId: string,
@@ -2917,12 +3063,11 @@ export class AppointmentsService {
     context: Pick<RequestContext, 'agencyId'>,
     appointmentVersionId: string,
   ): Promise<IssuedAppointmentContract | null> {
-    const record = await transaction.appointmentVersion.findFirst({
-      where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
-      select: contractVersionSelect,
-    });
-    if (!record) return null;
-    return this.contractBase(transaction, context, record);
+    return this.readModel.resolveIssuedContractInTransaction(
+      transaction,
+      context,
+      appointmentVersionId,
+    );
   }
 
   /**
@@ -2938,77 +3083,11 @@ export class AppointmentsService {
     context: Pick<RequestContext, 'agencyId'>,
     appointmentVersionId: string,
   ): Promise<AssumedAppointmentContract | null> {
-    const record = await transaction.appointmentVersion.findFirst({
-      where: { agencyId: context.agencyId, id: appointmentVersionId, status: 'ISSUED' },
-      select: contractVersionSelect,
-    });
-    if (
-      !record ||
-      record.appointment.workflowStatus !== 'ISSUED' ||
-      record.appointment.currentVersionId !== record.id ||
-      record.assumption?.status !== 'ASSUMED'
-    ) {
-      return null;
-    }
-    const base = await this.contractBase(transaction, context, record);
-    const assumption = assumptionSummary(record.assumption);
-    if (!base.acknowledgment || !base.oath || !assumption) {
-      throw new AppointmentServiceError(
-        'The stored Assumption to Duty is incomplete.',
-        500,
-        'APPOINTMENT_DATA_INVALID',
-      );
-    }
-    return { ...base, acknowledgment: base.acknowledgment, oath: base.oath, assumption };
-  }
-
-  private async contractBase(
-    transaction: Prisma.TransactionClient,
-    context: Pick<RequestContext, 'agencyId'>,
-    record: ContractVersionRecord,
-  ): Promise<IssuedAppointmentContract> {
-    if (!record.issuedAt) {
-      throw new AppointmentServiceError(
-        'The issued Appointment has no issue date.',
-        500,
-        'APPOINTMENT_DATA_INVALID',
-      );
-    }
-    const view = selectionPackageView(record.appointment.recruitmentSelectionPackage);
-    const reservation = await this.plantillaPositions.resolveReservationInTransaction(
+    return this.readModel.resolveAssumedContractInTransaction(
       transaction,
       context,
-      record.appointment.positionId,
+      appointmentVersionId,
     );
-    const versions = await transaction.appointmentVersion.findMany({
-      where: { agencyId: context.agencyId, appointmentId: record.appointmentId },
-      select: { id: true },
-    });
-    const externalStanding = await this.standingForVersionsInTransaction(
-      transaction,
-      context.agencyId,
-      versions.map((version) => version.id),
-    );
-    return {
-      contractSchemaVersion: APPOINTMENT_CONTRACT_SCHEMA_VERSION,
-      appointmentId: record.appointmentId,
-      appointmentVersionId: record.id,
-      personKey: record.appointment.appointeePersonKey,
-      fullName: view.applicantName,
-      applicationNo: view.applicationNo,
-      employmentStatus: record.employmentStatus as AppointmentEmploymentStatus,
-      natureOfAppointment: record.natureOfAppointment as AppointmentNature,
-      formVariant: record.formVariant as AppointmentFormVariant,
-      signatureMethod: record.signatureMethod as AppointmentSignatureMethod,
-      issuedAt: formatDateTime(record.issuedAt),
-      effectivityDate: formatDate(record.effectivityDate),
-      position: view.position,
-      reservation: reservation ? { id: reservation.id, status: reservation.status } : null,
-      compensation: { salaryGrade: record.salaryGrade, salaryStep: record.salaryStep },
-      externalStanding,
-      acknowledgment: record.acknowledgment ? acknowledgmentSummary(record.acknowledgment) : null,
-      oath: oathSummary(record.oath),
-    };
   }
 
   private async detailInTransaction(
@@ -3016,104 +3095,7 @@ export class AppointmentsService {
     context: RequestContext,
     appointmentId: string,
   ): Promise<AppointmentDetail> {
-    const record = await transaction.appointment.findFirst({
-      where: { agencyId: context.agencyId, id: appointmentId },
-      select: appointmentDetailSelect,
-    });
-    if (!record) throw this.notFound();
-    const settings = await transaction.appointmentAgencySettings.findFirst({
-      where: { agencyId: context.agencyId },
-      select: settingsSelect,
-    });
-    const history = await transaction.auditEvent.findMany({
-      where: {
-        agencyId: context.agencyId,
-        entityType: 'Appointment',
-        entityId: appointmentId,
-        NOT: [
-          { action: { startsWith: 'APPOINTMENT_EXTERNAL_' } },
-          { action: { in: [...ASSUMPTION_LIFECYCLE_ACTIONS] } },
-        ],
-      },
-      orderBy: { occurredAt: 'asc' },
-      select: {
-        id: true,
-        action: true,
-        previousStatus: true,
-        newStatus: true,
-        reason: true,
-        actorMembershipId: true,
-        occurredAt: true,
-      },
-    });
-    const [externalSubmissions, externalActions] = await Promise.all([
-      transaction.appointmentExternalSubmissionEvent.findMany({
-        where: { agencyId: context.agencyId, appointmentVersion: { appointmentId } },
-        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-        select: externalSubmissionSelect,
-      }),
-      transaction.appointmentExternalAction.findMany({
-        where: { agencyId: context.agencyId, appointmentVersion: { appointmentId } },
-        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
-        select: externalActionSelect,
-      }),
-    ]);
-    const activation = await this.employeesService.resolveActivationForAppointmentInTransaction(
-      transaction,
-      context,
-      appointmentId,
-    );
-    return this.detail(record, settings, history, externalSubmissions, externalActions, activation);
-  }
-
-  private detail(
-    record: AppointmentDetailRecord,
-    settings: SettingsRecord | null,
-    history: Array<{
-      id: string;
-      action: string;
-      previousStatus: string | null;
-      newStatus: string | null;
-      reason: string | null;
-      actorMembershipId: string | null;
-      occurredAt: Date;
-    }>,
-    externalSubmissions: ExternalSubmissionRecord[],
-    externalActions: ExternalActionRecord[],
-    activation: EmployeeActivationSummary | null,
-  ): AppointmentDetail {
-    const submissions = externalSubmissions.map(externalSubmissionSummary);
-    const actions = externalActions.map(externalActionSummary);
-    return {
-      ...appointmentSummary(
-        record,
-        deriveAppointmentExternalStanding(
-          submissions.map((submission) => ({
-            eventType: submission.eventType,
-            occurredAt: submission.occurredAt,
-          })),
-          actions.map((action) => ({
-            action: action.action,
-            actionAt: action.actionAt,
-          })),
-        ),
-      ),
-      selectionPackage: record.recruitmentSelectionPackage,
-      versions: record.versions.map(versionDetail),
-      history: history.map((event) => ({
-        id: event.id,
-        action: event.action,
-        previousStatus: event.previousStatus,
-        newStatus: event.newStatus,
-        reason: event.reason,
-        actorMembershipId: event.actorMembershipId,
-        occurredAt: formatDateTime(event.occurredAt),
-      })),
-      settings: settings ? settingsSummary(settings) : null,
-      externalSubmissions: submissions,
-      externalActions: actions,
-      activation,
-    };
+    return this.readModel.detailInTransaction(transaction, context, appointmentId);
   }
 
   private async requireAppointment(
@@ -3121,16 +3103,7 @@ export class AppointmentsService {
     context: RequestContext,
     appointmentId: string,
   ): Promise<AppointmentDetailRecord> {
-    const locked = await transaction.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT "id" FROM "appointments" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${appointmentId} AS uuid) FOR UPDATE`,
-    );
-    if (locked.length !== 1) throw this.notFound();
-    const record = await transaction.appointment.findFirst({
-      where: { agencyId: context.agencyId, id: appointmentId },
-      select: appointmentDetailSelect,
-    });
-    if (!record) throw this.notFound();
-    return record;
+    return this.readModel.requireAppointment(transaction, context, appointmentId);
   }
 
   private async requireEditableAppointment(
@@ -3487,45 +3460,7 @@ export class AppointmentsService {
     context: RequestContext,
     appointmentId: string,
   ): Promise<AppointmentExternalStanding> {
-    const versions = await transaction.appointmentVersion.findMany({
-      where: { agencyId: context.agencyId, appointmentId },
-      select: { id: true },
-    });
-    return this.standingForVersionsInTransaction(
-      transaction,
-      context.agencyId,
-      versions.map((version) => version.id),
-    );
-  }
-
-  private async standingForVersionsInTransaction(
-    transaction: Prisma.TransactionClient,
-    agencyId: string,
-    versionIds: readonly string[],
-  ): Promise<AppointmentExternalStanding> {
-    if (versionIds.length === 0) return 'NOT_SUBMITTED';
-    const [submissions, actions] = await Promise.all([
-      transaction.appointmentExternalSubmissionEvent.findMany({
-        where: { agencyId, appointmentVersionId: { in: [...versionIds] } },
-        select: { eventType: true, occurredAt: true },
-        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-      }),
-      transaction.appointmentExternalAction.findMany({
-        where: { agencyId, appointmentVersionId: { in: [...versionIds] } },
-        select: { action: true, actionAt: true },
-        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
-      }),
-    ]);
-    return deriveAppointmentExternalStanding(
-      submissions.map((submission) => ({
-        eventType: submission.eventType,
-        occurredAt: submission.occurredAt.toISOString(),
-      })),
-      actions.map((action) => ({
-        action: action.action,
-        actionAt: action.actionAt.toISOString(),
-      })),
-    );
+    return this.readModel.standingInTransaction(transaction, context, appointmentId);
   }
 
   private async externalStandingsInTransaction(
@@ -3533,67 +3468,7 @@ export class AppointmentsService {
     context: RequestContext,
     appointmentIds: readonly string[],
   ): Promise<Map<string, AppointmentExternalStanding>> {
-    const standings = new Map<string, AppointmentExternalStanding>();
-    if (appointmentIds.length === 0) return standings;
-    const versions = await transaction.appointmentVersion.findMany({
-      where: { agencyId: context.agencyId, appointmentId: { in: [...appointmentIds] } },
-      select: { id: true, appointmentId: true },
-    });
-    const appointmentByVersion = new Map(
-      versions.map((version) => [version.id, version.appointmentId]),
-    );
-    const versionIds = versions.map((version) => version.id);
-    if (versionIds.length === 0) return standings;
-    const [submissions, actions] = await Promise.all([
-      transaction.appointmentExternalSubmissionEvent.findMany({
-        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
-        select: { appointmentVersionId: true, eventType: true, occurredAt: true },
-        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
-      }),
-      transaction.appointmentExternalAction.findMany({
-        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
-        select: { appointmentVersionId: true, action: true, actionAt: true },
-        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
-      }),
-    ]);
-    const byAppointment = new Map<
-      string,
-      {
-        submissions: Array<{ eventType: string; occurredAt: string }>;
-        actions: Array<{ action: string; actionAt: string }>;
-      }
-    >();
-    const bucket = (appointmentId: string) => {
-      const existing = byAppointment.get(appointmentId);
-      if (existing) return existing;
-      const created = { submissions: [], actions: [] };
-      byAppointment.set(appointmentId, created);
-      return created;
-    };
-    for (const submission of submissions) {
-      const appointmentId = appointmentByVersion.get(submission.appointmentVersionId);
-      if (!appointmentId) continue;
-      bucket(appointmentId).submissions.push({
-        eventType: submission.eventType,
-        occurredAt: submission.occurredAt.toISOString(),
-      });
-    }
-    for (const action of actions) {
-      const appointmentId = appointmentByVersion.get(action.appointmentVersionId);
-      if (!appointmentId) continue;
-      bucket(appointmentId).actions.push({
-        action: action.action,
-        actionAt: action.actionAt.toISOString(),
-      });
-    }
-    for (const appointmentId of appointmentIds) {
-      const entry = byAppointment.get(appointmentId);
-      standings.set(
-        appointmentId,
-        deriveAppointmentExternalStanding(entry?.submissions ?? [], entry?.actions ?? []),
-      );
-    }
-    return standings;
+    return this.readModel.externalStandingsInTransaction(transaction, context, appointmentIds);
   }
 
   private async requireReservedPosition(
@@ -3935,7 +3810,7 @@ export class AppointmentsService {
         reason: input.reason,
         requestId: context.requestId,
         ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-        metadata: safeAuditMetadata(input.metadata),
+        metadata: safeAppointmentAuditMetadata(input.metadata),
       },
     });
   }

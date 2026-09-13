@@ -66,6 +66,10 @@ function serviceMock() {
   };
 }
 
+function activationMock() {
+  return { execute: vi.fn() };
+}
+
 const oathInput = {
   oathDate: '2026-10-03',
   administeredByMembershipId: documentVersionId,
@@ -93,7 +97,7 @@ const outcomeInput = {
 
 it('does not disclose Appointments outside the active Agency', async () => {
   const service = serviceMock();
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
 
   await expect(controller.list(otherAgencyId, {}, context)).rejects.toMatchObject({
     status: 404,
@@ -116,7 +120,7 @@ it('does not disclose Appointments outside the active Agency', async () => {
 
 it('rejects Appointment commands outside the active Agency before the service call', async () => {
   const service = serviceMock();
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
 
   await expect(
     controller.create(
@@ -191,7 +195,7 @@ it('rejects Appointment commands outside the active Agency before the service ca
 
 it('rejects malformed Appointment input before the service is called', async () => {
   const service = serviceMock();
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
 
   await expect(
     controller.create(agencyId, { selectionDecisionId }, context, 'create-key'),
@@ -266,7 +270,7 @@ it('rejects malformed Appointment input before the service is called', async () 
 
 it('rejects Oath and Assumption commands outside the active Agency', async () => {
   const service = serviceMock();
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
   const receiptInput = {
     acknowledgedAt: '2026-10-02T01:00:00.000Z',
     evidenceDocumentVersionId: documentVersionId,
@@ -341,7 +345,7 @@ it('rejects Oath and Assumption commands outside the active Agency', async () =>
 
 it('rejects malformed Oath and Assumption input before the service is called', async () => {
   const service = serviceMock();
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
 
   await expect(
     controller.recordReceipt(agencyId, appointmentId, { acknowledgedAt: 'not-a-date' }, context),
@@ -405,7 +409,7 @@ it('validates and forwards Oath and Assumption commands', async () => {
   service.correctAssumption.mockResolvedValue({ id: appointmentId });
   service.recordAssumptionFailure.mockResolvedValue({ id: appointmentId });
   service.recordAssumptionCancellation.mockResolvedValue({ id: appointmentId });
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
 
   const receiptInput = {
     acknowledgedAt: '2026-10-02T01:00:00.000Z',
@@ -518,7 +522,7 @@ it('validates and forwards Appointment commands', async () => {
   service.recordExternalSubmission.mockResolvedValue({ id: appointmentId });
   service.recordExternalAction.mockResolvedValue({ id: appointmentId });
   service.configureSettings.mockResolvedValue({ id: appointmentId });
-  const controller = new AppointmentsController(service as never);
+  const controller = new AppointmentsController(service as never, activationMock() as never);
 
   await expect(controller.list(agencyId, { status: 'DRAFT' }, context)).resolves.toEqual({
     appointments: [],
@@ -663,4 +667,23 @@ it('validates and forwards Appointment commands', async () => {
     actionInput,
     'act-key',
   );
+});
+
+it('forwards service activation through the Assumed Appointment activation interface', async () => {
+  const service = serviceMock();
+  const activation = activationMock();
+  activation.execute.mockResolvedValue({ id: appointmentId });
+  const controller = new AppointmentsController(service as never, activation as never);
+  const input = { employeeId: documentVersionId };
+
+  await expect(
+    controller.activateService(agencyId, appointmentId, input, context, 'activate-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(activation.execute).toHaveBeenCalledWith({
+    context,
+    appointmentId,
+    input,
+    idempotencyKey: 'activate-key',
+  });
+  expect(service).not.toHaveProperty('activateService');
 });
