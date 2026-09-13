@@ -591,7 +591,10 @@ async function setupMovementFixture(options: {
   );
   const appointments = new AppointmentsService(
     documentsService,
+    {} as never,
     plantillaService,
+    {} as never,
+    {} as never,
     {} as never,
     {} as never,
   );

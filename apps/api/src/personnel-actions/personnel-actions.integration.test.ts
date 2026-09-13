@@ -358,7 +358,10 @@ it.skipIf(!enabled)(
         new SeparationsService(separationAuditWriter),
         new AppointmentsService(
           documentsService,
+          {} as never,
           plantillaPositionsService,
+          {} as never,
+          {} as never,
           {} as never,
           {} as never,
         ),
