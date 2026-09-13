@@ -131,7 +131,7 @@ interface DocumentOption {
   documentNo: string | null;
   documentType: string;
   status: string;
-  currentVersion: { id: string; versionNo: number } | null;
+  currentVersion: { id: string; versionNo: number; issuedAt: string | null } | null;
 }
 
 interface UnitOption {
@@ -1094,15 +1094,16 @@ export function PersonnelActionWorkspace({
                           <select
                             className={inputClass}
                             id={`evidence-${type}`}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const documentId = targetValue(event);
+                              const document = documents.find(({ id }) => id === documentId);
+                              const sourceDate =
+                                document?.currentVersion?.issuedAt?.slice(0, 10) ?? effectivity;
                               setEvidence((current) => ({
                                 ...current,
-                                [type]: {
-                                  documentId: targetValue(event),
-                                  sourceDate: current[type]?.sourceDate ?? effectivity,
-                                },
-                              }))
-                            }
+                                [type]: { documentId, sourceDate },
+                              }));
+                            }}
                             required={required}
                             value={evidence[type]?.documentId ?? ''}
                           >
@@ -1124,15 +1125,16 @@ export function PersonnelActionWorkspace({
                           <input
                             className={inputClass}
                             id={`evidence-date-${type}`}
-                            onChange={(event) =>
+                            onChange={(event) => {
+                              const sourceDate = targetValue(event);
                               setEvidence((current) => ({
                                 ...current,
                                 [type]: {
                                   documentId: current[type]?.documentId ?? '',
-                                  sourceDate: targetValue(event),
+                                  sourceDate,
                                 },
-                              }))
-                            }
+                              }));
+                            }}
                             required={required || Boolean(evidence[type]?.documentId)}
                             type="date"
                             value={evidence[type]?.sourceDate ?? effectivity}
