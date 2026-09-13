@@ -1367,7 +1367,7 @@ export class PlantillaPositionsService {
   /** Internal contract: Appointment revalidates the Recruitment reservation through Plantilla. */
   async resolveReservationInTransaction(
     transaction: Prisma.TransactionClient,
-    context: RequestContext,
+    context: Pick<RequestContext, 'agencyId'>,
     positionId: string,
   ): Promise<PlantillaPositionSummary | null> {
     const record = await this.positionRecord(transaction, context.agencyId, positionId);

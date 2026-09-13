@@ -54,10 +54,42 @@ function serviceMock() {
     correct: vi.fn(),
     recordExternalSubmission: vi.fn(),
     recordExternalAction: vi.fn(),
+    recordReceipt: vi.fn(),
+    recordOath: vi.fn(),
+    correctOath: vi.fn(),
+    recordAssumption: vi.fn(),
+    correctAssumption: vi.fn(),
+    recordAssumptionFailure: vi.fn(),
+    recordAssumptionCancellation: vi.fn(),
     getSettings: vi.fn(),
     configureSettings: vi.fn(),
   };
 }
+
+const oathInput = {
+  oathDate: '2026-10-03',
+  administeredByMembershipId: documentVersionId,
+  authority: 'City Mayor',
+  place: 'City Hall',
+  documentVersionId,
+};
+
+const assumptionInput = {
+  oathVersionId: documentVersionId,
+  actualAssumptionDate: '2026-10-04',
+  certifiedByMembershipId: documentVersionId,
+  certifyingAuthority: 'City Mayor',
+  certifiedAt: '2026-10-04T01:00:00.000Z',
+  documentVersionId,
+};
+
+const outcomeInput = {
+  outcomeDate: '2026-10-05',
+  reason: 'The appointee did not report for duty.',
+  authorizedByMembershipId: documentVersionId,
+  authorityDocumentVersionId: documentVersionId,
+  evidenceDocumentVersionId: documentVersionId,
+};
 
 it('does not disclose Appointments outside the active Agency', async () => {
   const service = serviceMock();
@@ -230,6 +262,246 @@ it('rejects malformed Appointment input before the service is called', async () 
     response: { error: { code: 'INVALID_INPUT' } },
   });
   expect(service.recordExternalAction).not.toHaveBeenCalled();
+});
+
+it('rejects Oath and Assumption commands outside the active Agency', async () => {
+  const service = serviceMock();
+  const controller = new AppointmentsController(service as never);
+  const receiptInput = {
+    acknowledgedAt: '2026-10-02T01:00:00.000Z',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+
+  for (const call of [
+    () =>
+      controller.recordReceipt(otherAgencyId, appointmentId, receiptInput, context, 'receipt-key'),
+    () => controller.recordOath(otherAgencyId, appointmentId, oathInput, context, 'oath-key'),
+    () =>
+      controller.correctOath(
+        otherAgencyId,
+        appointmentId,
+        {
+          ...oathInput,
+          reason: 'Correct the oath date.',
+          authorityDocumentVersionId: documentVersionId,
+        },
+        context,
+        'oath-fix-key',
+      ),
+    () =>
+      controller.recordAssumption(
+        otherAgencyId,
+        appointmentId,
+        assumptionInput,
+        context,
+        'assume-key',
+      ),
+    () =>
+      controller.correctAssumption(
+        otherAgencyId,
+        appointmentId,
+        {
+          ...assumptionInput,
+          reason: 'Correct the assumption date.',
+          authorityDocumentVersionId: documentVersionId,
+        },
+        context,
+        'assume-fix-key',
+      ),
+    () =>
+      controller.recordAssumptionFailure(
+        otherAgencyId,
+        appointmentId,
+        { noticeDate: '2026-10-03', deadlineDate: '2026-10-05', ...outcomeInput },
+        context,
+        'fail-key',
+      ),
+    () =>
+      controller.recordAssumptionCancellation(
+        otherAgencyId,
+        appointmentId,
+        outcomeInput,
+        context,
+        'cancel-key',
+      ),
+  ]) {
+    await expect(call()).rejects.toMatchObject({
+      status: 403,
+      response: { error: { code: 'APPOINTMENT_WRITE_FORBIDDEN' } },
+    });
+  }
+  expect(service.recordReceipt).not.toHaveBeenCalled();
+  expect(service.recordOath).not.toHaveBeenCalled();
+  expect(service.correctOath).not.toHaveBeenCalled();
+  expect(service.recordAssumption).not.toHaveBeenCalled();
+  expect(service.correctAssumption).not.toHaveBeenCalled();
+  expect(service.recordAssumptionFailure).not.toHaveBeenCalled();
+  expect(service.recordAssumptionCancellation).not.toHaveBeenCalled();
+});
+
+it('rejects malformed Oath and Assumption input before the service is called', async () => {
+  const service = serviceMock();
+  const controller = new AppointmentsController(service as never);
+
+  await expect(
+    controller.recordReceipt(agencyId, appointmentId, { acknowledgedAt: 'not-a-date' }, context),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT' } },
+  });
+  expect(service.recordReceipt).not.toHaveBeenCalled();
+
+  await expect(
+    controller.recordOath(agencyId, appointmentId, { ...oathInput, oathDate: undefined }, context),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT' } },
+  });
+  expect(service.recordOath).not.toHaveBeenCalled();
+
+  await expect(
+    controller.recordAssumption(agencyId, appointmentId, assumptionInput, context, 'a'.repeat(201)),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_IDEMPOTENCY_KEY' } },
+  });
+  expect(service.recordAssumption).not.toHaveBeenCalled();
+
+  await expect(
+    controller.recordAssumptionFailure(
+      agencyId,
+      appointmentId,
+      { noticeDate: '2026-10-05', deadlineDate: '2026-10-03', ...outcomeInput },
+      context,
+      'fail-key',
+    ),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT' } },
+  });
+  expect(service.recordAssumptionFailure).not.toHaveBeenCalled();
+
+  await expect(
+    controller.recordAssumptionCancellation(
+      agencyId,
+      appointmentId,
+      { ...outcomeInput, reason: '  ' },
+      context,
+      'cancel-key',
+    ),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT' } },
+  });
+  expect(service.recordAssumptionCancellation).not.toHaveBeenCalled();
+});
+
+it('validates and forwards Oath and Assumption commands', async () => {
+  const service = serviceMock();
+  service.recordReceipt.mockResolvedValue({ id: appointmentId });
+  service.recordOath.mockResolvedValue({ id: appointmentId });
+  service.correctOath.mockResolvedValue({ id: appointmentId });
+  service.recordAssumption.mockResolvedValue({ id: appointmentId });
+  service.correctAssumption.mockResolvedValue({ id: appointmentId });
+  service.recordAssumptionFailure.mockResolvedValue({ id: appointmentId });
+  service.recordAssumptionCancellation.mockResolvedValue({ id: appointmentId });
+  const controller = new AppointmentsController(service as never);
+
+  const receiptInput = {
+    acknowledgedAt: '2026-10-02T01:00:00.000Z',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.recordReceipt(agencyId, appointmentId, receiptInput, context, 'receipt-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordReceipt).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    receiptInput,
+    'receipt-key',
+  );
+
+  await expect(
+    controller.recordOath(agencyId, appointmentId, oathInput, context, 'oath-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordOath).toHaveBeenCalledWith(context, appointmentId, oathInput, 'oath-key');
+
+  const oathCorrectionInput = {
+    ...oathInput,
+    reason: 'Correct the oath date.',
+    authorityDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.correctOath(agencyId, appointmentId, oathCorrectionInput, context, 'oath-fix-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.correctOath).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    oathCorrectionInput,
+    'oath-fix-key',
+  );
+
+  await expect(
+    controller.recordAssumption(agencyId, appointmentId, assumptionInput, context, 'assume-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordAssumption).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    assumptionInput,
+    'assume-key',
+  );
+
+  const assumptionCorrectionInput = {
+    ...assumptionInput,
+    reason: 'Correct the assumption date.',
+    authorityDocumentVersionId: documentVersionId,
+  };
+  await expect(
+    controller.correctAssumption(
+      agencyId,
+      appointmentId,
+      assumptionCorrectionInput,
+      context,
+      'assume-fix-key',
+    ),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.correctAssumption).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    assumptionCorrectionInput,
+    'assume-fix-key',
+  );
+
+  const failureInput = {
+    noticeDate: '2026-10-03',
+    deadlineDate: '2026-10-05',
+    ...outcomeInput,
+  };
+  await expect(
+    controller.recordAssumptionFailure(agencyId, appointmentId, failureInput, context, 'fail-key'),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordAssumptionFailure).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    failureInput,
+    'fail-key',
+  );
+
+  await expect(
+    controller.recordAssumptionCancellation(
+      agencyId,
+      appointmentId,
+      outcomeInput,
+      context,
+      'cancel-key',
+    ),
+  ).resolves.toEqual({ id: appointmentId });
+  expect(service.recordAssumptionCancellation).toHaveBeenCalledWith(
+    context,
+    appointmentId,
+    outcomeInput,
+    'cancel-key',
+  );
 });
 
 it('validates and forwards Appointment commands', async () => {

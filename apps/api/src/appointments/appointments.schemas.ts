@@ -62,6 +62,15 @@ export const APPOINTMENT_EXTERNAL_ACTIONS = [
   'INVALIDATED',
 ] as const;
 
+export const APPOINTMENT_ASSUMPTION_STATUSES = [
+  'PENDING',
+  'ASSUMED',
+  'DID_NOT_ASSUME',
+  'CANCELLED',
+] as const;
+
+export const APPOINTMENT_ASSUMPTION_OUTCOMES = ['DID_NOT_ASSUME', 'CANCELLED'] as const;
+
 export const appointmentIdSchema = z.string().uuid();
 export const appointmentIdempotencyKeySchema = z.string().trim().min(1).max(200);
 
@@ -170,4 +179,78 @@ export const appointmentExternalActionSchema = z
     reason: z.string().trim().min(1).max(1000).optional(),
     evidenceDocumentVersionId: appointmentIdSchema,
   })
+  .strict();
+
+export const appointmentReceiptSchema = z
+  .object({
+    acknowledgedAt: z.string().datetime(),
+    evidenceDocumentVersionId: appointmentIdSchema,
+  })
+  .strict();
+
+const oathFields = {
+  oathDate: z.string().date(),
+  administeredByMembershipId: appointmentIdSchema,
+  authority: z.string().trim().min(1).max(200),
+  place: z.string().trim().min(1).max(200).optional(),
+  permittedVirtualMethod: z.string().trim().min(1).max(200).optional(),
+  documentVersionId: appointmentIdSchema,
+};
+
+export const appointmentOathSchema = z.object({ ...oathFields }).strict();
+
+export const appointmentOathCorrectionSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(1000),
+    authorityDocumentVersionId: appointmentIdSchema,
+    ...oathFields,
+  })
+  .strict();
+
+const assumptionFields = {
+  oathVersionId: appointmentIdSchema,
+  actualAssumptionDate: z.string().date(),
+  certifiedByMembershipId: appointmentIdSchema,
+  certifyingAuthority: z.string().trim().min(1).max(200),
+  certifiedAt: z.string().datetime(),
+  documentVersionId: appointmentIdSchema,
+};
+
+export const appointmentAssumptionSchema = z.object({ ...assumptionFields }).strict();
+
+export const appointmentAssumptionCorrectionSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(1000),
+    authorityDocumentVersionId: appointmentIdSchema,
+    ...assumptionFields,
+  })
+  .strict();
+
+const assumptionOutcomeFields = {
+  outcomeDate: z.string().date(),
+  reason: z.string().trim().min(1).max(1000),
+  authorizedByMembershipId: appointmentIdSchema,
+  authorityDocumentVersionId: appointmentIdSchema,
+  evidenceDocumentVersionId: appointmentIdSchema,
+};
+
+export const appointmentAssumptionFailureSchema = z
+  .object({
+    noticeDate: z.string().date(),
+    deadlineDate: z.string().date(),
+    ...assumptionOutcomeFields,
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (value.deadlineDate < value.noticeDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['deadlineDate'],
+        message: 'The deadline cannot precede the notice date.',
+      });
+    }
+  });
+
+export const appointmentAssumptionCancellationSchema = z
+  .object({ ...assumptionOutcomeFields })
   .strict();

@@ -73,6 +73,51 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   await action.getByRole('button', { name: 'Record official action' }).click();
   await expect(detail.getByLabel('External standing').first()).toContainText('APPROVED');
 
+  await detail.getByRole('tab', { name: 'Oath & assumption' }).click();
+  await expect(detail.getByLabel('Assumption status')).toContainText('NOT RECORDED');
+
+  await detail.getByRole('button', { name: 'Record acknowledgment' }).click();
+  const receipt = page.getByRole('region', {
+    name: 'Record appointee acknowledgment of receipt',
+  });
+  await receipt
+    .getByLabel('Exact evidence (finalized Document Version)')
+    .selectOption({ index: 1 });
+  await receipt.getByRole('button', { name: 'Record acknowledgment' }).click();
+  await expect(detail.getByLabel('Assumption status')).toContainText('PENDING');
+  await expect(detail.getByText('Acknowledged receipt')).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Record Oath' }).click();
+  const oath = page.getByRole('region', { name: 'Record Oath of Office' });
+  await oath.getByLabel('Authority', { exact: true }).fill('City Mayor');
+  await oath.getByLabel('Exact evidence (finalized Document Version)').selectOption({ index: 1 });
+  await oath.getByRole('button', { name: 'Record Oath' }).click();
+  await expect(detail.getByText('Oath history')).toBeVisible();
+  await expect(detail.getByText('City Mayor').first()).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Certify Assumption to Duty' }).click();
+  const assumption = page.getByRole('region', { name: 'Certify Assumption to Duty' });
+  await assumption.getByLabel('Certifying authority').fill('Appointing Authority');
+  await assumption
+    .getByLabel('Exact evidence (finalized Document Version)')
+    .selectOption({ index: 1 });
+  await assumption.getByRole('button', { name: 'Certify Assumption to Duty' }).click();
+  await expect(detail.getByLabel('Assumption status')).toContainText('ASSUMED');
+  await expect(detail.getByText('Assumption history')).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Correct Assumption to Duty' }).click();
+  const assumptionCorrection = page.getByRole('region', {
+    name: 'Correct the Assumption to Duty',
+  });
+  await assumptionCorrection
+    .getByLabel('Reason')
+    .fill('Correct the certified assumption date under the recorded authority.');
+  await assumptionCorrection
+    .getByLabel('Authority evidence (finalized Document Version)')
+    .selectOption({ index: 1 });
+  await assumptionCorrection.getByRole('button', { name: 'Record Assumption correction' }).click();
+  await expect(detail.getByText('v2 · actual')).toBeVisible();
+
   await detail.getByRole('tab', { name: 'Review & issuance' }).click();
   await expect(detail.getByText('APPOINTMENT EXTERNAL SUBMISSION RECORDED')).toHaveCount(0);
 

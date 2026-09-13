@@ -49,6 +49,12 @@ model Agency {
   appointmentEvidenceLinks      AppointmentDocumentVersionLink[]
   appointmentExternalSubmissions AppointmentExternalSubmissionEvent[]
   appointmentExternalActions    AppointmentExternalAction[]
+  appointmentAcknowledgments    AppointmentAcknowledgment[]
+  oathsOfOffice                 OathOfOffice[]
+  oathVersions                  OathVersion[]
+  assumptionsToDuty             AssumptionToDuty[]
+  assumptionVersions            AssumptionVersion[]
+  assumptionOutcomeEvents       AssumptionOutcomeEvent[]
   plantillaPositionVersions     PlantillaPositionVersion[]
   positionDocuments             PositionDocument[]
   employees                     Employee[]
@@ -355,6 +361,13 @@ model AgencyMembership {
   updatedAppointmentVersions             AppointmentVersion[]               @relation("AppointmentVersionUpdater")
   recordedAppointmentExternalSubmissions AppointmentExternalSubmissionEvent[] @relation("AppointmentExternalSubmissionRecorder")
   recordedAppointmentExternalActions     AppointmentExternalAction[]           @relation("AppointmentExternalActionRecorder")
+  createdOaths                           OathOfOffice[]                        @relation("OathCreator")
+  updatedOaths                           OathOfOffice[]                        @relation("OathUpdater")
+  administeredOathVersions               OathVersion[]                         @relation("OathVersionAdministrator")
+  createdAssumptions                     AssumptionToDuty[]                    @relation("AssumptionCreator")
+  updatedAssumptions                     AssumptionToDuty[]                    @relation("AssumptionUpdater")
+  certifiedAssumptionVersions            AssumptionVersion[]                   @relation("AssumptionVersionCertifier")
+  authorizedAssumptionOutcomes           AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeAuthorizer")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1538,6 +1551,13 @@ model DocumentVersion {
   appointmentEvidenceLinks                         AppointmentDocumentVersionLink[]   @relation("AppointmentEvidenceVersion")
   appointmentExternalSubmissionEvidenceVersions    AppointmentExternalSubmissionEvent[] @relation("AppointmentExternalSubmissionEvidence")
   appointmentExternalActionEvidenceVersions        AppointmentExternalAction[]           @relation("AppointmentExternalActionEvidence")
+  appointmentAcknowledgmentEvidenceVersions        AppointmentAcknowledgment[]           @relation("AppointmentAcknowledgmentEvidence")
+  oathVersionDocuments                             OathVersion[]                         @relation("OathVersionDocument")
+  oathVersionCorrectionAuthorityVersions           OathVersion[]                         @relation("OathVersionCorrectionAuthority")
+  assumptionVersionDocuments                       AssumptionVersion[]                   @relation("AssumptionVersionDocument")
+  assumptionVersionCorrectionAuthorityVersions     AssumptionVersion[]                   @relation("AssumptionVersionCorrectionAuthority")
+  assumptionOutcomeAuthorityVersions               AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeAuthority")
+  assumptionOutcomeEvidenceVersions                AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeEvidence")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -2826,6 +2846,9 @@ model AppointmentVersion {
   links                             AppointmentDocumentVersionLink[]
   externalSubmissions               AppointmentExternalSubmissionEvent[] @relation("AppointmentExternalSubmissionVersion")
   externalActions                   AppointmentExternalAction[]           @relation("AppointmentExternalActionVersion")
+  acknowledgment                    AppointmentAcknowledgment?
+  oath                              OathOfOffice?
+  assumption                        AssumptionToDuty?
 
   @@unique([appointmentId, versionNo])
   @@unique([agencyId, appointmentId, id])
@@ -2890,4 +2913,161 @@ model AppointmentExternalAction {
   @@unique([agencyId, id])
   @@index([agencyId, appointmentVersionId, actionAt])
   @@map("appointment_external_actions")
+}
+
+model AppointmentAcknowledgment {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  appointmentVersionId      String   @map("appointment_version_id") @db.Uuid
+  acknowledgedAt            DateTime @map("acknowledged_at") @db.Timestamptz(6)
+  evidenceDocumentVersionId String   @map("evidence_document_version_id") @db.Uuid
+
+  agency                  Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointmentVersion      AppointmentVersion @relation(fields: [agencyId, appointmentVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion DocumentVersion    @relation("AppointmentAcknowledgmentEvidence", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([appointmentVersionId])
+  @@unique([agencyId, appointmentVersionId])
+  @@unique([agencyId, id])
+  @@map("appointment_acknowledgments")
+}
+
+model OathOfOffice {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  appointmentVersionId  String   @map("appointment_version_id") @db.Uuid
+  currentVersionId      String?  @map("current_version_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
+  rowVersion            Int      @default(1) @map("row_version")
+
+  agency             Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointmentVersion AppointmentVersion @relation(fields: [agencyId, appointmentVersionId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion     OathVersion?       @relation("OathCurrentVersion", fields: [agencyId, id, currentVersionId], references: [agencyId, oathId, id], onDelete: Restrict)
+  createdBy          AgencyMembership   @relation("OathCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy          AgencyMembership   @relation("OathUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  versions           OathVersion[]      @relation("OathVersions")
+
+  @@unique([appointmentVersionId])
+  @@unique([agencyId, appointmentVersionId])
+  @@unique([agencyId, id])
+  @@map("oaths_of_office")
+}
+
+model OathVersion {
+  id                                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                             String   @map("agency_id") @db.Uuid
+  oathId                               String   @map("oath_id") @db.Uuid
+  versionNo                            Int      @map("version_no")
+  oathDate                             DateTime @map("oath_date") @db.Date
+  administeredByMembershipId           String   @map("administered_by_membership_id") @db.Uuid
+  authority                            String
+  place                                String?
+  permittedVirtualMethod               String?  @map("permitted_virtual_method")
+  documentVersionId                    String   @map("document_version_id") @db.Uuid
+  replacesOathVersionId                String?  @map("replaces_oath_version_id") @db.Uuid
+  correctionReason                     String?  @map("correction_reason")
+  correctionAuthorityDocumentVersionId String?  @map("correction_authority_document_version_id") @db.Uuid
+  recordedAt                           DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  agency                            Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  oath                              OathOfOffice       @relation("OathVersions", fields: [agencyId, oathId], references: [agencyId, id], onDelete: Restrict)
+  administeredBy                    AgencyMembership   @relation("OathVersionAdministrator", fields: [agencyId, administeredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion                   DocumentVersion    @relation("OathVersionDocument", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+  correctionAuthorityDocumentVersion DocumentVersion?  @relation("OathVersionCorrectionAuthority", fields: [agencyId, correctionAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  replacesOathVersion               OathVersion?       @relation("OathVersionReplacement", fields: [agencyId, replacesOathVersionId], references: [agencyId, id], onDelete: Restrict)
+  replacementVersions               OathVersion[]      @relation("OathVersionReplacement")
+  currentForOaths                   OathOfOffice[]     @relation("OathCurrentVersion")
+  assumptionVersions                AssumptionVersion[]
+
+  @@unique([oathId, versionNo])
+  @@unique([agencyId, oathId, id])
+  @@unique([agencyId, id])
+  @@map("oath_versions")
+}
+
+model AssumptionToDuty {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  appointmentVersionId  String   @map("appointment_version_id") @db.Uuid
+  currentVersionId      String?  @map("current_version_id") @db.Uuid
+  status                String
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedByMembershipId String   @map("updated_by_membership_id") @db.Uuid
+  rowVersion            Int      @default(1) @map("row_version")
+
+  agency             Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  appointmentVersion AppointmentVersion  @relation(fields: [agencyId, appointmentVersionId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion     AssumptionVersion?  @relation("AssumptionCurrentVersion", fields: [agencyId, id, currentVersionId], references: [agencyId, assumptionId, id], onDelete: Restrict)
+  createdBy          AgencyMembership    @relation("AssumptionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy          AgencyMembership    @relation("AssumptionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  versions           AssumptionVersion[] @relation("AssumptionVersions")
+  outcome            AssumptionOutcomeEvent?
+
+  @@unique([appointmentVersionId])
+  @@unique([agencyId, appointmentVersionId])
+  @@unique([agencyId, id])
+  @@map("assumptions_to_duty")
+}
+
+model AssumptionVersion {
+  id                                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                             String   @map("agency_id") @db.Uuid
+  assumptionId                         String   @map("assumption_id") @db.Uuid
+  versionNo                            Int      @map("version_no")
+  oathVersionId                        String   @map("oath_version_id") @db.Uuid
+  actualAssumptionDate                 DateTime @map("actual_assumption_date") @db.Date
+  certifiedByMembershipId              String   @map("certified_by_membership_id") @db.Uuid
+  certifyingAuthority                  String   @map("certifying_authority")
+  certifiedAt                          DateTime @map("certified_at") @db.Timestamptz(6)
+  documentVersionId                    String   @map("document_version_id") @db.Uuid
+  replacesAssumptionVersionId          String?  @map("replaces_assumption_version_id") @db.Uuid
+  correctionReason                     String?  @map("correction_reason")
+  correctionAuthorityDocumentVersionId String?  @map("correction_authority_document_version_id") @db.Uuid
+  recordedAt                           DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  agency                            Agency              @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  assumption                        AssumptionToDuty    @relation("AssumptionVersions", fields: [agencyId, assumptionId], references: [agencyId, id], onDelete: Restrict)
+  oathVersion                       OathVersion         @relation(fields: [agencyId, oathVersionId], references: [agencyId, id], onDelete: Restrict)
+  certifiedBy                       AgencyMembership    @relation("AssumptionVersionCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion                   DocumentVersion     @relation("AssumptionVersionDocument", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+  correctionAuthorityDocumentVersion DocumentVersion?    @relation("AssumptionVersionCorrectionAuthority", fields: [agencyId, correctionAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  replacesAssumptionVersion         AssumptionVersion?  @relation("AssumptionVersionReplacement", fields: [agencyId, replacesAssumptionVersionId], references: [agencyId, id], onDelete: Restrict)
+  replacementVersions               AssumptionVersion[] @relation("AssumptionVersionReplacement")
+  currentForAssumptions             AssumptionToDuty[]  @relation("AssumptionCurrentVersion")
+
+  @@unique([assumptionId, versionNo])
+  @@unique([agencyId, assumptionId, id])
+  @@unique([agencyId, id])
+  @@map("assumption_versions")
+}
+
+model AssumptionOutcomeEvent {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  assumptionId               String   @map("assumption_id") @db.Uuid
+  outcome                    String
+  noticeDate                 DateTime? @map("notice_date") @db.Date
+  deadlineDate               DateTime? @map("deadline_date") @db.Date
+  outcomeDate                DateTime  @map("outcome_date") @db.Date
+  reason                     String
+  authorizedByMembershipId   String   @map("authorized_by_membership_id") @db.Uuid
+  authorityDocumentVersionId String   @map("authority_document_version_id") @db.Uuid
+  evidenceDocumentVersionId  String   @map("evidence_document_version_id") @db.Uuid
+  recordedAt                 DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  agency                   Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  assumption               AssumptionToDuty   @relation(fields: [agencyId, assumptionId], references: [agencyId, id], onDelete: Restrict)
+  authorizedBy             AgencyMembership   @relation("AssumptionOutcomeAuthorizer", fields: [agencyId, authorizedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  authorityDocumentVersion DocumentVersion    @relation("AssumptionOutcomeAuthority", fields: [agencyId, authorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidenceDocumentVersion  DocumentVersion    @relation("AssumptionOutcomeEvidence", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([assumptionId])
+  @@unique([agencyId, assumptionId])
+  @@unique([agencyId, id])
+  @@map("assumption_outcome_events")
 }

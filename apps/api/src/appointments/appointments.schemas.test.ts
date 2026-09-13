@@ -1,12 +1,19 @@
 import { expect, it } from 'vitest';
 import {
+  appointmentAssumptionCancellationSchema,
+  appointmentAssumptionCorrectionSchema,
+  appointmentAssumptionFailureSchema,
+  appointmentAssumptionSchema,
   appointmentCancelSchema,
   appointmentCorrectionSchema,
   appointmentCreateSchema,
   appointmentExternalActionSchema,
   appointmentExternalSubmissionSchema,
   appointmentListSchema,
+  appointmentOathCorrectionSchema,
+  appointmentOathSchema,
   appointmentReasonSchema,
+  appointmentReceiptSchema,
   appointmentSettingsSchema,
   appointmentUpdateSchema,
 } from './appointments.schemas';
@@ -265,4 +272,134 @@ it('accepts evidenced Agency Appointment settings only', () => {
   expect(appointmentSettingsSchema.safeParse({ regulatoryStatus: 'REGULATED' }).success).toBe(
     false,
   );
+});
+
+it('accepts an evidenced acknowledgment receipt and rejects invented facts', () => {
+  expect(
+    appointmentReceiptSchema.safeParse({
+      acknowledgedAt: '2026-10-04T01:00:00.000Z',
+      evidenceDocumentVersionId: id('30'),
+    }).success,
+  ).toBe(true);
+  expect(
+    appointmentReceiptSchema.safeParse({
+      acknowledgedAt: '04 October 2026',
+      evidenceDocumentVersionId: id('30'),
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentReceiptSchema.safeParse({
+      acknowledgedAt: '2026-10-04T01:00:00.000Z',
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentReceiptSchema.safeParse({
+      acknowledgedAt: '2026-10-04T01:00:00.000Z',
+      evidenceDocumentVersionId: id('30'),
+      assumedAt: '2026-10-05T01:00:00.000Z',
+    }).success,
+  ).toBe(false);
+});
+
+it('accepts an exact oath or reasoned oath replacement only', () => {
+  const oath = {
+    oathDate: '2026-10-05',
+    administeredByMembershipId: id('31'),
+    authority: 'Municipal Circuit Trial Court Judge',
+    place: 'Municipal Hall',
+    documentVersionId: id('32'),
+  };
+  expect(appointmentOathSchema.safeParse(oath).success).toBe(true);
+  expect(
+    appointmentOathSchema.safeParse({
+      ...oath,
+      permittedVirtualMethod: 'Video conference under the 2025 ORAOHRA',
+      place: undefined,
+    }).success,
+  ).toBe(true);
+  expect(appointmentOathSchema.safeParse({ ...oath, oathDate: '05 October 2026' }).success).toBe(
+    false,
+  );
+  expect(appointmentOathSchema.safeParse({ ...oath, authority: '   ' }).success).toBe(false);
+  expect(appointmentOathSchema.safeParse({ ...oath, documentVersionId: undefined }).success).toBe(
+    false,
+  );
+  expect(appointmentOathSchema.safeParse({ ...oath, reason: 'Typo.' }).success).toBe(false);
+  expect(
+    appointmentOathCorrectionSchema.safeParse({
+      ...oath,
+      reason: 'Correct the recorded oath date.',
+      authorityDocumentVersionId: id('33'),
+    }).success,
+  ).toBe(true);
+  expect(appointmentOathCorrectionSchema.safeParse({ ...oath, reason: '' }).success).toBe(false);
+  expect(appointmentOathCorrectionSchema.safeParse(oath).success).toBe(false);
+});
+
+it('accepts an evidenced assumption linked to the exact oath version only', () => {
+  const assumption = {
+    oathVersionId: id('34'),
+    actualAssumptionDate: '2026-10-07',
+    certifiedByMembershipId: id('35'),
+    certifyingAuthority: 'Municipal Human Resource Management Officer',
+    certifiedAt: '2026-10-07T02:00:00.000Z',
+    documentVersionId: id('36'),
+  };
+  expect(appointmentAssumptionSchema.safeParse(assumption).success).toBe(true);
+  expect(
+    appointmentAssumptionSchema.safeParse({ ...assumption, actualAssumptionDate: '07/10/2026' })
+      .success,
+  ).toBe(false);
+  expect(
+    appointmentAssumptionSchema.safeParse({ ...assumption, certifiedAt: '2026-10-07' }).success,
+  ).toBe(false);
+  expect(
+    appointmentAssumptionSchema.safeParse({ ...assumption, oathVersionId: undefined }).success,
+  ).toBe(false);
+  expect(
+    appointmentAssumptionCorrectionSchema.safeParse({
+      ...assumption,
+      reason: 'Correct the actual assumption date.',
+      authorityDocumentVersionId: id('37'),
+    }).success,
+  ).toBe(true);
+  expect(appointmentAssumptionCorrectionSchema.safeParse(assumption).success).toBe(false);
+});
+
+it('requires notice and deadline for failure and evidence for cancellation', () => {
+  const outcome = {
+    outcomeDate: '2026-10-20',
+    reason: 'The appointee did not assume duty.',
+    authorizedByMembershipId: id('38'),
+    authorityDocumentVersionId: id('39'),
+    evidenceDocumentVersionId: id('40'),
+  };
+  expect(
+    appointmentAssumptionFailureSchema.safeParse({
+      ...outcome,
+      noticeDate: '2026-10-08',
+      deadlineDate: '2026-10-15',
+    }).success,
+  ).toBe(true);
+  expect(
+    appointmentAssumptionFailureSchema.safeParse({
+      ...outcome,
+      noticeDate: '2026-10-15',
+      deadlineDate: '2026-10-08',
+    }).success,
+  ).toBe(false);
+  expect(appointmentAssumptionFailureSchema.safeParse(outcome).success).toBe(false);
+  expect(appointmentAssumptionCancellationSchema.safeParse(outcome).success).toBe(true);
+  expect(
+    appointmentAssumptionCancellationSchema.safeParse({
+      ...outcome,
+      noticeDate: '2026-10-08',
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentAssumptionCancellationSchema.safeParse({
+      ...outcome,
+      evidenceDocumentVersionId: undefined,
+    }).success,
+  ).toBe(false);
 });

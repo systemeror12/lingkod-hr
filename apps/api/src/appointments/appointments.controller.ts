@@ -19,6 +19,10 @@ import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import {
+  appointmentAssumptionCancellationSchema,
+  appointmentAssumptionCorrectionSchema,
+  appointmentAssumptionFailureSchema,
+  appointmentAssumptionSchema,
   appointmentCancelSchema,
   appointmentCorrectionSchema,
   appointmentCreateSchema,
@@ -27,7 +31,10 @@ import {
   appointmentIdSchema,
   appointmentIdempotencyKeySchema,
   appointmentListSchema,
+  appointmentOathCorrectionSchema,
+  appointmentOathSchema,
   appointmentReasonSchema,
+  appointmentReceiptSchema,
   appointmentSettingsSchema,
   appointmentUpdateSchema,
 } from './appointments.schemas';
@@ -299,6 +306,153 @@ export class AppointmentsController {
     const key = this.parseIdempotencyKey(idempotencyKey, context);
     try {
       return await this.service.recordExternalAction(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/receipt')
+  @RequirePermission('appointments.assumption.create')
+  async recordReceipt(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentReceiptSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordReceipt(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/oaths')
+  @RequirePermission('appointments.oath.record')
+  async recordOath(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentOathSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordOath(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/oaths/corrections')
+  @RequirePermission('appointments.oath.record')
+  async correctOath(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentOathCorrectionSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.correctOath(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/assumption')
+  @RequirePermission('appointments.assumption.certify')
+  async recordAssumption(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentAssumptionSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordAssumption(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/assumption/corrections')
+  @RequirePermission('appointments.assumption.correct')
+  async correctAssumption(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentAssumptionCorrectionSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.correctAssumption(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/assumption/failure')
+  @RequirePermission('appointments.assumption.fail')
+  async recordAssumptionFailure(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentAssumptionFailureSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordAssumptionFailure(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/assumption/cancellation')
+  @RequirePermission('appointments.assumption.cancel')
+  async recordAssumptionCancellation(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentAssumptionCancellationSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordAssumptionCancellation(context, id, parsed.data, key);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
