@@ -38,6 +38,7 @@ type Dialog =
   | 'assumption-correction'
   | 'assumption-failure'
   | 'assumption-cancellation'
+  | 'activation'
   | null;
 type Tab = 'preparation' | 'review' | 'oath' | 'csc';
 
@@ -61,6 +62,8 @@ const NATURES = [
   'DEMOTION',
 ] as const;
 const SIGNATURE_METHODS = ['WET_INK', 'ELECTRONIC', 'DIGITAL_CERTIFICATE'] as const;
+const ACTIVATION_SEXES = ['FEMALE', 'MALE'] as const;
+const ACTIVATION_CIVIL_STATUSES = ['SINGLE', 'MARRIED', 'WIDOWED', 'SEPARATED'] as const;
 const EXTERNAL_SUBMISSION_TYPES = ['SUBMITTED', 'RECEIVED', 'RETURNED', 'RESUBMITTED'] as const;
 const APPROVAL_ACTIONS = ['APPROVED', 'DISAPPROVED'] as const;
 const VALIDATION_ACTIONS = ['VALIDATED', 'INVALIDATED'] as const;
@@ -268,6 +271,16 @@ export interface AppointmentExternalAction {
   evidence: AppointmentExternalEvidence;
 }
 
+export interface AppointmentActivation {
+  employeeId: string;
+  employeeNumber: string;
+  legalName: string;
+  serviceSegmentId: string;
+  effectiveFrom: string;
+  positionId: string | null;
+  appointmentStatus: string;
+}
+
 export interface AppointmentDetail extends AppointmentSummary {
   selectionPackage: unknown;
   versions: AppointmentVersion[];
@@ -275,6 +288,7 @@ export interface AppointmentDetail extends AppointmentSummary {
   settings: AppointmentSettings | null;
   externalSubmissions: AppointmentExternalSubmission[];
   externalActions: AppointmentExternalAction[];
+  activation: AppointmentActivation | null;
 }
 
 export interface EligibleSelection {
@@ -334,6 +348,7 @@ interface Props {
   canCorrectAssumption: boolean;
   canFailAssumption: boolean;
   canCancelAssumption: boolean;
+  canActivateService: boolean;
   initialSelected: string | null;
 }
 
@@ -379,6 +394,14 @@ interface OutcomeForm {
   reason: string;
   authorityDocumentVersionId: string;
   evidenceDocumentVersionId: string;
+}
+
+interface ActivationForm {
+  employeeNumber: string;
+  birthDate: string;
+  sex: string;
+  civilStatus: string;
+  contactEmail: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -469,6 +492,16 @@ function defaultOutcomeForm(): OutcomeForm {
     reason: '',
     authorityDocumentVersionId: '',
     evidenceDocumentVersionId: '',
+  };
+}
+
+function defaultActivationForm(): ActivationForm {
+  return {
+    employeeNumber: '',
+    birthDate: '',
+    sex: 'FEMALE',
+    civilStatus: 'SINGLE',
+    contactEmail: '',
   };
 }
 
@@ -811,6 +844,7 @@ export function AppointmentsWorkspace(props: Props) {
   const [oathForm, setOathForm] = useState<OathForm>(defaultOathForm);
   const [assumptionForm, setAssumptionForm] = useState<AssumptionForm>(defaultAssumptionForm);
   const [outcomeForm, setOutcomeForm] = useState<OutcomeForm>(defaultOutcomeForm);
+  const [activationForm, setActivationForm] = useState<ActivationForm>(defaultActivationForm);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -831,6 +865,7 @@ export function AppointmentsWorkspace(props: Props) {
   const oath = currentVersionDetail?.oath ?? null;
   const assumption = currentVersionDetail?.assumption ?? null;
   const assumptionPending = assumption?.status === 'PENDING';
+  const activation = detail?.activation ?? null;
 
   async function loadDetail(appointmentId: string): Promise<void> {
     const response = await fetch(
@@ -1325,6 +1360,35 @@ export function AppointmentsWorkspace(props: Props) {
     }
   }
 
+  function openActivation(): void {
+    setActivationForm(defaultActivationForm());
+    setError('');
+    setSuccess('');
+    setDialog('activation');
+  }
+
+  async function saveActivation(): Promise<void> {
+    if (!detail) return;
+    const result = await command(
+      `/api/v1/agencies/${props.agencyId}/appointments/${detail.id}/activation`,
+      {
+        employee: {
+          employeeNumber: activationForm.employeeNumber.trim(),
+          birthDate: activationForm.birthDate,
+          sex: activationForm.sex,
+          civilStatus: activationForm.civilStatus,
+          contactEmail: activationForm.contactEmail.trim(),
+        },
+      },
+    );
+    if (result) {
+      setDialog(null);
+      setSuccess(
+        'Employee service was activated, the reserved Plantilla item was occupied, and the recruitment case was closed.',
+      );
+    }
+  }
+
   const canPrepare = props.canCreate && settings !== null;
   const dialogTitle =
     dialog === 'prepare'
@@ -1357,7 +1421,9 @@ export function AppointmentsWorkspace(props: Props) {
                                 ? 'Record failure to assume'
                                 : dialog === 'assumption-cancellation'
                                   ? 'Cancel before assumption'
-                                  : '';
+                                  : dialog === 'activation'
+                                    ? 'Activate Employee service'
+                                    : '';
 
   return (
     <div className="grid gap-5">
@@ -1899,6 +1965,62 @@ export function AppointmentsWorkspace(props: Props) {
                       </p>
                     </div>
                   ) : null}
+                  <div className="grid gap-3 rounded-[3px] border border-line px-4 py-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h3 className="m-0 text-sm font-[700] text-midnight">
+                        Employee service activation
+                      </h3>
+                      <StatusBadge
+                        status={
+                          activation
+                            ? 'ACTIVE'
+                            : assumption?.status === 'ASSUMED'
+                              ? 'READY'
+                              : 'PENDING'
+                        }
+                      />
+                    </div>
+                    <p className="m-0 text-[12px] leading-[1.55] text-muted">
+                      Activation runs only from the assumed Appointment Contract. Personnel creates
+                      the Employee and initial Service Segment, Plantilla occupies the reserved item
+                      and records the Position Incumbency, and Recruitment closes the selected
+                      Application, Vacancy Publication, and Request to Fill in one transaction.
+                    </p>
+                    {activation ? (
+                      <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
+                        <DetailRow label="Employee">
+                          {activation.legalName} · {activation.employeeNumber}
+                        </DetailRow>
+                        <DetailRow label="Service effective from">
+                          {dateLabel(activation.effectiveFrom)}
+                        </DetailRow>
+                        <DetailRow label="Appointment status">
+                          {label(activation.appointmentStatus)}
+                        </DetailRow>
+                        <DetailRow label="Service Segment">{activation.serviceSegmentId}</DetailRow>
+                      </dl>
+                    ) : null}
+                    {!activation && assumption?.status === 'ASSUMED' && props.canActivateService ? (
+                      <span>
+                        <Button
+                          size="default"
+                          className="min-h-9"
+                          type="button"
+                          variant="primary"
+                          disabled={busy}
+                          onClick={openActivation}
+                        >
+                          Activate service
+                        </Button>
+                      </span>
+                    ) : null}
+                    {!activation && assumption?.status !== 'ASSUMED' ? (
+                      <p className="m-0 text-xs text-muted">
+                        Activation opens once the Assumption to Duty is certified for the current
+                        issued version.
+                      </p>
+                    ) : null}
+                  </div>
                 </>
               )}
             </div>
@@ -2715,6 +2837,90 @@ export function AppointmentsWorkspace(props: Props) {
             </div>
           ) : null}
 
+          {dialog === 'activation' ? (
+            <div className="grid gap-4">
+              <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
+                <DetailRow label="Appointee">{detail?.appointee.fullName ?? '—'}</DetailRow>
+                <DetailRow label="Plantilla item">
+                  {detail
+                    ? `${detail.position.itemNumber} · ${detail.position.title ?? 'Untitled item'} · SG ${detail.position.salaryGrade ?? '—'}`
+                    : '—'}
+                </DetailRow>
+              </dl>
+              <p className="m-0 text-[12px] leading-[1.55] text-muted">
+                The Employee legal name and service dates come from the assumed Appointment
+                Contract. The Employee number and identity facts are recorded once and reused for
+                later personnel actions.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Employee number" htmlFor="activation-number">
+                  <input
+                    className={inputClass}
+                    id="activation-number"
+                    value={activationForm.employeeNumber}
+                    onChange={(event) =>
+                      setActivationForm({ ...activationForm, employeeNumber: inputValue(event) })
+                    }
+                  />
+                </Field>
+                <Field label="Birth date" htmlFor="activation-birth-date">
+                  <input
+                    className={inputClass}
+                    id="activation-birth-date"
+                    type="date"
+                    value={activationForm.birthDate}
+                    onChange={(event) =>
+                      setActivationForm({ ...activationForm, birthDate: inputValue(event) })
+                    }
+                  />
+                </Field>
+                <Field label="Sex" htmlFor="activation-sex">
+                  <select
+                    className={inputClass}
+                    id="activation-sex"
+                    value={activationForm.sex}
+                    onChange={(event) =>
+                      setActivationForm({ ...activationForm, sex: inputValue(event) })
+                    }
+                  >
+                    {ACTIVATION_SEXES.map((sex) => (
+                      <option key={sex} value={sex}>
+                        {label(sex)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Civil status" htmlFor="activation-civil-status">
+                  <select
+                    className={inputClass}
+                    id="activation-civil-status"
+                    value={activationForm.civilStatus}
+                    onChange={(event) =>
+                      setActivationForm({ ...activationForm, civilStatus: inputValue(event) })
+                    }
+                  >
+                    {ACTIVATION_CIVIL_STATUSES.map((civilStatus) => (
+                      <option key={civilStatus} value={civilStatus}>
+                        {label(civilStatus)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Contact email" htmlFor="activation-contact-email">
+                  <input
+                    className={inputClass}
+                    id="activation-contact-email"
+                    type="email"
+                    value={activationForm.contactEmail}
+                    onChange={(event) =>
+                      setActivationForm({ ...activationForm, contactEmail: inputValue(event) })
+                    }
+                  />
+                </Field>
+              </div>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             {dialog === 'prepare' ? (
               <Button
@@ -2949,6 +3155,23 @@ export function AppointmentsWorkspace(props: Props) {
                 onClick={() => void saveAssumptionCancellation()}
               >
                 Record cancellation
+              </Button>
+            ) : null}
+            {dialog === 'activation' ? (
+              <Button
+                size="default"
+                className="min-h-9"
+                type="button"
+                variant="primary"
+                disabled={
+                  busy ||
+                  activationForm.employeeNumber.trim() === '' ||
+                  activationForm.birthDate === '' ||
+                  activationForm.contactEmail.trim() === ''
+                }
+                onClick={() => void saveActivation()}
+              >
+                Activate service
               </Button>
             ) : null}
           </div>

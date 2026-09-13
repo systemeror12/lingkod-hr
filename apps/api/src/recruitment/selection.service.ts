@@ -627,6 +627,22 @@ export class SelectionService {
   }
 
   /**
+   * Internal contract: Appointment resolves the application behind a handed-off
+   * candidate by handoff id without reading Recruitment tables.
+   */
+  async resolveHandoffApplicationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    handoffId: string,
+  ): Promise<{ handoffId: string; applicationId: string } | null> {
+    const handoff = await transaction.recruitmentAppointmentHandoff.findFirst({
+      where: { agencyId: context.agencyId, id: handoffId },
+      select: { id: true, applicationId: true },
+    });
+    return handoff ? { handoffId: handoff.id, applicationId: handoff.applicationId } : null;
+  }
+
+  /**
    * Internal contract: Appointment lists the immutable selected-candidate
    * packages available for preparation without reading Recruitment tables.
    */

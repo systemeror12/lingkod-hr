@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import {
+  appointmentActivationSchema,
   appointmentAssumptionCancellationSchema,
   appointmentAssumptionCorrectionSchema,
   appointmentAssumptionFailureSchema,
@@ -402,4 +403,33 @@ it('requires notice and deadline for failure and evidence for cancellation', () 
       evidenceDocumentVersionId: undefined,
     }).success,
   ).toBe(false);
+});
+
+it('accepts exactly one Employee source for service activation', () => {
+  const employee = {
+    employeeNumber: 'E2E-1001',
+    birthDate: '1990-04-15',
+    sex: 'FEMALE',
+    civilStatus: 'SINGLE',
+    contactEmail: 'appointee@example.test',
+  };
+  expect(appointmentActivationSchema.safeParse({ employeeId: id('41') }).success).toBe(true);
+  expect(appointmentActivationSchema.safeParse({ employee }).success).toBe(true);
+  expect(appointmentActivationSchema.safeParse({}).success).toBe(false);
+  expect(appointmentActivationSchema.safeParse({ employeeId: id('41'), employee }).success).toBe(
+    false,
+  );
+  expect(
+    appointmentActivationSchema.safeParse({ employee: { ...employee, legalName: 'Invented' } })
+      .success,
+  ).toBe(false);
+  expect(
+    appointmentActivationSchema.safeParse({ employee: { ...employee, birthDate: '15/04/1990' } })
+      .success,
+  ).toBe(false);
+  expect(
+    appointmentActivationSchema.safeParse({ employee: { ...employee, contactEmail: 'nope' } })
+      .success,
+  ).toBe(false);
+  expect(appointmentActivationSchema.safeParse({ employee, extra: true }).success).toBe(false);
 });

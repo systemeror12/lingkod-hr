@@ -24,9 +24,12 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 const documents = {} as ConstructorParameters<typeof AppointmentsService>[0];
-const plantilla = {} as ConstructorParameters<typeof AppointmentsService>[1];
-const qualificationStandards = {} as ConstructorParameters<typeof AppointmentsService>[2];
-const selection = {} as ConstructorParameters<typeof AppointmentsService>[3];
+const employees = {} as ConstructorParameters<typeof AppointmentsService>[1];
+const plantilla = {} as ConstructorParameters<typeof AppointmentsService>[2];
+const qualificationStandards = {} as ConstructorParameters<typeof AppointmentsService>[3];
+const applications = {} as ConstructorParameters<typeof AppointmentsService>[4];
+const recruitment = {} as ConstructorParameters<typeof AppointmentsService>[5];
+const selection = {} as ConstructorParameters<typeof AppointmentsService>[6];
 
 const evidence: Array<{ linkRole: AppointmentLinkRole; documentVersionId: string }> = [
   { linkRole: 'PDS', documentVersionId },
@@ -51,7 +54,15 @@ const versionFields = {
 };
 
 function service(): AppointmentsService {
-  return new AppointmentsService(documents, plantilla, qualificationStandards, selection);
+  return new AppointmentsService(
+    documents,
+    employees,
+    plantilla,
+    qualificationStandards,
+    applications,
+    recruitment,
+    selection,
+  );
 }
 
 it('rechecks the read permission before listing or reading Appointments', async () => {

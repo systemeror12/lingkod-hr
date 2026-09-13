@@ -174,6 +174,27 @@ export interface PlantillaPositionSuccessor {
   draft: PlantillaPositionVersionSummary;
 }
 
+export interface ReservedAssignmentFacts {
+  organizationUnitId: string;
+  salaryGrade: number;
+}
+
+export interface CompleteReservedAssignmentInput {
+  employeeId: string;
+  serviceSegmentId: string;
+  appointmentId: string;
+  appointmentVersionId: string;
+  effectiveDate: string;
+  expectedOrganizationUnitId: string;
+  expectedSalaryGrade: number;
+  reason: string;
+}
+
+export interface CompletedAssignment {
+  versionId: string;
+  positionIncumbencyId: string;
+}
+
 export type RecruitableVacancyRejectionReason =
   | 'POSITION_NOT_VACANT'
   | 'POSITION_NOT_AUTHORIZED'
@@ -1601,6 +1622,189 @@ export class PlantillaPositionsService {
     return positionSummary(refreshed, toDatabaseDate(manilaToday()));
   }
 
+  /** Internal contract: Appointment resolves the reserved assignment it will consume. */
+  async resolveReservedAssignmentInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    positionId: string,
+    effectiveDate: string,
+  ): Promise<ReservedAssignmentFacts | null> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) return null;
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (!current || current.status !== 'ACTIVE' || current.domainStatus !== 'RESERVED') {
+      return null;
+    }
+    return {
+      organizationUnitId: current.organizationUnit.id,
+      salaryGrade: current.salaryGrade,
+    };
+  }
+
+  /**
+   * Internal contract: Appointment owns the transaction; Plantilla owns the
+   * occupancy and the Position Incumbency. The reserved version is revalidated
+   * at the assumption date, then consumed: a same-day consumption voids the
+   * never-effective reservation, a later assumption supersedes it like any
+   * other transition. The Service Segment is Personnel-owned; this method only
+   * links the incumbency to it.
+   */
+  async completeReservedAssignmentInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    input: CompleteReservedAssignmentInput,
+    rawIdempotencyKey?: string,
+  ): Promise<CompletedAssignment> {
+    const reason = input.reason.trim();
+    if (!reason) throw this.transitionReasonRequired();
+    const effectiveFrom = toDatabaseDate(input.effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    if (idempotencyKey) {
+      const completed = await transaction.auditEvent.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          action: 'PLANTILLA_POSITION_OCCUPIED',
+          entityId: positionId,
+          idempotencyKey,
+        },
+        select: { metadata: true },
+      });
+      if (completed) {
+        if (
+          this.metadataString(completed.metadata, 'appointmentId') !== input.appointmentId ||
+          this.metadataString(completed.metadata, 'effectiveDate') !== input.effectiveDate
+        ) {
+          throw this.idempotencyConflict();
+        }
+        const incumbent = await transaction.positionIncumbency.findFirst({
+          where: { agencyId: context.agencyId, serviceSegmentId: input.serviceSegmentId },
+          select: { id: true },
+        });
+        const versionId = this.metadataString(completed.metadata, 'versionId');
+        if (!incumbent || !versionId) throw this.idempotencyConflict();
+        return {
+          versionId,
+          positionIncumbencyId: incumbent.id,
+        };
+      }
+    }
+    if (draftVersion(record.versions)) throw this.transitionDraftConflict();
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (
+      !current ||
+      current.status !== 'ACTIVE' ||
+      current.domainStatus !== 'RESERVED' ||
+      current.effectiveFrom.getTime() > effectiveFrom.getTime()
+    ) {
+      throw this.assignmentInvalid();
+    }
+    if (
+      current.organizationUnit.id !== input.expectedOrganizationUnitId ||
+      current.salaryGrade !== input.expectedSalaryGrade
+    ) {
+      throw this.assignmentMismatch();
+    }
+    const overlap = await transaction.positionIncumbency.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        positionId,
+        status: { not: 'VOIDED' },
+        effectiveFrom: { lte: effectiveFrom },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: effectiveFrom } }],
+      },
+      select: { id: true },
+    });
+    if (overlap) throw this.incumbencyConflict();
+    const latest = record.versions.reduce(
+      (maxVersion, version) => Math.max(maxVersion, version.versionNo),
+      current.versionNo,
+    );
+    const sameDay = current.effectiveFrom.getTime() === effectiveFrom.getTime();
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+      data: sameDay
+        ? { status: 'VOIDED' }
+        : { status: 'SUPERSEDED', effectiveTo: addDays(effectiveFrom, -1) },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(
+        context,
+        positionId,
+        this.inputFromVersion(current, effectiveFrom),
+        effectiveFrom,
+        {
+          versionNo: latest + 1,
+          status: 'ACTIVE',
+          domainStatus: 'OCCUPIED',
+          effectiveTo: sameDay ? current.effectiveTo : null,
+        },
+      ),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    const incumbency = await transaction.positionIncumbency.create({
+      data: {
+        agencyId: context.agencyId,
+        positionId,
+        employeeId: input.employeeId,
+        serviceSegmentId: input.serviceSegmentId,
+        effectiveFrom,
+        effectiveTo: null,
+        status: 'ACTIVE',
+        createdByMembershipId: context.membershipId,
+      },
+      select: { id: true },
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_OCCUPIED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'RESERVED',
+      newStatus: 'OCCUPIED',
+      reason,
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        before: {
+          lifecycleStatus: current.domainStatus,
+          versionState: current.status,
+          versionId: current.id,
+          effectiveDate: formatDate(current.effectiveFrom),
+        },
+        after: {
+          lifecycleStatus: 'OCCUPIED',
+          versionState: 'ACTIVE',
+          versionId: replacement.id,
+          effectiveDate: formatDate(effectiveFrom),
+        },
+        predecessorId: current.id,
+        versionId: replacement.id,
+        effectiveDate: formatDate(effectiveFrom),
+        positionIncumbencyId: incumbency.id,
+        appointmentId: input.appointmentId,
+        appointmentVersionId: input.appointmentVersionId,
+        serviceSegmentId: input.serviceSegmentId,
+        employeeId: input.employeeId,
+        sameDayAssignment: sameDay,
+      },
+    });
+    return {
+      versionId: replacement.id,
+      positionIncumbencyId: incumbency.id,
+    };
+  }
+
   /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
   async lockInTransaction(
     transaction: Prisma.TransactionClient,
@@ -2239,6 +2443,30 @@ export class PlantillaPositionsService {
       'A successor effective date must follow the current version.',
       409,
       'PLANTILLA_POSITION_SUCCESSOR_DATE_INVALID',
+    );
+  }
+
+  private assignmentInvalid(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Plantilla Position is no longer reserved for this activation.',
+      409,
+      'PLANTILLA_POSITION_ASSIGNMENT_INVALID',
+    );
+  }
+
+  private assignmentMismatch(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The reserved Plantilla Position changed before service activation.',
+      409,
+      'PLANTILLA_POSITION_ASSIGNMENT_MISMATCH',
+    );
+  }
+
+  private incumbencyConflict(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Plantilla Position already has a conflicting Position Incumbency.',
+      409,
+      'PLANTILLA_POSITION_INCUMBENCY_CONFLICT',
     );
   }
 

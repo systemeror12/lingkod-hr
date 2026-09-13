@@ -4,8 +4,18 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
-import { PlantillaPositionsService } from '../plantilla-positions/plantilla-positions.service';
+import {
+  EmployeesService,
+  EmployeeServiceError,
+  type EmployeeActivationSummary,
+} from '../employees/employees.service';
+import {
+  PlantillaPositionsService,
+  PlantillaPositionServiceError,
+} from '../plantilla-positions/plantilla-positions.service';
 import { QualificationStandardsService } from '../qualification-standards/qualification-standards.service';
+import { ApplicationsService } from '../recruitment/applications.service';
+import { RecruitmentService, RecruitmentServiceError } from '../recruitment/recruitment.service';
 import { SelectionService } from '../recruitment/selection.service';
 import {
   APPOINTMENT_ASSUMPTION_OUTCOMES,
@@ -18,6 +28,7 @@ import {
   APPOINTMENT_REGULATORY_STATUSES,
   APPOINTMENT_SIGNATURE_METHODS,
   APPOINTMENT_WORKFLOW_STATUSES,
+  type appointmentActivationSchema,
   type appointmentAssumptionCancellationSchema,
   type appointmentAssumptionCorrectionSchema,
   type appointmentAssumptionFailureSchema,
@@ -305,6 +316,7 @@ export interface AppointmentDetail extends AppointmentSummary {
   settings: AppointmentSettingsSummary | null;
   externalSubmissions: AppointmentExternalSubmissionSummary[];
   externalActions: AppointmentExternalActionSummary[];
+  activation: EmployeeActivationSummary | null;
 }
 
 export interface AppointmentSettingsSummary {
@@ -623,6 +635,15 @@ const AUDIT_METADATA_KEYS = new Set([
   'noticeDate',
   'deadlineDate',
   'authorityDocumentVersionId',
+  'employeeId',
+  'employeeNumber',
+  'serviceSegmentId',
+  'positionIncumbencyId',
+  'positionVersionId',
+  'appointmentVersionId',
+  'applicationId',
+  'publicationId',
+  'requestId',
 ]);
 
 // External events are the source of truth: the standing is whichever supported
@@ -1058,10 +1079,13 @@ function appointmentSummary(
 export class AppointmentsService {
   constructor(
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
+    @Inject(EmployeesService) private readonly employeesService: EmployeesService,
     @Inject(PlantillaPositionsService)
     private readonly plantillaPositions: PlantillaPositionsService,
     @Inject(QualificationStandardsService)
     private readonly qualificationStandards: QualificationStandardsService,
+    @Inject(ApplicationsService) private readonly applicationsService: ApplicationsService,
+    @Inject(RecruitmentService) private readonly recruitmentService: RecruitmentService,
     @Inject(SelectionService) private readonly selectionService: SelectionService,
   ) {}
 
@@ -2488,6 +2512,234 @@ export class AppointmentsService {
     );
   }
 
+  /**
+   * The activation orchestrator: one transaction consumes the reserved
+   * Plantilla Position, activates the Employee service through Personnel,
+   * creates the Plantilla Position Incumbency, and closes the Recruitment
+   * chain. Retrying with the same Idempotency-Key replays; a different key
+   * after activation is a conflict.
+   */
+  async activateService(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentActivationSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'personnel.employees.activate',
+      'APPOINTMENT_SERVICE_ACTIVATE_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    try {
+      return await withDatabaseContext(
+        requestDatabaseContext(
+          context,
+          'appointment-transition',
+          'plantilla-position-transition',
+          'recruitment-transition',
+          'personnel-baseline-transition',
+        ),
+        async (transaction) => {
+          const record = await this.requireAppointment(transaction, context, appointmentId);
+          const completed = await transaction.auditEvent.findFirst({
+            where: {
+              agencyId: context.agencyId,
+              action: 'APPOINTMENT_SERVICE_ACTIVATED',
+              entityId: appointmentId,
+            },
+            select: { idempotencyKey: true },
+          });
+          if (completed) {
+            if (
+              idempotencyKey &&
+              completed.idempotencyKey &&
+              completed.idempotencyKey !== idempotencyKey
+            ) {
+              throw new AppointmentServiceError(
+                'The Appointment service is already activated.',
+                409,
+                'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
+              );
+            }
+            return this.detailInTransaction(transaction, context, appointmentId);
+          }
+          const version = this.requireIssuedAppointment(record);
+          const assumption = version.assumption;
+          if (!assumption || assumption.status !== 'ASSUMED' || !assumption.currentVersion) {
+            throw new AppointmentServiceError(
+              'Only an assumed Appointment Contract can activate service.',
+              409,
+              'APPOINTMENT_SERVICE_ASSUMPTION_REQUIRED',
+            );
+          }
+          const contract = await this.resolveAssumedAppointmentContractInTransaction(
+            transaction,
+            context,
+            version.id,
+          );
+          if (!contract) {
+            throw new AppointmentServiceError(
+              'The Assumed Appointment Contract is no longer valid.',
+              409,
+              'APPOINTMENT_SERVICE_ASSUMPTION_REQUIRED',
+            );
+          }
+          const effectiveDate = formatDate(assumption.currentVersion.actualAssumptionDate);
+          const reservation = await this.plantillaPositions.resolveReservedAssignmentInTransaction(
+            transaction,
+            context,
+            record.positionId,
+            effectiveDate,
+          );
+          if (!reservation) {
+            throw new AppointmentServiceError(
+              'The Plantilla Position is not reserved at the assumption date.',
+              409,
+              'APPOINTMENT_POSITION_NOT_RESERVED',
+            );
+          }
+          if (reservation.salaryGrade !== version.salaryGrade) {
+            throw new AppointmentServiceError(
+              'The salary grade does not match the reserved Plantilla Position.',
+              409,
+              'APPOINTMENT_SALARY_GRADE_MISMATCH',
+            );
+          }
+          const employeeSource = input.employeeId
+            ? { employeeId: input.employeeId }
+            : input.employee
+              ? { employee: { ...input.employee, legalName: contract.fullName } }
+              : {};
+          const personnel = await this.employeesService.activateFromAssumptionInTransaction(
+            transaction,
+            context,
+            {
+              appointmentId,
+              appointmentVersionId: version.id,
+              ...employeeSource,
+              organizationUnitId: reservation.organizationUnitId,
+              positionId: record.positionId,
+              appointmentStatus: contract.employmentStatus,
+              salaryGrade: version.salaryGrade,
+              salaryStep: version.salaryStep,
+              effectiveFrom: effectiveDate,
+            },
+            idempotencyKey ? `${idempotencyKey}:personnel` : undefined,
+          );
+          const assignment = await this.plantillaPositions.completeReservedAssignmentInTransaction(
+            transaction,
+            context,
+            record.positionId,
+            {
+              employeeId: personnel.employeeId,
+              serviceSegmentId: personnel.serviceSegmentId,
+              appointmentId,
+              appointmentVersionId: version.id,
+              effectiveDate,
+              expectedOrganizationUnitId: reservation.organizationUnitId,
+              expectedSalaryGrade: reservation.salaryGrade,
+              reason: `The assumed Appointment activated service effective ${effectiveDate}.`,
+            },
+            idempotencyKey ? `${idempotencyKey}:plantilla` : undefined,
+          );
+          const closureReason = `The assumed Appointment activated service effective ${effectiveDate}.`;
+          const handoff = record.recruitmentHandoffId
+            ? await this.selectionService.resolveHandoffApplicationInTransaction(
+                transaction,
+                context,
+                record.recruitmentHandoffId,
+              )
+            : null;
+          const applicationClosure = handoff
+            ? await this.applicationsService.closeAfterActivationInTransaction(
+                transaction,
+                context,
+                {
+                  applicationId: handoff.applicationId,
+                  appointmentId,
+                  serviceSegmentId: personnel.serviceSegmentId,
+                  reason: closureReason,
+                },
+                idempotencyKey ? `${idempotencyKey}:application` : undefined,
+              )
+            : null;
+          const publicationClosure = applicationClosure
+            ? await this.recruitmentService.closePublicationAndRequestAfterActivationInTransaction(
+                transaction,
+                context,
+                {
+                  publicationId: applicationClosure.publicationId,
+                  appointmentId,
+                  serviceSegmentId: personnel.serviceSegmentId,
+                  reason: closureReason,
+                },
+                idempotencyKey ? `${idempotencyKey}:recruitment` : undefined,
+              )
+            : null;
+          await this.writeAudit(transaction, context, {
+            action: 'APPOINTMENT_SERVICE_ACTIVATED',
+            entityId: appointmentId,
+            previousStatus: record.workflowStatus,
+            newStatus: record.workflowStatus,
+            reason: closureReason,
+            metadata: {
+              appointmentVersionId: version.id,
+              employeeId: personnel.employeeId,
+              employeeNumber: personnel.employeeNumber,
+              serviceSegmentId: personnel.serviceSegmentId,
+              positionId: record.positionId,
+              positionVersionId: assignment.versionId,
+              positionIncumbencyId: assignment.positionIncumbencyId,
+              actualAssumptionDate: effectiveDate,
+              handoffId: record.recruitmentHandoffId,
+              applicationId: applicationClosure?.applicationId ?? null,
+              publicationId: publicationClosure?.publicationId ?? null,
+              requestId: publicationClosure?.requestToFillId ?? null,
+            },
+            idempotencyKey,
+          });
+          await transaction.outboxEvent.create({
+            data: {
+              agencyId: context.agencyId,
+              eventType: 'APPOINTMENT_SERVICE_ACTIVATED',
+              aggregateType: 'Appointment',
+              aggregateId: appointmentId,
+              idempotencyKey: idempotencyKey ?? `appointment-service:${appointmentId}`,
+              payload: {
+                appointmentId,
+                appointmentVersionId: version.id,
+                employeeId: personnel.employeeId,
+                serviceSegmentId: personnel.serviceSegmentId,
+                positionId: record.positionId,
+                positionIncumbencyId: assignment.positionIncumbencyId,
+                actualAssumptionDate: effectiveDate,
+              },
+            },
+          });
+          return this.detailInTransaction(transaction, context, appointmentId);
+        },
+      );
+    } catch (error: unknown) {
+      if (error instanceof AppointmentServiceError) throw error;
+      if (
+        error instanceof EmployeeServiceError ||
+        error instanceof PlantillaPositionServiceError ||
+        error instanceof RecruitmentServiceError
+      ) {
+        throw new AppointmentServiceError(error.message, error.statusCode, error.code);
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new AppointmentServiceError(
+          'The Appointment service is already activated.',
+          409,
+          'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
+        );
+      }
+      throw error;
+    }
+  }
+
   async recordAssumptionFailure(
     context: RequestContext,
     appointmentId: string,
@@ -2806,7 +3058,12 @@ export class AppointmentsService {
         select: externalActionSelect,
       }),
     ]);
-    return this.detail(record, settings, history, externalSubmissions, externalActions);
+    const activation = await this.employeesService.resolveActivationForAppointmentInTransaction(
+      transaction,
+      context,
+      appointmentId,
+    );
+    return this.detail(record, settings, history, externalSubmissions, externalActions, activation);
   }
 
   private detail(
@@ -2823,6 +3080,7 @@ export class AppointmentsService {
     }>,
     externalSubmissions: ExternalSubmissionRecord[],
     externalActions: ExternalActionRecord[],
+    activation: EmployeeActivationSummary | null,
   ): AppointmentDetail {
     const submissions = externalSubmissions.map(externalSubmissionSummary);
     const actions = externalActions.map(externalActionSummary);
@@ -2854,6 +3112,7 @@ export class AppointmentsService {
       settings: settings ? settingsSummary(settings) : null,
       externalSubmissions: submissions,
       externalActions: actions,
+      activation,
     };
   }
 
