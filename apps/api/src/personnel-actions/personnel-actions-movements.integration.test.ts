@@ -121,6 +121,7 @@ interface MovementFixture {
   authority: RequestContext;
   service: PersonnelActionsService;
   appointments: AppointmentsService;
+  personKey: string;
   employeeId: string;
   sourcePositionId: string;
   sourceSegmentId: string;
@@ -386,10 +387,12 @@ async function setupMovementFixture(options: {
     };
   });
 
+  const personKey = randomUUID();
   const employee = await admin.employee.create({
     data: {
       agencyId,
       employeeNumber: `MOVE-EMP-${suffix}`,
+      personKey,
       legalName: 'Ana Reyes',
       birthDate: new Date('1990-01-01'),
       sex: 'FEMALE',
@@ -455,7 +458,7 @@ async function setupMovementFixture(options: {
     selectionDecisionId: randomUUID(),
     decision: 'SELECTED',
     applicant: {
-      id: randomUUID(),
+      id: personKey,
       fullName: 'Ana Reyes',
       email: null,
       mobileNumber: null,
@@ -491,7 +494,7 @@ async function setupMovementFixture(options: {
         recruitmentHandoffId: handoff.id,
         recruitmentSelectionPackage: selectionPackage,
         positionId: seed.targetPositionId,
-        appointeePersonKey: randomUUID(),
+        appointeePersonKey: personKey,
         workflowStatus: 'ISSUED',
         issuedAt: new Date(),
         createdByMembershipId: preparer.membershipId,
@@ -629,6 +632,7 @@ async function setupMovementFixture(options: {
     ]),
     service,
     appointments,
+    personKey,
     employeeId: seed.employeeId,
     sourcePositionId: seed.sourcePositionId,
     sourceSegmentId: seed.sourceSegmentId,
@@ -1028,6 +1032,107 @@ it.skipIf(!enabled)(
         serviceStatus: 'ACTIVE',
         currentServiceSegmentId: successor.id,
       });
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'rejects a movement when the Employee is not the Appointment appointee',
+  async () => {
+    const fixture = await setupMovementFixture({
+      label: 'identity-mismatch',
+      employeeStatus: 'ACTIVE',
+      nature: 'PROMOTION',
+    });
+    try {
+      const input: PersonnelActionInput = {
+        employeeId: fixture.employeeId,
+        actionType: 'PROMOTION',
+        proposedEffectivity: fixture.appointment.assumptionDate,
+        targetFacts: { appointmentVersionId: fixture.appointment.versionId },
+        reason: 'The Appointing Authority approved the promotion.',
+        evidence: [fixture.evidence.AUTHORITY],
+      };
+
+      await fixture.admin.employee.update({
+        where: { id: fixture.employeeId },
+        data: { personKey: null },
+      });
+      await expect(fixture.service.create(fixture.preparer, input)).rejects.toMatchObject({
+        code: 'PERSONNEL_ACTION_APPOINTEE_MISMATCH',
+        statusCode: 409,
+      });
+
+      await fixture.admin.employee.update({
+        where: { id: fixture.employeeId },
+        data: { personKey: randomUUID() },
+      });
+      await expect(fixture.service.create(fixture.preparer, input)).rejects.toMatchObject({
+        code: 'PERSONNEL_ACTION_APPOINTEE_MISMATCH',
+        statusCode: 409,
+      });
+
+      await fixture.admin.employee.update({
+        where: { id: fixture.employeeId },
+        data: { personKey: fixture.personKey },
+      });
+      const created = await fixture.service.create(fixture.preparer, input);
+      expect(created.effectuationAvailable).toBe(true);
+    } finally {
+      await fixture.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'rejects effectuation when the Employee loses their bound person identity after approval',
+  async () => {
+    const fixture = await setupMovementFixture({
+      label: 'identity-drift',
+      employeeStatus: 'ACTIVE',
+      nature: 'PROMOTION',
+    });
+    try {
+      const created = await fixture.service.create(fixture.preparer, {
+        employeeId: fixture.employeeId,
+        actionType: 'PROMOTION',
+        proposedEffectivity: fixture.appointment.assumptionDate,
+        targetFacts: { appointmentVersionId: fixture.appointment.versionId },
+        reason: 'The Appointing Authority approved the promotion.',
+        evidence: [fixture.evidence.AUTHORITY],
+      });
+      await fixture.service.submit(fixture.preparer, created.id);
+      await fixture.service.review(fixture.reviewer, created.id, {
+        decision: 'ENDORSE',
+        reason: 'The movement record is complete.',
+      });
+      await fixture.service.decide(fixture.authority, created.id, {
+        decision: 'APPROVE',
+        reason: 'The promotion is approved under current authority.',
+      });
+
+      await fixture.admin.employee.update({
+        where: { id: fixture.employeeId },
+        data: { personKey: null },
+      });
+
+      await expect(
+        fixture.service.effectuate(
+          fixture.preparer,
+          created.id,
+          `movement-identity-drift-${fixture.suffix}`,
+        ),
+      ).rejects.toMatchObject({
+        code: 'PERSONNEL_ACTION_APPOINTEE_MISMATCH',
+        statusCode: 409,
+      });
+      expect(
+        await fixture.admin.serviceSegment.count({
+          where: { agencyId: fixture.agencyId, personnelActionId: created.id },
+        }),
+      ).toBe(0);
     } finally {
       await fixture.dispose();
     }

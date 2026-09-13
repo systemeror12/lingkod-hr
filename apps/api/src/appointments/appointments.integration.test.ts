@@ -1671,6 +1671,7 @@ it.skipIf(!enabled)(
       });
       expect(employee.serviceStatus).toBe('ACTIVE');
       expect(employee.currentServiceSegmentId).toBe(serviceSegmentId);
+      expect(employee.personKey).toBe(ids.applicant);
       expect(employee.firstGovernmentServiceDate?.toISOString().slice(0, 10)).toBe('2026-10-05');
 
       const segment = await admin.serviceSegment.findUniqueOrThrow({
@@ -1865,13 +1866,11 @@ it.skipIf(!enabled)(
         employeeNumber: existing.employeeNumber,
         effectiveFrom: '2026-10-05',
       });
-      expect(
-        (
-          await admin.employee.findUniqueOrThrow({
-            where: { agencyId_id: { agencyId: fixture.agencyId, id: existing.id } },
-          })
-        ).serviceStatus,
-      ).toBe('ACTIVE');
+      const linked = await admin.employee.findUniqueOrThrow({
+        where: { agencyId_id: { agencyId: fixture.agencyId, id: existing.id } },
+      });
+      expect(linked.serviceStatus).toBe('ACTIVE');
+      expect(linked.personKey).toBe(fixture.ids.applicant);
       expect(await admin.employee.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
       expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
       expect(
@@ -1886,6 +1885,69 @@ it.skipIf(!enabled)(
     } finally {
       await fixture.dispose();
       await other.dispose();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'rejects activation when the Employee is not the Appointment appointee',
+  async () => {
+    const fixture = await setupFixture('IDENTITY', { recruitmentChain: true });
+    const { admin, preparer, activation, employees, ids } = fixture;
+    try {
+      const candidate = await employees.create(preparer, {
+        legalName: 'Ana Reyes',
+        ...employeeInput(fixture, 'IDENTITY'),
+      });
+      const otherPerson = await employees.create(preparer, {
+        legalName: 'Other Person',
+        ...employeeInput(fixture, 'IDENTITY'),
+        employeeNumber: `E2E-OTHER-${fixture.suffix}`,
+        contactEmail: `other-${fixture.suffix}@example.test`,
+      });
+
+      const { appointmentId } = await assumeAppointment(fixture, 'identity');
+
+      await admin.employee.update({
+        where: { id: candidate.id },
+        data: { personKey: randomUUID() },
+      });
+      await expect(
+        activation.execute({
+          context: preparer,
+          appointmentId,
+          input: { employeeId: candidate.id },
+          idempotencyKey: 'identity-mismatch',
+        }),
+      ).rejects.toMatchObject({ code: 'EMPLOYEE_IDENTITY_MISMATCH', statusCode: 409 });
+
+      await admin.employee.update({
+        where: { id: candidate.id },
+        data: { personKey: null },
+      });
+      await admin.employee.update({
+        where: { id: otherPerson.id },
+        data: { personKey: ids.applicant },
+      });
+      await expect(
+        activation.execute({
+          context: preparer,
+          appointmentId,
+          input: { employeeId: candidate.id },
+          idempotencyKey: 'identity-reuse',
+        }),
+      ).rejects.toMatchObject({ code: 'EMPLOYEE_IDENTITY_CONFLICT', statusCode: 409 });
+
+      expect(
+        (
+          await admin.employee.findUniqueOrThrow({
+            where: { agencyId_id: { agencyId: fixture.agencyId, id: candidate.id } },
+          })
+        ).serviceStatus,
+      ).toBe('PREBOARDING');
+      expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(0);
+    } finally {
+      await fixture.dispose();
     }
   },
 );

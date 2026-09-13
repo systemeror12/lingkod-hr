@@ -1461,9 +1461,17 @@ export class PersonnelActionsService {
           );
         }
 
-        await this.lockEmployee(transaction, context.agencyId, current.employeeId);
+        const employeePersonKey = (
+          await this.lockEmployee(transaction, context.agencyId, current.employeeId)
+        ).personKey;
         await this.lockServiceSegment(transaction, context.agencyId, source.id);
-        const { targets } = await this.validateMovementTarget(transaction, context, input, source);
+        const { targets } = await this.validateMovementTarget(
+          transaction,
+          context,
+          input,
+          source,
+          employeePersonKey,
+        );
         const positionIds = [source.positionId, targets.targetPositionId].sort();
         for (const positionId of positionIds) {
           await this.plantillaPositionsService.lockInTransaction(transaction, context, positionId);
@@ -1711,6 +1719,7 @@ export class PersonnelActionsService {
       where: { agencyId: context.agencyId, id: input.employeeId },
       select: {
         id: true,
+        personKey: true,
         serviceStatus: true,
         currentServiceSegment: {
           select: {
@@ -1916,6 +1925,7 @@ export class PersonnelActionsService {
         context,
         input,
         sourceSegment,
+        employee.personKey,
       ));
     } else {
       await this.validateTarget(transaction, context.agencyId, input, sourceSegment);
@@ -1928,6 +1938,7 @@ export class PersonnelActionsService {
     context: RequestContext,
     input: MovementPersonnelActionInput,
     source: { positionId: string | null; organizationUnitId: string },
+    personKey: string | null,
   ): Promise<{
     targets: { targetPositionId: string; targetOrganizationUnitId: string };
     contract: AssumedAppointmentContract;
@@ -1947,6 +1958,13 @@ export class PersonnelActionsService {
         'The linked Appointment version is not an issued Appointment with a valid Assumption to Duty.',
         409,
         'PERSONNEL_ACTION_APPOINTMENT_CONTRACT_INVALID',
+      );
+    }
+    if (!personKey || personKey !== contract.personKey) {
+      throw new PersonnelActionServiceError(
+        'The Appointment appointee is not the Employee on this action.',
+        409,
+        'PERSONNEL_ACTION_APPOINTEE_MISMATCH',
       );
     }
     const expectedNature = MOVEMENT_NATURES[input.actionType];
@@ -2440,11 +2458,13 @@ export class PersonnelActionsService {
     transaction: Prisma.TransactionClient,
     agencyId: string,
     employeeId: string,
-  ): Promise<void> {
-    const rows = await transaction.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT "id" FROM "employees" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${employeeId} AS uuid) FOR UPDATE`,
+  ): Promise<{ id: string; personKey: string | null }> {
+    const rows = await transaction.$queryRaw<Array<{ id: string; personKey: string | null }>>(
+      Prisma.sql`SELECT "id", "person_key" AS "personKey" FROM "employees" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${employeeId} AS uuid) FOR UPDATE`,
     );
-    if (rows.length !== 1) throw this.notFound('Employee');
+    const [row] = rows;
+    if (!row) throw this.notFound('Employee');
+    return row;
   }
 
   private async lockServiceSegment(

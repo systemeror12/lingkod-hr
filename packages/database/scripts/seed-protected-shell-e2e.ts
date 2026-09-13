@@ -1454,10 +1454,12 @@ async function seed(): Promise<void> {
       where: { id: movementTargetPosition.id },
       data: { currentVersionId: movementTargetVersion.id, status: 'RESERVED' },
     });
+    const movementPersonKey = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const movementEmployee = await transaction.employee.create({
       data: {
         agencyId: agency.id,
         employeeNumber: 'E2E-MOVE-001',
+        personKey: movementPersonKey,
         legalName: 'E2E Movement Candidate',
         birthDate: new Date('1990-01-01'),
         sex: 'FEMALE',
@@ -1504,7 +1506,7 @@ async function seed(): Promise<void> {
       selectionDecisionId: '88888888-8888-4888-8888-888888888888',
       decision: 'SELECTED',
       applicant: {
-        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        id: movementPersonKey,
         fullName: 'E2E Movement Candidate',
         email: 'e2e.movement@example.test',
         mobileNumber: null,
@@ -1538,7 +1540,7 @@ async function seed(): Promise<void> {
         recruitmentHandoffId: movementHandoff.id,
         recruitmentSelectionPackage: movementSelectionPackage,
         positionId: movementTargetPosition.id,
-        appointeePersonKey: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        appointeePersonKey: movementPersonKey,
         workflowStatus: 'ISSUED',
         issuedAt: new Date('2026-01-06'),
         createdByMembershipId: membership.id,
