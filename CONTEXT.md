@@ -328,6 +328,10 @@ _Avoid_: Employment Status, workflow action
 An append-only, evidence-backed action received from the CSC or another competent external authority, such as approval, validation, disapproval, or invalidation. It never overwrites the issued Appointment or Selection Decision.
 _Avoid_: Appointment Workflow Status, Employment Status
 
+**Person Key**:
+The opaque identity of the person named by a Selection Decision and carried by Appointment Versions. An Employee binds one Person Key from the Assumed Appointment Contract that activates service; within an Agency, at most one Employee binds a given Person Key, and Personnel movements verify the binding before effectuation.
+_Avoid_: Applicant ID, Employee ID
+
 **Issued Appointment Contract**:
 The immutable Appointment Version, exact signed Document Version, issue date, appointing authority, appointee acknowledgment path, selected Application reference, and reserved Plantilla Position reference exposed by Appointment after lawful issuance. It does not establish actual service or occupancy.
 _Avoid_: Draft appointment, assumed service

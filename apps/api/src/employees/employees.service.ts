@@ -55,6 +55,7 @@ export interface EmployeeDetail extends EmployeeSummary {
 export interface ServiceActivationInput {
   appointmentId: string;
   appointmentVersionId: string;
+  personKey: string;
   employeeId?: string;
   employee?: EmployeeInput;
   organizationUnitId: string;
@@ -115,6 +116,7 @@ const employeeSelect = {
   id: true,
   agencyId: true,
   employeeNumber: true,
+  personKey: true,
   legalName: true,
   birthDate: true,
   sex: true,
@@ -311,6 +313,7 @@ export class EmployeesService {
     const effectiveFrom = toDatabaseDate(input.effectiveFrom);
     let employeeId: string;
     let created = false;
+    let personKeyToBind: string | null = null;
 
     if (input.employeeId) {
       employeeId = input.employeeId;
@@ -319,6 +322,18 @@ export class EmployeesService {
       if (!record) throw this.notFound();
       if (record.serviceStatus !== 'PREBOARDING' || record.currentServiceSegment) {
         throw this.activationNotAllowed(record.serviceStatus);
+      }
+      if (record.personKey && record.personKey !== input.personKey) {
+        throw this.identityMismatch();
+      }
+      if (!record.personKey) {
+        await this.assertPersonKeyAvailable(
+          transaction,
+          context.agencyId,
+          input.personKey,
+          input.employeeId,
+        );
+        personKeyToBind = input.personKey;
       }
     } else {
       this.assertPermission(context, 'personnel.employees.create', 'EMPLOYEE_CREATE_FORBIDDEN');
@@ -329,10 +344,16 @@ export class EmployeesService {
           'EMPLOYEE_IDENTITY_REQUIRED',
         );
       }
-      const record = await this.insertEmployee(transaction, context, input.employee, {
-        appointmentId: input.appointmentId,
-        appointmentVersionId: input.appointmentVersionId,
-      });
+      const record = await this.insertEmployee(
+        transaction,
+        context,
+        input.employee,
+        {
+          appointmentId: input.appointmentId,
+          appointmentVersionId: input.appointmentVersionId,
+        },
+        input.personKey,
+      );
       employeeId = record.id;
       created = true;
     }
@@ -361,6 +382,7 @@ export class EmployeesService {
     const employee = await transaction.employee.update({
       where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
       data: {
+        ...(personKeyToBind ? { personKey: personKeyToBind } : {}),
         serviceStatus: 'ACTIVE',
         firstGovernmentServiceDate: effectiveFrom,
         agencyServiceStartDate: effectiveFrom,
@@ -387,6 +409,7 @@ export class EmployeesService {
       metadata: {
         appointmentId: input.appointmentId,
         appointmentVersionId: input.appointmentVersionId,
+        personKey: input.personKey,
         serviceSegmentId: serviceSegment.id,
         positionId: input.positionId,
         organizationUnitId: input.organizationUnitId,
@@ -441,6 +464,7 @@ export class EmployeesService {
     context: RequestContext,
     input: EmployeeInput,
     metadata: Prisma.InputJsonObject = {},
+    personKey?: string,
   ): Promise<EmployeeRecord> {
     const employeeNumber = input.employeeNumber.trim();
     const legalName = input.legalName.trim();
@@ -456,10 +480,14 @@ export class EmployeesService {
       select: { id: true },
     });
     if (personTaken) throw this.personConflict();
+    if (personKey) {
+      await this.assertPersonKeyAvailable(transaction, context.agencyId, personKey);
+    }
     const created = await transaction.employee.create({
       data: {
         agencyId: context.agencyId,
         employeeNumber,
+        ...(personKey ? { personKey } : {}),
         legalName,
         birthDate,
         sex: input.sex,
@@ -482,7 +510,13 @@ export class EmployeesService {
       newStatus: 'PREBOARDING',
       requestId: context.requestId,
       occurredAt: new Date(),
-      metadata: { employeeNumber, legalName, serviceStatus: 'PREBOARDING', ...metadata },
+      metadata: {
+        employeeNumber,
+        legalName,
+        serviceStatus: 'PREBOARDING',
+        ...(personKey ? { personKey } : {}),
+        ...metadata,
+      },
     });
     return created;
   }
@@ -681,6 +715,31 @@ export class EmployeesService {
       409,
       'EMPLOYEE_IDENTITY_CONFLICT',
     );
+  }
+
+  private identityMismatch(): EmployeeServiceError {
+    return new EmployeeServiceError(
+      'The Appointment appointee is not the Employee linked to this service.',
+      409,
+      'EMPLOYEE_IDENTITY_MISMATCH',
+    );
+  }
+
+  private async assertPersonKeyAvailable(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    personKey: string,
+    excludeEmployeeId?: string,
+  ): Promise<void> {
+    const taken = await transaction.employee.findFirst({
+      where: {
+        agencyId,
+        personKey,
+        ...(excludeEmployeeId ? { id: { not: excludeEmployeeId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (taken) throw this.personConflict();
   }
 
   private concurrentConflict(): EmployeeServiceError {

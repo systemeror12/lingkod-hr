@@ -153,6 +153,7 @@ export class AssumedAppointmentActivation {
             {
               appointmentId,
               appointmentVersionId: version.id,
+              personKey: contract.personKey,
               ...employeeSource,
               organizationUnitId: reservation.organizationUnitId,
               positionId: record.positionId,

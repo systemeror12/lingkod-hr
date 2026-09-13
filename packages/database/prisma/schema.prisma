@@ -1786,6 +1786,7 @@ model Employee {
   id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                   String    @map("agency_id") @db.Uuid
   employeeNumber             String    @map("employee_number") @db.Citext
+  personKey                  String?   @map("person_key") @db.Uuid
   legalName                  String    @map("legal_name") @db.Citext
   birthDate                  DateTime  @map("birth_date") @db.Date
   sex                        String
@@ -1822,6 +1823,7 @@ model Employee {
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
+  @@unique([agencyId, personKey])
   @@unique([agencyId, legalName, birthDate])
   @@map("employees")
 }
