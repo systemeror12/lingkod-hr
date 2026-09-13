@@ -39,6 +39,7 @@ import {
   appointmentSettingsSchema,
   appointmentUpdateSchema,
 } from './appointments.schemas';
+import { AssumedAppointmentActivation } from './assumed-appointment-activation';
 import { AppointmentServiceError, AppointmentsService } from './appointments.service';
 
 function validationFields(issues: readonly { path: PropertyKey[]; message: string }[]) {
@@ -63,7 +64,11 @@ function translateServiceError(error: unknown, requestId: string): never {
 @Controller('agencies')
 @UseGuards(AuthGuard, PermissionGuard)
 export class AppointmentsController {
-  constructor(@Inject(AppointmentsService) private readonly service: AppointmentsService) {}
+  constructor(
+    @Inject(AppointmentsService) private readonly service: AppointmentsService,
+    @Inject(AssumedAppointmentActivation)
+    private readonly assumedAppointmentActivation: AssumedAppointmentActivation,
+  ) {}
 
   @Get(':agencyId/appointments')
   @RequirePermission('appointments.records.read')
@@ -488,7 +493,12 @@ export class AppointmentsController {
     if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     const key = this.parseIdempotencyKey(idempotencyKey, context);
     try {
-      return await this.service.activateService(context, id, parsed.data, key);
+      return await this.assumedAppointmentActivation.execute({
+        context,
+        appointmentId: id,
+        input: parsed.data,
+        idempotencyKey: key,
+      });
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

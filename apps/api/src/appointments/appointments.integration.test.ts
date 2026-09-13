@@ -13,7 +13,12 @@ import type { QualificationStandardsService } from '../qualification-standards/q
 import { ApplicationsService } from '../recruitment/applications.service';
 import { RecruitmentService } from '../recruitment/recruitment.service';
 import { SelectionService } from '../recruitment/selection.service';
-import { AppointmentsService, type AppointmentLinkRole } from './appointments.service';
+import { AssumedAppointmentActivation } from './assumed-appointment-activation';
+import {
+  AppointmentReadModel,
+  AppointmentsService,
+  type AppointmentLinkRole,
+} from './appointments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -111,6 +116,7 @@ interface Fixture {
   preparer: RequestContext;
   authority: RequestContext;
   appointments: AppointmentsService;
+  activation: AssumedAppointmentActivation;
   employees: EmployeesService;
   setQualificationUsable: (usable: boolean) => void;
   dispose: () => Promise<void>;
@@ -432,11 +438,18 @@ async function setupFixture(
     {} as never,
     new ApprovalCompletionRegistry(),
   );
+  const readModel = new AppointmentReadModel(employees, plantilla);
   const appointments = new AppointmentsService(
     documents as never,
-    employees,
     plantilla,
     qualificationStandards,
+    selection,
+    readModel,
+  );
+  const activation = new AssumedAppointmentActivation(
+    readModel,
+    employees,
+    plantilla,
     applications,
     recruitment,
     selection,
@@ -462,6 +475,7 @@ async function setupFixture(
       AUTHORITY_PERMISSIONS,
     ),
     appointments,
+    activation,
     employees,
     setQualificationUsable: (usable: boolean) => {
       qualificationUsable = usable;
@@ -1563,7 +1577,7 @@ it.skipIf(!enabled)(
   'refuses activation from an issued Appointment with no Assumption to Duty',
   async () => {
     const fixture = await setupFixture('ACTIVATION-GATE', { recruitmentChain: true });
-    const { ids, admin, preparer, authority, appointments } = fixture;
+    const { ids, admin, preparer, authority, appointments, activation } = fixture;
     try {
       await appointments.configureSettings(preparer, {
         regulatoryStatus: 'REGULATED',
@@ -1578,8 +1592,10 @@ it.skipIf(!enabled)(
       await appointments.issue(authority, created.id, 'gate-issue');
 
       await expect(
-        appointments.activateService(preparer, created.id, {
-          employee: employeeInput(fixture, 'GATE'),
+        activation.execute({
+          context: preparer,
+          appointmentId: created.id,
+          input: { employee: employeeInput(fixture, 'GATE') },
         }),
       ).rejects.toMatchObject({
         code: 'APPOINTMENT_SERVICE_ASSUMPTION_REQUIRED',
@@ -1626,7 +1642,7 @@ it.skipIf(!enabled)(
   'activates service from an assumed Appointment and closes the recruitment chain',
   async () => {
     const fixture = await setupFixture('ACTIVATE', { recruitmentChain: true });
-    const { ids, admin, preparer, authority, appointments } = fixture;
+    const { ids, admin, preparer, authority, appointments, activation } = fixture;
     try {
       const { appointmentId, oathVersionId, assumptionVersionId } = await assumeAppointment(
         fixture,
@@ -1634,12 +1650,12 @@ it.skipIf(!enabled)(
       );
 
       const activationInput = { employee: employeeInput(fixture, 'ACTIVATE') };
-      const activated = await appointments.activateService(
-        preparer,
+      const activated = await activation.execute({
+        context: preparer,
         appointmentId,
-        activationInput,
-        'activate-1',
-      );
+        input: activationInput,
+        idempotencyKey: 'activate-1',
+      });
       expect(activated.activation).toMatchObject({
         employeeNumber: `E2E-ACTIVATE-${fixture.suffix}`,
         legalName: 'Ana Reyes',
@@ -1716,12 +1732,12 @@ it.skipIf(!enabled)(
       expect(activationEvent.metadata).not.toHaveProperty('contactEmail');
       expect(activationEvent.metadata).not.toHaveProperty('birthDate');
 
-      const replayed = await appointments.activateService(
-        preparer,
+      const replayed = await activation.execute({
+        context: preparer,
         appointmentId,
-        activationInput,
-        'activate-1',
-      );
+        input: activationInput,
+        idempotencyKey: 'activate-1',
+      });
       expect(replayed.activation?.serviceSegmentId).toBe(serviceSegmentId);
       expect(await admin.employee.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
       expect(await admin.serviceSegment.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
@@ -1740,16 +1756,21 @@ it.skipIf(!enabled)(
       ).toBe(1);
 
       await expect(
-        appointments.activateService(preparer, appointmentId, activationInput, 'activate-2'),
+        activation.execute({
+          context: preparer,
+          appointmentId,
+          input: activationInput,
+          idempotencyKey: 'activate-2',
+        }),
       ).rejects.toMatchObject({
         code: 'APPOINTMENT_SERVICE_ALREADY_ACTIVATED',
         statusCode: 409,
       });
-      const replayedWithoutKey = await appointments.activateService(
-        preparer,
+      const replayedWithoutKey = await activation.execute({
+        context: preparer,
         appointmentId,
-        activationInput,
-      );
+        input: activationInput,
+      });
       expect(replayedWithoutKey.id).toBe(appointmentId);
 
       await expect(
@@ -1803,7 +1824,7 @@ it.skipIf(!enabled)(
     const fixture = await setupFixture('LINK', { recruitmentChain: true });
     const other = await setupFixture('OTHER');
     try {
-      const { admin, preparer, appointments, employees } = fixture;
+      const { admin, preparer, activation, employees } = fixture;
       const existing = await employees.create(preparer, {
         legalName: 'Ana Reyes',
         ...employeeInput(fixture, 'LINK'),
@@ -1817,28 +1838,28 @@ it.skipIf(!enabled)(
       const { appointmentId } = await assumeAppointment(fixture, 'link');
 
       await expect(
-        other.appointments.activateService(
-          other.preparer,
+        other.activation.execute({
+          context: other.preparer,
           appointmentId,
-          { employeeId: otherEmployee.id },
-          'cross-agency-appointment',
-        ),
+          input: { employeeId: otherEmployee.id },
+          idempotencyKey: 'cross-agency-appointment',
+        }),
       ).rejects.toMatchObject({ code: 'APPOINTMENT_NOT_FOUND', statusCode: 404 });
       await expect(
-        appointments.activateService(
-          preparer,
+        activation.execute({
+          context: preparer,
           appointmentId,
-          { employeeId: otherEmployee.id },
-          'cross-agency-employee',
-        ),
+          input: { employeeId: otherEmployee.id },
+          idempotencyKey: 'cross-agency-employee',
+        }),
       ).rejects.toMatchObject({ code: 'EMPLOYEE_NOT_FOUND', statusCode: 404 });
 
-      const activated = await appointments.activateService(
-        preparer,
+      const activated = await activation.execute({
+        context: preparer,
         appointmentId,
-        { employeeId: existing.id },
-        'link-1',
-      );
+        input: { employeeId: existing.id },
+        idempotencyKey: 'link-1',
+      });
       expect(activated.activation).toMatchObject({
         employeeId: existing.id,
         employeeNumber: existing.employeeNumber,
@@ -1873,14 +1894,24 @@ it.skipIf(!enabled)(
   'serializes concurrent activation attempts on one assumed Appointment',
   async () => {
     const fixture = await setupFixture('RACE', { recruitmentChain: true });
-    const { admin, preparer, appointments } = fixture;
+    const { admin, preparer, activation } = fixture;
     try {
       const { appointmentId } = await assumeAppointment(fixture, 'race');
       const activationInput = { employee: employeeInput(fixture, 'RACE') };
 
       const results = await Promise.allSettled([
-        appointments.activateService(preparer, appointmentId, activationInput, 'race-a'),
-        appointments.activateService(preparer, appointmentId, activationInput, 'race-b'),
+        activation.execute({
+          context: preparer,
+          appointmentId,
+          input: activationInput,
+          idempotencyKey: 'race-a',
+        }),
+        activation.execute({
+          context: preparer,
+          appointmentId,
+          input: activationInput,
+          idempotencyKey: 'race-b',
+        }),
       ]);
       expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
       const failure = results.find((result) => result.status === 'rejected');
@@ -1912,7 +1943,7 @@ it.skipIf(!enabled)(
   'rolls back every owner when the reserved position cannot be consumed',
   async () => {
     const fixture = await setupFixture('ROLLBACK', { recruitmentChain: true });
-    const { ids, admin, preparer, appointments } = fixture;
+    const { ids, admin, preparer, activation } = fixture;
     try {
       const { appointmentId } = await assumeAppointment(fixture, 'rollback');
       await admin.$transaction(async (transaction) => {
@@ -1929,12 +1960,12 @@ it.skipIf(!enabled)(
       });
 
       await expect(
-        appointments.activateService(
-          preparer,
+        activation.execute({
+          context: preparer,
           appointmentId,
-          { employee: employeeInput(fixture, 'ROLLBACK') },
-          'rollback-1',
-        ),
+          input: { employee: employeeInput(fixture, 'ROLLBACK') },
+          idempotencyKey: 'rollback-1',
+        }),
       ).rejects.toMatchObject({
         code: 'PLANTILLA_POSITION_INCUMBENCY_CONFLICT',
         statusCode: 409,

@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import {
+  AppointmentReadModel,
   AppointmentServiceError,
   AppointmentsService,
   deriveAppointmentExternalStanding,
@@ -24,12 +25,13 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 const documents = {} as ConstructorParameters<typeof AppointmentsService>[0];
-const employees = {} as ConstructorParameters<typeof AppointmentsService>[1];
-const plantilla = {} as ConstructorParameters<typeof AppointmentsService>[2];
-const qualificationStandards = {} as ConstructorParameters<typeof AppointmentsService>[3];
-const applications = {} as ConstructorParameters<typeof AppointmentsService>[4];
-const recruitment = {} as ConstructorParameters<typeof AppointmentsService>[5];
-const selection = {} as ConstructorParameters<typeof AppointmentsService>[6];
+const plantilla = {} as ConstructorParameters<typeof AppointmentsService>[1];
+const qualificationStandards = {} as ConstructorParameters<typeof AppointmentsService>[2];
+const selection = {} as ConstructorParameters<typeof AppointmentsService>[3];
+const readModel = new AppointmentReadModel(
+  {} as ConstructorParameters<typeof AppointmentReadModel>[0],
+  plantilla,
+);
 
 const evidence: Array<{ linkRole: AppointmentLinkRole; documentVersionId: string }> = [
   { linkRole: 'PDS', documentVersionId },
@@ -56,12 +58,10 @@ const versionFields = {
 function service(): AppointmentsService {
   return new AppointmentsService(
     documents,
-    employees,
     plantilla,
     qualificationStandards,
-    applications,
-    recruitment,
     selection,
+    readModel,
   );
 }
 

@@ -5,8 +5,9 @@ import { EmployeesModule } from '../employees/employees.module';
 import { PlantillaPositionsModule } from '../plantilla-positions/plantilla-positions.module';
 import { QualificationStandardsModule } from '../qualification-standards/qualification-standards.module';
 import { RecruitmentModule } from '../recruitment/recruitment.module';
+import { AssumedAppointmentActivation } from './assumed-appointment-activation';
 import { AppointmentsController } from './appointments.controller';
-import { AppointmentsService } from './appointments.service';
+import { AppointmentReadModel, AppointmentsService } from './appointments.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { AppointmentsService } from './appointments.service';
     RecruitmentModule,
   ],
   controllers: [AppointmentsController],
-  providers: [AppointmentsService],
+  providers: [AppointmentReadModel, AppointmentsService, AssumedAppointmentActivation],
   exports: [AppointmentsService],
 })
 export class AppointmentsModule {}
