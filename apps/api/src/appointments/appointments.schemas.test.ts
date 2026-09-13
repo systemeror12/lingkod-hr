@@ -3,6 +3,8 @@ import {
   appointmentCancelSchema,
   appointmentCorrectionSchema,
   appointmentCreateSchema,
+  appointmentExternalActionSchema,
+  appointmentExternalSubmissionSchema,
   appointmentListSchema,
   appointmentReasonSchema,
   appointmentSettingsSchema,
@@ -150,6 +152,95 @@ it('requires reasons and authority evidence for correction and cancellation', ()
       authorityDocumentVersionId: id('12'),
     }).success,
   ).toBe(true);
+});
+
+it('accepts supported external submission and action commands', () => {
+  expect(
+    appointmentExternalSubmissionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      eventType: 'SUBMITTED',
+      occurredAt: '2026-10-02T01:00:00.000Z',
+      receivingOffice: 'CSC Field Office',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(true);
+  expect(
+    appointmentExternalSubmissionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      eventType: 'RETURNED',
+      externalReference: 'CSC-2026-0001',
+      occurredAt: '2026-10-03T01:00:00.000Z',
+      receivingOffice: 'CSC Field Office',
+      reason: 'Complete the missing attachment.',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(true);
+  expect(
+    appointmentExternalActionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      action: 'APPROVED',
+      externalReference: 'CSC-2026-0001',
+      actionAt: '2026-10-05T01:00:00.000Z',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(true);
+});
+
+it('rejects unsupported or incomplete external tracking values', () => {
+  expect(
+    appointmentExternalSubmissionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      eventType: 'APPROVED',
+      occurredAt: '2026-10-02T01:00:00.000Z',
+      receivingOffice: 'CSC Field Office',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentExternalSubmissionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      eventType: 'SUBMITTED',
+      occurredAt: '02 October 2026',
+      receivingOffice: 'CSC Field Office',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentExternalSubmissionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      eventType: 'SUBMITTED',
+      occurredAt: '2026-10-02T01:00:00.000Z',
+      receivingOffice: '   ',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentExternalSubmissionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      eventType: 'SUBMITTED',
+      occurredAt: '2026-10-02T01:00:00.000Z',
+      receivingOffice: 'CSC Field Office',
+      evidenceDocumentVersionId: id('21'),
+      extra: true,
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentExternalActionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      action: 'APPROVED',
+      actionAt: '2026-10-05T01:00:00.000Z',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(false);
+  expect(
+    appointmentExternalActionSchema.safeParse({
+      appointmentVersionId: id('20'),
+      action: 'SUBMITTED',
+      externalReference: 'CSC-2026-0001',
+      actionAt: '2026-10-05T01:00:00.000Z',
+      evidenceDocumentVersionId: id('21'),
+    }).success,
+  ).toBe(false);
 });
 
 it('accepts evidenced Agency Appointment settings only', () => {

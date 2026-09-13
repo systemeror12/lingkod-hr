@@ -51,6 +51,32 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   await expect(detail.getByLabel('Version v1')).toContainText('ISSUED');
   await expect(detail.getByText('Current version v1 · ISSUED')).toBeVisible();
 
+  await detail.getByRole('tab', { name: 'CSC transactions' }).click();
+  await expect(detail.getByLabel('External standing').first()).toContainText('NOT SUBMITTED');
+
+  await detail.getByRole('button', { name: 'Record submission event' }).click();
+  const submission = page.getByRole('region', { name: 'Record CSC submission event' });
+  await submission.getByLabel('Receiving office').fill('CSC Field Office');
+  await submission.getByLabel('External reference (optional)').fill('CSC-2026-0001');
+  await submission
+    .getByLabel('Exact evidence (finalized Document Version)')
+    .selectOption({ index: 1 });
+  await submission.getByRole('button', { name: 'Record submission event' }).click();
+  await expect(detail.getByLabel('External standing').first()).toContainText('SUBMITTED');
+  await expect(detail.getByText('Submission history')).toBeVisible();
+  await expect(detail.getByText('CSC Field Office')).toBeVisible();
+
+  await detail.getByRole('button', { name: 'Record official action' }).click();
+  const action = page.getByRole('region', { name: 'Record official CSC action' });
+  await action.getByLabel('External reference').fill('CSC-2026-0001');
+  await action.getByLabel('Exact evidence (finalized Document Version)').selectOption({ index: 1 });
+  await action.getByRole('button', { name: 'Record official action' }).click();
+  await expect(detail.getByLabel('External standing').first()).toContainText('APPROVED');
+
+  await detail.getByRole('tab', { name: 'Review & issuance' }).click();
+  await expect(detail.getByText('APPOINTMENT EXTERNAL SUBMISSION RECORDED')).toHaveCount(0);
+
+  await detail.getByRole('tab', { name: 'Preparation & evidence' }).click();
   await detail.getByRole('button', { name: 'Prepare linked correction' }).click();
   const correction = page.getByRole('region', { name: 'Prepare a linked correction' });
   await correction

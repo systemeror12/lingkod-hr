@@ -9,6 +9,8 @@ import { QualificationStandardsService } from '../qualification-standards/qualif
 import { SelectionService } from '../recruitment/selection.service';
 import {
   APPOINTMENT_EMPLOYMENT_STATUSES,
+  APPOINTMENT_EXTERNAL_ACTIONS,
+  APPOINTMENT_EXTERNAL_SUBMISSION_EVENT_TYPES,
   APPOINTMENT_LINK_ROLES,
   APPOINTMENT_NATURES,
   APPOINTMENT_REGULATORY_STATUSES,
@@ -17,6 +19,8 @@ import {
   type appointmentCancelSchema,
   type appointmentCorrectionSchema,
   type appointmentCreateSchema,
+  type appointmentExternalActionSchema,
+  type appointmentExternalSubmissionSchema,
   type appointmentListSchema,
   type appointmentReasonSchema,
   type appointmentSettingsSchema,
@@ -31,6 +35,11 @@ export type AppointmentSignatureMethod = (typeof APPOINTMENT_SIGNATURE_METHODS)[
 export type AppointmentLinkRole = (typeof APPOINTMENT_LINK_ROLES)[number];
 export type AppointmentRegulatoryStatus = (typeof APPOINTMENT_REGULATORY_STATUSES)[number];
 export type AppointmentFormVariant = 'CS_FORM_33_A_2025' | 'CS_FORM_33_B_2025';
+export type AppointmentExternalSubmissionEventType =
+  (typeof APPOINTMENT_EXTERNAL_SUBMISSION_EVENT_TYPES)[number];
+export type AppointmentExternalAction = (typeof APPOINTMENT_EXTERNAL_ACTIONS)[number];
+export type AppointmentExternalStanding =
+  'NOT_SUBMITTED' | AppointmentExternalSubmissionEventType | AppointmentExternalAction;
 
 export const REQUIRED_APPOINTMENT_LINK_ROLES: readonly AppointmentLinkRole[] = [
   'PDS',
@@ -84,6 +93,7 @@ export interface AppointmentVersionDetail extends AppointmentVersionSummary {
 export interface AppointmentSummary {
   id: string;
   workflowStatus: AppointmentWorkflowStatus;
+  externalStanding: AppointmentExternalStanding;
   recruitmentHandoffId: string;
   position: {
     id: string;
@@ -113,11 +123,46 @@ export interface AppointmentHistoryEntry {
   occurredAt: string;
 }
 
+export interface AppointmentExternalEvidenceSummary {
+  documentVersionId: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: string;
+  versionNo: number;
+  issuedAt: string;
+}
+
+export interface AppointmentExternalSubmissionSummary {
+  id: string;
+  appointmentVersionId: string;
+  eventType: AppointmentExternalSubmissionEventType;
+  externalReference: string | null;
+  occurredAt: string;
+  receivingOffice: string;
+  recordedByMembershipId: string;
+  reason: string | null;
+  evidence: AppointmentExternalEvidenceSummary;
+}
+
+export interface AppointmentExternalActionSummary {
+  id: string;
+  appointmentVersionId: string;
+  action: AppointmentExternalAction;
+  externalReference: string;
+  actionAt: string;
+  recordedByMembershipId: string;
+  reason: string | null;
+  evidence: AppointmentExternalEvidenceSummary;
+}
+
 export interface AppointmentDetail extends AppointmentSummary {
   selectionPackage: unknown;
   versions: AppointmentVersionDetail[];
   history: AppointmentHistoryEntry[];
   settings: AppointmentSettingsSummary | null;
+  externalSubmissions: AppointmentExternalSubmissionSummary[];
+  externalActions: AppointmentExternalActionSummary[];
 }
 
 export interface AppointmentSettingsSummary {
@@ -202,6 +247,41 @@ const versionDetailSelect = {
   },
 } satisfies Prisma.AppointmentVersionSelect;
 
+const externalEvidenceSelect = {
+  documentId: true,
+  versionNo: true,
+  issuedAt: true,
+  createdAt: true,
+  document: {
+    select: { documentNo: true, documentType: true, classification: true },
+  },
+};
+
+const externalSubmissionSelect = {
+  id: true,
+  appointmentVersionId: true,
+  eventType: true,
+  externalReference: true,
+  occurredAt: true,
+  receivingOffice: true,
+  recordedByMembershipId: true,
+  reason: true,
+  evidenceDocumentVersionId: true,
+  evidenceDocumentVersion: { select: externalEvidenceSelect },
+} satisfies Prisma.AppointmentExternalSubmissionEventSelect;
+
+const externalActionSelect = {
+  id: true,
+  appointmentVersionId: true,
+  action: true,
+  externalReference: true,
+  actionAt: true,
+  recordedByMembershipId: true,
+  reason: true,
+  evidenceDocumentVersionId: true,
+  evidenceDocumentVersion: { select: externalEvidenceSelect },
+} satisfies Prisma.AppointmentExternalActionSelect;
+
 const appointmentSelect = {
   id: true,
   recruitmentHandoffId: true,
@@ -240,6 +320,12 @@ type AppointmentVersionDetailRecord = Prisma.AppointmentVersionGetPayload<{
   select: typeof versionDetailSelect;
 }>;
 type SettingsRecord = Prisma.AppointmentAgencySettingsGetPayload<{ select: typeof settingsSelect }>;
+type ExternalSubmissionRecord = Prisma.AppointmentExternalSubmissionEventGetPayload<{
+  select: typeof externalSubmissionSelect;
+}>;
+type ExternalActionRecord = Prisma.AppointmentExternalActionGetPayload<{
+  select: typeof externalActionSelect;
+}>;
 
 const AUDIT_METADATA_KEYS = new Set([
   'selectionDecisionId',
@@ -257,7 +343,43 @@ const AUDIT_METADATA_KEYS = new Set([
   'documentVersionId',
   'reservationReleased',
   'versionNo',
+  'externalReference',
+  'receivingOffice',
+  'externalStanding',
 ]);
+
+// External events are the source of truth: the standing is whichever supported
+// event happened last, so a resubmission after an adverse action stands until a
+// newer official action arrives. An action wins only a same-instant tie.
+export function deriveAppointmentExternalStanding(
+  submissions: ReadonlyArray<{ eventType: string; occurredAt: string }>,
+  actions: ReadonlyArray<{ action: string; actionAt: string }>,
+): AppointmentExternalStanding {
+  const latestAction = actions.reduce<{ action: string; actionAt: string } | null>(
+    (latest, item) => (!latest || item.actionAt >= latest.actionAt ? item : latest),
+    null,
+  );
+  const latestSubmission = submissions.reduce<{ eventType: string; occurredAt: string } | null>(
+    (latest, item) => (!latest || item.occurredAt >= latest.occurredAt ? item : latest),
+    null,
+  );
+  if (
+    latestAction &&
+    APPOINTMENT_EXTERNAL_ACTIONS.includes(latestAction.action as AppointmentExternalAction) &&
+    (!latestSubmission || latestAction.actionAt >= latestSubmission.occurredAt)
+  ) {
+    return latestAction.action as AppointmentExternalAction;
+  }
+  if (
+    latestSubmission &&
+    APPOINTMENT_EXTERNAL_SUBMISSION_EVENT_TYPES.includes(
+      latestSubmission.eventType as AppointmentExternalSubmissionEventType,
+    )
+  ) {
+    return latestSubmission.eventType as AppointmentExternalSubmissionEventType;
+  }
+  return 'NOT_SUBMITTED';
+}
 
 function safeAuditMetadata(value: Prisma.InputJsonObject): Prisma.InputJsonObject {
   return Object.fromEntries(
@@ -409,6 +531,50 @@ function versionDetail(record: AppointmentVersionDetailRecord): AppointmentVersi
   };
 }
 
+function externalEvidence(
+  record: ExternalSubmissionRecord | ExternalActionRecord,
+): AppointmentExternalEvidenceSummary {
+  const version = record.evidenceDocumentVersion;
+  return {
+    documentVersionId: record.evidenceDocumentVersionId,
+    documentId: version.documentId,
+    documentNo: version.document.documentNo,
+    documentType: version.document.documentType,
+    classification: version.document.classification,
+    versionNo: version.versionNo,
+    issuedAt: formatDateTime(version.issuedAt ?? version.createdAt),
+  };
+}
+
+function externalSubmissionSummary(
+  record: ExternalSubmissionRecord,
+): AppointmentExternalSubmissionSummary {
+  return {
+    id: record.id,
+    appointmentVersionId: record.appointmentVersionId,
+    eventType: record.eventType as AppointmentExternalSubmissionEventType,
+    externalReference: record.externalReference,
+    occurredAt: formatDateTime(record.occurredAt),
+    receivingOffice: record.receivingOffice,
+    recordedByMembershipId: record.recordedByMembershipId,
+    reason: record.reason,
+    evidence: externalEvidence(record),
+  };
+}
+
+function externalActionSummary(record: ExternalActionRecord): AppointmentExternalActionSummary {
+  return {
+    id: record.id,
+    appointmentVersionId: record.appointmentVersionId,
+    action: record.action as AppointmentExternalAction,
+    externalReference: record.externalReference,
+    actionAt: formatDateTime(record.actionAt),
+    recordedByMembershipId: record.recordedByMembershipId,
+    reason: record.reason,
+    evidence: externalEvidence(record),
+  };
+}
+
 interface SelectionPackageView {
   raw: Prisma.JsonValue;
   applicantId: string;
@@ -466,11 +632,15 @@ function selectionPackageView(raw: Prisma.JsonValue): SelectionPackageView {
   };
 }
 
-function appointmentSummary(record: AppointmentRecord): AppointmentSummary {
+function appointmentSummary(
+  record: AppointmentRecord,
+  externalStanding: AppointmentExternalStanding,
+): AppointmentSummary {
   const view = selectionPackageView(record.recruitmentSelectionPackage);
   return {
     id: record.id,
     workflowStatus: workflowStatus(record.workflowStatus),
+    externalStanding,
     recruitmentHandoffId: record.recruitmentHandoffId,
     position: view.position,
     appointee: {
@@ -514,8 +684,15 @@ export class AppointmentsService {
       });
       const hasMore = records.length > filter.limit;
       const page = hasMore ? records.slice(0, filter.limit) : records;
+      const standings = await this.externalStandingsInTransaction(
+        transaction,
+        context,
+        page.map((record) => record.id),
+      );
       return {
-        items: page.map(appointmentSummary),
+        items: page.map((record) =>
+          appointmentSummary(record, standings.get(record.id) ?? 'NOT_SUBMITTED'),
+        ),
         hasMore,
         nextOffset: hasMore ? filter.offset + filter.limit : null,
       };
@@ -1236,6 +1413,168 @@ export class AppointmentsService {
     );
   }
 
+  async recordExternalSubmission(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentExternalSubmissionSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.external_events.record',
+      'APPOINTMENT_EXTERNAL_EVENT_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_EXTERNAL_SUBMISSION_RECORDED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedExternalVersion(record, input.appointmentVersionId);
+        await this.requireSettings(transaction, context);
+        const evidence = await this.documentsService.resolveFinalizedVersionInTransaction(
+          transaction,
+          context,
+          input.evidenceDocumentVersionId,
+        );
+        if (!evidence) {
+          throw new AppointmentServiceError(
+            'The external submission evidence must be a finalized Document Version.',
+            409,
+            'APPOINTMENT_EXTERNAL_EVIDENCE_INVALID',
+          );
+        }
+        await transaction.appointmentExternalSubmissionEvent.create({
+          data: {
+            agencyId: context.agencyId,
+            appointmentVersionId: version.id,
+            eventType: input.eventType,
+            externalReference: input.externalReference ?? null,
+            occurredAt: new Date(input.occurredAt),
+            receivingOffice: input.receivingOffice,
+            recordedByMembershipId: context.membershipId,
+            reason: input.reason ?? null,
+            evidenceDocumentVersionId: evidence.id,
+          },
+          select: { id: true },
+        });
+        const standing = await this.standingInTransaction(transaction, context, appointmentId);
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_EXTERNAL_SUBMISSION_RECORDED',
+          entityId: appointmentId,
+          previousStatus: null,
+          newStatus: input.eventType,
+          reason: input.reason ?? `External ${input.eventType.toLowerCase()} event recorded.`,
+          metadata: {
+            versionId: version.id,
+            documentVersionId: input.evidenceDocumentVersionId,
+            ...(input.externalReference ? { externalReference: input.externalReference } : {}),
+            receivingOffice: input.receivingOffice,
+            externalStanding: standing,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
+  async recordExternalAction(
+    context: RequestContext,
+    appointmentId: string,
+    input: z.infer<typeof appointmentExternalActionSchema>,
+    rawIdempotencyKey?: string,
+  ): Promise<AppointmentDetail> {
+    this.assertPermission(
+      context,
+      'appointments.external_actions.record',
+      'APPOINTMENT_EXTERNAL_ACTION_FORBIDDEN',
+    );
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'appointment-transition'),
+      async (transaction) => {
+        if (idempotencyKey) {
+          const completed = await this.idempotentEvent(
+            transaction,
+            context,
+            'APPOINTMENT_EXTERNAL_ACTION_RECORDED',
+            idempotencyKey,
+          );
+          if (completed) return this.detailInTransaction(transaction, context, completed.entityId);
+        }
+        const record = await this.requireAppointment(transaction, context, appointmentId);
+        const version = this.requireIssuedExternalVersion(record, input.appointmentVersionId);
+        const settings = await this.requireSettings(transaction, context);
+        const regulatoryStatus = settingsSummary(settings).regulatoryStatus;
+        const allowed: readonly AppointmentExternalAction[] =
+          regulatoryStatus === 'REGULATED'
+            ? ['APPROVED', 'DISAPPROVED']
+            : ['VALIDATED', 'INVALIDATED'];
+        if (!allowed.includes(input.action)) {
+          throw new AppointmentServiceError(
+            regulatoryStatus === 'REGULATED'
+              ? 'A regulated Agency records approval or disapproval.'
+              : 'An accredited or deregulated Agency records validation or invalidation.',
+            409,
+            'APPOINTMENT_EXTERNAL_ACTION_INVALID',
+          );
+        }
+        const evidence = await this.documentsService.resolveFinalizedVersionInTransaction(
+          transaction,
+          context,
+          input.evidenceDocumentVersionId,
+        );
+        if (!evidence) {
+          throw new AppointmentServiceError(
+            'The official action evidence must be a finalized Document Version.',
+            409,
+            'APPOINTMENT_EXTERNAL_EVIDENCE_INVALID',
+          );
+        }
+        await transaction.appointmentExternalAction.create({
+          data: {
+            agencyId: context.agencyId,
+            appointmentVersionId: version.id,
+            action: input.action,
+            externalReference: input.externalReference,
+            actionAt: new Date(input.actionAt),
+            recordedByMembershipId: context.membershipId,
+            reason: input.reason ?? null,
+            evidenceDocumentVersionId: evidence.id,
+          },
+          select: { id: true },
+        });
+        const standing = await this.standingInTransaction(transaction, context, appointmentId);
+        await this.writeAudit(transaction, context, {
+          action: 'APPOINTMENT_EXTERNAL_ACTION_RECORDED',
+          entityId: appointmentId,
+          previousStatus: null,
+          newStatus: input.action,
+          reason:
+            input.reason ?? `Official external ${input.action.toLowerCase()} action recorded.`,
+          metadata: {
+            versionId: version.id,
+            documentVersionId: input.evidenceDocumentVersionId,
+            externalReference: input.externalReference,
+            regulatoryStatus,
+            externalStanding: standing,
+          },
+          idempotencyKey,
+        });
+        return this.detailInTransaction(transaction, context, appointmentId);
+      },
+    );
+  }
+
   async getSettings(context: RequestContext): Promise<AppointmentSettingsSummary | null> {
     this.assertPermission(context, 'appointments.records.read', 'APPOINTMENT_READ_FORBIDDEN');
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
@@ -1346,7 +1685,12 @@ export class AppointmentsService {
       select: settingsSelect,
     });
     const history = await transaction.auditEvent.findMany({
-      where: { agencyId: context.agencyId, entityType: 'Appointment', entityId: appointmentId },
+      where: {
+        agencyId: context.agencyId,
+        entityType: 'Appointment',
+        entityId: appointmentId,
+        NOT: { action: { startsWith: 'APPOINTMENT_EXTERNAL_' } },
+      },
       orderBy: { occurredAt: 'asc' },
       select: {
         id: true,
@@ -1358,7 +1702,19 @@ export class AppointmentsService {
         occurredAt: true,
       },
     });
-    return this.detail(record, settings, history);
+    const [externalSubmissions, externalActions] = await Promise.all([
+      transaction.appointmentExternalSubmissionEvent.findMany({
+        where: { agencyId: context.agencyId, appointmentVersion: { appointmentId } },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+        select: externalSubmissionSelect,
+      }),
+      transaction.appointmentExternalAction.findMany({
+        where: { agencyId: context.agencyId, appointmentVersion: { appointmentId } },
+        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
+        select: externalActionSelect,
+      }),
+    ]);
+    return this.detail(record, settings, history, externalSubmissions, externalActions);
   }
 
   private detail(
@@ -1373,9 +1729,25 @@ export class AppointmentsService {
       actorMembershipId: string | null;
       occurredAt: Date;
     }>,
+    externalSubmissions: ExternalSubmissionRecord[],
+    externalActions: ExternalActionRecord[],
   ): AppointmentDetail {
+    const submissions = externalSubmissions.map(externalSubmissionSummary);
+    const actions = externalActions.map(externalActionSummary);
     return {
-      ...appointmentSummary(record),
+      ...appointmentSummary(
+        record,
+        deriveAppointmentExternalStanding(
+          submissions.map((submission) => ({
+            eventType: submission.eventType,
+            occurredAt: submission.occurredAt,
+          })),
+          actions.map((action) => ({
+            action: action.action,
+            actionAt: action.actionAt,
+          })),
+        ),
+      ),
       selectionPackage: record.recruitmentSelectionPackage,
       versions: record.versions.map(versionDetail),
       history: history.map((event) => ({
@@ -1388,6 +1760,8 @@ export class AppointmentsService {
         occurredAt: formatDateTime(event.occurredAt),
       })),
       settings: settings ? settingsSummary(settings) : null,
+      externalSubmissions: submissions,
+      externalActions: actions,
     };
   }
 
@@ -1437,6 +1811,134 @@ export class AppointmentsService {
       );
     }
     return settings;
+  }
+
+  // External tracking advances independently of the Appointment workflow
+  // status, so it needs at least one issued version rather than an issued
+  // workflow: corrections and cancellations never reopen the frozen version.
+  private requireIssuedExternalVersion(
+    record: AppointmentDetailRecord,
+    appointmentVersionId: string,
+  ): AppointmentVersionDetailRecord {
+    if (!record.versions.some((item) => item.status === 'ISSUED')) {
+      throw new AppointmentServiceError(
+        'External tracking is only available for an issued Appointment.',
+        409,
+        'APPOINTMENT_EXTERNAL_NOT_ISSUED',
+      );
+    }
+    const version = record.versions.find((item) => item.id === appointmentVersionId);
+    if (!version || version.status !== 'ISSUED') {
+      throw new AppointmentServiceError(
+        'External tracking must reference an issued Appointment Version.',
+        409,
+        'APPOINTMENT_EXTERNAL_VERSION_INVALID',
+      );
+    }
+    return version;
+  }
+
+  private async standingInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    appointmentId: string,
+  ): Promise<AppointmentExternalStanding> {
+    const versions = await transaction.appointmentVersion.findMany({
+      where: { agencyId: context.agencyId, appointmentId },
+      select: { id: true },
+    });
+    const versionIds = versions.map((version) => version.id);
+    if (versionIds.length === 0) return 'NOT_SUBMITTED';
+    const [submissions, actions] = await Promise.all([
+      transaction.appointmentExternalSubmissionEvent.findMany({
+        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        select: { eventType: true, occurredAt: true },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      }),
+      transaction.appointmentExternalAction.findMany({
+        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        select: { action: true, actionAt: true },
+        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+    return deriveAppointmentExternalStanding(
+      submissions.map((submission) => ({
+        eventType: submission.eventType,
+        occurredAt: submission.occurredAt.toISOString(),
+      })),
+      actions.map((action) => ({
+        action: action.action,
+        actionAt: action.actionAt.toISOString(),
+      })),
+    );
+  }
+
+  private async externalStandingsInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    appointmentIds: readonly string[],
+  ): Promise<Map<string, AppointmentExternalStanding>> {
+    const standings = new Map<string, AppointmentExternalStanding>();
+    if (appointmentIds.length === 0) return standings;
+    const versions = await transaction.appointmentVersion.findMany({
+      where: { agencyId: context.agencyId, appointmentId: { in: [...appointmentIds] } },
+      select: { id: true, appointmentId: true },
+    });
+    const appointmentByVersion = new Map(
+      versions.map((version) => [version.id, version.appointmentId]),
+    );
+    const versionIds = versions.map((version) => version.id);
+    if (versionIds.length === 0) return standings;
+    const [submissions, actions] = await Promise.all([
+      transaction.appointmentExternalSubmissionEvent.findMany({
+        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        select: { appointmentVersionId: true, eventType: true, occurredAt: true },
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      }),
+      transaction.appointmentExternalAction.findMany({
+        where: { agencyId: context.agencyId, appointmentVersionId: { in: versionIds } },
+        select: { appointmentVersionId: true, action: true, actionAt: true },
+        orderBy: [{ actionAt: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+    const byAppointment = new Map<
+      string,
+      {
+        submissions: Array<{ eventType: string; occurredAt: string }>;
+        actions: Array<{ action: string; actionAt: string }>;
+      }
+    >();
+    const bucket = (appointmentId: string) => {
+      const existing = byAppointment.get(appointmentId);
+      if (existing) return existing;
+      const created = { submissions: [], actions: [] };
+      byAppointment.set(appointmentId, created);
+      return created;
+    };
+    for (const submission of submissions) {
+      const appointmentId = appointmentByVersion.get(submission.appointmentVersionId);
+      if (!appointmentId) continue;
+      bucket(appointmentId).submissions.push({
+        eventType: submission.eventType,
+        occurredAt: submission.occurredAt.toISOString(),
+      });
+    }
+    for (const action of actions) {
+      const appointmentId = appointmentByVersion.get(action.appointmentVersionId);
+      if (!appointmentId) continue;
+      bucket(appointmentId).actions.push({
+        action: action.action,
+        actionAt: action.actionAt.toISOString(),
+      });
+    }
+    for (const appointmentId of appointmentIds) {
+      const entry = byAppointment.get(appointmentId);
+      standings.set(
+        appointmentId,
+        deriveAppointmentExternalStanding(entry?.submissions ?? [], entry?.actions ?? []),
+      );
+    }
+    return standings;
   }
 
   private async requireReservedPosition(

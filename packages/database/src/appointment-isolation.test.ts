@@ -9,6 +9,8 @@ const PROTECTED_TABLES = [
   'appointments',
   'appointment_versions',
   'appointment_document_version_links',
+  'appointment_external_submission_events',
+  'appointment_external_actions',
 ];
 
 async function withContext<T>(
@@ -93,6 +95,8 @@ it.skipIf(!enabled)(
     const documentVersionIds = [randomUUID(), randomUUID()];
     const linkIds = [randomUUID(), randomUUID()];
     const settingsIds = [randomUUID(), randomUUID()];
+    const externalSubmissionIds = [randomUUID(), randomUUID()];
+    const externalActionIds = [randomUUID(), randomUUID()];
 
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
@@ -106,6 +110,8 @@ it.skipIf(!enabled)(
         const documentVersionId = documentVersionIds[index];
         const linkId = linkIds[index];
         const settingsId = settingsIds[index];
+        const externalSubmissionId = externalSubmissionIds[index];
+        const externalActionId = externalActionIds[index];
         if (
           !membership ||
           !appointmentId ||
@@ -115,7 +121,9 @@ it.skipIf(!enabled)(
           !issuedVersionId ||
           !documentVersionId ||
           !linkId ||
-          !settingsId
+          !settingsId ||
+          !externalSubmissionId ||
+          !externalActionId
         ) {
           throw new Error('Appointment RLS fixture identifiers are missing.');
         }
@@ -176,6 +184,26 @@ it.skipIf(!enabled)(
           VALUES
             (${linkId}::uuid, ${agency.id}::uuid, ${issuedVersionId}::uuid,
              ${documentVersionId}::uuid, 'PDS')
+        `;
+        await transaction.$executeRaw`
+          INSERT INTO "appointment_external_submission_events"
+            ("id", "agency_id", "appointment_version_id", "event_type",
+             "external_reference", "occurred_at", "receiving_office",
+             "recorded_by_membership_id", "evidence_document_version_id")
+          VALUES
+            (${externalSubmissionId}::uuid, ${agency.id}::uuid, ${issuedVersionId}::uuid,
+             'SUBMITTED', ${`CSC-RLS-${index}-${suffix}`}, now(), 'CSC Field Office',
+             ${membership.id}::uuid, ${documentVersionId}::uuid)
+        `;
+        await transaction.$executeRaw`
+          INSERT INTO "appointment_external_actions"
+            ("id", "agency_id", "appointment_version_id", "action",
+             "external_reference", "action_at", "recorded_by_membership_id",
+             "evidence_document_version_id")
+          VALUES
+            (${externalActionId}::uuid, ${agency.id}::uuid, ${issuedVersionId}::uuid,
+             'APPROVED', ${`CSC-RLS-${index}-${suffix}`}, now(),
+             ${membership.id}::uuid, ${documentVersionId}::uuid)
         `;
       }
     });
@@ -380,10 +408,115 @@ it.skipIf(!enabled)(
             `,
         ),
       ).rejects.toThrow(/Issued Appointment evidence is frozen/i);
+
+      const visibleSubmissionsToB = await withContext(
+        app,
+        {
+          agencyId: agencyB.id,
+          userId: user.id,
+          membershipId: membershipB.id,
+        },
+        (transaction) => transaction.appointmentExternalSubmissionEvent.findMany(),
+      );
+      expect(visibleSubmissionsToB.map(({ id }) => id)).toEqual([externalSubmissionIds[1]]);
+
+      const visibleActionsToB = await withContext(
+        app,
+        {
+          agencyId: agencyB.id,
+          userId: user.id,
+          membershipId: membershipB.id,
+        },
+        (transaction) => transaction.appointmentExternalAction.findMany(),
+      );
+      expect(visibleActionsToB.map(({ id }) => id)).toEqual([externalActionIds[1]]);
+
+      await expect(
+        withContext(
+          app,
+          {
+            agencyId: agencyA.id,
+            userId: user.id,
+            membershipId: membershipA.id,
+            appointmentTransition: true,
+          },
+          (transaction) =>
+            transaction.$executeRaw`
+              INSERT INTO "appointment_external_submission_events"
+                ("id", "agency_id", "appointment_version_id", "event_type",
+                 "occurred_at", "receiving_office", "recorded_by_membership_id",
+                 "evidence_document_version_id")
+              VALUES
+                (${randomUUID()}::uuid, ${agencyB.id}::uuid, ${issuedVersionIds[1]}::uuid,
+                 'SUBMITTED', now(), 'CSC Field Office', ${membershipA.id}::uuid,
+                 ${documentVersionIds[1]}::uuid)
+            `,
+        ),
+      ).rejects.toThrow(/row-level security|require an issued Appointment version/i);
+
+      await expect(
+        withContext(
+          app,
+          {
+            agencyId: agencyA.id,
+            userId: user.id,
+            membershipId: membershipA.id,
+            appointmentTransition: true,
+          },
+          (transaction) =>
+            transaction.$executeRaw`
+              INSERT INTO "appointment_external_submission_events"
+                ("id", "agency_id", "appointment_version_id", "event_type",
+                 "occurred_at", "receiving_office", "recorded_by_membership_id",
+                 "evidence_document_version_id")
+              VALUES
+                (${randomUUID()}::uuid, ${agencyA.id}::uuid, ${versionIds[0]}::uuid,
+                 'SUBMITTED', now(), 'CSC Field Office', ${membershipA.id}::uuid,
+                 ${documentVersionIds[0]}::uuid)
+            `,
+        ),
+      ).rejects.toThrow(/require an issued Appointment version/i);
+
+      await expect(
+        withContext(
+          app,
+          {
+            agencyId: agencyA.id,
+            userId: user.id,
+            membershipId: membershipA.id,
+            appointmentTransition: true,
+          },
+          (transaction) =>
+            transaction.$executeRaw`
+              UPDATE "appointment_external_submission_events"
+              SET "receiving_office" = 'Elsewhere'
+              WHERE "id" = ${externalSubmissionIds[0]}::uuid
+            `,
+        ),
+      ).rejects.toThrow(/permission denied|append-only/i);
+
+      await expect(
+        withContext(
+          app,
+          {
+            agencyId: agencyA.id,
+            userId: user.id,
+            membershipId: membershipA.id,
+            appointmentTransition: true,
+          },
+          (transaction) =>
+            transaction.$executeRaw`
+              DELETE FROM "appointment_external_actions"
+              WHERE "id" = ${externalActionIds[0]}::uuid
+            `,
+        ),
+      ).rejects.toThrow(/permission denied|append-only/i);
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         for (const table of [
+          'appointment_external_submission_events',
+          'appointment_external_actions',
           'appointment_document_version_links',
           'appointment_versions',
           'appointments',

@@ -22,6 +22,8 @@ import {
   appointmentCancelSchema,
   appointmentCorrectionSchema,
   appointmentCreateSchema,
+  appointmentExternalActionSchema,
+  appointmentExternalSubmissionSchema,
   appointmentIdSchema,
   appointmentIdempotencyKeySchema,
   appointmentListSchema,
@@ -255,6 +257,48 @@ export class AppointmentsController {
     const key = this.parseIdempotencyKey(idempotencyKey, context);
     try {
       return await this.service.correct(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/external-submissions')
+  @RequirePermission('appointments.external_events.record')
+  async recordExternalSubmission(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentExternalSubmissionSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordExternalSubmission(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/appointments/:appointmentId/external-actions')
+  @RequirePermission('appointments.external_actions.record')
+  async recordExternalAction(
+    @Param('agencyId') agencyId: string,
+    @Param('appointmentId') appointmentId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    this.assertWriteAgency(agencyId, context);
+    const id = this.parseId(appointmentId, context);
+    const parsed = appointmentExternalActionSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.service.recordExternalAction(context, id, parsed.data, key);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

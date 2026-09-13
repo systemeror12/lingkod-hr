@@ -10,8 +10,27 @@ type WorkflowStatus = 'DRAFT' | 'FOR_REVIEW' | 'FOR_SIGNATURE' | 'ISSUED' | 'CAN
 type VersionStatus = 'DRAFT' | 'ISSUED' | 'SUPERSEDED';
 type SignatureMethod = 'WET_INK' | 'ELECTRONIC' | 'DIGITAL_CERTIFICATE';
 type RegulatoryStatus = 'REGULATED' | 'ACCREDITED_OR_DEREGULATED';
-type Dialog = 'prepare' | 'update' | 'return' | 'cancel' | 'correct' | 'settings' | null;
-type Tab = 'preparation' | 'review';
+type ExternalStanding =
+  | 'NOT_SUBMITTED'
+  | 'SUBMITTED'
+  | 'RECEIVED'
+  | 'RETURNED'
+  | 'RESUBMITTED'
+  | 'APPROVED'
+  | 'DISAPPROVED'
+  | 'VALIDATED'
+  | 'INVALIDATED';
+type Dialog =
+  | 'prepare'
+  | 'update'
+  | 'return'
+  | 'cancel'
+  | 'correct'
+  | 'settings'
+  | 'external-submission'
+  | 'external-action'
+  | null;
+type Tab = 'preparation' | 'review' | 'csc';
 
 const EMPLOYMENT_STATUSES = [
   'PERMANENT',
@@ -33,6 +52,9 @@ const NATURES = [
   'DEMOTION',
 ] as const;
 const SIGNATURE_METHODS = ['WET_INK', 'ELECTRONIC', 'DIGITAL_CERTIFICATE'] as const;
+const EXTERNAL_SUBMISSION_TYPES = ['SUBMITTED', 'RECEIVED', 'RETURNED', 'RESUBMITTED'] as const;
+const APPROVAL_ACTIONS = ['APPROVED', 'DISAPPROVED'] as const;
+const VALIDATION_ACTIONS = ['VALIDATED', 'INVALIDATED'] as const;
 const REQUIRED_ROLES = [
   ['PDS', 'PDS'],
   ['WORK_EXPERIENCE_SHEET', 'Work Experience Sheet'],
@@ -91,6 +113,7 @@ export interface AppointmentVersion {
 export interface AppointmentSummary {
   id: string;
   workflowStatus: WorkflowStatus;
+  externalStanding: ExternalStanding;
   recruitmentHandoffId: string;
   position: {
     id: string;
@@ -124,11 +147,46 @@ export interface AppointmentSettings {
   updatedAt: string;
 }
 
+export interface AppointmentExternalEvidence {
+  documentVersionId: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: string;
+  versionNo: number;
+  issuedAt: string;
+}
+
+export interface AppointmentExternalSubmission {
+  id: string;
+  appointmentVersionId: string;
+  eventType: ExternalStanding;
+  externalReference: string | null;
+  occurredAt: string;
+  receivingOffice: string;
+  recordedByMembershipId: string;
+  reason: string | null;
+  evidence: AppointmentExternalEvidence;
+}
+
+export interface AppointmentExternalAction {
+  id: string;
+  appointmentVersionId: string;
+  action: ExternalStanding;
+  externalReference: string;
+  actionAt: string;
+  recordedByMembershipId: string;
+  reason: string | null;
+  evidence: AppointmentExternalEvidence;
+}
+
 export interface AppointmentDetail extends AppointmentSummary {
   selectionPackage: unknown;
   versions: AppointmentVersion[];
   history: AppointmentHistoryEntry[];
   settings: AppointmentSettings | null;
+  externalSubmissions: AppointmentExternalSubmission[];
+  externalActions: AppointmentExternalAction[];
 }
 
 export interface EligibleSelection {
@@ -180,7 +238,20 @@ interface Props {
   canIssue: boolean;
   canCancel: boolean;
   canManageSettings: boolean;
+  canRecordExternalEvents: boolean;
+  canRecordExternalActions: boolean;
   initialSelected: string | null;
+}
+
+interface ExternalForm {
+  appointmentVersionId: string;
+  eventType: string;
+  action: string;
+  externalReference: string;
+  occurredAt: string;
+  receivingOffice: string;
+  reason: string;
+  evidenceDocumentVersionId: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -231,11 +302,42 @@ function label(value: string): string {
   return value.replaceAll('_', ' ');
 }
 
+function externalActionsFor(regulatoryStatus: RegulatoryStatus | null): readonly string[] {
+  return (regulatoryStatus ?? 'REGULATED') === 'REGULATED' ? APPROVAL_ACTIONS : VALIDATION_ACTIONS;
+}
+
+function localDateTimeValue(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function toIsoDateTime(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+}
+
+function defaultExternalForm(
+  versionId: string,
+  regulatoryStatus: RegulatoryStatus | null,
+): ExternalForm {
+  return {
+    appointmentVersionId: versionId,
+    eventType: 'SUBMITTED',
+    action: externalActionsFor(regulatoryStatus)[0] ?? 'APPROVED',
+    externalReference: '',
+    occurredAt: localDateTimeValue(new Date()),
+    receivingOffice: '',
+    reason: '',
+    evidenceDocumentVersionId: '',
+  };
+}
+
 function statusTone(status: string): 'blue' | 'amber' | 'green' | 'gray' | 'red' {
-  if (status === 'ISSUED') return 'green';
-  if (status === 'FOR_REVIEW' || status === 'FOR_SIGNATURE') return 'amber';
-  if (status === 'CANCELLED') return 'red';
-  if (status === 'SUPERSEDED') return 'gray';
+  if (status === 'ISSUED' || status === 'APPROVED' || status === 'VALIDATED') return 'green';
+  if (status === 'FOR_REVIEW' || status === 'FOR_SIGNATURE' || status === 'RETURNED')
+    return 'amber';
+  if (status === 'CANCELLED' || status === 'DISAPPROVED' || status === 'INVALIDATED') return 'red';
+  if (status === 'SUPERSEDED' || status === 'NOT_SUBMITTED') return 'gray';
   return 'blue';
 }
 
@@ -527,6 +629,9 @@ export function AppointmentsWorkspace(props: Props) {
     regulatoryStatus: props.initialSettings?.regulatoryStatus ?? 'REGULATED',
     statusEvidenceDocumentVersionId: props.initialSettings?.statusEvidenceDocumentVersionId ?? '',
   });
+  const [externalForm, setExternalForm] = useState<ExternalForm>(() =>
+    defaultExternalForm('', props.initialSettings?.regulatoryStatus ?? null),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -536,6 +641,9 @@ export function AppointmentsWorkspace(props: Props) {
     [appointments, selectedId],
   );
   const currentVersion = detail?.currentVersion ?? selected?.currentVersion ?? null;
+  const issuedVersions = (detail?.versions ?? []).filter((version) => version.status === 'ISSUED');
+  const externalRegulatoryStatus =
+    detail?.settings?.regulatoryStatus ?? settings?.regulatoryStatus ?? null;
 
   async function loadDetail(appointmentId: string): Promise<void> {
     const response = await fetch(
@@ -775,6 +883,57 @@ export function AppointmentsWorkspace(props: Props) {
     }
   }
 
+  function openExternal(dialogName: 'external-submission' | 'external-action'): void {
+    if (!detail || issuedVersions.length === 0) return;
+    const issued = issuedVersions.at(-1);
+    if (!issued) return;
+    setExternalForm(defaultExternalForm(issued.id, externalRegulatoryStatus));
+    setError('');
+    setSuccess('');
+    setDialog(dialogName);
+  }
+
+  async function saveExternalSubmission(): Promise<void> {
+    if (!detail) return;
+    const result = await command(
+      `/api/v1/agencies/${props.agencyId}/appointments/${detail.id}/external-submissions`,
+      {
+        appointmentVersionId: externalForm.appointmentVersionId,
+        eventType: externalForm.eventType,
+        occurredAt: toIsoDateTime(externalForm.occurredAt),
+        receivingOffice: externalForm.receivingOffice.trim(),
+        evidenceDocumentVersionId: externalForm.evidenceDocumentVersionId,
+        ...(externalForm.externalReference.trim()
+          ? { externalReference: externalForm.externalReference.trim() }
+          : {}),
+        ...(externalForm.reason.trim() ? { reason: externalForm.reason.trim() } : {}),
+      },
+    );
+    if (result) {
+      setDialog(null);
+      setSuccess('The external submission event was recorded.');
+    }
+  }
+
+  async function saveExternalAction(): Promise<void> {
+    if (!detail) return;
+    const result = await command(
+      `/api/v1/agencies/${props.agencyId}/appointments/${detail.id}/external-actions`,
+      {
+        appointmentVersionId: externalForm.appointmentVersionId,
+        action: externalForm.action,
+        externalReference: externalForm.externalReference.trim(),
+        actionAt: toIsoDateTime(externalForm.occurredAt),
+        evidenceDocumentVersionId: externalForm.evidenceDocumentVersionId,
+        ...(externalForm.reason.trim() ? { reason: externalForm.reason.trim() } : {}),
+      },
+    );
+    if (result) {
+      setDialog(null);
+      setSuccess('The official external action was recorded.');
+    }
+  }
+
   const canPrepare = props.canCreate && settings !== null;
   const dialogTitle =
     dialog === 'prepare'
@@ -789,7 +948,11 @@ export function AppointmentsWorkspace(props: Props) {
               ? 'Prepare a linked correction'
               : dialog === 'settings'
                 ? 'Agency appointment configuration'
-                : '';
+                : dialog === 'external-submission'
+                  ? 'Record CSC submission event'
+                  : dialog === 'external-action'
+                    ? 'Record official CSC action'
+                    : '';
 
   return (
     <div className="grid gap-5">
@@ -938,6 +1101,7 @@ export function AppointmentsWorkspace(props: Props) {
                     <th className="px-3 py-2">Appointee</th>
                     <th className="px-3 py-2">Position</th>
                     <th className="px-3 py-2">Workflow</th>
+                    <th className="px-3 py-2">CSC standing</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -967,6 +1131,9 @@ export function AppointmentsWorkspace(props: Props) {
                       <td className="px-3 py-2">
                         <StatusBadge status={appointment.workflowStatus} />
                       </td>
+                      <td className="px-3 py-2">
+                        <StatusBadge status={appointment.externalStanding} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -984,6 +1151,9 @@ export function AppointmentsWorkspace(props: Props) {
           <div className="flex flex-wrap items-center gap-3">
             <span aria-label="Workflow status">
               <StatusBadge status={detail.workflowStatus} />
+            </span>
+            <span aria-label="External standing">
+              <StatusBadge status={detail.externalStanding} />
             </span>
             <span className="text-[13px] text-muted">
               {currentVersion
@@ -1017,6 +1187,7 @@ export function AppointmentsWorkspace(props: Props) {
               [
                 ['preparation', 'Preparation & evidence'],
                 ['review', 'Review & issuance'],
+                ['csc', 'CSC transactions'],
               ] as const
             ).map(([value, name]) => (
               <Button
@@ -1087,7 +1258,7 @@ export function AppointmentsWorkspace(props: Props) {
                 </div>
               ))}
             </div>
-          ) : (
+          ) : tab === 'review' ? (
             <div className="grid gap-4">
               <h3 className="m-0 text-sm font-[700] text-midnight">
                 Preparation, review and signature
@@ -1118,6 +1289,115 @@ export function AppointmentsWorkspace(props: Props) {
                 evidence. Issuance alone creates no Employee service and leaves the Plantilla
                 reservation in place.
               </p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-[13px] text-muted">External standing</span>
+                <span aria-label="External standing">
+                  <StatusBadge status={detail.externalStanding} />
+                </span>
+              </div>
+              <p className="m-0 text-[12px] leading-[1.55] text-muted">
+                Submission and official action events are append-only and bind to an exact issued
+                version. They never change the workflow status, employment status, nature of
+                appointment, or the issued instrument.
+              </p>
+              {issuedVersions.length === 0 ? (
+                <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
+                  External tracking opens once an Appointment Version is issued.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {props.canRecordExternalEvents ? (
+                    <Button
+                      size="default"
+                      className="min-h-9"
+                      type="button"
+                      variant="primary"
+                      disabled={busy || detail.settings === null}
+                      onClick={() => openExternal('external-submission')}
+                    >
+                      Record submission event
+                    </Button>
+                  ) : null}
+                  {props.canRecordExternalActions ? (
+                    <Button
+                      size="default"
+                      className="min-h-9"
+                      type="button"
+                      variant="secondary"
+                      disabled={busy || detail.settings === null}
+                      onClick={() => openExternal('external-action')}
+                    >
+                      Record official action
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid gap-2">
+                  <h3 className="m-0 text-sm font-[700] text-midnight">Submission history</h3>
+                  {detail.externalSubmissions.length === 0 ? (
+                    <p className="m-0 text-[13px] text-muted">No submission events recorded.</p>
+                  ) : (
+                    <ul className="m-0 grid list-none gap-1 p-0">
+                      {detail.externalSubmissions.map((entry) => (
+                        <li
+                          className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
+                          key={entry.id}
+                        >
+                          <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[13px] font-[650] text-ink">
+                              {label(entry.eventType)}
+                            </span>
+                            <span className="text-xs text-muted">
+                              {dateTimeLabel(entry.occurredAt)}
+                            </span>
+                          </span>
+                          <span className="text-xs text-muted">
+                            {entry.externalReference ? `${entry.externalReference} · ` : ''}
+                            {entry.receivingOffice} ·{' '}
+                            {entry.evidence.documentNo ?? label(entry.evidence.documentType)} v
+                            {entry.evidence.versionNo}
+                            {entry.reason ? ` · ${entry.reason}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="grid gap-2">
+                  <h3 className="m-0 text-sm font-[700] text-midnight">Official action history</h3>
+                  {detail.externalActions.length === 0 ? (
+                    <p className="m-0 text-[13px] text-muted">No official actions recorded.</p>
+                  ) : (
+                    <ul className="m-0 grid list-none gap-1 p-0">
+                      {detail.externalActions.map((entry) => (
+                        <li
+                          className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
+                          key={entry.id}
+                        >
+                          <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[13px] font-[650] text-ink">
+                              {label(entry.action)}
+                            </span>
+                            <span className="text-xs text-muted">
+                              {dateTimeLabel(entry.actionAt)}
+                            </span>
+                          </span>
+                          <span className="text-xs text-muted">
+                            {entry.externalReference} ·{' '}
+                            {entry.evidence.documentNo ?? label(entry.evidence.documentType)} v
+                            {entry.evidence.versionNo}
+                            {entry.reason ? ` · ${entry.reason}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1332,6 +1612,143 @@ export function AppointmentsWorkspace(props: Props) {
             </div>
           ) : null}
 
+          {dialog === 'external-submission' || dialog === 'external-action' ? (
+            <div className="grid gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Issued version" htmlFor={`${dialog}-version`}>
+                  <select
+                    className={inputClass}
+                    id={`${dialog}-version`}
+                    value={externalForm.appointmentVersionId}
+                    onChange={(event) =>
+                      setExternalForm({
+                        ...externalForm,
+                        appointmentVersionId: inputValue(event),
+                      })
+                    }
+                  >
+                    {issuedVersions.map((version) => (
+                      <option key={version.id} value={version.id}>
+                        Version v{version.versionNo} · issued {dateLabel(version.issuedAt)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {dialog === 'external-submission' ? (
+                  <Field label="Submission event" htmlFor="external-event">
+                    <select
+                      className={inputClass}
+                      id="external-event"
+                      value={externalForm.eventType}
+                      onChange={(event) =>
+                        setExternalForm({ ...externalForm, eventType: inputValue(event) })
+                      }
+                    >
+                      {EXTERNAL_SUBMISSION_TYPES.map((eventType) => (
+                        <option key={eventType} value={eventType}>
+                          {label(eventType)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label="Official action" htmlFor="external-action">
+                    <select
+                      className={inputClass}
+                      id="external-action"
+                      value={externalForm.action}
+                      onChange={(event) =>
+                        setExternalForm({ ...externalForm, action: inputValue(event) })
+                      }
+                    >
+                      {externalActionsFor(externalRegulatoryStatus).map((action) => (
+                        <option key={action} value={action}>
+                          {label(action)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field
+                  label={
+                    dialog === 'external-submission'
+                      ? 'External reference (optional)'
+                      : 'External reference'
+                  }
+                  htmlFor="external-reference"
+                >
+                  <input
+                    className={inputClass}
+                    id="external-reference"
+                    value={externalForm.externalReference}
+                    onChange={(event) =>
+                      setExternalForm({ ...externalForm, externalReference: inputValue(event) })
+                    }
+                  />
+                </Field>
+                <Field
+                  label={dialog === 'external-submission' ? 'Occurred at' : 'Action at'}
+                  htmlFor="external-occurred"
+                >
+                  <input
+                    className={inputClass}
+                    id="external-occurred"
+                    type="datetime-local"
+                    value={externalForm.occurredAt}
+                    onChange={(event) =>
+                      setExternalForm({ ...externalForm, occurredAt: inputValue(event) })
+                    }
+                  />
+                </Field>
+                {dialog === 'external-submission' ? (
+                  <Field label="Receiving office" htmlFor="external-office">
+                    <input
+                      className={inputClass}
+                      id="external-office"
+                      value={externalForm.receivingOffice}
+                      onChange={(event) =>
+                        setExternalForm({ ...externalForm, receivingOffice: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                ) : null}
+              </div>
+              <Field
+                label="Exact evidence (finalized Document Version)"
+                htmlFor="external-evidence"
+              >
+                <select
+                  className={inputClass}
+                  id="external-evidence"
+                  value={externalForm.evidenceDocumentVersionId}
+                  onChange={(event) =>
+                    setExternalForm({
+                      ...externalForm,
+                      evidenceDocumentVersionId: inputValue(event),
+                    })
+                  }
+                >
+                  <option value="">Select the exact evidence version</option>
+                  {props.documents.map((document) => (
+                    <option key={document.version.id} value={document.version.id}>
+                      {documentOptionLabel(document)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Reason (optional)" htmlFor="external-reason">
+                <textarea
+                  className={`${inputClass} min-h-20 py-2`}
+                  id="external-reason"
+                  value={externalForm.reason}
+                  onChange={(event) =>
+                    setExternalForm({ ...externalForm, reason: inputValue(event) })
+                  }
+                />
+              </Field>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             {dialog === 'prepare' ? (
               <Button
@@ -1403,6 +1820,43 @@ export function AppointmentsWorkspace(props: Props) {
                 onClick={() => void saveSettings()}
               >
                 Record configuration
+              </Button>
+            ) : null}
+            {dialog === 'external-submission' ? (
+              <Button
+                size="default"
+                className="min-h-9"
+                type="button"
+                variant="primary"
+                disabled={
+                  busy ||
+                  externalForm.appointmentVersionId === '' ||
+                  externalForm.occurredAt === '' ||
+                  externalForm.receivingOffice.trim() === '' ||
+                  externalForm.evidenceDocumentVersionId === ''
+                }
+                onClick={() => void saveExternalSubmission()}
+              >
+                Record submission event
+              </Button>
+            ) : null}
+            {dialog === 'external-action' ? (
+              <Button
+                size="default"
+                className="min-h-9"
+                type="button"
+                variant="primary"
+                disabled={
+                  busy ||
+                  externalForm.appointmentVersionId === '' ||
+                  externalForm.action === '' ||
+                  externalForm.occurredAt === '' ||
+                  externalForm.externalReference.trim() === '' ||
+                  externalForm.evidenceDocumentVersionId === ''
+                }
+                onClick={() => void saveExternalAction()}
+              >
+                Record official action
               </Button>
             ) : null}
           </div>

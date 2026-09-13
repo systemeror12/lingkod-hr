@@ -1,6 +1,10 @@
 import { expect, it } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
-import { AppointmentServiceError, AppointmentsService } from './appointments.service';
+import {
+  AppointmentServiceError,
+  AppointmentsService,
+  deriveAppointmentExternalStanding,
+} from './appointments.service';
 import type { AppointmentLinkRole } from './appointments.service';
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
@@ -106,6 +110,84 @@ it.each([
     await expect(call).rejects.toMatchObject({ code, statusCode: 403 });
   },
 );
+
+it('rechecks the external tracking permissions before recording', async () => {
+  const instance = service();
+  const submission = {
+    appointmentVersionId: documentVersionId,
+    eventType: 'SUBMITTED' as const,
+    occurredAt: '2026-10-02T01:00:00.000Z',
+    receivingOffice: 'CSC Field Office',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+  const action = {
+    appointmentVersionId: documentVersionId,
+    action: 'APPROVED' as const,
+    externalReference: 'CSC-2026-0001',
+    actionAt: '2026-10-05T01:00:00.000Z',
+    evidenceDocumentVersionId: documentVersionId,
+  };
+
+  await expect(
+    instance.recordExternalSubmission(context([]), appointmentId, submission),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_EXTERNAL_EVENT_FORBIDDEN', statusCode: 403 });
+  await expect(
+    instance.recordExternalAction(context([]), appointmentId, action),
+  ).rejects.toMatchObject({ code: 'APPOINTMENT_EXTERNAL_ACTION_FORBIDDEN', statusCode: 403 });
+});
+
+it('derives the external standing from the latest recorded event', () => {
+  expect(deriveAppointmentExternalStanding([], [])).toBe('NOT_SUBMITTED');
+  expect(
+    deriveAppointmentExternalStanding(
+      [
+        { eventType: 'SUBMITTED', occurredAt: '2026-10-02T01:00:00.000Z' },
+        { eventType: 'RETURNED', occurredAt: '2026-10-03T01:00:00.000Z' },
+      ],
+      [],
+    ),
+  ).toBe('RETURNED');
+  expect(
+    deriveAppointmentExternalStanding(
+      [
+        { eventType: 'SUBMITTED', occurredAt: '2026-10-02T01:00:00.000Z' },
+        { eventType: 'RETURNED', occurredAt: '2026-10-03T01:00:00.000Z' },
+        { eventType: 'RESUBMITTED', occurredAt: '2026-10-04T01:00:00.000Z' },
+      ],
+      [{ action: 'APPROVED', actionAt: '2026-10-05T01:00:00.000Z' }],
+    ),
+  ).toBe('APPROVED');
+  expect(
+    deriveAppointmentExternalStanding(
+      [{ eventType: 'RESUBMITTED', occurredAt: '2026-10-04T01:00:00.000Z' }],
+      [
+        { action: 'APPROVED', actionAt: '2026-10-05T01:00:00.000Z' },
+        { action: 'INVALIDATED', actionAt: '2026-10-06T01:00:00.000Z' },
+      ],
+    ),
+  ).toBe('INVALIDATED');
+  expect(
+    deriveAppointmentExternalStanding(
+      [{ eventType: 'SUBMITTED', occurredAt: '2026-10-02T01:00:00.000Z' }],
+      [{ action: 'UNKNOWN', actionAt: '2026-10-07T01:00:00.000Z' }],
+    ),
+  ).toBe('SUBMITTED');
+  expect(
+    deriveAppointmentExternalStanding(
+      [{ eventType: 'RESUBMITTED', occurredAt: '2026-10-07T01:00:00.000Z' }],
+      [
+        { action: 'APPROVED', actionAt: '2026-10-05T01:00:00.000Z' },
+        { action: 'INVALIDATED', actionAt: '2026-10-06T01:00:00.000Z' },
+      ],
+    ),
+  ).toBe('RESUBMITTED');
+  expect(
+    deriveAppointmentExternalStanding(
+      [{ eventType: 'SUBMITTED', occurredAt: '2026-10-05T01:00:00.000Z' }],
+      [{ action: 'VALIDATED', actionAt: '2026-10-05T01:00:00.000Z' }],
+    ),
+  ).toBe('VALIDATED');
+});
 
 it('requires the settings permission before configuring the Agency', async () => {
   const instance = service();
