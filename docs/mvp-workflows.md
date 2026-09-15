@@ -324,7 +324,7 @@ An ordinary daytime DTR presents semantic events through the familiar AM In, AM 
 
 ```mermaid
 flowchart TD
-    A[Employee starts leave application] --> B[Select Leave Type, date ranges, details, and supporting Document Versions]
+    A[Employee or authorized recorder starts Leave Application] --> B[Select Leave Type, date ranges, typed details, and supporting Document Versions]
     B --> C[Load policy, schedule, and holiday versions effective for each requested date]
     C --> D{Required input missing or ambiguous?}
     D -- Yes --> E[Save draft and show structured deficiencies]
@@ -333,22 +333,21 @@ flowchart TD
     G --> H{Assessment result}
     H -- INELIGIBLE --> I[Show failed rules]
     H -- INDETERMINATE --> E
-    H -- ELIGIBLE --> J[Submit application with evaluation snapshot]
-    J --> K[Load posted balance and active Leave Credit Commitments]
-    K --> L[HR freezes Leave Credit Certification]
+    H -- ELIGIBLE --> J[Freeze Leave Application Version, attestation, evidence, form, assessment, and Approval Route Version]
+    J --> K[Load posted balance and active Leave Credit Commitments under account lock]
+    K --> L[HR freezes Leave Credit Certification and creates commitments]
     L --> M{Credits or authority sufficient?}
     M -- No --> N[Route as leave without pay or reject according to policy]
     M -- Yes --> O[Route to supervisor recommendation]
-    O --> P{Recommended?}
-    P -- No --> Q[Reject with reason]
-    P -- Yes --> R[Route to approving official]
-    R --> S{Approved?}
-    S -- No --> Q
-    S -- Yes --> T[Post through Leave owning service]
-    T --> U[Insert source-linked Leave Ledger Entry when applicable]
-    U --> V[Update attendance calendar]
-    V --> W[Create payroll impact when applicable]
-    W --> X[Notify employee]
+    O --> P[Record immutable Leave Recommendation]
+    P --> R[Route to authorized approving official]
+    R --> S{Decision}
+    S -- Reject --> Q[Record reason, release commitments, notify Employee]
+    S -- Approve full or exact subset --> T[Freeze Leave Approval Allocation and narrow commitment if needed]
+    T --> U[Post atomically through Leave and owning services]
+    U --> V[Insert source-linked Leave Ledger Entries when applicable]
+    V --> W[Create Attendance input and Payroll Input when applicable]
+    W --> X[Consume commitment, mark POSTED, and notify Employee]
 ```
 
 Calculation preserves the unit prescribed by the governing source. A statutory
@@ -356,12 +355,50 @@ calendar-day benefit is not converted to an ordinary working-day ledger debit,
 and a benefit outside vacation and sick leave credits does not create a posting
 to those accounts.
 
-The posted balance is derived only from immutable Leave Ledger Entries. An
-application may affect currently available credits through a separate Leave
-Credit Commitment at the lifecycle point resolved by the application contract;
-an unposted commitment is never represented as a ledger entry. Configuration
-changes after submission require an explicit re-evaluation and, where already
-certified, recertification.
+The posted balance is derived only from immutable Leave Ledger Entries. HR
+certification atomically creates separate Leave Credit Commitments; an unposted
+commitment is never represented as a ledger entry. An authorized partial approval
+may replace the certified commitment only with a linked, smaller successor.
+Posting consumes the active commitment. Withdrawal, rejection, material return,
+or supersession releases it. Commitments do not silently expire.
+
+A material change after submission creates a new immutable Leave Application
+Version and restarts evaluation, certification, and routing. Reviewer comments,
+assignments, and notifications do not create application versions. Shared
+Approval Routes own tasks and immutable Approval Decisions; Leave owns the
+domain validations and records the certification, Leave Recommendation, and
+Leave Approval Allocation. A negative recommendation remains advisory unless an
+evidenced route provides otherwise.
+
+Posting is a separate atomic Leave-owned command. It uses stable effect keys and
+owning application services to create every required ledger, Attendance, and
+Payroll effect. An authoritative failure rolls back the command and leaves the
+application approved for retry. Notifications and document delivery use the
+outbox after commit.
+
+### Withdrawal, cancellation, and correction
+
+```mermaid
+flowchart TD
+    A{Current effect} -->|Unapproved submission| B[Employee withdraws]
+    B --> C[Cancel route work and release commitment]
+    A -->|Approved or posted| D[Create Leave Cancellation with exact scope and evidence]
+    D --> E[Bind cancellation Approval Route Version]
+    E --> F{Authorized decision}
+    F -->|Reject| G[Retain APPROVED or POSTED application]
+    F -->|Approve| H[Apply cancellation atomically]
+    H --> I[Release unposted commitment or reverse posted ledger effects]
+    I --> J[Create Attendance and Payroll correction handoffs]
+    J --> K[Project application CANCELLED and expose downstream status]
+```
+
+Whole posted cancellation exactly reverses each original ledger entry. Partial
+cancellation fully reverses affected original entries and posts replacements for
+the retained effect. Original effective dates and later posting timestamps
+preserve both effective history and knowledge history. If Attendance is locked
+or a Payroll Input has been consumed, the owning subsystem accepts an idempotent
+adjustment handoff rather than rewriting history. Cancellation remains approved
+with its original posting effective if the atomic application command fails.
 
 ### Mandatory or forced leave
 

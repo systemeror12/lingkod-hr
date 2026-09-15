@@ -450,6 +450,18 @@ _Avoid_: Approved overtime, rest-day absence
 A stable, agency-scoped leave category whose Leave Policy Versions define its entitlement basis, calendar basis, account effect, applicability, and evidence requirements.
 _Avoid_: Leave workflow, credit-based flag
 
+**Leave Application**:
+The stable agency-scoped case through which an Employee requests leave. Its submitted content, evidence, assessments, route binding, certifications, decisions, posting, and cancellation history are preserved through linked records rather than overwritten.
+_Avoid_: Leave form, mutable leave request
+
+**Leave Application Version**:
+An immutable submitted or resubmitted statement of a Leave Application that binds its typed request facts, submission attestation, exact applicable form and supporting Document Versions, accepted Leave Eligibility Assessment, and Approval Route Version.
+_Avoid_: Workflow version, current form data
+
+**Leave Submission Attestation**:
+The evidence that an Employee adopted one Leave Application Version as their request. It is either an authenticated self-submission or an exact signed Document Version recorded by an authorized administrator without impersonating the Employee.
+_Avoid_: Submitter identity, administrator attestation
+
 **Leave Policy Version**:
 An immutable, effective-dated, agency-scoped bundle governing one Leave Type. It binds typed rule parameters, the applicable national rules, evidence-backed Agency configuration, authority references, and calculation inputs needed to reproduce an evaluation.
 _Avoid_: Editable leave policy, runtime rule overlay, administrator formula
@@ -463,15 +475,15 @@ An immutable, source-linked posting that changes one Leave Account by a signed q
 _Avoid_: Pending reservation, editable leave balance
 
 **Leave Credit Commitment**:
-A claim against a Leave Account created by an applicable request lifecycle. It reduces currently available credits without changing the posted ledger balance.
-_Avoid_: Pending ledger entry, posted deduction
+A certified claim against a Leave Account for an unposted request. It reduces currently available credits without changing the posted ledger balance and is consumed by posting or released when its certified basis no longer authorizes the claim; an authorized partial approval may replace it only with a linked, smaller successor.
+_Avoid_: Pending ledger entry, posted deduction, submitted request hold
 
 **Mandatory Leave Assessment**:
 An explainable, as-of evaluation of whether an Employee is subject to a mandatory or forced leave obligation under an applicable Leave Policy Version. Any resulting obligation is fulfilled through an ordinary Leave Application rather than a separate leave balance or application type.
 _Avoid_: Mandatory leave account, mandatory leave application
 
 **Leave Calculation Segment**:
-An immutable portion of a Leave Application calculated under one combination of Leave Policy Version, schedule, holiday calendar, and source-prescribed unit.
+An immutable portion of a Leave Application Version calculated under one combination of Leave Policy Version, schedule, holiday calendar, and source-prescribed unit.
 _Avoid_: Requested days field, editable calculation line
 
 **Leave Eligibility Assessment**:
@@ -479,8 +491,28 @@ An explainable evaluation that records an `ELIGIBLE`, `INELIGIBLE`, or `INDETERM
 _Avoid_: Eligibility flag, approval decision
 
 **Leave Credit Certification**:
-An immutable HR attestation of the posted balances, active Leave Credit Commitments, current application quantities, and resulting available credits for the affected Leave Accounts using a stated effective date and ledger knowledge cutoff.
+A permanently historical HR attestation of the posted balances, active Leave Credit Commitments, current application quantities, and resulting available credits for the affected Leave Accounts using a stated effective date and ledger knowledge cutoff. Its current authority is derived from the continued validity of the application version, assessment, commitment, and accounts it binds.
 _Avoid_: Current balance, eligibility assessment
+
+**Leave Recommendation**:
+An immutable Supervisor opinion on the operational acceptability of one Leave Application Version. It informs but does not replace the authorized approving official's decision.
+_Avoid_: Leave approval, supervisor veto
+
+**Leave Approval Allocation**:
+The authorized approving official's immutable allocation of one Leave Application Version across exact approved periods and their policy-permitted charged, paid, or unpaid quantities. It may narrow the request but cannot add dates, increase quantity, or rewrite the Employee's submitted facts.
+_Avoid_: Edited application, implicit leave-without-pay conversion
+
+**Leave Posting**:
+The atomic Leave-owned act that consumes each applicable certified Leave Credit Commitment and creates every required source-linked ledger, Attendance, and Payroll handoff for one approved Leave Application Version.
+_Avoid_: Approval, ledger-only posting, asynchronous partial posting
+
+**Leave Withdrawal**:
+An Employee's evidenced decision to end a submitted Leave Application before authorized approval. It cancels unfinished route work and releases any active Leave Credit Commitment without reversing an approval or posted effect.
+_Avoid_: Leave Cancellation, administrator cancellation
+
+**Leave Cancellation**:
+The authorized record that ends all or an exact subset of an approved or posted Leave Application while preserving its original application, certification, recommendation, approval, commitment, and posting history.
+_Avoid_: Leave Withdrawal, deleting leave, editing posted leave
 
 ## Workforce Relationships
 

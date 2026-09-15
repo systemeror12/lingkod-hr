@@ -3,7 +3,7 @@
 **Document status:** Draft for review  
 **Model level:** Logical ERD  
 **Primary profile:** Civilian Philippine National Government Agency  
-**Version:** 1.1
+**Version:** 1.2
 **Date:** September 15, 2026
 
 ---
@@ -21,7 +21,6 @@
 - Normal application deletion is restricted. Historical transactions are voided, superseded, deactivated, or archived.
 - PostgreSQL Row-Level Security and physical indexes will be specified in the physical-schema phase.
 - Cross-module actions go through owning application services rather than direct table updates.
-
 
 ## Relationship diagram
 
@@ -51,14 +50,26 @@ erDiagram
     LEAVE_ACCOUNTS ||--o{ LEAVE_LEDGER_ENTRIES : records
     LEAVE_ACCOUNTS ||--o{ LEAVE_CREDIT_COMMITMENTS : reserves
     EMPLOYEES ||--o{ LEAVE_APPLICATIONS : submits
-    LEAVE_APPLICATIONS ||--|{ LEAVE_APPLICATION_PERIODS : requests
-    LEAVE_APPLICATIONS ||--|{ LEAVE_CALCULATION_SEGMENTS : calculated_as
+    LEAVE_APPLICATIONS ||--o{ LEAVE_APPLICATION_DRAFT_PERIODS : drafts
+    LEAVE_APPLICATIONS ||--o{ LEAVE_APPLICATION_DRAFT_DOCUMENTS : drafts
+    LEAVE_APPLICATIONS ||--o{ LEAVE_APPLICATION_VERSIONS : preserves
+    LEAVE_APPLICATION_VERSIONS ||--|{ LEAVE_APPLICATION_PERIODS : requests
+    LEAVE_APPLICATION_VERSIONS ||--o{ LEAVE_APPLICATION_VERSION_DOCUMENTS : supported_by
+    LEAVE_APPLICATION_VERSIONS ||--|{ LEAVE_CALCULATION_SEGMENTS : calculated_as
     LEAVE_POLICY_VERSIONS ||--o{ LEAVE_CALCULATION_SEGMENTS : governs
-    LEAVE_APPLICATIONS ||--o{ LEAVE_ELIGIBILITY_ASSESSMENTS : evaluated_by
-    LEAVE_APPLICATIONS ||--o{ LEAVE_CREDIT_CERTIFICATIONS : certified_by
+    LEAVE_APPLICATION_VERSIONS ||--o{ LEAVE_ELIGIBILITY_ASSESSMENTS : evaluated_by
+    LEAVE_APPLICATION_VERSIONS ||--o| LEAVE_CREDIT_CERTIFICATIONS : certified_by
     LEAVE_CREDIT_CERTIFICATIONS ||--|{ LEAVE_CREDIT_CERTIFICATION_LINES : contains
     LEAVE_ACCOUNTS ||--o{ LEAVE_CREDIT_CERTIFICATION_LINES : certifies
-    LEAVE_APPLICATIONS ||--o{ LEAVE_CREDIT_COMMITMENTS : may_create
+    LEAVE_APPLICATION_VERSIONS ||--o{ LEAVE_CREDIT_COMMITMENTS : may_create
+    LEAVE_APPLICATION_VERSIONS ||--o| LEAVE_RECOMMENDATIONS : recommended_by
+    LEAVE_APPLICATION_VERSIONS ||--o| LEAVE_APPROVAL_ALLOCATIONS : approved_as
+    LEAVE_APPROVAL_ALLOCATIONS ||--|{ LEAVE_APPROVAL_ALLOCATION_LINES : contains
+    LEAVE_APPLICATION_VERSIONS ||--o| LEAVE_POSTINGS : posted_by
+    LEAVE_POSTINGS ||--o{ LEAVE_POSTING_EFFECTS : creates
+    LEAVE_APPLICATIONS ||--o{ LEAVE_CANCELLATIONS : corrected_by
+    LEAVE_CANCELLATIONS ||--|{ LEAVE_CANCELLATION_SCOPES : targets
+    LEAVE_CANCELLATIONS ||--o{ LEAVE_CANCELLATION_EFFECTS : creates
     EMPLOYEES ||--o{ MANDATORY_LEAVE_ASSESSMENTS : assessed_for
     LEAVE_POLICY_VERSIONS ||--o{ MANDATORY_LEAVE_ASSESSMENTS : governs
     EMPLOYEES ||--o{ LEAVE_MONETIZATION_REQUESTS : requests
@@ -71,7 +82,7 @@ erDiagram
 Reusable schedule definition
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ------------------ | ------------ | ----- | ------------------------- | --------------- |
 | id | uuid | No | PK | Schedule |
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Code |
@@ -83,12 +94,13 @@ Reusable schedule definition
 - Unique `(agency_id, code)`.
 
 **Deletion behavior:** Inactivate.
+
 ## `work_schedule_versions`
 
 Effective-dated schedule rules
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ----------------------------- | ------------ | ----- | -------------------- | -------------------------------------------------- |
 | id | uuid | No | PK | Version |
 | agency_id | uuid | No | FK agencies | Tenant |
 | work_schedule_id | uuid | No | FK work_schedules | Schedule |
@@ -108,6 +120,7 @@ Effective-dated schedule rules
 - Exactly seven complete Day Rules; no implicit grace or timestamp rounding.
 
 **Deletion behavior:** Supersede.
+
 ## `work_schedule_day_rules`
 
 One fixed, flexible, or rest rule for a weekday, including required minutes, duty interval, optional flexible start/core window, Event Collection Window, and event pattern. Duty may end on the next calendar day.
@@ -121,7 +134,7 @@ Ordered unpaid break intervals belonging to a Day Rule. A break may end on the n
 Authorized work arrangement
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ------------------ | ------------ | ----- | ---------------------------- | --------------- |
 | id | uuid | No | PK | Arrangement |
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Code |
@@ -133,6 +146,7 @@ Authorized work arrangement
 - Unique `(agency_id, code)`.
 
 **Deletion behavior:** Inactivate.
+
 ## `work_arrangement_versions`
 
 Immutable effective-dated arrangement mode, permitted schedule types, scoped Holiday Calendar, exact authority Document Version, and approving authority. Arrangement modes are ONSITE, WORK_FROM_HOME, HYBRID, FIELD, or OTHER; one-off official business is Attendance Context.
@@ -142,7 +156,7 @@ Immutable effective-dated arrangement mode, permitted schedule types, scoped Hol
 Effective employee schedule and arrangement
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ----------------------------- | ------------ | ----- | ---------------------------- | -------------------- |
 | id | uuid | No | PK | Assignment |
 | agency_id | uuid | No | FK agencies | Tenant |
 | employee_id | uuid | No | FK employees | Employee |
@@ -158,12 +172,13 @@ Effective employee schedule and arrangement
 - No conflicting overlapping primary schedule assignments.
 
 **Deletion behavior:** End-date.
+
 ## `holiday_calendars`
 
 Agency/location holiday calendar
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ------------------ | ------------ | ----- | ---------------------------- | ------------------------ |
 | id | uuid | No | PK | Calendar |
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Code |
@@ -177,6 +192,7 @@ Agency/location holiday calendar
 - Unique `(agency_id, code)`.
 
 **Deletion behavior:** Inactivate.
+
 ## `holiday_calendar_versions`
 
 Immutable effective-dated calendar version with exact authority evidence and DRAFT, ACTIVE, or SUPERSEDED status.
@@ -186,7 +202,7 @@ Immutable effective-dated calendar version with exact authority evidence and DRA
 Effective holiday/day classification
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| --------------------------- | ------------ | ----- | ---------------------------- | ------------------------------------------------------------------------------------- |
 | id | uuid | No | PK | Holiday |
 | agency_id | uuid | No | FK agencies | Tenant |
 | holiday_calendar_version_id | uuid | No | FK holiday_calendar_versions | Calendar version |
@@ -200,12 +216,13 @@ Effective holiday/day classification
 - Unique `(holiday_calendar_version_id, holiday_date, day_type)`.
 
 **Deletion behavior:** Correct through version/replacement.
+
 ## `attendance_periods`
 
 Review and payroll-cutoff period
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ----------------------- | ------------ | ----- | --------------------- | -------------------------------------------- |
 | id | uuid | No | PK | Period |
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Period code |
@@ -220,12 +237,13 @@ Review and payroll-cutoff period
 - No overlapping active primary periods for the same payroll profile.
 
 **Deletion behavior:** Retain.
+
 ## `attendance_events`
 
 Immutable raw manual or web-clock event
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ------------------------ | ------------ | ----- | --------------------- | -------------------------------------- |
 | id | uuid | No | PK | Event |
 | agency_id | uuid | No | FK agencies | Tenant |
 | employee_id | uuid | No | FK employees | Employee |
@@ -242,6 +260,7 @@ Immutable raw manual or web-clock event
 - No biometric source enum in MVP.
 
 **Deletion behavior:** Retain; never hard-delete.
+
 ## `attendance_contexts`
 
 Immutable whole-Work-Date or timed official-business, official-travel, training, or approved non-leave absence input. It requires the recorder, reason, and either a linked authoritative source record or exact evidence Document Version. It carries no separate Attendance approval workflow.
@@ -251,7 +270,7 @@ Immutable whole-Work-Date or timed official-business, official-travel, training,
 Calculated daily attendance result
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ------------------------------ | ------------ | ----- | ---------------------------- | ---------------------------------------------------------------------- |
 | id | uuid | No | PK | Attendance day |
 | agency_id | uuid | No | FK agencies | Tenant |
 | attendance_period_id | uuid | No | FK attendance_periods | Period |
@@ -285,6 +304,7 @@ Calculated daily attendance result
 - Negative minute values prohibited.
 
 **Deletion behavior:** Retain all versions.
+
 ## `attendance_day_segments`
 
 Non-overlapping immutable intervals belonging to one Attendance Day calculation version. Each segment records expected or outside-schedule relation, worked/context/leave/uncovered classification, an optional mutually exclusive deficit classification, holiday classification, and source references.
@@ -294,7 +314,7 @@ Non-overlapping immutable intervals belonging to one Attendance Day calculation 
 Detected attendance issue
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ----------------- | ------------ | ----- | ------------------ | ---------------------------------------------------------------------------------------- |
 | id | uuid | No | PK | Exception |
 | agency_id | uuid | No | FK agencies | Tenant |
 | attendance_day_id | uuid | No | FK attendance_days | Day |
@@ -308,12 +328,13 @@ Detected attendance issue
 - Every MVP Attendance Exception blocks approval until resolved or formally waived.
 
 **Deletion behavior:** Retain.
+
 ## `attendance_corrections`
 
 Correction request without overwriting raw events
 
 | Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
+| ---------------------------- | ------------ | ----- | --------------------- | --------------------------------------------------------------------------- |
 | id | uuid | No | PK | Correction |
 | agency_id | uuid | No | FK agencies | Tenant |
 | attendance_day_id | uuid | No | FK attendance_days | Day |
@@ -335,6 +356,7 @@ Correction request without overwriting raw events
 - Applied correction preserves the original event or context and creates the approved effect, a new Attendance Day calculation version, or a locked-period adjustment.
 
 **Deletion behavior:** Retain.
+
 ## `leave_types`
 
 Stable leave category
@@ -464,7 +486,7 @@ Immutable leave-credit transaction
 Unposted claim considered when calculating available credits
 
 | Column                | Logical type | Null? | Key / rule        | Description                                   |
-| --------------------- | ------------ | ----- | ----------------- | --------------------------------------------- |
+| ---------------------- | ------------ | ----- | --------------------------- | ------------------------------------------------ |
 | id                    | uuid         | No    | PK                | Commitment                                    |
 | agency_id             | uuid         | No    | FK agencies       | Tenant                                        |
 | leave_account_id      | uuid         | No    | FK leave_accounts | Reserved account                              |
@@ -472,6 +494,7 @@ Unposted claim considered when calculating available credits
 | source_type           | string       | No    |                   | Request kind                                  |
 | source_id             | uuid         | No    |                   | Request                                       |
 | source_commitment_key | string       | No    |                   | Stable occurrence within the request          |
+| succeeds_commitment_id | uuid         | Yes   | FK leave_credit_commitments | Larger certified commitment narrowed by approval |
 | status                | enum         | No    |                   | ACTIVE, CONSUMED, RELEASED                    |
 | effective_from        | datetime     | No    |                   | Start of claim                                |
 | ended_at              | datetime     | Yes   |                   | Consumption or release time                   |
@@ -480,67 +503,161 @@ Unposted claim considered when calculating available credits
 
 - Unique `(leave_account_id, source_type, source_id, source_commitment_key)`.
 - An active commitment affects available credits but never the posted balance.
-- The application contract determines the lifecycle transition that creates or
-  releases it.
+- HR certification creates it under account lock. Posting consumes it;
+  withdrawal, rejection, material return, invalidation, or supersession releases
+  it.
+- A partial approval may release a commitment and create one linked successor
+  with no greater quantity in the same account. Other replacement requires
+  recertification.
 
 **Deletion behavior:** Retain.
 
 ## `leave_applications`
 
-Government leave application
+Stable government leave case
 
 | Column        | Logical type | Null? | Key / rule     | Description                                                                                                                                       |
-| ------------- | ------------ | ----- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------ | ------------ | ----- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | id            | uuid         | No    | PK             | Application                                                                                                                                       |
 | agency_id     | uuid         | No    | FK agencies    | Tenant                                                                                                                                            |
 | employee_id   | uuid         | No    | FK employees   | Employee                                                                                                                                          |
-| leave_type_id | uuid         | No    | FK leave_types | Type                                                                                                                                              |
-| accepted_assessment_id | uuid | Yes | FK leave_eligibility_assessments | Assessment bound to the current workflow version |
-| workflow_version | integer | No | | Application workflow version |
-| status        | enum         | No    |                | DRAFT, SUBMITTED, FOR_CERTIFICATION, FOR_RECOMMENDATION, FOR_APPROVAL, APPROVED, REJECTED, NEEDS_INFORMATION, CANCEL_REQUESTED, CANCELLED, POSTED |
-| reason        | string       | Yes   |                | Reason                                                                                                                                            |
-| submitted_at  | datetime     | Yes   |                | Submission                                                                                                                                        |
+| draft_leave_type_id      | uuid         | No    | FK leave_types                | Mutable working type                                                                                                                                         |
+| draft_reason             | string       | Yes   |                               | Mutable working reason                                                                                                                                       |
+| draft_policy_details     | json         | No    | Validated typed schema        | Mutable policy-specific facts                                                                                                                                |
+| draft_commutation_choice | enum         | Yes   |                               | REQUESTED, NOT_REQUESTED where applicable                                                                                                                    |
+| current_version_id       | uuid         | Yes   | FK leave_application_versions | Current submitted version                                                                                                                                    |
+| status                   | enum         | No    |                               | DRAFT, SUBMITTED, FOR_CERTIFICATION, FOR_RECOMMENDATION, FOR_APPROVAL, APPROVED, REJECTED, NEEDS_INFORMATION, WITHDRAWN, CANCEL_REQUESTED, CANCELLED, POSTED |
+| created_by_membership_id | uuid         | No    | FK agency_memberships         | Creator                                                                                                                                                      |
+| created_at               | datetime     | No    |                               | Creation                                                                                                                                                     |
 
 **Constraints and indexes**
 
-- At least one requested period is required before submission.
-- Submission binds one immutable effective Leave Eligibility Assessment.
+- One current version belongs to the same application and Agency.
 - No overlapping approved/posted leave unless the bound policy assessment
   allows it.
-- Posted application must have ledger/payroll effects where applicable.
+- `POSTED` requires one complete Leave Posting. `CANCELLED` requires one applied
+  Leave Cancellation.
 
 **Deletion behavior:** Retain.
 
+## `leave_application_draft_periods`
+
+Mutable requested periods before submission or material resubmission
+
+| Column               | Logical type | Null? | Key / rule            | Description     |
+| -------------------- | ------------ | ----- | --------------------- | --------------- |
+| id                   | uuid         | No    | PK                    | Draft period    |
+| agency_id            | uuid         | No    | FK agencies           | Tenant          |
+| leave_application_id | uuid         | No    | FK leave_applications | Stable case     |
+| sequence_no          | integer      | No    |                       | Display order   |
+| date_from            | date         | No    |                       | Inclusive start |
+| date_to              | date         | No    |                       | Inclusive end   |
+
+**Deletion behavior:** Replaceable while preparing the next submitted version.
+
+## `leave_application_draft_documents`
+
+Mutable exact-document links before submission or material resubmission
+
+| Column               | Logical type | Null? | Key / rule                   | Description      |
+| -------------------- | ------------ | ----- | ---------------------------- | ---------------- |
+| id                   | uuid         | No    | PK                           | Draft link       |
+| agency_id            | uuid         | No    | FK agencies                  | Tenant           |
+| leave_application_id | uuid         | No    | FK leave_applications        | Stable case      |
+| document_version_id  | uuid         | No    | FK document_versions         | Exact document   |
+| purpose_code         | string       | No    | Validated policy requirement | Why it is linked |
+
+**Deletion behavior:** Replaceable while preparing the next submitted version;
+the underlying Document Version follows Documents retention rules.
+
+## `leave_application_versions`
+
+Immutable submitted or resubmitted application statement
+
+| Column                            | Logical type | Null? | Key / rule                       | Description                                |
+| --------------------------------- | ------------ | ----- | -------------------------------- | ------------------------------------------ |
+| id                                | uuid         | No    | PK                               | Version                                    |
+| agency_id                         | uuid         | No    | FK agencies                      | Tenant                                     |
+| leave_application_id              | uuid         | No    | FK leave_applications            | Stable case                                |
+| version_no                        | integer      | No    |                                  | Case-local version                         |
+| leave_type_id                     | uuid         | No    | FK leave_types                   | Requested type                             |
+| accepted_assessment_id            | uuid         | No    | FK leave_eligibility_assessments | Accepted evaluation                        |
+| approval_route_version_id         | uuid         | No    | FK approval_route_versions       | Bound route                                |
+| approval_request_id               | uuid         | No    | FK approval_requests             | Route instance                             |
+| form_template_document_version_id | uuid         | No    | FK document_versions             | Exact applicable form                      |
+| attestation_type                  | enum         | No    |                                  | AUTHENTICATED_SUBMISSION, SIGNED_DOCUMENT  |
+| attestation_document_version_id   | uuid         | Yes   | FK document_versions             | Exact signed submission                    |
+| submitted_by_membership_id        | uuid         | No    | FK agency_memberships            | Employee or authorized recorder            |
+| employee_attested_at              | datetime     | Yes   |                                  | Authenticated adoption time when available |
+| submission_method                 | string       | No    |                                  | Evidence-backed channel                    |
+| received_at                       | datetime     | No    |                                  | Time received by LingkodHR or recorder     |
+| reason                            | string       | Yes   |                                  | Employee reason                            |
+| policy_details                    | json         | No    | Validated typed schema           | Policy-specific facts                      |
+| commutation_choice                | enum         | Yes   |                                  | REQUESTED, NOT_REQUESTED where applicable  |
+| submitted_at                      | datetime     | No    |                                  | Submission                                 |
+
+**Constraints and indexes**
+
+- Unique `(leave_application_id, version_no)`.
+- An authenticated submission requires the submitting membership to represent
+  the Employee. A recorded submission requires an exact signed Document Version
+  and a separately authorized recorder.
+- Version facts, periods, submitted document links, accepted assessment, and
+  route binding are immutable after submission. Later rendered form links may
+  be appended but never edited or removed.
+
+**Deletion behavior:** Retain all versions.
+
 ## `leave_application_periods`
 
-Inclusive requested date range in a Leave Application
+Inclusive requested date range in a Leave Application Version
 
 | Column               | Logical type | Null? | Key / rule            | Description                   |
-| -------------------- | ------------ | ----- | --------------------- | ----------------------------- |
+| ---------------------------- | ------------ | ----- | ----------------------------- | ----------------------------- |
 | id                   | uuid         | No    | PK                    | Period                        |
 | agency_id            | uuid         | No    | FK agencies           | Tenant                        |
-| leave_application_id | uuid         | No    | FK leave_applications | Application                   |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Submitted version             |
 | date_from            | date         | No    |                       | Inclusive start               |
 | date_to              | date         | No    |                       | Inclusive end                 |
 | sequence_no          | integer      | No    |                       | Display and calculation order |
 
 **Constraints and indexes**
 
-- Unique `(leave_application_id, sequence_no)`.
-- Periods within one application may not overlap.
+- Unique `(leave_application_version_id, sequence_no)`.
+- Periods within one submitted version may not overlap.
 
-**Deletion behavior:** Mutable only while the application is a draft; retained
-after submission.
+**Deletion behavior:** Retain with the submitted version. Submission-time links
+are frozen; later generated form links are append-only.
+
+## `leave_application_version_documents`
+
+Exact supporting, rendered, or signed document linked to one submitted version
+
+| Column                       | Logical type | Null? | Key / rule                    | Description      |
+| ---------------------------- | ------------ | ----- | ----------------------------- | ---------------- |
+| id                           | uuid         | No    | PK                            | Link             |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant           |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Version          |
+| document_version_id          | uuid         | No    | FK document_versions          | Exact document   |
+| purpose_code                 | string       | No    | Validated policy requirement  | Why it is linked |
+
+**Constraints and indexes**
+
+- Unique `(leave_application_version_id, document_version_id, purpose_code)`.
+- Documents owns classification, version eligibility, and access. Leave owns
+  whether the purpose satisfies the bound policy.
+
+**Deletion behavior:** Retain with the submitted version.
 
 ## `leave_eligibility_assessments`
 
 Explainable, versioned eligibility result
 
 | Column               | Logical type | Null? | Key / rule            | Description                                       |
-| -------------------- | ------------ | ----- | --------------------- | ------------------------------------------------- |
+| ---------------------------- | ------------ | ----- | ----------------------------- | ------------------------------------------------- |
 | id                   | uuid         | No    | PK                    | Assessment                                        |
 | agency_id            | uuid         | No    | FK agencies           | Tenant                                            |
-| leave_application_id | uuid         | No    | FK leave_applications | Application                                       |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Submitted version                                 |
 | assessment_no        | integer      | No    |                       | Application-local version                         |
 | result               | enum         | No    |                       | ELIGIBLE, INELIGIBLE, INDETERMINATE               |
 | input_facts          | json         | No    |                       | Effective-dated facts and exact source references |
@@ -550,10 +667,9 @@ Explainable, versioned eligibility result
 
 **Constraints and indexes**
 
-- Unique `(leave_application_id, assessment_no)`.
+- Unique `(leave_application_version_id, assessment_no)`.
 - Assessment and its calculation segments are immutable.
-- A submitted application identifies the assessment accepted for that workflow
-  version.
+- A submitted version identifies exactly one accepted assessment.
 
 **Deletion behavior:** Retain all versions.
 
@@ -562,10 +678,10 @@ Explainable, versioned eligibility result
 Immutable quantity calculation for one effective portion of a request
 
 | Column                    | Logical type | Null? | Key / rule                       | Description                                                 |
-| ------------------------- | ------------ | ----- | -------------------------------- | ----------------------------------------------------------- |
+| ---------------------------- | ------------ | ----- | -------------------------------- | ----------------------------------------------------------- |
 | id                        | uuid         | No    | PK                               | Segment                                                     |
 | agency_id                 | uuid         | No    | FK agencies                      | Tenant                                                      |
-| leave_application_id      | uuid         | No    | FK leave_applications            | Application                                                 |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions    | Submitted version                                           |
 | eligibility_assessment_id | uuid         | No    | FK leave_eligibility_assessments | Owning assessment                                           |
 | policy_version_id         | uuid         | No    | FK leave_policy_versions         | Effective policy                                            |
 | schedule_assignment_id    | uuid         | Yes   | FK schedule_assignments          | Effective schedule, if required                             |
@@ -590,12 +706,12 @@ Immutable quantity calculation for one effective portion of a request
 Certified balance for an application
 
 | Column                     | Logical type | Null? | Key / rule                       | Description                  |
-| -------------------------- | ------------ | ----- | -------------------------------- | ---------------------------- |
+| ---------------------------- | ------------ | ----- | -------------------------------- | ---------------------------- |
 | id                         | uuid         | No    | PK                               | Certification                |
 | agency_id                  | uuid         | No    | FK agencies                      | Tenant                       |
-| leave_application_id       | uuid         | No    | FK leave_applications            | Application                  |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions    | Submitted version            |
 | eligibility_assessment_id  | uuid         | No    | FK leave_eligibility_assessments | Exact assessment             |
-| workflow_version           | integer      | No    |                                  | Application workflow version |
+| approval_decision_id         | uuid         | No    | FK approval_decisions            | Completed certification step |
 | balance_as_of              | date         | No    |                                  | Effective balance date       |
 | ledger_recorded_through    | datetime     | No    |                                  | Ledger knowledge cutoff      |
 | certified_by_membership_id | uuid         | No    | FK agency_memberships            | Certifier                    |
@@ -603,8 +719,11 @@ Certified balance for an application
 
 **Constraints and indexes**
 
-- At most one certification per workflow version; recertification creates a new
-  workflow version rather than rewriting the prior record.
+- At most one certification per Leave Application Version. Recertification
+  requires a new version rather than rewriting the prior record.
+- Current authority is derived from the continued validity of the bound version,
+  assessment, commitments, and accounts. The historical certification has no
+  mutable validity flag.
 
 **Deletion behavior:** Retain.
 
@@ -613,7 +732,7 @@ Certified balance for an application
 Certified balance facts for one affected Leave Account
 
 | Column                        | Logical type | Null? | Key / rule                     | Description                      |
-| ----------------------------- | ------------ | ----- | ------------------------------ | -------------------------------- |
+| ----------------------------- | ------------ | ----- | ------------------------------ | ----------------------------------- |
 | id                            | uuid         | No    | PK                             | Line                             |
 | agency_id                     | uuid         | No    | FK agencies                    | Tenant                           |
 | leave_credit_certification_id | uuid         | No    | FK leave_credit_certifications | Certification                    |
@@ -622,6 +741,7 @@ Certified balance facts for one affected Leave Account
 | active_commitments            | decimal      | No    |                                | Other active claims included     |
 | application_quantity          | decimal      | No    |                                | Current request effect           |
 | available_after_application   | decimal      | No    |                                | Certified remainder              |
+| leave_credit_commitment_id    | uuid         | No    | FK leave_credit_commitments    | Commitment created by certification |
 
 **Constraints and indexes**
 
@@ -629,6 +749,183 @@ Certified balance facts for one affected Leave Account
 - Lines and their certification header are immutable.
 
 **Deletion behavior:** Retain.
+
+## `leave_recommendations`
+
+Immutable advisory Supervisor decision
+
+| Column                       | Logical type | Null? | Key / rule                    | Description                             |
+| ---------------------------- | ------------ | ----- | ----------------------------- | --------------------------------------- |
+| id                           | uuid         | No    | PK                            | Recommendation                          |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                                  |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Exact version                           |
+| approval_decision_id         | uuid         | No    | FK approval_decisions         | Shared route decision                   |
+| outcome                      | enum         | No    |                               | RECOMMEND_APPROVAL, RECOMMEND_REJECTION |
+| reason                       | string       | Yes   |                               | Required for negative recommendation    |
+| recommended_at               | datetime     | No    |                               | Decision time                           |
+
+**Constraints and indexes**
+
+- At most one effective recommendation per version.
+- A negative recommendation remains advisory unless the bound route provides an
+  evidenced terminal outcome.
+
+**Deletion behavior:** Retain.
+
+## `leave_approval_allocations`
+
+Authorized final disposition of one submitted version
+
+| Column                       | Logical type | Null? | Key / rule                    | Description         |
+| ---------------------------- | ------------ | ----- | ----------------------------- | ------------------- |
+| id                           | uuid         | No    | PK                            | Allocation          |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant              |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Exact version       |
+| approval_decision_id         | uuid         | No    | FK approval_decisions         | Authorized decision |
+| decided_at                   | datetime     | No    |                               | Decision time       |
+
+**Constraints and indexes**
+
+- Exactly one allocation belongs to an approved version.
+- Allocation lines may narrow but never enlarge the requested periods or
+  quantities.
+
+**Deletion behavior:** Retain.
+
+## `leave_approval_allocation_lines`
+
+One exact approved period and quantity
+
+| Column                       | Logical type | Null? | Key / rule                    | Description                                  |
+| ---------------------------- | ------------ | ----- | ----------------------------- | -------------------------------------------- |
+| id                           | uuid         | No    | PK                            | Line                                         |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                                       |
+| leave_approval_allocation_id | uuid         | No    | FK leave_approval_allocations | Allocation                                   |
+| sequence_no                  | integer      | No    |                               | Display order                                |
+| date_from                    | date         | No    |                               | Inclusive start                              |
+| date_to                      | date         | No    |                               | Inclusive end                                |
+| allocation_kind              | enum         | No    |                               | LEAVE_ACCOUNT, LEAVE_WITHOUT_PAY, NON_CREDIT |
+| leave_account_id             | uuid         | Yes   | FK leave_accounts             | Charged account                              |
+| quantity                     | decimal      | No    |                               | Approved quantity                            |
+| unit                         | enum         | No    |                               | Source-prescribed unit                       |
+
+**Constraints and indexes**
+
+- Unique `(leave_approval_allocation_id, sequence_no)`.
+- A Leave Account is required only for `LEAVE_ACCOUNT`; the bound policy must
+  authorize every allocation kind and unit.
+
+**Deletion behavior:** Retain.
+
+## `leave_postings`
+
+Atomic source record for approved leave effects
+
+| Column                       | Logical type | Null? | Key / rule                    | Description               |
+| ---------------------------- | ------------ | ----- | ----------------------------- | ------------------------- |
+| id                           | uuid         | No    | PK                            | Posting                   |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                    |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Exact version             |
+| leave_approval_allocation_id | uuid         | No    | FK leave_approval_allocations | Exact approved effect     |
+| idempotency_key              | string       | No    |                               | Retry identity            |
+| posted_by_membership_id      | uuid         | Yes   | FK agency_memberships         | Actor or system initiator |
+| posted_at                    | datetime     | No    |                               | Commit time               |
+
+**Constraints and indexes**
+
+- One posting per approved version and unique Agency idempotency key.
+- The posting record, every required owner effect, commitment consumption,
+  application projection, Audit Events, and outbox records commit atomically.
+
+**Deletion behavior:** Never delete.
+
+## `leave_posting_effects`
+
+Owner-issued result of one Leave Posting
+
+| Column           | Logical type | Null? | Key / rule        | Description                                   |
+| ---------------- | ------------ | ----- | ----------------- | --------------------------------------------- |
+| id               | uuid         | No    | PK                | Effect                                        |
+| agency_id        | uuid         | No    | FK agencies       | Tenant                                        |
+| leave_posting_id | uuid         | No    | FK leave_postings | Posting                                       |
+| effect_kind      | enum         | No    |                   | LEDGER_ENTRY, ATTENDANCE_INPUT, PAYROLL_INPUT |
+| effect_key       | string       | No    |                   | Stable source key                             |
+| owner_record_id  | uuid         | No    |                   | Record returned by owning service             |
+
+**Constraints and indexes**
+
+- Unique `(leave_posting_id, effect_key)` and unique owner target per kind.
+
+**Deletion behavior:** Never delete.
+
+## `leave_cancellations`
+
+Authorized whole or partial cancellation of approved or posted leave
+
+| Column                       | Logical type | Null? | Key / rule                    | Description                         |
+| ---------------------------- | ------------ | ----- | ----------------------------- | ----------------------------------- |
+| id                           | uuid         | No    | PK                            | Cancellation                        |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                              |
+| leave_application_id         | uuid         | No    | FK leave_applications         | Stable case                         |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Approved version                    |
+| leave_posting_id             | uuid         | Yes   | FK leave_postings             | Posted effect, if any               |
+| scope_type                   | enum         | No    |                               | WHOLE, PARTIAL                      |
+| reason                       | string       | No    |                               | Requested basis                     |
+| evidence_document_version_id | uuid         | Yes   | FK document_versions          | Exact evidence                      |
+| approval_route_version_id    | uuid         | No    | FK approval_route_versions    | Bound cancellation route            |
+| approval_request_id          | uuid         | No    | FK approval_requests          | Route instance                      |
+| decision_status              | enum         | No    |                               | REQUESTED, APPROVED, REJECTED       |
+| effect_status                | enum         | No    |                               | NOT_READY, PENDING, APPLIED, FAILED |
+| requested_by_membership_id   | uuid         | No    | FK agency_memberships         | Employee or recorder                |
+| requested_at                 | datetime     | No    |                               | Request time                        |
+
+**Constraints and indexes**
+
+- Approval and effect application remain separate facts.
+- `APPLIED` requires every required cancellation effect. `FAILED` retains the
+  approval while the original posting remains effective.
+
+**Deletion behavior:** Retain.
+
+## `leave_cancellation_scopes`
+
+Exact approved period and quantity targeted by cancellation
+
+| Column                      | Logical type | Null? | Key / rule                         | Description         |
+| --------------------------- | ------------ | ----- | ---------------------------------- | ------------------- |
+| id                          | uuid         | No    | PK                                 | Scope line          |
+| agency_id                   | uuid         | No    | FK agencies                        | Tenant              |
+| leave_cancellation_id       | uuid         | No    | FK leave_cancellations             | Cancellation        |
+| approval_allocation_line_id | uuid         | No    | FK leave_approval_allocation_lines | Original allocation |
+| quantity                    | decimal      | No    |                                    | Quantity cancelled  |
+
+**Constraints and indexes**
+
+- Quantity is positive and cannot exceed the targeted approved allocation.
+
+**Deletion behavior:** Retain.
+
+## `leave_cancellation_effects`
+
+Owner-issued reversal, replacement, or adjustment handoff
+
+| Column                | Logical type | Null? | Key / rule             | Description                                                                                        |
+| --------------------- | ------------ | ----- | ---------------------- | -------------------------------------------------------------------------------------------------- |
+| id                    | uuid         | No    | PK                     | Effect                                                                                             |
+| agency_id             | uuid         | No    | FK agencies            | Tenant                                                                                             |
+| leave_cancellation_id | uuid         | No    | FK leave_cancellations | Cancellation                                                                                       |
+| effect_kind           | enum         | No    |                        | COMMITMENT_RELEASE, LEDGER_REVERSAL, LEDGER_REPLACEMENT, ATTENDANCE_CORRECTION, PAYROLL_CORRECTION |
+| effect_key            | string       | No    |                        | Stable source key                                                                                  |
+| owner_record_id       | uuid         | No    |                        | Record returned by owner                                                                           |
+| owner_status          | string       | No    |                        | Accepted owner-controlled state                                                                    |
+
+**Constraints and indexes**
+
+- Unique `(leave_cancellation_id, effect_key)`.
+- Effect rows are created atomically. Later owner-status projections may advance
+  without changing the applied cancellation.
+
+**Deletion behavior:** Never delete.
 
 ## `mandatory_leave_assessments`
 

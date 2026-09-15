@@ -671,10 +671,44 @@ quantity, resulting availability, and exact eligibility assessment. Later
 backdated facts may alter a new reconstruction but never rewrite the historical
 certification.
 
+A Leave Application is a stable case whose submitted facts live in immutable
+Leave Application Versions. Each version binds one Leave Submission Attestation,
+exact form and supporting Document Versions, an accepted Leave Eligibility
+Assessment, and an effective Approval Route Version. A material resubmission or
+authorized reroute creates a successor version. Shared Approval Routes own task
+progression and immutable Approval Decisions; Leave owns certification,
+recommendation, allocation, commitment, posting, withdrawal, and cancellation
+rules.
+
+HR certification creates the Leave Credit Commitments under the affected
+account locks. A partial approval may replace a certified commitment only with
+a linked, smaller successor. Other replacement requires recertification.
+Commitments remain active through valid review without a system-invented expiry,
+are released by withdrawal, rejection, material return, invalidation, or
+supersession, and are consumed by posting.
+
 Balance-sensitive posting locks the Leave Account, recomputes availability,
-enforces a unique source posting key, writes the ledger and domain effects, and
-appends audit and outbox records in one transaction. Competing transactions
-that cannot both satisfy the applicable policy do not both post.
+enforces unique source effect keys, and invokes Attendance and Payroll through
+their application services inside one transaction. It writes the required
+ledger entries, posted-leave inputs, Payroll Inputs, application status, Audit
+Events, and outbox records, then consumes the commitments. Any authoritative
+failure rolls back the full Leave Posting and leaves the application approved
+for a recorded retry. External delivery remains asynchronous after commit.
+
+Leave Cancellation is a separate authorized record over an approved or posted
+application. Applying it is another atomic Leave-owned command. Whole
+cancellation creates exact linked reversals; partial cancellation fully reverses
+affected original entries and creates replacements for the retained effect.
+Attendance and Payroll own their correction records. Unlocked attendance may be
+recalculated, while locked attendance and consumed or finalized payroll receive
+linked adjustment handoffs. Leave stores their identifiers and states but never
+modifies another module's tables directly.
+
+An approved cancellation whose effect command fails remains approved with the
+original posting effective. The application projects `CANCELLED` only after all
+required reversals or owner handoffs have committed. A downstream adjustment may
+remain pending after its owner accepted the handoff, and the Leave workspace
+must expose that status rather than claiming completion.
 
 Mandatory or forced leave is an explainable, policy-derived assessment over an
 Employee's applicable facts and vacation Leave Account. It uses the ordinary

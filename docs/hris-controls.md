@@ -476,7 +476,7 @@ SUPERSEDED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-| --- | --- | --- | --- | --- | --- | --- |
+| ------- | -------------- | ---------- | ------------------------ | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | None | Create version | DRAFT | Attendance Administrator | `attendance.configuration.manage` | Agency-owned stable record | Create editable draft |
 | DRAFT | Update draft | DRAFT | Attendance Administrator | `attendance.configuration.manage` | Not used by an Attendance Day | Preserve draft audit history |
 | DRAFT | Activate | ACTIVE | Attendance Administrator | `attendance.configuration.activate` | Exact authority Document Version, approving authority, effectivity, complete Day Rules or calendar entries, and no conflicting active period | Freeze version for new assignments or date resolution |
@@ -501,7 +501,7 @@ ADJUSTED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-| ---------- | --------------------------- | ---------- | -------------------------------------------------- | ------------------------------- | --------------------------------- | -------------------------------------------- |
+| ---------- | --------------------------- | ---------- | -------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | None | Create attendance day | PENDING | System | Internal | Attendance Applicability covers Work Date, or complete events establish Unscheduled Service | Initialize calculation version |
 | PENDING | Calculate | CALCULATED | System / Attendance Administrator | `attendance.days.calculate` | Exact effective configuration, events, Attendance Context, posted leave, and holiday classification resolve without ambiguity | Store immutable segments, totals, and source snapshot |
 | PENDING | Detect exception | EXCEPTION | System | Internal | Missing configuration, unmatched or incomplete events, or conflicting coverage classification | Create blocking Attendance Exception without inferred values |
@@ -531,7 +531,7 @@ APPLIED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-| ----------------- | ------------------- | ----------------- | ------------------------------------- | -------------------------------- | ---------------------------------------- | -------------------------------- |
+| ----------------- | ------------------- | ----------------- | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | None | Create request | DRAFT | Employee / Attendance Administrator | `attendance.corrections.create` | Employee owns affected record or administrator scope; target is Attendance Event or Attendance Context | Save proposed ADD, REPLACE, or VOID change |
 | DRAFT | Submit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested change, reason, and evidence complete | Notify approver |
 | SUBMITTED | Request information | NEEDS_INFORMATION | Supervisor / Attendance Administrator | `attendance.corrections.return` | Comment required | Notify employee |
@@ -556,8 +556,17 @@ defaulting to a favorable result.
 For credit-bearing leave, posted balance and available credits are separate
 facts. Posted balance is derived only from immutable Leave Ledger Entries.
 Active Leave Credit Commitments reduce availability but never appear in the
-ledger. The application-contract decision shall set the lifecycle transition
-that creates or releases a commitment.
+ledger. HR certification creates commitments under account lock. Posting
+consumes them; withdrawal, rejection, material return, invalidation, or
+supersession releases them. An authorized partial approval may replace a
+certified commitment only with a linked, smaller successor.
+
+The Leave Application is a stable case. Submission or material resubmission
+freezes a Leave Application Version with its typed facts, Leave Submission
+Attestation, exact form and evidence Document Versions, accepted assessment,
+and Approval Route Version. Shared Approval Routes own tasks and Approval
+Decisions. Leave owns the certification, recommendation, approval allocation,
+commitment, posting, withdrawal, and cancellation validations.
 
 Statuses:
 
@@ -570,28 +579,29 @@ FOR_APPROVAL
 APPROVED
 REJECTED
 NEEDS_INFORMATION
+WITHDRAWN
 CANCEL_REQUESTED
 CANCELLED
 POSTED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-| ------------------ | ----------------------------- | ------------------ | ------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| ----------------------------------------------------------------- | ------------------------------------- | ------------------ | ------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
 | None               | Create application            | DRAFT              | Employee / Leave Administrator | `leave.applications.create`         | Leave type available; draft may carry deficiencies                                                               | Save draft                                                    |
-| DRAFT              | Submit                        | SUBMITTED          | Employee                       | `leave.applications.submit`         | Required fields and attachments; complete policy inputs; `ELIGIBLE` assessment snapshot                          | Start workflow                                                |
-| SUBMITTED | Send for credit certification | FOR_CERTIFICATION | System / Leave Administrator | `leave.applications.route` | Employee record valid | Reserve review task |
-| FOR_CERTIFICATION  | Certify credits               | FOR_RECOMMENDATION | Leave Administrator            | `leave.credits.certify`             | Effective balance date, ledger cutoff, posted balance, commitments, application quantity, and assessment checked | Store immutable Leave Credit Certification                    |
-| FOR_CERTIFICATION | Request information | NEEDS_INFORMATION | Leave Administrator | `leave.applications.return` | Comment required | Notify employee |
-| NEEDS_INFORMATION | Resubmit | SUBMITTED | Employee | `leave.applications.submit` | Missing data resolved | Restart route |
-| FOR_RECOMMENDATION | Recommend approval | FOR_APPROVAL | Supervisor | `leave.applications.recommend` | Service needs considered | Route approving official |
-| FOR_RECOMMENDATION | Recommend rejection | FOR_APPROVAL | Supervisor | `leave.applications.recommend` | Reason required | Route final decision |
-| FOR_APPROVAL | Approve | APPROVED | Authorized Approving Official | `leave.applications.approve` | Certification and recommendation available | Create pending ledger/payroll actions |
-| FOR_APPROVAL | Reject | REJECTED | Authorized Approving Official | `leave.applications.reject` | Reason required | Release reservation |
-| APPROVED           | Post leave                    | POSTED             | Leave Administrator / System   | `leave.applications.post`           | Dates valid; no conflicting posting; account availability rechecked under lock                                   | Atomically create source-linked ledger and attendance effects |
-| APPROVED | Request cancellation | CANCEL_REQUESTED | Employee | `leave.applications.request_cancel` | Policy and cutoff permit | Route cancellation |
-| POSTED | Request cancellation | CANCEL_REQUESTED | Employee / Leave Administrator | `leave.applications.request_cancel` | Reversal policy permits | Route cancellation and payroll review |
-| CANCEL_REQUESTED | Approve cancellation | CANCELLED | Authorized Approver | `leave.applications.cancel` | Reason and downstream effects checked | Reverse ledger/attendance/payroll prospectively |
-| CANCEL_REQUESTED | Reject cancellation | APPROVED or POSTED | Authorized Approver | `leave.applications.reject_cancel` | Reason required | Preserve leave |
+| DRAFT                                                             | Submit                                | SUBMITTED          | Employee / Leave Administrator recording signed form          | `leave.applications.submit`             | Typed required facts and exact Document Versions; complete policy inputs; `ELIGIBLE` assessment; authenticated attestation or exact signed form  | Freeze Leave Application Version and bind Approval Route Version                                                         |
+| SUBMITTED                                                         | Send for credit certification         | FOR_CERTIFICATION  | System / Leave Administrator                                  | `leave.applications.route`              | Employee and route valid                                                                                                                         | Activate certification step                                                                                              |
+| FOR_CERTIFICATION                                                 | Certify credits                       | FOR_RECOMMENDATION | Leave Administrator                                           | `leave.credits.certify`                 | Exact version and assessment; effective balance date; ledger cutoff; account status; posted balance; active commitments; application quantity    | Under account lock, freeze certification and create commitments                                                          |
+| FOR_CERTIFICATION / FOR_RECOMMENDATION / FOR_APPROVAL             | Request material information          | NEEDS_INFORMATION  | Current authorized reviewer                                   | `leave.applications.return`             | Comment; changed facts or evidence required                                                                                                      | Cancel unfinished route work and release commitments                                                                     |
+| NEEDS_INFORMATION                                                 | Resubmit                              | SUBMITTED          | Employee / authorized recorder                                | `leave.applications.submit`             | New attestation; deficiencies resolved; complete assessment                                                                                      | Freeze successor Leave Application Version and restart route                                                             |
+| SUBMITTED / FOR_CERTIFICATION / FOR_RECOMMENDATION / FOR_APPROVAL | Withdraw                              | WITHDRAWN          | Employee / Leave Administrator recording evidenced withdrawal | `leave.applications.withdraw`           | No final approval; administrator has exact withdrawal evidence                                                                                   | Cancel route work and release commitments                                                                                |
+| FOR_RECOMMENDATION                                                | Recommend approval or rejection       | FOR_APPROVAL       | Supervisor                                                    | `leave.applications.recommend`          | Exact version; reason required for negative recommendation                                                                                       | Append Leave Recommendation and continue route                                                                           |
+| FOR_APPROVAL                                                      | Approve full or exact subset          | APPROVED           | Authorized Approving Official                                 | `leave.applications.approve`            | Current certification and recommendation; no self-approval; allocation does not enlarge or rewrite request                                       | Append Approval Decision and Leave Approval Allocation; narrow commitment through linked successor when needed           |
+| FOR_APPROVAL                                                      | Reject                                | REJECTED           | Authorized Approving Official                                 | `leave.applications.reject`             | Exact version; reason required                                                                                                                   | Append decision and release commitments                                                                                  |
+| APPROVED                                                          | Post leave                            | POSTED             | Leave Administrator / System                                  | `leave.applications.post`               | Exact version, assessment, certification, commitment, allocation, and decisions valid; account availability rechecked under stable account locks | Atomically create all ledger, Attendance, Payroll, audit, and outbox effects through owning services; consume commitment |
+| APPROVED / POSTED                                                 | Request whole or partial cancellation | CANCEL_REQUESTED   | Employee / Leave Administrator recording evidenced request    | `leave.applications.request_cancel`     | Exact scope, reason, evidence, and applicable cancellation route                                                                                 | Create separate Leave Cancellation and route request                                                                     |
+| CANCEL_REQUESTED                                                  | Reject cancellation                   | APPROVED or POSTED | Authorized Approver                                           | `leave.applications.reject_cancel`      | Exact prior effect; reason required                                                                                                              | Preserve original approval and posting                                                                                   |
+| CANCEL_REQUESTED                                                  | Approve cancellation                  | CANCEL_REQUESTED   | Authorized Approver                                           | `leave.applications.cancel`             | Exact scope; authority; no enlargement or substitution                                                                                           | Mark Leave Cancellation approved with effects pending                                                                    |
+| CANCEL_REQUESTED                                                  | Apply cancellation                    | CANCELLED          | Leave Administrator / System                                  | `leave.applications.apply_cancellation` | Approved cancellation; exact original effects; owner handoffs accepted                                                                           | Atomically release commitment or create exact ledger reversal/replacement and Attendance/Payroll correction handoffs     |
 
 ### Leave policy and credit invariants
 
@@ -609,11 +619,23 @@ POSTED
   not a business-event enum. Source posting keys are unique per account. Posted
   entries are immutable, and a reversal exactly negates its original entry in
   the same account.
+- Whole cancellation exactly reverses affected entries. Partial cancellation
+  fully reverses each affected entry and creates a replacement for the retained
+  effect, using the original effective date and a later posting time.
 - Balance-sensitive commands serialize against the Leave Account, recompute
   posted balance and active commitments within the transaction, and reject a
   result that the applicable policy does not permit.
 - A historical Leave Credit Certification remains unchanged when later facts or
-  backdated entries produce a different current reconstruction.
+  backdated entries produce a different current reconstruction. Its current
+  authority is derived; a new application version or assessment, invalidated
+  account, or unsupported commitment replacement requires recertification.
+- A Leave Posting or applied Leave Cancellation commits every required
+  authoritative effect or none. A failed cancellation effect leaves the
+  cancellation approved and the original posting effective. Accepted Attendance
+  or Payroll adjustment handoffs retain their own truthful pending status.
+- Commitments do not silently expire. A route interruption blocks progression
+  until authorized rerouting creates a new Leave Application Version and
+  recertification, unless an authoritative policy provides a different result.
 - A Mandatory Leave Assessment is explainable and policy-derived. It may prompt
   an ordinary Leave Application but cannot approve leave or post a forfeiture.
 
@@ -1165,7 +1187,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 ## 6.7 Attendance and DTR
 
 | Permission | Attendance Admin | HRMO Admin | Supervisor | Employee | HR Certifier | Payroll Preparer | Auditor |
-| --------------------------------- | ---------------: | ---------: | ---------: | -------: | -----------: | ---------------: | ------: |
+| ----------------------------------- | ---------------: | ---------: | ---------: | -------: | -----------: | ---------------: | ------: |
 | `attendance.configuration.read` | A | A | S | O | A | R | R |
 | `attendance.configuration.manage` | A | C | — | — | — | — | R |
 | `attendance.configuration.activate` | A | C | — | — | C | — | R |
@@ -1192,7 +1214,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 ## 6.8 Leave Administration
 
 | Permission | Leave Admin | HRMO Admin | Supervisor | Employee | Approving Official | Payroll Preparer | Auditor |
-| ------------------------------ | ----------: | ---------: | ---------: | -------: | -----------------: | ---------------: | ------: |
+| --------------------------------------- | ----------: | ---------: | ---------: | -------: | -----------------: | ---------------: | ------: |
 | `leave.types.read` | A | A | R | R | R | R | R |
 | `leave.types.manage` | A | A | — | — | — | — | — |
 | `leave.accounts.read` | A | A | S | O | C | R | R |
@@ -1200,10 +1222,16 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `leave.credits.adjust` | A | A | — | — | C | — | — |
 | `leave.applications.create` | A | C | S | O | — | — | — |
 | `leave.applications.submit` | A | C | S | O | — | — | — |
+| `leave.applications.return`             |           A |          C |          S |        — |                  A |                — |       — |
+| `leave.applications.withdraw`           |           A |          C |          — |        O |                  — |                — |       — |
 | `leave.applications.recommend` | — | C | S | — | — | — | — |
 | `leave.applications.approve` | — | C | — | — | A | — | — |
 | `leave.applications.reject` | — | C | — | — | A | — | — |
 | `leave.applications.post` | A | C | — | — | — | C | — |
+| `leave.applications.request_cancel`     |           A |          C |          S |        O |                  — |                — |       — |
+| `leave.applications.cancel`             |           — |          C |          — |        — |                  A |                — |       — |
+| `leave.applications.reject_cancel`      |           — |          C |          — |        — |                  A |                — |       — |
+| `leave.applications.apply_cancellation` |           A |          C |          — |        — |                  — |                C |       — |
 | `leave.monetization.validate` | A | A | — | — | — | R | R |
 | `leave.monetization.approve` | — | C | — | — | A | — | — |
 | `leave.monetization.post` | A | C | — | — | — | A | — |
