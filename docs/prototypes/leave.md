@@ -2,7 +2,7 @@
 
 Review artifact for [Prototype the Leave workspace](https://github.com/systemeror12/lingkod-hr/issues/155), under [Map: resolve Phase 7 attendance and leave contracts](https://github.com/systemeror12/lingkod-hr/issues/156).
 
-This revision follows the developer-approved Tree/Form/Kanban pattern from [Prototype the Attendance and DTR workspace](https://github.com/systemeror12/lingkod-hr/issues/154): Tree is the default register, rows and Kanban cards open the same Form, and the Form separates the application lifecycle from effective ledger changes. No decision is recorded by this document; acceptance belongs to the developer's live review.
+This revision follows the developer-approved Tree/Form/Kanban pattern from [Prototype the Attendance and DTR workspace](https://github.com/systemeror12/lingkod-hr/issues/154): Tree is the default register, rows and Kanban cards open the same Form, and the Form separates the application lifecycle from effective ledger changes. The developer accepted this revision on 15 September 2026; the canonical decision is recorded in the [resolution comment](https://github.com/systemeror12/lingkod-hr/issues/155).
 
 ## Run
 
