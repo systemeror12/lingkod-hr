@@ -6,7 +6,7 @@
 **Source:** Philippine Public-Sector HRIS MVP BRD v1.0  
 **Primary implementation profile:** Civilian National Government Agency  
 **Version:** 1.0  
-**Date:** August 5, 2026  
+**Date:** August 5, 2026
 
 ---
 
@@ -35,21 +35,21 @@ The workflow set differs materially from a private-sector HRIS because the publi
 
 # 3. Workflow Index
 
-| ID | Workflow |
+| ID     | Workflow                                           |
 | ------ | -------------------------------------------------- |
-| WF-001 | User Invitation, Login, and Agency Access |
-| WF-002 | Plantilla Position Creation and Vacancy Control |
-| WF-003 | Vacancy Publication and Merit Selection |
+| WF-001 | User Invitation, Login, and Agency Access          |
+| WF-002 | Plantilla Position Creation and Vacancy Control    |
+| WF-003 | Vacancy Publication and Merit Selection            |
 | WF-004 | Appointment Issuance, CSC Tracking, and Assumption |
-| WF-005 | PDS, Employee Onboarding, and Service Record |
-| WF-006 | Personnel Action and Position Movement |
-| WF-007 | Attendance and Daily Time Record |
-| WF-008 | Leave Application and Leave-Credit Ledger |
-| WF-009 | Overtime Authority, COC/CTO, and Overtime Pay |
-| WF-010 | Government Payroll |
-| WF-011 | SPMS Performance Cycle |
-| WF-012 | Separation, Clearance, and Access Revocation |
-| WF-013 | AI-Assisted HR Action |
+| WF-005 | PDS, Employee Onboarding, and Service Record       |
+| WF-006 | Personnel Action and Position Movement             |
+| WF-007 | Attendance and Daily Time Record                   |
+| WF-008 | Leave Application and Leave-Credit Ledger          |
+| WF-009 | Overtime Authority, COC/CTO, and Overtime Pay      |
+| WF-010 | Government Payroll                                 |
+| WF-011 | SPMS Performance Cycle                             |
+| WF-012 | Separation, Clearance, and Access Revocation       |
+| WF-013 | AI-Assisted HR Action                              |
 
 ---
 
@@ -439,17 +439,60 @@ forfeiture posting.
 
 ```mermaid
 flowchart TD
-    A[Employee requests monetization] --> B[HR validates leave balance and eligibility]
-    B --> C[Check minimum retention, annual limit, reason, and funding]
-    C --> D{Eligible and fund-supported?}
-    D -- No --> E[Reject with reason]
-    D -- Yes --> F[Route for agency-head or authorized approval]
-    F --> G{Approved?}
-    G -- No --> E
-    G -- Yes --> H[Create source-linked negative Leave Ledger Entry]
-    H --> I[Create payroll earning input]
-    I --> J[Record approval and rule version]
+    A[Employee submits Leave Monetization Request Version] --> B[Create explainable eligibility assessment]
+    B --> C{Eligible and determinate?}
+    C -- No --> D[Block or reject with reasons]
+    C -- Yes --> E[HR certifies credits under all account locks]
+    E --> F[Create per-account Leave Credit Commitments]
+    F --> G[Budget Officer records funding determination]
+    G --> H{Funded and determinate?}
+    H -- No --> D
+    H -- Yes --> I[Route exact version for authorized approval]
+    I --> J{Decision}
+    J -- Reject --> K[Release commitments and preserve decision]
+    J -- Approve full or smaller same-account allocations --> L[Record approval without posting]
+    L --> M[Post atomically through Leave and Payroll]
+    M --> N{Payroll handoff result}
+    N -- Rejected or retryable failure --> O[Keep approval and commitments with truthful result]
+    N -- Accepted or matching duplicate --> P[Create source-owned negative ledger entries]
+    P --> Q[Consume commitments and mark posted]
 ```
+
+Payroll resolves and freezes the authoritative salary source, fixed calculator,
+factor, evidence-backed valuation and rounding configuration, and calculated
+amount in its Monetization Earning Input. Leave never supplies a free-form
+salary or payout amount. Missing authority or configuration is indeterminate and
+blocks the ledger deduction.
+
+Withdrawal, rejection, material return, supersession, invalid eligibility, or
+invalid funding releases commitments. An approved Monetization Adjustment uses
+one atomic owner-service command. Pending Payroll Inputs are cancelled or
+replaced; consumed inputs receive a linked adjustment. Leave restores credits
+only after Payroll accepts the correction handoff, and finalized payroll remains
+immutable. A failed handoff leaves the original posting effective for retry.
+
+### Terminal-leave input preservation
+
+```mermaid
+flowchart TD
+    A[Separation takes effect] --> B[Complete required Leave postings through last service date]
+    B --> C[Separation requests terminal-leave input preservation]
+    C --> D[Evaluate separation, service, account, authority, clearance, and salary-source facts]
+    D --> E{Assessment result}
+    E -- INDETERMINATE --> F[Preserve missing or conflicting facts without a consumable snapshot]
+    E -- READY --> G[Freeze Terminal Leave Input Snapshot]
+    G --> H[Return stable snapshot reference to Separation]
+    H --> I{Separation handoff outcome}
+    I -- Accepted or duplicate --> J[Retain accepted reference]
+    I -- Rejected or retryable --> K[Retain reason for correction or retry]
+    K --> D
+```
+
+The snapshot uses the effective separation or last service date for its balance
+cutoff and states a separate ledger-knowledge cutoff. A corrected source creates
+a reasoned successor rather than rewriting history. Phase 7 does not compute a
+terminal benefit, create a terminal ledger posting, or send a terminal Payroll
+Input.
 
 ---
 
@@ -729,17 +772,17 @@ Shared
 
 # 18. Approval
 
-| Role | Name | Decision | Date |
+| Role                          | Name | Decision | Date |
 | ----------------------------- | ---- | -------- | ---- |
-| Product Owner |  | Pending |  |
-| Government HR / HRMO Reviewer |  | Pending |  |
-| Payroll / Accounting Reviewer |  | Pending |  |
-| Technical Owner |  | Pending |  |
+| Product Owner                 |      | Pending  |      |
+| Government HR / HRMO Reviewer |      | Pending  |      |
+| Payroll / Accounting Reviewer |      | Pending  |      |
+| Technical Owner               |      | Pending  |      |
 
 ---
 
 # 19. Change Log
 
-| Version | Date | Description |
+| Version | Date           | Description                                                                  |
 | ------- | -------------- | ---------------------------------------------------------------------------- |
-| 1.0 | August 5, 2026 | Replaced private-sector workflows with Philippine public-sector HR workflows |
+| 1.0     | August 5, 2026 | Replaced private-sector workflows with Philippine public-sector HR workflows |

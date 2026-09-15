@@ -9,7 +9,7 @@
 **Architecture:** Multi-tenant SaaS, with optional dedicated-agency deployment  
 **Primary objective:** Digitize and control government human resource management processes  
 **Version:** 1.0  
-**Date:** August 5, 2026  
+**Date:** August 5, 2026
 
 ---
 
@@ -29,18 +29,18 @@ The initial implementation profile is for a civilian National Government Agency.
 
 The public-sector product profile shall be maintained separately from a private-sector HRIS profile.
 
-| Area | Private-sector HRIS | Public-sector HRIS |
+| Area              | Private-sector HRIS                      | Public-sector HRIS                                                                                           |
 | ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Position control | Company-defined jobs and headcount | Authorized organizational structure, plantilla, item number, salary grade, and step |
-| Hiring | Company recruitment policy | Publication, qualification standards, merit selection, appointing authority, and CSC appointment rules |
-| Employee record | Company employee profile | PDS, eligibility, appointment, oath, assumption, service record, and personnel actions |
-| Employment status | Regular, probationary, contractual, etc. | Career/non-career and government appointment statuses under applicable rules |
-| Performance | Company appraisal | Agency SPMS, OPCR/IPCR, targets, ratings, and review cycle |
-| Leave | Company policy and labor law | Government leave credits, CSC leave rules, Form 6, mandatory leave, monetization, and special leave |
-| Overtime | Company-authorized OT pay | Prior-authorized overtime service, overtime pay or COC/CTO, subject to applicable rules and funds |
-| Payroll | Company pay structure and SSS | Salary grade/step, DBM salary schedule, GSIS, government allowances, and agency-specific deductions |
-| Audit | Management and statutory audit | CSC, DBM, COA, agency internal control, records, and public accountability requirements |
-| Separation | Company clearance/final pay | Acceptance of resignation, clearance, service record, retirement or separation action, and access revocation |
+| Position control  | Company-defined jobs and headcount       | Authorized organizational structure, plantilla, item number, salary grade, and step                          |
+| Hiring            | Company recruitment policy               | Publication, qualification standards, merit selection, appointing authority, and CSC appointment rules       |
+| Employee record   | Company employee profile                 | PDS, eligibility, appointment, oath, assumption, service record, and personnel actions                       |
+| Employment status | Regular, probationary, contractual, etc. | Career/non-career and government appointment statuses under applicable rules                                 |
+| Performance       | Company appraisal                        | Agency SPMS, OPCR/IPCR, targets, ratings, and review cycle                                                   |
+| Leave             | Company policy and labor law             | Government leave credits, CSC leave rules, Form 6, mandatory leave, monetization, and special leave          |
+| Overtime          | Company-authorized OT pay                | Prior-authorized overtime service, overtime pay or COC/CTO, subject to applicable rules and funds            |
+| Payroll           | Company pay structure and SSS            | Salary grade/step, DBM salary schedule, GSIS, government allowances, and agency-specific deductions          |
+| Audit             | Management and statutory audit           | CSC, DBM, COA, agency internal control, records, and public accountability requirements                      |
+| Separation        | Company clearance/final pay              | Acceptance of resignation, clearance, service record, retirement or separation action, and access revocation |
 
 The system shall not mix public- and private-sector rule engines within one organization profile.
 
@@ -127,24 +127,24 @@ The MVP shall:
 
 # 6. Primary Users and Stakeholders
 
-| Role | Responsibilities |
-| ------------------------------------------ | ------------------------------------------------------------------------------ |
-| Agency Administrator | Agency profile, security, users, and configuration |
-| HR Administrator | Broad HR administration, attendance configuration and locking, and inherited HR Officer attendance access |
-| HR Officer | Attendance review and approval within assigned scope, with inherited Employee attendance access |
-| HRMPSB / Selection Board Member | Candidate evaluation, deliberation, and recommendations |
-| Appointing Authority / Authorized Approver | Appointment and designated high-level approvals |
-| Supervisor / Division Chief | Leave, overtime, and performance review |
-| Payroll Preparer | Payroll data, calculation, deductions, and reconciliation |
-| Payroll Reviewer / Certifying Officer | Review, certification, and exception resolution |
-| Payroll Approver / Agency Authority | Payroll authorization and finalization |
-| Employee / Official | PDS, attendance submission, DTR, leave, payslip, performance commitments, and self-service |
-| Budget Officer | Position and personnel-services validation |
-| Accounting Office | Payroll obligations, deductions, and accounting reports |
-| Cashier / Disbursing Officer | Payment processing and remittance support |
-| Records Officer | Retention, document control, and certified records |
-| Internal Audit / COA Auditor | Audit evidence and control review |
-| Data Protection Officer | Privacy, access, retention, and incident controls |
+| Role                                       | Responsibilities                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Agency Administrator                       | Agency profile, security, users, and configuration                                                        |
+| HR Administrator                           | Broad HR administration, attendance configuration and locking, and inherited HR Officer attendance access |
+| HR Officer                                 | Attendance review and approval within assigned scope, with inherited Employee attendance access           |
+| HRMPSB / Selection Board Member            | Candidate evaluation, deliberation, and recommendations                                                   |
+| Appointing Authority / Authorized Approver | Appointment and designated high-level approvals                                                           |
+| Supervisor / Division Chief                | Leave, overtime, and performance review                                                                   |
+| Payroll Preparer                           | Payroll data, calculation, deductions, and reconciliation                                                 |
+| Payroll Reviewer / Certifying Officer      | Review, certification, and exception resolution                                                           |
+| Payroll Approver / Agency Authority        | Payroll authorization and finalization                                                                    |
+| Employee / Official                        | PDS, attendance submission, DTR, leave, payslip, performance commitments, and self-service                |
+| Budget Officer                             | Position and personnel-services validation                                                                |
+| Accounting Office                          | Payroll obligations, deductions, and accounting reports                                                   |
+| Cashier / Disbursing Officer               | Payment processing and remittance support                                                                 |
+| Records Officer                            | Retention, document control, and certified records                                                        |
+| Internal Audit / COA Auditor               | Audit evidence and control review                                                                         |
+| Data Protection Officer                    | Privacy, access, retention, and incident controls                                                         |
 
 ---
 
@@ -870,11 +870,93 @@ shall never be inferred from an alert alone.
 
 ## LEA-007 Monetization
 
-The system shall support a request, eligibility validation, funding/authority review, approval, payroll input, and ledger deduction.
+The system shall keep one stable Leave Monetization Request with immutable
+submitted versions. A version shall preserve the Employee's attestation or an
+administrator-recorded signed Document Version, exact requested allocations by
+Leave Account, applicable Leave Policy and authority versions, supporting
+evidence, and Approval Route Version. Ordinary monetization shall draw only from
+vacation leave; special monetization may allocate across vacation and sick leave
+only as the applicable authority permits.
+
+Leave shall create an explainable Monetization Eligibility Assessment and an HR
+credit certification for the exact request version. Certification shall lock all
+affected accounts, recheck posted balances and active commitments, and create one
+Leave Credit Commitment per allocation. A separate immutable Monetization
+Funding Determination shall bind the Budget review, funding source, applicable
+fiscal authority, and exact evidence. Missing or conflicting eligibility,
+valuation-date, allocation, salary-component, rounding, funding, approval, or
+authority facts shall produce `INDETERMINATE` and block approval or posting.
+
+The subject or recorder shall not certify, review funding, approve, or post the
+request. The HR credit certifier, Budget funding reviewer, final approver, and
+posting executor shall be different people unless a controlling authority
+expressly establishes another arrangement. The authorized final decision shall
+bind the exact request version, current assessment, certification, funding
+determination, commitments, and Approval Decisions. A partial approval may only
+replace commitments with linked, smaller allocations against the same accounts.
+
+Withdrawal, rejection, material return, supersession, invalid eligibility, or
+invalid funding shall release active commitments. Commitments shall not expire
+silently. Approval shall not change the ledger or create a Payroll Input.
+
+Posting shall be a separate atomic and idempotent Leave-owned command. Leave
+shall call Payroll with an authority-bound input containing the Employee, exact
+request version and posting, approved account allocations and total credits,
+stable effect key, effective valuation date, fixed calculator kind and factor,
+applicable policy and authority Document Versions, funding determination, final
+Approval Decisions, and required salary-basis semantics. It shall not supply a
+free-form salary or payout amount.
+
+Payroll shall resolve the authoritative salary source, perform the fixed
+calculation, apply evidence-backed rounding configuration, and freeze its inputs
+and amount in an immutable Monetization Earning Input. Payroll shall return
+`ACCEPTED`, matching `ALREADY_ACCEPTED`, `REJECTED`, or `RETRYABLE_FAILURE`.
+Leave shall commit source-owned negative Leave Ledger Entries, commitment
+consumption, request status, audit, and outbox records only with an accepted
+Payroll result. Otherwise the approved request shall retain no ledger deduction
+and expose its blocking or retryable result.
+
+An authorized Monetization Adjustment shall preserve exact scope, reason,
+evidence, route, and decisions. A pending Payroll Input may be cancelled or
+replaced. A consumed input requires Payroll's linked adjustment contract, and a
+finalized payroll result shall never be edited. Leave shall restore credits only
+when Payroll accepts the correction handoff. Whole adjustment shall exactly
+reverse every original ledger entry; partial adjustment shall fully reverse each
+affected original entry and post replacements for retained quantities. A failed
+or rejected handoff shall leave the original posting effective, while duplicate
+retries return the original accepted result through stable effect keys.
+
+The unresolved solo-parent forfeiture and cash-conversion conflict shall create
+no automatic cash liability. A controlling authority or an evidence-backed
+greater benefit must expressly support any such conversion.
 
 ## LEA-008 Terminal leave
 
-The system shall preserve data required for a later terminal-leave computation, but full retirement-benefit computation is outside MVP.
+After a qualifying Separation takes effect and all required Leave postings
+through the last service date are complete, Separation may request terminal-leave
+input preservation. Leave shall create an immutable Terminal Leave Input
+Assessment. An `INDETERMINATE` assessment shall retain every missing or
+conflicting fact and create no consumable snapshot.
+
+A `READY` assessment shall create an immutable Terminal Leave Input Snapshot
+that binds the exact Separation record and version, separation classification
+and effective date, referenced service-period facts, vacation and sick Leave
+Accounts, posted balances as of the effective separation or last service date,
+ledger-knowledge cutoff, applicable policy and authority versions, clearance and
+supporting Document Versions, and the exact highest-monthly-salary source
+reference verified by its owning module.
+
+Leave shall return the stable snapshot reference to Separation. Separation shall
+record acceptance, duplicate acceptance, rejection, or retryable technical
+failure without taking ownership of Leave facts. A corrected or backdated source
+shall create a reasoned successor assessment and, when ready, a successor
+snapshot. Historical snapshots shall never be rewritten.
+
+A Terminal Leave Input Snapshot shall not close a Leave Account, create a Leave
+Ledger Entry, authorize payment, calculate a terminal benefit, or create a
+Payroll Input. Account closure remains part of the separation-driven Leave
+posting sequence. Full terminal-leave benefit calculation and payment are
+outside MVP and remain future Payroll and Separation responsibilities.
 
 ---
 
@@ -1419,18 +1501,18 @@ The public-sector MVP is acceptable when an agency can:
 
 # 28. Risks and Mitigations
 
-| Risk | Impact | Mitigation |
+| Risk                                      | Impact                         | Mitigation                                                  |
 | ----------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
-| Treating all public agencies as identical | Incorrect workflows | Agency profiles and a defined first pilot |
-| Outdated CSC or DBM rule | Invalid transaction | Effective-dated policies and formal update process |
-| Incomplete plantilla data | Invalid appointment or payroll | Position reconciliation and migration validation |
-| Appointment-document error | CSC return or invalidation | Completeness checks and human review |
-| Payroll rule error | Financial and audit exposure | Regression tests, certification, and immutable finalization |
-| Excessive scope | Delayed MVP | Phased modules and explicit exclusions |
-| Sensitive-record breach | Legal and trust impact | Least privilege, MFA, encryption, and audit |
-| AI-generated error | Incorrect HR action | Draft-only output and human approval |
-| Agency-specific legacy process | Adoption difficulty | Configurable workflows without arbitrary scripting |
-| Regulatory integration expectation | Deployment delay | Export-first boundary and later official integration |
+| Treating all public agencies as identical | Incorrect workflows            | Agency profiles and a defined first pilot                   |
+| Outdated CSC or DBM rule                  | Invalid transaction            | Effective-dated policies and formal update process          |
+| Incomplete plantilla data                 | Invalid appointment or payroll | Position reconciliation and migration validation            |
+| Appointment-document error                | CSC return or invalidation     | Completeness checks and human review                        |
+| Payroll rule error                        | Financial and audit exposure   | Regression tests, certification, and immutable finalization |
+| Excessive scope                           | Delayed MVP                    | Phased modules and explicit exclusions                      |
+| Sensitive-record breach                   | Legal and trust impact         | Least privilege, MFA, encryption, and audit                 |
+| AI-generated error                        | Incorrect HR action            | Draft-only output and human approval                        |
+| Agency-specific legacy process            | Adoption difficulty            | Configurable workflows without arbitrary scripting          |
+| Regulatory integration expectation        | Deployment delay               | Export-first boundary and later official integration        |
 
 ---
 
@@ -1453,18 +1535,18 @@ The reference baseline must be revalidated before production and whenever an iss
 
 # 30. Approval
 
-| Role | Name | Decision | Date |
+| Role                          | Name | Decision | Date |
 | ----------------------------- | ---- | -------- | ---- |
-| Product Owner |  | Pending |  |
-| Government HR / HRMO Reviewer |  | Pending |  |
-| Payroll / Accounting Reviewer |  | Pending |  |
-| Technical Owner |  | Pending |  |
-| Privacy / Security Reviewer |  | Pending |  |
+| Product Owner                 |      | Pending  |      |
+| Government HR / HRMO Reviewer |      | Pending  |      |
+| Payroll / Accounting Reviewer |      | Pending  |      |
+| Technical Owner               |      | Pending  |      |
+| Privacy / Security Reviewer   |      | Pending  |      |
 
 ---
 
 # 31. Change Log
 
-| Version | Date | Description |
+| Version | Date           | Description                                                                                     |
 | ------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| 1.0 | August 5, 2026 | Reframed the product as a Philippine public-sector HRIS and replaced private-sector assumptions |
+| 1.0     | August 5, 2026 | Reframed the product as a Philippine public-sector HRIS and replaced private-sector assumptions |
