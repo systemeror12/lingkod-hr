@@ -2,7 +2,7 @@
 
 Review artifact for [Prototype the Attendance and DTR workspace](https://github.com/systemeror12/lingkod-hr/issues/154), under [Map: resolve Phase 7 attendance and leave contracts](https://github.com/systemeror12/lingkod-hr/issues/156).
 
-The developer rejected the three custom layout recommendations and requested the established Tree/Form/Kanban pattern used for record work. This revision follows Recruitment's record navigation, view selector, table density and Kanban presentation. The revised prototype is awaiting review; the ticket is not resolved.
+The developer rejected the three custom layout recommendations and requested the established Tree/Form/Kanban pattern used for record work. This revision follows Recruitment's record navigation, view selector, table density and Kanban presentation. The developer approved this revision on 15 September 2026. The canonical decision is recorded in the [resolution comment](https://github.com/systemeror12/lingkod-hr/issues/154#issuecomment-5673624476).
 
 ## Run
 
@@ -43,4 +43,4 @@ The URL holds the view and selected record using the existing `useRecordNavigati
 
 ## Validation
 
-Web TypeScript, focused ESLint and formatting checks pass. Authenticated HTTP requests return 200 with the expected Tree, Form and Kanban content and no old variant switcher. Browser interactions and visual appearance have not been verified with browser automation; live review remains necessary.
+Web TypeScript, focused ESLint and formatting checks pass. Authenticated HTTP requests return 200 with the expected Tree, Form and Kanban content and no old variant switcher. Browser interactions and visual appearance have not been verified with browser automation; the developer approved the revised design on 15 September 2026.
