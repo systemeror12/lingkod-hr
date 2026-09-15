@@ -233,19 +233,31 @@ Create:
 9. `work_arrangement_versions`
 10. `schedule_assignments`
 11. `attendance_periods`
-12. `attendance_events`
-13. `attendance_contexts`
-14. `attendance_days`
-15. `attendance_day_segments`
-16. `attendance_exceptions`
-17. `attendance_corrections`
+12. `employee_attendance_submissions`
+13. `attendance_period_versions`
+14. `attendance_events`
+15. `attendance_contexts`
+16. `attendance_days`
+17. `attendance_day_segments`
+18. `attendance_exceptions`
+19. `employee_attendance_submission_days`
+20. `attendance_period_version_days`
+21. `attendance_corrections`
+22. `attendance_correction_evidence`
+23. `attendance_correction_effects`
+24. `locked_attendance_adjustments`
+25. `locked_attendance_adjustment_periods`
+26. `dtr_documents`
+27. `attendance_payroll_publications`
+28. `attendance_payroll_facts`
 
 Add:
 
 - schedule overlap exclusion constraints;
 - configuration-version immutability and activation checks;
 - attendance current-version unique index;
-- immutable event, context, and segment triggers;
+- immutable event, context, segment, submitted snapshot, locked period version, correction effect, adjustment, DTR, and publication triggers;
+- attendance lock and correction-application transaction checks;
 - RLS and high-volume indexes.
 
 ---

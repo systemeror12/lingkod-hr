@@ -220,9 +220,13 @@ _Avoid_: Agency self-registration, public agency signup
 An agency-scoped role responsible for Agency setup, user access, role assignment, and technical configuration.
 _Avoid_: Platform administrator, HR administrator
 
-**HRMO Administrator**:
-An agency-scoped role responsible for broad human-resource management without unrestricted system-administration or payroll authority.
-_Avoid_: Agency Administrator, HR administrator
+**HR Administrator**:
+An agency-scoped role responsible for broad human-resource management without unrestricted system-administration or payroll authority. In Attendance, it inherits HR Officer access and additionally owns configuration, authorized inputs, recalculation, period administration, and locking.
+_Avoid_: Agency Administrator, HRMO Administrator, Attendance Administrator
+
+**HR Officer**:
+An agency-scoped operational HR role that inherits Employee access and may review, return, and approve attendance records within assigned scope. Attendance settings and period locking remain HR Administrator responsibilities.
+_Avoid_: Attendance Administrator, HR Certifying Officer
 
 **Invitation Role Assignment**:
 A role assignment requested for a prospective Agency Membership that becomes effective only when the invitation is accepted.
@@ -417,7 +421,7 @@ A familiar Daily Time Record presentation position such as AM In, AM Out, PM In,
 _Avoid_: Raw event type, universal shift label
 
 **Attendance Context**:
-An immutable whole-Work-Date or timed record entered by an authorized Attendance Administrator for official business, official travel, training, or an approved non-leave absence. It carries its recorder and prior-authorization evidence, may cross midnight, and affects attendance without fabricating an Attendance Event or adding another approval workflow.
+An immutable whole-Work-Date or timed record entered by an authorized HR Administrator for official business, official travel, training, or an approved non-leave absence. It carries its recorder and prior-authorization evidence, may cross midnight, and affects attendance without fabricating an Attendance Event or adding another approval workflow.
 _Avoid_: Attendance Event, leave copy, attendance approval
 
 **Attendance Coverage**:
@@ -433,12 +437,60 @@ An expected-duty minute not covered by work, Attendance Context, or posted leave
 _Avoid_: Missing hours, duplicate deduction
 
 **Attendance Correction**:
-An approval request to add, replace, or void an Attendance Event or Attendance Context while preserving the original record and recalculating the affected Attendance Day.
+A routed, evidence-backed approval request to add, replace, or void an Attendance Event or Attendance Context while preserving the original record and recalculating the affected Attendance Day. Its subject, initiator, recorder, approvers, and applied effect remain distinct and traceable.
 _Avoid_: Direct attendance edit, deleted clock entry
+
+**Attendance Correction Effect**:
+An immutable `ADD`, `REPLACE`, or `VOID` instruction created from an approved Attendance Correction and used as an input to later Attendance Day calculations. It preserves the correction, original target, replacement values, evidence, and approval lineage.
+_Avoid_: Edited Attendance Event, deleted Attendance Context
+
+**Attendance Correction Impact Preview**:
+The before-and-after comparison of every Attendance Day and Attendance Period affected by a proposed Attendance Correction. Approval binds the previewed source versions, and any intervening input change requires a refreshed preview and approval.
+_Avoid_: Estimated correction result, UI-only preview
 
 **Attendance Exception**:
 A recorded ambiguity or missing input that prevents an Attendance Day from being approved until resolved. LingkodHR preserves the available facts and never invents a timestamp or silently chooses between conflicting inputs.
 _Avoid_: Attendance error, automatic correction
+
+**Employee Attendance Submission**:
+An Employee's request for HR review of their exact Attendance Day versions within one Attendance Period. HR approval binds those versions, while recalculation makes the submission stale; it remains distinct from an Attendance Correction and the agency-wide Attendance Period Version.
+_Avoid_: Employee Attendance Period, payroll submission
+
+**Attendance Period**:
+An agency-scoped interval that groups Attendance Days for review, certification, DTR publication, and the attendance-to-payroll handoff. Its mutable working set is not itself a finalized attendance result.
+_Avoid_: Locked Attendance Day, payroll period
+
+**Attendance Period Version**:
+An immutable snapshot that identifies the exact approved Attendance Day calculation version for every covered Employee and Work Date in an Attendance Period. A locked version is the authoritative source for finalized DTRs and attendance payroll inputs.
+_Avoid_: Current attendance period, collection of mutable Attendance Days
+
+**Attendance Period Lock**:
+The certification action that makes an approved Attendance Period Version authoritative and atomically publishes its Finalized Daily Time Records and attendance payroll inputs. A locked version is never reopened or overwritten.
+_Avoid_: Attendance Day lock, editable finalization flag
+
+**Attendance Period Reconciliation**:
+The proof before lock that the complete applicable population, approved Employee Attendance Submissions, exact current Attendance Day versions, DTR outputs, and Attendance Payroll Publication counts and minute totals agree without unresolved exceptions or corrections.
+_Avoid_: Attendance spot check, payroll reconciliation
+
+**Locked Attendance Adjustment**:
+The post-lock application of an approved Attendance Correction through successor Attendance Day and Attendance Period Versions. It links the locked predecessor to corrected outputs and delta payroll inputs without reopening or overwriting published history.
+_Avoid_: Reopened attendance period, edited payroll input
+
+**Attendance Payroll Publication**:
+An immutable, idempotent batch of non-monetary attendance facts emitted when an Attendance Period Version is locked. An adjustment publication links a locked successor to its predecessor and contains only changed facts.
+_Avoid_: Payroll calculation, attendance deduction batch
+
+**Attendance Payroll Fact**:
+A source-identified quantity of exact minutes for one Employee, Work Date, and attendance classification in an Attendance Payroll Publication. It carries no rate, money, or payroll-treatment decision.
+_Avoid_: Payroll line, attendance deduction
+
+**Daily Time Record Preview**:
+An explicitly unfinalized projection of the current approved Attendance Day versions in an Attendance Period.
+_Avoid_: Finalized DTR, official DTR
+
+**Finalized Daily Time Record**:
+A Printable System View bound to one locked Attendance Period Version and its exact Attendance Day calculation versions. A successor lock creates a separately retained corrected DTR, and either artifact is an Exact Versioned Form only when a supported authoritative template version has been configured and evidenced.
+_Avoid_: Live DTR, universal official DTR
 
 **Unscheduled Service**:
 Complete worked time recorded on a rest day or another date without expected duty. It creates no tardiness, undertime, or absence and does not by itself authorize overtime, COC, or compensation.
