@@ -224,21 +224,28 @@ Create:
 
 1. `work_schedules`
 2. `work_schedule_versions`
-3. `work_arrangements`
-4. `schedule_assignments`
+3. `work_schedule_day_rules`
+4. `work_schedule_break_intervals`
 5. `holiday_calendars`
-6. `holidays`
-7. `attendance_periods`
-8. `attendance_events`
-9. `attendance_days`
-10. `attendance_exceptions`
-11. `attendance_corrections`
+6. `holiday_calendar_versions`
+7. `holiday_calendar_entries`
+8. `work_arrangements`
+9. `work_arrangement_versions`
+10. `schedule_assignments`
+11. `attendance_periods`
+12. `attendance_events`
+13. `attendance_contexts`
+14. `attendance_days`
+15. `attendance_day_segments`
+16. `attendance_exceptions`
+17. `attendance_corrections`
 
 Add:
 
 - schedule overlap exclusion constraints;
+- configuration-version immutability and activation checks;
 - attendance current-version unique index;
-- immutable event trigger;
+- immutable event, context, and segment triggers;
 - RLS and high-volume indexes.
 
 ---

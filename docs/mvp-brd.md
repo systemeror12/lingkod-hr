@@ -584,7 +584,10 @@ The MVP shall support:
 
 - authorized manual time entry;
 - employee web clock-in and clock-out when enabled;
-- HR-entered official business, travel, training, and approved absence records.
+- immutable HR-entered Attendance Context for already-authorized official business, official travel, training, and approved non-leave absence;
+- posted leave supplied by the Leave domain without copying the Leave Application into Attendance.
+
+Attendance Context shall not introduce another approval workflow. An authorized Attendance Administrator records the covered Work Date or exact interval, reason, recorder, and linked source record or supporting Document Version. Attendance Correction is the approval path for adding, replacing, or voiding an Attendance Event or Attendance Context.
 
 The MVP shall not support biometric-device integrations or biometric export-file imports.
 
@@ -592,18 +595,19 @@ The MVP shall not support biometric-device integrations or biometric export-file
 
 The system shall support:
 
-- regular schedules;
-- flexible work schedules;
-- compressed workweek where authorized;
-- shifting schedules;
-- work-from-home or hybrid arrangements;
-- field work and official business;
-- rest days and holidays;
-- effective-dated assignments.
+- a dedicated Attendance configuration section for reusable Work Schedules and their immutable, effective-dated versions;
+- seven Day Rules per Work Schedule Version, with fixed or flexible duty, rest days, required whole minutes, unpaid breaks, and event-collection windows;
+- regular, authorized flexible, compressed, daytime, overnight, and shifting schedules through the same Day Rule model;
+- Work Arrangement Versions that define the authorized place or operating mode separately from expected duty intervals;
+- non-overlapping Schedule Assignments that bind eligible Appointed Personnel to one Work Schedule Version and one Work Arrangement Version for an effective period;
+- stable, scoped Holiday Calendars with immutable effective-dated versions and categorized source issuances;
+- explicit authority evidence for activated schedule, arrangement, calendar, and assignment records.
+
+A duty or break interval may end on the next calendar day. Its Work Date is the local date on which the duty interval begins in the Work Schedule Version's time zone. The system shall seed an authority-backed ordinary Work Schedule Version but shall not silently use it when an explicit Schedule Assignment is missing.
 
 ## ATT-003 Raw time events
 
-Original time events shall remain immutable. Corrections shall be stored separately.
+Original time events shall remain immutable. Raw event types are `TIME_IN`, `BREAK_OUT`, `BREAK_IN`, and `TIME_OUT`; AM In, AM Out, PM In, and PM Out are ordinary daytime DTR presentation slots rather than source-event types. Corrections shall be stored separately and may add, replace, or void a source event without deleting it.
 
 ## ATT-004 DTR
 
@@ -613,16 +617,16 @@ The system shall generate a Daily Time Record view and printable report from app
 
 The system shall calculate:
 
-- hours rendered;
-- tardiness;
-- undertime;
-- absence;
-- incomplete time entries;
-- official business;
-- leave;
-- overtime candidate hours;
-- compensatory time candidate hours;
-- schedule and work-arrangement compliance.
+- expected-duty, worked, covered, and outside-schedule minutes;
+- mutually exclusive tardiness, undertime, and absence minutes without double-counting an Attendance Deficit;
+- official business, official travel, training, approved non-leave absence, and posted-leave coverage;
+- incomplete, duplicate, out-of-order, unmatched, and ambiguous time events as blocking Attendance Exceptions;
+- holiday and work-arrangement classification from the exact effective versions;
+- factual outside-schedule and statutory-night-window minutes without treating them as authorized overtime, COC, night differential, or compensation.
+
+Calculations shall use exact whole minutes without a default grace period or timestamp rounding. One immutable Attendance Day calculation version shall preserve its governing service applicability, Schedule Assignment, Work Schedule Version, Work Arrangement Version, Holiday Calendar Version, source records, rules, and non-overlapping Attendance Day Segments. Missing or conflicting authoritative input shall fail closed as an Attendance Exception.
+
+For flexible duty, the first qualifying worked or Attendance Context minute within the permitted start window shall anchor the expected interval; earlier coverage clamps to the earliest start, later coverage uses the latest start and produces tardiness, and no coverage uses the latest start only to place the required absent minutes. Scheduled unpaid breaks remain outside expected duty. A fully uncovered expected Work Date is absence; otherwise leading, trailing, and internal uncovered minutes are tardiness, undertime, and absence respectively.
 
 ## ATT-006 Correction workflow
 

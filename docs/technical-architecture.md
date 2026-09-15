@@ -515,6 +515,8 @@ Examples:
 - service segments;
 - personnel actions;
 - work schedules;
+- work arrangements;
+- holiday calendars;
 - schedule assignments;
 - leave policies;
 - salary schedules;
@@ -609,7 +611,17 @@ WEB_CLOCK
 MANUAL
 ```
 
-Raw events are immutable. Corrections create replacement events or controlled adjustments. Locked periods are never directly edited.
+Attendance calculation resolves, for one Work Date, qualifying active Appointed Personnel service and exactly one effective Schedule Assignment, Work Schedule Version, Work Arrangement Version, and scoped Holiday Calendar Version. Missing, overlapping, unauthorized, or ambiguous inputs fail closed as an Attendance Exception. The ordinary seeded schedule is never an implicit assignment fallback.
+
+Work Schedule Versions are immutable, authority-bearing definitions containing seven fixed, flexible, or rest Day Rules. Duty and break intervals may cross midnight; the Work Date is the local start date in the version's time zone. A flexible day anchors on the first qualifying worked or Attendance Context minute within its authorized start window, subject to its earliest/latest bounds and required minutes. Exact whole minutes are retained. Event Collection Windows associate events with Work Dates but never act as grace periods or rounding rules.
+
+Work Arrangement Versions define authorized operating mode or place separately from duty time. Holiday Calendars have stable scoped identities and effective-dated versions so annual proclamations and later issuances do not require changing every employee assignment. Holiday classification alone does not erase expected duty; the applicable authority-backed schedule rule supplies the effect.
+
+Raw events are immutable and use `TIME_IN`, `BREAK_OUT`, `BREAK_IN`, and `TIME_OUT`. AM In, AM Out, PM In, and PM Out are ordinary daytime DTR projection slots. Corrections add, replace, or void events or Attendance Context through retained correction records; locked periods are never directly edited.
+
+Attendance Context is an immutable, evidence-backed whole-Work-Date or timed fact entered by an authorized Attendance Administrator for official business, official travel, training, or approved non-leave absence. It records prior authorization without adding a second Attendance approval workflow. Posted leave remains Leave-owned input.
+
+Each calculation creates an immutable Attendance Day version and non-overlapping Attendance Day Segments. Segments retain source references, expected or outside-schedule relation, coverage or deficit classification, and holiday classification. Summary totals never count overlapping coverage or deficit minutes twice. Outside-schedule and statutory-night-window minutes are factual handoffs only, not compensation authorization.
 
 ## Leave
 

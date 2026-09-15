@@ -465,6 +465,27 @@ SUPERSEDED
 
 ---
 
+## Attendance Configuration Versions
+
+Work Schedule Versions, Work Arrangement Versions, and Holiday Calendar Versions use:
+
+```text
+DRAFT
+ACTIVE
+SUPERSEDED
+```
+
+| Current | Action | Next | Actor | Permission | Validations | Side effects |
+| --- | --- | --- | --- | --- | --- | --- |
+| None | Create version | DRAFT | Attendance Administrator | `attendance.configuration.manage` | Agency-owned stable record | Create editable draft |
+| DRAFT | Update draft | DRAFT | Attendance Administrator | `attendance.configuration.manage` | Not used by an Attendance Day | Preserve draft audit history |
+| DRAFT | Activate | ACTIVE | Attendance Administrator | `attendance.configuration.activate` | Exact authority Document Version, approving authority, effectivity, complete Day Rules or calendar entries, and no conflicting active period | Freeze version for new assignments or date resolution |
+| ACTIVE | Supersede | SUPERSEDED | Attendance Administrator | `attendance.configuration.activate` | Complete successor and prospective effectivity | Activate successor without rewriting prior Attendance Days |
+
+Activation records an already-approved agency configuration and does not start another approval workflow. A Schedule Assignment separately records its assignment authority and may reference only active configuration versions. Schedule Assignments cannot overlap for the same Appointed Personnel.
+
+---
+
 ## 5.11 Attendance Day
 
 Statuses:
@@ -481,9 +502,9 @@ ADJUSTED
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
 | ---------- | --------------------------- | ---------- | -------------------------------------------------- | ------------------------------- | --------------------------------- | -------------------------------------------- |
-| None | Create attendance day | PENDING | System | Internal | Employee and schedule valid | Initialize day |
-| PENDING | Calculate | CALCULATED | System / Attendance Administrator | `attendance.days.calculate` | Raw events and schedule available | Store computed values |
-| PENDING | Detect exception | EXCEPTION | System | Internal | Missing or inconsistent data | Create exception |
+| None | Create attendance day | PENDING | System | Internal | Attendance Applicability covers Work Date, or complete events establish Unscheduled Service | Initialize calculation version |
+| PENDING | Calculate | CALCULATED | System / Attendance Administrator | `attendance.days.calculate` | Exact effective configuration, events, Attendance Context, posted leave, and holiday classification resolve without ambiguity | Store immutable segments, totals, and source snapshot |
+| PENDING | Detect exception | EXCEPTION | System | Internal | Missing configuration, unmatched or incomplete events, or conflicting coverage classification | Create blocking Attendance Exception without inferred values |
 | CALCULATED | Flag exception | EXCEPTION | Attendance Administrator | `attendance.days.flag` | Reason required | Create review task |
 | EXCEPTION | Submit for review | FOR_REVIEW | Employee / Attendance Administrator | `attendance.corrections.submit` | Correction or explanation exists | Start review |
 | FOR_REVIEW | Approve result | APPROVED | Supervisor / Attendance Administrator | `attendance.days.approve` | Correction reviewed | Publish approved result |
@@ -511,15 +532,15 @@ APPLIED
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
 | ----------------- | ------------------- | ----------------- | ------------------------------------- | -------------------------------- | ---------------------------------------- | -------------------------------- |
-| None | Create request | DRAFT | Employee / Attendance Administrator | `attendance.corrections.create` | Employee owns record or admin scope | Save draft |
-| DRAFT | Submit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested values and reason complete | Notify approver |
+| None | Create request | DRAFT | Employee / Attendance Administrator | `attendance.corrections.create` | Employee owns affected record or administrator scope; target is Attendance Event or Attendance Context | Save proposed ADD, REPLACE, or VOID change |
+| DRAFT | Submit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested change, reason, and evidence complete | Notify approver |
 | SUBMITTED | Request information | NEEDS_INFORMATION | Supervisor / Attendance Administrator | `attendance.corrections.return` | Comment required | Notify employee |
 | NEEDS_INFORMATION | Resubmit | SUBMITTED | Employee | `attendance.corrections.submit` | Requested evidence provided | Resume review |
-| SUBMITTED | Approve | APPROVED | Supervisor / Attendance Administrator | `attendance.corrections.approve` | Supporting evidence; no conflict | Create approved correction |
+| SUBMITTED | Approve | APPROVED | Supervisor / Attendance Administrator | `attendance.corrections.approve` | Supporting evidence; no conflict; approver is not self-certifying | Authorize retained correction effect |
 | SUBMITTED | Reject | REJECTED | Supervisor / Attendance Administrator | `attendance.corrections.reject` | Reason required | Notify employee |
 | DRAFT | Cancel | CANCELLED | Employee | `attendance.corrections.cancel` | Not submitted | Close request |
 | SUBMITTED | Cancel | CANCELLED | Employee / Attendance Administrator | `attendance.corrections.cancel` | Not yet decided or authorized withdrawal | Stop approval |
-| APPROVED | Apply correction | APPLIED | System / Attendance Administrator | `attendance.corrections.apply` | Attendance period handling valid | Recalculate or create adjustment |
+| APPROVED | Apply correction | APPLIED | System / Attendance Administrator | `attendance.corrections.apply` | Attendance period handling valid | Add replacement input or exclude voided input, preserve original, and create a new calculation version or adjustment |
 
 ---
 
@@ -1108,9 +1129,15 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 
 | Permission | Attendance Admin | HRMO Admin | Supervisor | Employee | HR Certifier | Payroll Preparer | Auditor |
 | --------------------------------- | ---------------: | ---------: | ---------: | -------: | -----------: | ---------------: | ------: |
+| `attendance.configuration.read` | A | A | S | O | A | R | R |
+| `attendance.configuration.manage` | A | C | — | — | — | — | R |
+| `attendance.configuration.activate` | A | C | — | — | C | — | R |
+| `attendance.assignments.manage` | A | C | — | — | — | — | R |
 | `attendance.events.create_manual` | A | C | C | — | — | — | — |
 | `attendance.events.clock` | — | — | O | O | — | — | — |
 | `attendance.events.read` | A | A | S | O | A | R | R |
+| `attendance.contexts.create` | A | C | — | — | — | — | — |
+| `attendance.contexts.read` | A | A | S | O | A | R | R |
 | `attendance.days.calculate` | A | C | — | — | — | — | — |
 | `attendance.days.read` | A | A | S | O | A | R | R |
 | `attendance.days.approve` | A | C | S | — | C | — | — |
