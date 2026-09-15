@@ -376,11 +376,21 @@ erDiagram
     ATTENDANCE_DAY ||--o{ ATTENDANCE_CORRECTION : corrected_by
     ATTENDANCE_CORRECTION }o--o| ATTENDANCE_EVENT : may_change
     ATTENDANCE_CORRECTION }o--o| ATTENDANCE_CONTEXT : may_change
-    ATTENDANCE_CORRECTION ||--o{ ATTENDANCE_CORRECTION_DOCUMENT : supported_by
+    ATTENDANCE_CORRECTION ||--|{ ATTENDANCE_CORRECTION_EVIDENCE : supported_by
+    ATTENDANCE_CORRECTION ||--o{ ATTENDANCE_CORRECTION_EFFECT : applies_as
+    ATTENDANCE_CORRECTION ||--o{ LOCKED_ATTENDANCE_ADJUSTMENT : groups
 
     AGENCY ||--o{ ATTENDANCE_PERIOD : processes
     ATTENDANCE_PERIOD ||--o{ ATTENDANCE_DAY : contains
-    ATTENDANCE_PERIOD ||--o| DTR_DOCUMENT : produces
+    EMPLOYEE ||--o{ EMPLOYEE_ATTENDANCE_SUBMISSION : submits
+    ATTENDANCE_PERIOD ||--o{ EMPLOYEE_ATTENDANCE_SUBMISSION : collects
+    EMPLOYEE_ATTENDANCE_SUBMISSION }o--o{ ATTENDANCE_DAY : binds
+    ATTENDANCE_PERIOD ||--o{ ATTENDANCE_PERIOD_VERSION : versioned_as
+    ATTENDANCE_PERIOD_VERSION }o--o{ ATTENDANCE_DAY : snapshots
+    ATTENDANCE_PERIOD_VERSION ||--o{ DTR_DOCUMENT : produces
+    ATTENDANCE_PERIOD_VERSION ||--o| ATTENDANCE_PAYROLL_PUBLICATION : publishes
+    ATTENDANCE_PAYROLL_PUBLICATION ||--o{ ATTENDANCE_PAYROLL_FACT : contains
+    LOCKED_ATTENDANCE_ADJUSTMENT }o--|| ATTENDANCE_PERIOD_VERSION : corrects
 ```
 
 | Entity | Purpose |
@@ -396,9 +406,16 @@ erDiagram
 | `ATTENDANCE_DAY` | Versioned calculated attendance summary for one Work Date |
 | `ATTENDANCE_DAY_SEGMENT` | Immutable interval-level calculation result and provenance |
 | `ATTENDANCE_EXCEPTION` | Blocking missing or ambiguous calculation input |
-| `ATTENDANCE_CORRECTION` | Approved add, replace, or void request for an event or context |
-| `ATTENDANCE_PERIOD` | Review and payroll-locking period |
-| `DTR_DOCUMENT` | Generated Daily Time Record |
+| `ATTENDANCE_CORRECTION` | Evidence-backed request and impact preview for an add, replace, or void effect |
+| `ATTENDANCE_CORRECTION_EVIDENCE` | Immutable supporting Document Version or authoritative domain-record reference |
+| `ATTENDANCE_CORRECTION_EFFECT` | Immutable approved effect on later calculations |
+| `EMPLOYEE_ATTENDANCE_SUBMISSION` | Employee-bound snapshot submitted for HR Officer review |
+| `ATTENDANCE_PERIOD` | Stable agency-wide attendance interval |
+| `ATTENDANCE_PERIOD_VERSION` | Immutable review and lock snapshot of exact approved Attendance Day versions |
+| `LOCKED_ATTENDANCE_ADJUSTMENT` | Grouped post-lock correction linking predecessor and successor period versions |
+| `DTR_DOCUMENT` | Immutable finalized DTR with exact source, predecessor, and template classification |
+| `ATTENDANCE_PAYROLL_PUBLICATION` | Idempotent original or adjustment batch emitted by a lock |
+| `ATTENDANCE_PAYROLL_FACT` | Non-monetary exact-minute fact with stable source identity |
 
 ---
 

@@ -320,6 +320,7 @@ Examples:
 
 - recruitment may request appointment creation but may not insert appointment rows;
 - appointment may request personnel activation but may not directly alter payroll;
+- attendance may publish immutable non-monetary facts and adjustment deltas but may not select payroll treatment or edit payroll results;
 - leave may create approved payroll inputs but may not edit finalized payroll lines;
 - separation may request membership deactivation but may not bypass identity controls.
 
@@ -620,9 +621,19 @@ Work Arrangement Versions define authorized operating mode or place separately f
 
 Raw events are immutable and use `TIME_IN`, `BREAK_OUT`, `BREAK_IN`, and `TIME_OUT`. AM In, AM Out, PM In, and PM Out are ordinary daytime DTR projection slots. Corrections add, replace, or void events or Attendance Context through retained correction records; locked periods are never directly edited.
 
-Attendance Context is an immutable, evidence-backed whole-Work-Date or timed fact entered by an authorized Attendance Administrator for official business, official travel, training, or approved non-leave absence. It records prior authorization without adding a second Attendance approval workflow. Posted leave remains Leave-owned input.
+Attendance Context is an immutable, evidence-backed whole-Work-Date or timed fact entered by an authorized HR Administrator for official business, official travel, training, or approved non-leave absence. It records prior authorization without adding a second Attendance approval workflow. Posted leave remains Leave-owned input.
 
 Each calculation creates an immutable Attendance Day version and non-overlapping Attendance Day Segments. Segments retain source references, expected or outside-schedule relation, coverage or deficit classification, and holiday classification. Summary totals never count overlapping coverage or deficit minutes twice. Outside-schedule and statutory-night-window minutes are factual handoffs only, not compensation authorization.
+
+Attendance lifecycle state belongs to the record whose meaning changes. Attendance Day versions use only `PENDING`, `CALCULATED`, `EXCEPTION`, and `APPROVED`. Employee Attendance Submissions bind one Employee's exact day versions for HR Officer review. Immutable Attendance Period Versions own `FOR_REVIEW`, `APPROVED`, `RETURNED`, and `LOCKED`; the Attendance Period is `OPEN` until its first lock and `FINALIZED` thereafter.
+
+An HR Administrator has the full Attendance permission set and inherits HR Officer access. An HR Officer inherits Employee access and may review, return, and approve attendance within assigned scope. An Employee may submit their own attendance. The HR Officer who approves an Attendance Period Version and the HR Administrator who locks it must be different Agency Memberships.
+
+Lock is the attendance certification and publication transaction. It revalidates the complete applicable Employee and Work Date population, approved current day versions and submissions, unresolved exceptions and corrections, source bindings, routed authority, actor separation, and DTR and payroll-fact reconciliation. It then atomically records the lock, creates immutable Finalized Daily Time Records and an idempotent Attendance Payroll Publication, and appends audit and outbox records. A failure leaves the version `APPROVED` with no partial publication.
+
+Attendance Payroll Facts are exact nonnegative minute quantities by Employee, Work Date, and attendance classification. They retain the source Attendance Day version and holiday classification but contain no rate, money, deduction decision, or target payroll period. Posted leave remains provenance in Attendance while Leave owns its payroll effect. Outside-schedule and statutory-night-window minutes remain separate candidate-hours handoffs to Phase 8.
+
+An Attendance Correction stores an immutable impact preview over every affected Work Date and period. Open-period approval and application are atomic. A locked-period correction requires HR Officer approval and separate HR Administrator authorization, then creates retained correction effects, successor day versions, a grouped Locked Attendance Adjustment, and a complete successor Attendance Period Version. Locking the successor creates new corrected DTRs and an idempotent delta publication; original locked versions and outputs never reopen, change, or disappear.
 
 ## Leave
 

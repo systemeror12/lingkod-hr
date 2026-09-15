@@ -219,7 +219,7 @@ Effective holiday/day classification
 
 ## `attendance_periods`
 
-Review and payroll-cutoff period
+Stable agency-wide attendance interval
 
 | Column | Logical type | Null? | Key / rule | Description |
 | ----------------------- | ------------ | ----- | --------------------- | -------------------------------------------- |
@@ -228,15 +228,74 @@ Review and payroll-cutoff period
 | code | string | No |  | Period code |
 | date_from | date | No |  | Start |
 | date_to | date | No |  | End |
-| status | enum | No |  | OPEN, FOR_REVIEW, APPROVED, LOCKED, REOPENED |
-| locked_at | datetime | Yes |  | Lock |
-| locked_by_membership_id | uuid | Yes | FK agency_memberships | Locker |
+| status | enum | No |  | OPEN, FINALIZED |
 
 **Constraints and indexes**
 
 - No overlapping active primary periods for the same payroll profile.
+- A finalized period is never reopened; corrections create successor Attendance Period Versions.
 
 **Deletion behavior:** Retain.
+
+## `employee_attendance_submissions`
+
+One Employee's submitted snapshot within an Attendance Period
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Submission |
+| agency_id | uuid | No | FK agencies | Tenant |
+| attendance_period_id | uuid | No | FK attendance_periods | Period |
+| employee_id | uuid | No | FK employees | Subject |
+| version_no | integer | No |  | Submission version |
+| status | enum | No |  | DRAFT, SUBMITTED, RETURNED, APPROVED, CANCELLED, STALE |
+| submitted_by_membership_id | uuid | No | FK agency_memberships | Employee or on-behalf HR Administrator |
+| on_behalf_reason | string | Yes |  | Required for on-behalf submission |
+| evidence_document_version_id | uuid | Yes | FK document_versions | Required for on-behalf submission |
+| reviewed_by_membership_id | uuid | Yes | FK agency_memberships | HR Officer reviewer |
+| reviewed_at | datetime | Yes |  | Review time |
+| review_reason | string | Yes |  | Return or decision basis |
+
+Each submission has immutable membership rows identifying its exact Attendance Day versions. Recalculation of any member makes a pending submission stale. Approval requires all members to be current and free of unresolved Attendance Exceptions.
+
+**Deletion behavior:** Retain all versions.
+
+## `attendance_period_versions`
+
+Immutable agency-wide review and lock snapshot
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Period version |
+| agency_id | uuid | No | FK agencies | Tenant |
+| attendance_period_id | uuid | No | FK attendance_periods | Stable period |
+| version_no | integer | No |  | Monotonic version |
+| predecessor_version_id | uuid | Yes | Self FK | Prior locked version for a correction successor |
+| status | enum | No |  | FOR_REVIEW, APPROVED, RETURNED, LOCKED |
+| approval_route_version_id | uuid | No | FK approval_route_versions | Exact routed authority |
+| submitted_by_membership_id | uuid | No | FK agency_memberships | HR Administrator preparer |
+| reviewed_by_membership_id | uuid | Yes | FK agency_memberships | HR Officer approver |
+| reviewed_at | datetime | Yes |  | Review time |
+| review_reason | string | Yes |  | Return or approval basis |
+| locked_by_membership_id | uuid | Yes | FK agency_memberships | Different HR Administrator |
+| locked_at | datetime | Yes |  | Lock time |
+| reconciliation | json | Yes |  | Locked counts and exact-minute totals |
+
+Immutable membership rows bind every applicable Employee, approved Employee Attendance Submission, Work Date, and exact Attendance Day version. Lock requires complete membership, no unresolved exception or correction, unchanged sources, successful DTR rendering and payroll-fact reconciliation, and different reviewer and locker memberships.
+
+**Deletion behavior:** Retain; locked versions never reopen or change.
+
+## `dtr_documents`
+
+Immutable Finalized Daily Time Record for one Employee and Attendance Period Version. Each lock creates a retained artifact classified as original or corrected, with predecessor and authoritative template version when applicable; unfinalized previews are derived and visibly labelled rather than stored as finalized documents.
+
+## `attendance_payroll_publications`
+
+Immutable idempotent original or adjustment batch created by an Attendance Period Lock. One publication exists per Attendance Period Version; adjustment publications identify their predecessor and contain only changed facts.
+
+## `attendance_payroll_facts`
+
+One exact nonnegative minute quantity by publication, Employee, Work Date, attendance classification, source Attendance Day version, and holiday classification. Adjustment facts preserve prior value, corrected value, and a nonnegative `INCREASE` or `DECREASE` difference; they contain no rate, money, deduction, or target payroll-period decision.
 
 ## `attendance_events`
 
@@ -281,7 +340,7 @@ Calculated daily attendance result
 | work_arrangement_version_id | uuid | Yes | FK work_arrangement_versions | Exact arrangement version |
 | holiday_calendar_version_id | uuid | Yes | FK holiday_calendar_versions | Exact calendar version |
 | day_classification | enum | No |  | SCHEDULED, UNSCHEDULED_SERVICE |
-| status | enum | No |  | PENDING, CALCULATED, EXCEPTION, FOR_REVIEW, APPROVED, LOCKED, ADJUSTED |
+| status | enum | No |  | PENDING, CALCULATED, EXCEPTION, APPROVED |
 | expected_minutes | integer | No |  | Expected duty |
 | worked_minutes | integer | No |  | Worked |
 | coverage_minutes | integer | No |  | Union of worked and authorized coverage |
@@ -337,15 +396,16 @@ Correction request without overwriting raw events
 | ---------------------------- | ------------ | ----- | --------------------- | --------------------------------------------------------------------------- |
 | id | uuid | No | PK | Correction |
 | agency_id | uuid | No | FK agencies | Tenant |
-| attendance_day_id | uuid | No | FK attendance_days | Day |
-| employee_id | uuid | No | FK employees | Requester/subject |
+| employee_id | uuid | No | FK employees | Subject |
+| initiated_by_membership_id | uuid | No | FK agency_memberships | Employee or scoped HR Administrator |
 | target_type | enum | No |  | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT |
 | requested_action | enum | No |  | ADD, REPLACE, VOID |
 | target_id | uuid | Yes |  | Existing target for replace or void |
-| status | enum | No |  | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, REJECTED, CANCELLED, APPLIED |
+| status | enum | No |  | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, FOR_AUTHORIZATION, REJECTED, CANCELLED, APPLIED |
 | requested_record | json | Yes |  | Proposed add or replacement |
 | reason | string | No |  | Reason |
-| evidence_document_version_id | uuid | No | FK document_versions | Exact evidence |
+| approval_route_version_id | uuid | No | FK approval_route_versions | Exact routed authority |
+| impact_preview | json | No |  | Exact before-and-after source and result versions |
 | submitted_at | datetime | Yes |  | Submission |
 | decided_by_membership_id | uuid | Yes | FK agency_memberships | Approver |
 | decided_at | datetime | Yes |  | Decision |
@@ -353,10 +413,19 @@ Correction request without overwriting raw events
 
 **Constraints and indexes**
 
-- Applied correction preserves the original event or context and creates the approved effect, a new Attendance Day calculation version, or a locked-period adjustment.
+- Immutable child evidence rows reference one or more Document Versions or authoritative domain records; a comment alone is insufficient.
+- Approval binds the impact preview. Open-period approval and application are atomic; a post-lock approval requires a different HR Administrator to authorize application.
+- Application preserves the original event or context and creates immutable effect rows and successor versions for every affected Work Date. A correction may span Attendance Periods.
 
 **Deletion behavior:** Retain.
 
+## `attendance_correction_effects`
+
+Normalized immutable `ADD`, `REPLACE`, or `VOID` effects created from an applied Attendance Correction. Each row identifies its original target or new fact, replacement values where applicable, and the evidence and approval lineage used by later calculations.
+
+## `locked_attendance_adjustments`
+
+Grouped post-lock application of one approved Attendance Correction. Child rows link every affected locked predecessor Attendance Period Version to its complete successor version, corrected DTRs, and adjustment publication without changing the predecessor.
 ## `leave_types`
 
 Stable leave category

@@ -301,22 +301,38 @@ flowchart TD
     O --> P{Blocking exception?}
     P -- Yes --> D
     P -- No --> Q[Mark CALCULATED]
-    D --> R[Notify employee or supervisor]
-    R --> S[Employee or administrator may request correction]
-    S --> T[Supervisor or HR reviews]
-    T --> U{Approved?}
-    U -- No --> V[Reject with reason]
-    U -- Yes --> W[Add, replace, or void the event or context]
-    W --> X[Create a new Attendance Day calculation version]
-    Q --> Y[Generate DTR view]
-    X --> Y
-    Y --> Z{Payroll cutoff reached?}
-    Z -- No --> B
-    Z -- Yes --> AA[Approve and lock attendance period]
-    AA --> AB[Publish payroll inputs]
+    D --> R[Notify Employee or HR]
+    R --> S[Employee or HR Administrator submits evidence-backed correction]
+    S --> T[Build impact preview for every affected Work Date and period]
+    T --> U[HR Officer reviews factual correction]
+    U --> V{Approved?}
+    V -- No --> W[Reject or return with reason]
+    V -- Yes, open period --> X[Atomically record effect and recalculate affected days]
+    V -- Yes, locked period --> XA[Set FOR_AUTHORIZATION]
+    XA --> XB[Different HR Administrator authorizes grouped locked adjustment]
+    XB --> X
+    X --> P
+    Q --> Y[Employee reviews Daily Time Record Preview]
+    Y --> Z[Employee submits exact Attendance Day versions]
+    Z --> AA[HR Officer reviews and approves submission]
+    AA --> AB{All applicable submissions and days approved?}
+    AB -- No --> B
+    AB -- Yes --> AC[Create immutable Attendance Period Version FOR_REVIEW]
+    AC --> AD[HR Officer reviews complete period snapshot]
+    AD --> AE{Approved?}
+    AE -- Returned --> B
+    AE -- Yes --> AF[Different HR Administrator runs lock reconciliation]
+    AF --> AG{All lock checks pass?}
+    AG -- No --> AH[Remain APPROVED with no partial outputs]
+    AG -- Yes --> AI[Atomically lock, create finalized DTRs, publish attendance payroll facts, and append audit and outbox records]
+    AI --> AJ{Later approved correction?}
+    AJ -- No --> AK[Retain locked version and outputs]
+    AJ -- Yes --> XA
 ```
 
-An ordinary daytime DTR presents semantic events through the familiar AM In, AM Out, PM In, and PM Out slots. Overnight duty remains one Work Date beginning on the local date of `TIME_IN`; its view uses duty and break labels with actual dates and times. Complete events on a rest day create Unscheduled Service, not approved overtime or COC. No biometric import exists in MVP.
+An ordinary daytime DTR presents semantic events through the familiar AM In, AM Out, PM In, and PM Out slots. Overnight duty remains one Work Date beginning on the local date of `TIME_IN`; its view uses duty and break labels with actual dates and times. A preview is explicitly unfinalized. Each lock creates separately retained Finalized Daily Time Records and an idempotent Attendance Payroll Publication. A locked correction produces successor Attendance Day and Attendance Period Versions, corrected DTRs, and a delta publication without changing the predecessor.
+
+Complete events on a rest day create Unscheduled Service, not approved overtime or COC. Outside-schedule and statutory-night-window minutes remain separate factual candidate-hours handoffs to Phase 8. No biometric import exists in MVP.
 
 ---
 

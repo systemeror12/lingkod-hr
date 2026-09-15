@@ -251,14 +251,84 @@ CREATE TABLE attendance_periods (
   code citext NOT NULL,
   date_from date NOT NULL,
   date_to date NOT NULL,
-  status text NOT NULL
-    CHECK (status IN ('OPEN','FOR_REVIEW','APPROVED','LOCKED','REOPENED')),
-  locked_at timestamptz,
-  locked_by_membership_id uuid,
+  status text NOT NULL CHECK (status IN ('OPEN','FINALIZED')),
   CHECK (date_to >= date_from),
+  UNIQUE (agency_id, code),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE employee_attendance_submissions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_period_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  version_no integer NOT NULL CHECK (version_no > 0),
+  status text NOT NULL CHECK (status IN (
+    'DRAFT','SUBMITTED','RETURNED','APPROVED','CANCELLED','STALE'
+  )),
+  submitted_by_membership_id uuid NOT NULL,
+  submitted_at timestamptz,
+  on_behalf_reason text,
+  evidence_document_version_id uuid,
+  reviewed_by_membership_id uuid,
+  reviewed_at timestamptz,
+  review_reason text,
+  CHECK (
+    (on_behalf_reason IS NULL AND evidence_document_version_id IS NULL)
+    OR (on_behalf_reason IS NOT NULL AND evidence_document_version_id IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_period_id)
+    REFERENCES attendance_periods (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, submitted_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, evidence_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, reviewed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (attendance_period_id, employee_id, version_no),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE attendance_period_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_period_id uuid NOT NULL,
+  version_no integer NOT NULL CHECK (version_no > 0),
+  predecessor_version_id uuid,
+  status text NOT NULL CHECK (status IN ('FOR_REVIEW','APPROVED','RETURNED','LOCKED')),
+  approval_route_version_id uuid NOT NULL,
+  submitted_by_membership_id uuid NOT NULL,
+  submitted_at timestamptz NOT NULL,
+  reviewed_by_membership_id uuid,
+  reviewed_at timestamptz,
+  review_reason text,
+  locked_by_membership_id uuid,
+  locked_at timestamptz,
+  reconciliation jsonb,
+  CHECK (reviewed_by_membership_id IS NULL OR reviewed_by_membership_id <> locked_by_membership_id),
+  CHECK (
+    status <> 'LOCKED'
+    OR (reviewed_by_membership_id IS NOT NULL
+      AND reviewed_at IS NOT NULL
+      AND locked_by_membership_id IS NOT NULL
+      AND locked_at IS NOT NULL
+      AND reconciliation IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_period_id)
+    REFERENCES attendance_periods (agency_id, id),
+  FOREIGN KEY (agency_id, predecessor_version_id)
+    REFERENCES attendance_period_versions (agency_id, id),
+  FOREIGN KEY (agency_id, approval_route_version_id)
+    REFERENCES approval_route_versions (agency_id, id),
+  FOREIGN KEY (agency_id, submitted_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, reviewed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, locked_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
-  UNIQUE (agency_id, code),
+  UNIQUE (attendance_period_id, version_no),
   UNIQUE (agency_id, id)
 );
 ```
@@ -341,7 +411,7 @@ CREATE TABLE attendance_days (
   holiday_calendar_version_id uuid,
   day_classification text NOT NULL CHECK (day_classification IN ('SCHEDULED','UNSCHEDULED_SERVICE')),
   status text NOT NULL
-    CHECK (status IN ('PENDING','CALCULATED','EXCEPTION','FOR_REVIEW','APPROVED','LOCKED','ADJUSTED')),
+    CHECK (status IN ('PENDING','CALCULATED','EXCEPTION','APPROVED')),
   expected_minutes integer NOT NULL DEFAULT 0 CHECK (expected_minutes >= 0),
   worked_minutes integer NOT NULL DEFAULT 0 CHECK (worked_minutes >= 0),
   coverage_minutes integer NOT NULL DEFAULT 0 CHECK (coverage_minutes >= 0),
@@ -416,6 +486,31 @@ CREATE TABLE attendance_exceptions (
   FOREIGN KEY (agency_id, resolved_by_membership_id)
     REFERENCES agency_memberships (agency_id, id)
 );
+
+CREATE TABLE employee_attendance_submission_days (
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_attendance_submission_id uuid NOT NULL,
+  attendance_day_id uuid NOT NULL,
+  PRIMARY KEY (employee_attendance_submission_id, attendance_day_id),
+  FOREIGN KEY (agency_id, employee_attendance_submission_id)
+    REFERENCES employee_attendance_submissions (agency_id, id),
+  FOREIGN KEY (agency_id, attendance_day_id)
+    REFERENCES attendance_days (agency_id, id)
+);
+
+CREATE TABLE attendance_period_version_days (
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_period_version_id uuid NOT NULL,
+  employee_attendance_submission_id uuid NOT NULL,
+  attendance_day_id uuid NOT NULL,
+  PRIMARY KEY (attendance_period_version_id, attendance_day_id),
+  FOREIGN KEY (agency_id, attendance_period_version_id)
+    REFERENCES attendance_period_versions (agency_id, id),
+  FOREIGN KEY (agency_id, employee_attendance_submission_id)
+    REFERENCES employee_attendance_submissions (agency_id, id),
+  FOREIGN KEY (agency_id, attendance_day_id)
+    REFERENCES attendance_days (agency_id, id)
+);
 ```
 
 Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, and posted-leave intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
@@ -430,46 +525,222 @@ An overnight calculation remains one Attendance Day under the beginning-local-da
 CREATE TABLE attendance_corrections (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
-  attendance_day_id uuid NOT NULL,
   employee_id uuid NOT NULL,
+  initiated_by_membership_id uuid NOT NULL,
+  recorded_by_membership_id uuid NOT NULL,
   target_type text NOT NULL CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT')),
   requested_action text NOT NULL CHECK (requested_action IN ('ADD','REPLACE','VOID')),
   target_id uuid,
   status text NOT NULL
-    CHECK (status IN ('DRAFT','SUBMITTED','NEEDS_INFORMATION','APPROVED','REJECTED','CANCELLED','APPLIED')),
+    CHECK (status IN (
+      'DRAFT','SUBMITTED','NEEDS_INFORMATION','APPROVED','FOR_AUTHORIZATION',
+      'REJECTED','CANCELLED','APPLIED'
+    )),
   requested_record jsonb,
   reason text NOT NULL,
-  evidence_document_version_id uuid NOT NULL,
+  approval_route_version_id uuid NOT NULL,
+  impact_preview jsonb NOT NULL,
   submitted_at timestamptz,
   decided_by_membership_id uuid,
   decided_at timestamptz,
   decision_reason text,
-  FOREIGN KEY (agency_id, attendance_day_id)
-    REFERENCES attendance_days (agency_id, id),
+  authorized_by_membership_id uuid,
+  authorized_at timestamptz,
+  applied_by_membership_id uuid,
+  applied_at timestamptz,
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
-  FOREIGN KEY (agency_id, evidence_document_version_id)
-    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, initiated_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, recorded_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, approval_route_version_id)
+    REFERENCES approval_route_versions (agency_id, id),
   FOREIGN KEY (agency_id, decided_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, authorized_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  FOREIGN KEY (agency_id, applied_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
   UNIQUE (agency_id, id)
+);
+
+CREATE TABLE attendance_correction_evidence (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_correction_id uuid NOT NULL,
+  document_version_id uuid,
+  source_type text,
+  source_id uuid,
+  CHECK (
+    (document_version_id IS NOT NULL AND source_type IS NULL AND source_id IS NULL)
+    OR (document_version_id IS NULL AND source_type IS NOT NULL AND source_id IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_correction_id)
+    REFERENCES attendance_corrections (agency_id, id),
+  FOREIGN KEY (agency_id, document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE attendance_correction_effects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_correction_id uuid NOT NULL,
+  effect_action text NOT NULL CHECK (effect_action IN ('ADD','REPLACE','VOID')),
+  target_type text NOT NULL CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT')),
+  original_target_id uuid,
+  replacement_record jsonb,
+  applied_by_membership_id uuid NOT NULL,
+  applied_at timestamptz NOT NULL,
+  CHECK (
+    (effect_action = 'ADD' AND original_target_id IS NULL AND replacement_record IS NOT NULL)
+    OR (effect_action = 'REPLACE' AND original_target_id IS NOT NULL AND replacement_record IS NOT NULL)
+    OR (effect_action = 'VOID' AND original_target_id IS NOT NULL AND replacement_record IS NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_correction_id)
+    REFERENCES attendance_corrections (agency_id, id),
+  FOREIGN KEY (agency_id, applied_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (attendance_correction_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE locked_attendance_adjustments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_correction_id uuid NOT NULL,
+  authorized_by_membership_id uuid NOT NULL,
+  authorized_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, attendance_correction_id)
+    REFERENCES attendance_corrections (agency_id, id),
+  FOREIGN KEY (agency_id, authorized_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (attendance_correction_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE locked_attendance_adjustment_periods (
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  locked_attendance_adjustment_id uuid NOT NULL,
+  predecessor_period_version_id uuid NOT NULL,
+  successor_period_version_id uuid NOT NULL,
+  PRIMARY KEY (locked_attendance_adjustment_id, predecessor_period_version_id),
+  CHECK (predecessor_period_version_id <> successor_period_version_id),
+  FOREIGN KEY (agency_id, locked_attendance_adjustment_id)
+    REFERENCES locked_attendance_adjustments (agency_id, id),
+  FOREIGN KEY (agency_id, predecessor_period_version_id)
+    REFERENCES attendance_period_versions (agency_id, id),
+  FOREIGN KEY (agency_id, successor_period_version_id)
+    REFERENCES attendance_period_versions (agency_id, id)
 );
 ```
 
 Applied correction transaction:
 
-- retain the original Attendance Event or Attendance Context and record the approved ADD, REPLACE, or VOID effect;
-- retain the old Attendance Day and its segments;
-- create replacement current version;
-- mark old version `is_current = false`;
-- append audit record;
-- create payroll adjustment if period was locked/finalized.
+- require at least one immutable evidence row and bind the exact Approval Route Version and impact preview;
+- retain the original Attendance Event or Attendance Context and record the approved `ADD`, `REPLACE`, or `VOID` effect;
+- retain every old Attendance Day and segment, create replacement current versions for all affected Work Dates, and make their prior versions non-current;
+- apply open-period approval and effect atomically against the previewed versions;
+- for a locked period, require a different HR Administrator's authorization and group every affected predecessor and successor Attendance Period Version under one Locked Attendance Adjustment; and
+- append sanitized audit and outbox records without partial effects.
 
-The finalization contract defines the normalized applied-effect and locked-period adjustment tables. The input boundary forbids hard deletion or in-place mutation of the target record.
+An approved correction may produce an Attendance Exception. The effect remains applied, but the affected Employee Attendance Submission becomes stale and no successor period may enter review until the exception is resolved. The input boundary forbids hard deletion or in-place mutation of the target record.
 
 ---
 
-## 6. Leave Types and Policies
+## 6. Finalized DTR and Attendance Payroll Publications
+
+```sql
+CREATE TABLE dtr_documents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_period_version_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  predecessor_dtr_document_id uuid,
+  classification text NOT NULL CHECK (classification IN ('ORIGINAL','CORRECTED')),
+  output_type text NOT NULL CHECK (output_type IN ('PRINTABLE_SYSTEM_VIEW','EXACT_VERSIONED_FORM')),
+  document_version_id uuid NOT NULL,
+  authoritative_template_reference jsonb,
+  source_manifest jsonb NOT NULL,
+  generated_at timestamptz NOT NULL,
+  CHECK (output_type <> 'EXACT_VERSIONED_FORM' OR authoritative_template_reference IS NOT NULL),
+  CHECK (
+    (classification = 'ORIGINAL' AND predecessor_dtr_document_id IS NULL)
+    OR (classification = 'CORRECTED' AND predecessor_dtr_document_id IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_period_version_id)
+    REFERENCES attendance_period_versions (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, predecessor_dtr_document_id)
+    REFERENCES dtr_documents (agency_id, id),
+  FOREIGN KEY (agency_id, document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  UNIQUE (attendance_period_version_id, employee_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE attendance_payroll_publications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_period_version_id uuid NOT NULL,
+  predecessor_publication_id uuid,
+  publication_type text NOT NULL CHECK (publication_type IN ('ORIGINAL','ADJUSTMENT')),
+  idempotency_key text NOT NULL,
+  published_at timestamptz NOT NULL,
+  CHECK (
+    (publication_type = 'ORIGINAL' AND predecessor_publication_id IS NULL)
+    OR (publication_type = 'ADJUSTMENT' AND predecessor_publication_id IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_period_version_id)
+    REFERENCES attendance_period_versions (agency_id, id),
+  FOREIGN KEY (agency_id, predecessor_publication_id)
+    REFERENCES attendance_payroll_publications (agency_id, id),
+  UNIQUE (attendance_period_version_id),
+  UNIQUE (agency_id, idempotency_key),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE attendance_payroll_facts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  attendance_payroll_publication_id uuid NOT NULL,
+  attendance_day_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  work_date date NOT NULL,
+  fact_type text NOT NULL CHECK (fact_type IN (
+    'EXPECTED','WORKED','OFFICIAL_BUSINESS','OFFICIAL_TRAVEL','TRAINING',
+    'APPROVED_ABSENCE','POSTED_LEAVE','TARDINESS','UNDERTIME','ABSENCE'
+  )),
+  holiday_classification text,
+  stable_source_key text NOT NULL,
+  corrected_minutes integer NOT NULL CHECK (corrected_minutes >= 0),
+  prior_minutes integer CHECK (prior_minutes >= 0),
+  difference_direction text CHECK (difference_direction IN ('INCREASE','DECREASE')),
+  difference_minutes integer CHECK (difference_minutes >= 0),
+  CHECK (
+    (prior_minutes IS NULL AND difference_direction IS NULL AND difference_minutes IS NULL)
+    OR (prior_minutes IS NOT NULL AND difference_direction IS NOT NULL AND difference_minutes IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, attendance_payroll_publication_id)
+    REFERENCES attendance_payroll_publications (agency_id, id),
+  FOREIGN KEY (agency_id, attendance_day_id)
+    REFERENCES attendance_days (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  UNIQUE (attendance_payroll_publication_id, stable_source_key),
+  UNIQUE (agency_id, id)
+);
+```
+
+Attendance Period Lock must atomically validate Attendance Period Reconciliation, set the approved version to `LOCKED`, set an initially open stable period to `FINALIZED`, create one DTR per covered Employee, create exactly one idempotent publication, and append audit and outbox events. Any failure leaves the version `APPROVED` and creates none of those outputs.
+
+An adjustment publication contains only changed facts and records prior, corrected, and nonnegative directional difference values. It never edits or retracts the original publication, assigns money or rates, or selects the payroll period that consumes the difference. Posted leave is retained as attendance provenance while Leave owns its payroll effect. Outside-schedule and statutory-night-window minutes do not enter these publications.
+
+---
+
+## 7. Leave Types and Policies
 
 ```sql
 CREATE TABLE leave_types (
@@ -545,7 +816,7 @@ superseded versions and their authority links are immutable.
 
 ---
 
-## 7. Leave Accounts and Ledger
+## 8. Leave Accounts and Ledger
 
 ```sql
 CREATE TABLE leave_accounts (
@@ -666,7 +937,7 @@ Leave Application Version and recertification.
 
 ---
 
-## 8. Leave Applications
+## 9. Leave Applications
 
 ```sql
 CREATE TABLE leave_applications (
@@ -1164,7 +1435,7 @@ commitment has no silent system-defined expiry.
 
 ---
 
-## 9. Monetization
+## 10. Monetization
 
 ```sql
 CREATE TABLE leave_monetization_requests (
