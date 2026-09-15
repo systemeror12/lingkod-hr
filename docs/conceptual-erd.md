@@ -5,8 +5,8 @@
 **Document status:** Draft for review  
 **Source documents:** Public-Sector HRIS BRD v1.0, Workflow Specification v1.0, Controls Specification v1.0  
 **Primary profile:** Civilian National Government Agency  
-**Version:** 1.0  
-**Date:** August 6, 2026
+**Version:** 1.1
+**Date:** September 15, 2026
 
 ---
 
@@ -81,7 +81,9 @@ erDiagram
     EMPLOYEE ||--o{ PDS_VERSION : maintains
 
     EMPLOYEE ||--o{ ATTENDANCE_EVENT : creates
+    EMPLOYEE ||--o{ ATTENDANCE_CONTEXT : receives
     EMPLOYEE ||--o{ ATTENDANCE_DAY : summarized_into
+    ATTENDANCE_DAY ||--o{ ATTENDANCE_DAY_SEGMENT : calculated_as
     ATTENDANCE_DAY ||--o{ ATTENDANCE_CORRECTION : corrected_by
 
     EMPLOYEE ||--o{ LEAVE_ACCOUNT : holds
@@ -351,19 +353,29 @@ Certified PDS versions and completed service segments must remain historically a
 
 ```mermaid
 erDiagram
+    WORK_SCHEDULE ||--o{ WORK_SCHEDULE_VERSION : versioned_as
+    WORK_SCHEDULE_VERSION ||--|{ DAY_RULE : composed_of
+    DAY_RULE ||--o{ BREAK_INTERVAL : excludes
     EMPLOYEE ||--o{ SCHEDULE_ASSIGNMENT : assigned
-    WORK_SCHEDULE ||--o{ SCHEDULE_ASSIGNMENT : defines
-    WORK_ARRANGEMENT ||--o{ SCHEDULE_ASSIGNMENT : modifies
+    WORK_SCHEDULE_VERSION ||--o{ SCHEDULE_ASSIGNMENT : governs_time
+    WORK_ARRANGEMENT ||--o{ WORK_ARRANGEMENT_VERSION : versioned_as
+    WORK_ARRANGEMENT_VERSION ||--o{ SCHEDULE_ASSIGNMENT : governs_mode
 
     AGENCY ||--o{ HOLIDAY_CALENDAR : maintains
-    HOLIDAY_CALENDAR ||--o{ HOLIDAY : contains
+    HOLIDAY_CALENDAR ||--o{ HOLIDAY_CALENDAR_VERSION : versioned_as
+    HOLIDAY_CALENDAR_VERSION ||--o{ HOLIDAY : contains
+    WORK_ARRANGEMENT_VERSION }o--|| HOLIDAY_CALENDAR : selects_scope
 
     EMPLOYEE ||--o{ ATTENDANCE_EVENT : records
+    EMPLOYEE ||--o{ ATTENDANCE_CONTEXT : receives
     EMPLOYEE ||--o{ ATTENDANCE_DAY : summarized_into
-    WORK_SCHEDULE ||--o{ ATTENDANCE_DAY : evaluated_against
+    SCHEDULE_ASSIGNMENT ||--o{ ATTENDANCE_DAY : evaluated_against
+    ATTENDANCE_DAY ||--o{ ATTENDANCE_DAY_SEGMENT : calculated_as
 
     ATTENDANCE_DAY ||--o{ ATTENDANCE_EXCEPTION : identifies
     ATTENDANCE_DAY ||--o{ ATTENDANCE_CORRECTION : corrected_by
+    ATTENDANCE_CORRECTION }o--o| ATTENDANCE_EVENT : may_change
+    ATTENDANCE_CORRECTION }o--o| ATTENDANCE_CONTEXT : may_change
     ATTENDANCE_CORRECTION ||--o{ ATTENDANCE_CORRECTION_DOCUMENT : supported_by
 
     AGENCY ||--o{ ATTENDANCE_PERIOD : processes
@@ -373,13 +385,18 @@ erDiagram
 
 | Entity | Purpose |
 | ----------------------- | ------------------------------------------------ |
-| `WORK_SCHEDULE` | Reusable schedule pattern |
-| `WORK_ARRANGEMENT` | Office, hybrid, WFH, field, or other arrangement |
-| `SCHEDULE_ASSIGNMENT` | Effective employee schedule |
+| `WORK_SCHEDULE` | Stable identity for a reusable schedule |
+| `WORK_SCHEDULE_VERSION` | Immutable effective Day Rules, time zone, event windows, and authority |
+| `DAY_RULE` | Fixed, flexible, or rest-day duty rule for one weekday |
+| `WORK_ARRANGEMENT_VERSION` | Immutable authorized operating mode and holiday-calendar scope |
+| `SCHEDULE_ASSIGNMENT` | Effective binding of eligible Appointed Personnel to schedule and arrangement versions |
+| `HOLIDAY_CALENDAR_VERSION` | Immutable scoped holiday and suspension classifications |
 | `ATTENDANCE_EVENT` | Immutable raw manual or web-clock event |
-| `ATTENDANCE_DAY` | Calculated daily attendance |
-| `ATTENDANCE_EXCEPTION` | Missing event, tardiness, undertime, or mismatch |
-| `ATTENDANCE_CORRECTION` | Correction request and decision |
+| `ATTENDANCE_CONTEXT` | Evidence-backed official business, travel, training, or approved non-leave absence |
+| `ATTENDANCE_DAY` | Versioned calculated attendance summary for one Work Date |
+| `ATTENDANCE_DAY_SEGMENT` | Immutable interval-level calculation result and provenance |
+| `ATTENDANCE_EXCEPTION` | Blocking missing or ambiguous calculation input |
+| `ATTENDANCE_CORRECTION` | Approved add, replace, or void request for an event or context |
 | `ATTENDANCE_PERIOD` | Review and payroll-locking period |
 | `DTR_DOCUMENT` | Generated Daily Time Record |
 

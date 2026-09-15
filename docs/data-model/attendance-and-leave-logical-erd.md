@@ -3,8 +3,8 @@
 **Document status:** Draft for review  
 **Model level:** Logical ERD  
 **Primary profile:** Civilian Philippine National Government Agency  
-**Version:** 1.0  
-**Date:** August 6, 2026
+**Version:** 1.1
+**Date:** September 15, 2026
 
 ---
 
@@ -28,12 +28,20 @@
 ```mermaid
 erDiagram
     WORK_SCHEDULES ||--o{ WORK_SCHEDULE_VERSIONS : versioned_as
+    WORK_SCHEDULE_VERSIONS ||--|{ WORK_SCHEDULE_DAY_RULES : contains
+    WORK_SCHEDULE_DAY_RULES ||--o{ WORK_SCHEDULE_BREAK_INTERVALS : excludes
+    WORK_ARRANGEMENTS ||--o{ WORK_ARRANGEMENT_VERSIONS : versioned_as
     EMPLOYEES ||--o{ SCHEDULE_ASSIGNMENTS : assigned
     WORK_SCHEDULE_VERSIONS ||--o{ SCHEDULE_ASSIGNMENTS : uses
+    WORK_ARRANGEMENT_VERSIONS ||--o{ SCHEDULE_ASSIGNMENTS : uses
+    HOLIDAY_CALENDARS ||--o{ HOLIDAY_CALENDAR_VERSIONS : versioned_as
+    HOLIDAY_CALENDAR_VERSIONS ||--o{ HOLIDAY_CALENDAR_ENTRIES : contains
     AGENCIES ||--o{ ATTENDANCE_PERIODS : owns
     EMPLOYEES ||--o{ ATTENDANCE_EVENTS : records
+    EMPLOYEES ||--o{ ATTENDANCE_CONTEXTS : receives
     ATTENDANCE_PERIODS ||--o{ ATTENDANCE_DAYS : contains
     EMPLOYEES ||--o{ ATTENDANCE_DAYS : has
+    ATTENDANCE_DAYS ||--o{ ATTENDANCE_DAY_SEGMENTS : calculated_as
     ATTENDANCE_DAYS ||--o{ ATTENDANCE_EXCEPTIONS : flags
     ATTENDANCE_DAYS ||--o{ ATTENDANCE_CORRECTIONS : corrected_by
     LEAVE_TYPES ||--o{ LEAVE_POLICY_VERSIONS : versioned_as
@@ -57,9 +65,6 @@ Reusable schedule definition
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Code |
 | name | string | No |  | Name |
-| schedule_type | enum | No |  | REGULAR, FLEXIBLE, SHIFT, COMPRESSED |
-| timezone | string | No |  | Timezone |
-| status | enum | No |  | ACTIVE, INACTIVE |
 | current_version_id | uuid | Yes | FK work_schedule_versions | Current version |
 
 **Constraints and indexes**
@@ -77,17 +82,29 @@ Effective-dated schedule rules
 | agency_id | uuid | No | FK agencies | Tenant |
 | work_schedule_id | uuid | No | FK work_schedules | Schedule |
 | version_no | integer | No |  | Version |
-| weekly_pattern | json | No |  | Daily start/end and break rules |
-| grace_minutes | integer | No |  | Grace period |
-| required_minutes_per_day | integer | Yes |  | Expected minutes |
+| schedule_type | enum | No |  | REGULAR, FLEXIBLE, SHIFT, COMPRESSED |
+| timezone | string | No |  | Governing local timezone |
+| holiday_effect_rules | json | No |  | Authority-backed effect by calendar classification |
+| authority_document_version_id | uuid | Yes | FK document_versions | Required authority evidence at activation |
+| approving_authority | string | Yes |  | Required authority named at activation |
+| status | enum | No |  | DRAFT, ACTIVE, SUPERSEDED |
 | effective_from | date | No |  | Start |
 | effective_to | date | Yes |  | End |
 
 **Constraints and indexes**
 
 - No overlapping active versions.
+- Exactly seven complete Day Rules; no implicit grace or timestamp rounding.
 
 **Deletion behavior:** Supersede.
+## `work_schedule_day_rules`
+
+One fixed, flexible, or rest rule for a weekday, including required minutes, duty interval, optional flexible start/core window, Event Collection Window, and event pattern. Duty may end on the next calendar day.
+
+## `work_schedule_break_intervals`
+
+Ordered unpaid break intervals belonging to a Day Rule. A break may end on the next calendar day.
+
 ## `work_arrangements`
 
 Authorized work arrangement
@@ -98,14 +115,17 @@ Authorized work arrangement
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Code |
 | name | string | No |  | Name |
-| arrangement_type | enum | No |  | OFFICE, WFH, HYBRID, FIELD, OFFICIAL_BUSINESS, OTHER |
-| status | enum | No |  | ACTIVE, INACTIVE |
+| current_version_id | uuid | Yes | FK work_arrangement_versions | Current version |
 
 **Constraints and indexes**
 
 - Unique `(agency_id, code)`.
 
 **Deletion behavior:** Inactivate.
+## `work_arrangement_versions`
+
+Immutable effective-dated arrangement mode, permitted schedule types, scoped Holiday Calendar, exact authority Document Version, and approving authority. Arrangement modes are ONSITE, WORK_FROM_HOME, HYBRID, FIELD, or OTHER; one-off official business is Attendance Context.
+
 ## `schedule_assignments`
 
 Effective employee schedule and arrangement
@@ -116,7 +136,8 @@ Effective employee schedule and arrangement
 | agency_id | uuid | No | FK agencies | Tenant |
 | employee_id | uuid | No | FK employees | Employee |
 | work_schedule_version_id | uuid | No | FK work_schedule_versions | Schedule version |
-| work_arrangement_id | uuid | Yes | FK work_arrangements | Arrangement |
+| work_arrangement_version_id | uuid | No | FK work_arrangement_versions | Arrangement version |
+| authority_document_version_id | uuid | No | FK document_versions | Assignment authority |
 | effective_from | date | No |  | Start |
 | effective_to | date | Yes |  | End |
 | assigned_by_membership_id | uuid | No | FK agency_memberships | Actor |
@@ -136,15 +157,20 @@ Agency/location holiday calendar
 | agency_id | uuid | No | FK agencies | Tenant |
 | code | string | No |  | Code |
 | name | string | No |  | Name |
-| region_code | string | Yes |  | Region/location |
-| status | enum | No |  | ACTIVE, INACTIVE |
+| scope_type | enum | No |  | AGENCY, OFFICE, WORKSITE |
+| scope_reference | string | No |  | Authorized scope |
+| current_version_id | uuid | Yes | FK holiday_calendar_versions | Current version |
 
 **Constraints and indexes**
 
 - Unique `(agency_id, code)`.
 
 **Deletion behavior:** Inactivate.
-## `holidays`
+## `holiday_calendar_versions`
+
+Immutable effective-dated calendar version with exact authority evidence and DRAFT, ACTIVE, or SUPERSEDED status.
+
+## `holiday_calendar_entries`
 
 Effective holiday/day classification
 
@@ -152,15 +178,15 @@ Effective holiday/day classification
 | --- | --- | --- | --- | --- |
 | id | uuid | No | PK | Holiday |
 | agency_id | uuid | No | FK agencies | Tenant |
-| holiday_calendar_id | uuid | No | FK holiday_calendars | Calendar |
+| holiday_calendar_version_id | uuid | No | FK holiday_calendar_versions | Calendar version |
 | holiday_date | date | No |  | Date |
 | name | string | No |  | Name |
-| day_type | enum | No |  | REGULAR_HOLIDAY, SPECIAL_DAY, LOCAL_HOLIDAY, AGENCY_HOLIDAY |
-| source_reference | string | Yes |  | Issuance |
+| day_type | enum | No |  | REGULAR_HOLIDAY, SPECIAL_NON_WORKING, SPECIAL_WORKING, LOCAL_HOLIDAY, WORK_SUSPENSION |
+| source_reference | string | No |  | Issuance |
 
 **Constraints and indexes**
 
-- Unique `(holiday_calendar_id, holiday_date, day_type)`.
+- Unique `(holiday_calendar_version_id, holiday_date, day_type)`.
 
 **Deletion behavior:** Correct through version/replacement.
 ## `attendance_periods`
@@ -198,15 +224,17 @@ Immutable raw manual or web-clock event
 | source_reference | string | Yes |  | Request/device metadata |
 | entered_by_membership_id | uuid | Yes | FK agency_memberships | Manual actor |
 | reason | string | Yes |  | Required for manual entry |
-| voided_at | datetime | Yes |  | Void time |
-| void_reason | string | Yes |  | Void reason |
 
 **Constraints and indexes**
 
-- Events are not updated; incorrect events are voided and replaced.
+- Events are not updated; an approved correction records the add, replace, or void effect separately.
 - No biometric source enum in MVP.
 
 **Deletion behavior:** Retain; never hard-delete.
+## `attendance_contexts`
+
+Immutable whole-Work-Date or timed official-business, official-travel, training, or approved non-leave absence input. It requires the recorder, reason, and either a linked authoritative source record or exact evidence Document Version. It carries no separate Attendance approval workflow.
+
 ## `attendance_days`
 
 Calculated daily attendance result
@@ -219,12 +247,24 @@ Calculated daily attendance result
 | employee_id | uuid | No | FK employees | Employee |
 | work_date | date | No |  | Work date |
 | schedule_assignment_id | uuid | Yes | FK schedule_assignments | Schedule used |
+| work_schedule_version_id | uuid | Yes | FK work_schedule_versions | Exact schedule version |
+| work_arrangement_version_id | uuid | Yes | FK work_arrangement_versions | Exact arrangement version |
+| holiday_calendar_version_id | uuid | Yes | FK holiday_calendar_versions | Exact calendar version |
+| day_classification | enum | No |  | SCHEDULED, UNSCHEDULED_SERVICE |
 | status | enum | No |  | PENDING, CALCULATED, EXCEPTION, FOR_REVIEW, APPROVED, LOCKED, ADJUSTED |
+| expected_minutes | integer | No |  | Expected duty |
 | worked_minutes | integer | No |  | Worked |
+| coverage_minutes | integer | No |  | Union of worked and authorized coverage |
 | late_minutes | integer | No |  | Late |
 | undertime_minutes | integer | No |  | Undertime |
 | absence_minutes | integer | No |  | Absence |
 | official_business_minutes | integer | No |  | Official business |
+| official_travel_minutes | integer | No |  | Official travel |
+| training_minutes | integer | No |  | Training |
+| approved_absence_minutes | integer | No |  | Approved non-leave absence |
+| posted_leave_minutes | integer | No |  | Leave-owned coverage |
+| outside_schedule_minutes | integer | No |  | Factual unscheduled service |
+| statutory_night_window_minutes | integer | No |  | Factual night-window service |
 | calculation_version | integer | No |  | Recalculation version |
 | rule_snapshot | json | No |  | Applied rules |
 
@@ -234,6 +274,10 @@ Calculated daily attendance result
 - Negative minute values prohibited.
 
 **Deletion behavior:** Retain all versions.
+## `attendance_day_segments`
+
+Non-overlapping immutable intervals belonging to one Attendance Day calculation version. Each segment records expected or outside-schedule relation, worked/context/leave/uncovered classification, an optional mutually exclusive deficit classification, holiday classification, and source references.
+
 ## `attendance_exceptions`
 
 Detected attendance issue
@@ -243,15 +287,14 @@ Detected attendance issue
 | id | uuid | No | PK | Exception |
 | agency_id | uuid | No | FK agencies | Tenant |
 | attendance_day_id | uuid | No | FK attendance_days | Day |
-| exception_type | enum | No |  | MISSING_EVENT, TARDINESS, UNDERTIME, ABSENCE, OVERLAP, SCHEDULE_MISMATCH, OTHER |
-| severity | enum | No |  | INFO, WARNING, BLOCKING |
+| exception_type | enum | No |  | MISSING_CONFIGURATION, UNMATCHED_EVENT, INCOMPLETE_SEQUENCE, CONFLICTING_COVERAGE, OTHER |
 | status | enum | No |  | OPEN, RESOLVED, WAIVED |
 | details | json | No |  | Sanitized details |
 | resolved_at | datetime | Yes |  | Resolution |
 
 **Constraints and indexes**
 
-- Blocking exception prevents period lock unless formally waived.
+- Every MVP Attendance Exception blocks approval until resolved or formally waived.
 
 **Deletion behavior:** Retain.
 ## `attendance_corrections`
@@ -264,9 +307,13 @@ Correction request without overwriting raw events
 | agency_id | uuid | No | FK agencies | Tenant |
 | attendance_day_id | uuid | No | FK attendance_days | Day |
 | employee_id | uuid | No | FK employees | Requester/subject |
+| target_type | enum | No |  | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT |
+| requested_action | enum | No |  | ADD, REPLACE, VOID |
+| target_id | uuid | Yes |  | Existing target for replace or void |
 | status | enum | No |  | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, REJECTED, CANCELLED, APPLIED |
-| requested_events | json | No |  | Requested corrected events |
+| requested_record | json | Yes |  | Proposed add or replacement |
 | reason | string | No |  | Reason |
+| evidence_document_version_id | uuid | No | FK document_versions | Exact evidence |
 | submitted_at | datetime | Yes |  | Submission |
 | decided_by_membership_id | uuid | Yes | FK agency_memberships | Approver |
 | decided_at | datetime | Yes |  | Decision |
@@ -274,7 +321,7 @@ Correction request without overwriting raw events
 
 **Constraints and indexes**
 
-- Applied correction creates replacement events or a locked-period adjustment.
+- Applied correction preserves the original event or context and creates the approved effect, a new Attendance Day calculation version, or a locked-period adjustment.
 
 **Deletion behavior:** Retain.
 ## `leave_types`

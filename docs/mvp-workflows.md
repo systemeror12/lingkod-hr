@@ -282,36 +282,41 @@ Action types include promotion, transfer, reappointment, reassignment, detail, d
 
 ```mermaid
 flowchart TD
-    A[Attendance period opens] --> B[Load schedule, work arrangement, holidays, official business, and leave]
-    B --> C[Receive attendance event]
-    C --> D{Source}
-    D -- Employee web clock --> E[Validate employee, session, and timestamp]
-    D -- Authorized manual entry --> F[Validate HR permission and reason]
-    E --> G[Store immutable raw event]
-    F --> G
-    G --> H[Group events by employee and work date]
-    H --> I[Apply schedule and flexible-work rules]
-    I --> J[Calculate hours rendered, tardiness, undertime, and absence]
-    J --> K[Identify overtime or COC candidate hours]
-    K --> L{Exception?}
-    L -- Yes --> M[Create attendance exception]
-    L -- No --> N[Mark CALCULATED]
-    M --> O[Notify employee or supervisor]
-    O --> P[Employee may request correction]
-    P --> Q[Supervisor or HR reviews]
-    Q --> R{Approved?}
-    R -- No --> S[Reject with reason]
-    R -- Yes --> T[Create correction record]
-    T --> U[Recalculate attendance]
-    N --> V[Generate DTR view]
-    U --> V
-    V --> W{Payroll cutoff reached?}
-    W -- No --> H
-    W -- Yes --> X[Approve and lock attendance period]
-    X --> Y[Publish payroll inputs]
+    A[Attendance period opens] --> B[Resolve Attendance Applicability and exact effective configuration]
+    B --> C{Configuration complete and unambiguous?}
+    C -- No --> D[Create blocking Attendance Exception]
+    C -- Yes --> E[Load Day Rule, holiday classification, Attendance Context, and posted leave]
+    E --> F[Receive attendance event]
+    F --> G{Source}
+    G -- Employee web clock --> H[Validate Appointed Personnel, session, enabled source, and timestamp]
+    G -- Authorized manual entry --> I[Validate permission, timestamp, and reason]
+    H --> J[Store immutable semantic event]
+    I --> J
+    J --> K[Match event collection window and Work Date]
+    K --> L{Sequence and match unambiguous?}
+    L -- No --> D
+    L -- Yes --> M[Build non-overlapping Attendance Day Segments]
+    M --> N[Calculate worked, coverage, tardiness, undertime, and absence minutes]
+    N --> O[Classify outside-schedule and statutory-night-window minutes]
+    O --> P{Blocking exception?}
+    P -- Yes --> D
+    P -- No --> Q[Mark CALCULATED]
+    D --> R[Notify employee or supervisor]
+    R --> S[Employee or administrator may request correction]
+    S --> T[Supervisor or HR reviews]
+    T --> U{Approved?}
+    U -- No --> V[Reject with reason]
+    U -- Yes --> W[Add, replace, or void the event or context]
+    W --> X[Create a new Attendance Day calculation version]
+    Q --> Y[Generate DTR view]
+    X --> Y
+    Y --> Z{Payroll cutoff reached?}
+    Z -- No --> B
+    Z -- Yes --> AA[Approve and lock attendance period]
+    AA --> AB[Publish payroll inputs]
 ```
 
-No biometric import exists in MVP.
+An ordinary daytime DTR presents semantic events through the familiar AM In, AM Out, PM In, and PM Out slots. Overnight duty remains one Work Date beginning on the local date of `TIME_IN`; its view uses duty and break labels with actual dates and times. Complete events on a rest day create Unscheduled Service, not approved overtime or COC. No biometric import exists in MVP.
 
 ---
 
@@ -577,9 +582,17 @@ Personnel Records
 
 Attendance and Leave
 - work_schedules
+- work_schedule_versions
+- work_schedule_day_rules
 - work_arrangements
+- work_arrangement_versions
+- schedule_assignments
+- holiday_calendar_versions
 - attendance_events
+- attendance_contexts
 - attendance_days
+- attendance_day_segments
+- attendance_exceptions
 - attendance_corrections
 - leave_types
 - leave_accounts

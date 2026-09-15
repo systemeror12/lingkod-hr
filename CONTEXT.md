@@ -368,6 +368,42 @@ _Avoid_: Rating edit, reopened rating
 
 ## Attendance
 
+**Attendance Applicability**:
+The effective-dated determination that Appointed Personnel receives Attendance Days based on qualifying active service and an admitted personnel category. Approved leave or another authorized absence does not end applicability, while an Authoritative HR Record alone does not establish it.
+_Avoid_: Employee attendance eligibility, universal personnel coverage
+
+**Work Schedule**:
+A reusable definition of when duty is expected, maintained independently from the Appointed Personnel assigned to it. It may describe daytime, overnight, flexible, shifting, or compressed duty without creating separate calculation systems for those patterns.
+_Avoid_: Working schedule, employee timetable
+
+**Work Schedule Version**:
+An immutable, effective-dated and authority-bearing Work Schedule definition composed of Day Rules and its governing time zone. Only an active version may receive a new Schedule Assignment, and a later version does not rewrite prior Attendance Days.
+_Avoid_: Current schedule settings, night-shift rule
+
+**Schedule Assignment**:
+The effective-dated binding of Appointed Personnel to one Work Schedule Version and one Work Arrangement Version. Historical Attendance Days retain the versions that governed their calculation.
+_Avoid_: Employee schedule, current schedule pointer
+
+**Work Arrangement Version**:
+An immutable, effective-dated definition of the authorized place or operating mode of duty, its evidence, and its permitted Work Schedule types. It does not define expected duty intervals.
+_Avoid_: Work Schedule, one-off official business
+
+**Work Date**:
+The local date on which an assigned duty interval begins in the governing Work Schedule Version's time zone. An overnight duty interval remains part of that Work Date after midnight.
+_Avoid_: Event date, clock-in date
+
+**Holiday Calendar Version**:
+An immutable, effective-dated calendar used with a Schedule Assignment to classify holidays that may affect expected duty. A classification does not by itself erase scheduled duty, and attendance calculation requires exactly one applicable version rather than silently selecting a current or default calendar.
+_Avoid_: Current holiday list, hard-coded holidays
+
+**Day Rule**:
+One weekday within a Work Schedule Version, defined as a rest day or as fixed or flexible duty with required minutes, zero or more unpaid breaks, and an Event Collection Window. Compressed, daytime, overnight, and shifting schedules combine the same Day Rules.
+_Avoid_: Daily schedule override, night-shift rule
+
+**Event Collection Window**:
+The interval used only to associate an Attendance Event with one Work Date. It does not excuse tardiness, round a timestamp, or change worked minutes.
+_Avoid_: Grace period, attendance tolerance
+
 **Attendance Event**:
 A raw record of an attendance action preserved as the input for attendance calculation and correction; it is distinct from a calculated Attendance Day or Daily Time Record.
 _Avoid_: DTR entry, time-sheet entry
@@ -375,6 +411,38 @@ _Avoid_: DTR entry, time-sheet entry
 **Web Clock Attendance Event**:
 An Attendance Event captured through the authenticated HRIS web clock by Appointed Personnel when the agency has enabled that source; it does not imply biometric, device, location, or geofence verification.
 _Avoid_: AM/PM event, biometric clock entry, JO/COS clock-in
+
+**DTR Slot**:
+A familiar Daily Time Record presentation position such as AM In, AM Out, PM In, or PM Out, projected from semantic Attendance Events for an ordinary daytime schedule. It is not an Attendance Event type and does not govern overnight event sequencing.
+_Avoid_: Raw event type, universal shift label
+
+**Attendance Context**:
+An immutable whole-Work-Date or timed record entered by an authorized Attendance Administrator for official business, official travel, training, or an approved non-leave absence. It carries its recorder and prior-authorization evidence, may cross midnight, and affects attendance without fabricating an Attendance Event or adding another approval workflow.
+_Avoid_: Attendance Event, leave copy, attendance approval
+
+**Attendance Coverage**:
+The union of worked time, Attendance Context, and posted leave that covers expected duty without counting overlapping minutes twice. Conflicting Attendance Context or leave classifications require an Attendance Exception instead of an assumed precedence.
+_Avoid_: Credited hours, summed attendance inputs
+
+**Attendance Day Segment**:
+An immutable interval-level result belonging to one Attendance Day calculation version, carrying its expected-duty relation, coverage or deficit classification, holiday classification, and source references. Attendance Day totals are derived from non-overlapping segments.
+_Avoid_: Raw event, editable calculation line
+
+**Attendance Deficit**:
+An expected-duty minute not covered by work, Attendance Context, or posted leave, classified once as tardiness, undertime, or absence. A completely uncovered Work Date is absence rather than simultaneous tardiness and undertime.
+_Avoid_: Missing hours, duplicate deduction
+
+**Attendance Correction**:
+An approval request to add, replace, or void an Attendance Event or Attendance Context while preserving the original record and recalculating the affected Attendance Day.
+_Avoid_: Direct attendance edit, deleted clock entry
+
+**Attendance Exception**:
+A recorded ambiguity or missing input that prevents an Attendance Day from being approved until resolved. LingkodHR preserves the available facts and never invents a timestamp or silently chooses between conflicting inputs.
+_Avoid_: Attendance error, automatic correction
+
+**Unscheduled Service**:
+Complete worked time recorded on a rest day or another date without expected duty. It creates no tardiness, undertime, or absence and does not by itself authorize overtime, COC, or compensation.
+_Avoid_: Approved overtime, rest-day absence
 
 ## Workforce Relationships
 
