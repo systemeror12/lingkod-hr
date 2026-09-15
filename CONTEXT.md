@@ -444,6 +444,44 @@ _Avoid_: Attendance error, automatic correction
 Complete worked time recorded on a rest day or another date without expected duty. It creates no tardiness, undertime, or absence and does not by itself authorize overtime, COC, or compensation.
 _Avoid_: Approved overtime, rest-day absence
 
+## Leave Administration
+
+**Leave Type**:
+A stable, agency-scoped leave category whose Leave Policy Versions define its entitlement basis, calendar basis, account effect, applicability, and evidence requirements.
+_Avoid_: Leave workflow, credit-based flag
+
+**Leave Policy Version**:
+An immutable, effective-dated, agency-scoped bundle governing one Leave Type. It binds typed rule parameters, the applicable national rules, evidence-backed Agency configuration, authority references, and calculation inputs needed to reproduce an evaluation.
+_Avoid_: Editable leave policy, runtime rule overlay, administrator formula
+
+**Leave Account**:
+A record for one Employee, credit-bearing Leave Type, and continuous agency-employment entitlement period whose posted balance is derived from its Leave Ledger Entries.
+_Avoid_: Balance field, leave application
+
+**Leave Ledger Entry**:
+An immutable, source-linked posting that changes one Leave Account by a signed quantity on an effective date. Corrections use linked reversals or adjustments rather than editing an entry.
+_Avoid_: Pending reservation, editable leave balance
+
+**Leave Credit Commitment**:
+A claim against a Leave Account created by an applicable request lifecycle. It reduces currently available credits without changing the posted ledger balance.
+_Avoid_: Pending ledger entry, posted deduction
+
+**Mandatory Leave Assessment**:
+An explainable, as-of evaluation of whether an Employee is subject to a mandatory or forced leave obligation under an applicable Leave Policy Version. Any resulting obligation is fulfilled through an ordinary Leave Application rather than a separate leave balance or application type.
+_Avoid_: Mandatory leave account, mandatory leave application
+
+**Leave Calculation Segment**:
+An immutable portion of a Leave Application calculated under one combination of Leave Policy Version, schedule, holiday calendar, and source-prescribed unit.
+_Avoid_: Requested days field, editable calculation line
+
+**Leave Eligibility Assessment**:
+An explainable evaluation that records an `ELIGIBLE`, `INELIGIBLE`, or `INDETERMINATE` result together with the applicable rules, input facts, missing facts, and Leave Calculation Segments.
+_Avoid_: Eligibility flag, approval decision
+
+**Leave Credit Certification**:
+An immutable HR attestation of the posted balances, active Leave Credit Commitments, current application quantities, and resulting available credits for the affected Leave Accounts using a stated effective date and ledger knowledge cutoff.
+_Avoid_: Current balance, eligibility assessment
+
 ## Workforce Relationships
 
 **JO/COS Worker**:

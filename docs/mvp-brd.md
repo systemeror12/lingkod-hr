@@ -642,7 +642,22 @@ Attendance periods used in payroll shall be lockable. Changes after payroll shal
 
 ## LEA-001 Government leave types
 
-The system shall support configurable government leave categories, including:
+The system shall support agency-scoped Leave Types governed by immutable,
+effective-dated Leave Policy Versions. A policy version shall use fixed,
+validated evaluator kinds and typed parameters rather than administrator-authored
+formulas. It shall bind applicable national rules, evidence-backed Agency
+configuration, authority references, personnel applicability, evidence
+requirements, and these category capabilities:
+
+- entitlement basis: accrued account, periodic allowance, qualifying event, or
+  non-credit authorization;
+- calendar basis: working day, calendar day, scheduled time, or a duration
+  prescribed by the governing source;
+- the credited or charged Leave Type, where one category affects another
+  category's Leave Account; and
+- accumulation, expiration, forfeiture, and conversion behavior.
+
+The supported catalogue shall include:
 
 - vacation leave;
 - sick leave;
@@ -660,27 +675,73 @@ The system shall support configurable government leave categories, including:
 - other leave under law or CSC issuance;
 - leave without pay.
 
+Coverage shall follow the applicable authority profile. The system shall not
+apply ordinary civilian NGA vacation and sick leave rules to teachers,
+special-law personnel, JO/COS Workers, or other excluded categories without an
+applicable source. Missing, ambiguous, or conflicting authority shall produce
+an `INDETERMINATE` result rather than an assumed entitlement.
+
 ## LEA-002 Leave-credit ledger
 
-Vacation and sick leave credits shall use a ledger containing:
+Vacation and sick leave credits shall use one Leave Account per Employee,
+credit-bearing Leave Type, and continuous agency-employment entitlement period.
+Separation closes the account after its required postings; reemployment opens a
+new account from zero or from an evidence-backed opening or transfer source.
 
-- opening balance;
-- earned credits;
-- deduction;
-- restoration;
-- adjustment;
-- monetization;
-- terminal leave;
-- forfeiture or expiration where applicable;
-- source and rule version.
+The posted balance shall be the sum of signed, immutable Leave Ledger Entries.
+Each entry shall contain the account, quantity, effective date, unique source
+posting key, governing Leave Policy Version, posting actor and time, and an
+original-entry reference when it reverses a posting. The authoritative source,
+not a ledger entry-type enum, shall identify whether a posting arose from an
+opening balance, accrual, leave use, restoration, transfer, monetization,
+terminal event, forfeiture, or authorized adjustment.
+
+Posted entries shall never be edited. A reversal shall exactly negate its
+original entry in the same account. An adjustment shall require authority,
+evidence, and a reason. Balance-sensitive posting shall lock the account,
+recalculate availability, reject overspending, enforce source idempotency, and
+commit atomically.
+
+The balance contract shall distinguish:
+
+- posted balance as of an effective date and ledger knowledge cutoff;
+- active Leave Credit Commitments, which never enter the ledger; and
+- currently available credits after those commitments and the transaction under
+  review.
+
+Ordinary vacation and sick leave rules, category-specific units, transfers,
+restorations, forfeitures, and Agency configuration boundaries are documented in
+[the authoritative leave research](research/authoritative-leave-credit-and-mandatory-leave-rules.md).
 
 ## LEA-003 Leave application
 
-The workflow shall capture the information required for the applicable government leave form and agency approval process.
+The workflow shall capture the information required for the applicable
+government leave form and Agency approval process. An application shall preserve
+its requested date or date ranges and source-prescribed unit. Immutable Leave
+Calculation Segments shall record the policy, schedule, holiday, unit, and
+quantity applied to each effective portion of the request, separate from any
+Leave Account debit.
+
+Eligibility evaluation shall return `ELIGIBLE`, `INELIGIBLE`, or
+`INDETERMINATE` with the applicable rule results, input facts, missing facts,
+authority references, and calculation segments. Drafts may be saved with
+deficiencies, but submission validation, credit certification, approval, and
+posting shall fail closed when a required policy, schedule, holiday, or authority
+fact is missing or ambiguous.
+
+Each requested date shall use the policy, schedule, and holiday versions
+effective on that date. A submitted evaluation snapshot shall list every
+contributing version. Later configuration changes require explicit re-evaluation
+and recertification and shall not silently change an accepted result.
 
 ## LEA-004 Certification of leave credits
 
-HR shall certify available credits as of the applicable date.
+HR shall create an immutable Leave Credit Certification for the application and
+workflow version. It shall preserve the effective balance date, ledger knowledge
+cutoff, posted balance, active Leave Credit Commitments, current application
+quantity, resulting available credits, exact Leave Eligibility Assessment, and
+certifying actor and time. A later backdated entry may change a newly
+reconstructed balance but shall not rewrite a historical certification.
 
 ## LEA-005 Approval
 
@@ -688,7 +749,16 @@ Approval routing shall support supervisor recommendation, HR certification, and 
 
 ## LEA-006 Mandatory leave
 
-The system shall identify employees subject to mandatory or forced leave based on applicable balances and policy.
+For the ordinary civilian NGA profile, the system shall apply the authoritative
+five-working-day mandatory or forced leave rule to Employees with at least ten
+vacation leave credits, including its cancellation and partial-year exceptions.
+The system shall preserve a material Mandatory Leave Assessment containing its
+as-of policy, balance, qualifying facts, exceptions, result, and explanation.
+
+A resulting obligation shall use the ordinary Leave Application and vacation
+Leave Account. It shall not create a separate balance, application type, or
+workflow. Any forfeiture shall require its own authoritative source posting and
+shall never be inferred from an alert alone.
 
 ## LEA-007 Monetization
 

@@ -324,26 +324,63 @@ An ordinary daytime DTR presents semantic events through the familiar AM In, AM 
 
 ```mermaid
 flowchart TD
-    A[Employee starts leave application] --> B[Select leave type, dates, location or details, and supporting document]
-    B --> C[Load eligibility, schedule, holidays, and leave balance]
-    C --> D[Calculate requested leave units]
-    D --> E{Eligible and complete?}
-    E -- No --> F[Show deficiency or policy explanation]
-    E -- Yes --> G[Submit application]
-    G --> H[HR certifies leave credits]
-    H --> I{Credits or authority sufficient?}
-    I -- No --> J[Route as leave without pay or reject according to policy]
-    I -- Yes --> K[Route to supervisor recommendation]
-    K --> L{Recommended?}
-    L -- No --> M[Reject with reason]
-    L -- Yes --> N[Route to approving official]
-    N --> O{Approved?}
-    O -- No --> M
-    O -- Yes --> P[Create leave-ledger deduction]
-    P --> Q[Update attendance calendar]
-    Q --> R[Create payroll impact]
-    R --> S[Notify employee]
+    A[Employee starts leave application] --> B[Select Leave Type, date ranges, details, and supporting Document Versions]
+    B --> C[Load policy, schedule, and holiday versions effective for each requested date]
+    C --> D{Required input missing or ambiguous?}
+    D -- Yes --> E[Save draft and show structured deficiencies]
+    D -- No --> F[Create Leave Calculation Segments]
+    F --> G[Create explainable Leave Eligibility Assessment]
+    G --> H{Assessment result}
+    H -- INELIGIBLE --> I[Show failed rules]
+    H -- INDETERMINATE --> E
+    H -- ELIGIBLE --> J[Submit application with evaluation snapshot]
+    J --> K[Load posted balance and active Leave Credit Commitments]
+    K --> L[HR freezes Leave Credit Certification]
+    L --> M{Credits or authority sufficient?}
+    M -- No --> N[Route as leave without pay or reject according to policy]
+    M -- Yes --> O[Route to supervisor recommendation]
+    O --> P{Recommended?}
+    P -- No --> Q[Reject with reason]
+    P -- Yes --> R[Route to approving official]
+    R --> S{Approved?}
+    S -- No --> Q
+    S -- Yes --> T[Post through Leave owning service]
+    T --> U[Insert source-linked Leave Ledger Entry when applicable]
+    U --> V[Update attendance calendar]
+    V --> W[Create payroll impact when applicable]
+    W --> X[Notify employee]
 ```
+
+Calculation preserves the unit prescribed by the governing source. A statutory
+calendar-day benefit is not converted to an ordinary working-day ledger debit,
+and a benefit outside vacation and sick leave credits does not create a posting
+to those accounts.
+
+The posted balance is derived only from immutable Leave Ledger Entries. An
+application may affect currently available credits through a separate Leave
+Credit Commitment at the lifecycle point resolved by the application contract;
+an unposted commitment is never represented as a ledger entry. Configuration
+changes after submission require an explicit re-evaluation and, where already
+certified, recertification.
+
+### Mandatory or forced leave
+
+```mermaid
+flowchart TD
+    A[Evaluate Employee under applicable mandatory-leave policy] --> B[Load as-of vacation balance and annual leave facts]
+    B --> C[Create explainable Mandatory Leave Assessment]
+    C --> D{Subject to obligation?}
+    D -- No --> E[Retain material non-obligation result when required]
+    D -- Yes --> F[Notify Employee and Leave Administrator]
+    F --> G[Use ordinary Leave Application for mandatory or forced leave]
+    G --> H[Post against vacation Leave Account when approved]
+    H --> I[Re-evaluate annual obligation]
+```
+
+The ordinary civilian NGA baseline is five working days for an Employee with at
+least ten vacation leave credits. The assessment applies the source-defined
+cancellation and partial-year exceptions. An alert alone never authorizes a
+forfeiture posting.
 
 ### Leave monetization
 
@@ -356,7 +393,7 @@ flowchart TD
     D -- Yes --> F[Route for agency-head or authorized approval]
     F --> G{Approved?}
     G -- No --> E
-    G -- Yes --> H[Create leave-ledger deduction]
+    G -- Yes --> H[Create source-linked negative Leave Ledger Entry]
     H --> I[Create payroll earning input]
     I --> J[Record approval and rule version]
 ```

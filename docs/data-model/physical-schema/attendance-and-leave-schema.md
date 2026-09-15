@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Schedules and Work Arrangements
 
 `work_schedules` and `work_arrangements` are stable identities. Their activated versions are immutable. Editing is allowed only while a version is `DRAFT`; normal changes activate a successor and mark the prior version `SUPERSEDED`.
@@ -478,7 +477,6 @@ CREATE TABLE leave_types (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   code citext NOT NULL,
   name text NOT NULL,
-  credit_based boolean NOT NULL,
   status text NOT NULL CHECK (status IN ('ACTIVE','INACTIVE')),
   current_policy_version_id uuid,
   UNIQUE (agency_id, code),
@@ -490,8 +488,19 @@ CREATE TABLE leave_policy_versions (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   leave_type_id uuid NOT NULL,
   version_no integer NOT NULL CHECK (version_no > 0),
-  eligibility_rules jsonb NOT NULL,
-  accrual_rules jsonb NOT NULL,
+  entitlement_basis text NOT NULL
+    CHECK (entitlement_basis IN (
+      'ACCRUED_ACCOUNT','PERIODIC_ALLOWANCE',
+      'QUALIFYING_EVENT','NON_CREDIT_AUTHORIZATION'
+    )),
+  calendar_basis text NOT NULL
+    CHECK (calendar_basis IN (
+      'WORKING_DAY','CALENDAR_DAY','SCHEDULED_TIME','SOURCE_DEFINED'
+    )),
+  charged_leave_type_id uuid,
+  evaluator_kind citext NOT NULL,
+  rule_parameters jsonb NOT NULL,
+  applicability_rules jsonb NOT NULL,
   document_requirements jsonb NOT NULL,
   approval_route_code citext NOT NULL,
   effective_from date NOT NULL,
@@ -500,10 +509,39 @@ CREATE TABLE leave_policy_versions (
   CHECK (effective_to IS NULL OR effective_to >= effective_from),
   FOREIGN KEY (agency_id, leave_type_id)
     REFERENCES leave_types (agency_id, id),
+  FOREIGN KEY (agency_id, charged_leave_type_id)
+    REFERENCES leave_types (agency_id, id),
   UNIQUE (leave_type_id, version_no),
   UNIQUE (agency_id, id)
 );
+
+CREATE TABLE leave_policy_authorities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_policy_version_id uuid NOT NULL,
+  document_version_id uuid NOT NULL,
+  authority_class text NOT NULL
+    CHECK (authority_class IN ('NATIONAL_RULE','AGENCY_CONFIGURATION')),
+  citation text NOT NULL CHECK (btrim(citation) <> ''),
+  FOREIGN KEY (agency_id, leave_policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
+  FOREIGN KEY (agency_id, document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  UNIQUE (leave_policy_version_id, document_version_id, citation),
+  UNIQUE (agency_id, id)
+);
+
+ALTER TABLE leave_types
+ADD CONSTRAINT leave_types_current_policy_version_fk
+FOREIGN KEY (agency_id, current_policy_version_id)
+REFERENCES leave_policy_versions (agency_id, id);
 ```
+
+Use an exclusion constraint to prevent overlapping `ACTIVE` policy versions for
+one Leave Type. Activation must validate `rule_parameters` against the fixed
+schema registered for `evaluator_kind`, require applicable authority links, and
+reject unsupported or conflicting national and Agency values. Active and
+superseded versions and their authority links are immutable.
 
 ---
 
@@ -515,9 +553,15 @@ CREATE TABLE leave_accounts (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
   leave_type_id uuid NOT NULL,
+  unit_code text NOT NULL CHECK (unit_code IN ('CREDIT_DAY')),
   status text NOT NULL CHECK (status IN ('ACTIVE','FROZEN','CLOSED')),
   opened_at date NOT NULL,
   closed_at date,
+  CHECK (closed_at IS NULL OR closed_at >= opened_at),
+  CHECK (
+    (status IN ('ACTIVE','FROZEN') AND closed_at IS NULL)
+    OR (status = 'CLOSED' AND closed_at IS NOT NULL)
+  ),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, leave_type_id)
@@ -525,9 +569,9 @@ CREATE TABLE leave_accounts (
   UNIQUE (agency_id, id)
 );
 
-CREATE UNIQUE INDEX leave_accounts_one_active_uq
+CREATE UNIQUE INDEX leave_accounts_one_open_uq
 ON leave_accounts (agency_id, employee_id, leave_type_id)
-WHERE status = 'ACTIVE';
+WHERE status IN ('ACTIVE','FROZEN');
 ```
 
 ```sql
@@ -535,42 +579,82 @@ CREATE TABLE leave_ledger_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   leave_account_id uuid NOT NULL,
-  entry_type text NOT NULL
-    CHECK (entry_type IN (
-      'OPENING','EARNED','USED','ADJUSTMENT',
-      'RESTORATION','MONETIZATION','TERMINAL','REVERSAL'
-    )),
-  quantity_days numeric(12,4) NOT NULL,
+  quantity numeric(12,4) NOT NULL CHECK (quantity <> 0),
   effective_date date NOT NULL,
-  source_type text NOT NULL,
+  source_type citext NOT NULL CHECK (btrim(source_type::text) <> ''),
   source_id uuid NOT NULL,
+  source_posting_key citext NOT NULL
+    CHECK (btrim(source_posting_key::text) <> ''),
+  policy_version_id uuid NOT NULL,
   reverses_entry_id uuid,
   posted_at timestamptz NOT NULL DEFAULT now(),
   posted_by_membership_id uuid,
   FOREIGN KEY (agency_id, leave_account_id)
     REFERENCES leave_accounts (agency_id, id),
-  FOREIGN KEY (reverses_entry_id)
-    REFERENCES leave_ledger_entries(id) ON DELETE RESTRICT,
+  FOREIGN KEY (agency_id, policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
+  FOREIGN KEY (agency_id, reverses_entry_id)
+    REFERENCES leave_ledger_entries(agency_id, id) ON DELETE RESTRICT,
   FOREIGN KEY (agency_id, posted_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
-  UNIQUE (agency_id, source_type, source_id, entry_type),
+  UNIQUE (
+    agency_id, leave_account_id,
+    source_type, source_id, source_posting_key
+  ),
+  UNIQUE (agency_id, id)
+);
+
+CREATE UNIQUE INDEX leave_ledger_entries_one_reversal_uq
+ON leave_ledger_entries (agency_id, reverses_entry_id)
+WHERE reverses_entry_id IS NOT NULL;
+
+CREATE TABLE leave_credit_commitments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_account_id uuid NOT NULL,
+  quantity numeric(12,4) NOT NULL CHECK (quantity > 0),
+  source_type citext NOT NULL CHECK (btrim(source_type::text) <> ''),
+  source_id uuid NOT NULL,
+  source_commitment_key citext NOT NULL
+    CHECK (btrim(source_commitment_key::text) <> ''),
+  status text NOT NULL CHECK (status IN ('ACTIVE','CONSUMED','RELEASED')),
+  effective_from timestamptz NOT NULL,
+  ended_at timestamptz,
+  CHECK (
+    (status = 'ACTIVE' AND ended_at IS NULL)
+    OR (status IN ('CONSUMED','RELEASED') AND ended_at IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, leave_account_id)
+    REFERENCES leave_accounts (agency_id, id),
+  UNIQUE (
+    agency_id, leave_account_id,
+    source_type, source_id, source_commitment_key
+  ),
   UNIQUE (agency_id, id)
 );
 ```
 
-Attach immutable mutation-prevention triggers.
+Attach immutable mutation-prevention triggers to posted ledger entries and
+terminal commitment states. A reviewed trigger must require a reversal to use
+the same account and exact opposite quantity as its original entry. The owning
+service must validate the polymorphic source and serialize balance-sensitive
+posting by locking the Leave Account.
 
-A balance view:
+A balance query always states both cutoffs:
 
 ```sql
-CREATE VIEW leave_account_balances AS
 SELECT
-  agency_id,
-  leave_account_id,
-  SUM(quantity_days) AS balance_days
+  COALESCE(SUM(quantity), 0) AS posted_balance
 FROM leave_ledger_entries
-GROUP BY agency_id, leave_account_id;
+WHERE agency_id = :agency_id
+  AND leave_account_id = :leave_account_id
+  AND effective_date <= :balance_as_of
+  AND posted_at <= :ledger_recorded_through;
 ```
+
+Currently available credits subtract active commitments and the quantity under
+review from this posted balance. The application contract determines when a
+commitment becomes active or is consumed or released.
 
 ---
 
@@ -582,10 +666,8 @@ CREATE TABLE leave_applications (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
   leave_type_id uuid NOT NULL,
-  policy_version_id uuid NOT NULL,
-  date_from date NOT NULL,
-  date_to date NOT NULL,
-  requested_days numeric(12,4) NOT NULL CHECK (requested_days > 0),
+  accepted_assessment_id uuid,
+  workflow_version integer NOT NULL DEFAULT 1 CHECK (workflow_version > 0),
   status text NOT NULL
     CHECK (status IN (
       'DRAFT','SUBMITTED','FOR_CERTIFICATION','FOR_RECOMMENDATION',
@@ -594,18 +676,152 @@ CREATE TABLE leave_applications (
     )),
   reason text,
   submitted_at timestamptz,
-  CHECK (date_to >= date_from),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, leave_type_id)
     REFERENCES leave_types (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE leave_application_periods (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_application_id uuid NOT NULL,
+  sequence_no integer NOT NULL CHECK (sequence_no > 0),
+  date_from date NOT NULL,
+  date_to date NOT NULL,
+  CHECK (date_to >= date_from),
+  FOREIGN KEY (agency_id, leave_application_id)
+    REFERENCES leave_applications (agency_id, id),
+  UNIQUE (leave_application_id, sequence_no),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE leave_eligibility_assessments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_application_id uuid NOT NULL,
+  assessment_no integer NOT NULL CHECK (assessment_no > 0),
+  result text NOT NULL
+    CHECK (result IN ('ELIGIBLE','INELIGIBLE','INDETERMINATE')),
+  input_facts jsonb NOT NULL,
+  rule_results jsonb NOT NULL,
+  missing_facts jsonb NOT NULL,
+  assessed_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, leave_application_id)
+    REFERENCES leave_applications (agency_id, id),
+  UNIQUE (leave_application_id, assessment_no),
+  UNIQUE (agency_id, leave_application_id, id),
+  UNIQUE (agency_id, id)
+);
+
+ALTER TABLE leave_applications
+ADD CONSTRAINT leave_applications_accepted_assessment_fk
+FOREIGN KEY (agency_id, id, accepted_assessment_id)
+REFERENCES leave_eligibility_assessments (
+  agency_id, leave_application_id, id
+);
+
+CREATE TABLE leave_calculation_segments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_application_id uuid NOT NULL,
+  eligibility_assessment_id uuid NOT NULL,
+  policy_version_id uuid NOT NULL,
+  schedule_assignment_id uuid,
+  holiday_facts jsonb NOT NULL,
+  date_from date NOT NULL,
+  date_to date NOT NULL,
+  requested_quantity numeric(12,4) NOT NULL CHECK (requested_quantity > 0),
+  requested_unit text NOT NULL
+    CHECK (requested_unit IN (
+      'WORKING_DAY','CALENDAR_DAY','SCHEDULED_MINUTE','SOURCE_DEFINED'
+    )),
+  account_quantity numeric(12,4),
+  CHECK (date_to >= date_from),
+  FOREIGN KEY (agency_id, leave_application_id)
+    REFERENCES leave_applications (agency_id, id),
+  FOREIGN KEY (
+    agency_id, leave_application_id, eligibility_assessment_id
+  ) REFERENCES leave_eligibility_assessments (
+    agency_id, leave_application_id, id
+  ),
   FOREIGN KEY (agency_id, policy_version_id)
     REFERENCES leave_policy_versions (agency_id, id),
+  FOREIGN KEY (agency_id, schedule_assignment_id)
+    REFERENCES schedule_assignments (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE leave_credit_certifications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_application_id uuid NOT NULL,
+  eligibility_assessment_id uuid NOT NULL,
+  workflow_version integer NOT NULL CHECK (workflow_version > 0),
+  balance_as_of date NOT NULL,
+  ledger_recorded_through timestamptz NOT NULL,
+  certified_by_membership_id uuid NOT NULL,
+  certified_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, leave_application_id)
+    REFERENCES leave_applications (agency_id, id),
+  FOREIGN KEY (
+    agency_id, leave_application_id, eligibility_assessment_id
+  ) REFERENCES leave_eligibility_assessments (
+    agency_id, leave_application_id, id
+  ),
+  FOREIGN KEY (agency_id, certified_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (leave_application_id, workflow_version),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE leave_credit_certification_lines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  leave_credit_certification_id uuid NOT NULL,
+  leave_account_id uuid NOT NULL,
+  posted_balance numeric(12,4) NOT NULL,
+  active_commitments numeric(12,4) NOT NULL CHECK (active_commitments >= 0),
+  application_quantity numeric(12,4) NOT NULL CHECK (application_quantity > 0),
+  available_after_application numeric(12,4) NOT NULL,
+  FOREIGN KEY (agency_id, leave_credit_certification_id)
+    REFERENCES leave_credit_certifications (agency_id, id),
+  FOREIGN KEY (agency_id, leave_account_id)
+    REFERENCES leave_accounts (agency_id, id),
+  UNIQUE (leave_credit_certification_id, leave_account_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE mandatory_leave_assessments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  policy_version_id uuid NOT NULL,
+  leave_account_id uuid NOT NULL,
+  assessment_date date NOT NULL,
+  result text NOT NULL
+    CHECK (result IN ('SUBJECT','NOT_SUBJECT','INDETERMINATE')),
+  required_quantity numeric(12,4),
+  fulfilled_quantity numeric(12,4),
+  input_facts jsonb NOT NULL,
+  rule_results jsonb NOT NULL,
+  assessed_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
+  FOREIGN KEY (agency_id, leave_account_id)
+    REFERENCES leave_accounts (agency_id, id),
   UNIQUE (agency_id, id)
 );
 ```
 
-Prevent overlapping posted leave using a reviewed exclusion constraint where agency policy requires strict non-overlap.
+Prevent overlapping requested periods within one application. Prevent
+overlapping posted leave where the accepted Leave Policy Version requires it.
+Assessment, segment, certification, and material mandatory-assessment rows are
+immutable. Required policy, schedule, holiday, or authority gaps produce
+`INDETERMINATE`; they are not filled with schema defaults.
 
 ---
 

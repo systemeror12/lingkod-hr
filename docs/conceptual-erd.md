@@ -412,11 +412,21 @@ erDiagram
     EMPLOYEE ||--o{ LEAVE_ACCOUNT : holds
     LEAVE_TYPE ||--o{ LEAVE_ACCOUNT : categorizes
     LEAVE_ACCOUNT ||--o{ LEAVE_LEDGER_ENTRY : records
+    LEAVE_ACCOUNT ||--o{ LEAVE_CREDIT_COMMITMENT : reserves
 
     EMPLOYEE ||--o{ LEAVE_APPLICATION : submits
     LEAVE_TYPE ||--o{ LEAVE_APPLICATION : requested_as
     LEAVE_APPLICATION ||--o{ LEAVE_APPLICATION_DOCUMENT : supported_by
-    LEAVE_APPLICATION ||--o| LEAVE_CREDIT_CERTIFICATION : certified_by
+    LEAVE_APPLICATION ||--|{ LEAVE_CALCULATION_SEGMENT : calculated_as
+    LEAVE_POLICY_VERSION ||--o{ LEAVE_CALCULATION_SEGMENT : governs
+    LEAVE_APPLICATION ||--o{ LEAVE_ELIGIBILITY_ASSESSMENT : evaluated_by
+    LEAVE_APPLICATION ||--o{ LEAVE_CREDIT_CERTIFICATION : certified_by
+    LEAVE_CREDIT_CERTIFICATION ||--|{ LEAVE_CREDIT_CERTIFICATION_LINE : contains
+    LEAVE_ACCOUNT ||--o{ LEAVE_CREDIT_CERTIFICATION_LINE : certifies
+    LEAVE_APPLICATION ||--o{ LEAVE_CREDIT_COMMITMENT : may_create
+
+    EMPLOYEE ||--o{ MANDATORY_LEAVE_ASSESSMENT : assessed_for
+    LEAVE_POLICY_VERSION ||--o{ MANDATORY_LEAVE_ASSESSMENT : governs
 
     EMPLOYEE ||--o{ LEAVE_MONETIZATION_REQUEST : requests
     LEAVE_ACCOUNT ||--o{ LEAVE_MONETIZATION_REQUEST : funded_by
@@ -425,13 +435,18 @@ erDiagram
 ```
 
 | Entity | Purpose |
-| ---------------------------- | ------------------------------------------------ |
+| ------------------------------ | --------------------------------------------------------------- |
 | `LEAVE_TYPE` | Government leave category |
-| `LEAVE_POLICY_VERSION` | Effective-dated leave rules |
+| `LEAVE_POLICY_VERSION`         | Immutable agency-scoped effective-dated rules and authority bindings      |
 | `LEAVE_ACCOUNT` | Employee account for a leave type |
-| `LEAVE_LEDGER_ENTRY` | Immutable credit, debit, adjustment, or reversal |
+| `LEAVE_LEDGER_ENTRY`           | Immutable signed posting whose source owns its business meaning |
+| `LEAVE_CREDIT_COMMITMENT`      | Unposted claim considered when calculating available credits    |
 | `LEAVE_APPLICATION` | Leave request |
-| `LEAVE_CREDIT_CERTIFICATION` | HR-certified available credits |
+| `LEAVE_CALCULATION_SEGMENT`    | Immutable effective-dated quantity calculation within a request |
+| `LEAVE_ELIGIBILITY_ASSESSMENT` | Explainable eligible, ineligible, or indeterminate evaluation   |
+| `LEAVE_CREDIT_CERTIFICATION`   | HR-certified available credits across affected accounts                  |
+| `LEAVE_CREDIT_CERTIFICATION_LINE` | Certified posted, committed, requested, and available quantities for one account |
+| `MANDATORY_LEAVE_ASSESSMENT`   | Explainable as-of evaluation of a mandatory-leave obligation    |
 | `LEAVE_MONETIZATION_REQUEST` | Monetization request |
 | `PAYROLL_INPUT` | Approved HR input consumed by payroll |
 
