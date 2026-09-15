@@ -5,7 +5,7 @@
 **Document status:** Draft for review  
 **Source documents:** Public-Sector HRIS BRD v1.0, Workflow Specification v1.0, Controls Specification v1.0  
 **Primary profile:** Civilian National Government Agency  
-**Version:** 1.1
+**Version:** 1.2
 **Date:** September 15, 2026
 
 ---
@@ -232,7 +232,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-| ----------------------------- | ------------------------------------------------------------------------- |
+| ------------------------------------------- | ------------------------------------------------------------------------- |
 | `REQUEST_TO_FILL` | Approved request to recruit for a vacant item |
 | `AGENCY_MERIT_SELECTION_PLAN_VERSION` | Immutable, effective-dated governing merit-selection plan                 |
 | `MERIT_SELECTION_CRITERIA_SET`         | Bound criteria, weights, scales, cutoffs, evidence, and calculation rules |
@@ -394,7 +394,7 @@ erDiagram
 ```
 
 | Entity | Purpose |
-| ----------------------- | ------------------------------------------------ |
+| -------------------------- | -------------------------------------------------------------------------------------- |
 | `WORK_SCHEDULE` | Stable identity for a reusable schedule |
 | `WORK_SCHEDULE_VERSION` | Immutable effective Day Rules, time zone, event windows, and authority |
 | `DAY_RULE` | Fixed, flexible, or rest-day duty rule for one weekday |
@@ -432,15 +432,31 @@ erDiagram
     LEAVE_ACCOUNT ||--o{ LEAVE_CREDIT_COMMITMENT : reserves
 
     EMPLOYEE ||--o{ LEAVE_APPLICATION : submits
-    LEAVE_TYPE ||--o{ LEAVE_APPLICATION : requested_as
-    LEAVE_APPLICATION ||--o{ LEAVE_APPLICATION_DOCUMENT : supported_by
-    LEAVE_APPLICATION ||--|{ LEAVE_CALCULATION_SEGMENT : calculated_as
+    LEAVE_APPLICATION ||--o{ LEAVE_APPLICATION_VERSION : preserves
+    LEAVE_TYPE ||--o{ LEAVE_APPLICATION_VERSION : requested_as
+    LEAVE_APPLICATION_VERSION ||--o{ LEAVE_APPLICATION_VERSION_DOCUMENT : supported_by
+    DOCUMENT_VERSION ||--o{ LEAVE_APPLICATION_VERSION_DOCUMENT : linked_as
+    LEAVE_APPLICATION_VERSION ||--|| APPROVAL_REQUEST : routed_by
+    LEAVE_APPLICATION_VERSION ||--|{ LEAVE_CALCULATION_SEGMENT : calculated_as
     LEAVE_POLICY_VERSION ||--o{ LEAVE_CALCULATION_SEGMENT : governs
-    LEAVE_APPLICATION ||--o{ LEAVE_ELIGIBILITY_ASSESSMENT : evaluated_by
-    LEAVE_APPLICATION ||--o{ LEAVE_CREDIT_CERTIFICATION : certified_by
+    LEAVE_APPLICATION_VERSION ||--o{ LEAVE_ELIGIBILITY_ASSESSMENT : evaluated_by
+    LEAVE_APPLICATION_VERSION ||--o| LEAVE_CREDIT_CERTIFICATION : certified_by
+    APPROVAL_DECISION ||--o| LEAVE_CREDIT_CERTIFICATION : records
     LEAVE_CREDIT_CERTIFICATION ||--|{ LEAVE_CREDIT_CERTIFICATION_LINE : contains
     LEAVE_ACCOUNT ||--o{ LEAVE_CREDIT_CERTIFICATION_LINE : certifies
-    LEAVE_APPLICATION ||--o{ LEAVE_CREDIT_COMMITMENT : may_create
+    LEAVE_APPLICATION_VERSION ||--o{ LEAVE_CREDIT_COMMITMENT : reserves
+    LEAVE_CREDIT_COMMITMENT o|--o| LEAVE_CREDIT_COMMITMENT : narrowed_by
+    LEAVE_APPLICATION_VERSION ||--o| LEAVE_RECOMMENDATION : recommended_by
+    APPROVAL_DECISION ||--o| LEAVE_RECOMMENDATION : records
+    LEAVE_APPLICATION_VERSION ||--o| LEAVE_APPROVAL_ALLOCATION : resolved_by
+    APPROVAL_DECISION ||--o| LEAVE_APPROVAL_ALLOCATION : authorizes
+    LEAVE_APPROVAL_ALLOCATION ||--|{ LEAVE_APPROVAL_ALLOCATION_LINE : contains
+    LEAVE_APPLICATION_VERSION ||--o| LEAVE_POSTING : posted_by
+    LEAVE_POSTING ||--o{ LEAVE_POSTING_EFFECT : creates
+    LEAVE_APPLICATION ||--o{ LEAVE_CANCELLATION : corrected_by
+    LEAVE_CANCELLATION ||--|| APPROVAL_REQUEST : routed_by
+    LEAVE_CANCELLATION ||--|{ LEAVE_CANCELLATION_SCOPE : targets
+    LEAVE_CANCELLATION ||--o{ LEAVE_CANCELLATION_EFFECT : applies
 
     EMPLOYEE ||--o{ MANDATORY_LEAVE_ASSESSMENT : assessed_for
     LEAVE_POLICY_VERSION ||--o{ MANDATORY_LEAVE_ASSESSMENT : governs
@@ -452,17 +468,27 @@ erDiagram
 ```
 
 | Entity | Purpose |
-| ------------------------------ | --------------------------------------------------------------- |
+| ------------------------------------ | -------------------------------------------------------------------------------- |
 | `LEAVE_TYPE` | Government leave category |
 | `LEAVE_POLICY_VERSION`         | Immutable agency-scoped effective-dated rules and authority bindings      |
 | `LEAVE_ACCOUNT` | Employee account for a leave type |
 | `LEAVE_LEDGER_ENTRY`           | Immutable signed posting whose source owns its business meaning |
 | `LEAVE_CREDIT_COMMITMENT`      | Unposted claim considered when calculating available credits    |
-| `LEAVE_APPLICATION` | Leave request |
+| `LEAVE_APPLICATION`                  | Stable case preserving the full leave request lifecycle                          |
+| `LEAVE_APPLICATION_VERSION`          | Immutable submitted facts, attestation, evidence, assessment, and route binding  |
+| `LEAVE_APPLICATION_VERSION_DOCUMENT` | Exact supporting or rendered Document Version linked to one submission           |
 | `LEAVE_CALCULATION_SEGMENT`    | Immutable effective-dated quantity calculation within a request |
 | `LEAVE_ELIGIBILITY_ASSESSMENT` | Explainable eligible, ineligible, or indeterminate evaluation   |
 | `LEAVE_CREDIT_CERTIFICATION`   | HR-certified available credits across affected accounts                  |
 | `LEAVE_CREDIT_CERTIFICATION_LINE` | Certified posted, committed, requested, and available quantities for one account |
+| `LEAVE_RECOMMENDATION`               | Immutable advisory Supervisor recommendation                                     |
+| `LEAVE_APPROVAL_ALLOCATION`          | Authorized exact approved periods and charged, paid, or unpaid quantities        |
+| `LEAVE_APPROVAL_ALLOCATION_LINE`     | One exact portion of the authorized allocation                                   |
+| `LEAVE_POSTING`                      | Atomic source of ledger, Attendance, and Payroll effects                         |
+| `LEAVE_POSTING_EFFECT`               | Stable owner-issued identifier and state for one posting effect                  |
+| `LEAVE_CANCELLATION`                 | Authorized whole or partial correction of approved or posted leave               |
+| `LEAVE_CANCELLATION_SCOPE`           | Exact approved period and quantity targeted by cancellation                      |
+| `LEAVE_CANCELLATION_EFFECT`          | Owner-issued reversal or correction handoff and current state                    |
 | `MANDATORY_LEAVE_ASSESSMENT`   | Explainable as-of evaluation of a mandatory-leave obligation    |
 | `LEAVE_MONETIZATION_REQUEST` | Monetization request |
 | `PAYROLL_INPUT` | Approved HR input consumed by payroll |
@@ -771,7 +797,7 @@ The logical ERD must later enforce:
 # 19. Proposed Module Ownership
 
 | Module | Aggregate roots |
-| ----------- | ---------------------------------------------------------------------------------------- |
+| ----------- | --------------------------------------------------------------------------------------------------- |
 | Identity | User, AgencyMembership, Role |
 | Agency | Agency, OrganizationUnit |
 | Plantilla | PlantillaPosition, QualificationStandard |
@@ -779,7 +805,7 @@ The logical ERD must later enforce:
 | Appointment | Appointment, ExternalAppointmentAction, OathVersion, AssumptionVersion                   |
 | Personnel | Employee, PdsVersion, PersonnelAction, ServiceSegment |
 | Attendance | WorkSchedule, AttendancePeriod, AttendanceDay |
-| Leave | LeaveType, LeaveAccount, LeaveApplication |
+| Leave       | LeaveType, LeaveAccount, LeaveApplication, LeaveApplicationVersion, LeavePosting, LeaveCancellation |
 | Overtime | OvertimeAuthority, CocAccount, CtoRequest |
 | Payroll | SalarySchedule, PayComponent, PayrollPeriod |
 | Performance | PerformanceCycle, IndividualCommitment |

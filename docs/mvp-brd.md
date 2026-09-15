@@ -734,12 +734,28 @@ restorations, forfeitures, and Agency configuration boundaries are documented in
 
 ## LEA-003 Leave application
 
-The workflow shall capture the information required for the applicable
-government leave form and Agency approval process. An application shall preserve
-its requested date or date ranges and source-prescribed unit. Immutable Leave
-Calculation Segments shall record the policy, schedule, holiday, unit, and
-quantity applied to each effective portion of the request, separate from any
-Leave Account debit.
+The Leave Application shall be a stable Agency-scoped case. Its mutable initial
+draft becomes an immutable Leave Application Version at each submission or
+material resubmission. A submitted version shall preserve the typed request
+facts required by the applicable government form and Agency process, including
+the Leave Type, requested date ranges, source-prescribed unit, policy-relevant
+details, commutation choice where applicable, and Employee declarations.
+
+Each submitted version shall bind the exact applicable form-template Document
+Version, exact supporting Document Versions, one Leave Submission Attestation,
+one accepted Leave Eligibility Assessment, and one effective Approval Route
+Version. Authenticated Employee submission is an attestation. An authorized
+administrator may record an externally signed application only by linking the
+exact signed Document Version and separately recording the Employee, recorder,
+submission method, and received time; the administrator shall not impersonate
+the Employee or supply a missing signature.
+
+Required supporting evidence shall come from applicable national authority or
+evidence-backed Agency configuration. The Leave domain shall keep typed core
+facts and validated policy-specific details rather than treating an opaque form
+payload as the authoritative application. Immutable Leave Calculation Segments
+shall record the policy, schedule, holiday, unit, and quantity applied to each
+effective portion of the request, separate from any Leave Account debit.
 
 Eligibility evaluation shall return `ELIGIBLE`, `INELIGIBLE`, or
 `INDETERMINATE` with the applicable rule results, input facts, missing facts,
@@ -750,21 +766,94 @@ fact is missing or ambiguous.
 
 Each requested date shall use the policy, schedule, and holiday versions
 effective on that date. A submitted evaluation snapshot shall list every
-contributing version. Later configuration changes require explicit re-evaluation
-and recertification and shall not silently change an accepted result.
+contributing version. Later configuration changes shall not silently change an
+accepted result. A change to a submitted Leave Type, period, quantity, unit,
+policy-relevant detail, commutation choice, declaration, required evidence,
+accepted assessment, or route binding shall create a new Leave Application
+Version and restart evaluation, certification, and routing. Reviewer comments,
+task assignment, notification delivery, and display-only corrections remain
+Audit Events and do not create a new version.
+
+Structured Leave records are authoritative. Generated and uploaded official
+forms are immutable Document Versions linked to the exact application stage.
+Electronic or digital signatures shall be claimed only under an evidenced
+Agency signature contract.
 
 ## LEA-004 Certification of leave credits
 
 HR shall create an immutable Leave Credit Certification for the application and
-workflow version. It shall preserve the effective balance date, ledger knowledge
-cutoff, posted balance, active Leave Credit Commitments, current application
-quantity, resulting available credits, exact Leave Eligibility Assessment, and
-certifying actor and time. A later backdated entry may change a newly
-reconstructed balance but shall not rewrite a historical certification.
+Leave Application Version. It shall preserve the effective balance date, ledger
+knowledge cutoff, posted balance, active Leave Credit Commitments, current
+application quantity, resulting available credits, exact Leave Eligibility
+Assessment, and certifying actor and time. Certification shall atomically create
+the application commitments while locking the affected Leave Accounts.
+
+A certification remains a permanently valid historical attestation. Its current
+authority for approval and posting shall be derived from the continued validity
+of its application version, assessment, commitments, and accounts. A new
+application version or assessment, a released or replaced commitment other than
+an authorized smaller successor, or a frozen or closed account shall require
+recertification or block progression. A later transaction that honors the active
+commitment shall not cause blanket recertification, and a later backdated entry
+may change a newly reconstructed balance but shall not rewrite a historical
+certification.
 
 ## LEA-005 Approval
 
-Approval routing shall support supervisor recommendation, HR certification, and authorized approving official.
+Submission shall resolve one effective Approval Route Version. Shared Approval
+Routes own task ordering, assignments, delegation, and immutable Approval
+Decisions; Leave owns eligibility, certification validity, commitment state,
+self-approval prevention, and posting readiness. A route change shall not alter
+an in-flight application. An authorized reroute shall create a new Leave
+Application Version, release the old commitments, and require recertification.
+
+HR certification attests credit facts but does not approve leave. A Supervisor's
+immutable Leave Recommendation is advisory and proceeds to the authorized
+approving official even when negative unless an evidenced route says otherwise.
+The final official may approve the full request, approve an exact subset through
+a Leave Approval Allocation, or reject it. Where applicable authority permits,
+the allocation may divide approved quantities among charged Leave Accounts,
+another policy-authorized source, and leave without pay. It shall not add dates,
+increase quantity, change the Leave Type, or rewrite Employee-submitted facts.
+
+Partial approval may atomically release a certified commitment and create a
+linked successor for a smaller approved quantity without recertification. Any
+increase, account substitution, policy change, or other replacement requires a
+new application version and recertification. Rejection releases commitments.
+Commitments shall not silently expire; any expiry requires authoritative policy
+or evidence-backed Agency configuration.
+
+Posting shall be a separate, atomic, idempotent Leave-owned command. It shall
+revalidate the exact approved application version, assessment, certification,
+commitments, allocation, and Approval Decisions while locking affected accounts;
+then create every required source-linked ledger entry, Attendance input, Payroll
+Input, Audit Event, and outbox record through owning application services. It
+shall consume the active commitments and mark the application posted only when
+all authoritative effects commit. Failure shall roll back all effects and leave
+the application approved for a recorded retry.
+
+An Employee may withdraw a submitted but unapproved application, cancelling
+unfinished route work and releasing commitments. An administrator may record an
+evidenced Employee withdrawal but shall not originate one. Cancellation after
+approval requires a separate Leave Cancellation with its exact scope, reason,
+evidence, Approval Route Version, decisions, and effect state. Whole and
+policy-permitted partial cancellation are supported; neither may add or
+substitute leave.
+
+For posted leave, whole cancellation creates exact linked ledger reversals.
+Partial cancellation fully reverses each affected original entry and creates
+replacement entries for the retained effect, using the original effective dates
+and later posting times. Leave shall obtain idempotent Attendance and Payroll
+correction handoffs through their owning services. Unlocked attendance may be
+recalculated; locked attendance requires its correction or adjustment contract.
+Pending Payroll Inputs may be cancelled or replaced; consumed inputs require a
+linked adjustment, and finalized payroll remains immutable.
+
+Cancellation approval and effect application are separate facts. The application
+shall project `CANCELLED` only after one atomic command creates every required
+reversal or owner handoff. A failed command shall leave the cancellation approved,
+the original posting effective, and a truthful retryable or blocking failure.
+Accepted downstream adjustments may remain pending and shall be shown as such.
 
 ## LEA-006 Mandatory leave
 
