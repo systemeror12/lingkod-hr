@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Salary Schedules
 
 ```sql
@@ -151,6 +150,16 @@ CREATE TABLE payroll_inputs (
 ```
 
 Consumed inputs are immutable.
+
+For a Leave Monetization input, Payroll resolves the authoritative salary source
+and computes `amount`; Leave may not supply either as an unrestricted value. The
+immutable `payload_snapshot` must bind the exact Monetization Posting, approved
+per-account credit quantities, stable effect key, valuation date, fixed
+calculator and authority-bound factor, policy and authority Document Versions,
+funding determination, Approval Decisions, resolved salary source and value,
+calculation steps, and evidence-backed rounding rule and result. Payroll returns
+`ACCEPTED`, matching `ALREADY_ACCEPTED`, `REJECTED`, or `RETRYABLE_FAILURE` to
+the owner command. A rejected or retryable request creates no Payroll Input.
 
 ---
 

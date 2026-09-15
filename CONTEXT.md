@@ -566,6 +566,42 @@ _Avoid_: Leave Cancellation, administrator cancellation
 The authorized record that ends all or an exact subset of an approved or posted Leave Application while preserving its original application, certification, recommendation, approval, commitment, and posting history.
 _Avoid_: Leave Withdrawal, deleting leave, editing posted leave
 
+**Leave Monetization Request**:
+The stable agency-scoped case through which an Employee asks to convert authorized vacation or sick leave credits to money. Its submitted versions, account allocations, evidence, reviews, approval, posting, and adjustment history remain linked and immutable.
+_Avoid_: Payroll earning, mutable monetization form
+
+**Leave Monetization Request Version**:
+An immutable submitted or resubmitted statement of a Leave Monetization Request that binds its requested account allocations, attestation, evidence, applicable policy and authority, and Approval Route Version.
+_Avoid_: Editable monetization request, approved amount
+
+**Monetization Eligibility Assessment**:
+An explainable evaluation of one Leave Monetization Request Version against its applicable personnel coverage, credit, retention, quantity, reason, and authority rules.
+_Avoid_: Approval, funding review, balance check
+
+**Monetization Funding Determination**:
+An immutable Budget review of whether one Leave Monetization Request Version has current funding support under exact authority and evidence.
+_Avoid_: Monetization approval, available-funds flag
+
+**Monetization Posting**:
+The atomic Leave-owned act that consumes the request's Leave Credit Commitments, creates its source-owned negative Leave Ledger Entries, and obtains an authority-bound Monetization Earning Input from Payroll.
+_Avoid_: Monetization approval, direct payroll edit
+
+**Monetization Earning Input**:
+An immutable Payroll-owned input that freezes Payroll's authority-bound salary resolution and monetary calculation for one accepted Monetization Posting.
+_Avoid_: Caller-supplied payout, leave ledger entry
+
+**Monetization Adjustment**:
+An authorized whole or partial correction of a Monetization Posting that preserves the original approval and effects while linking exact ledger reversals or replacements to Payroll's accepted correction handoff.
+_Avoid_: Edited monetization, immediate credit restoration
+
+**Terminal Leave Input Assessment**:
+An immutable Leave evaluation that records whether the source facts required to preserve terminal-leave inputs are `READY` or `INDETERMINATE`, including every missing or conflicting fact.
+_Avoid_: Terminal benefit eligibility, terminal payment approval
+
+**Terminal Leave Input Snapshot**:
+An immutable Leave-owned preservation of the exact separation, service, account-balance, ledger-cutoff, authority, evidence, and salary-source references needed for a later terminal-leave claim and calculation.
+_Avoid_: Terminal leave computation, Payroll Input, leave ledger posting
+
 ## Workforce Relationships
 
 **JO/COS Worker**:

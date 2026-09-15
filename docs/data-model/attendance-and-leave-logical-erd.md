@@ -73,6 +73,21 @@ erDiagram
     EMPLOYEES ||--o{ MANDATORY_LEAVE_ASSESSMENTS : assessed_for
     LEAVE_POLICY_VERSIONS ||--o{ MANDATORY_LEAVE_ASSESSMENTS : governs
     EMPLOYEES ||--o{ LEAVE_MONETIZATION_REQUESTS : requests
+    LEAVE_MONETIZATION_REQUESTS ||--|{ LEAVE_MONETIZATION_REQUEST_VERSIONS : preserves
+    LEAVE_MONETIZATION_REQUEST_VERSIONS ||--|{ LEAVE_MONETIZATION_ALLOCATIONS : requests
+    LEAVE_ACCOUNTS ||--o{ LEAVE_MONETIZATION_ALLOCATIONS : funds
+    LEAVE_MONETIZATION_REQUEST_VERSIONS ||--o{ MONETIZATION_ELIGIBILITY_ASSESSMENTS : evaluated_by
+    LEAVE_MONETIZATION_REQUEST_VERSIONS ||--o| MONETIZATION_CREDIT_CERTIFICATIONS : certified_by
+    MONETIZATION_CREDIT_CERTIFICATIONS ||--|{ MONETIZATION_CREDIT_CERTIFICATION_LINES : contains
+    LEAVE_MONETIZATION_REQUEST_VERSIONS ||--o{ MONETIZATION_FUNDING_DETERMINATIONS : reviewed_by
+    LEAVE_MONETIZATION_REQUEST_VERSIONS ||--o| MONETIZATION_POSTINGS : posted_by
+    MONETIZATION_POSTINGS ||--o{ MONETIZATION_ADJUSTMENTS : corrected_by
+    MONETIZATION_ADJUSTMENTS ||--|{ MONETIZATION_ADJUSTMENT_LINES : targets
+    EMPLOYEES ||--o{ TERMINAL_LEAVE_INPUT_ASSESSMENTS : assessed_for
+    TERMINAL_LEAVE_INPUT_ASSESSMENTS ||--o| TERMINAL_LEAVE_INPUT_SNAPSHOTS : produces
+    TERMINAL_LEAVE_INPUT_SNAPSHOTS ||--|{ TERMINAL_LEAVE_INPUT_SNAPSHOT_LINES : contains
+    LEAVE_ACCOUNTS ||--o{ TERMINAL_LEAVE_INPUT_SNAPSHOT_LINES : certifies
+    TERMINAL_LEAVE_INPUT_SNAPSHOTS ||--o{ TERMINAL_LEAVE_INPUT_HANDOFF_OUTCOMES : handed_to
 ```
 
 # Entity definitions
@@ -81,13 +96,13 @@ erDiagram
 
 Reusable schedule definition
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column             | Logical type | Null? | Key / rule                | Description     |
 | ------------------ | ------------ | ----- | ------------------------- | --------------- |
-| id | uuid | No | PK | Schedule |
-| agency_id | uuid | No | FK agencies | Tenant |
-| code | string | No |  | Code |
-| name | string | No |  | Name |
-| current_version_id | uuid | Yes | FK work_schedule_versions | Current version |
+| id                 | uuid         | No    | PK                        | Schedule        |
+| agency_id          | uuid         | No    | FK agencies               | Tenant          |
+| code               | string       | No    |                           | Code            |
+| name               | string       | No    |                           | Name            |
+| current_version_id | uuid         | Yes   | FK work_schedule_versions | Current version |
 
 **Constraints and indexes**
 
@@ -99,20 +114,20 @@ Reusable schedule definition
 
 Effective-dated schedule rules
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column                        | Logical type | Null? | Key / rule           | Description                                        |
 | ----------------------------- | ------------ | ----- | -------------------- | -------------------------------------------------- |
-| id | uuid | No | PK | Version |
-| agency_id | uuid | No | FK agencies | Tenant |
-| work_schedule_id | uuid | No | FK work_schedules | Schedule |
-| version_no | integer | No |  | Version |
-| schedule_type | enum | No |  | REGULAR, FLEXIBLE, SHIFT, COMPRESSED |
-| timezone | string | No |  | Governing local timezone |
-| holiday_effect_rules | json | No |  | Authority-backed effect by calendar classification |
-| authority_document_version_id | uuid | Yes | FK document_versions | Required authority evidence at activation |
-| approving_authority | string | Yes |  | Required authority named at activation |
-| status | enum | No |  | DRAFT, ACTIVE, SUPERSEDED |
-| effective_from | date | No |  | Start |
-| effective_to | date | Yes |  | End |
+| id                            | uuid         | No    | PK                   | Version                                            |
+| agency_id                     | uuid         | No    | FK agencies          | Tenant                                             |
+| work_schedule_id              | uuid         | No    | FK work_schedules    | Schedule                                           |
+| version_no                    | integer      | No    |                      | Version                                            |
+| schedule_type                 | enum         | No    |                      | REGULAR, FLEXIBLE, SHIFT, COMPRESSED               |
+| timezone                      | string       | No    |                      | Governing local timezone                           |
+| holiday_effect_rules          | json         | No    |                      | Authority-backed effect by calendar classification |
+| authority_document_version_id | uuid         | Yes   | FK document_versions | Required authority evidence at activation          |
+| approving_authority           | string       | Yes   |                      | Required authority named at activation             |
+| status                        | enum         | No    |                      | DRAFT, ACTIVE, SUPERSEDED                          |
+| effective_from                | date         | No    |                      | Start                                              |
+| effective_to                  | date         | Yes   |                      | End                                                |
 
 **Constraints and indexes**
 
@@ -133,13 +148,13 @@ Ordered unpaid break intervals belonging to a Day Rule. A break may end on the n
 
 Authorized work arrangement
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column             | Logical type | Null? | Key / rule                   | Description     |
 | ------------------ | ------------ | ----- | ---------------------------- | --------------- |
-| id | uuid | No | PK | Arrangement |
-| agency_id | uuid | No | FK agencies | Tenant |
-| code | string | No |  | Code |
-| name | string | No |  | Name |
-| current_version_id | uuid | Yes | FK work_arrangement_versions | Current version |
+| id                 | uuid         | No    | PK                           | Arrangement     |
+| agency_id          | uuid         | No    | FK agencies                  | Tenant          |
+| code               | string       | No    |                              | Code            |
+| name               | string       | No    |                              | Name            |
+| current_version_id | uuid         | Yes   | FK work_arrangement_versions | Current version |
 
 **Constraints and indexes**
 
@@ -155,17 +170,17 @@ Immutable effective-dated arrangement mode, permitted schedule types, scoped Hol
 
 Effective employee schedule and arrangement
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column                        | Logical type | Null? | Key / rule                   | Description          |
 | ----------------------------- | ------------ | ----- | ---------------------------- | -------------------- |
-| id | uuid | No | PK | Assignment |
-| agency_id | uuid | No | FK agencies | Tenant |
-| employee_id | uuid | No | FK employees | Employee |
-| work_schedule_version_id | uuid | No | FK work_schedule_versions | Schedule version |
-| work_arrangement_version_id | uuid | No | FK work_arrangement_versions | Arrangement version |
-| authority_document_version_id | uuid | No | FK document_versions | Assignment authority |
-| effective_from | date | No |  | Start |
-| effective_to | date | Yes |  | End |
-| assigned_by_membership_id | uuid | No | FK agency_memberships | Actor |
+| id                            | uuid         | No    | PK                           | Assignment           |
+| agency_id                     | uuid         | No    | FK agencies                  | Tenant               |
+| employee_id                   | uuid         | No    | FK employees                 | Employee             |
+| work_schedule_version_id      | uuid         | No    | FK work_schedule_versions    | Schedule version     |
+| work_arrangement_version_id   | uuid         | No    | FK work_arrangement_versions | Arrangement version  |
+| authority_document_version_id | uuid         | No    | FK document_versions         | Assignment authority |
+| effective_from                | date         | No    |                              | Start                |
+| effective_to                  | date         | Yes   |                              | End                  |
+| assigned_by_membership_id     | uuid         | No    | FK agency_memberships        | Actor                |
 
 **Constraints and indexes**
 
@@ -177,15 +192,15 @@ Effective employee schedule and arrangement
 
 Agency/location holiday calendar
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column             | Logical type | Null? | Key / rule                   | Description              |
 | ------------------ | ------------ | ----- | ---------------------------- | ------------------------ |
-| id | uuid | No | PK | Calendar |
-| agency_id | uuid | No | FK agencies | Tenant |
-| code | string | No |  | Code |
-| name | string | No |  | Name |
-| scope_type | enum | No |  | AGENCY, OFFICE, WORKSITE |
-| scope_reference | string | No |  | Authorized scope |
-| current_version_id | uuid | Yes | FK holiday_calendar_versions | Current version |
+| id                 | uuid         | No    | PK                           | Calendar                 |
+| agency_id          | uuid         | No    | FK agencies                  | Tenant                   |
+| code               | string       | No    |                              | Code                     |
+| name               | string       | No    |                              | Name                     |
+| scope_type         | enum         | No    |                              | AGENCY, OFFICE, WORKSITE |
+| scope_reference    | string       | No    |                              | Authorized scope         |
+| current_version_id | uuid         | Yes   | FK holiday_calendar_versions | Current version          |
 
 **Constraints and indexes**
 
@@ -201,15 +216,15 @@ Immutable effective-dated calendar version with exact authority evidence and DRA
 
 Effective holiday/day classification
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column                      | Logical type | Null? | Key / rule                   | Description                                                                           |
 | --------------------------- | ------------ | ----- | ---------------------------- | ------------------------------------------------------------------------------------- |
-| id | uuid | No | PK | Holiday |
-| agency_id | uuid | No | FK agencies | Tenant |
-| holiday_calendar_version_id | uuid | No | FK holiday_calendar_versions | Calendar version |
-| holiday_date | date | No |  | Date |
-| name | string | No |  | Name |
-| day_type | enum | No |  | REGULAR_HOLIDAY, SPECIAL_NON_WORKING, SPECIAL_WORKING, LOCAL_HOLIDAY, WORK_SUSPENSION |
-| source_reference | string | No |  | Issuance |
+| id                          | uuid         | No    | PK                           | Holiday                                                                               |
+| agency_id                   | uuid         | No    | FK agencies                  | Tenant                                                                                |
+| holiday_calendar_version_id | uuid         | No    | FK holiday_calendar_versions | Calendar version                                                                      |
+| holiday_date                | date         | No    |                              | Date                                                                                  |
+| name                        | string       | No    |                              | Name                                                                                  |
+| day_type                    | enum         | No    |                              | REGULAR_HOLIDAY, SPECIAL_NON_WORKING, SPECIAL_WORKING, LOCAL_HOLIDAY, WORK_SUSPENSION |
+| source_reference            | string       | No    |                              | Issuance                                                                              |
 
 **Constraints and indexes**
 
@@ -221,14 +236,14 @@ Effective holiday/day classification
 
 Stable agency-wide attendance interval
 
-| Column | Logical type | Null? | Key / rule | Description |
-| ----------------------- | ------------ | ----- | --------------------- | -------------------------------------------- |
-| id | uuid | No | PK | Period |
-| agency_id | uuid | No | FK agencies | Tenant |
-| code | string | No |  | Period code |
-| date_from | date | No |  | Start |
-| date_to | date | No |  | End |
-| status | enum | No |  | OPEN, FINALIZED |
+| Column    | Logical type | Null? | Key / rule  | Description     |
+| --------- | ------------ | ----- | ----------- | --------------- |
+| id        | uuid         | No    | PK          | Period          |
+| agency_id | uuid         | No    | FK agencies | Tenant          |
+| code      | string       | No    |             | Period code     |
+| date_from | date         | No    |             | Start           |
+| date_to   | date         | No    |             | End             |
+| status    | enum         | No    |             | OPEN, FINALIZED |
 
 **Constraints and indexes**
 
@@ -241,20 +256,20 @@ Stable agency-wide attendance interval
 
 One Employee's submitted snapshot within an Attendance Period
 
-| Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
-| id | uuid | No | PK | Submission |
-| agency_id | uuid | No | FK agencies | Tenant |
-| attendance_period_id | uuid | No | FK attendance_periods | Period |
-| employee_id | uuid | No | FK employees | Subject |
-| version_no | integer | No |  | Submission version |
-| status | enum | No |  | DRAFT, SUBMITTED, RETURNED, APPROVED, CANCELLED, STALE |
-| submitted_by_membership_id | uuid | No | FK agency_memberships | Employee or on-behalf HR Administrator |
-| on_behalf_reason | string | Yes |  | Required for on-behalf submission |
-| evidence_document_version_id | uuid | Yes | FK document_versions | Required for on-behalf submission |
-| reviewed_by_membership_id | uuid | Yes | FK agency_memberships | HR Officer reviewer |
-| reviewed_at | datetime | Yes |  | Review time |
-| review_reason | string | Yes |  | Return or decision basis |
+| Column                       | Logical type | Null? | Key / rule            | Description                                            |
+| ---------------------------- | ------------ | ----- | --------------------- | ------------------------------------------------------ |
+| id                           | uuid         | No    | PK                    | Submission                                             |
+| agency_id                    | uuid         | No    | FK agencies           | Tenant                                                 |
+| attendance_period_id         | uuid         | No    | FK attendance_periods | Period                                                 |
+| employee_id                  | uuid         | No    | FK employees          | Subject                                                |
+| version_no                   | integer      | No    |                       | Submission version                                     |
+| status                       | enum         | No    |                       | DRAFT, SUBMITTED, RETURNED, APPROVED, CANCELLED, STALE |
+| submitted_by_membership_id   | uuid         | No    | FK agency_memberships | Employee or on-behalf HR Administrator                 |
+| on_behalf_reason             | string       | Yes   |                       | Required for on-behalf submission                      |
+| evidence_document_version_id | uuid         | Yes   | FK document_versions  | Required for on-behalf submission                      |
+| reviewed_by_membership_id    | uuid         | Yes   | FK agency_memberships | HR Officer reviewer                                    |
+| reviewed_at                  | datetime     | Yes   |                       | Review time                                            |
+| review_reason                | string       | Yes   |                       | Return or decision basis                               |
 
 Each submission has immutable membership rows identifying its exact Attendance Day versions. Recalculation of any member makes a pending submission stale. Approval requires all members to be current and free of unresolved Attendance Exceptions.
 
@@ -264,22 +279,22 @@ Each submission has immutable membership rows identifying its exact Attendance D
 
 Immutable agency-wide review and lock snapshot
 
-| Column | Logical type | Null? | Key / rule | Description |
-| --- | --- | --- | --- | --- |
-| id | uuid | No | PK | Period version |
-| agency_id | uuid | No | FK agencies | Tenant |
-| attendance_period_id | uuid | No | FK attendance_periods | Stable period |
-| version_no | integer | No |  | Monotonic version |
-| predecessor_version_id | uuid | Yes | Self FK | Prior locked version for a correction successor |
-| status | enum | No |  | FOR_REVIEW, APPROVED, RETURNED, LOCKED |
-| approval_route_version_id | uuid | No | FK approval_route_versions | Exact routed authority |
-| submitted_by_membership_id | uuid | No | FK agency_memberships | HR Administrator preparer |
-| reviewed_by_membership_id | uuid | Yes | FK agency_memberships | HR Officer approver |
-| reviewed_at | datetime | Yes |  | Review time |
-| review_reason | string | Yes |  | Return or approval basis |
-| locked_by_membership_id | uuid | Yes | FK agency_memberships | Different HR Administrator |
-| locked_at | datetime | Yes |  | Lock time |
-| reconciliation | json | Yes |  | Locked counts and exact-minute totals |
+| Column                     | Logical type | Null? | Key / rule                 | Description                                     |
+| -------------------------- | ------------ | ----- | -------------------------- | ----------------------------------------------- |
+| id                         | uuid         | No    | PK                         | Period version                                  |
+| agency_id                  | uuid         | No    | FK agencies                | Tenant                                          |
+| attendance_period_id       | uuid         | No    | FK attendance_periods      | Stable period                                   |
+| version_no                 | integer      | No    |                            | Monotonic version                               |
+| predecessor_version_id     | uuid         | Yes   | Self FK                    | Prior locked version for a correction successor |
+| status                     | enum         | No    |                            | FOR_REVIEW, APPROVED, RETURNED, LOCKED          |
+| approval_route_version_id  | uuid         | No    | FK approval_route_versions | Exact routed authority                          |
+| submitted_by_membership_id | uuid         | No    | FK agency_memberships      | HR Administrator preparer                       |
+| reviewed_by_membership_id  | uuid         | Yes   | FK agency_memberships      | HR Officer approver                             |
+| reviewed_at                | datetime     | Yes   |                            | Review time                                     |
+| review_reason              | string       | Yes   |                            | Return or approval basis                        |
+| locked_by_membership_id    | uuid         | Yes   | FK agency_memberships      | Different HR Administrator                      |
+| locked_at                  | datetime     | Yes   |                            | Lock time                                       |
+| reconciliation             | json         | Yes   |                            | Locked counts and exact-minute totals           |
 
 Immutable membership rows bind every applicable Employee, approved Employee Attendance Submission, Work Date, and exact Attendance Day version. Lock requires complete membership, no unresolved exception or correction, unchanged sources, successful DTR rendering and payroll-fact reconciliation, and different reviewer and locker memberships.
 
@@ -301,17 +316,17 @@ One exact nonnegative minute quantity by publication, Employee, Work Date, atten
 
 Immutable raw manual or web-clock event
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column                   | Logical type | Null? | Key / rule            | Description                            |
 | ------------------------ | ------------ | ----- | --------------------- | -------------------------------------- |
-| id | uuid | No | PK | Event |
-| agency_id | uuid | No | FK agencies | Tenant |
-| employee_id | uuid | No | FK employees | Employee |
-| event_time | datetime | No |  | Timestamp |
-| event_type | enum | No |  | TIME_IN, BREAK_OUT, BREAK_IN, TIME_OUT |
-| source | enum | No |  | WEB_CLOCK, MANUAL |
-| source_reference | string | Yes |  | Request/device metadata |
-| entered_by_membership_id | uuid | Yes | FK agency_memberships | Manual actor |
-| reason | string | Yes |  | Required for manual entry |
+| id                       | uuid         | No    | PK                    | Event                                  |
+| agency_id                | uuid         | No    | FK agencies           | Tenant                                 |
+| employee_id              | uuid         | No    | FK employees          | Employee                               |
+| event_time               | datetime     | No    |                       | Timestamp                              |
+| event_type               | enum         | No    |                       | TIME_IN, BREAK_OUT, BREAK_IN, TIME_OUT |
+| source                   | enum         | No    |                       | WEB_CLOCK, MANUAL                      |
+| source_reference         | string       | Yes   |                       | Request/device metadata                |
+| entered_by_membership_id | uuid         | Yes   | FK agency_memberships | Manual actor                           |
+| reason                   | string       | Yes   |                       | Required for manual entry              |
 
 **Constraints and indexes**
 
@@ -328,34 +343,34 @@ Immutable whole-Work-Date or timed official-business, official-travel, training,
 
 Calculated daily attendance result
 
-| Column | Logical type | Null? | Key / rule | Description |
-| ------------------------------ | ------------ | ----- | ---------------------------- | ---------------------------------------------------------------------- |
-| id | uuid | No | PK | Attendance day |
-| agency_id | uuid | No | FK agencies | Tenant |
-| attendance_period_id | uuid | No | FK attendance_periods | Period |
-| employee_id | uuid | No | FK employees | Employee |
-| work_date | date | No |  | Work date |
-| schedule_assignment_id | uuid | Yes | FK schedule_assignments | Schedule used |
-| work_schedule_version_id | uuid | Yes | FK work_schedule_versions | Exact schedule version |
-| work_arrangement_version_id | uuid | Yes | FK work_arrangement_versions | Exact arrangement version |
-| holiday_calendar_version_id | uuid | Yes | FK holiday_calendar_versions | Exact calendar version |
-| day_classification | enum | No |  | SCHEDULED, UNSCHEDULED_SERVICE |
-| status | enum | No |  | PENDING, CALCULATED, EXCEPTION, APPROVED |
-| expected_minutes | integer | No |  | Expected duty |
-| worked_minutes | integer | No |  | Worked |
-| coverage_minutes | integer | No |  | Union of worked and authorized coverage |
-| late_minutes | integer | No |  | Late |
-| undertime_minutes | integer | No |  | Undertime |
-| absence_minutes | integer | No |  | Absence |
-| official_business_minutes | integer | No |  | Official business |
-| official_travel_minutes | integer | No |  | Official travel |
-| training_minutes | integer | No |  | Training |
-| approved_absence_minutes | integer | No |  | Approved non-leave absence |
-| posted_leave_minutes | integer | No |  | Leave-owned coverage |
-| outside_schedule_minutes | integer | No |  | Factual unscheduled service |
-| statutory_night_window_minutes | integer | No |  | Factual night-window service |
-| calculation_version | integer | No |  | Recalculation version |
-| rule_snapshot | json | No |  | Applied rules |
+| Column                         | Logical type | Null? | Key / rule                   | Description                              |
+| ------------------------------ | ------------ | ----- | ---------------------------- | ---------------------------------------- |
+| id                             | uuid         | No    | PK                           | Attendance day                           |
+| agency_id                      | uuid         | No    | FK agencies                  | Tenant                                   |
+| attendance_period_id           | uuid         | No    | FK attendance_periods        | Period                                   |
+| employee_id                    | uuid         | No    | FK employees                 | Employee                                 |
+| work_date                      | date         | No    |                              | Work date                                |
+| schedule_assignment_id         | uuid         | Yes   | FK schedule_assignments      | Schedule used                            |
+| work_schedule_version_id       | uuid         | Yes   | FK work_schedule_versions    | Exact schedule version                   |
+| work_arrangement_version_id    | uuid         | Yes   | FK work_arrangement_versions | Exact arrangement version                |
+| holiday_calendar_version_id    | uuid         | Yes   | FK holiday_calendar_versions | Exact calendar version                   |
+| day_classification             | enum         | No    |                              | SCHEDULED, UNSCHEDULED_SERVICE           |
+| status                         | enum         | No    |                              | PENDING, CALCULATED, EXCEPTION, APPROVED |
+| expected_minutes               | integer      | No    |                              | Expected duty                            |
+| worked_minutes                 | integer      | No    |                              | Worked                                   |
+| coverage_minutes               | integer      | No    |                              | Union of worked and authorized coverage  |
+| late_minutes                   | integer      | No    |                              | Late                                     |
+| undertime_minutes              | integer      | No    |                              | Undertime                                |
+| absence_minutes                | integer      | No    |                              | Absence                                  |
+| official_business_minutes      | integer      | No    |                              | Official business                        |
+| official_travel_minutes        | integer      | No    |                              | Official travel                          |
+| training_minutes               | integer      | No    |                              | Training                                 |
+| approved_absence_minutes       | integer      | No    |                              | Approved non-leave absence               |
+| posted_leave_minutes           | integer      | No    |                              | Leave-owned coverage                     |
+| outside_schedule_minutes       | integer      | No    |                              | Factual unscheduled service              |
+| statutory_night_window_minutes | integer      | No    |                              | Factual night-window service             |
+| calculation_version            | integer      | No    |                              | Recalculation version                    |
+| rule_snapshot                  | json         | No    |                              | Applied rules                            |
 
 **Constraints and indexes**
 
@@ -372,15 +387,15 @@ Non-overlapping immutable intervals belonging to one Attendance Day calculation 
 
 Detected attendance issue
 
-| Column | Logical type | Null? | Key / rule | Description |
+| Column            | Logical type | Null? | Key / rule         | Description                                                                              |
 | ----------------- | ------------ | ----- | ------------------ | ---------------------------------------------------------------------------------------- |
-| id | uuid | No | PK | Exception |
-| agency_id | uuid | No | FK agencies | Tenant |
-| attendance_day_id | uuid | No | FK attendance_days | Day |
-| exception_type | enum | No |  | MISSING_CONFIGURATION, UNMATCHED_EVENT, INCOMPLETE_SEQUENCE, CONFLICTING_COVERAGE, OTHER |
-| status | enum | No |  | OPEN, RESOLVED, WAIVED |
-| details | json | No |  | Sanitized details |
-| resolved_at | datetime | Yes |  | Resolution |
+| id                | uuid         | No    | PK                 | Exception                                                                                |
+| agency_id         | uuid         | No    | FK agencies        | Tenant                                                                                   |
+| attendance_day_id | uuid         | No    | FK attendance_days | Day                                                                                      |
+| exception_type    | enum         | No    |                    | MISSING_CONFIGURATION, UNMATCHED_EVENT, INCOMPLETE_SEQUENCE, CONFLICTING_COVERAGE, OTHER |
+| status            | enum         | No    |                    | OPEN, RESOLVED, WAIVED                                                                   |
+| details           | json         | No    |                    | Sanitized details                                                                        |
+| resolved_at       | datetime     | Yes   |                    | Resolution                                                                               |
 
 **Constraints and indexes**
 
@@ -392,24 +407,24 @@ Detected attendance issue
 
 Correction request without overwriting raw events
 
-| Column | Logical type | Null? | Key / rule | Description |
-| ---------------------------- | ------------ | ----- | --------------------- | --------------------------------------------------------------------------- |
-| id | uuid | No | PK | Correction |
-| agency_id | uuid | No | FK agencies | Tenant |
-| employee_id | uuid | No | FK employees | Subject |
-| initiated_by_membership_id | uuid | No | FK agency_memberships | Employee or scoped HR Administrator |
-| target_type | enum | No |  | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT |
-| requested_action | enum | No |  | ADD, REPLACE, VOID |
-| target_id | uuid | Yes |  | Existing target for replace or void |
-| status | enum | No |  | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, FOR_AUTHORIZATION, REJECTED, CANCELLED, APPLIED |
-| requested_record | json | Yes |  | Proposed add or replacement |
-| reason | string | No |  | Reason |
-| approval_route_version_id | uuid | No | FK approval_route_versions | Exact routed authority |
-| impact_preview | json | No |  | Exact before-and-after source and result versions |
-| submitted_at | datetime | Yes |  | Submission |
-| decided_by_membership_id | uuid | Yes | FK agency_memberships | Approver |
-| decided_at | datetime | Yes |  | Decision |
-| decision_reason | string | Yes |  | Decision basis |
+| Column                     | Logical type | Null? | Key / rule                 | Description                                                                                    |
+| -------------------------- | ------------ | ----- | -------------------------- | ---------------------------------------------------------------------------------------------- |
+| id                         | uuid         | No    | PK                         | Correction                                                                                     |
+| agency_id                  | uuid         | No    | FK agencies                | Tenant                                                                                         |
+| employee_id                | uuid         | No    | FK employees               | Subject                                                                                        |
+| initiated_by_membership_id | uuid         | No    | FK agency_memberships      | Employee or scoped HR Administrator                                                            |
+| target_type                | enum         | No    |                            | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT                                                           |
+| requested_action           | enum         | No    |                            | ADD, REPLACE, VOID                                                                             |
+| target_id                  | uuid         | Yes   |                            | Existing target for replace or void                                                            |
+| status                     | enum         | No    |                            | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, FOR_AUTHORIZATION, REJECTED, CANCELLED, APPLIED |
+| requested_record           | json         | Yes   |                            | Proposed add or replacement                                                                    |
+| reason                     | string       | No    |                            | Reason                                                                                         |
+| approval_route_version_id  | uuid         | No    | FK approval_route_versions | Exact routed authority                                                                         |
+| impact_preview             | json         | No    |                            | Exact before-and-after source and result versions                                              |
+| submitted_at               | datetime     | Yes   |                            | Submission                                                                                     |
+| decided_by_membership_id   | uuid         | Yes   | FK agency_memberships      | Approver                                                                                       |
+| decided_at                 | datetime     | Yes   |                            | Decision                                                                                       |
+| decision_reason            | string       | Yes   |                            | Decision basis                                                                                 |
 
 **Constraints and indexes**
 
@@ -426,6 +441,7 @@ Normalized immutable `ADD`, `REPLACE`, or `VOID` effects created from an applied
 ## `locked_attendance_adjustments`
 
 Grouped post-lock application of one approved Attendance Correction. Child rows link every affected locked predecessor Attendance Period Version to its complete successor version, corrected DTRs, and adjustment publication without changing the predecessor.
+
 ## `leave_types`
 
 Stable leave category
@@ -554,19 +570,19 @@ Immutable leave-credit transaction
 
 Unposted claim considered when calculating available credits
 
-| Column                | Logical type | Null? | Key / rule        | Description                                   |
+| Column                 | Logical type | Null? | Key / rule                  | Description                                      |
 | ---------------------- | ------------ | ----- | --------------------------- | ------------------------------------------------ |
-| id                    | uuid         | No    | PK                | Commitment                                    |
-| agency_id             | uuid         | No    | FK agencies       | Tenant                                        |
-| leave_account_id      | uuid         | No    | FK leave_accounts | Reserved account                              |
-| quantity              | decimal      | No    |                   | Positive quantity claimed in the account unit |
-| source_type           | string       | No    |                   | Request kind                                  |
-| source_id             | uuid         | No    |                   | Request                                       |
-| source_commitment_key | string       | No    |                   | Stable occurrence within the request          |
+| id                     | uuid         | No    | PK                          | Commitment                                       |
+| agency_id              | uuid         | No    | FK agencies                 | Tenant                                           |
+| leave_account_id       | uuid         | No    | FK leave_accounts           | Reserved account                                 |
+| quantity               | decimal      | No    |                             | Positive quantity claimed in the account unit    |
+| source_type            | string       | No    |                             | Request kind                                     |
+| source_id              | uuid         | No    |                             | Request                                          |
+| source_commitment_key  | string       | No    |                             | Stable occurrence within the request             |
 | succeeds_commitment_id | uuid         | Yes   | FK leave_credit_commitments | Larger certified commitment narrowed by approval |
-| status                | enum         | No    |                   | ACTIVE, CONSUMED, RELEASED                    |
-| effective_from        | datetime     | No    |                   | Start of claim                                |
-| ended_at              | datetime     | Yes   |                   | Consumption or release time                   |
+| status                 | enum         | No    |                             | ACTIVE, CONSUMED, RELEASED                       |
+| effective_from         | datetime     | No    |                             | Start of claim                                   |
+| ended_at               | datetime     | Yes   |                             | Consumption or release time                      |
 
 **Constraints and indexes**
 
@@ -585,11 +601,11 @@ Unposted claim considered when calculating available credits
 
 Stable government leave case
 
-| Column        | Logical type | Null? | Key / rule     | Description                                                                                                                                       |
+| Column                   | Logical type | Null? | Key / rule                    | Description                                                                                                                                                  |
 | ------------------------ | ------------ | ----- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| id            | uuid         | No    | PK             | Application                                                                                                                                       |
-| agency_id     | uuid         | No    | FK agencies    | Tenant                                                                                                                                            |
-| employee_id   | uuid         | No    | FK employees   | Employee                                                                                                                                          |
+| id                       | uuid         | No    | PK                            | Application                                                                                                                                                  |
+| agency_id                | uuid         | No    | FK agencies                   | Tenant                                                                                                                                                       |
+| employee_id              | uuid         | No    | FK employees                  | Employee                                                                                                                                                     |
 | draft_leave_type_id      | uuid         | No    | FK leave_types                | Mutable working type                                                                                                                                         |
 | draft_reason             | string       | Yes   |                               | Mutable working reason                                                                                                                                       |
 | draft_policy_details     | json         | No    | Validated typed schema        | Mutable policy-specific facts                                                                                                                                |
@@ -681,14 +697,14 @@ Immutable submitted or resubmitted application statement
 
 Inclusive requested date range in a Leave Application Version
 
-| Column               | Logical type | Null? | Key / rule            | Description                   |
+| Column                       | Logical type | Null? | Key / rule                    | Description                   |
 | ---------------------------- | ------------ | ----- | ----------------------------- | ----------------------------- |
-| id                   | uuid         | No    | PK                    | Period                        |
-| agency_id            | uuid         | No    | FK agencies           | Tenant                        |
+| id                           | uuid         | No    | PK                            | Period                        |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                        |
 | leave_application_version_id | uuid         | No    | FK leave_application_versions | Submitted version             |
-| date_from            | date         | No    |                       | Inclusive start               |
-| date_to              | date         | No    |                       | Inclusive end                 |
-| sequence_no          | integer      | No    |                       | Display and calculation order |
+| date_from                    | date         | No    |                               | Inclusive start               |
+| date_to                      | date         | No    |                               | Inclusive end                 |
+| sequence_no                  | integer      | No    |                               | Display and calculation order |
 
 **Constraints and indexes**
 
@@ -722,17 +738,17 @@ Exact supporting, rendered, or signed document linked to one submitted version
 
 Explainable, versioned eligibility result
 
-| Column               | Logical type | Null? | Key / rule            | Description                                       |
+| Column                       | Logical type | Null? | Key / rule                    | Description                                       |
 | ---------------------------- | ------------ | ----- | ----------------------------- | ------------------------------------------------- |
-| id                   | uuid         | No    | PK                    | Assessment                                        |
-| agency_id            | uuid         | No    | FK agencies           | Tenant                                            |
+| id                           | uuid         | No    | PK                            | Assessment                                        |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                                            |
 | leave_application_version_id | uuid         | No    | FK leave_application_versions | Submitted version                                 |
-| assessment_no        | integer      | No    |                       | Application-local version                         |
-| result               | enum         | No    |                       | ELIGIBLE, INELIGIBLE, INDETERMINATE               |
-| input_facts          | json         | No    |                       | Effective-dated facts and exact source references |
-| rule_results         | json         | No    |                       | Per-rule outcome and explanation                  |
-| missing_facts        | json         | No    |                       | Missing or conflicting prerequisites              |
-| assessed_at          | datetime     | No    |                       | Evaluation time and ledger knowledge cutoff       |
+| assessment_no                | integer      | No    |                               | Application-local version                         |
+| result                       | enum         | No    |                               | ELIGIBLE, INELIGIBLE, INDETERMINATE               |
+| input_facts                  | json         | No    |                               | Effective-dated facts and exact source references |
+| rule_results                 | json         | No    |                               | Per-rule outcome and explanation                  |
+| missing_facts                | json         | No    |                               | Missing or conflicting prerequisites              |
+| assessed_at                  | datetime     | No    |                               | Evaluation time and ledger knowledge cutoff       |
 
 **Constraints and indexes**
 
@@ -746,20 +762,20 @@ Explainable, versioned eligibility result
 
 Immutable quantity calculation for one effective portion of a request
 
-| Column                    | Logical type | Null? | Key / rule                       | Description                                                 |
+| Column                       | Logical type | Null? | Key / rule                       | Description                                                 |
 | ---------------------------- | ------------ | ----- | -------------------------------- | ----------------------------------------------------------- |
-| id                        | uuid         | No    | PK                               | Segment                                                     |
-| agency_id                 | uuid         | No    | FK agencies                      | Tenant                                                      |
+| id                           | uuid         | No    | PK                               | Segment                                                     |
+| agency_id                    | uuid         | No    | FK agencies                      | Tenant                                                      |
 | leave_application_version_id | uuid         | No    | FK leave_application_versions    | Submitted version                                           |
-| eligibility_assessment_id | uuid         | No    | FK leave_eligibility_assessments | Owning assessment                                           |
-| policy_version_id         | uuid         | No    | FK leave_policy_versions         | Effective policy                                            |
-| schedule_assignment_id    | uuid         | Yes   | FK schedule_assignments          | Effective schedule, if required                             |
-| holiday_facts             | json         | No    |                                  | Exact holiday records and day classifications used          |
-| date_from                 | date         | No    |                                  | Segment start                                               |
-| date_to                   | date         | No    |                                  | Segment end                                                 |
-| requested_quantity        | decimal      | No    |                                  | Quantity in source-prescribed unit                          |
-| requested_unit            | enum         | No    |                                  | WORKING_DAY, CALENDAR_DAY, SCHEDULED_MINUTE, SOURCE_DEFINED |
-| account_quantity          | decimal      | Yes   |                                  | Separate effect in the Leave Account unit                   |
+| eligibility_assessment_id    | uuid         | No    | FK leave_eligibility_assessments | Owning assessment                                           |
+| policy_version_id            | uuid         | No    | FK leave_policy_versions         | Effective policy                                            |
+| schedule_assignment_id       | uuid         | Yes   | FK schedule_assignments          | Effective schedule, if required                             |
+| holiday_facts                | json         | No    |                                  | Exact holiday records and day classifications used          |
+| date_from                    | date         | No    |                                  | Segment start                                               |
+| date_to                      | date         | No    |                                  | Segment end                                                 |
+| requested_quantity           | decimal      | No    |                                  | Quantity in source-prescribed unit                          |
+| requested_unit               | enum         | No    |                                  | WORKING_DAY, CALENDAR_DAY, SCHEDULED_MINUTE, SOURCE_DEFINED |
+| account_quantity             | decimal      | Yes   |                                  | Separate effect in the Leave Account unit                   |
 
 **Constraints and indexes**
 
@@ -774,17 +790,17 @@ Immutable quantity calculation for one effective portion of a request
 
 Certified balance for an application
 
-| Column                     | Logical type | Null? | Key / rule                       | Description                  |
+| Column                       | Logical type | Null? | Key / rule                       | Description                  |
 | ---------------------------- | ------------ | ----- | -------------------------------- | ---------------------------- |
-| id                         | uuid         | No    | PK                               | Certification                |
-| agency_id                  | uuid         | No    | FK agencies                      | Tenant                       |
+| id                           | uuid         | No    | PK                               | Certification                |
+| agency_id                    | uuid         | No    | FK agencies                      | Tenant                       |
 | leave_application_version_id | uuid         | No    | FK leave_application_versions    | Submitted version            |
-| eligibility_assessment_id  | uuid         | No    | FK leave_eligibility_assessments | Exact assessment             |
+| eligibility_assessment_id    | uuid         | No    | FK leave_eligibility_assessments | Exact assessment             |
 | approval_decision_id         | uuid         | No    | FK approval_decisions            | Completed certification step |
-| balance_as_of              | date         | No    |                                  | Effective balance date       |
-| ledger_recorded_through    | datetime     | No    |                                  | Ledger knowledge cutoff      |
-| certified_by_membership_id | uuid         | No    | FK agency_memberships            | Certifier                    |
-| certified_at               | datetime     | No    |                                  | Certification                |
+| balance_as_of                | date         | No    |                                  | Effective balance date       |
+| ledger_recorded_through      | datetime     | No    |                                  | Ledger knowledge cutoff      |
+| certified_by_membership_id   | uuid         | No    | FK agency_memberships            | Certifier                    |
+| certified_at                 | datetime     | No    |                                  | Certification                |
 
 **Constraints and indexes**
 
@@ -800,16 +816,16 @@ Certified balance for an application
 
 Certified balance facts for one affected Leave Account
 
-| Column                        | Logical type | Null? | Key / rule                     | Description                      |
+| Column                        | Logical type | Null? | Key / rule                     | Description                         |
 | ----------------------------- | ------------ | ----- | ------------------------------ | ----------------------------------- |
-| id                            | uuid         | No    | PK                             | Line                             |
-| agency_id                     | uuid         | No    | FK agencies                    | Tenant                           |
-| leave_credit_certification_id | uuid         | No    | FK leave_credit_certifications | Certification                    |
-| leave_account_id              | uuid         | No    | FK leave_accounts              | Account                          |
-| posted_balance                | decimal      | No    |                                | Sum of applicable ledger entries |
-| active_commitments            | decimal      | No    |                                | Other active claims included     |
-| application_quantity          | decimal      | No    |                                | Current request effect           |
-| available_after_application   | decimal      | No    |                                | Certified remainder              |
+| id                            | uuid         | No    | PK                             | Line                                |
+| agency_id                     | uuid         | No    | FK agencies                    | Tenant                              |
+| leave_credit_certification_id | uuid         | No    | FK leave_credit_certifications | Certification                       |
+| leave_account_id              | uuid         | No    | FK leave_accounts              | Account                             |
+| posted_balance                | decimal      | No    |                                | Sum of applicable ledger entries    |
+| active_commitments            | decimal      | No    |                                | Other active claims included        |
+| application_quantity          | decimal      | No    |                                | Current request effect              |
+| available_after_application   | decimal      | No    |                                | Certified remainder                 |
 | leave_credit_commitment_id    | uuid         | No    | FK leave_credit_commitments    | Commitment created by certification |
 
 **Constraints and indexes**
@@ -1026,25 +1042,321 @@ Explainable as-of evaluation of a mandatory or forced leave obligation
 
 ## `leave_monetization_requests`
 
-Leave monetization request and payroll handoff
+Stable monetization case
 
-| Column            | Logical type | Null? | Key / rule               | Description                                                                                      |
-| ----------------- | ------------ | ----- | ------------------------ | ------------------------------------------------------------------------------------------------ |
-| id                | uuid         | No    | PK                       | Request                                                                                          |
-| agency_id         | uuid         | No    | FK agencies              | Tenant                                                                                           |
-| employee_id       | uuid         | No    | FK employees             | Employee                                                                                         |
-| leave_account_id  | uuid         | No    | FK leave_accounts        | Account                                                                                          |
-| policy_version_id | uuid         | No    | FK leave_policy_versions | Rules                                                                                            |
-| requested_days    | decimal      | No    |                          | Days                                                                                             |
-| approved_days     | decimal      | Yes   |                          | Approved                                                                                         |
-| status            | enum         | No    |                          | DRAFT, SUBMITTED, FOR_VALIDATION, FOR_APPROVAL, APPROVED, REJECTED, POSTED_TO_PAYROLL, CANCELLED |
-| payroll_input_id  | uuid         | Yes   | FK payroll_inputs        | Payroll handoff                                                                                  |
+| Column                   | Logical type | Null? | Key / rule                             | Description                                                                                                           |
+| ------------------------ | ------------ | ----- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| id                       | uuid         | No    | PK                                     | Request                                                                                                               |
+| agency_id                | uuid         | No    | FK agencies                            | Tenant                                                                                                                |
+| employee_id              | uuid         | No    | FK employees                           | Employee                                                                                                              |
+| current_version_id       | uuid         | Yes   | FK leave_monetization_request_versions | Current submitted version                                                                                             |
+| status                   | enum         | No    |                                        | DRAFT, SUBMITTED, CREDIT_CERTIFIED, NEEDS_INFORMATION, FOR_APPROVAL, APPROVED, REJECTED, POSTED, WITHDRAWN, CANCELLED |
+| created_by_membership_id | uuid         | No    | FK agency_memberships                  | Creator                                                                                                               |
+| created_at               | datetime     | No    |                                        | Creation                                                                                                              |
 
 **Constraints and indexes**
 
-- Posting creates one leave ledger debit and one idempotent payroll input.
+- One current version belongs to the same request and Agency.
+- `POSTED` requires one accepted Monetization Posting. `CANCELLED` after posting
+  is represented by an applied Monetization Adjustment, not deletion.
 
 **Deletion behavior:** Retain.
+
+## `leave_monetization_request_versions`
+
+Immutable submitted or resubmitted monetization statement
+
+| Column                            | Logical type | Null? | Key / rule                         | Description                               |
+| --------------------------------- | ------------ | ----- | ---------------------------------- | ----------------------------------------- |
+| id                                | uuid         | No    | PK                                 | Version                                   |
+| agency_id                         | uuid         | No    | FK agencies                        | Tenant                                    |
+| monetization_request_id           | uuid         | No    | FK leave_monetization_requests     | Stable case                               |
+| version_no                        | integer      | No    |                                    | Case-local version                        |
+| kind                              | enum         | No    |                                    | REGULAR, SPECIAL                          |
+| approval_route_version_id         | uuid         | No    | FK approval_route_versions         | Bound route                               |
+| approval_request_id               | uuid         | No    | FK approval_requests               | Route instance                            |
+| form_template_document_version_id | uuid         | No    | FK document_versions               | Exact applicable form                     |
+| attestation_type                  | enum         | No    |                                    | AUTHENTICATED_SUBMISSION, SIGNED_DOCUMENT |
+| attestation_document_version_id   | uuid         | Yes   | FK document_versions               | Exact signed request                      |
+| submitted_by_membership_id        | uuid         | No    | FK agency_memberships              | Employee or authorized recorder           |
+| employee_attested_at              | datetime     | Yes   |                                    | Authenticated adoption time               |
+| reason                            | string       | Yes   |                                    | Requested basis                           |
+| authority_snapshot                | json         | No    | Exact sources and typed parameters | Applicable authority facts                |
+| submitted_at                      | datetime     | No    |                                    | Submission                                |
+
+**Constraints and indexes**
+
+- Unique `(monetization_request_id, version_no)`.
+- A recorded submission requires an exact signed Document Version and separately
+  authorized recorder. Submitted facts, allocations, evidence, and route are
+  immutable.
+
+**Deletion behavior:** Retain all versions.
+
+## `leave_monetization_allocations`
+
+Requested and approved quantity against one credit-bearing Leave Account
+
+| Column                          | Logical type | Null? | Key / rule                              | Description            |
+| ------------------------------- | ------------ | ----- | --------------------------------------- | ---------------------- |
+| id                              | uuid         | No    | PK                                      | Allocation             |
+| agency_id                       | uuid         | No    | FK agencies                             | Tenant                 |
+| monetization_request_version_id | uuid         | No    | FK leave_monetization_request_versions  | Request version        |
+| leave_account_id                | uuid         | No    | FK leave_accounts                       | Allocated account      |
+| policy_version_id               | uuid         | No    | FK leave_policy_versions                | Governing policy       |
+| requested_quantity              | decimal      | No    | Positive                                | Requested credits      |
+| approved_quantity               | decimal      | Yes   | Nonnegative and no greater than request | Final approved credits |
+
+**Constraints and indexes**
+
+- Unique `(monetization_request_version_id, leave_account_id)`.
+- Regular monetization permits only a vacation Leave Account. Special
+  monetization may use vacation and sick accounts when the bound authority
+  permits it. Approval may narrow but not add or substitute an account.
+
+**Deletion behavior:** Retain with the version.
+
+## `monetization_eligibility_assessments`
+
+Explainable assessment of one monetization request version
+
+| Column                          | Logical type | Null? | Key / rule                             | Description                               |
+| ------------------------------- | ------------ | ----- | -------------------------------------- | ----------------------------------------- |
+| id                              | uuid         | No    | PK                                     | Assessment                                |
+| agency_id                       | uuid         | No    | FK agencies                            | Tenant                                    |
+| monetization_request_version_id | uuid         | No    | FK leave_monetization_request_versions | Evaluated version                         |
+| result                          | enum         | No    |                                        | ELIGIBLE, INELIGIBLE, INDETERMINATE       |
+| balance_effective_date          | date         | No    |                                        | Balance date                              |
+| ledger_cutoff                   | datetime     | No    |                                        | Knowledge cutoff                          |
+| input_facts                     | json         | No    |                                        | Coverage, quantities, reason, and sources |
+| rule_results                    | json         | No    |                                        | Per-rule explanation                      |
+| assessed_by_membership_id       | uuid         | Yes   | FK agency_memberships                  | Responsible reviewer                      |
+| assessed_at                     | datetime     | No    |                                        | Assessment time                           |
+
+**Deletion behavior:** Retain every material assessment.
+
+## `monetization_credit_certifications`
+
+Immutable HR certification that creates the version's account commitments
+
+| Column                          | Logical type | Null? | Key / rule                              | Description         |
+| ------------------------------- | ------------ | ----- | --------------------------------------- | ------------------- |
+| id                              | uuid         | No    | PK                                      | Certification       |
+| agency_id                       | uuid         | No    | FK agencies                             | Tenant              |
+| monetization_request_version_id | uuid         | No    | FK leave_monetization_request_versions  | Certified version   |
+| eligibility_assessment_id       | uuid         | No    | FK monetization_eligibility_assessments | Accepted assessment |
+| certified_by_membership_id      | uuid         | No    | FK agency_memberships                   | HR certifier        |
+| certified_at                    | datetime     | No    |                                         | Certification time  |
+
+**Constraints and indexes**
+
+- At most one current certification per request version. Historical
+  certifications remain immutable after invalidation or supersession.
+
+**Deletion behavior:** Retain.
+
+## `monetization_credit_certification_lines`
+
+Certified balance and commitment for one monetization allocation
+
+| Column                               | Logical type | Null? | Key / rule                            | Description                |
+| ------------------------------------ | ------------ | ----- | ------------------------------------- | -------------------------- |
+| id                                   | uuid         | No    | PK                                    | Line                       |
+| agency_id                            | uuid         | No    | FK agencies                           | Tenant                     |
+| monetization_credit_certification_id | uuid         | No    | FK monetization_credit_certifications | Certification              |
+| monetization_allocation_id           | uuid         | No    | FK leave_monetization_allocations     | Certified allocation       |
+| leave_account_id                     | uuid         | No    | FK leave_accounts                     | Account                    |
+| posted_balance                       | decimal      | No    |                                       | Balance at stated cutoffs  |
+| other_active_commitments             | decimal      | No    |                                       | Other reserved quantity    |
+| certified_quantity                   | decimal      | No    |                                       | Quantity reserved          |
+| resulting_available_quantity         | decimal      | No    |                                       | Availability after reserve |
+| leave_credit_commitment_id           | uuid         | No    | FK leave_credit_commitments           | Created commitment         |
+
+**Constraints and indexes**
+
+- Unique `(monetization_credit_certification_id, leave_account_id)`.
+- Certification locks all affected accounts and creates commitments atomically.
+
+**Deletion behavior:** Retain.
+
+## `monetization_funding_determinations`
+
+Immutable Budget review of funding support
+
+| Column                               | Logical type | Null? | Key / rule                             | Description                           |
+| ------------------------------------ | ------------ | ----- | -------------------------------------- | ------------------------------------- |
+| id                                   | uuid         | No    | PK                                     | Determination                         |
+| agency_id                            | uuid         | No    | FK agencies                            | Tenant                                |
+| monetization_request_version_id      | uuid         | No    | FK leave_monetization_request_versions | Reviewed version                      |
+| result                               | enum         | No    |                                        | SUPPORTED, UNSUPPORTED, INDETERMINATE |
+| fiscal_authority_document_version_id | uuid         | No    | FK document_versions                   | Exact funding authority               |
+| funding_source_snapshot              | json         | No    |                                        | Fund and fiscal-period facts          |
+| evidence_snapshot                    | json         | No    | Exact Document Versions                | Supporting evidence                   |
+| reviewed_by_membership_id            | uuid         | No    | FK agency_memberships                  | Budget reviewer                       |
+| reviewed_at                          | datetime     | No    |                                        | Review time                           |
+
+**Deletion behavior:** Retain all determinations.
+
+## `monetization_postings`
+
+Atomic source of leave-credit deductions and Payroll's accepted earning input
+
+| Column                          | Logical type | Null? | Key / rule                             | Description                                      |
+| ------------------------------- | ------------ | ----- | -------------------------------------- | ------------------------------------------------ |
+| id                              | uuid         | No    | PK                                     | Posting                                          |
+| agency_id                       | uuid         | No    | FK agencies                            | Tenant                                           |
+| monetization_request_version_id | uuid         | No    | FK leave_monetization_request_versions | Approved version                                 |
+| posting_key                     | string       | No    | Unique per Agency                      | Stable idempotency key                           |
+| valuation_date                  | date         | No    | Evidence-backed                        | Payroll valuation date                           |
+| calculator_kind                 | string       | No    | Fixed allow-list                       | Payroll calculator                               |
+| factor                          | decimal      | No    | Authority-bound                        | Applicable conversion factor                     |
+| payroll_input_id                | uuid         | No    | FK payroll_inputs                      | Accepted Monetization Earning Input              |
+| payroll_result                  | json         | No    | Immutable owner response               | Salary source, calculation, amount, and rounding |
+| posted_by_membership_id         | uuid         | No    | FK agency_memberships                  | Posting executor                                 |
+| posted_at                       | datetime     | No    |                                        | Posting time                                     |
+
+**Constraints and indexes**
+
+- Unique `(agency_id, posting_key)` and one accepted posting per request version.
+- Payroll owns salary resolution and monetary calculation. An accepted or
+  matching already-accepted result, all ledger entries, commitment consumption,
+  request status, Audit Events, and outbox records commit together. Rejection or
+  retryable failure creates no authoritative posting.
+
+**Deletion behavior:** Never delete.
+
+## `monetization_adjustments`
+
+Authorized correction of one Monetization Posting
+
+| Column                      | Logical type | Null? | Key / rule                 | Description                                                          |
+| --------------------------- | ------------ | ----- | -------------------------- | -------------------------------------------------------------------- |
+| id                          | uuid         | No    | PK                         | Adjustment                                                           |
+| agency_id                   | uuid         | No    | FK agencies                | Tenant                                                               |
+| monetization_posting_id     | uuid         | No    | FK monetization_postings   | Original posting                                                     |
+| scope                       | enum         | No    |                            | WHOLE, PARTIAL                                                       |
+| reason                      | string       | No    |                            | Correction reason                                                    |
+| approval_route_version_id   | uuid         | No    | FK approval_route_versions | Bound route                                                          |
+| approval_request_id         | uuid         | No    | FK approval_requests       | Immutable decisions                                                  |
+| status                      | enum         | No    |                            | DRAFT, FOR_APPROVAL, APPROVED, APPLIED, REJECTED, BLOCKED, RETRYABLE |
+| payroll_adjustment_input_id | uuid         | Yes   | FK payroll_inputs          | Accepted owner correction                                            |
+| owner_result                | json         | Yes   |                            | Accepted, duplicate, rejected, or retryable result                   |
+| applied_at                  | datetime     | Yes   |                            | Authoritative application time                                       |
+
+**Deletion behavior:** Retain.
+
+## `monetization_adjustment_lines`
+
+Exact ledger correction and retained quantity for one original allocation
+
+| Column                      | Logical type | Null? | Key / rule                  | Description                        |
+| --------------------------- | ------------ | ----- | --------------------------- | ---------------------------------- |
+| id                          | uuid         | No    | PK                          | Line                               |
+| agency_id                   | uuid         | No    | FK agencies                 | Tenant                             |
+| monetization_adjustment_id  | uuid         | No    | FK monetization_adjustments | Adjustment                         |
+| original_ledger_entry_id    | uuid         | No    | FK leave_ledger_entries     | Original deduction                 |
+| retained_quantity           | decimal      | No    | Nonnegative                 | Quantity retained after correction |
+| reversal_ledger_entry_id    | uuid         | Yes   | FK leave_ledger_entries     | Exact reversal                     |
+| replacement_ledger_entry_id | uuid         | Yes   | FK leave_ledger_entries     | Retained replacement when partial  |
+
+**Constraints and indexes**
+
+- Credits are restored only in the same transaction that obtains Payroll's
+  accepted correction handoff. Failed or rejected handoffs leave the original
+  posting effective.
+
+**Deletion behavior:** Retain.
+
+## `terminal_leave_input_assessments`
+
+Immutable evaluation of terminal-leave source readiness
+
+| Column                       | Logical type | Null? | Key / rule              | Description                                       |
+| ---------------------------- | ------------ | ----- | ----------------------- | ------------------------------------------------- |
+| id                           | uuid         | No    | PK                      | Assessment                                        |
+| agency_id                    | uuid         | No    | FK agencies             | Tenant                                            |
+| employee_id                  | uuid         | No    | FK employees            | Employee                                          |
+| separation_source_id         | uuid         | No    | Application-validated   | Exact Separation record                           |
+| separation_source_version_id | uuid         | No    | Application-validated   | Exact immutable Separation version                |
+| separation_classification    | string       | No    | Authority-bound         | Qualifying or disqualifying classification        |
+| separation_effective_date    | date         | No    |                         | Last service or effective separation date         |
+| ledger_cutoff                | datetime     | No    |                         | Knowledge cutoff                                  |
+| result                       | enum         | No    |                         | READY, INDETERMINATE                              |
+| input_facts                  | json         | No    | Exact source references | Service, clearance, authority, and salary sources |
+| missing_or_conflicting_facts | json         | No    |                         | Explainable blockers                              |
+| assessed_by_membership_id    | uuid         | No    | FK agency_memberships   | HR certifier                                      |
+| assessed_at                  | datetime     | No    |                         | Assessment time                                   |
+
+**Deletion behavior:** Retain every assessment.
+
+## `terminal_leave_input_snapshots`
+
+Ready Leave-owned input preserved for Separation
+
+| Column                             | Logical type | Null? | Key / rule                          | Description                            |
+| ---------------------------------- | ------------ | ----- | ----------------------------------- | -------------------------------------- |
+| id                                 | uuid         | No    | PK                                  | Snapshot                               |
+| agency_id                          | uuid         | No    | FK agencies                         | Tenant                                 |
+| terminal_leave_input_assessment_id | uuid         | No    | FK terminal_leave_input_assessments | Ready assessment                       |
+| supersedes_snapshot_id             | uuid         | Yes   | FK terminal_leave_input_snapshots   | Prior snapshot                         |
+| snapshot_key                       | string       | No    | Unique per Agency                   | Stable handoff key                     |
+| service_source_snapshot            | json         | No    | Exact source references             | Service facts                          |
+| authority_snapshot                 | json         | No    | Exact policy and Document Versions  | Governing authority                    |
+| clearance_document_snapshot        | json         | No    | Exact Document Versions             | Clearance evidence                     |
+| salary_source_reference            | json         | No    | Owning-module reference             | Verified highest-monthly-salary source |
+| created_at                         | datetime     | No    |                                     | Preservation time                      |
+
+**Constraints and indexes**
+
+- Unique `(agency_id, snapshot_key)` and one snapshot per ready assessment.
+- A correction creates a reasoned successor. A snapshot cannot close an account,
+  post to the ledger, calculate or authorize a benefit, or create a Payroll
+  Input.
+
+**Deletion behavior:** Never delete.
+
+## `terminal_leave_input_handoff_outcomes`
+
+Append-only Separation response to a snapshot handoff
+
+| Column                           | Logical type | Null? | Key / rule                        | Description                                             |
+| -------------------------------- | ------------ | ----- | --------------------------------- | ------------------------------------------------------- |
+| id                               | uuid         | No    | PK                                | Outcome                                                 |
+| agency_id                        | uuid         | No    | FK agencies                       | Tenant                                                  |
+| terminal_leave_input_snapshot_id | uuid         | No    | FK terminal_leave_input_snapshots | Snapshot                                                |
+| attempt_key                      | string       | No    | Unique per snapshot               | Idempotent attempt                                      |
+| result                           | enum         | No    |                                   | ACCEPTED, ALREADY_ACCEPTED, REJECTED, RETRYABLE_FAILURE |
+| separation_reference             | json         | Yes   | Exact owning-service reference    | Accepted consumer reference                             |
+| reason                           | json         | Yes   |                                   | Rejection or retry detail                               |
+| recorded_at                      | datetime     | No    |                                   | Outcome time                                            |
+
+**Constraints and indexes**
+
+- Unique `(terminal_leave_input_snapshot_id, attempt_key)`.
+- Outcomes never mutate the snapshot or transfer ownership of Leave facts.
+
+**Deletion behavior:** Never delete.
+
+## `terminal_leave_input_snapshot_lines`
+
+One preserved Leave Account balance
+
+| Column                           | Logical type | Null? | Key / rule                        | Description                   |
+| -------------------------------- | ------------ | ----- | --------------------------------- | ----------------------------- |
+| id                               | uuid         | No    | PK                                | Line                          |
+| agency_id                        | uuid         | No    | FK agencies                       | Tenant                        |
+| terminal_leave_input_snapshot_id | uuid         | No    | FK terminal_leave_input_snapshots | Snapshot                      |
+| leave_account_id                 | uuid         | No    | FK leave_accounts                 | Vacation or sick account      |
+| policy_version_id                | uuid         | No    | FK leave_policy_versions          | Governing policy              |
+| balance_effective_date           | date         | No    |                                   | Effective separation date     |
+| ledger_cutoff                    | datetime     | No    |                                   | Knowledge cutoff              |
+| posted_balance                   | decimal      | No    |                                   | Preserved commutable quantity |
+
+**Constraints and indexes**
+
+- Unique `(terminal_leave_input_snapshot_id, leave_account_id)`.
+
+**Deletion behavior:** Never delete.
 
 # Domain invariants
 
@@ -1060,3 +1372,8 @@ Leave monetization request and payroll handoff
 - Historical eligibility assessments and credit certifications are immutable.
 - Mandatory leave uses a policy-derived assessment and the ordinary leave
   application and posting path.
+- Monetization approval, posting, and Payroll acceptance are separate facts;
+  rejected or retryable handoffs create no ledger deduction.
+- Terminal Leave Input Snapshots preserve future calculation inputs without
+  creating a ledger posting, Payroll Input, benefit calculation, or payment
+  authority.

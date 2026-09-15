@@ -1442,26 +1442,367 @@ CREATE TABLE leave_monetization_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
-  leave_account_id uuid NOT NULL,
-  policy_version_id uuid NOT NULL,
-  requested_days numeric(12,4) NOT NULL CHECK (requested_days > 0),
-  approved_days numeric(12,4),
+  current_version_id uuid,
   status text NOT NULL
     CHECK (status IN (
-      'DRAFT','SUBMITTED','FOR_VALIDATION','FOR_APPROVAL',
-      'APPROVED','REJECTED','POSTED_TO_PAYROLL','CANCELLED'
+      'DRAFT','SUBMITTED','CREDIT_CERTIFIED','NEEDS_INFORMATION',
+      'FOR_APPROVAL','APPROVED','REJECTED','POSTED','WITHDRAWN','CANCELLED'
     )),
-  payroll_input_id uuid,
+  created_by_membership_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, created_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE leave_monetization_request_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_request_id uuid NOT NULL,
+  version_no integer NOT NULL CHECK (version_no > 0),
+  kind text NOT NULL CHECK (kind IN ('REGULAR','SPECIAL')),
+  approval_route_version_id uuid NOT NULL,
+  approval_request_id uuid NOT NULL,
+  form_template_document_version_id uuid NOT NULL,
+  attestation_type text NOT NULL
+    CHECK (attestation_type IN ('AUTHENTICATED_SUBMISSION','SIGNED_DOCUMENT')),
+  attestation_document_version_id uuid,
+  submitted_by_membership_id uuid NOT NULL,
+  employee_attested_at timestamptz,
+  reason text,
+  authority_snapshot jsonb NOT NULL,
+  submitted_at timestamptz NOT NULL,
+  CHECK (
+    (attestation_type = 'AUTHENTICATED_SUBMISSION'
+      AND employee_attested_at IS NOT NULL
+      AND attestation_document_version_id IS NULL)
+    OR
+    (attestation_type = 'SIGNED_DOCUMENT'
+      AND employee_attested_at IS NULL
+      AND attestation_document_version_id IS NOT NULL)
+  ),
+  FOREIGN KEY (agency_id, monetization_request_id)
+    REFERENCES leave_monetization_requests (agency_id, id),
+  FOREIGN KEY (agency_id, approval_route_version_id)
+    REFERENCES approval_route_versions (agency_id, id),
+  FOREIGN KEY (agency_id, approval_request_id)
+    REFERENCES approval_requests (agency_id, id),
+  FOREIGN KEY (agency_id, form_template_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, attestation_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, submitted_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (monetization_request_id, version_no),
+  UNIQUE (agency_id, id)
+);
+
+ALTER TABLE leave_monetization_requests
+ADD CONSTRAINT leave_monetization_requests_current_version_fk
+FOREIGN KEY (agency_id, current_version_id)
+REFERENCES leave_monetization_request_versions (agency_id, id);
+
+CREATE TABLE leave_monetization_allocations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_request_version_id uuid NOT NULL,
+  leave_account_id uuid NOT NULL,
+  policy_version_id uuid NOT NULL,
+  requested_quantity numeric(12,4) NOT NULL CHECK (requested_quantity > 0),
+  approved_quantity numeric(12,4),
+  CHECK (
+    approved_quantity IS NULL
+    OR (approved_quantity >= 0 AND approved_quantity <= requested_quantity)
+  ),
+  FOREIGN KEY (agency_id, monetization_request_version_id)
+    REFERENCES leave_monetization_request_versions (agency_id, id),
   FOREIGN KEY (agency_id, leave_account_id)
-    REFERENCES leave_accounts (agency_id, id)
+    REFERENCES leave_accounts (agency_id, id),
+  FOREIGN KEY (agency_id, policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
+  UNIQUE (monetization_request_version_id, leave_account_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_eligibility_assessments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_request_version_id uuid NOT NULL,
+  result text NOT NULL
+    CHECK (result IN ('ELIGIBLE','INELIGIBLE','INDETERMINATE')),
+  balance_effective_date date NOT NULL,
+  ledger_cutoff timestamptz NOT NULL,
+  input_facts jsonb NOT NULL,
+  rule_results jsonb NOT NULL,
+  assessed_by_membership_id uuid,
+  assessed_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, monetization_request_version_id)
+    REFERENCES leave_monetization_request_versions (agency_id, id),
+  FOREIGN KEY (agency_id, assessed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_credit_certifications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_request_version_id uuid NOT NULL,
+  eligibility_assessment_id uuid NOT NULL,
+  certified_by_membership_id uuid NOT NULL,
+  certified_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, monetization_request_version_id)
+    REFERENCES leave_monetization_request_versions (agency_id, id),
+  FOREIGN KEY (agency_id, eligibility_assessment_id)
+    REFERENCES monetization_eligibility_assessments (agency_id, id),
+  FOREIGN KEY (agency_id, certified_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (monetization_request_version_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_credit_certification_lines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_credit_certification_id uuid NOT NULL,
+  monetization_allocation_id uuid NOT NULL,
+  leave_account_id uuid NOT NULL,
+  posted_balance numeric(12,4) NOT NULL,
+  other_active_commitments numeric(12,4) NOT NULL
+    CHECK (other_active_commitments >= 0),
+  certified_quantity numeric(12,4) NOT NULL CHECK (certified_quantity > 0),
+  resulting_available_quantity numeric(12,4) NOT NULL
+    CHECK (resulting_available_quantity >= 0),
+  leave_credit_commitment_id uuid NOT NULL,
+  FOREIGN KEY (agency_id, monetization_credit_certification_id)
+    REFERENCES monetization_credit_certifications (agency_id, id),
+  FOREIGN KEY (agency_id, monetization_allocation_id)
+    REFERENCES leave_monetization_allocations (agency_id, id),
+  FOREIGN KEY (agency_id, leave_account_id)
+    REFERENCES leave_accounts (agency_id, id),
+  FOREIGN KEY (agency_id, leave_credit_commitment_id)
+    REFERENCES leave_credit_commitments (agency_id, id),
+  UNIQUE (monetization_credit_certification_id, leave_account_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_funding_determinations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_request_version_id uuid NOT NULL,
+  result text NOT NULL
+    CHECK (result IN ('SUPPORTED','UNSUPPORTED','INDETERMINATE')),
+  fiscal_authority_document_version_id uuid NOT NULL,
+  funding_source_snapshot jsonb NOT NULL,
+  evidence_snapshot jsonb NOT NULL,
+  reviewed_by_membership_id uuid NOT NULL,
+  reviewed_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, monetization_request_version_id)
+    REFERENCES leave_monetization_request_versions (agency_id, id),
+  FOREIGN KEY (agency_id, fiscal_authority_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, reviewed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_postings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_request_version_id uuid NOT NULL,
+  posting_key citext NOT NULL CHECK (btrim(posting_key::text) <> ''),
+  valuation_date date NOT NULL,
+  calculator_kind citext NOT NULL CHECK (btrim(calculator_kind::text) <> ''),
+  factor numeric(12,7) NOT NULL CHECK (factor > 0),
+  payroll_input_id uuid NOT NULL,
+  payroll_result jsonb NOT NULL,
+  posted_by_membership_id uuid NOT NULL,
+  posted_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, monetization_request_version_id)
+    REFERENCES leave_monetization_request_versions (agency_id, id),
+  FOREIGN KEY (agency_id, posted_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, posting_key),
+  UNIQUE (monetization_request_version_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_adjustments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_posting_id uuid NOT NULL,
+  scope text NOT NULL CHECK (scope IN ('WHOLE','PARTIAL')),
+  reason text NOT NULL CHECK (btrim(reason) <> ''),
+  approval_route_version_id uuid NOT NULL,
+  approval_request_id uuid NOT NULL,
+  status text NOT NULL
+    CHECK (status IN (
+      'DRAFT','FOR_APPROVAL','APPROVED','APPLIED',
+      'REJECTED','BLOCKED','RETRYABLE'
+    )),
+  payroll_adjustment_input_id uuid,
+  owner_result jsonb,
+  applied_at timestamptz,
+  CHECK ((status = 'APPLIED') = (applied_at IS NOT NULL)),
+  FOREIGN KEY (agency_id, monetization_posting_id)
+    REFERENCES monetization_postings (agency_id, id),
+  FOREIGN KEY (agency_id, approval_route_version_id)
+    REFERENCES approval_route_versions (agency_id, id),
+  FOREIGN KEY (agency_id, approval_request_id)
+    REFERENCES approval_requests (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE monetization_adjustment_lines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  monetization_adjustment_id uuid NOT NULL,
+  original_ledger_entry_id uuid NOT NULL,
+  retained_quantity numeric(12,4) NOT NULL CHECK (retained_quantity >= 0),
+  reversal_ledger_entry_id uuid,
+  replacement_ledger_entry_id uuid,
+  FOREIGN KEY (agency_id, monetization_adjustment_id)
+    REFERENCES monetization_adjustments (agency_id, id),
+  FOREIGN KEY (agency_id, original_ledger_entry_id)
+    REFERENCES leave_ledger_entries (agency_id, id),
+  FOREIGN KEY (agency_id, reversal_ledger_entry_id)
+    REFERENCES leave_ledger_entries (agency_id, id),
+  FOREIGN KEY (agency_id, replacement_ledger_entry_id)
+    REFERENCES leave_ledger_entries (agency_id, id),
+  UNIQUE (monetization_adjustment_id, original_ledger_entry_id),
+  UNIQUE (agency_id, id)
 );
 ```
 
-Posting must atomically:
+Submission freezes the request version, allocation, evidence, policy, authority,
+and route records. HR certification locks all affected accounts and creates each
+commitment in one transaction. The owning service must enforce actor separation
+and validate polymorphic commitment sources.
 
-1. insert a leave ledger debit;
-2. create an idempotent payroll input;
-3. update request status;
-4. append audit/outbox events.
+Posting must call Payroll's owning service and receive `ACCEPTED` or the matching
+`ALREADY_ACCEPTED` result before atomically:
+
+1. inserting every source-owned negative Leave Ledger Entry;
+2. consuming every active commitment;
+3. storing the immutable Payroll result and input identifier;
+4. updating request status; and
+5. appending audit and outbox events.
+
+`REJECTED` and `RETRYABLE_FAILURE` create none of those authoritative effects.
+Payroll validates the input identifier across the Agency boundary because its
+table belongs to the Payroll schema. Missing authority for valuation date,
+allocation, salary components, or rounding blocks posting rather than invoking a
+default.
+
+An applied Monetization Adjustment must receive Payroll's accepted cancellation,
+replacement, or linked adjustment before it writes exact ledger reversals and
+any partial retained replacements. Consumed Payroll Inputs and finalized Payroll
+results are never edited. Attach immutable mutation-prevention triggers to
+submitted versions, material assessments and determinations, certifications,
+postings, applied adjustments, and their lines.
+
+---
+
+## 11. Terminal Leave Input Preservation
+
+```sql
+CREATE TABLE terminal_leave_input_assessments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  separation_source_type citext NOT NULL
+    CHECK (btrim(separation_source_type::text) <> ''),
+  separation_source_id uuid NOT NULL,
+  separation_source_version_key citext NOT NULL
+    CHECK (btrim(separation_source_version_key::text) <> ''),
+  separation_classification citext NOT NULL
+    CHECK (btrim(separation_classification::text) <> ''),
+  separation_effective_date date NOT NULL,
+  ledger_cutoff timestamptz NOT NULL,
+  result text NOT NULL CHECK (result IN ('READY','INDETERMINATE')),
+  input_facts jsonb NOT NULL,
+  missing_or_conflicting_facts jsonb NOT NULL,
+  assessed_by_membership_id uuid NOT NULL,
+  assessed_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, employee_id)
+    REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, assessed_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (
+    agency_id, separation_source_type, separation_source_id,
+    separation_source_version_key, ledger_cutoff
+  ),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE terminal_leave_input_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  terminal_leave_input_assessment_id uuid NOT NULL,
+  supersedes_snapshot_id uuid,
+  snapshot_key citext NOT NULL CHECK (btrim(snapshot_key::text) <> ''),
+  service_source_snapshot jsonb NOT NULL,
+  authority_snapshot jsonb NOT NULL,
+  clearance_document_snapshot jsonb NOT NULL,
+  salary_source_reference jsonb NOT NULL,
+  created_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, terminal_leave_input_assessment_id)
+    REFERENCES terminal_leave_input_assessments (agency_id, id),
+  FOREIGN KEY (agency_id, supersedes_snapshot_id)
+    REFERENCES terminal_leave_input_snapshots (agency_id, id),
+  UNIQUE (terminal_leave_input_assessment_id),
+  UNIQUE (agency_id, snapshot_key),
+  UNIQUE (agency_id, supersedes_snapshot_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE terminal_leave_input_snapshot_lines (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  terminal_leave_input_snapshot_id uuid NOT NULL,
+  leave_account_id uuid NOT NULL,
+  policy_version_id uuid NOT NULL,
+  balance_effective_date date NOT NULL,
+  ledger_cutoff timestamptz NOT NULL,
+  posted_balance numeric(12,4) NOT NULL CHECK (posted_balance >= 0),
+  FOREIGN KEY (agency_id, terminal_leave_input_snapshot_id)
+    REFERENCES terminal_leave_input_snapshots (agency_id, id),
+  FOREIGN KEY (agency_id, leave_account_id)
+    REFERENCES leave_accounts (agency_id, id),
+  FOREIGN KEY (agency_id, policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
+  UNIQUE (terminal_leave_input_snapshot_id, leave_account_id),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE terminal_leave_input_handoff_outcomes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  terminal_leave_input_snapshot_id uuid NOT NULL,
+  attempt_key citext NOT NULL CHECK (btrim(attempt_key::text) <> ''),
+  result text NOT NULL
+    CHECK (result IN (
+      'ACCEPTED','ALREADY_ACCEPTED','REJECTED','RETRYABLE_FAILURE'
+    )),
+  separation_reference jsonb,
+  reason jsonb,
+  recorded_at timestamptz NOT NULL,
+  FOREIGN KEY (agency_id, terminal_leave_input_snapshot_id)
+    REFERENCES terminal_leave_input_snapshots (agency_id, id),
+  UNIQUE (terminal_leave_input_snapshot_id, attempt_key),
+  UNIQUE (agency_id, id)
+);
+```
+
+Only a `READY` assessment may create a snapshot. Its account lines use the
+effective separation or last service date as the balance date and state the
+separate ledger-knowledge cutoff. The Leave service validates the polymorphic
+Separation source and owning-module salary reference. Handoff outcomes are
+append-only and never mutate the snapshot.
+
+A corrected source creates a reasoned successor assessment and snapshot. These
+records cannot close a Leave Account, create a Leave Ledger Entry or Payroll
+Input, calculate or authorize a terminal benefit, or record payment. Attach
+immutable mutation-prevention triggers to assessments, snapshots, lines, and
+handoff outcomes.

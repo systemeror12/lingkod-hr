@@ -49,11 +49,11 @@ separate vacation-service-credit provisions and excludes a terminal claim where
 the leave benefit is covered by special law; those populations need their own
 authority profile. [CSC MC No. 41, s. 1998, Rules I and XVI](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/1998/mc41s1998.pdf)
 
-| Case | Direct quantity rule | What is not included by the cited rule |
-| --- | --- | --- |
-| Ordinary/regular MLC | An eligible employee with at least **15 vacation-leave (VL) days** may monetize a **minimum of 10 days**, must retain **at least 5 VL days**, and may monetize **at most 30 days in a given year**. Section 22 names VL only. | Sick leave (SL), special-leave privileges, and other category-specific leave are not pulled into this rule. |
-| Special MLC | **50% or more of accumulated VL/SL credits** may be monetized for valid and justifiable reasons. CSC MC No. 16, s. 2002 gives examples: health/medical/hospital needs; force-majeure calamities and accidents; educational needs; mortgages/loans benefiting the employee or immediate family; extreme financial need; and analogous cases determined by CSC. It requires favorable agency-head recommendation and available funds. | The issuance does not state whether the percentage is applied per account or to a combined balance, nor how fractional days are rounded. |
-| Terminal leave | On retirement, voluntary resignation, or separation through no fault, accumulated **VL and/or SL** may be commuted **without a day limit**, regardless of when credits were earned, **exclusive of Saturdays, Sundays, and holidays**. Terminal leave itself earns no further credits. | Special-leave privileges and special-law leave are not ordinary commutable VL/SL credits. |
+| Case                 | Direct quantity rule                                                                                                                                                                                                                                                                                                                                                                                                                | What is not included by the cited rule                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary/regular MLC | An eligible employee with at least **15 vacation-leave (VL) days** may monetize a **minimum of 10 days**, must retain **at least 5 VL days**, and may monetize **at most 30 days in a given year**. Section 22 names VL only.                                                                                                                                                                                                       | Sick leave (SL), special-leave privileges, and other category-specific leave are not pulled into this rule.                              |
+| Special MLC          | **50% or more of accumulated VL/SL credits** may be monetized for valid and justifiable reasons. CSC MC No. 16, s. 2002 gives examples: health/medical/hospital needs; force-majeure calamities and accidents; educational needs; mortgages/loans benefiting the employee or immediate family; extreme financial need; and analogous cases determined by CSC. It requires favorable agency-head recommendation and available funds. | The issuance does not state whether the percentage is applied per account or to a combined balance, nor how fractional days are rounded. |
+| Terminal leave       | On retirement, voluntary resignation, or separation through no fault, accumulated **VL and/or SL** may be commuted **without a day limit**, regardless of when credits were earned, **exclusive of Saturdays, Sundays, and holidays**. Terminal leave itself earns no further credits.                                                                                                                                              | Special-leave privileges and special-law leave are not ordinary commutable VL/SL credits.                                                |
 
 The five-day retention rule belongs to ordinary Section 22 monetization. It is
 not stated as a condition for Section 23 special monetization, which instead
@@ -149,7 +149,7 @@ For DBM release authority, the current Table A2 lists the following evidence:
   record; and other pertinent authority documents.
 
 [DBM Table A2 — release of TLB, retirement gratuity, MLC, and trust-receipt
-  authorities](https://www.dbm.gov.ph/index.php/central-office/services-for-client-agencies/2500-release-of-obligational-and-or-disbursement-authorities-for-terminal-leave-retirement-gratuity-claims-monetization-of-leave-credits-and-trust-receipts)
+authorities](https://www.dbm.gov.ph/index.php/central-office/services-for-client-agencies/2500-release-of-obligational-and-or-disbursement-authorities-for-terminal-leave-retirement-gratuity-claims-monetization-of-leave-credits-and-trust-receipts)
 
 For payment claims, the current DBM checklist additionally calls for the
 accepted resignation or retirement letter, leave card/certificate as of the
@@ -215,8 +215,7 @@ official. A mere employee request is not the funding or approval evidence.
 
 1. **CSC MC No. 41, s. 1998** (24 December 1998) supplied the ordinary VL/SL,
    Sections 22-24 monetization, and Sections 35-43 terminal-leave baseline.
-2. **CSC MC No. 16, s. 2002** was published 7 June 2002 and took effect 22 June
-   2002. It amended Section 23 from “50%” to “50% or more,” listed valid and
+2. **CSC MC No. 16, s. 2002** was published 7 June 2002 and took effect 22 June 2002. It amended Section 23 from “50%” to “50% or more,” listed valid and
    justifiable reasons, and required favorable agency-head recommendation and
    funds.
 3. **CSC MC No. 8, s. 2003** adopted the then-terminal factor for MLC, but its

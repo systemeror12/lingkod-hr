@@ -122,32 +122,32 @@ Responsible for document processing, email delivery, PDF generation, imports/exp
 
 # 5. Approved Technology Stack
 
-| Area | Technology |
+| Area                     | Technology                                             |
 | ------------------------ | ------------------------------------------------------ |
-| Runtime | Node.js active LTS |
-| Language | TypeScript |
-| Package manager | pnpm |
-| Monorepo | pnpm workspaces + Turborepo |
-| Frontend | Next.js App Router + React |
-| Styling | Tailwind CSS |
-| Components | shadcn/ui |
-| Tables | TanStack Table |
-| Forms | React Hook Form |
-| Validation | Zod |
-| Server state | TanStack Query |
-| Backend | NestJS |
-| API | REST + OpenAPI |
-| Database | PostgreSQL |
-| ORM | Prisma |
-| Vector search | pgvector |
-| Queue/cache | Redis + BullMQ |
-| Files | S3-compatible object storage |
-| AI | OpenAI Responses API behind provider-neutral interface |
-| Local infra | Docker Compose |
-| CI/CD | GitHub Actions |
-| Observability | OpenTelemetry |
-| Unit/integration testing | Vitest |
-| E2E testing | Playwright |
+| Runtime                  | Node.js active LTS                                     |
+| Language                 | TypeScript                                             |
+| Package manager          | pnpm                                                   |
+| Monorepo                 | pnpm workspaces + Turborepo                            |
+| Frontend                 | Next.js App Router + React                             |
+| Styling                  | Tailwind CSS                                           |
+| Components               | shadcn/ui                                              |
+| Tables                   | TanStack Table                                         |
+| Forms                    | React Hook Form                                        |
+| Validation               | Zod                                                    |
+| Server state             | TanStack Query                                         |
+| Backend                  | NestJS                                                 |
+| API                      | REST + OpenAPI                                         |
+| Database                 | PostgreSQL                                             |
+| ORM                      | Prisma                                                 |
+| Vector search            | pgvector                                               |
+| Queue/cache              | Redis + BullMQ                                         |
+| Files                    | S3-compatible object storage                           |
+| AI                       | OpenAI Responses API behind provider-neutral interface |
+| Local infra              | Docker Compose                                         |
+| CI/CD                    | GitHub Actions                                         |
+| Observability            | OpenTelemetry                                          |
+| Unit/integration testing | Vitest                                                 |
+| E2E testing              | Playwright                                             |
 
 TypeScript is used throughout the web, API, worker, and shared packages.
 
@@ -725,6 +725,50 @@ Mandatory or forced leave is an explainable, policy-derived assessment over an
 Employee's applicable facts and vacation Leave Account. It uses the ordinary
 Leave Application and ledger path. An alert or assessment is not itself an
 approval or posting authority.
+
+Leave Monetization follows the same history and balance boundaries without
+pretending to be an ordinary Leave Application. A stable Leave Monetization
+Request owns immutable submitted versions and per-account allocations. An HR
+credit certification creates Leave Credit Commitments under every affected
+account lock; a separate Budget-owned funding determination and the bound
+Approval Route supply the remaining authority. Approval does not post.
+
+Monetization Posting is an atomic Leave-owned orchestration over Leave and
+Payroll application services. Leave supplies approved account quantities,
+source and effect identities, authority and policy versions, funding and
+approval lineage, valuation date, fixed calculator kind and factor, and the
+required salary semantics. Payroll alone resolves the authoritative salary,
+calculates and rounds the amount, and stores the immutable Monetization Earning
+Input. It returns `ACCEPTED`, matching `ALREADY_ACCEPTED`, `REJECTED`, or
+`RETRYABLE_FAILURE`. Leave writes negative source-owned ledger entries and
+consumes commitments only with an accepted Payroll result in the same
+transaction.
+
+Missing monetization valuation-date, allocation, salary-component, rounding,
+funding, or authority facts fail closed as indeterminate. The product provides
+no default for gaps left by national sources. The unresolved solo-parent
+forfeiture and cash-conversion conflict creates no automatic earning.
+
+Monetization Adjustment is a separate authorized source. Pending Payroll Inputs
+may be cancelled or replaced; consumed inputs receive a linked Payroll
+adjustment, and finalized results remain immutable. Leave restores credits only
+after Payroll accepts the correction handoff. A failed or rejected handoff
+leaves the original posting effective and the adjustment available for recorded
+retry or correction.
+
+Separation initiates terminal-leave input preservation only after its effective
+date and the required Leave postings through the last service date. Leave
+records a `READY` or `INDETERMINATE` Terminal Leave Input Assessment. A ready
+result freezes a Terminal Leave Input Snapshot containing exact separation and
+service references, account balances at the effective separation date, the
+ledger-knowledge cutoff, policy and authority versions, clearance evidence, and
+the owning module's verified highest-monthly-salary source reference.
+
+Leave returns the stable snapshot reference to Separation and retains acceptance,
+duplicate, rejection, or retryable handoff results. Corrected sources create
+reasoned successors. A snapshot never closes an account, creates a ledger or
+Payroll effect, calculates a terminal benefit, or authorizes payment. Full
+terminal-leave calculation and payment remain outside MVP.
 
 ## Overtime
 
@@ -1339,8 +1383,10 @@ Create agency
 - leave policies;
 - leave accounts;
 - leave ledger;
+- leave credit commitments;
 - applications;
-- monetization.
+- monetization requests, funding, postings, and adjustments;
+- terminal-leave input assessments and snapshots.
 
 ## Phase 8 — Overtime, COC, and CTO
 
@@ -1623,9 +1669,9 @@ The first meaningful milestone is:
 
 # 12. Change Log
 
-| Version | Date | Description |
+| Version | Date              | Description                                                                                                                                            |
 | ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.1 | August 2, 2026 | Initial general AI-enabled ERP architecture |
-| 0.2 | August 7, 2026 | Reframed architecture around the Philippine Public-Sector HRIS implementation |
-| 0.3 | August 7, 2026 | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
-| 0.4 | September 4, 2026 | Clarified ownership of database capabilities, External Evidence linking, and the PDS editor model |
+| 0.1     | August 2, 2026    | Initial general AI-enabled ERP architecture                                                                                                            |
+| 0.2     | August 7, 2026    | Reframed architecture around the Philippine Public-Sector HRIS implementation                                                                          |
+| 0.3     | August 7, 2026    | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
+| 0.4     | September 4, 2026 | Clarified ownership of database capabilities, External Evidence linking, and the PDS editor model                                                      |
