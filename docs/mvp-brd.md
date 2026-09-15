@@ -130,14 +130,15 @@ The MVP shall:
 | Role | Responsibilities |
 | ------------------------------------------ | ------------------------------------------------------------------------------ |
 | Agency Administrator | Agency profile, security, users, and configuration |
-| HRMO / HR Administrator | Plantilla, recruitment, appointments, personnel records, leave, and HR reports |
+| HR Administrator | Broad HR administration, attendance configuration and locking, and inherited HR Officer attendance access |
+| HR Officer | Attendance review and approval within assigned scope, with inherited Employee attendance access |
 | HRMPSB / Selection Board Member | Candidate evaluation, deliberation, and recommendations |
 | Appointing Authority / Authorized Approver | Appointment and designated high-level approvals |
-| Supervisor / Division Chief | Attendance, leave, overtime, and performance review |
+| Supervisor / Division Chief | Leave, overtime, and performance review |
 | Payroll Preparer | Payroll data, calculation, deductions, and reconciliation |
 | Payroll Reviewer / Certifying Officer | Review, certification, and exception resolution |
 | Payroll Approver / Agency Authority | Payroll authorization and finalization |
-| Employee / Official | PDS, DTR, leave, payslip, performance commitments, and self-service |
+| Employee / Official | PDS, attendance submission, DTR, leave, payslip, performance commitments, and self-service |
 | Budget Officer | Position and personnel-services validation |
 | Accounting Office | Payroll obligations, deductions, and accounting reports |
 | Cashier / Disbursing Officer | Payment processing and remittance support |
@@ -587,7 +588,7 @@ The MVP shall support:
 - immutable HR-entered Attendance Context for already-authorized official business, official travel, training, and approved non-leave absence;
 - posted leave supplied by the Leave domain without copying the Leave Application into Attendance.
 
-Attendance Context shall not introduce another approval workflow. An authorized Attendance Administrator records the covered Work Date or exact interval, reason, recorder, and linked source record or supporting Document Version. Attendance Correction is the approval path for adding, replacing, or voiding an Attendance Event or Attendance Context.
+Attendance Context shall not introduce another approval workflow. An authorized HR Administrator records the covered Work Date or exact interval, reason, recorder, and linked source record or supporting Document Version. Attendance Correction is the approval path for adding, replacing, or voiding an Attendance Event or Attendance Context.
 
 The MVP shall not support biometric-device integrations or biometric export-file imports.
 
@@ -611,7 +612,13 @@ Original time events shall remain immutable. Raw event types are `TIME_IN`, `BRE
 
 ## ATT-004 DTR
 
-The system shall generate a Daily Time Record view and printable report from approved attendance data.
+The system shall generate:
+
+- an explicitly unfinalized Daily Time Record Preview from an Employee's current approved Attendance Day versions;
+- one immutable Finalized Daily Time Record per Employee from each locked Attendance Period Version; and
+- an Exact Versioned Form only when a supported national or agency-approved template version and its authority evidence are configured.
+
+The ordinary printable DTR is a Printable System View and shall not imply a universal official form. A corrected successor shall create a new retained DTR linked to its predecessor. Each printable output shall identify its Attendance Period, version, original or corrected classification, lock timestamp, and applicable authoritative template revision. Full source-version lineage shall remain available from the record and audit history.
 
 ## ATT-005 Attendance calculations
 
@@ -630,11 +637,23 @@ For flexible duty, the first qualifying worked or Attendance Context minute with
 
 ## ATT-006 Correction workflow
 
-Employees may request a correction with date, requested values, reason, and evidence. Supervisor or HR approval shall be required.
+An Employee may submit an Attendance Correction for their own record, and an HR Administrator may submit one within assigned scope with an on-behalf reason and evidence. Each request shall preserve the subject, initiator, recorder, exact target or proposed source fact, `ADD`, `REPLACE`, or `VOID` values, reason, immutable evidence references, resolved Approval Route Version, and Attendance Correction Impact Preview.
+
+An HR Officer shall review the factual correction and shall not be the subject, initiator, recorder, or effect applier. Approval and application against an open period shall occur atomically against the previewed source versions. A post-lock correction shall additionally require authorization by a different HR Administrator before it creates one grouped Locked Attendance Adjustment across every affected Attendance Day or Attendance Period. Any intervening source change shall require a refreshed preview and approval.
+
+Applying a correction shall preserve the original source, create an immutable Attendance Correction Effect, and recalculate every affected Work Date, including both sides of a changed event-window or period boundary. A resulting Attendance Exception shall block later period review without undoing the approved factual correction.
 
 ## ATT-007 Period locking
 
-Attendance periods used in payroll shall be lockable. Changes after payroll shall create an adjustment process.
+An Employee Attendance Submission shall bind one Employee's exact Attendance Day versions within an Attendance Period. An HR Officer may return or approve the submission; recalculation makes it stale. Every covered Employee shall have an approved submission, including a reasoned and evidenced on-behalf submission where permitted, before period review.
+
+Submitting an Attendance Period for review shall create an immutable Attendance Period Version containing the complete applicable Employee and Work Date population and the exact approved Attendance Day versions. Versions shall progress through `FOR_REVIEW`, `APPROVED`, `RETURNED`, or `LOCKED`; Attendance Days shall not carry period review, lock, or adjustment states. A returned version shall remain immutable. A locked version shall never reopen or be overwritten.
+
+An HR Officer shall approve an Attendance Period Version, and a different HR Administrator shall lock it. Lock shall fail closed unless Attendance Period Reconciliation proves complete applicability, current approved submissions and Attendance Day versions, no unresolved exceptions or corrections, unchanged source bindings, valid routed authority, and matching DTR and payroll-publication counts and minute totals.
+
+Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects.
+
+A Locked Attendance Adjustment shall create and lock a complete successor Attendance Period Version rather than reopen its predecessor. Its adjustment publication shall link the predecessor, omit unchanged facts, and state each changed fact's prior value, corrected value, and nonnegative `INCREASE` or `DECREASE` difference. Outside-schedule and statutory-night-window minutes shall remain separate factual candidate-hours handoffs to Overtime and COC processing.
 
 ---
 
