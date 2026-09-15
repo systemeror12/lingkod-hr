@@ -262,7 +262,7 @@ CLOSED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-| ---------- | ----------------------- | ---------- | --------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| ---------- | ----------------------- | ---------- | --------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | None | Create request | DRAFT | Requesting Office / Recruitment Officer | `recruitment.requests.create` | Position is VACANT; office scope valid | Create request |
 | DRAFT | Submit | SUBMITTED | Requesting Office | `recruitment.requests.submit` | Required justification complete | Start review |
 | SUBMITTED  | Begin review            | FOR_REVIEW | Recruitment Officer / HRMO              | `recruitment.requests.review`     | Position remains a Recruitable Vacancy; exactly one applicable Agency Merit Selection Plan Version, Merit Selection Criteria Set, Board Definition with effective appointments, and every required Approval Route Version resolve server-side | Store immutable governing bindings; create review task      |
@@ -546,6 +546,19 @@ APPLIED
 
 ## 5.13 Leave Application
 
+Before submission, the Leave domain shall select the Leave Policy Version,
+schedule, and holiday facts effective for each requested date and create
+immutable Leave Calculation Segments. Eligibility is a structured result of
+`ELIGIBLE`, `INELIGIBLE`, or `INDETERMINATE`; a missing or conflicting required
+fact blocks submission, certification, approval, and posting rather than
+defaulting to a favorable result.
+
+For credit-bearing leave, posted balance and available credits are separate
+facts. Posted balance is derived only from immutable Leave Ledger Entries.
+Active Leave Credit Commitments reduce availability but never appear in the
+ledger. The application-contract decision shall set the lifecycle transition
+that creates or releases a commitment.
+
 Statuses:
 
 ```text
@@ -563,22 +576,46 @@ POSTED
 ```
 
 | Current | Action | Next | Actor | Permission | Validations | Side effects |
-| ------------------ | ----------------------------- | ------------------ | ------------------------------ | ----------------------------------- | ------------------------------------------ | ----------------------------------------------- |
-| None | Create application | DRAFT | Employee / Leave Administrator | `leave.applications.create` | Leave type available | Save draft |
-| DRAFT | Submit | SUBMITTED | Employee | `leave.applications.submit` | Required fields and attachments | Start workflow |
+| ------------------ | ----------------------------- | ------------------ | ------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| None               | Create application            | DRAFT              | Employee / Leave Administrator | `leave.applications.create`         | Leave type available; draft may carry deficiencies                                                               | Save draft                                                    |
+| DRAFT              | Submit                        | SUBMITTED          | Employee                       | `leave.applications.submit`         | Required fields and attachments; complete policy inputs; `ELIGIBLE` assessment snapshot                          | Start workflow                                                |
 | SUBMITTED | Send for credit certification | FOR_CERTIFICATION | System / Leave Administrator | `leave.applications.route` | Employee record valid | Reserve review task |
-| FOR_CERTIFICATION | Certify credits | FOR_RECOMMENDATION | Leave Administrator | `leave.credits.certify` | Ledger balance and eligibility checked | Store certification |
+| FOR_CERTIFICATION  | Certify credits               | FOR_RECOMMENDATION | Leave Administrator            | `leave.credits.certify`             | Effective balance date, ledger cutoff, posted balance, commitments, application quantity, and assessment checked | Store immutable Leave Credit Certification                    |
 | FOR_CERTIFICATION | Request information | NEEDS_INFORMATION | Leave Administrator | `leave.applications.return` | Comment required | Notify employee |
 | NEEDS_INFORMATION | Resubmit | SUBMITTED | Employee | `leave.applications.submit` | Missing data resolved | Restart route |
 | FOR_RECOMMENDATION | Recommend approval | FOR_APPROVAL | Supervisor | `leave.applications.recommend` | Service needs considered | Route approving official |
 | FOR_RECOMMENDATION | Recommend rejection | FOR_APPROVAL | Supervisor | `leave.applications.recommend` | Reason required | Route final decision |
 | FOR_APPROVAL | Approve | APPROVED | Authorized Approving Official | `leave.applications.approve` | Certification and recommendation available | Create pending ledger/payroll actions |
 | FOR_APPROVAL | Reject | REJECTED | Authorized Approving Official | `leave.applications.reject` | Reason required | Release reservation |
-| APPROVED | Post leave | POSTED | Leave Administrator / System | `leave.applications.post` | Dates valid; no conflicting posting | Create leave-ledger and attendance entries |
+| APPROVED           | Post leave                    | POSTED             | Leave Administrator / System   | `leave.applications.post`           | Dates valid; no conflicting posting; account availability rechecked under lock                                   | Atomically create source-linked ledger and attendance effects |
 | APPROVED | Request cancellation | CANCEL_REQUESTED | Employee | `leave.applications.request_cancel` | Policy and cutoff permit | Route cancellation |
 | POSTED | Request cancellation | CANCEL_REQUESTED | Employee / Leave Administrator | `leave.applications.request_cancel` | Reversal policy permits | Route cancellation and payroll review |
 | CANCEL_REQUESTED | Approve cancellation | CANCELLED | Authorized Approver | `leave.applications.cancel` | Reason and downstream effects checked | Reverse ledger/attendance/payroll prospectively |
 | CANCEL_REQUESTED | Reject cancellation | APPROVED or POSTED | Authorized Approver | `leave.applications.reject_cancel` | Reason required | Preserve leave |
+
+### Leave policy and credit invariants
+
+- An active Leave Policy Version is immutable and has no overlapping active
+  version for the same Leave Type. It uses a fixed evaluator kind, typed
+  parameters, and authority-linked Agency configuration. Arbitrary executable
+  formulas are prohibited.
+- A request spanning version boundaries keeps one application but has separate
+  Leave Calculation Segments for each effective combination of policy, schedule,
+  holiday calendar, and unit.
+- A Leave Account covers one Employee, one credit-bearing Leave Type, and one
+  continuous agency-employment entitlement period. Separation closes the
+  account; evidence-backed reemployment or transfer opens a new account.
+- A Leave Ledger Entry contains a signed quantity and an authoritative source,
+  not a business-event enum. Source posting keys are unique per account. Posted
+  entries are immutable, and a reversal exactly negates its original entry in
+  the same account.
+- Balance-sensitive commands serialize against the Leave Account, recompute
+  posted balance and active commitments within the transaction, and reject a
+  result that the applicable policy does not permit.
+- A historical Leave Credit Certification remains unchanged when later facts or
+  backdated entries produce a different current reconstruction.
+- A Mandatory Leave Assessment is explainable and policy-derived. It may prompt
+  an ordinary Leave Application but cannot approve leave or post a forfeiture.
 
 ---
 

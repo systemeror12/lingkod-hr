@@ -1,4 +1,5 @@
 # Philippine Public-Sector HRIS
+
 ## Technical Stack and Architecture Specification
 
 **Document status:** Draft v0.4
@@ -56,7 +57,7 @@ The architecture should:
 11. Minimize languages and infrastructure products.
 12. Keep hosting and maintenance predictable.
 13. Keep private- and public-sector rules explicitly separated.
-13. Allow agency rules, forms, and rates to be versioned rather than permanently hard-coded.
+14. Allow agency rules, forms, and rates to be versioned rather than permanently hard-coded.
 
 ---
 
@@ -122,7 +123,7 @@ Responsible for document processing, email delivery, PDF generation, imports/exp
 # 5. Approved Technology Stack
 
 | Area | Technology |
-|---|---|
+| ------------------------ | ------------------------------------------------------ |
 | Runtime | Node.js active LTS |
 | Language | TypeScript |
 | Package manager | pnpm |
@@ -625,18 +626,60 @@ Each calculation creates an immutable Attendance Day version and non-overlapping
 
 ## Leave
 
-Leave uses an immutable ledger with entry types such as:
+Leave separates policy evaluation, requests, commitments, and posted credits:
 
 ```text
-OPENING
-EARNED
-USED
-ADJUSTMENT
-RESTORATION
-MONETIZATION
-TERMINAL
-REVERSAL
+Leave Type
+  -> immutable effective-dated Leave Policy Versions
+  -> fixed evaluator kind and typed parameters
+
+Leave Application
+  -> effective-dated Leave Calculation Segments
+  -> explainable Leave Eligibility Assessment
+  -> immutable Leave Credit Certification where credits apply
+
+Leave Account
+  -> active Leave Credit Commitments
+  -> immutable signed Leave Ledger Entries
 ```
+
+A Leave Policy Version is one reproducible agency-scoped bundle. It binds the
+applicable national rules, evidence-backed Agency configuration, authority
+references, entitlement and calendar bases, optional charged Leave Type,
+evidence requirements, and typed evaluator parameters. The Leave domain does
+not execute administrator-authored formulas. Missing, ambiguous, or conflicting
+required facts return `INDETERMINATE` and block authoritative progression.
+
+Each requested date uses the policy, schedule, and holiday versions effective
+on that date. Requests crossing a version boundary remain one application but
+produce separate immutable Leave Calculation Segments. The source-prescribed
+unit is preserved; calendar-day statutory leave is not silently converted to a
+working-day credit debit.
+
+The posted balance is the sum of signed Leave Ledger Entries for an account,
+effective date, and ledger knowledge cutoff. An entry stores a unique source
+posting key and policy provenance. Its source record owns the business meaning,
+such as accrual, leave use, transfer, monetization, forfeiture, or correction, so
+the ledger does not duplicate that meaning in an entry-type enum. Reversals
+reference and exactly negate their original entry. Posted entries cannot be
+edited.
+
+Pending or approved-but-unposted effects use Leave Credit Commitments outside
+the ledger. An immutable Leave Credit Certification freezes its effective
+balance date, ledger cutoff, posted balance, active commitments, application
+quantity, resulting availability, and exact eligibility assessment. Later
+backdated facts may alter a new reconstruction but never rewrite the historical
+certification.
+
+Balance-sensitive posting locks the Leave Account, recomputes availability,
+enforces a unique source posting key, writes the ledger and domain effects, and
+appends audit and outbox records in one transaction. Competing transactions
+that cannot both satisfy the applicable policy do not both post.
+
+Mandatory or forced leave is an explainable, policy-derived assessment over an
+Employee's applicable facts and vacation Leave Account. It uses the ordinary
+Leave Application and ledger path. An alert or assessment is not itself an
+approval or posting authority.
 
 ## Overtime
 
@@ -949,14 +992,14 @@ services:
       POSTGRES_USER: erp_local
       POSTGRES_PASSWORD: local_only
     ports:
-      - "55432:5432"
+      - '55432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - '6379:6379'
 
 volumes:
   postgres_data:
@@ -1536,7 +1579,7 @@ The first meaningful milestone is:
 # 12. Change Log
 
 | Version | Date | Description |
-|---|---|---|
+| ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0.1 | August 2, 2026 | Initial general AI-enabled ERP architecture |
 | 0.2 | August 7, 2026 | Reframed architecture around the Philippine Public-Sector HRIS implementation |
 | 0.3 | August 7, 2026 | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
