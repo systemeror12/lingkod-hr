@@ -1,13 +1,11 @@
 'use client';
 
-// Throwaway: three Attendance/DTR layouts on /attendance-prototype?variant=A|B|C.
+// Throwaway: standard Tree/Form/Kanban on /attendance-prototype?view=tree|form|kanban.
 // All records and transitions are synthetic. No domain calculation or persistence.
-import { useEffect, useState } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useState } from 'react';
+import { useRecordNavigation } from './record-navigation';
 import { Button } from './ui/button';
 
-const variants = ['A', 'B', 'C'] as const;
-const variantNames = { A: 'Exception review queue', B: 'Attendance calendar', C: 'DTR worksheet' };
 const days = [
   {
     date: '2026-09-07',
@@ -62,14 +60,22 @@ function Status({ children }: { children: string }) {
 }
 
 export function AttendancePrototype() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const raw = params.get('variant');
-  const variant = raw === 'B' || raw === 'C' ? raw : 'A';
+  const navigation = useRecordNavigation();
+  const requestedView = navigation.search.get('view');
+  const view = requestedView === 'form' || requestedView === 'kanban' ? requestedView : 'tree';
+  const selected = Math.max(
+    0,
+    days.findIndex((day) => day.date === navigation.search.get('selected')),
+  );
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All statuses');
+  const [formTab, setFormTab] = useState('Attendance day');
+  function openRecord(index: number) {
+    setFormTab('Attendance day');
+    navigation.navigate({ view: 'form', selected: days[index]!.date, variant: null });
+  }
   const [role, setRole] = useState('Attendance Administrator');
   const [scenario, setScenario] = useState('Active');
-  const [selected, setSelected] = useState(1);
   const [section, setSection] = useState('Attendance');
   const [correction, setCorrection] = useState('SUBMITTED');
   const [reason, setReason] = useState('Forgot to record departure after the records inventory.');
@@ -95,83 +101,104 @@ export function AttendancePrototype() {
     setNotice('');
   };
 
-  useEffect(() => {
-    type PreviewKey = {
-      key: string;
-      altKey: boolean;
-      ctrlKey: boolean;
-      metaKey: boolean;
-      shiftKey: boolean;
-      target: { closest?: (selector: string) => unknown } | null;
-      preventDefault(): void;
-    };
-    const browser = globalThis as unknown as {
-      addEventListener(type: string, handler: (event: PreviewKey) => void): void;
-      removeEventListener(type: string, handler: (event: PreviewKey) => void): void;
-    };
-    function key(event: PreviewKey) {
-      if (
-        !event.target?.closest ||
-        event.target.closest('input, textarea, select, [contenteditable], [role="slider"]')
-      )
-        return;
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-      event.preventDefault();
-      const next = new URLSearchParams(params.toString());
-      next.set(
-        'variant',
-        variants[(variants.indexOf(variant) + (event.key === 'ArrowRight' ? 1 : 2)) % 3]!,
-      );
-      router.replace(`${pathname}?${next}`, { scroll: false });
-    }
-    browser.addEventListener('keydown', key);
-    return () => browser.removeEventListener('keydown', key);
-  }, [params, pathname, router, variant]);
-
-  function cycle(offset: number) {
-    const next = new URLSearchParams(params.toString());
-    next.set('variant', variants[(variants.indexOf(variant) + offset + 3) % 3]!);
-    router.replace(`${pathname}?${next}`, { scroll: false });
+  function displayStatus(record: (typeof days)[number]) {
+    return periodLocked ? 'LOCKED' : allApproved ? 'APPROVED' : record.state;
   }
+  const records = days
+    .map((record, index) => ({ ...record, index }))
+    .filter(
+      (record) =>
+        (statusFilter === 'All statuses' || displayStatus(record) === statusFilter) &&
+        `${record.date} Mara Santos Administrative Officer II ${record.context} ${record.result}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+    );
 
   const detail = (
     <section className={panel} aria-label="Attendance day detail">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+        <button
+          className="cursor-pointer text-sm font-semibold text-cobalt hover:underline"
+          onClick={() => navigation.navigate({ view: 'tree', variant: null })}
+        >
+          Attendance / Attendance days
+        </button>
+        <div className="flex items-center gap-3 text-xs text-muted">
+          <span>
+            {selected + 1} / {days.length}
+          </span>
+          <Button
+            variant="secondary"
+            size="default"
+            disabled={selected === 0}
+            onClick={() => openRecord(selected - 1)}
+          >
+            Previous
+          </Button>
+          <Button
+            variant="secondary"
+            size="default"
+            disabled={selected === days.length - 1}
+            onClick={() => openRecord(selected + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">{day.label} September</h2>
         <Status>{periodLocked ? 'LOCKED' : allApproved ? 'APPROVED' : day.state}</Status>
       </div>
       <p className="mt-1 text-sm text-muted">Mara Santos · Administrative Officer II</p>
-      <dl className="mt-5 space-y-4 text-sm">
-        <div className="border-l-2 border-cobalt pl-3">
-          <dt className="font-semibold">Raw Attendance Events</dt>
-          <dd className="mt-1 font-mono text-xs leading-6">{day.events}</dd>
-          <dd className="text-muted">
-            Source: synthetic web clock. Original events remain unchanged.
-          </dd>
-        </div>
-        <div className="border-l-2 border-line pl-3">
-          <dt className="font-semibold">Context used</dt>
-          <dd>{day.context}</dd>
-          <dd className="text-muted">Effective from 1 September · Asia/Manila</dd>
-        </div>
-        <div className="border-l-2 border-line pl-3">
-          <dt className="font-semibold">Calculated Attendance Day</dt>
-          <dd>{day.result}</dd>
-          <dd className="text-muted">
-            Hours, tardiness and undertime withheld pending calculation contracts.
-          </dd>
-        </div>
-        <div className="border-l-2 border-line pl-3">
-          <dt className="font-semibold">DTR inclusion</dt>
-          <dd>
-            {allApproved || day.state === 'APPROVED'
-              ? 'Approved sample result available in DTR preview.'
-              : 'Pending approval. This day is not part of the approved DTR.'}
-          </dd>
-        </div>
-      </dl>
-      {selected === 1 && (
+      <div className="mt-5 flex flex-wrap gap-2" aria-label="Attendance form sections">
+        {['Attendance day', 'Correction', 'History'].map((tab) => (
+          <Button
+            key={tab}
+            variant="secondary"
+            size="default"
+            aria-pressed={formTab === tab}
+            className={`min-h-9 border px-3 ${formTab === tab ? 'border-cobalt bg-[#edf2f9] text-cobalt' : 'border-line bg-paper text-muted'}`}
+            onClick={() => setFormTab(tab)}
+          >
+            {tab}
+          </Button>
+        ))}
+      </div>
+      {formTab === 'Attendance day' && (
+        <dl className="mt-5 grid gap-6 text-sm md:grid-cols-2">
+          <div className="border-l-2 border-cobalt pl-3">
+            <dt className="font-semibold">Raw Attendance Events</dt>
+            <dd className="mt-1 font-mono text-xs leading-6">{day.events}</dd>
+            <dd className="text-muted">
+              Source: synthetic web clock. Original events remain unchanged.
+            </dd>
+          </div>
+          <div className="border-l-2 border-line pl-3">
+            <dt className="font-semibold">Context used</dt>
+            <dd>{day.context}</dd>
+            <dd className="text-muted">Effective from 1 September · Asia/Manila</dd>
+          </div>
+          <div className="border-l-2 border-line pl-3">
+            <dt className="font-semibold">Calculated Attendance Day</dt>
+            <dd>{day.result}</dd>
+            <dd className="text-muted">
+              Hours, tardiness and undertime withheld pending calculation contracts.
+            </dd>
+          </div>
+          <div className="border-l-2 border-line pl-3">
+            <dt className="font-semibold">DTR inclusion</dt>
+            <dd>
+              {allApproved || day.state === 'APPROVED'
+                ? 'Approved sample result available in DTR preview.'
+                : 'Pending approval. This day is not part of the approved DTR.'}
+            </dd>
+          </div>
+        </dl>
+      )}
+      {formTab === 'Correction' && selected !== 1 && (
+        <p className="mt-5 text-sm text-muted">No correction request for this day.</p>
+      )}
+      {formTab === 'Correction' && selected === 1 && (
         <div className="mt-5 border-t border-line pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="font-semibold">Correction request</h3>
@@ -281,19 +308,21 @@ export function AttendancePrototype() {
           )}
         </div>
       )}
-      <details className="mt-5 border-t border-line pt-3 text-sm">
-        <summary className="cursor-pointer font-semibold">Record history</summary>
-        <ol className="mt-3 space-y-2">
-          <li>Original events received · version 1 retained</li>
-          <li>Calculation created · sample rule snapshot</li>
-          {selected === 1 && (
-            <li>
-              Correction · {correctionState} · {employee ? 'Employee view' : 'Reviewer view'}
-            </li>
-          )}
-          {periodLocked && <li>Certified result locked · prior versions retained</li>}
-        </ol>
-      </details>
+      {formTab === 'History' && (
+        <details open className="mt-5 border-t border-line pt-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Record history</summary>
+          <ol className="mt-3 space-y-2">
+            <li>Original events received · version 1 retained</li>
+            <li>Calculation created · sample rule snapshot</li>
+            {selected === 1 && (
+              <li>
+                Correction · {correctionState} · {employee ? 'Employee view' : 'Reviewer view'}
+              </li>
+            )}
+            {periodLocked && <li>Certified result locked · prior versions retained</li>}
+          </ol>
+        </details>
+      )}
     </section>
   );
 
@@ -355,66 +384,10 @@ export function AttendancePrototype() {
   );
 
   return (
-    <div className="workspace space-y-5 pb-28">
-      <aside
-        aria-label="Prototype review controls"
-        className="rounded border border-cobalt bg-pale-blue p-4 text-sm"
-      >
-        <p className="font-semibold">
-          Attendance/DTR prototype · Synthetic records · No changes are saved
-        </p>
-        <div className="mt-3 flex flex-wrap gap-4">
-          <label>
-            Preview role
-            <select
-              className={field}
-              value={role}
-              onChange={(e) => {
-                setRole((e.target as unknown as { value: string }).value);
-                setSection('Attendance');
-                setNotice('');
-              }}
-            >
-              <option>Employee</option>
-              <option>Supervisor</option>
-              <option>Attendance Administrator</option>
-            </select>
-          </label>
-          <label>
-            Sample state
-            <select
-              className={field}
-              value={scenario}
-              onChange={(e) => selectScenario((e.target as unknown as { value: string }).value)}
-            >
-              {[
-                'Active',
-                'Empty',
-                'Loading',
-                'Permission denied',
-                'Returned',
-                'Ready to lock',
-                'Completed',
-              ].map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={clockEnabled}
-              onChange={(e) =>
-                setClockEnabled((e.target as unknown as { checked: boolean }).checked)
-              }
-            />
-            Agency enables web clock
-          </label>
-        </div>
-      </aside>
+    <div className="workspace space-y-5 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted">
+          <p className="text-[10px] font-bold uppercase tracking-[0.09em] text-cobalt">
             {employee
               ? 'My attendance'
               : role === 'Supervisor'
@@ -422,7 +395,9 @@ export function AttendancePrototype() {
                 : 'Agency attendance'}{' '}
             · Example Agency
           </p>
-          <h1 className="mt-2 font-semibold">Attendance and DTR</h1>
+          <h1 className="mt-2 text-[28px] font-[760] tracking-[-0.035em] text-midnight">
+            Attendance
+          </h1>
           <p className="mt-2 text-sm text-muted">
             1–15 September 2026 · Asia/Manila · {periodLocked ? 'Locked period' : 'Open period'}
           </p>
@@ -455,23 +430,80 @@ export function AttendancePrototype() {
           </div>
         )}
       </header>
-      <nav
-        aria-label="Attendance sections"
-        className="flex flex-wrap gap-2 border-b border-line pb-3"
-      >
-        {['Attendance', 'DTR', ...(admin ? ['Schedule and context', 'Manual entry'] : [])].map(
-          (s) => (
-            <button
-              key={s}
-              onClick={() => setSection(s)}
-              aria-current={section === s ? 'page' : undefined}
-              className={`cursor-pointer rounded px-4 py-2 text-sm font-semibold ${section === s ? 'bg-midnight text-paper' : 'bg-paper text-ink'}`}
-            >
-              {s}
-            </button>
-          ),
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
+        <nav className="flex flex-wrap gap-1" aria-label="Attendance records">
+          {['Attendance', 'DTR', ...(admin ? ['Schedule and context', 'Manual entry'] : [])].map(
+            (s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSection(s)}
+                aria-current={section === s ? 'page' : undefined}
+                className={`cursor-pointer rounded-[3px] px-3 py-2 text-xs font-[680] ${section === s ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
+              >
+                {s === 'Attendance' ? 'Attendance days' : s}
+              </button>
+            ),
+          )}
+        </nav>
+        {section === 'Attendance' && (
+          <div
+            className="flex items-center gap-1 rounded-[3px] border border-line bg-paper p-1"
+            aria-label="Record view"
+          >
+            {(['tree', 'form', 'kanban'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={view === mode}
+                onClick={() =>
+                  navigation.navigate({ view: mode, selected: day.date, variant: null })
+                }
+                className={`cursor-pointer rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === mode ? 'bg-canvas text-ink' : 'text-muted'}`}
+              >
+                {mode[0]!.toUpperCase() + mode.slice(1)}
+              </button>
+            ))}
+          </div>
         )}
-      </nav>
+      </div>
+      {section === 'Attendance' && view !== 'form' && (
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap gap-3">
+            <label className="text-xs text-muted">
+              Search
+              <input
+                className={field}
+                value={query}
+                placeholder="Employee, date or context"
+                onChange={(e) => setQuery((e.target as unknown as { value: string }).value)}
+              />
+            </label>
+            <label className="text-xs text-muted">
+              Status
+              <select
+                className={field}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter((e.target as unknown as { value: string }).value)}
+              >
+                {[
+                  'All statuses',
+                  'CALCULATED',
+                  'EXCEPTION',
+                  'FOR_REVIEW',
+                  'APPROVED',
+                  'LOCKED',
+                ].map((status) => (
+                  <option key={status}>{status}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <span className="text-xs text-muted">
+            {scenario === 'Empty' ? 0 : records.length} records · 1–15 September 2026
+          </span>
+        </div>
+      )}
       <p role="status" className="text-sm text-cobalt">
         {notice}
       </p>
@@ -616,122 +648,191 @@ export function AttendancePrototype() {
         </section>
       ) : section === 'DTR' ? (
         dtr
-      ) : variant === 'A' ? (
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.2fr)]">
-          <section className={panel}>
-            <h2 className="text-lg font-semibold">
-              {employee ? 'Days needing attention' : 'Review queue'}
-            </h2>
-            <p className="mt-2 text-sm text-muted">
-              {employee ? 'Your records' : 'Mara Santos · selected Employee'} · exceptions first
-            </p>
-            <div className="mt-4 space-y-2">
-              {[1, 2, 0, 3, 4].map((i) => (
-                <button
-                  key={i}
-                  onClick={() => setSelected(i)}
-                  className={`block w-full cursor-pointer rounded border p-4 text-left ${selected === i ? 'border-cobalt bg-pale-blue' : 'border-line bg-paper'}`}
-                >
-                  <span className="flex flex-wrap justify-between gap-2">
-                    <strong>{days[i]!.label}</strong>
-                    <Status>
-                      {periodLocked ? 'LOCKED' : allApproved ? 'APPROVED' : days[i]!.state}
-                    </Status>
-                  </span>
-                  <span className="mt-2 block text-sm">{days[i]!.result}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-          {detail}
-        </div>
-      ) : variant === 'B' ? (
-        <div className="space-y-5">
-          <section className={panel}>
-            <h2 className="text-lg font-semibold">Mara Santos · Week of 7 September</h2>
-            <p className="mt-2 text-sm text-muted">
-              Read each day alongside its schedule, official business and leave context.
-            </p>
-            <div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-              {days.map((d, i) => (
-                <button
-                  key={d.date}
-                  onClick={() => setSelected(i)}
-                  className={`min-h-44 cursor-pointer rounded border p-3 text-left ${i === selected ? 'border-cobalt bg-pale-blue' : 'border-line'}`}
-                >
-                  <strong className="block text-xl">{d.label}</strong>
-                  <span className="my-3 block text-sm">{d.context}</span>
-                  <Status>{periodLocked ? 'LOCKED' : allApproved ? 'APPROVED' : d.state}</Status>
-                </button>
-              ))}
-            </div>
-            <p className="mt-3 text-xs text-muted">
-              Showing one synthetic workweek; period boundaries and holiday assignment remain
-              visible above.
-            </p>
-          </section>
-          {detail}
-        </div>
+      ) : view === 'form' ? (
+        detail
       ) : (
-        <div className="space-y-5">
-          <section className={panel}>
-            <h2 className="text-lg font-semibold">Attendance worksheet · Mara Santos</h2>
-            <p className="mt-2 text-sm text-muted">
-              Review source, calculated result and approval side by side before DTR inclusion.
+        <section className={panel}>
+          <div className="mb-4 grid gap-1">
+            <h2 className="m-0 text-[17px] font-[720] tracking-[-0.02em] text-midnight">
+              Attendance days
+            </h2>
+            <p className="m-0 text-[13px] leading-[1.55] text-muted">
+              {view === 'tree'
+                ? 'Open a record to review its events, calculation, correction and history.'
+                : 'The same attendance records grouped by status. Open a card to review its Form.'}
             </p>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[680px] text-left text-sm">
+          </div>
+          {view === 'tree' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[780px] border-collapse text-left">
                 <thead>
-                  <tr className="border-b border-line text-muted">
-                    <th scope="col">Date</th>
-                    <th scope="col">Raw events / context</th>
-                    <th scope="col">Calculated day</th>
-                    <th scope="col">DTR</th>
+                  <tr className="border-b border-line text-[10px] font-bold uppercase tracking-[0.07em] text-muted">
+                    {[
+                      'Work date',
+                      'Employee',
+                      'Schedule / context',
+                      'Status',
+                      'Exception',
+                      'DTR',
+                    ].map((heading) => (
+                      <th key={heading} scope="col" className="px-3 py-2">
+                        {heading}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {days.map((d, i) => (
+                  {records.map((record) => (
                     <tr
-                      key={d.date}
-                      className={`border-b border-line ${selected === i ? 'bg-pale-blue' : ''}`}
+                      key={record.date}
+                      className={`border-b border-line/70 align-top ${selected === record.index ? 'bg-[#f1f5fb]' : ''}`}
                     >
-                      <td>
+                      <td className="px-3 py-2">
                         <button
-                          className="cursor-pointer p-2 font-semibold text-cobalt underline"
-                          onClick={() => setSelected(i)}
+                          type="button"
+                          className="cursor-pointer rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
+                          onClick={() => openRecord(record.index)}
                         >
-                          {d.label}
+                          {record.date}
                         </button>
                       </td>
-                      <td className="max-w-64 py-3">
-                        <span className="block font-mono text-xs">{d.events}</span>
-                        <span className="text-muted">{d.context}</span>
+                      <td className="px-3 py-2 text-sm">
+                        Mara Santos
+                        <span className="block text-xs text-muted">Administrative Officer II</span>
                       </td>
-                      <td>
-                        <Status>
-                          {periodLocked ? 'LOCKED' : allApproved ? 'APPROVED' : d.state}
-                        </Status>
+                      <td className="px-3 py-2 text-[13px]">{record.context}</td>
+                      <td className="px-3 py-2">
+                        <Status>{displayStatus(record)}</Status>
                       </td>
-                      <td>
-                        {allApproved || d.state === 'APPROVED' ? 'Included' : 'Pending approval'}
+                      <td className="px-3 py-2 text-[13px]">
+                        {!allApproved && record.state === 'EXCEPTION'
+                          ? 'Missing time-out'
+                          : !allApproved && record.state === 'FOR_REVIEW'
+                            ? 'Certification for review'
+                            : 'None'}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {allApproved || record.state === 'APPROVED'
+                          ? 'Included'
+                          : 'Pending approval'}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {records.length === 0 && (
+                <p className="py-6 text-center text-sm text-muted">
+                  No attendance days match these filters.
+                </p>
+              )}
             </div>
-          </section>
-          <div className="grid items-start gap-5 xl:grid-cols-2">
-            {detail}
-            {dtr}
-          </div>
-        </div>
+          ) : (
+            <div className="flex gap-3 overflow-x-auto pb-2" aria-label="Attendance board">
+              {(periodLocked
+                ? ['LOCKED']
+                : ['CALCULATED', 'EXCEPTION', 'FOR_REVIEW', 'APPROVED']
+              ).map((status) => {
+                const cards = records.filter((record) => displayStatus(record) === status);
+                return (
+                  <section
+                    key={status}
+                    className="grid min-w-[230px] flex-1 content-start gap-2 rounded-[3px] border border-line bg-canvas/60 p-3"
+                  >
+                    <h3 className="m-0 flex items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-[0.06em] text-muted">
+                      {status.replaceAll('_', ' ')}
+                      <span className="rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] text-ink">
+                        {cards.length}
+                      </span>
+                    </h3>
+                    {cards.length === 0 ? (
+                      <p className="m-0 rounded-[3px] border border-dashed border-line px-3 py-4 text-center text-xs text-muted">
+                        No attendance days
+                      </p>
+                    ) : (
+                      cards.map((record) => (
+                        <button
+                          key={record.date}
+                          type="button"
+                          onClick={() => openRecord(record.index)}
+                          className={`grid cursor-pointer gap-1.5 rounded-[3px] border bg-paper px-3 py-3 text-left transition-colors ${selected === record.index ? 'border-cobalt bg-[#f1f5fb]' : 'border-line hover:border-[#aebed3]'}`}
+                        >
+                          <span className="text-xs font-bold text-cobalt">{record.date}</span>
+                          <strong className="text-sm font-[680] text-midnight">Mara Santos</strong>
+                          <span className="text-xs text-muted">{record.context}</span>
+                          {!allApproved && record.state === 'EXCEPTION' && (
+                            <span className="text-xs text-[#755421]">Missing time-out</span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </section>
       )}
+      <details
+        aria-label="Prototype review controls"
+        className="rounded border border-line bg-paper p-4 text-sm"
+      >
+        <summary className="cursor-pointer font-semibold">
+          Attendance/DTR prototype · Synthetic records · No changes are saved
+        </summary>
+        <div className="mt-3 flex flex-wrap gap-4">
+          <label>
+            Preview role
+            <select
+              className={field}
+              value={role}
+              onChange={(e) => {
+                setRole((e.target as unknown as { value: string }).value);
+                setSection('Attendance');
+                setNotice('');
+              }}
+            >
+              <option>Employee</option>
+              <option>Supervisor</option>
+              <option>Attendance Administrator</option>
+            </select>
+          </label>
+          <label>
+            Sample state
+            <select
+              className={field}
+              value={scenario}
+              onChange={(e) => selectScenario((e.target as unknown as { value: string }).value)}
+            >
+              {[
+                'Active',
+                'Empty',
+                'Loading',
+                'Permission denied',
+                'Returned',
+                'Ready to lock',
+                'Completed',
+              ].map((s) => (
+                <option key={s}>{s}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={clockEnabled}
+              onChange={(e) =>
+                setClockEnabled((e.target as unknown as { checked: boolean }).checked)
+              }
+            />
+            Agency enables web clock
+          </label>
+        </div>
+      </details>
       <details className={`${panel} text-sm`}>
         <summary className="cursor-pointer font-semibold">Review notes and visible state</summary>
         <p className="mt-3">
-          Question: which layout makes raw events, calculated days, correction review and approved
-          DTR records easiest to distinguish?
+          Review: does the standard Tree/Form/Kanban pattern clearly distinguish raw events,
+          calculated days, correction review and approved DTR records easiest to distinguish?
         </p>
         <ul className="mt-3 list-disc space-y-2 pl-5">
           <li>
@@ -758,7 +859,7 @@ export function AttendancePrototype() {
         <pre className="mt-4 overflow-auto rounded bg-canvas p-3 text-xs">
           {JSON.stringify(
             {
-              variant,
+              view,
               role,
               scenario,
               section,
@@ -775,30 +876,6 @@ export function AttendancePrototype() {
           )}
         </pre>
       </details>
-      {process.env.NODE_ENV !== 'production' && (
-        <div
-          aria-label="Prototype variant switcher"
-          className="fixed bottom-5 left-1/2 z-50 flex max-w-[95vw] -translate-x-1/2 items-center gap-4 rounded-full bg-midnight px-4 py-3 text-paper shadow-lg"
-        >
-          <button
-            aria-label="Previous variant"
-            className="cursor-pointer px-2 py-1"
-            onClick={() => cycle(-1)}
-          >
-            ←
-          </button>
-          <span className="text-center text-xs sm:text-sm">
-            {variant} · {variantNames[variant]}
-          </span>
-          <button
-            aria-label="Next variant"
-            className="cursor-pointer px-2 py-1"
-            onClick={() => cycle(1)}
-          >
-            →
-          </button>
-        </div>
-      )}
     </div>
   );
 }
