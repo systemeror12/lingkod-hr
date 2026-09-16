@@ -117,6 +117,9 @@ model Agency {
   candidateEvaluationReports    CandidateEvaluationReportVersion[]
   selectionDecisions            SelectionDecision[]
   appointmentHandoffs           RecruitmentAppointmentHandoff[]
+  leaveTypes                    LeaveType[]
+  leavePolicyVersions           LeavePolicyVersion[]
+  leavePolicyAuthorities        LeavePolicyAuthority[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -368,6 +371,11 @@ model AgencyMembership {
   updatedAssumptions                     AssumptionToDuty[]                    @relation("AssumptionUpdater")
   certifiedAssumptionVersions            AssumptionVersion[]                   @relation("AssumptionVersionCertifier")
   authorizedAssumptionOutcomes           AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeAuthorizer")
+  createdLeaveTypes                      LeaveType[]                          @relation("LeaveTypeCreator")
+  updatedLeaveTypes                      LeaveType[]                          @relation("LeaveTypeUpdater")
+  createdLeavePolicyVersions             LeavePolicyVersion[]                 @relation("LeavePolicyVersionCreator")
+  updatedLeavePolicyVersions             LeavePolicyVersion[]                 @relation("LeavePolicyVersionUpdater")
+  createdLeavePolicyAuthorities          LeavePolicyAuthority[]               @relation("LeavePolicyAuthorityCreator")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1481,6 +1489,7 @@ model Document {
   salnAcknowledgmentDocuments             SalnComplianceRecord[]         @relation("SalnAcknowledgmentDocument")
   serviceRecordCorrectionDocuments        ServiceRecordSnapshot[]        @relation("ServiceRecordCorrectionDocument")
   applicationDocuments                    ApplicationDocument[]          @relation("ApplicationDocumentDocument")
+  leavePolicyAuthorityDocuments           LeavePolicyAuthority[]         @relation("LeavePolicyAuthorityDocument")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -1558,6 +1567,7 @@ model DocumentVersion {
   assumptionVersionCorrectionAuthorityVersions     AssumptionVersion[]                   @relation("AssumptionVersionCorrectionAuthority")
   assumptionOutcomeAuthorityVersions               AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeAuthority")
   assumptionOutcomeEvidenceVersions                AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeEvidence")
+  leavePolicyAuthorityVersions                     LeavePolicyAuthority[]                @relation("LeavePolicyAuthorityVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -3072,4 +3082,91 @@ model AssumptionOutcomeEvent {
   @@unique([agencyId, assumptionId])
   @@unique([agencyId, id])
   @@map("assumption_outcome_events")
+}
+
+model LeaveType {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String   @map("agency_id") @db.Uuid
+  code                   String   @db.Citext
+  name                   String   @db.Citext
+  status                 String
+  currentPolicyVersionId String?  @map("current_policy_version_id") @db.Uuid
+  createdByMembershipId  String   @map("created_by_membership_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId  String   @map("updated_by_membership_id") @db.Uuid
+  updatedAt              DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion             Int      @default(1) @map("row_version")
+
+  agency               Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  currentPolicyVersion LeavePolicyVersion?    @relation("LeaveTypeCurrentPolicyVersion", fields: [agencyId, currentPolicyVersionId], references: [agencyId, id], onDelete: Restrict)
+  versions             LeavePolicyVersion[]   @relation("LeavePolicyVersions")
+  chargedPolicyVersions LeavePolicyVersion[]  @relation("LeavePolicyVersionChargedLeaveType")
+  createdBy             AgencyMembership     @relation("LeaveTypeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy             AgencyMembership     @relation("LeaveTypeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, code])
+  @@index([agencyId, status])
+  @@map("leave_types")
+}
+
+model LeavePolicyVersion {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String    @map("agency_id") @db.Uuid
+  leaveTypeId           String    @map("leave_type_id") @db.Uuid
+  versionNo             Int       @map("version_no")
+  entitlementBasis      String    @map("entitlement_basis")
+  calendarBasis         String    @map("calendar_basis")
+  chargedLeaveTypeId    String?   @map("charged_leave_type_id") @db.Uuid
+  evaluatorKind         String    @map("evaluator_kind") @db.Citext
+  ruleParameters        Json      @default("{}") @map("rule_parameters")
+  applicabilityRules    Json      @default("{}") @map("applicability_rules")
+  documentRequirements  Json      @default("{}") @map("document_requirements")
+  approvalRouteCode     String    @map("approval_route_code") @db.Citext
+  effectiveFrom         DateTime  @map("effective_from") @db.Date
+  effectiveTo           DateTime? @map("effective_to") @db.Date
+  status                String
+  createdByMembershipId String    @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedByMembershipId String    @map("updated_by_membership_id") @db.Uuid
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion            Int       @default(1) @map("row_version")
+
+  agency               Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveType            LeaveType              @relation("LeavePolicyVersions", fields: [agencyId, leaveTypeId], references: [agencyId, id], onDelete: Restrict)
+  chargedLeaveType     LeaveType?             @relation("LeavePolicyVersionChargedLeaveType", fields: [agencyId, chargedLeaveTypeId], references: [agencyId, id], onDelete: Restrict)
+  currentForLeaveTypes LeaveType[]            @relation("LeaveTypeCurrentPolicyVersion")
+  authorities          LeavePolicyAuthority[] @relation("LeavePolicyVersionAuthorities")
+  createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  updatedBy            AgencyMembership       @relation("LeavePolicyVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveTypeId, versionNo])
+  @@unique([agencyId, id])
+  @@unique([agencyId, leaveTypeId, id])
+  @@index([agencyId, leaveTypeId, effectiveFrom])
+  @@map("leave_policy_versions")
+}
+
+model LeavePolicyAuthority {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  leavePolicyVersionId  String   @map("leave_policy_version_id") @db.Uuid
+  authorityClass        String   @map("authority_class")
+  documentId            String   @map("document_id") @db.Uuid
+  documentVersionId     String   @map("document_version_id") @db.Uuid
+  citation              String
+  validationReason      String?  @map("validation_reason")
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency             Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leavePolicyVersion LeavePolicyVersion @relation("LeavePolicyVersionAuthorities", fields: [agencyId, leavePolicyVersionId], references: [agencyId, id], onDelete: Restrict)
+  document           Document           @relation("LeavePolicyAuthorityDocument", fields: [agencyId, documentId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion    DocumentVersion    @relation("LeavePolicyAuthorityVersion", fields: [agencyId, documentId, documentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  createdBy          AgencyMembership   @relation("LeavePolicyAuthorityCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([leavePolicyVersionId, documentVersionId, citation])
+  @@index([agencyId, leavePolicyVersionId])
+  @@map("leave_policy_authorities")
 }

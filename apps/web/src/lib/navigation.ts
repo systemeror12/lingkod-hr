@@ -4,7 +4,14 @@ export function hasPermission(session: ActiveSession, permission: string): boole
 }
 
 export type DestinationIcon =
-  'dashboard' | 'users' | 'organization' | 'authority' | 'qualification' | 'position' | 'audit';
+  | 'dashboard'
+  | 'users'
+  | 'organization'
+  | 'authority'
+  | 'qualification'
+  | 'position'
+  | 'leave'
+  | 'audit';
 
 export interface Destination {
   href: string;
@@ -123,6 +130,12 @@ const destinations: readonly (Destination & {
     label: 'Service Records',
     icon: 'position',
     permission: 'personnel.service_records.read',
+  },
+  {
+    href: '/leave-policies',
+    label: 'Leave Policies',
+    icon: 'leave',
+    permission: 'leave.types.read',
   },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];

@@ -13,6 +13,8 @@ const foreignUnitVersionId = '33333333-3333-4333-8333-333333333333';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
 const foreignIdentifierId = '66666666-6666-4666-8666-666666666666';
+const leaveNationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
+const leaveAgencyConfigurationDocumentId = '88888888-8888-4888-8888-888888888888';
 const phase5OwnerEmail = 'phase5.owner@example.test';
 const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
 const phase5RestrictedEmail = 'phase5.restricted@example.test';
@@ -321,6 +323,13 @@ async function seed(): Promise<void> {
     });
     await transaction.qualificationStandardVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.qualificationStandard.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveType.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentPolicyVersionId: null },
+    });
+    await transaction.leavePolicyAuthority.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leavePolicyVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveType.deleteMany({ where: { agencyId: agency.id } });
     await transaction.documentVersion.deleteMany({
       where: { agencyId: agency.id, document: { documentNo: { startsWith: 'P5-PDS-' } } },
     });
@@ -357,6 +366,8 @@ async function seed(): Promise<void> {
               'E2E-APPT-PUBLICATION-CERT',
               'E2E-APPT-AUTHORITY',
               'E2E-MOVE-AUTHORITY',
+              'E2E-LEAVE-NATIONAL-RULE',
+              'E2E-LEAVE-AGENCY-CONFIG',
             ],
           },
         },
@@ -391,6 +402,8 @@ async function seed(): Promise<void> {
             'E2E-APPT-PUBLICATION-CERT',
             'E2E-APPT-AUTHORITY',
             'E2E-MOVE-AUTHORITY',
+            'E2E-LEAVE-NATIONAL-RULE',
+            'E2E-LEAVE-AGENCY-CONFIG',
           ],
         },
       },
@@ -420,9 +433,10 @@ async function seed(): Promise<void> {
       data: { currentVersionId: unitVersion.id },
     });
 
-    async function evidence(documentNo: string, documentType: string) {
+    async function evidence(documentNo: string, documentType: string, id?: string) {
       const document = await transaction.document.create({
         data: {
+          id,
           agencyId: agency.id,
           documentNo,
           documentType,
@@ -454,6 +468,8 @@ async function seed(): Promise<void> {
     const sourceEvidence = await evidence('E2E-PLANTILLA-QS-SOURCE', 'QUALIFICATION_STANDARD');
     const approvalEvidence = await evidence('E2E-PLANTILLA-QS-APPROVAL', 'QUALIFICATION_STANDARD');
     const authorityEvidence = await evidence('E2E-PLANTILLA-AUTHORITY', 'STAFFING_AUTHORITY');
+    await evidence('E2E-LEAVE-NATIONAL-RULE', 'LEAVE_POLICY', leaveNationalRuleDocumentId);
+    await evidence('E2E-LEAVE-AGENCY-CONFIG', 'LEAVE_POLICY', leaveAgencyConfigurationDocumentId);
     await evidence('E2E-PDS-EVIDENCE', 'PDS');
     const standard = await transaction.qualificationStandard.create({
       data: {
