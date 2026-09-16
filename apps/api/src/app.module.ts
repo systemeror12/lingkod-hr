@@ -20,6 +20,7 @@ import { ServiceRecordsModule } from './service-records/service-records.module';
 import { ApprovalModule } from './approvals/approval.module';
 import { RecruitmentModule } from './recruitment/recruitment.module';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { AttendanceConfigurationModule } from './attendance-configuration/attendance-configuration.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
     ApprovalModule,
     RecruitmentModule,
     AppointmentsModule,
+    AttendanceConfigurationModule,
   ],
   controllers: [HealthController],
 })

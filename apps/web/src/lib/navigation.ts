@@ -124,6 +124,12 @@ const destinations: readonly (Destination & {
     icon: 'position',
     permission: 'personnel.service_records.read',
   },
+  {
+    href: '/attendance-configuration',
+    label: 'Attendance Configuration',
+    icon: 'position',
+    permission: 'attendance.configuration.manage',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 
