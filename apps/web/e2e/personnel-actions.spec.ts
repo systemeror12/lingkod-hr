@@ -166,8 +166,9 @@ test('prepares and reviews an Appointment-backed movement from its assumed contr
       response.url().includes('/personnel-actions') && response.request().method() === 'POST',
   );
   await prepare.getByRole('button', { name: 'Save draft' }).click();
-  const created = await apiBody<{ status: string }>(await createdResponse);
+  const created = await apiBody<{ id: string; status: string }>(await createdResponse);
   expect(created.status).toBe('DRAFT');
+  await page.waitForURL((url) => url.searchParams.get('record') === created.id);
 
   const detail = page.getByRole('region', { name: 'E2E Movement Candidate' });
   await expect(detail.getByText('DRAFT', { exact: true })).toBeVisible();
