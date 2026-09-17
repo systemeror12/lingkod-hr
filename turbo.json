@@ -54,6 +54,9 @@
     "@lingkod-hr/database#typecheck": {
       "dependsOn": ["build", "^build"]
     },
+    "@lingkod-hr/database#test": {
+      "dependsOn": ["build", "^build"]
+    },
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"]

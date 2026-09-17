@@ -132,6 +132,12 @@ const destinations: readonly (Destination & {
     permission: 'personnel.service_records.read',
   },
   {
+    href: '/attendance-configuration',
+    label: 'Attendance Configuration',
+    icon: 'position',
+    permission: 'attendance.configuration.manage',
+  },
+  {
     href: '/leave-policies',
     label: 'Leave Policies',
     icon: 'leave',

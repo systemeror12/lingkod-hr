@@ -21,6 +21,8 @@ export type DatabaseCapability =
   | 'approval-transition'
   | 'recruitment-transition'
   | 'appointment-transition'
+  | 'work-schedule-transition'
+  | 'work-arrangement-transition'
   | 'leave-policy-transition';
 
 export interface DatabaseContext {
@@ -148,6 +150,16 @@ export async function setDatabaseContext(
       set_config(
         'app.appointment_transition',
         ${hasCapability(context, 'appointment-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.work_schedule_transition',
+        ${hasCapability(context, 'work-schedule-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.work_arrangement_transition',
+        ${hasCapability(context, 'work-arrangement-transition') ? 'on' : ''},
         true
       ),
       set_config(

@@ -3084,6 +3084,155 @@ model AssumptionOutcomeEvent {
   @@map("assumption_outcome_events")
 }
 
+model WorkSchedule {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId         String   @map("agency_id") @db.Uuid
+  code             String   @db.Citext
+  name             String
+  currentVersionId String?  @map("current_version_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion       Int      @default(1) @map("row_version")
+
+  versions WorkScheduleVersion[] @relation("WorkScheduleVersions")
+
+  @@unique([agencyId, code])
+  @@unique([agencyId, id])
+  @@map("work_schedules")
+}
+
+model WorkScheduleVersion {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  workScheduleId             String    @map("work_schedule_id") @db.Uuid
+  versionNo                  Int       @map("version_no")
+  scheduleType               String    @map("schedule_type")
+  timezone                   String    @default("Asia/Manila")
+  holidayEffectRules         Json      @default("{}") @map("holiday_effect_rules")
+  authorityDocumentVersionId String?   @map("authority_document_version_id") @db.Uuid
+  approvingAuthority         String?   @map("approving_authority")
+  status                     String
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  activatedByMembershipId    String?   @map("activated_by_membership_id") @db.Uuid
+  activatedAt                DateTime? @map("activated_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  workSchedule WorkSchedule         @relation("WorkScheduleVersions", fields: [agencyId, workScheduleId], references: [agencyId, id], onDelete: Restrict)
+  dayRules     WorkScheduleDayRule[]
+
+  @@unique([workScheduleId, versionNo])
+  @@unique([agencyId, id])
+  @@map("work_schedule_versions")
+}
+
+model WorkScheduleDayRule {
+  id                    String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String  @map("agency_id") @db.Uuid
+  workScheduleVersionId String  @map("work_schedule_version_id") @db.Uuid
+  weekday               Int     @map("weekday") @db.SmallInt
+  ruleType              String  @map("rule_type")
+  dutyStartTime         DateTime? @map("duty_start_time") @db.Time(6)
+  earliestStartTime     DateTime? @map("earliest_start_time") @db.Time(6)
+  latestStartTime       DateTime? @map("latest_start_time") @db.Time(6)
+  dutyEndTime           DateTime? @map("duty_end_time") @db.Time(6)
+  endNextCalendarDay    Boolean @default(false) @map("end_next_calendar_day")
+  requiredMinutes       Int     @map("required_minutes")
+  coreStartTime         DateTime? @map("core_start_time") @db.Time(6)
+  coreEndTime           DateTime? @map("core_end_time") @db.Time(6)
+  eventPattern          String  @map("event_pattern")
+  collectionBeforeMinutes Int   @map("collection_before_minutes")
+  collectionAfterMinutes  Int   @map("collection_after_minutes")
+
+  workScheduleVersion WorkScheduleVersion         @relation(fields: [agencyId, workScheduleVersionId], references: [agencyId, id], onDelete: Restrict)
+  breaks              WorkScheduleBreakInterval[]
+
+  @@unique([workScheduleVersionId, weekday])
+  @@unique([agencyId, id])
+  @@map("work_schedule_day_rules")
+}
+
+model WorkScheduleBreakInterval {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String  @map("agency_id") @db.Uuid
+  dayRuleId          String  @map("day_rule_id") @db.Uuid
+  sequenceNo         Int     @map("sequence_no")
+  breakStartTime     DateTime @map("break_start_time") @db.Time(6)
+  breakEndTime       DateTime @map("break_end_time") @db.Time(6)
+  endNextCalendarDay Boolean @default(false) @map("end_next_calendar_day")
+
+  dayRule WorkScheduleDayRule @relation(fields: [agencyId, dayRuleId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([dayRuleId, sequenceNo])
+  @@unique([agencyId, id])
+  @@map("work_schedule_break_intervals")
+}
+
+model HolidayCalendar {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId         String   @map("agency_id") @db.Uuid
+  code             String   @db.Citext
+  name             String
+  scopeType        String   @map("scope_type")
+  scopeReference   String   @map("scope_reference")
+  currentVersionId String?  @map("current_version_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion       Int      @default(1) @map("row_version")
+
+  workArrangementVersions WorkArrangementVersion[]
+
+  @@unique([agencyId, code])
+  @@unique([agencyId, id])
+  @@map("holiday_calendars")
+}
+
+model WorkArrangement {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId         String   @map("agency_id") @db.Uuid
+  code             String   @db.Citext
+  name             String
+  currentVersionId String?  @map("current_version_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion       Int      @default(1) @map("row_version")
+
+  versions WorkArrangementVersion[] @relation("WorkArrangementVersions")
+
+  @@unique([agencyId, code])
+  @@unique([agencyId, id])
+  @@map("work_arrangements")
+}
+
+model WorkArrangementVersion {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  workArrangementId          String    @map("work_arrangement_id") @db.Uuid
+  versionNo                  Int       @map("version_no")
+  arrangementType            String    @map("arrangement_type")
+  permittedScheduleTypes     Json      @map("permitted_schedule_types")
+  holidayCalendarId          String    @map("holiday_calendar_id") @db.Uuid
+  authorityDocumentVersionId String?   @map("authority_document_version_id") @db.Uuid
+  approvingAuthority         String?   @map("approving_authority")
+  status                     String
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  activatedByMembershipId    String?   @map("activated_by_membership_id") @db.Uuid
+  activatedAt                DateTime? @map("activated_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  workArrangement WorkArrangement @relation("WorkArrangementVersions", fields: [agencyId, workArrangementId], references: [agencyId, id], onDelete: Restrict)
+  holidayCalendar HolidayCalendar @relation(fields: [agencyId, holidayCalendarId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([workArrangementId, versionNo])
+  @@unique([agencyId, id])
+  @@map("work_arrangement_versions")
+}
+
 model LeaveType {
   id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId               String   @map("agency_id") @db.Uuid

@@ -317,6 +317,21 @@ async function seed(): Promise<void> {
     await transaction.staffingAuthority.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.workScheduleBreakInterval.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.workScheduleDayRule.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.workSchedule.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentVersionId: null },
+    });
+    await transaction.workScheduleVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.workSchedule.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.workArrangement.updateMany({
+      where: { agencyId: agency.id },
+      data: { currentVersionId: null },
+    });
+    await transaction.workArrangementVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.workArrangement.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.holidayCalendar.deleteMany({ where: { agencyId: agency.id } });
     await transaction.qualificationStandard.updateMany({
       where: { agencyId: agency.id },
       data: { currentVersionId: null },
@@ -365,6 +380,7 @@ async function seed(): Promise<void> {
               'E2E-APPT-SELECTION-CERT',
               'E2E-APPT-PUBLICATION-CERT',
               'E2E-APPT-AUTHORITY',
+              'E2E-ORDINARY-SCHEDULE-AUTHORITY',
               'E2E-MOVE-AUTHORITY',
               'E2E-LEAVE-NATIONAL-RULE',
               'E2E-LEAVE-AGENCY-CONFIG',
@@ -401,6 +417,7 @@ async function seed(): Promise<void> {
             'E2E-APPT-SELECTION-CERT',
             'E2E-APPT-PUBLICATION-CERT',
             'E2E-APPT-AUTHORITY',
+            'E2E-ORDINARY-SCHEDULE-AUTHORITY',
             'E2E-MOVE-AUTHORITY',
             'E2E-LEAVE-NATIONAL-RULE',
             'E2E-LEAVE-AGENCY-CONFIG',
@@ -525,6 +542,80 @@ async function seed(): Promise<void> {
         createdByMembershipId: membership.id,
         updatedByMembershipId: membership.id,
       },
+    });
+    const scheduleEvidence = await evidence(
+      'E2E-ORDINARY-SCHEDULE-AUTHORITY',
+      'WORK_SCHEDULE_AUTHORITY',
+    );
+    await transaction.holidayCalendar.create({
+      data: {
+        agencyId: agency.id,
+        code: 'PH-NATIONAL',
+        name: 'Philippine National Holidays',
+        scopeType: 'AGENCY',
+        scopeReference: 'Agency-wide',
+      },
+    });
+    const ordinarySchedule = await transaction.workSchedule.create({
+      data: { agencyId: agency.id, code: 'ORDINARY', name: 'Ordinary Work Schedule' },
+    });
+    const ordinaryVersion = await transaction.workScheduleVersion.create({
+      data: {
+        agencyId: agency.id,
+        workScheduleId: ordinarySchedule.id,
+        versionNo: 1,
+        scheduleType: 'REGULAR',
+        timezone: 'Asia/Manila',
+        authorityDocumentVersionId: scheduleEvidence.currentVersionId!,
+        approvingAuthority: 'Office of the President',
+        status: 'ACTIVE',
+        effectiveFrom: new Date('2026-01-01'),
+        activatedByMembershipId: membership.id,
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    for (const weekday of [1, 2, 3, 4, 5]) {
+      await transaction.workScheduleDayRule.create({
+        data: {
+          agencyId: agency.id,
+          workScheduleVersionId: ordinaryVersion.id,
+          weekday,
+          ruleType: 'FIXED',
+          dutyStartTime: new Date(Date.UTC(1970, 0, 1, 8, 0)),
+          dutyEndTime: new Date(Date.UTC(1970, 0, 1, 17, 0)),
+          requiredMinutes: 480,
+          eventPattern: 'IN_OUT',
+          collectionBeforeMinutes: 0,
+          collectionAfterMinutes: 0,
+          breaks: {
+            create: [
+              {
+                sequenceNo: 1,
+                breakStartTime: new Date(Date.UTC(1970, 0, 1, 12, 0)),
+                breakEndTime: new Date(Date.UTC(1970, 0, 1, 13, 0)),
+              },
+            ],
+          },
+        },
+      });
+    }
+    for (const weekday of [6, 7]) {
+      await transaction.workScheduleDayRule.create({
+        data: {
+          agencyId: agency.id,
+          workScheduleVersionId: ordinaryVersion.id,
+          weekday,
+          ruleType: 'REST',
+          requiredMinutes: 0,
+          eventPattern: 'IN_OUT',
+          collectionBeforeMinutes: 0,
+          collectionAfterMinutes: 0,
+        },
+      });
+    }
+    await transaction.workSchedule.update({
+      where: { id: ordinarySchedule.id },
+      data: { currentVersionId: ordinaryVersion.id },
     });
     const formNo9Evidence = await evidence('E2E-CS-FORM-9', 'CS_FORM_NO_9');
     const fieldOfficePosting = await evidence('E2E-CSC-FIELD-OFFICE-POSTING', 'VACANCY_POSTING');
