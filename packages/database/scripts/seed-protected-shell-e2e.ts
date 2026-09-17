@@ -342,6 +342,11 @@ async function seed(): Promise<void> {
       where: { agencyId: agency.id },
       data: { currentPolicyVersionId: null },
     });
+    await transaction.leaveLedgerAdjustment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveLedgerEntry.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveCreditCommitment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveAccountOpening.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveAccount.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leavePolicyAuthority.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leavePolicyVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leaveType.deleteMany({ where: { agencyId: agency.id } });
