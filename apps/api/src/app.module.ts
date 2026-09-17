@@ -21,6 +21,7 @@ import { ApprovalModule } from './approvals/approval.module';
 import { RecruitmentModule } from './recruitment/recruitment.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { AttendanceConfigurationModule } from './attendance-configuration/attendance-configuration.module';
+import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { AttendanceConfigurationModule } from './attendance-configuration/attend
     RecruitmentModule,
     AppointmentsModule,
     AttendanceConfigurationModule,
+    LeavePoliciesModule,
   ],
   controllers: [HealthController],
 })

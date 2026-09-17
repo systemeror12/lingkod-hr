@@ -22,7 +22,8 @@ export type DatabaseCapability =
   | 'recruitment-transition'
   | 'appointment-transition'
   | 'work-schedule-transition'
-  | 'work-arrangement-transition';
+  | 'work-arrangement-transition'
+  | 'leave-policy-transition';
 
 export interface DatabaseContext {
   agencyId?: string;
@@ -159,6 +160,11 @@ export async function setDatabaseContext(
       set_config(
         'app.work_arrangement_transition',
         ${hasCapability(context, 'work-arrangement-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.leave_policy_transition',
+        ${hasCapability(context, 'leave-policy-transition') ? 'on' : ''},
         true
       )
   `;

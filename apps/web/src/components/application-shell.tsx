@@ -72,6 +72,14 @@ function Icon({ name }: { name: DestinationIcon }) {
       </svg>
     );
   }
+  if (name === 'leave') {
+    return (
+      <svg {...common}>
+        <rect x="4" y="5" width="16" height="15" rx="2" />
+        <path d="M8 3v4M16 3v4M4 10h16M9 14h2M14 14h1" />
+      </svg>
+    );
+  }
   return (
     <svg {...common}>
       <path d="M7 3h10v4H7zM5 7h14v14H5zM9 12h6M9 16h4" />
