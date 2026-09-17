@@ -23,6 +23,8 @@ export type DatabaseCapability =
   | 'appointment-transition'
   | 'work-schedule-transition'
   | 'work-arrangement-transition'
+  | 'holiday-calendar-transition'
+  | 'schedule-assignment-transition'
   | 'leave-policy-transition';
 
 export interface DatabaseContext {
@@ -160,6 +162,16 @@ export async function setDatabaseContext(
       set_config(
         'app.work_arrangement_transition',
         ${hasCapability(context, 'work-arrangement-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.holiday_calendar_transition',
+        ${hasCapability(context, 'holiday-calendar-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.schedule_assignment_transition',
+        ${hasCapability(context, 'schedule-assignment-transition') ? 'on' : ''},
         true
       ),
       set_config(

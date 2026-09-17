@@ -281,6 +281,7 @@ async function seed(): Promise<void> {
       data: { currentServiceSegmentId: null },
     });
     await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.scheduleAssignment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.plantillaPosition.updateMany({
       where: { agencyId: agency.id },
@@ -331,6 +332,8 @@ async function seed(): Promise<void> {
     });
     await transaction.workArrangementVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.workArrangement.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.holidayCalendarEntry.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.holidayCalendarVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.holidayCalendar.deleteMany({ where: { agencyId: agency.id } });
     await transaction.qualificationStandard.updateMany({
       where: { agencyId: agency.id },
@@ -381,6 +384,9 @@ async function seed(): Promise<void> {
               'E2E-APPT-PUBLICATION-CERT',
               'E2E-APPT-AUTHORITY',
               'E2E-ORDINARY-SCHEDULE-AUTHORITY',
+              'E2E-HOLIDAY-CALENDAR-AUTHORITY',
+              'E2E-ONSITE-ARRANGEMENT-AUTHORITY',
+              'E2E-SCHEDULE-ASSIGNMENT-AUTHORITY',
               'E2E-MOVE-AUTHORITY',
               'E2E-LEAVE-NATIONAL-RULE',
               'E2E-LEAVE-AGENCY-CONFIG',
@@ -418,6 +424,9 @@ async function seed(): Promise<void> {
             'E2E-APPT-PUBLICATION-CERT',
             'E2E-APPT-AUTHORITY',
             'E2E-ORDINARY-SCHEDULE-AUTHORITY',
+            'E2E-HOLIDAY-CALENDAR-AUTHORITY',
+            'E2E-ONSITE-ARRANGEMENT-AUTHORITY',
+            'E2E-SCHEDULE-ASSIGNMENT-AUTHORITY',
             'E2E-MOVE-AUTHORITY',
             'E2E-LEAVE-NATIONAL-RULE',
             'E2E-LEAVE-AGENCY-CONFIG',
@@ -547,7 +556,7 @@ async function seed(): Promise<void> {
       'E2E-ORDINARY-SCHEDULE-AUTHORITY',
       'WORK_SCHEDULE_AUTHORITY',
     );
-    await transaction.holidayCalendar.create({
+    const holidayCalendar = await transaction.holidayCalendar.create({
       data: {
         agencyId: agency.id,
         code: 'PH-NATIONAL',
@@ -555,6 +564,63 @@ async function seed(): Promise<void> {
         scopeType: 'AGENCY',
         scopeReference: 'Agency-wide',
       },
+    });
+    const holidayEvidence = await evidence(
+      'E2E-HOLIDAY-CALENDAR-AUTHORITY',
+      'HOLIDAY_CALENDAR_AUTHORITY',
+    );
+    const holidayVersion = await transaction.holidayCalendarVersion.create({
+      data: {
+        agencyId: agency.id,
+        holidayCalendarId: holidayCalendar.id,
+        versionNo: 1,
+        authorityDocumentVersionId: holidayEvidence.currentVersionId!,
+        approvingAuthority: 'Office of the President',
+        status: 'ACTIVE',
+        effectiveFrom: new Date('2026-01-01'),
+        activatedByMembershipId: membership.id,
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    await transaction.holidayCalendarEntry.createMany({
+      data: [
+        {
+          agencyId: agency.id,
+          holidayCalendarVersionId: holidayVersion.id,
+          holidayDate: new Date('2026-01-01'),
+          name: "New Year's Day",
+          dayType: 'REGULAR_HOLIDAY',
+          sourceReference: 'E2E Proclamation Fixture',
+        },
+        {
+          agencyId: agency.id,
+          holidayCalendarVersionId: holidayVersion.id,
+          holidayDate: new Date('2026-04-09'),
+          name: 'Araw ng Kagitingan',
+          dayType: 'REGULAR_HOLIDAY',
+          sourceReference: 'E2E Proclamation Fixture',
+        },
+        {
+          agencyId: agency.id,
+          holidayCalendarVersionId: holidayVersion.id,
+          holidayDate: new Date('2026-11-01'),
+          name: "All Saints' Day",
+          dayType: 'SPECIAL_NON_WORKING',
+          sourceReference: 'E2E Proclamation Fixture',
+        },
+        {
+          agencyId: agency.id,
+          holidayCalendarVersionId: holidayVersion.id,
+          holidayDate: new Date('2026-12-25'),
+          name: 'Christmas Day',
+          dayType: 'REGULAR_HOLIDAY',
+          sourceReference: 'E2E Proclamation Fixture',
+        },
+      ],
+    });
+    await transaction.holidayCalendar.update({
+      where: { id: holidayCalendar.id },
+      data: { currentVersionId: holidayVersion.id },
     });
     const ordinarySchedule = await transaction.workSchedule.create({
       data: { agencyId: agency.id, code: 'ORDINARY', name: 'Ordinary Work Schedule' },
@@ -616,6 +682,33 @@ async function seed(): Promise<void> {
     await transaction.workSchedule.update({
       where: { id: ordinarySchedule.id },
       data: { currentVersionId: ordinaryVersion.id },
+    });
+    const arrangementEvidence = await evidence(
+      'E2E-ONSITE-ARRANGEMENT-AUTHORITY',
+      'WORK_ARRANGEMENT_AUTHORITY',
+    );
+    const ordinaryArrangement = await transaction.workArrangement.create({
+      data: { agencyId: agency.id, code: 'ONSITE', name: 'Onsite Work Arrangement' },
+    });
+    const ordinaryArrangementVersion = await transaction.workArrangementVersion.create({
+      data: {
+        agencyId: agency.id,
+        workArrangementId: ordinaryArrangement.id,
+        versionNo: 1,
+        arrangementType: 'ONSITE',
+        permittedScheduleTypes: ['REGULAR'],
+        holidayCalendarId: holidayCalendar.id,
+        authorityDocumentVersionId: arrangementEvidence.currentVersionId!,
+        approvingAuthority: 'Office of the President',
+        status: 'ACTIVE',
+        effectiveFrom: new Date('2026-01-01'),
+        activatedByMembershipId: membership.id,
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    await transaction.workArrangement.update({
+      where: { id: ordinaryArrangement.id },
+      data: { currentVersionId: ordinaryArrangementVersion.id },
     });
     const formNo9Evidence = await evidence('E2E-CS-FORM-9', 'CS_FORM_NO_9');
     const fieldOfficePosting = await evidence('E2E-CSC-FIELD-OFFICE-POSTING', 'VACANCY_POSTING');
@@ -1360,6 +1453,21 @@ async function seed(): Promise<void> {
       where: { id: employee.id },
       data: { currentServiceSegmentId: serviceSegment.id },
     });
+    const assignmentEvidence = await evidence(
+      'E2E-SCHEDULE-ASSIGNMENT-AUTHORITY',
+      'SCHEDULE_ASSIGNMENT_AUTHORITY',
+    );
+    await transaction.scheduleAssignment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        workScheduleVersionId: ordinaryVersion.id,
+        workArrangementVersionId: ordinaryArrangementVersion.id,
+        authorityDocumentVersionId: assignmentEvidence.currentVersionId!,
+        effectiveFrom: new Date('2026-01-01'),
+        assignedByMembershipId: membership.id,
+      },
+    });
     const actionEvidence = await Promise.all(
       ['NOSI', 'CURRENT_COMPENSATION', 'PERFORMANCE_OR_SERVICE', 'SERVICE_CONTINUITY'].map((type) =>
         evidence(`E2E-ACTION-${type}`, type),
@@ -1893,6 +2001,7 @@ async function seed(): Promise<void> {
       data: { employeeId: null },
     });
     await transaction.governmentIdentifier.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.scheduleAssignment.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.employee.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: foreignAgency.id } });
