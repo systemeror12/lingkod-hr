@@ -27,6 +27,31 @@ export type WorkArrangementVersionState = (typeof WORK_ARRANGEMENT_VERSION_STATE
 export const HOLIDAY_CALENDAR_SCOPE_TYPES = ['AGENCY', 'OFFICE', 'WORKSITE'] as const;
 export type HolidayCalendarScopeType = (typeof HOLIDAY_CALENDAR_SCOPE_TYPES)[number];
 
+export const HOLIDAY_CALENDAR_VERSION_STATES = ['DRAFT', 'ACTIVE', 'SUPERSEDED'] as const;
+export type HolidayCalendarVersionState = (typeof HOLIDAY_CALENDAR_VERSION_STATES)[number];
+
+export const HOLIDAY_DAY_TYPES = [
+  'REGULAR_HOLIDAY',
+  'SPECIAL_NON_WORKING',
+  'SPECIAL_WORKING',
+  'LOCAL_HOLIDAY',
+  'WORK_SUSPENSION',
+] as const;
+export type HolidayDayType = (typeof HOLIDAY_DAY_TYPES)[number];
+
+/** Blocking Attendance Exception causes raised when the calculation inputs cannot be resolved. */
+export const ATTENDANCE_EXCEPTION_TYPES = [
+  'MISSING_SERVICE',
+  'MISSING_SCHEDULE_ASSIGNMENT',
+  'OVERLAPPING_SCHEDULE_ASSIGNMENT',
+  'MISSING_WORK_SCHEDULE_VERSION',
+  'MISSING_WORK_ARRANGEMENT_VERSION',
+  'INCOMPATIBLE_SCHEDULE_ARRANGEMENT',
+  'MISSING_HOLIDAY_CALENDAR_VERSION',
+  'AMBIGUOUS_HOLIDAY_CALENDAR_VERSION',
+] as const;
+export type AttendanceExceptionType = (typeof ATTENDANCE_EXCEPTION_TYPES)[number];
+
 /** ISO-8601 weekday: 1 = Monday through 7 = Sunday. */
 export const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
@@ -90,6 +115,54 @@ export interface UpdateWorkArrangementDraftInput extends WorkArrangementDefiniti
 export interface ActivateAttendanceConfigurationInput {
   authorityDocumentVersionId: string;
   approvingAuthority: string;
+  reason: string;
+}
+
+export interface AttendanceHolidayEntryInput {
+  holidayDate: string;
+  name: string;
+  dayType: HolidayDayType;
+  sourceReference: string;
+}
+
+export interface HolidayCalendarVersionDefinitionInput {
+  effectiveDate: string;
+  entries: AttendanceHolidayEntryInput[];
+}
+
+export interface CreateHolidayCalendarInput extends HolidayCalendarVersionDefinitionInput {
+  code: string;
+  name: string;
+  scopeType: HolidayCalendarScopeType;
+  scopeReference: string;
+}
+
+export interface UpdateHolidayCalendarDraftInput extends HolidayCalendarVersionDefinitionInput {
+  rowVersion?: number | undefined;
+}
+
+export interface NormalizedHolidayEntry {
+  holidayDate: string;
+  name: string;
+  dayType: HolidayDayType;
+  sourceReference: string;
+}
+
+export interface HolidayCalendarVersionDefinition {
+  effectiveDate: string;
+  entries: NormalizedHolidayEntry[];
+}
+
+export interface CreateScheduleAssignmentInput {
+  employeeId: string;
+  workScheduleVersionId: string;
+  workArrangementVersionId: string;
+  authorityDocumentVersionId: string;
+  effectiveFrom: string;
+}
+
+export interface EndScheduleAssignmentInput {
+  effectiveTo: string;
   reason: string;
 }
 
@@ -228,6 +301,22 @@ export class AttendanceConfigurationServiceError extends Error {
   ) {
     super(message);
     this.name = 'AttendanceConfigurationServiceError';
+  }
+}
+
+/**
+ * A blocking Attendance Exception. Calculation inputs could not be resolved to
+ * exactly one assignment and one effective configuration version for the Work
+ * Date, so the caller must fail closed instead of assuming a default.
+ */
+export class AttendanceExceptionError extends AttendanceConfigurationServiceError {
+  constructor(
+    readonly exceptionType: AttendanceExceptionType,
+    message: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(message, 409, 'ATTENDANCE_EXCEPTION');
+    this.name = 'AttendanceExceptionError';
   }
 }
 
@@ -558,6 +647,37 @@ export function normalizeArrangementDefinition(
 
 export function timeValueOf(value: string): Date {
   return toTimeValue(parseTime(value, 'Time is invalid.'));
+}
+
+export function normalizeHolidayCalendarDefinition(
+  input: HolidayCalendarVersionDefinitionInput,
+): HolidayCalendarVersionDefinition {
+  const effectiveDate = formatDate(toDatabaseDate(input.effectiveDate));
+  const seen = new Set<string>();
+  const entries = input.entries.map((entry) => {
+    if (!(HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType)) {
+      throw invalid('Holiday Calendar entries use a supported holiday day type.');
+    }
+    const holidayDate = formatDate(toDatabaseDate(entry.holidayDate));
+    const name = entry.name.trim();
+    if (!name) throw invalid('Every Holiday Calendar entry requires a name.');
+    const sourceReference = entry.sourceReference.trim();
+    if (!sourceReference) {
+      throw invalid('Every Holiday Calendar entry requires its source reference.');
+    }
+    const key = `${holidayDate}:${entry.dayType}`;
+    if (seen.has(key)) {
+      throw invalid('A Holiday Calendar Version cannot repeat one day type on the same date.');
+    }
+    seen.add(key);
+    return { holidayDate, name, dayType: entry.dayType, sourceReference };
+  });
+  entries.sort(
+    (left, right) =>
+      left.holidayDate.localeCompare(right.holidayDate) ||
+      left.dayType.localeCompare(right.dayType),
+  );
+  return { effectiveDate, entries };
 }
 
 export function timeColumn(value: string | null): Date | null {

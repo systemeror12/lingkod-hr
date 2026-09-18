@@ -12,8 +12,19 @@ import type {
   WorkArrangementHistoryEntry,
   WorkArrangementSummary,
   WorkArrangementVersionSummary,
-  HolidayCalendarSummary,
 } from './work-arrangements.service';
+import type {
+  HolidayCalendarDetail,
+  HolidayCalendarEntrySummary,
+  HolidayCalendarHistoryEntry,
+  HolidayCalendarSuccessor,
+  HolidayCalendarSummary,
+  HolidayCalendarVersionSummary,
+} from './holiday-calendars.service';
+import type {
+  AttendanceResolution,
+  ScheduleAssignmentSummary,
+} from './schedule-assignments.service';
 
 class WorkScheduleBreakDto {
   readonly id: string;
@@ -281,13 +292,66 @@ export class WorkArrangementDetailDto {
   }
 }
 
+export class HolidayCalendarEntryDto {
+  readonly id: string;
+  readonly holidayDate: string;
+  readonly name: string;
+  readonly dayType: HolidayCalendarEntrySummary['dayType'];
+  readonly sourceReference: string;
+  readonly rowVersion: number;
+
+  constructor(entry: HolidayCalendarEntrySummary) {
+    this.id = entry.id;
+    this.holidayDate = entry.holidayDate;
+    this.name = entry.name;
+    this.dayType = entry.dayType;
+    this.sourceReference = entry.sourceReference;
+    this.rowVersion = entry.rowVersion;
+  }
+}
+
+export class HolidayCalendarVersionDto {
+  readonly id: string;
+  readonly holidayCalendarId: string;
+  readonly versionNo: number;
+  readonly authorityDocumentVersionId: string | null;
+  readonly approvingAuthority: string | null;
+  readonly versionState: HolidayCalendarVersionSummary['versionState'];
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly activatedAt: string | null;
+  readonly entries: HolidayCalendarEntryDto[];
+  readonly rowVersion: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+
+  constructor(version: HolidayCalendarVersionSummary) {
+    this.id = version.id;
+    this.holidayCalendarId = version.holidayCalendarId;
+    this.versionNo = version.versionNo;
+    this.authorityDocumentVersionId = version.authorityDocumentVersionId;
+    this.approvingAuthority = version.approvingAuthority;
+    this.versionState = version.versionState;
+    this.effectiveFrom = version.effectiveFrom;
+    this.effectiveTo = version.effectiveTo;
+    this.activatedAt = version.activatedAt;
+    this.entries = version.entries.map((entry) => new HolidayCalendarEntryDto(entry));
+    this.rowVersion = version.rowVersion;
+    this.createdAt = version.createdAt;
+    this.updatedAt = version.updatedAt;
+  }
+}
+
 export class HolidayCalendarDto {
   readonly id: string;
   readonly code: string;
   readonly name: string;
   readonly scopeType: HolidayCalendarSummary['scopeType'];
   readonly scopeReference: string;
-  readonly currentVersionId: string | null;
+  readonly currentVersion: HolidayCalendarVersionDto | null;
+  readonly draft: HolidayCalendarVersionDto | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 
   constructor(calendar: HolidayCalendarSummary) {
     this.id = calendar.id;
@@ -295,7 +359,12 @@ export class HolidayCalendarDto {
     this.name = calendar.name;
     this.scopeType = calendar.scopeType;
     this.scopeReference = calendar.scopeReference;
-    this.currentVersionId = calendar.currentVersionId;
+    this.currentVersion = calendar.currentVersion
+      ? new HolidayCalendarVersionDto(calendar.currentVersion)
+      : null;
+    this.draft = calendar.draft ? new HolidayCalendarVersionDto(calendar.draft) : null;
+    this.createdAt = calendar.createdAt;
+    this.updatedAt = calendar.updatedAt;
   }
 }
 
@@ -304,5 +373,129 @@ export class HolidayCalendarListResponseDto {
 
   constructor(items: HolidayCalendarSummary[]) {
     this.items = items.map((item) => new HolidayCalendarDto(item));
+  }
+}
+
+class HolidayCalendarHistoryEntryDto {
+  readonly id: string;
+  readonly action: string;
+  readonly previousStatus: string | null;
+  readonly newStatus: string | null;
+  readonly reason: string | null;
+  readonly effectiveDate: string | null;
+  readonly occurredAt: string;
+
+  constructor(entry: HolidayCalendarHistoryEntry) {
+    this.id = entry.id;
+    this.action = entry.action;
+    this.previousStatus = entry.previousStatus;
+    this.newStatus = entry.newStatus;
+    this.reason = entry.reason;
+    this.effectiveDate = entry.effectiveDate;
+    this.occurredAt = entry.occurredAt;
+  }
+}
+
+export class HolidayCalendarDetailDto {
+  readonly calendar: HolidayCalendarDto;
+  readonly asOf: string;
+  readonly effective: HolidayCalendarVersionDto | null;
+  readonly versions: HolidayCalendarVersionDto[];
+  readonly history: HolidayCalendarHistoryEntryDto[];
+
+  constructor(detail: HolidayCalendarDetail) {
+    this.calendar = new HolidayCalendarDto(detail.calendar);
+    this.asOf = detail.asOf;
+    this.effective = detail.effective ? new HolidayCalendarVersionDto(detail.effective) : null;
+    this.versions = detail.versions.map((version) => new HolidayCalendarVersionDto(version));
+    this.history = detail.history.map((entry) => new HolidayCalendarHistoryEntryDto(entry));
+  }
+}
+
+export class HolidayCalendarSuccessorDto {
+  readonly current: HolidayCalendarVersionDto;
+  readonly draft: HolidayCalendarVersionDto;
+
+  constructor(successor: HolidayCalendarSuccessor) {
+    this.current = new HolidayCalendarVersionDto(successor.current);
+    this.draft = new HolidayCalendarVersionDto(successor.draft);
+  }
+}
+
+export class ScheduleAssignmentDto {
+  readonly id: string;
+  readonly employee: ScheduleAssignmentSummary['employee'];
+  readonly workScheduleVersionId: string;
+  readonly workScheduleVersionNo: number;
+  readonly scheduleType: ScheduleAssignmentSummary['scheduleType'];
+  readonly workScheduleCode: string;
+  readonly workScheduleName: string;
+  readonly workArrangementVersionId: string;
+  readonly workArrangementVersionNo: number;
+  readonly arrangementType: ScheduleAssignmentSummary['arrangementType'];
+  readonly workArrangementCode: string;
+  readonly workArrangementName: string;
+  readonly holidayCalendarId: string;
+  readonly authorityDocumentVersionId: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly assignedByMembershipId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly rowVersion: number;
+
+  constructor(assignment: ScheduleAssignmentSummary) {
+    this.id = assignment.id;
+    this.employee = assignment.employee;
+    this.workScheduleVersionId = assignment.workScheduleVersionId;
+    this.workScheduleVersionNo = assignment.workScheduleVersionNo;
+    this.scheduleType = assignment.scheduleType;
+    this.workScheduleCode = assignment.workScheduleCode;
+    this.workScheduleName = assignment.workScheduleName;
+    this.workArrangementVersionId = assignment.workArrangementVersionId;
+    this.workArrangementVersionNo = assignment.workArrangementVersionNo;
+    this.arrangementType = assignment.arrangementType;
+    this.workArrangementCode = assignment.workArrangementCode;
+    this.workArrangementName = assignment.workArrangementName;
+    this.holidayCalendarId = assignment.holidayCalendarId;
+    this.authorityDocumentVersionId = assignment.authorityDocumentVersionId;
+    this.effectiveFrom = assignment.effectiveFrom;
+    this.effectiveTo = assignment.effectiveTo;
+    this.assignedByMembershipId = assignment.assignedByMembershipId;
+    this.createdAt = assignment.createdAt;
+    this.updatedAt = assignment.updatedAt;
+    this.rowVersion = assignment.rowVersion;
+  }
+}
+
+export class ScheduleAssignmentListResponseDto {
+  readonly items: ScheduleAssignmentDto[];
+
+  constructor(items: ScheduleAssignmentSummary[]) {
+    this.items = items.map((item) => new ScheduleAssignmentDto(item));
+  }
+}
+
+export class AttendanceResolutionDto {
+  readonly employeeId: string;
+  readonly workDate: string;
+  readonly assignment: ScheduleAssignmentDto;
+  readonly workScheduleVersion: WorkScheduleVersionDto;
+  readonly workArrangementVersion: WorkArrangementVersionDto;
+  readonly holidayCalendarVersion: HolidayCalendarVersionDto;
+  readonly dayRule: WorkScheduleDayRuleDto;
+  readonly holidayEntries: HolidayCalendarEntryDto[];
+
+  constructor(resolution: AttendanceResolution) {
+    this.employeeId = resolution.employeeId;
+    this.workDate = resolution.workDate;
+    this.assignment = new ScheduleAssignmentDto(resolution.assignment);
+    this.workScheduleVersion = new WorkScheduleVersionDto(resolution.workScheduleVersion);
+    this.workArrangementVersion = new WorkArrangementVersionDto(resolution.workArrangementVersion);
+    this.holidayCalendarVersion = new HolidayCalendarVersionDto(resolution.holidayCalendarVersion);
+    this.dayRule = new WorkScheduleDayRuleDto(resolution.dayRule);
+    this.holidayEntries = resolution.holidayEntries.map(
+      (entry) => new HolidayCalendarEntryDto(entry),
+    );
   }
 }

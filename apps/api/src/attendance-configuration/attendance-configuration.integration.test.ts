@@ -4,6 +4,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { attendanceConfigurationAuditWriter } from './attendance-configuration.audit';
+import { HolidayCalendarsService } from './holiday-calendars.service';
 import { WorkArrangementsService } from './work-arrangements.service';
 import { WorkSchedulesService } from './work-schedules.service';
 
@@ -312,6 +313,10 @@ it.skipIf(!enabled)(
       attendanceConfigurationAuditWriter,
       documentsService,
     );
+    const holidayCalendars = new HolidayCalendarsService(
+      attendanceConfigurationAuditWriter,
+      documentsService,
+    );
     const initialEvidence = await createEvidence(admin, agency.id, membership.id, `${suffix}-1`);
     const successorEvidence = await createEvidence(admin, agency.id, membership.id, `${suffix}-2`);
     const arrangementEvidence = await createEvidence(
@@ -498,7 +503,7 @@ it.skipIf(!enabled)(
       );
       expect(arrangementActive.currentVersion?.arrangementType).toBe('HYBRID');
       expect(arrangementActive.currentVersion?.permittedScheduleTypes).toEqual(['REGULAR']);
-      await expect(arrangements.listHolidayCalendars(context)).resolves.toHaveLength(1);
+      await expect(holidayCalendars.list(context)).resolves.toHaveLength(1);
       const arrangementDetail = await arrangements.findById(context, arrangement.id);
       expect(arrangementDetail?.history.map(({ action }) => action)).toEqual(
         expect.arrayContaining(['WORK_ARRANGEMENT_CREATED', 'WORK_ARRANGEMENT_VERSION_ACTIVATED']),

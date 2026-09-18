@@ -803,6 +803,26 @@ export class WorkSchedulesService {
     normalizeDayRules(draft.dayRules.map(storedDayRuleInput));
   }
 
+  /** Load one published Work Schedule Version for calculation input resolution. */
+  async findVersionInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    versionId: string,
+    asOf: Date,
+  ): Promise<WorkScheduleVersionSummary | null> {
+    const record = await transaction.workScheduleVersion.findFirst({
+      where: {
+        agencyId,
+        id: versionId,
+        status: { in: ['ACTIVE', 'SUPERSEDED'] },
+        effectiveFrom: { lte: asOf },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+      },
+      select: versionSelect,
+    });
+    return record ? versionSummary(record) : null;
+  }
+
   private async writeDayRules(
     transaction: Prisma.TransactionClient,
     agencyId: string,

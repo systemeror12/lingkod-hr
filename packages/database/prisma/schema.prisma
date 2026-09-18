@@ -1830,6 +1830,7 @@ model Employee {
   payrollBankAccounts    PayrollBankAccount[]    @relation("EmployeePayrollBankAccounts")
   salnComplianceRecords  SalnComplianceRecord[]  @relation("EmployeeSalnComplianceRecords")
   serviceRecordSnapshots ServiceRecordSnapshot[] @relation("EmployeeServiceRecords")
+  scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3120,8 +3121,9 @@ model WorkScheduleVersion {
   updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion                 Int       @default(1) @map("row_version")
 
-  workSchedule WorkSchedule         @relation("WorkScheduleVersions", fields: [agencyId, workScheduleId], references: [agencyId, id], onDelete: Restrict)
-  dayRules     WorkScheduleDayRule[]
+  workSchedule        WorkSchedule         @relation("WorkScheduleVersions", fields: [agencyId, workScheduleId], references: [agencyId, id], onDelete: Restrict)
+  dayRules            WorkScheduleDayRule[]
+  scheduleAssignments ScheduleAssignment[] @relation("ScheduleAssignmentWorkScheduleVersion")
 
   @@unique([workScheduleId, versionNo])
   @@unique([agencyId, id])
@@ -3183,6 +3185,7 @@ model HolidayCalendar {
   rowVersion       Int      @default(1) @map("row_version")
 
   workArrangementVersions WorkArrangementVersion[]
+  versions                HolidayCalendarVersion[]
 
   @@unique([agencyId, code])
   @@unique([agencyId, id])
@@ -3225,12 +3228,78 @@ model WorkArrangementVersion {
   updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion                 Int       @default(1) @map("row_version")
 
-  workArrangement WorkArrangement @relation("WorkArrangementVersions", fields: [agencyId, workArrangementId], references: [agencyId, id], onDelete: Restrict)
-  holidayCalendar HolidayCalendar @relation(fields: [agencyId, holidayCalendarId], references: [agencyId, id], onDelete: Restrict)
+  workArrangement     WorkArrangement     @relation("WorkArrangementVersions", fields: [agencyId, workArrangementId], references: [agencyId, id], onDelete: Restrict)
+  holidayCalendar     HolidayCalendar     @relation(fields: [agencyId, holidayCalendarId], references: [agencyId, id], onDelete: Restrict)
+  scheduleAssignments ScheduleAssignment[] @relation("ScheduleAssignmentWorkArrangementVersion")
 
   @@unique([workArrangementId, versionNo])
   @@unique([agencyId, id])
   @@map("work_arrangement_versions")
+}
+
+model HolidayCalendarVersion {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  holidayCalendarId          String    @map("holiday_calendar_id") @db.Uuid
+  versionNo                  Int       @map("version_no")
+  authorityDocumentVersionId String?   @map("authority_document_version_id") @db.Uuid
+  approvingAuthority         String?   @map("approving_authority")
+  status                     String
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  activatedByMembershipId    String?   @map("activated_by_membership_id") @db.Uuid
+  activatedAt                DateTime? @map("activated_at") @db.Timestamptz(6)
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  holidayCalendar HolidayCalendar        @relation(fields: [agencyId, holidayCalendarId], references: [agencyId, id], onDelete: Restrict)
+  entries         HolidayCalendarEntry[]
+
+  @@unique([holidayCalendarId, versionNo])
+  @@unique([agencyId, id])
+  @@map("holiday_calendar_versions")
+}
+
+model HolidayCalendarEntry {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  holidayCalendarVersionId String  @map("holiday_calendar_version_id") @db.Uuid
+  holidayDate             DateTime @map("holiday_date") @db.Date
+  name                    String
+  dayType                 String   @map("day_type")
+  sourceReference         String   @map("source_reference")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion              Int      @default(1) @map("row_version")
+
+  holidayCalendarVersion HolidayCalendarVersion @relation(fields: [agencyId, holidayCalendarVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([holidayCalendarVersionId, holidayDate, dayType])
+  @@unique([agencyId, id])
+  @@map("holiday_calendar_entries")
+}
+
+model ScheduleAssignment {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  employeeId                 String    @map("employee_id") @db.Uuid
+  workScheduleVersionId      String    @map("work_schedule_version_id") @db.Uuid
+  workArrangementVersionId   String    @map("work_arrangement_version_id") @db.Uuid
+  authorityDocumentVersionId String    @map("authority_document_version_id") @db.Uuid
+  effectiveFrom              DateTime  @map("effective_from") @db.Date
+  effectiveTo                DateTime? @map("effective_to") @db.Date
+  assignedByMembershipId     String    @map("assigned_by_membership_id") @db.Uuid
+  createdAt                  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion                 Int       @default(1) @map("row_version")
+
+  employee              Employee              @relation("ScheduleAssignmentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  workScheduleVersion   WorkScheduleVersion   @relation("ScheduleAssignmentWorkScheduleVersion", fields: [agencyId, workScheduleVersionId], references: [agencyId, id], onDelete: Restrict)
+  workArrangementVersion WorkArrangementVersion @relation("ScheduleAssignmentWorkArrangementVersion", fields: [agencyId, workArrangementVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@map("schedule_assignments")
 }
 
 model LeaveType {
