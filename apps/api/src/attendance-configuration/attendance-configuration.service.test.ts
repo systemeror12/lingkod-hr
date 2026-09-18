@@ -123,10 +123,6 @@ it('rechecks permissions before opening a Work Arrangement workflow', async () =
       effectiveDate: '2026-01-01',
     }),
   ).rejects.toMatchObject({ code: 'WORK_ARRANGEMENT_MANAGE_FORBIDDEN', statusCode: 403 });
-  await expect(service.listHolidayCalendars(context([]))).rejects.toMatchObject({
-    code: 'ATTENDANCE_CONFIGURATION_READ_FORBIDDEN',
-    statusCode: 403,
-  });
   await expect(
     service.create(context([{ code: 'attendance.configuration.manage', scopePolicy: 'AGENCY' }]), {
       code: 'HYBRID-2026',

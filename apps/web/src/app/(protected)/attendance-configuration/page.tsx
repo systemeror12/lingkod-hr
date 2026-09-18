@@ -74,6 +74,7 @@ export default async function AttendanceConfigurationPage() {
       arrangements={(arrangements as WorkArrangementListResponse).items}
       calendars={(calendars as HolidayCalendarListResponse).items}
       canActivate={hasPermission(session, 'attendance.configuration.activate')}
+      canAssign={hasPermission(session, 'attendance.assignments.manage')}
       canManage={hasPermission(session, 'attendance.configuration.manage')}
       schedules={(schedules as WorkScheduleListResponse).items}
     />

@@ -1,7 +1,10 @@
 import { expect, it, vi } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { AttendanceConfigurationController } from './attendance-configuration.controller';
-import { AttendanceConfigurationServiceError } from './attendance-configuration.types';
+import {
+  AttendanceConfigurationServiceError,
+  AttendanceExceptionError,
+} from './attendance-configuration.types';
 import type { WorkScheduleSummary } from './work-schedules.service';
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
@@ -69,7 +72,20 @@ function serviceMocks() {
       createSuccessor: vi.fn(),
       updateDraft: vi.fn(),
       activate: vi.fn(),
-      listHolidayCalendars: vi.fn(),
+    },
+    holidayCalendars: {
+      list: vi.fn(),
+      findById: vi.fn(),
+      create: vi.fn(),
+      createSuccessor: vi.fn(),
+      updateDraft: vi.fn(),
+      activate: vi.fn(),
+    },
+    assignments: {
+      list: vi.fn(),
+      create: vi.fn(),
+      end: vi.fn(),
+      resolveForWorkDate: vi.fn(),
     },
   };
 }
@@ -78,6 +94,8 @@ function controllerWith(mocks: ReturnType<typeof serviceMocks>) {
   return new AttendanceConfigurationController(
     mocks.schedules as never,
     mocks.arrangements as never,
+    mocks.holidayCalendars as never,
+    mocks.assignments as never,
   );
 }
 
@@ -204,14 +222,17 @@ it('forwards Work Arrangement transitions and Holiday Calendar reads', async () 
     current: { id: scheduleId },
     draft: { id: draftId },
   });
-  mocks.arrangements.listHolidayCalendars.mockResolvedValue([
+  mocks.holidayCalendars.list.mockResolvedValue([
     {
       id: documentVersionId,
       code: 'PH-NATIONAL',
       name: 'Philippine National Holidays',
       scopeType: 'AGENCY',
       scopeReference: 'Agency-wide',
-      currentVersionId: null,
+      currentVersion: null,
+      draft: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
     },
   ]);
   const controller = controllerWith(mocks);
@@ -221,5 +242,112 @@ it('forwards Work Arrangement transitions and Holiday Calendar reads', async () 
   ).resolves.toMatchObject({ id: draftId });
   await expect(controller.listHolidayCalendars(agencyId, context)).resolves.toMatchObject({
     items: [expect.objectContaining({ code: 'PH-NATIONAL' })],
+  });
+});
+
+const employeeId = '00000000-0000-4000-8000-000000000008';
+const assignmentId = '00000000-0000-4000-8000-000000000009';
+
+const assignment = {
+  id: assignmentId,
+  employee: { id: employeeId, employeeNumber: 'EMP-0001', legalName: 'Maria Santos' },
+  workScheduleVersionId: scheduleId,
+  workScheduleVersionNo: 1,
+  scheduleType: 'REGULAR' as const,
+  workScheduleCode: 'ORDINARY',
+  workScheduleName: 'Ordinary Work Schedule',
+  workArrangementVersionId: draftId,
+  workArrangementVersionNo: 1,
+  arrangementType: 'ONSITE' as const,
+  workArrangementCode: 'ONSITE',
+  workArrangementName: 'Onsite Work Arrangement',
+  holidayCalendarId: documentVersionId,
+  authorityDocumentVersionId: documentVersionId,
+  effectiveFrom: '2026-01-05',
+  effectiveTo: null,
+  assignedByMembershipId: context.membershipId,
+  createdAt: '2026-01-05T00:00:00.000Z',
+  updatedAt: '2026-01-05T00:00:00.000Z',
+  rowVersion: 1,
+};
+
+it('forwards Schedule Assignment transitions with the Idempotency-Key', async () => {
+  const mocks = serviceMocks();
+  mocks.assignments.create.mockResolvedValue(assignment);
+  mocks.assignments.end.mockResolvedValue({ ...assignment, effectiveTo: '2026-06-30' });
+  const controller = controllerWith(mocks);
+
+  await expect(
+    controller.createScheduleAssignment(
+      agencyId,
+      {
+        employeeId,
+        workScheduleVersionId: scheduleId,
+        workArrangementVersionId: draftId,
+        authorityDocumentVersionId: documentVersionId,
+        effectiveFrom: '2026-01-05',
+      },
+      'assignment-create',
+      context,
+    ),
+  ).resolves.toMatchObject({ id: assignmentId, effectiveTo: null });
+  expect(mocks.assignments.create).toHaveBeenCalledWith(
+    context,
+    {
+      employeeId,
+      workScheduleVersionId: scheduleId,
+      workArrangementVersionId: draftId,
+      authorityDocumentVersionId: documentVersionId,
+      effectiveFrom: '2026-01-05',
+    },
+    'assignment-create',
+  );
+
+  await expect(
+    controller.endScheduleAssignment(
+      agencyId,
+      assignmentId,
+      { effectiveTo: '2026-06-30', reason: 'Reassignment.' },
+      context,
+    ),
+  ).resolves.toMatchObject({ id: assignmentId, effectiveTo: '2026-06-30' });
+  expect(mocks.assignments.end).toHaveBeenCalledWith(context, assignmentId, {
+    effectiveTo: '2026-06-30',
+    reason: 'Reassignment.',
+  });
+
+  mocks.assignments.create.mockClear();
+  await expect(
+    controller.createScheduleAssignment(agencyId, { employeeId }, undefined, context),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT', requestId: context.requestId } },
+  });
+  expect(mocks.assignments.create).not.toHaveBeenCalled();
+});
+
+it('exposes the Attendance Exception cause on the blocking error envelope', async () => {
+  const mocks = serviceMocks();
+  mocks.assignments.resolveForWorkDate.mockRejectedValue(
+    new AttendanceExceptionError(
+      'MISSING_SCHEDULE_ASSIGNMENT',
+      'No Schedule Assignment is effective on the Work Date.',
+      { employeeId, workDate: '2026-01-05' },
+    ),
+  );
+  const controller = controllerWith(mocks);
+
+  await expect(
+    controller.resolveScheduleAssignment(agencyId, employeeId, '2026-01-05', context),
+  ).rejects.toMatchObject({
+    status: 409,
+    response: {
+      error: {
+        code: 'ATTENDANCE_EXCEPTION',
+        exceptionType: 'MISSING_SCHEDULE_ASSIGNMENT',
+        details: { employeeId, workDate: '2026-01-05' },
+        requestId: context.requestId,
+      },
+    },
   });
 });

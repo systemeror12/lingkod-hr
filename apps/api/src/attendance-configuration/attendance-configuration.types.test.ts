@@ -1,11 +1,13 @@
 import { expect, it } from 'vitest';
 import {
+  AttendanceExceptionError,
   WEEKDAYS,
   addDays,
   formatDate,
   fromTimeValue,
   normalizeArrangementDefinition,
   normalizeDayRules,
+  normalizeHolidayCalendarDefinition,
   normalizeScheduleDefinition,
   toDatabaseDate,
   toTimeValue,
@@ -318,4 +320,89 @@ it('keeps date and time conversions stable', () => {
   expect(toTimeValue(8 * 60 + 30).toISOString()).toBe('1970-01-01T08:30:00.000Z');
   expect(fromTimeValue(toTimeValue(23 * 60 + 59))).toBe('23:59');
   expect(() => toDatabaseDate('2026-02-30')).toThrow(/effective date is invalid/);
+});
+
+it('normalizes Holiday Calendar versions in date and day type order', () => {
+  const normalized = normalizeHolidayCalendarDefinition({
+    effectiveDate: '2026-01-01',
+    entries: [
+      {
+        holidayDate: '2026-12-25',
+        name: ' Christmas Day ',
+        dayType: 'REGULAR_HOLIDAY',
+        sourceReference: ' Proclamation No. 123 ',
+      },
+      {
+        holidayDate: '2026-01-01',
+        name: 'New Year',
+        dayType: 'SPECIAL_NON_WORKING',
+        sourceReference: 'Proclamation No. 123',
+      },
+      {
+        holidayDate: '2026-01-01',
+        name: 'New Year',
+        dayType: 'REGULAR_HOLIDAY',
+        sourceReference: 'Proclamation No. 123',
+      },
+    ],
+  });
+
+  expect(normalized.effectiveDate).toBe('2026-01-01');
+  expect(normalized.entries.map((entry) => `${entry.holidayDate}:${entry.dayType}`)).toEqual([
+    '2026-01-01:REGULAR_HOLIDAY',
+    '2026-01-01:SPECIAL_NON_WORKING',
+    '2026-12-25:REGULAR_HOLIDAY',
+  ]);
+  expect(normalized.entries[2]).toMatchObject({
+    name: 'Christmas Day',
+    sourceReference: 'Proclamation No. 123',
+  });
+
+  expect(() =>
+    normalizeHolidayCalendarDefinition({
+      effectiveDate: '2026-01-01',
+      entries: [
+        {
+          holidayDate: '2026-12-25',
+          name: 'Christmas Day',
+          dayType: 'REGULAR_HOLIDAY',
+          sourceReference: 'Proclamation No. 123',
+        },
+        {
+          holidayDate: '2026-12-25',
+          name: 'Christmas Day',
+          dayType: 'REGULAR_HOLIDAY',
+          sourceReference: 'Proclamation No. 123',
+        },
+      ],
+    }),
+  ).toThrow(/cannot repeat one day type/);
+  expect(() =>
+    normalizeHolidayCalendarDefinition({
+      effectiveDate: '2026-01-01',
+      entries: [
+        {
+          holidayDate: '2026-12-25',
+          name: 'Christmas Day',
+          dayType: 'FIESTA' as never,
+          sourceReference: 'Proclamation No. 123',
+        },
+      ],
+    }),
+  ).toThrow(/supported holiday day type/);
+});
+
+it('reports an Attendance Exception with its cause and details', () => {
+  const exception = new AttendanceExceptionError(
+    'MISSING_SCHEDULE_ASSIGNMENT',
+    'No Schedule Assignment is effective on the Work Date.',
+    { employeeId: 'employee-1', workDate: '2026-01-05' },
+  );
+
+  expect(exception).toMatchObject({
+    code: 'ATTENDANCE_EXCEPTION',
+    statusCode: 409,
+    exceptionType: 'MISSING_SCHEDULE_ASSIGNMENT',
+    details: { employeeId: 'employee-1', workDate: '2026-01-05' },
+  });
 });

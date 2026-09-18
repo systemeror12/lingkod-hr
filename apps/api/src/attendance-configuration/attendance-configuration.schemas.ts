@@ -2,6 +2,8 @@ import { z } from 'zod';
 import {
   DAY_RULE_TYPES,
   EVENT_PATTERNS,
+  HOLIDAY_CALENDAR_SCOPE_TYPES,
+  HOLIDAY_DAY_TYPES,
   WORK_ARRANGEMENT_TYPES,
   WORK_SCHEDULE_TYPES,
 } from './attendance-configuration.types';
@@ -90,4 +92,53 @@ export const attendanceConfigurationActivationSchema = z
 
 export const attendanceConfigurationIdSchema = z.string().uuid();
 export const attendanceConfigurationAsOfSchema = z.string().date().optional();
+export const attendanceConfigurationWorkDateSchema = z.string().date();
 export const attendanceConfigurationIdempotencyKeySchema = z.string().trim().min(1).max(200);
+
+const holidayEntrySchema = z
+  .object({
+    holidayDate: z.string().date(),
+    name: z.string().trim().min(1).max(200),
+    dayType: z.enum(HOLIDAY_DAY_TYPES),
+    sourceReference: z.string().trim().min(1).max(300),
+  })
+  .strict();
+
+const holidayCalendarDefinition = {
+  effectiveDate: z.string().date(),
+  entries: z.array(holidayEntrySchema).max(400),
+};
+
+export const holidayCalendarCreateSchema = z
+  .object({
+    code: z.string().trim().min(1).max(80),
+    name: z.string().trim().min(1).max(200),
+    scopeType: z.enum(HOLIDAY_CALENDAR_SCOPE_TYPES),
+    scopeReference: z.string().trim().min(1).max(300),
+    ...holidayCalendarDefinition,
+  })
+  .strict();
+
+export const holidayCalendarDraftUpdateSchema = z
+  .object({
+    ...holidayCalendarDefinition,
+    rowVersion: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export const scheduleAssignmentCreateSchema = z
+  .object({
+    employeeId: z.string().uuid(),
+    workScheduleVersionId: z.string().uuid(),
+    workArrangementVersionId: z.string().uuid(),
+    authorityDocumentVersionId: z.string().uuid(),
+    effectiveFrom: z.string().date(),
+  })
+  .strict();
+
+export const scheduleAssignmentEndSchema = z
+  .object({
+    effectiveTo: z.string().date(),
+    reason: z.string().trim().min(1).max(500),
+  })
+  .strict();

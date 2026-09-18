@@ -19,7 +19,6 @@ import {
   WORK_SCHEDULE_TYPES,
   type ActivateAttendanceConfigurationInput,
   type CreateWorkArrangementInput,
-  type HolidayCalendarScopeType,
   type UpdateWorkArrangementDraftInput,
   type WorkArrangementType,
   type WorkArrangementVersionState,
@@ -75,15 +74,6 @@ export interface WorkArrangementDetail {
 export interface WorkArrangementSuccessor {
   current: WorkArrangementVersionSummary;
   draft: WorkArrangementVersionSummary;
-}
-
-export interface HolidayCalendarSummary {
-  id: string;
-  code: string;
-  name: string;
-  scopeType: HolidayCalendarScopeType;
-  scopeReference: string;
-  currentVersionId: string | null;
 }
 
 const versionSelect = {
@@ -204,36 +194,6 @@ export class WorkArrangementsService {
     private readonly auditWriter: AttendanceConfigurationAuditWriter,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
   ) {}
-
-  async listHolidayCalendars(context: RequestContext): Promise<HolidayCalendarSummary[]> {
-    this.assertPermission(
-      context,
-      'attendance.configuration.read',
-      'ATTENDANCE_CONFIGURATION_READ_FORBIDDEN',
-    );
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const records = await transaction.holidayCalendar.findMany({
-        where: { agencyId: context.agencyId },
-        orderBy: [{ name: 'asc' }],
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          scopeType: true,
-          scopeReference: true,
-          currentVersionId: true,
-        },
-      });
-      return records.map((record) => ({
-        id: record.id,
-        code: record.code,
-        name: record.name,
-        scopeType: record.scopeType as HolidayCalendarScopeType,
-        scopeReference: record.scopeReference,
-        currentVersionId: record.currentVersionId,
-      }));
-    });
-  }
 
   async list(context: RequestContext): Promise<WorkArrangementSummary[]> {
     this.assertPermission(
@@ -683,6 +643,26 @@ export class WorkArrangementsService {
       });
       return arrangementSummary(result, current);
     });
+  }
+
+  /** Load one published Work Arrangement Version for calculation input resolution. */
+  async findVersionInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    versionId: string,
+    asOf: Date,
+  ): Promise<WorkArrangementVersionSummary | null> {
+    const record = await transaction.workArrangementVersion.findFirst({
+      where: {
+        agencyId,
+        id: versionId,
+        status: { in: ['ACTIVE', 'SUPERSEDED'] },
+        effectiveFrom: { lte: asOf },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
+      },
+      select: versionSelect,
+    });
+    return record ? versionSummary(record) : null;
   }
 
   private async assertHolidayCalendar(
