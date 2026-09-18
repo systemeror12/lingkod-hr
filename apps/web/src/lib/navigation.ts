@@ -143,6 +143,12 @@ const destinations: readonly (Destination & {
     icon: 'leave',
     permission: 'leave.types.read',
   },
+  {
+    href: '/leave-accounts',
+    label: 'Leave Accounts',
+    icon: 'leave',
+    permission: 'leave.accounts.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 

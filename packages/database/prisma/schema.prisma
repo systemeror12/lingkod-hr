@@ -120,6 +120,11 @@ model Agency {
   leaveTypes                    LeaveType[]
   leavePolicyVersions           LeavePolicyVersion[]
   leavePolicyAuthorities        LeavePolicyAuthority[]
+  leaveAccounts                 LeaveAccount[]
+  leaveLedgerEntries            LeaveLedgerEntry[]
+  leaveCreditCommitments        LeaveCreditCommitment[]
+  leaveAccountOpenings          LeaveAccountOpening[]
+  leaveLedgerAdjustments        LeaveLedgerAdjustment[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -376,6 +381,9 @@ model AgencyMembership {
   createdLeavePolicyVersions             LeavePolicyVersion[]                 @relation("LeavePolicyVersionCreator")
   updatedLeavePolicyVersions             LeavePolicyVersion[]                 @relation("LeavePolicyVersionUpdater")
   createdLeavePolicyAuthorities          LeavePolicyAuthority[]               @relation("LeavePolicyAuthorityCreator")
+  openedLeaveAccounts                    LeaveAccountOpening[]                @relation("LeaveAccountOpeningOpener")
+  postedLeaveLedgerEntries               LeaveLedgerEntry[]                   @relation("LeaveLedgerEntryPoster")
+  recordedLeaveLedgerAdjustments         LeaveLedgerAdjustment[]              @relation("LeaveLedgerAdjustmentRecorder")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1490,6 +1498,9 @@ model Document {
   serviceRecordCorrectionDocuments        ServiceRecordSnapshot[]        @relation("ServiceRecordCorrectionDocument")
   applicationDocuments                    ApplicationDocument[]          @relation("ApplicationDocumentDocument")
   leavePolicyAuthorityDocuments           LeavePolicyAuthority[]         @relation("LeavePolicyAuthorityDocument")
+  leaveAccountOpeningEvidenceDocuments    LeaveAccountOpening[]          @relation("LeaveAccountOpeningEvidence")
+  leaveLedgerAdjustmentAuthorityDocuments LeaveLedgerAdjustment[]        @relation("LeaveLedgerAdjustmentAuthority")
+  leaveLedgerAdjustmentEvidenceDocuments  LeaveLedgerAdjustment[]        @relation("LeaveLedgerAdjustmentEvidence")
 
   @@unique([agencyId, id])
   @@unique([agencyId, documentNo])
@@ -1568,6 +1579,9 @@ model DocumentVersion {
   assumptionOutcomeAuthorityVersions               AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeAuthority")
   assumptionOutcomeEvidenceVersions                AssumptionOutcomeEvent[]              @relation("AssumptionOutcomeEvidence")
   leavePolicyAuthorityVersions                     LeavePolicyAuthority[]                @relation("LeavePolicyAuthorityVersion")
+  leaveAccountOpeningEvidenceVersions              LeaveAccountOpening[]                 @relation("LeaveAccountOpeningEvidenceVersion")
+  leaveLedgerAdjustmentAuthorityVersions           LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentAuthorityVersion")
+  leaveLedgerAdjustmentEvidenceVersions            LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -1831,6 +1845,7 @@ model Employee {
   salnComplianceRecords  SalnComplianceRecord[]  @relation("EmployeeSalnComplianceRecords")
   serviceRecordSnapshots ServiceRecordSnapshot[] @relation("EmployeeServiceRecords")
   scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
+  leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3319,6 +3334,7 @@ model LeaveType {
   currentPolicyVersion LeavePolicyVersion?    @relation("LeaveTypeCurrentPolicyVersion", fields: [agencyId, currentPolicyVersionId], references: [agencyId, id], onDelete: Restrict)
   versions             LeavePolicyVersion[]   @relation("LeavePolicyVersions")
   chargedPolicyVersions LeavePolicyVersion[]  @relation("LeavePolicyVersionChargedLeaveType")
+  leaveAccounts         LeaveAccount[]        @relation("LeaveAccountLeaveType")
   createdBy             AgencyMembership     @relation("LeaveTypeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy             AgencyMembership     @relation("LeaveTypeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
@@ -3355,6 +3371,9 @@ model LeavePolicyVersion {
   chargedLeaveType     LeaveType?             @relation("LeavePolicyVersionChargedLeaveType", fields: [agencyId, chargedLeaveTypeId], references: [agencyId, id], onDelete: Restrict)
   currentForLeaveTypes LeaveType[]            @relation("LeaveTypeCurrentPolicyVersion")
   authorities          LeavePolicyAuthority[] @relation("LeavePolicyVersionAuthorities")
+  ledgerEntries        LeaveLedgerEntry[]     @relation("LeaveLedgerEntryPolicyVersion")
+  accountOpenings      LeaveAccountOpening[]  @relation("LeaveAccountOpeningPolicyVersion")
+  ledgerAdjustments    LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustmentPolicyVersion")
   createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy            AgencyMembership       @relation("LeavePolicyVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
@@ -3387,4 +3406,137 @@ model LeavePolicyAuthority {
   @@unique([leavePolicyVersionId, documentVersionId, citation])
   @@index([agencyId, leavePolicyVersionId])
   @@map("leave_policy_authorities")
+}
+
+model LeaveAccount {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId    String    @map("agency_id") @db.Uuid
+  employeeId  String    @map("employee_id") @db.Uuid
+  leaveTypeId String    @map("leave_type_id") @db.Uuid
+  unitCode    String    @map("unit_code")
+  status      String
+  openedAt    DateTime  @map("opened_at") @db.Date
+  closedAt    DateTime? @map("closed_at") @db.Date
+
+  agency            Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee          Employee                @relation("LeaveAccountEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  leaveType         LeaveType               @relation("LeaveAccountLeaveType", fields: [agencyId, leaveTypeId], references: [agencyId, id], onDelete: Restrict)
+  opening           LeaveAccountOpening?
+  ledgerEntries     LeaveLedgerEntry[]      @relation("LeaveLedgerEntries")
+  creditCommitments LeaveCreditCommitment[] @relation("LeaveCreditCommitments")
+  adjustments       LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustments")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, status, employeeId])
+  @@map("leave_accounts")
+}
+
+model LeaveLedgerEntry {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String   @map("agency_id") @db.Uuid
+  leaveAccountId       String   @map("leave_account_id") @db.Uuid
+  quantity             Decimal  @db.Decimal(12, 4)
+  effectiveDate        DateTime @map("effective_date") @db.Date
+  sourceType           String   @map("source_type") @db.Citext
+  sourceId             String   @map("source_id") @db.Uuid
+  sourcePostingKey     String   @map("source_posting_key") @db.Citext
+  policyVersionId      String   @map("policy_version_id") @db.Uuid
+  reversesEntryId      String?  @map("reverses_entry_id") @db.Uuid
+  postedAt             DateTime @default(now()) @map("posted_at") @db.Timestamptz(6)
+  postedByMembershipId String?  @map("posted_by_membership_id") @db.Uuid
+
+  agency          Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveAccount    LeaveAccount            @relation("LeaveLedgerEntries", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion   LeavePolicyVersion      @relation("LeaveLedgerEntryPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  reversesEntry   LeaveLedgerEntry?       @relation("LeaveLedgerEntryReversal", fields: [agencyId, reversesEntryId], references: [agencyId, id], onDelete: Restrict)
+  reversedByEntry LeaveLedgerEntry[]      @relation("LeaveLedgerEntryReversal")
+  postedBy        AgencyMembership?       @relation("LeaveLedgerEntryPoster", fields: [agencyId, postedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  adjustments     LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustmentReversal")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, leaveAccountId, sourceType, sourceId, sourcePostingKey])
+  @@index([agencyId, leaveAccountId, effectiveDate, postedAt])
+  @@map("leave_ledger_entries")
+}
+
+model LeaveCreditCommitment {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String    @map("agency_id") @db.Uuid
+  leaveAccountId       String    @map("leave_account_id") @db.Uuid
+  quantity             Decimal   @db.Decimal(12, 4)
+  sourceType           String    @map("source_type") @db.Citext
+  sourceId             String    @map("source_id") @db.Uuid
+  sourceCommitmentKey  String    @map("source_commitment_key") @db.Citext
+  succeedsCommitmentId String?   @map("succeeds_commitment_id") @db.Uuid
+  status               String
+  effectiveFrom        DateTime  @map("effective_from") @db.Timestamptz(6)
+  endedAt              DateTime? @map("ended_at") @db.Timestamptz(6)
+
+  agency             Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveAccount       LeaveAccount           @relation("LeaveCreditCommitments", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  succeedsCommitment LeaveCreditCommitment?  @relation("LeaveCreditCommitmentSuccession", fields: [agencyId, succeedsCommitmentId], references: [agencyId, id], onDelete: Restrict)
+  supersededBy       LeaveCreditCommitment?  @relation("LeaveCreditCommitmentSuccession")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, succeedsCommitmentId])
+  @@unique([agencyId, leaveAccountId, sourceType, sourceId, sourceCommitmentKey])
+  @@index([agencyId, leaveAccountId, effectiveFrom])
+  @@map("leave_credit_commitments")
+}
+
+model LeaveAccountOpening {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveAccountId            String   @map("leave_account_id") @db.Uuid
+  policyVersionId           String   @map("policy_version_id") @db.Uuid
+  quantity                  Decimal  @db.Decimal(12, 4)
+  effectiveDate             DateTime @map("effective_date") @db.Date
+  evidenceDocumentId        String   @map("evidence_document_id") @db.Uuid
+  evidenceDocumentVersionId String   @map("evidence_document_version_id") @db.Uuid
+  reason                    String?
+  openedByMembershipId      String   @map("opened_by_membership_id") @db.Uuid
+  openedAt                  DateTime @default(now()) @map("opened_at") @db.Timestamptz(6)
+
+  agency          Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveAccount    LeaveAccount       @relation(fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion   LeavePolicyVersion @relation("LeaveAccountOpeningPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  evidence        Document           @relation("LeaveAccountOpeningEvidence", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion DocumentVersion    @relation("LeaveAccountOpeningEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  openedBy        AgencyMembership   @relation("LeaveAccountOpeningOpener", fields: [agencyId, openedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, leaveAccountId])
+  @@map("leave_account_openings")
+}
+
+model LeaveLedgerAdjustment {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  leaveAccountId             String   @map("leave_account_id") @db.Uuid
+  policyVersionId            String   @map("policy_version_id") @db.Uuid
+  quantity                   Decimal  @db.Decimal(12, 4)
+  effectiveDate              DateTime @map("effective_date") @db.Date
+  authorityDocumentId        String   @map("authority_document_id") @db.Uuid
+  authorityDocumentVersionId String   @map("authority_document_version_id") @db.Uuid
+  evidenceDocumentId         String   @map("evidence_document_id") @db.Uuid
+  evidenceDocumentVersionId  String   @map("evidence_document_version_id") @db.Uuid
+  reversesEntryId            String?  @map("reverses_entry_id") @db.Uuid
+  reason                     String
+  recordedByMembershipId     String   @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                 DateTime @default(now()) @map("recorded_at") @db.Timestamptz(6)
+
+  agency            Agency             @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveAccount      LeaveAccount       @relation("LeaveLedgerAdjustments", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion     LeavePolicyVersion @relation("LeaveLedgerAdjustmentPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  authority         Document           @relation("LeaveLedgerAdjustmentAuthority", fields: [agencyId, authorityDocumentId], references: [agencyId, id], onDelete: Restrict)
+  authorityVersion  DocumentVersion    @relation("LeaveLedgerAdjustmentAuthorityVersion", fields: [agencyId, authorityDocumentId, authorityDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  evidence          Document           @relation("LeaveLedgerAdjustmentEvidence", fields: [agencyId, evidenceDocumentId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion   DocumentVersion    @relation("LeaveLedgerAdjustmentEvidenceVersion", fields: [agencyId, evidenceDocumentId, evidenceDocumentVersionId], references: [agencyId, documentId, id], onDelete: Restrict)
+  reversesEntry     LeaveLedgerEntry?  @relation("LeaveLedgerAdjustmentReversal", fields: [agencyId, reversesEntryId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy        AgencyMembership   @relation("LeaveLedgerAdjustmentRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, reversesEntryId])
+  @@index([agencyId, leaveAccountId, recordedAt])
+  @@map("leave_ledger_adjustments")
 }
