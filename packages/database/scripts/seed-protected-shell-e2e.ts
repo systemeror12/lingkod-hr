@@ -281,6 +281,7 @@ async function seed(): Promise<void> {
       data: { currentServiceSegmentId: null },
     });
     await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceContext.deleteMany({ where: { agencyId: agency.id } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.plantillaPosition.updateMany({
@@ -2006,6 +2007,7 @@ async function seed(): Promise<void> {
       data: { employeeId: null },
     });
     await transaction.governmentIdentifier.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.attendanceContext.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.employee.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });

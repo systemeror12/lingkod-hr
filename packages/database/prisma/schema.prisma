@@ -384,6 +384,7 @@ model AgencyMembership {
   openedLeaveAccounts                    LeaveAccountOpening[]                @relation("LeaveAccountOpeningOpener")
   postedLeaveLedgerEntries               LeaveLedgerEntry[]                   @relation("LeaveLedgerEntryPoster")
   recordedLeaveLedgerAdjustments         LeaveLedgerAdjustment[]              @relation("LeaveLedgerAdjustmentRecorder")
+  enteredAttendanceContexts              AttendanceContext[]                  @relation("AttendanceContextRecorder")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1582,6 +1583,7 @@ model DocumentVersion {
   leaveAccountOpeningEvidenceVersions              LeaveAccountOpening[]                 @relation("LeaveAccountOpeningEvidenceVersion")
   leaveLedgerAdjustmentAuthorityVersions           LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentAuthorityVersion")
   leaveLedgerAdjustmentEvidenceVersions            LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentEvidenceVersion")
+  attendanceContextEvidenceVersions                AttendanceContext[]                   @relation("AttendanceContextEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -1846,6 +1848,7 @@ model Employee {
   serviceRecordSnapshots ServiceRecordSnapshot[] @relation("EmployeeServiceRecords")
   scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
   leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
+  attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3315,6 +3318,32 @@ model ScheduleAssignment {
 
   @@unique([agencyId, id])
   @@map("schedule_assignments")
+}
+
+model AttendanceContext {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  contextType               String    @map("context_type")
+  coverageMode              String    @map("coverage_mode")
+  workDate                  DateTime? @map("work_date") @db.Date
+  startsAt                  DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt                    DateTime? @map("ends_at") @db.Timestamptz(6)
+  reason                    String
+  sourceType                String?   @map("source_type")
+  sourceId                  String?   @map("source_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  enteredByMembershipId     String    @map("entered_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee        Employee         @relation("AttendanceContextEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion DocumentVersion? @relation("AttendanceContextEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  enteredBy       AgencyMembership @relation("AttendanceContextRecorder", fields: [agencyId, enteredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, workDate])
+  @@index([agencyId, employeeId, startsAt])
+  @@map("attendance_contexts")
 }
 
 model LeaveType {
