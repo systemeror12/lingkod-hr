@@ -596,6 +596,38 @@ it.skipIf(!enabled)(
         requestedQuantity: 3,
       });
 
+      await withDatabaseContext(
+        {
+          agencyId: agency.id,
+          membershipId: membership.id,
+          capabilities: ['personnel-baseline-transition'],
+        },
+        async (transaction) => {
+          await transaction.serviceSegment.updateMany({
+            where: { agencyId: agency.id, employeeId: employee.id, status: 'ACTIVE' },
+            data: { status: 'CLOSED', effectiveTo: new Date(wednesday) },
+          });
+          await transaction.serviceSegment.create({
+            data: {
+              agencyId: agency.id,
+              employeeId: employee.id,
+              organizationUnitId: unit.id,
+              appointmentStatus: 'PERMANENT',
+              salaryGrade: 18,
+              salaryStep: 3,
+              effectiveFrom: new Date(addDays(wednesday, 1)),
+              status: 'ACTIVE',
+              createdByMembershipId: membership.id,
+            },
+          });
+        },
+      );
+      const afterSupersession = await applications.preview(employeeContext, applicationId);
+      expect(afterSupersession.result).toBe('ELIGIBLE');
+      expect(afterSupersession.missingFacts.map(({ fact }) => fact)).not.toContain(
+        'MISSING_SERVICE',
+      );
+
       await expect(
         applications.submit(
           recorderContext,

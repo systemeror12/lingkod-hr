@@ -1640,7 +1640,7 @@ export class LeaveApplicationsService {
       where: {
         agencyId: context.agencyId,
         employeeId,
-        status: 'ACTIVE',
+        status: { in: ['ACTIVE', 'CLOSED', 'ENDED'] },
         effectiveFrom: { lte: date },
         OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
       },
