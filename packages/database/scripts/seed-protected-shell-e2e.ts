@@ -220,6 +220,16 @@ async function seed(): Promise<void> {
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveCalculationSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveEligibilityAssessment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationVersionDocument.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.leaveApplicationPeriod.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationDraftDocument.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationDraftPeriod.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplication.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalDecision.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
@@ -2001,6 +2011,22 @@ async function seed(): Promise<void> {
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveCalculationSegment.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveEligibilityAssessment.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplicationVersionDocument.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplicationPeriod.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveApplicationVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveApplicationDraftDocument.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplicationDraftPeriod.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplication.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.agencyMembership.updateMany({
       where: { agencyId: foreignAgency.id },
       data: { employeeId: null },

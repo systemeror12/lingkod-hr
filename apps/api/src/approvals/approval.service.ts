@@ -513,7 +513,11 @@ export class ApprovalsService {
     routeCode: string,
     effectiveDate?: string,
   ): Promise<ApprovalRouteSummary> {
-    this.assertPermission(context, 'approvals.routes.read', 'APPROVAL_ROUTE_READ_FORBIDDEN');
+    this.assertOperationalPermission(
+      context,
+      'approvals.routes.read',
+      'APPROVAL_ROUTE_READ_FORBIDDEN',
+    );
     const asOf = approvalDate(effectiveDate);
     return routeSummary(await this.resolveRoute(transaction, context.agencyId, routeCode, asOf));
   }
@@ -821,7 +825,7 @@ export class ApprovalsService {
     rawIdempotencyKey?: string,
     boundRouteVersionId?: string,
   ): Promise<ApprovalRequestSummary> {
-    this.assertPermission(
+    this.assertOperationalPermission(
       context,
       'approvals.requests.create',
       'APPROVAL_REQUEST_CREATE_FORBIDDEN',
@@ -1040,57 +1044,89 @@ export class ApprovalsService {
     const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
     return withDatabaseContext(
       requestDatabaseContext(context, 'approval-transition'),
-      async (transaction) => {
-        const previous = await this.idempotentEvent(
-          transaction,
-          context,
-          'APPROVAL_REQUEST_CANCELLED',
-          idempotencyKey,
-          requestId,
-        );
-        if (previous) {
-          if (previous.reason !== reason.trim()) throw this.idempotencyConflict();
-          return requestSummary(
-            await this.requireRequest(transaction, context.agencyId, requestId),
-          );
-        }
-        const current = await this.lockRequest(transaction, context.agencyId, requestId);
-        if (!current) throw this.notFound('Approval Request');
-        if (current.requestedByMembershipId !== context.membershipId) {
-          throw new ApprovalServiceError(
-            'Only the Approval Request drafter can cancel it.',
-            403,
-            'APPROVAL_REQUEST_DRAFTER_REQUIRED',
-          );
-        }
-        if (!['PENDING', 'IN_PROGRESS', 'RETURNED'].includes(current.status)) {
-          throw this.requestWorkflowError('cancel', current.status);
-        }
-        await transaction.approvalStep.updateMany({
-          where: {
-            agencyId: context.agencyId,
-            approvalRequestId: requestId,
-            status: { in: ['PENDING', 'ACTIVE', 'RETURNED'] },
-          },
-          data: { status: 'SKIPPED', completedAt: new Date() },
-        });
-        await transaction.approvalRequest.update({
-          where: { agencyId_id: { agencyId: context.agencyId, id: requestId } },
-          data: { status: 'CANCELLED', completedAt: new Date() },
-        });
-        await this.writeAudit(transaction, context, {
-          action: 'APPROVAL_REQUEST_CANCELLED',
-          entityType: 'ApprovalRequest',
-          entityId: requestId,
-          previousStatus: current.status,
-          newStatus: 'CANCELLED',
-          reason: reason.trim(),
-          metadata: {},
-          idempotencyKey,
-        });
-        return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
-      },
+      (transaction) =>
+        this.cancelWorkInTransaction(transaction, context, requestId, reason, idempotencyKey, true),
     );
+  }
+
+  /**
+   * Internal contract: an owning domain that already asserted its own authority
+   * cancels unfinished route work in the caller's transaction. Leave owns the
+   * withdrawal decision; Approval owns the request state.
+   */
+  async cancelInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    requestId: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<ApprovalRequestSummary> {
+    this.assertReason(reason, 'APPROVAL_REQUEST_REASON_REQUIRED');
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return this.cancelWorkInTransaction(
+      transaction,
+      context,
+      requestId,
+      reason,
+      idempotencyKey,
+      false,
+    );
+  }
+
+  private async cancelWorkInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    requestId: string,
+    reason: string,
+    idempotencyKey: string | null,
+    requireDrafter: boolean,
+  ): Promise<ApprovalRequestSummary> {
+    const previous = await this.idempotentEvent(
+      transaction,
+      context,
+      'APPROVAL_REQUEST_CANCELLED',
+      idempotencyKey,
+      requestId,
+    );
+    if (previous) {
+      if (previous.reason !== reason.trim()) throw this.idempotencyConflict();
+      return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
+    }
+    const current = await this.lockRequest(transaction, context.agencyId, requestId);
+    if (!current) throw this.notFound('Approval Request');
+    if (requireDrafter && current.requestedByMembershipId !== context.membershipId) {
+      throw new ApprovalServiceError(
+        'Only the Approval Request drafter can cancel it.',
+        403,
+        'APPROVAL_REQUEST_DRAFTER_REQUIRED',
+      );
+    }
+    if (!['PENDING', 'IN_PROGRESS', 'RETURNED'].includes(current.status)) {
+      throw this.requestWorkflowError('cancel', current.status);
+    }
+    await transaction.approvalStep.updateMany({
+      where: {
+        agencyId: context.agencyId,
+        approvalRequestId: requestId,
+        status: { in: ['PENDING', 'ACTIVE', 'RETURNED'] },
+      },
+      data: { status: 'SKIPPED', completedAt: new Date() },
+    });
+    await transaction.approvalRequest.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: requestId } },
+      data: { status: 'CANCELLED', completedAt: new Date() },
+    });
+    await this.writeAudit(transaction, context, {
+      action: 'APPROVAL_REQUEST_CANCELLED',
+      entityType: 'ApprovalRequest',
+      entityId: requestId,
+      previousStatus: current.status,
+      newStatus: 'CANCELLED',
+      reason: reason.trim(),
+      metadata: {},
+      idempotencyKey,
+    });
+    return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
   }
 
   private async decide(
@@ -1646,6 +1682,30 @@ export class ApprovalsService {
       !context.userId ||
       !context.membershipId ||
       !hasPermission(context, permission, { agencyId: context.agencyId })
+    ) {
+      throw new ApprovalServiceError(
+        'The current Agency Membership lacks the required permission.',
+        403,
+        code,
+      );
+    }
+  }
+
+  /**
+   * Internal contract: the owning domain already asserted its own scoped
+   * authority, so accept an operational grant in either AGENCY or OWN scope.
+   * Public Approval endpoints keep the narrower AGENCY-only check.
+   */
+  private assertOperationalPermission(
+    context: RequestContext,
+    permission: string,
+    code: string,
+  ): void {
+    if (
+      !context.agencyId ||
+      !context.userId ||
+      !context.membershipId ||
+      !context.permissions.some((grant) => grant.code === permission)
     ) {
       throw new ApprovalServiceError(
         'The current Agency Membership lacks the required permission.',
