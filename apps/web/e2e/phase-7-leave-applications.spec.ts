@@ -1,7 +1,7 @@
 import { expect, test, type APIResponse } from '@playwright/test';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
-const leaveRouteCode = 'LEAVE-VACATION-ROUTE';
+const leaveRouteCode = 'LEAVE-SPECIAL-PRIVILEGE-ROUTE';
 
 async function apiBody<T>(response: APIResponse): Promise<T> {
   const text = await response.text();
@@ -24,7 +24,7 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
   const leaveType = await apiBody<{ id: string }>(
     await page.request.post(`${agencyBase}/leave-types`, {
       headers,
-      data: { catalogueCode: 'VACATION_LEAVE' },
+      data: { catalogueCode: 'SPECIAL_PRIVILEGE_LEAVE' },
     }),
   );
   const version = await apiBody<{ id: string }>(
@@ -35,7 +35,7 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
         approvalRouteCode: leaveRouteCode,
         applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
         documentRequirements: {},
-        reason: 'Activating Vacation Leave for Leave Application coverage.',
+        reason: 'Activating Special Privilege Leave for Leave Application coverage.',
       },
     }),
   );
@@ -116,6 +116,7 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
   await expect(detail).toContainText('DRAFT');
 
   await detail.getByLabel('Reason').fill('Rest and recreation leave for the E2E fixture.');
+  await detail.getByLabel('Commutation').selectOption('NOT_REQUESTED');
   await detail.getByLabel('Period start').fill('2026-06-01');
   await detail.getByLabel('Period end').fill('2026-06-03');
   await detail.getByRole('button', { name: 'Add evidence' }).click();
