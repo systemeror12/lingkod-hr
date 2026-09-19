@@ -1323,7 +1323,8 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `leave.monetization.reject`             |           — |        C |            — |          — |        — |              C |                  A |                — |       R |
 | `leave.monetization.post`               |           A |        C |            — |          — |        — |              — |                  — |                C |       R |
 | `leave.monetization.adjust`             |           A |        C |            — |          — |        — |              C |                  A |                C |       R |
-| `leave.terminal_inputs.preserve`        |           A |        C |            A |          — |        — |              — |                  C |                — |       R |
+| `leave.terminal_inputs.read`            |           R |        R |            R |          — |        — |              — |                  R |                — |       R |
+| `leave.terminal_inputs.preserve`        |           A |        C |            A |          — |        — |              — |                  C |                — |       — |
 | `leave.reports.read`                    |           A |        A |            A |          S |      O/C |              R |                  R |                R |       R |
 
 ---

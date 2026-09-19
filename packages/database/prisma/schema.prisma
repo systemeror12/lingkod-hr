@@ -125,6 +125,10 @@ model Agency {
   leaveCreditCommitments        LeaveCreditCommitment[]
   leaveAccountOpenings          LeaveAccountOpening[]
   leaveLedgerAdjustments        LeaveLedgerAdjustment[]
+  terminalLeaveInputAssessments TerminalLeaveInputAssessment[]
+  terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
+  terminalLeaveInputLines       TerminalLeaveInputSnapshotLine[]
+  terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -384,6 +388,7 @@ model AgencyMembership {
   openedLeaveAccounts                    LeaveAccountOpening[]                @relation("LeaveAccountOpeningOpener")
   postedLeaveLedgerEntries               LeaveLedgerEntry[]                   @relation("LeaveLedgerEntryPoster")
   recordedLeaveLedgerAdjustments         LeaveLedgerAdjustment[]              @relation("LeaveLedgerAdjustmentRecorder")
+  assessedTerminalLeaveInputs            TerminalLeaveInputAssessment[]       @relation("TerminalLeaveInputAssessmentAssessor")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1844,8 +1849,9 @@ model Employee {
   payrollBankAccounts    PayrollBankAccount[]    @relation("EmployeePayrollBankAccounts")
   salnComplianceRecords  SalnComplianceRecord[]  @relation("EmployeeSalnComplianceRecords")
   serviceRecordSnapshots ServiceRecordSnapshot[] @relation("EmployeeServiceRecords")
-  scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
-  leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
+  scheduleAssignments            ScheduleAssignment[]            @relation("ScheduleAssignmentEmployee")
+  leaveAccounts                  LeaveAccount[]                  @relation("LeaveAccountEmployee")
+  terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3374,6 +3380,7 @@ model LeavePolicyVersion {
   ledgerEntries        LeaveLedgerEntry[]     @relation("LeaveLedgerEntryPolicyVersion")
   accountOpenings      LeaveAccountOpening[]  @relation("LeaveAccountOpeningPolicyVersion")
   ledgerAdjustments    LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustmentPolicyVersion")
+  terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLinePolicyVersion")
   createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy            AgencyMembership       @relation("LeavePolicyVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
@@ -3425,6 +3432,7 @@ model LeaveAccount {
   ledgerEntries     LeaveLedgerEntry[]      @relation("LeaveLedgerEntries")
   creditCommitments LeaveCreditCommitment[] @relation("LeaveCreditCommitments")
   adjustments       LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustments")
+  terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLines")
 
   @@unique([agencyId, id])
   @@index([agencyId, status, employeeId])
@@ -3539,4 +3547,96 @@ model LeaveLedgerAdjustment {
   @@unique([agencyId, reversesEntryId])
   @@index([agencyId, leaveAccountId, recordedAt])
   @@map("leave_ledger_adjustments")
+}
+
+model TerminalLeaveInputAssessment {
+  id                         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String   @map("agency_id") @db.Uuid
+  employeeId                 String   @map("employee_id") @db.Uuid
+  separationSourceType       String   @map("separation_source_type") @db.Citext
+  separationSourceId         String   @map("separation_source_id") @db.Uuid
+  separationSourceVersionKey String   @map("separation_source_version_key") @db.Citext
+  separationClassification   String   @map("separation_classification") @db.Citext
+  separationEffectiveDate    DateTime @map("separation_effective_date") @db.Date
+  ledgerCutoff               DateTime @map("ledger_cutoff") @db.Timestamptz(6)
+  result                     String
+  inputFacts                 Json     @map("input_facts")
+  missingOrConflictingFacts  Json     @map("missing_or_conflicting_facts")
+  assessedByMembershipId     String   @map("assessed_by_membership_id") @db.Uuid
+  assessedAt                 DateTime @map("assessed_at") @db.Timestamptz(6)
+
+  agency     Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee   Employee         @relation("TerminalLeaveInputAssessmentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  assessedBy AgencyMembership @relation("TerminalLeaveInputAssessmentAssessor", fields: [agencyId, assessedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  snapshot   TerminalLeaveInputSnapshot?
+
+  @@unique([agencyId, separationSourceType, separationSourceId, separationSourceVersionKey, ledgerCutoff])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, assessedAt(sort: Desc)])
+  @@map("terminal_leave_input_assessments")
+}
+
+model TerminalLeaveInputSnapshot {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  terminalLeaveInputAssessmentId String   @map("terminal_leave_input_assessment_id") @db.Uuid
+  supersedesSnapshotId           String?  @map("supersedes_snapshot_id") @db.Uuid
+  snapshotKey                    String   @map("snapshot_key") @db.Citext
+  serviceSourceSnapshot          Json     @map("service_source_snapshot")
+  authoritySnapshot              Json     @map("authority_snapshot")
+  clearanceDocumentSnapshot      Json     @map("clearance_document_snapshot")
+  salarySourceReference          Json     @map("salary_source_reference")
+  createdAt                      DateTime @map("created_at") @db.Timestamptz(6)
+
+  agency       Agency                        @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  assessment   TerminalLeaveInputAssessment  @relation(fields: [agencyId, terminalLeaveInputAssessmentId], references: [agencyId, id], onDelete: Restrict)
+  supersedes   TerminalLeaveInputSnapshot?   @relation("TerminalLeaveInputSnapshotSuccession", fields: [agencyId, supersedesSnapshotId], references: [agencyId, id], onDelete: Restrict)
+  supersededBy TerminalLeaveInputSnapshot?   @relation("TerminalLeaveInputSnapshotSuccession")
+  lines        TerminalLeaveInputSnapshotLine[]
+  outcomes     TerminalLeaveInputHandoffOutcome[]
+
+  @@unique([terminalLeaveInputAssessmentId])
+  @@unique([agencyId, terminalLeaveInputAssessmentId])
+  @@unique([agencyId, snapshotKey])
+  @@unique([agencyId, supersedesSnapshotId])
+  @@unique([agencyId, id])
+  @@map("terminal_leave_input_snapshots")
+}
+
+model TerminalLeaveInputSnapshotLine {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String   @map("agency_id") @db.Uuid
+  terminalLeaveInputSnapshotId String   @map("terminal_leave_input_snapshot_id") @db.Uuid
+  leaveAccountId               String   @map("leave_account_id") @db.Uuid
+  policyVersionId              String   @map("policy_version_id") @db.Uuid
+  balanceEffectiveDate         DateTime @map("balance_effective_date") @db.Date
+  ledgerCutoff                 DateTime @map("ledger_cutoff") @db.Timestamptz(6)
+  postedBalance                Decimal  @map("posted_balance") @db.Decimal(12, 4)
+
+  agency        Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  snapshot      TerminalLeaveInputSnapshot @relation(fields: [agencyId, terminalLeaveInputSnapshotId], references: [agencyId, id], onDelete: Restrict)
+  leaveAccount  LeaveAccount               @relation("TerminalLeaveInputSnapshotLines", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion LeavePolicyVersion         @relation("TerminalLeaveInputSnapshotLinePolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([terminalLeaveInputSnapshotId, leaveAccountId])
+  @@unique([agencyId, id])
+  @@map("terminal_leave_input_snapshot_lines")
+}
+
+model TerminalLeaveInputHandoffOutcome {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String   @map("agency_id") @db.Uuid
+  terminalLeaveInputSnapshotId String   @map("terminal_leave_input_snapshot_id") @db.Uuid
+  attemptKey                   String   @map("attempt_key") @db.Citext
+  result                       String
+  separationReference          Json?    @map("separation_reference")
+  reason                       Json?
+  recordedAt                   DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  agency   Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  snapshot TerminalLeaveInputSnapshot @relation(fields: [agencyId, terminalLeaveInputSnapshotId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([terminalLeaveInputSnapshotId, attemptKey])
+  @@unique([agencyId, id])
+  @@map("terminal_leave_input_handoff_outcomes")
 }

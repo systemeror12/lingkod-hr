@@ -149,6 +149,12 @@ const destinations: readonly (Destination & {
     icon: 'leave',
     permission: 'leave.accounts.read',
   },
+  {
+    href: '/terminal-leave-inputs',
+    label: 'Terminal Leave Inputs',
+    icon: 'leave',
+    permission: 'leave.terminal_inputs.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 
