@@ -1,4 +1,14 @@
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { expect, test, type APIResponse } from '@playwright/test';
+
+function resetFixture(): void {
+  execFileSync('pnpm', ['--filter', '@lingkod-hr/database', 'e2e:seed:shell'], {
+    cwd: resolve(__dirname, '../../..'),
+    env: { ...process.env },
+    stdio: 'pipe',
+  });
+}
 
 async function apiBody<T>(response: APIResponse): Promise<T> {
   const text = await response.text();
@@ -25,6 +35,8 @@ function weekdayName(dateValue: string): string {
 test('enables the Web clock, records a manual Attendance Event, and inspects the Work Date', async ({
   page,
 }) => {
+  test.setTimeout(120_000);
+  resetFixture();
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
