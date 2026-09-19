@@ -338,7 +338,13 @@ export function AttendanceContextWorkspace({
             </button>
           </div>
           {canCreate ? (
-            <Button className="min-h-10" onClick={openCreate} type="button" variant="primary">
+            <Button
+              className="min-h-10 whitespace-nowrap"
+              onClick={openCreate}
+              size="default"
+              type="button"
+              variant="primary"
+            >
               Record attendance context
             </Button>
           ) : null}
@@ -503,15 +509,22 @@ export function AttendanceContextWorkspace({
                   : 'Append-only history; correct coverage by recording a new context.'}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {!creating && selected && canCreate ? (
-                <Button className="min-h-9" onClick={openCreate} type="button" variant="secondary">
+                <Button
+                  className="min-h-9 whitespace-nowrap"
+                  onClick={openCreate}
+                  size="default"
+                  type="button"
+                  variant="secondary"
+                >
                   Record another context
                 </Button>
               ) : null}
               <Button
-                className="min-h-9"
+                className="min-h-9 whitespace-nowrap"
                 onClick={() => navigation.navigate({ view: 'tree', record: null, new: null })}
+                size="default"
                 type="button"
                 variant="secondary"
               >
@@ -674,7 +687,13 @@ export function AttendanceContextWorkspace({
                   />
                 </Field>
                 <div className="flex justify-end">
-                  <Button className="min-h-10" disabled={busy} type="submit" variant="primary">
+                  <Button
+                    className="min-h-10 whitespace-nowrap"
+                    disabled={busy}
+                    size="default"
+                    type="submit"
+                    variant="primary"
+                  >
                     {busy ? 'Recording…' : 'Record Attendance Context'}
                   </Button>
                 </div>
