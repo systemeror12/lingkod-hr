@@ -219,6 +219,32 @@ async function seed(): Promise<void> {
   await seedInvitation(phase5RestrictedEmail, phase5RestrictedToken, ['employee']);
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.payrollMonetizationAdjustmentOutcome.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.payrollMonetizationEarningInput.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.monetizationAdjustmentLine.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.monetizationAdjustment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.monetizationCreditCertificationLine.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.monetizationCreditCertification.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.monetizationFundingDetermination.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.monetizationEligibilityAssessment.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.leaveMonetizationAllocation.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.monetizationPosting.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveMonetizationRequestVersion.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.leaveMonetizationRequest.deleteMany({ where: { agencyId: agency.id } });
     await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalDecision.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
@@ -871,6 +897,24 @@ async function seed(): Promise<void> {
           versionNo: 1,
           domain: 'recruitment',
           stepDefinition: routeStep('recruitment.vacancies.publish'),
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+        },
+        {
+          agencyId: agency.id,
+          routeCode: 'LEAVE_MONETIZATION',
+          versionNo: 1,
+          domain: 'leave',
+          stepDefinition: routeStep('approvals.requests.approve'),
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+        },
+        {
+          agencyId: agency.id,
+          routeCode: 'LEAVE_MONETIZATION_ADJUSTMENT',
+          versionNo: 1,
+          domain: 'leave',
+          stepDefinition: routeStep('approvals.requests.approve'),
           effectiveFrom: new Date('2026-01-01'),
           status: 'ACTIVE',
         },

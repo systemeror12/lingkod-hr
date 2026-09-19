@@ -149,6 +149,12 @@ const destinations: readonly (Destination & {
     icon: 'leave',
     permission: 'leave.accounts.read',
   },
+  {
+    href: '/leave-monetization',
+    label: 'Leave Monetization',
+    icon: 'leave',
+    permission: 'leave.accounts.read',
+  },
   { href: '/audit', label: 'Audit Log', icon: 'audit', permission: 'audit.events.read' },
 ];
 
