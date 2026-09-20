@@ -282,6 +282,7 @@ model AgencyMembership {
   sessions                               UserSession[]
   securityEvents                         SecurityEvent[]                    @relation("SecurityEventMembership")
   auditEvents                            AuditEvent[]                       @relation("AuditEventMembership")
+  enteredAttendanceEvents                AttendanceEvent[]                  @relation("AttendanceEventEnteredBy")
   createdDocuments                       Document[]                         @relation("DocumentCreator")
   updatedDocuments                       Document[]                         @relation("DocumentUpdater")
   createdDocumentVersions                DocumentVersion[]                  @relation("DocumentVersionCreator")
@@ -1849,6 +1850,7 @@ model Employee {
   scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
   leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
   attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
+  attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3344,6 +3346,48 @@ model AttendanceContext {
   @@index([agencyId, employeeId, workDate])
   @@index([agencyId, employeeId, startsAt])
   @@map("attendance_contexts")
+}
+
+model AttendanceWebClockVersion {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  versionNo               Int      @map("version_no")
+  enabled                 Boolean
+  effectiveFrom           DateTime @map("effective_from") @db.Date
+  effectiveTo             DateTime? @map("effective_to") @db.Date
+  status                  String
+  reason                  String
+  activatedByMembershipId String   @map("activated_by_membership_id") @db.Uuid
+  activatedAt             DateTime @map("activated_at") @db.Timestamptz(6)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion              Int      @default(1) @map("row_version")
+
+  @@unique([agencyId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, effectiveFrom])
+  @@map("attendance_web_clock_versions")
+}
+
+model AttendanceEvent {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  eventTime             DateTime @map("event_time") @db.Timestamptz(6)
+  eventType             String   @map("event_type")
+  source                String
+  sourceReference       String?  @map("source_reference")
+  enteredByMembershipId String?  @map("entered_by_membership_id") @db.Uuid
+  reason                String?
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee  Employee          @relation("AttendanceEventEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  enteredBy AgencyMembership? @relation("AttendanceEventEnteredBy", fields: [agencyId, enteredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, eventTime])
+  @@index([agencyId, eventTime])
+  @@map("attendance_events")
 }
 
 model LeaveType {

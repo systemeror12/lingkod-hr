@@ -809,7 +809,7 @@ it.skipIf(!enabled)(
       const overnightResolution = await assignments.resolveForWorkDate(
         context,
         overnightEmployee.id,
-        recentWeekday(5),
+        recentWeekday(1),
       );
       expect(overnightResolution).toMatchObject({
         assignment: { id: overnightAssignment.id },
