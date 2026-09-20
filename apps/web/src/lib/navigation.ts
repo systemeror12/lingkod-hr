@@ -148,6 +148,12 @@ const destinations: readonly (Destination & {
     permission: 'attendance.configuration.manage',
   },
   {
+    href: '/attendance-contexts',
+    label: 'Attendance Contexts',
+    icon: 'position',
+    permission: 'attendance.contexts.read',
+  },
+  {
     href: '/leave-policies',
     label: 'Leave Policies',
     icon: 'leave',
