@@ -12,6 +12,7 @@ import {
 import {
   TerminalLeaveInputsService,
   terminalLeaveInputAuditWriter,
+  type SeparationQualification,
 } from './terminal-leave-inputs.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -452,7 +453,8 @@ it.skipIf(!enabled)(
       });
 
       const candidates = await service.listCandidates(terminalContext);
-      expect(candidates.map((candidate) => candidate.separationCaseId)).toEqual(
+      const candidateIds = candidates.map((candidate) => candidate.separationCaseId);
+      expect(candidateIds).toEqual(
         expect.arrayContaining([
           separationCase.id,
           incompleteCase.id,
@@ -460,12 +462,8 @@ it.skipIf(!enabled)(
           dismissalCase.id,
         ]),
       );
-      expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
-        terminationCase.id,
-      );
-      expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
-        clearedCase.id,
-      );
+      expect(candidateIds).not.toContain(terminationCase.id);
+      expect(candidateIds).not.toContain(clearedCase.id);
       expect(
         candidates.find((candidate) => candidate.separationCaseId === separationCase.id)
           ?.hasReadySnapshot,
@@ -608,8 +606,11 @@ it.skipIf(!enabled)(
       expect(dismissed.assessment.result).toBe('INDETERMINATE');
       expect(dismissed.snapshot).toBeNull();
       expect(
-        (dismissed.assessment.inputFacts as { separation: { qualification: string } }).separation
-          .qualification,
+        (
+          dismissed.assessment.inputFacts as {
+            separation: { qualification: SeparationQualification };
+          }
+        ).separation.qualification,
       ).toBe('QUALIFYING');
       await expect(
         service.preserve(terminalContext, { separationCaseId: terminationCase.id }),

@@ -18,11 +18,11 @@ import {
 /**
  * Terminal Leave Input Preservation freezes the exact sources a later
  * terminal-leave computation will rely on without calculating or authorizing
- * anything. CSC MC No. 41, s. 1998, sections 35-37 make retirement,
- * resignation, and separation through no fault the condition precedent for
- * terminal leave. CSC MC No. 14, s. 1999, section 65 and the 2025 RACCS,
- * sections 73 and 135 confirm that dismissal and dropping from rolls do not
- * forfeit it. No accepted authority states the treatment of every termination,
+ * anything. CSC MC No. 41, s. 1998, sections 35-37 establish terminal-leave
+ * entitlement on retirement, resignation, and other separation. CSC MC No. 14,
+ * s. 1999, section 65 and the 2025 RACCS, section 73 confirm that dismissal
+ * retains it, and the 2025 RACCS, section 135 says the same of dropping from
+ * rolls. No accepted authority states the treatment of every termination,
  * transfer, reorganization, or other separation, so those stay unresolved and
  * fail closed until the Separation-owned Separation Leave Credit Disposition
  * states it (#205).
@@ -1308,7 +1308,7 @@ function separationClassificationUnresolved(
   separationType: string,
 ): TerminalLeaveInputServiceError {
   return new TerminalLeaveInputServiceError(
-    'No accepted authority maps that Separation type to a qualifying terminal-leave separation.',
+    'That Separation type stays unresolved until the Separation Leave Credit Disposition establishes its terminal-leave treatment.',
     409,
     'TERMINAL_LEAVE_INPUT_SEPARATION_CLASSIFICATION_UNRESOLVED',
     [`CLASSIFICATION:${separationType}`],

@@ -96,7 +96,7 @@ The CS Form 6 certification gives the operational as-of pattern: it asks for the
 
 Ordinary VL and SL do not expire and have no accumulation cap. They become commutable on the qualifying retirement, resignation, or separation event, subject to the rule on separation for cause. Separation for cause forfeits credits. Terminal leave itself does not earn additional credits, and an extension beyond the mandatory retirement age does not earn additional credits. [MC41, sections 26 and 35-43](https://www.csc.gov.ph/phocadownload/userupload/irmo/mc/1998/mc41s1998.pdf).
 
-> The accepted decision in #205 qualifies the forfeiture reading: CSC MC No. 14, s. 1999, section 65 and the 2025 RACCS, sections 73 and 135 establish that dismissal and dropping from rolls do not forfeit terminal-leave benefits. The terminal-leave qualification map follows those authorities.
+> The accepted decision in #205 qualifies the forfeiture reading: CSC MC No. 14, s. 1999, section 65 and the 2025 RACCS, section 73 establish that dismissal does not bar terminal-leave benefits, and the 2025 RACCS, section 135 says dropping from rolls forfeits none. The terminal-leave qualification map follows those authorities.
 
 The following benefits do expire, forfeit, or remain noncumulative under their direct sources:
 
