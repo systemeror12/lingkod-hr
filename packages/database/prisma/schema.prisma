@@ -125,6 +125,26 @@ model Agency {
   leaveCreditCommitments        LeaveCreditCommitment[]
   leaveAccountOpenings          LeaveAccountOpening[]
   leaveLedgerAdjustments        LeaveLedgerAdjustment[]
+  leaveApplications             LeaveApplication[]
+  leaveApplicationDraftPeriods  LeaveApplicationDraftPeriod[]
+  leaveApplicationDraftDocuments LeaveApplicationDraftDocument[]
+  leaveApplicationVersions      LeaveApplicationVersion[]
+  leaveApplicationPeriods       LeaveApplicationPeriod[]
+  leaveApplicationVersionDocuments LeaveApplicationVersionDocument[]
+  leaveEligibilityAssessments   LeaveEligibilityAssessment[]
+  leaveCalculationSegments      LeaveCalculationSegment[]
+  leaveMonetizationRequests     LeaveMonetizationRequest[]
+  leaveMonetizationVersions     LeaveMonetizationRequestVersion[]
+  monetizationAllocations       LeaveMonetizationAllocation[]
+  monetizationAssessments       MonetizationEligibilityAssessment[]
+  monetizationCertifications    MonetizationCreditCertification[]
+  monetizationCertificationLines MonetizationCreditCertificationLine[]
+  monetizationFundingDeterminations MonetizationFundingDetermination[]
+  monetizationPostings          MonetizationPosting[]
+  monetizationAdjustments       MonetizationAdjustment[]
+  monetizationAdjustmentLines   MonetizationAdjustmentLine[]
+  payrollMonetizationInputs     PayrollMonetizationEarningInput[]
+  payrollMonetizationOutcomes   PayrollMonetizationAdjustmentOutcome[]
   terminalLeaveInputAssessments TerminalLeaveInputAssessment[]
   terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
   terminalLeaveInputLines       TerminalLeaveInputSnapshotLine[]
@@ -286,6 +306,7 @@ model AgencyMembership {
   sessions                               UserSession[]
   securityEvents                         SecurityEvent[]                    @relation("SecurityEventMembership")
   auditEvents                            AuditEvent[]                       @relation("AuditEventMembership")
+  enteredAttendanceEvents                AttendanceEvent[]                  @relation("AttendanceEventEnteredBy")
   createdDocuments                       Document[]                         @relation("DocumentCreator")
   updatedDocuments                       Document[]                         @relation("DocumentUpdater")
   createdDocumentVersions                DocumentVersion[]                  @relation("DocumentVersionCreator")
@@ -388,6 +409,17 @@ model AgencyMembership {
   openedLeaveAccounts                    LeaveAccountOpening[]                @relation("LeaveAccountOpeningOpener")
   postedLeaveLedgerEntries               LeaveLedgerEntry[]                   @relation("LeaveLedgerEntryPoster")
   recordedLeaveLedgerAdjustments         LeaveLedgerAdjustment[]              @relation("LeaveLedgerAdjustmentRecorder")
+  createdLeaveApplications               LeaveApplication[]                   @relation("LeaveApplicationCreator")
+  submittedLeaveApplicationVersions      LeaveApplicationVersion[]            @relation("LeaveApplicationVersionSubmitter")
+  enteredAttendanceContexts              AttendanceContext[]                  @relation("AttendanceContextRecorder")
+  createdLeaveMonetizationRequests        LeaveMonetizationRequest[]           @relation("LeaveMonetizationRequestCreator")
+  submittedLeaveMonetizationVersions      LeaveMonetizationRequestVersion[]    @relation("LeaveMonetizationVersionSubmitter")
+  assessedMonetizationEligibility         MonetizationEligibilityAssessment[]  @relation("MonetizationEligibilityAssessor")
+  certifiedMonetizationCredits            MonetizationCreditCertification[]    @relation("MonetizationCertificationCertifier")
+  reviewedMonetizationFunding             MonetizationFundingDetermination[]   @relation("MonetizationFundingReviewer")
+  postedMonetizationPostings              MonetizationPosting[]                @relation("MonetizationPostingPoster")
+  createdPayrollMonetizationInputs        PayrollMonetizationEarningInput[]    @relation("PayrollMonetizationEarningInputCreator")
+  recordedPayrollMonetizationOutcomes     PayrollMonetizationAdjustmentOutcome[] @relation("PayrollMonetizationAdjustmentOutcomeRecorder")
   assessedTerminalLeaveInputs            TerminalLeaveInputAssessment[]       @relation("TerminalLeaveInputAssessmentAssessor")
 
   @@unique([agencyId, id])
@@ -596,6 +628,9 @@ model ApprovalRouteVersion {
   requests                     ApprovalRequest[]
   requestApprovalRouteBindings RequestApprovalRouteBinding[]
   vacancyPublications          VacancyPublication[]
+  leaveApplicationVersions     LeaveApplicationVersion[]     @relation("LeaveApplicationVersionApprovalRouteVersion")
+  monetizationVersions         LeaveMonetizationRequestVersion[] @relation("MonetizationVersionApprovalRoute")
+  monetizationAdjustments      MonetizationAdjustment[]          @relation("MonetizationAdjustmentApprovalRoute")
 
   @@unique([agencyId, routeCode, versionNo])
   @@unique([agencyId, id])
@@ -619,6 +654,9 @@ model ApprovalRequest {
   routeVersion ApprovalRouteVersion @relation(fields: [agencyId, routeVersionId], references: [agencyId, id], onDelete: Restrict)
   requestedBy  AgencyMembership     @relation("ApprovalRequestRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   steps        ApprovalStep[]
+  leaveApplicationVersions LeaveApplicationVersion[] @relation("LeaveApplicationVersionApprovalRequest")
+  monetizationVersions    LeaveMonetizationRequestVersion[] @relation("MonetizationVersionApprovalRequest")
+  monetizationAdjustments MonetizationAdjustment[]          @relation("MonetizationAdjustmentApprovalRequest")
 
   @@unique([agencyId, id])
   @@index([agencyId, status, requestedAt])
@@ -1587,6 +1625,14 @@ model DocumentVersion {
   leaveAccountOpeningEvidenceVersions              LeaveAccountOpening[]                 @relation("LeaveAccountOpeningEvidenceVersion")
   leaveLedgerAdjustmentAuthorityVersions           LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentAuthorityVersion")
   leaveLedgerAdjustmentEvidenceVersions            LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentEvidenceVersion")
+  leaveApplicationDraftDocumentVersions            LeaveApplicationDraftDocument[]       @relation("LeaveApplicationDraftDocumentVersion")
+  leaveApplicationVersionDocuments                 LeaveApplicationVersionDocument[]     @relation("LeaveApplicationVersionDocumentVersion")
+  leaveApplicationFormTemplateVersions             LeaveApplicationVersion[]             @relation("LeaveApplicationVersionFormTemplate")
+  leaveApplicationAttestationVersions              LeaveApplicationVersion[]             @relation("LeaveApplicationVersionAttestation")
+  attendanceContextEvidenceVersions                AttendanceContext[]                   @relation("AttendanceContextEvidenceVersion")
+  monetizationFormTemplateVersions                 LeaveMonetizationRequestVersion[]     @relation("MonetizationFormTemplateVersion")
+  monetizationAttestationVersions                  LeaveMonetizationRequestVersion[]     @relation("MonetizationAttestationVersion")
+  monetizationFundingFiscalAuthorityVersions       MonetizationFundingDetermination[]    @relation("MonetizationFundingFiscalAuthorityVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -1849,8 +1895,13 @@ model Employee {
   payrollBankAccounts    PayrollBankAccount[]    @relation("EmployeePayrollBankAccounts")
   salnComplianceRecords  SalnComplianceRecord[]  @relation("EmployeeSalnComplianceRecords")
   serviceRecordSnapshots ServiceRecordSnapshot[] @relation("EmployeeServiceRecords")
-  scheduleAssignments            ScheduleAssignment[]            @relation("ScheduleAssignmentEmployee")
-  leaveAccounts                  LeaveAccount[]                  @relation("LeaveAccountEmployee")
+  scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
+  leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
+  leaveApplications      LeaveApplication[]      @relation("LeaveApplicationEmployee")
+  attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
+  attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
+  monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
+  monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
 
   @@unique([agencyId, id])
@@ -3318,9 +3369,78 @@ model ScheduleAssignment {
   employee              Employee              @relation("ScheduleAssignmentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
   workScheduleVersion   WorkScheduleVersion   @relation("ScheduleAssignmentWorkScheduleVersion", fields: [agencyId, workScheduleVersionId], references: [agencyId, id], onDelete: Restrict)
   workArrangementVersion WorkArrangementVersion @relation("ScheduleAssignmentWorkArrangementVersion", fields: [agencyId, workArrangementVersionId], references: [agencyId, id], onDelete: Restrict)
+  leaveCalculationSegments LeaveCalculationSegment[] @relation("LeaveCalculationSegments")
 
   @@unique([agencyId, id])
   @@map("schedule_assignments")
+}
+
+model AttendanceContext {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  contextType               String    @map("context_type")
+  coverageMode              String    @map("coverage_mode")
+  workDate                  DateTime? @map("work_date") @db.Date
+  startsAt                  DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt                    DateTime? @map("ends_at") @db.Timestamptz(6)
+  reason                    String
+  sourceType                String?   @map("source_type")
+  sourceId                  String?   @map("source_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  enteredByMembershipId     String    @map("entered_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee        Employee         @relation("AttendanceContextEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion DocumentVersion? @relation("AttendanceContextEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  enteredBy       AgencyMembership @relation("AttendanceContextRecorder", fields: [agencyId, enteredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, workDate])
+  @@index([agencyId, employeeId, startsAt])
+  @@map("attendance_contexts")
+}
+
+model AttendanceWebClockVersion {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  versionNo               Int      @map("version_no")
+  enabled                 Boolean
+  effectiveFrom           DateTime @map("effective_from") @db.Date
+  effectiveTo             DateTime? @map("effective_to") @db.Date
+  status                  String
+  reason                  String
+  activatedByMembershipId String   @map("activated_by_membership_id") @db.Uuid
+  activatedAt             DateTime @map("activated_at") @db.Timestamptz(6)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion              Int      @default(1) @map("row_version")
+
+  @@unique([agencyId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, effectiveFrom])
+  @@map("attendance_web_clock_versions")
+}
+
+model AttendanceEvent {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  eventTime             DateTime @map("event_time") @db.Timestamptz(6)
+  eventType             String   @map("event_type")
+  source                String
+  sourceReference       String?  @map("source_reference")
+  enteredByMembershipId String?  @map("entered_by_membership_id") @db.Uuid
+  reason                String?
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee  Employee          @relation("AttendanceEventEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  enteredBy AgencyMembership? @relation("AttendanceEventEnteredBy", fields: [agencyId, enteredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, eventTime])
+  @@index([agencyId, eventTime])
+  @@map("attendance_events")
 }
 
 model LeaveType {
@@ -3341,6 +3461,8 @@ model LeaveType {
   versions             LeavePolicyVersion[]   @relation("LeavePolicyVersions")
   chargedPolicyVersions LeavePolicyVersion[]  @relation("LeavePolicyVersionChargedLeaveType")
   leaveAccounts         LeaveAccount[]        @relation("LeaveAccountLeaveType")
+  leaveApplications     LeaveApplication[]    @relation("LeaveApplicationDraftLeaveType")
+  leaveApplicationVersions LeaveApplicationVersion[] @relation("LeaveApplicationVersionLeaveType")
   createdBy             AgencyMembership     @relation("LeaveTypeCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy             AgencyMembership     @relation("LeaveTypeUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
@@ -3380,6 +3502,8 @@ model LeavePolicyVersion {
   ledgerEntries        LeaveLedgerEntry[]     @relation("LeaveLedgerEntryPolicyVersion")
   accountOpenings      LeaveAccountOpening[]  @relation("LeaveAccountOpeningPolicyVersion")
   ledgerAdjustments    LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustmentPolicyVersion")
+  calculationSegments  LeaveCalculationSegment[] @relation("LeaveCalculationSegmentPolicyVersion")
+  monetizationAllocations LeaveMonetizationAllocation[] @relation("LeaveMonetizationAllocationPolicyVersion")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLinePolicyVersion")
   createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy            AgencyMembership       @relation("LeavePolicyVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
@@ -3432,6 +3556,8 @@ model LeaveAccount {
   ledgerEntries     LeaveLedgerEntry[]      @relation("LeaveLedgerEntries")
   creditCommitments LeaveCreditCommitment[] @relation("LeaveCreditCommitments")
   adjustments       LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustments")
+  monetizationAllocations       LeaveMonetizationAllocation[]           @relation("LeaveMonetizationAllocationAccount")
+  monetizationCertificationLines MonetizationCreditCertificationLine[]  @relation("MonetizationCertificationLineAccount")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLines")
 
   @@unique([agencyId, id])
@@ -3460,6 +3586,9 @@ model LeaveLedgerEntry {
   reversedByEntry LeaveLedgerEntry[]      @relation("LeaveLedgerEntryReversal")
   postedBy        AgencyMembership?       @relation("LeaveLedgerEntryPoster", fields: [agencyId, postedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   adjustments     LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustmentReversal")
+  monetizationAdjustmentOriginals    MonetizationAdjustmentLine[] @relation("MonetizationAdjustmentOriginalEntry")
+  monetizationAdjustmentReversals    MonetizationAdjustmentLine[] @relation("MonetizationAdjustmentReversalEntry")
+  monetizationAdjustmentReplacements MonetizationAdjustmentLine[] @relation("MonetizationAdjustmentReplacementEntry")
 
   @@unique([agencyId, id])
   @@unique([agencyId, leaveAccountId, sourceType, sourceId, sourcePostingKey])
@@ -3484,6 +3613,7 @@ model LeaveCreditCommitment {
   leaveAccount       LeaveAccount           @relation("LeaveCreditCommitments", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
   succeedsCommitment LeaveCreditCommitment?  @relation("LeaveCreditCommitmentSuccession", fields: [agencyId, succeedsCommitmentId], references: [agencyId, id], onDelete: Restrict)
   supersededBy       LeaveCreditCommitment?  @relation("LeaveCreditCommitmentSuccession")
+  monetizationCertificationLines MonetizationCreditCertificationLine[] @relation("MonetizationCertificationLineCommitment")
 
   @@unique([agencyId, id])
   @@unique([agencyId, succeedsCommitmentId])
@@ -3639,4 +3769,474 @@ model TerminalLeaveInputHandoffOutcome {
   @@unique([terminalLeaveInputSnapshotId, attemptKey])
   @@unique([agencyId, id])
   @@map("terminal_leave_input_handoff_outcomes")
+}
+
+model LeaveMonetizationRequest {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  currentVersionId      String?  @map("current_version_id") @db.Uuid
+  status                String
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency         Agency                           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee       Employee                         @relation("LeaveMonetizationRequestEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion LeaveMonetizationRequestVersion? @relation("LeaveMonetizationRequestCurrentVersion", fields: [agencyId, currentVersionId], references: [agencyId, id], onDelete: Restrict)
+  createdBy      AgencyMembership                 @relation("LeaveMonetizationRequestCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  versions       LeaveMonetizationRequestVersion[] @relation("LeaveMonetizationRequestVersions")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@map("leave_monetization_requests")
+}
+
+model LeaveMonetizationRequestVersion {
+  id                            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                      String    @map("agency_id") @db.Uuid
+  monetizationRequestId         String    @map("monetization_request_id") @db.Uuid
+  versionNo                     Int       @map("version_no")
+  kind                          String
+  approvalRouteVersionId        String    @map("approval_route_version_id") @db.Uuid
+  approvalRequestId             String    @map("approval_request_id") @db.Uuid
+  formTemplateDocumentVersionId String    @map("form_template_document_version_id") @db.Uuid
+  attestationType               String    @map("attestation_type")
+  attestationDocumentVersionId  String?   @map("attestation_document_version_id") @db.Uuid
+  submittedByMembershipId       String    @map("submitted_by_membership_id") @db.Uuid
+  employeeAttestedAt            DateTime? @map("employee_attested_at") @db.Timestamptz(6)
+  reason                        String?
+  authoritySnapshot             Json      @map("authority_snapshot")
+  submittedAt                   DateTime  @map("submitted_at") @db.Timestamptz(6)
+
+  agency                Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request               LeaveMonetizationRequest       @relation("LeaveMonetizationRequestVersions", fields: [agencyId, monetizationRequestId], references: [agencyId, id], onDelete: Restrict)
+  approvalRouteVersion  ApprovalRouteVersion           @relation("MonetizationVersionApprovalRoute", fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalRequest       ApprovalRequest                @relation("MonetizationVersionApprovalRequest", fields: [agencyId, approvalRequestId], references: [agencyId, id], onDelete: Restrict)
+  formTemplateVersion   DocumentVersion                @relation("MonetizationFormTemplateVersion", fields: [agencyId, formTemplateDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  attestationVersion    DocumentVersion?               @relation("MonetizationAttestationVersion", fields: [agencyId, attestationDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  submittedBy           AgencyMembership               @relation("LeaveMonetizationVersionSubmitter", fields: [agencyId, submittedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  currentForRequests    LeaveMonetizationRequest[]     @relation("LeaveMonetizationRequestCurrentVersion")
+  allocations           LeaveMonetizationAllocation[]
+  assessments           MonetizationEligibilityAssessment[]
+  certification         MonetizationCreditCertification?
+  fundingDeterminations MonetizationFundingDetermination[]
+  posting               MonetizationPosting?
+
+  @@unique([agencyId, monetizationRequestId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, approvalRequestId])
+  @@map("leave_monetization_request_versions")
+}
+
+model LeaveMonetizationAllocation {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String   @map("agency_id") @db.Uuid
+  monetizationRequestVersionId String   @map("monetization_request_version_id") @db.Uuid
+  leaveAccountId               String   @map("leave_account_id") @db.Uuid
+  policyVersionId              String   @map("policy_version_id") @db.Uuid
+  requestedQuantity            Decimal  @map("requested_quantity") @db.Decimal(12, 4)
+  approvedQuantity             Decimal? @map("approved_quantity") @db.Decimal(12, 4)
+
+  agency             Agency                           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestVersion     LeaveMonetizationRequestVersion  @relation(fields: [agencyId, monetizationRequestVersionId], references: [agencyId, id], onDelete: Restrict)
+  leaveAccount       LeaveAccount                     @relation("LeaveMonetizationAllocationAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion      LeavePolicyVersion               @relation("LeaveMonetizationAllocationPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  certificationLines MonetizationCreditCertificationLine[]
+
+  @@unique([agencyId, monetizationRequestVersionId, leaveAccountId])
+  @@unique([agencyId, id])
+  @@map("leave_monetization_allocations")
+}
+
+model MonetizationEligibilityAssessment {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String   @map("agency_id") @db.Uuid
+  monetizationRequestVersionId String   @map("monetization_request_version_id") @db.Uuid
+  result                       String
+  balanceEffectiveDate         DateTime @map("balance_effective_date") @db.Date
+  ledgerCutoff                 DateTime @map("ledger_cutoff") @db.Timestamptz(6)
+  inputFacts                   Json     @map("input_facts")
+  ruleResults                  Json     @map("rule_results")
+  assessedByMembershipId       String?  @map("assessed_by_membership_id") @db.Uuid
+  assessedAt                   DateTime @map("assessed_at") @db.Timestamptz(6)
+
+  agency         Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestVersion LeaveMonetizationRequestVersion @relation(fields: [agencyId, monetizationRequestVersionId], references: [agencyId, id], onDelete: Restrict)
+  assessedBy     AgencyMembership?               @relation("MonetizationEligibilityAssessor", fields: [agencyId, assessedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  certifications MonetizationCreditCertification[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, monetizationRequestVersionId, assessedAt])
+  @@map("monetization_eligibility_assessments")
+}
+
+model MonetizationCreditCertification {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String   @map("agency_id") @db.Uuid
+  monetizationRequestVersionId String   @unique @map("monetization_request_version_id") @db.Uuid
+  eligibilityAssessmentId      String   @map("eligibility_assessment_id") @db.Uuid
+  certifiedByMembershipId      String   @map("certified_by_membership_id") @db.Uuid
+  certifiedAt                  DateTime @map("certified_at") @db.Timestamptz(6)
+
+  agency                Agency                           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestVersion        LeaveMonetizationRequestVersion  @relation(fields: [agencyId, monetizationRequestVersionId], references: [agencyId, id], onDelete: Restrict)
+  eligibilityAssessment MonetizationEligibilityAssessment @relation(fields: [agencyId, eligibilityAssessmentId], references: [agencyId, id], onDelete: Restrict)
+  certifiedBy           AgencyMembership                 @relation("MonetizationCertificationCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  lines                 MonetizationCreditCertificationLine[]
+
+  @@unique([agencyId, monetizationRequestVersionId])
+  @@unique([agencyId, id])
+  @@map("monetization_credit_certifications")
+}
+
+model MonetizationCreditCertificationLine {
+  id                                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                          String  @map("agency_id") @db.Uuid
+  monetizationCreditCertificationId String  @map("monetization_credit_certification_id") @db.Uuid
+  monetizationAllocationId          String  @map("monetization_allocation_id") @db.Uuid
+  leaveAccountId                    String  @map("leave_account_id") @db.Uuid
+  postedBalance                     Decimal @map("posted_balance") @db.Decimal(12, 4)
+  otherActiveCommitments            Decimal @map("other_active_commitments") @db.Decimal(12, 4)
+  certifiedQuantity                 Decimal @map("certified_quantity") @db.Decimal(12, 4)
+  resultingAvailableQuantity        Decimal @map("resulting_available_quantity") @db.Decimal(12, 4)
+  leaveCreditCommitmentId           String  @map("leave_credit_commitment_id") @db.Uuid
+
+  agency        Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  certification MonetizationCreditCertification @relation(fields: [agencyId, monetizationCreditCertificationId], references: [agencyId, id], onDelete: Restrict, map: "monetization_credit_cert_lines_certification_fkey")
+  allocation    LeaveMonetizationAllocation    @relation(fields: [agencyId, monetizationAllocationId], references: [agencyId, id], onDelete: Restrict, map: "monetization_credit_cert_lines_allocation_fkey")
+  leaveAccount  LeaveAccount                   @relation("MonetizationCertificationLineAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  commitment    LeaveCreditCommitment          @relation("MonetizationCertificationLineCommitment", fields: [agencyId, leaveCreditCommitmentId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, monetizationCreditCertificationId, leaveAccountId])
+  @@unique([agencyId, id])
+  @@map("monetization_credit_certification_lines")
+}
+
+model MonetizationFundingDetermination {
+  id                              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                        String   @map("agency_id") @db.Uuid
+  monetizationRequestVersionId    String   @map("monetization_request_version_id") @db.Uuid
+  result                          String
+  fiscalAuthorityDocumentVersionId String  @map("fiscal_authority_document_version_id") @db.Uuid
+  fundingSourceSnapshot           Json     @map("funding_source_snapshot")
+  evidenceSnapshot                Json     @map("evidence_snapshot")
+  reviewedByMembershipId          String   @map("reviewed_by_membership_id") @db.Uuid
+  reviewedAt                      DateTime @map("reviewed_at") @db.Timestamptz(6)
+
+  agency                 Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestVersion         LeaveMonetizationRequestVersion @relation(fields: [agencyId, monetizationRequestVersionId], references: [agencyId, id], onDelete: Restrict)
+  fiscalAuthorityVersion DocumentVersion                @relation("MonetizationFundingFiscalAuthorityVersion", fields: [agencyId, fiscalAuthorityDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  reviewedBy             AgencyMembership               @relation("MonetizationFundingReviewer", fields: [agencyId, reviewedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, monetizationRequestVersionId, reviewedAt])
+  @@map("monetization_funding_determinations")
+}
+
+model MonetizationPosting {
+  id                           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String   @map("agency_id") @db.Uuid
+  monetizationRequestVersionId String   @unique @map("monetization_request_version_id") @db.Uuid
+  postingKey                   String   @map("posting_key") @db.Citext
+  valuationDate                DateTime @map("valuation_date") @db.Date
+  calculatorKind               String   @map("calculator_kind") @db.Citext
+  factor                       Decimal  @db.Decimal(12, 7)
+  payrollInputId               String   @map("payroll_input_id") @db.Uuid
+  payrollResult                Json     @map("payroll_result")
+  postedByMembershipId         String   @map("posted_by_membership_id") @db.Uuid
+  postedAt                     DateTime @map("posted_at") @db.Timestamptz(6)
+
+  agency         Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestVersion LeaveMonetizationRequestVersion @relation(fields: [agencyId, monetizationRequestVersionId], references: [agencyId, id], onDelete: Restrict)
+  postedBy       AgencyMembership                @relation("MonetizationPostingPoster", fields: [agencyId, postedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  adjustments    MonetizationAdjustment[]
+
+  @@unique([agencyId, monetizationRequestVersionId])
+  @@unique([agencyId, postingKey])
+  @@unique([agencyId, id])
+  @@map("monetization_postings")
+}
+
+model MonetizationAdjustment {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  monetizationPostingId     String    @map("monetization_posting_id") @db.Uuid
+  scope                     String
+  reason                    String
+  approvalRouteVersionId    String    @map("approval_route_version_id") @db.Uuid
+  approvalRequestId         String    @map("approval_request_id") @db.Uuid
+  status                    String
+  payrollAdjustmentInputId  String?   @map("payroll_adjustment_input_id") @db.Uuid
+  ownerResult               Json?     @map("owner_result")
+  appliedAt                 DateTime? @map("applied_at") @db.Timestamptz(6)
+
+  agency              Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  posting             MonetizationPosting       @relation(fields: [agencyId, monetizationPostingId], references: [agencyId, id], onDelete: Restrict)
+  approvalRouteVersion ApprovalRouteVersion     @relation("MonetizationAdjustmentApprovalRoute", fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalRequest     ApprovalRequest           @relation("MonetizationAdjustmentApprovalRequest", fields: [agencyId, approvalRequestId], references: [agencyId, id], onDelete: Restrict)
+  lines               MonetizationAdjustmentLine[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, monetizationPostingId, status])
+  @@map("monetization_adjustments")
+}
+
+model MonetizationAdjustmentLine {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  monetizationAdjustmentId  String   @map("monetization_adjustment_id") @db.Uuid
+  originalLedgerEntryId     String   @map("original_ledger_entry_id") @db.Uuid
+  retainedQuantity          Decimal  @map("retained_quantity") @db.Decimal(12, 4)
+  reversalLedgerEntryId     String?  @map("reversal_ledger_entry_id") @db.Uuid
+  replacementLedgerEntryId  String?  @map("replacement_ledger_entry_id") @db.Uuid
+
+  agency           Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  adjustment       MonetizationAdjustment  @relation(fields: [agencyId, monetizationAdjustmentId], references: [agencyId, id], onDelete: Restrict)
+  originalEntry    LeaveLedgerEntry        @relation("MonetizationAdjustmentOriginalEntry", fields: [agencyId, originalLedgerEntryId], references: [agencyId, id], onDelete: Restrict, map: "monetization_adjustment_lines_original_entry_fkey")
+  reversalEntry    LeaveLedgerEntry?       @relation("MonetizationAdjustmentReversalEntry", fields: [agencyId, reversalLedgerEntryId], references: [agencyId, id], onDelete: Restrict, map: "monetization_adjustment_lines_reversal_entry_fkey")
+  replacementEntry LeaveLedgerEntry?       @relation("MonetizationAdjustmentReplacementEntry", fields: [agencyId, replacementLedgerEntryId], references: [agencyId, id], onDelete: Restrict, map: "monetization_adjustment_lines_replacement_entry_fkey")
+
+  @@unique([agencyId, monetizationAdjustmentId, originalLedgerEntryId])
+  @@unique([agencyId, id])
+  @@map("monetization_adjustment_lines")
+}
+
+/// Phase-local Payroll-owned input store. Superseded by the Payroll module's
+/// payroll_inputs table; the production Payroll port remains fail-closed until
+/// that module owns monetization inputs.
+model PayrollMonetizationEarningInput {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  sourceType            String   @map("source_type") @db.Citext
+  sourceId              String   @map("source_id") @db.Uuid
+  sourceVersionKey      String   @map("source_version_key") @db.Citext
+  status                String
+  quantity              Decimal  @map("quantity") @db.Decimal(12, 4)
+  amount                Decimal  @map("amount") @db.Decimal(19, 4)
+  effectiveDate         DateTime @map("effective_date") @db.Date
+  valuationDate         DateTime @map("valuation_date") @db.Date
+  calculatorKind        String   @map("calculator_kind") @db.Citext
+  factor                Decimal  @db.Decimal(12, 7)
+  salarySourceSnapshot  Json     @map("salary_source_snapshot")
+  roundingSnapshot      Json     @map("rounding_snapshot")
+  calculationSnapshot   Json     @map("calculation_snapshot")
+  payloadSnapshot       Json     @map("payload_snapshot")
+  supersedesInputId     String?  @map("supersedes_input_id") @db.Uuid
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency       Agency                          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee     Employee                        @relation("PayrollMonetizationEarningInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  createdBy    AgencyMembership                @relation("PayrollMonetizationEarningInputCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  supersedes   PayrollMonetizationEarningInput? @relation("PayrollMonetizationEarningInputSuccession", fields: [agencyId, supersedesInputId], references: [agencyId, id], onDelete: Restrict)
+  supersededBy PayrollMonetizationEarningInput? @relation("PayrollMonetizationEarningInputSuccession")
+  outcomes     PayrollMonetizationAdjustmentOutcome[]
+
+  @@unique([agencyId, sourceType, sourceId, sourceVersionKey])
+  @@unique([agencyId, supersedesInputId])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@map("payroll_monetization_earning_inputs")
+}
+
+/// Phase-local Payroll-owned accepted linkage for corrections against consumed
+/// inputs. Immutable once recorded.
+model PayrollMonetizationAdjustmentOutcome {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  monetizationAdjustmentId  String   @unique @map("monetization_adjustment_id") @db.Uuid
+  earningInputId            String   @map("earning_input_id") @db.Uuid
+  result                    String
+  linkedInputId             String?  @map("linked_input_id") @db.Uuid
+  payloadSnapshot           Json     @map("payload_snapshot")
+  recordedByMembershipId    String   @map("recorded_by_membership_id") @db.Uuid
+  recordedAt                DateTime @map("recorded_at") @db.Timestamptz(6)
+
+  agency      Agency                         @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  earningInput PayrollMonetizationEarningInput @relation(fields: [agencyId, earningInputId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy  AgencyMembership               @relation("PayrollMonetizationAdjustmentOutcomeRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@map("payroll_monetization_adjustment_outcomes")
+}
+
+model LeaveApplication {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String   @map("agency_id") @db.Uuid
+  employeeId             String   @map("employee_id") @db.Uuid
+  draftLeaveTypeId       String   @map("draft_leave_type_id") @db.Uuid
+  currentVersionId       String?  @map("current_version_id") @db.Uuid
+  draftReason            String?  @map("draft_reason")
+  draftPolicyDetails     Json     @default("{}") @map("draft_policy_details")
+  draftCommutationChoice String?  @map("draft_commutation_choice")
+  status                 String
+  createdByMembershipId  String   @map("created_by_membership_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency         Agency                      @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee       Employee                    @relation("LeaveApplicationEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  draftLeaveType LeaveType                   @relation("LeaveApplicationDraftLeaveType", fields: [agencyId, draftLeaveTypeId], references: [agencyId, id], onDelete: Restrict)
+  createdBy      AgencyMembership            @relation("LeaveApplicationCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  currentVersion LeaveApplicationVersion?    @relation("LeaveApplicationCurrentVersion", fields: [agencyId, id, currentVersionId], references: [agencyId, leaveApplicationId, id], onDelete: Restrict)
+  versions       LeaveApplicationVersion[]   @relation("LeaveApplicationVersions")
+  draftPeriods   LeaveApplicationDraftPeriod[]
+  draftDocuments LeaveApplicationDraftDocument[]
+
+  @@unique([agencyId, id])
+  @@index([agencyId, status, employeeId])
+  @@map("leave_applications")
+}
+
+model LeaveApplicationDraftPeriod {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String   @map("agency_id") @db.Uuid
+  leaveApplicationId String   @map("leave_application_id") @db.Uuid
+  sequenceNo         Int      @map("sequence_no")
+  dateFrom           DateTime @map("date_from") @db.Date
+  dateTo             DateTime @map("date_to") @db.Date
+
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplication LeaveApplication @relation(fields: [agencyId, leaveApplicationId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveApplicationId, sequenceNo])
+  @@unique([agencyId, id])
+  @@map("leave_application_draft_periods")
+}
+
+model LeaveApplicationDraftDocument {
+  id                 String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String @map("agency_id") @db.Uuid
+  leaveApplicationId String @map("leave_application_id") @db.Uuid
+  documentVersionId  String @map("document_version_id") @db.Uuid
+  purposeCode        String @map("purpose_code") @db.Citext
+
+  agency           Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplication LeaveApplication @relation(fields: [agencyId, leaveApplicationId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion  DocumentVersion  @relation("LeaveApplicationDraftDocumentVersion", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveApplicationId, documentVersionId, purposeCode])
+  @@unique([agencyId, id])
+  @@map("leave_application_draft_documents")
+}
+
+model LeaveApplicationVersion {
+  id                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String    @map("agency_id") @db.Uuid
+  leaveApplicationId           String    @map("leave_application_id") @db.Uuid
+  versionNo                    Int       @map("version_no")
+  leaveTypeId                  String    @map("leave_type_id") @db.Uuid
+  acceptedAssessmentId         String?   @map("accepted_assessment_id") @db.Uuid
+  approvalRouteVersionId       String    @map("approval_route_version_id") @db.Uuid
+  approvalRequestId            String    @map("approval_request_id") @db.Uuid
+  formTemplateDocumentVersionId String   @map("form_template_document_version_id") @db.Uuid
+  attestationType              String    @map("attestation_type")
+  attestationDocumentVersionId String?   @map("attestation_document_version_id") @db.Uuid
+  submittedByMembershipId      String    @map("submitted_by_membership_id") @db.Uuid
+  employeeAttestedAt           DateTime? @map("employee_attested_at") @db.Timestamptz(6)
+  submissionMethod             String    @map("submission_method") @db.Citext
+  receivedAt                   DateTime  @map("received_at") @db.Timestamptz(6)
+  reason                       String?
+  policyDetails                Json      @default("{}") @map("policy_details")
+  commutationChoice            String?   @map("commutation_choice")
+  submittedAt                  DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  agency               Agency               @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplication     LeaveApplication     @relation("LeaveApplicationVersions", fields: [agencyId, leaveApplicationId], references: [agencyId, id], onDelete: Restrict)
+  leaveType            LeaveType            @relation("LeaveApplicationVersionLeaveType", fields: [agencyId, leaveTypeId], references: [agencyId, id], onDelete: Restrict)
+  approvalRouteVersion ApprovalRouteVersion @relation("LeaveApplicationVersionApprovalRouteVersion", fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalRequest      ApprovalRequest      @relation("LeaveApplicationVersionApprovalRequest", fields: [agencyId, approvalRequestId], references: [agencyId, id], onDelete: Restrict)
+  formTemplateDocumentVersion DocumentVersion @relation("LeaveApplicationVersionFormTemplate", fields: [agencyId, formTemplateDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  attestationDocumentVersion  DocumentVersion? @relation("LeaveApplicationVersionAttestation", fields: [agencyId, attestationDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  submittedBy          AgencyMembership     @relation("LeaveApplicationVersionSubmitter", fields: [agencyId, submittedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  acceptedAssessment   LeaveEligibilityAssessment? @relation("LeaveApplicationVersionAcceptedAssessment", fields: [agencyId, id, acceptedAssessmentId], references: [agencyId, leaveApplicationVersionId, id], onDelete: Restrict)
+  currentForApplications LeaveApplication[]  @relation("LeaveApplicationCurrentVersion")
+  periods              LeaveApplicationPeriod[]
+  documents            LeaveApplicationVersionDocument[]
+  assessments          LeaveEligibilityAssessment[] @relation("LeaveApplicationVersionAssessments")
+  calculationSegments  LeaveCalculationSegment[]
+
+  @@unique([leaveApplicationId, versionNo])
+  @@unique([approvalRequestId])
+  @@unique([agencyId, leaveApplicationId, id])
+  @@unique([agencyId, id])
+  @@map("leave_application_versions")
+}
+
+model LeaveApplicationPeriod {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @map("leave_application_version_id") @db.Uuid
+  sequenceNo                Int      @map("sequence_no")
+  dateFrom                  DateTime @map("date_from") @db.Date
+  dateTo                    DateTime @map("date_to") @db.Date
+
+  agency                  Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion @relation(fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveApplicationVersionId, sequenceNo])
+  @@unique([agencyId, id])
+  @@map("leave_application_periods")
+}
+
+model LeaveApplicationVersionDocument {
+  id                        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String @map("leave_application_version_id") @db.Uuid
+  documentVersionId         String @map("document_version_id") @db.Uuid
+  purposeCode               String @map("purpose_code") @db.Citext
+
+  agency                  Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion @relation(fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion         DocumentVersion         @relation("LeaveApplicationVersionDocumentVersion", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveApplicationVersionId, documentVersionId, purposeCode])
+  @@unique([agencyId, id])
+  @@map("leave_application_version_documents")
+}
+
+model LeaveEligibilityAssessment {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @map("leave_application_version_id") @db.Uuid
+  assessmentNo              Int      @map("assessment_no")
+  result                    String
+  inputFacts                Json     @map("input_facts")
+  ruleResults               Json     @map("rule_results")
+  missingFacts              Json     @map("missing_facts")
+  assessedAt                DateTime @default(now()) @map("assessed_at") @db.Timestamptz(6)
+
+  agency                  Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion @relation("LeaveApplicationVersionAssessments", fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+  acceptedForVersions     LeaveApplicationVersion[] @relation("LeaveApplicationVersionAcceptedAssessment")
+  calculationSegments     LeaveCalculationSegment[]
+
+  @@unique([leaveApplicationVersionId, assessmentNo])
+  @@unique([agencyId, leaveApplicationVersionId, id])
+  @@unique([agencyId, id])
+  @@map("leave_eligibility_assessments")
+}
+
+model LeaveCalculationSegment {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @map("leave_application_version_id") @db.Uuid
+  eligibilityAssessmentId   String   @map("eligibility_assessment_id") @db.Uuid
+  policyVersionId           String   @map("policy_version_id") @db.Uuid
+  scheduleAssignmentId      String?  @map("schedule_assignment_id") @db.Uuid
+  holidayFacts              Json     @map("holiday_facts")
+  dateFrom                  DateTime @map("date_from") @db.Date
+  dateTo                    DateTime @map("date_to") @db.Date
+  requestedQuantity         Decimal  @map("requested_quantity") @db.Decimal(12, 4)
+  requestedUnit             String   @map("requested_unit")
+  accountQuantity           Decimal? @map("account_quantity") @db.Decimal(12, 4)
+
+  agency                  Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion @relation(fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict, map: "leave_calculation_segments_version_fkey")
+  eligibilityAssessment   LeaveEligibilityAssessment @relation(fields: [agencyId, leaveApplicationVersionId, eligibilityAssessmentId], references: [agencyId, leaveApplicationVersionId, id], onDelete: Restrict, map: "leave_calculation_segments_assessment_fkey")
+  policyVersion           LeavePolicyVersion      @relation("LeaveCalculationSegmentPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  scheduleAssignment      ScheduleAssignment?     @relation("LeaveCalculationSegments", fields: [agencyId, scheduleAssignmentId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@map("leave_calculation_segments")
 }
