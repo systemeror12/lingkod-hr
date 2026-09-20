@@ -26,6 +26,7 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
 import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
+import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
 
 @Module({
   imports: [
@@ -55,6 +56,7 @@ import { LeaveApplicationsModule } from './leave-applications/leave-applications
     LeavePoliciesModule,
     LeaveAccountsModule,
     LeaveApplicationsModule,
+    LeaveMonetizationModule,
   ],
   controllers: [HealthController],
 })

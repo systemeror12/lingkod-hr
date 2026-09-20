@@ -817,7 +817,11 @@ export class ApprovalsService {
     );
   }
 
-  /** Internal contract: create an Approval Request in the caller's transaction. */
+  /**
+   * Internal contract: create an Approval Request in the caller's transaction.
+   * The owning domain asserts its own scoped authority; the operational
+   * Approval create grant is still required in AGENCY or OWN scope.
+   */
   async createRequestInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -934,18 +938,19 @@ export class ApprovalsService {
     );
   }
 
-  /** Internal contract: submit an Approval Request in the caller's transaction. */
+  /**
+   * Internal contract: submit an Approval Request in the caller's transaction.
+   * The owning domain enforces its own permission; the public `submit` keeps
+   * the Approval-owned check. Pass `requireDrafter: false` when the owning
+   * domain submits on behalf of a drafter who cannot submit from its own role.
+   */
   async submitInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     requestId: string,
     rawIdempotencyKey?: string,
+    options?: { requireDrafter?: boolean },
   ): Promise<ApprovalRequestSummary> {
-    this.assertPermission(
-      context,
-      'approvals.requests.submit',
-      'APPROVAL_REQUEST_SUBMIT_FORBIDDEN',
-    );
     const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
     const previous = await this.idempotentEvent(
       transaction,
@@ -958,7 +963,10 @@ export class ApprovalsService {
       return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
     const current = await this.lockRequest(transaction, context.agencyId, requestId);
     if (!current) throw this.notFound('Approval Request');
-    if (current.requestedByMembershipId !== context.membershipId) {
+    if (
+      (options?.requireDrafter ?? true) &&
+      current.requestedByMembershipId !== context.membershipId
+    ) {
       throw new ApprovalServiceError(
         'Only the Approval Request drafter can submit it.',
         403,
@@ -1136,6 +1144,22 @@ export class ApprovalsService {
     rawComments?: string,
     rawIdempotencyKey?: string,
   ): Promise<ApprovalRequestSummary> {
+    this.assertDecisionReason(decision, rawComments);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'approval-transition'),
+      (transaction) =>
+        this.decideInTransaction(
+          transaction,
+          context,
+          requestId,
+          decision,
+          rawComments,
+          rawIdempotencyKey,
+        ),
+    );
+  }
+
+  private assertDecisionReason(decision: ApprovalDecision, rawComments?: string): void {
     const comments = rawComments?.trim() ?? '';
     if (decision !== 'APPROVE' && comments.length === 0) {
       throw new ApprovalServiceError(
@@ -1144,6 +1168,23 @@ export class ApprovalsService {
         'APPROVAL_DECISION_REASON_REQUIRED',
       );
     }
+  }
+
+  /**
+   * Internal contract: record an Approval Decision inside the caller's
+   * transaction so the owning domain can bind it to its own effects atomically.
+   * Decision authorization still uses the bound Approval Step snapshot.
+   */
+  async decideInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    requestId: string,
+    decision: ApprovalDecision,
+    rawComments?: string,
+    rawIdempotencyKey?: string,
+  ): Promise<ApprovalRequestSummary> {
+    this.assertDecisionReason(decision, rawComments);
+    const comments = rawComments?.trim() ?? '';
     const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
     const action =
       decision === 'APPROVE'
@@ -1151,139 +1192,129 @@ export class ApprovalsService {
         : decision === 'RETURN'
           ? 'APPROVAL_REQUEST_RETURNED'
           : 'APPROVAL_REQUEST_REJECTED';
-    return withDatabaseContext(
-      requestDatabaseContext(context, 'approval-transition'),
-      async (transaction) => {
-        const previous = await this.idempotentEvent(
-          transaction,
-          context,
-          action,
-          idempotencyKey,
-          requestId,
-        );
-        if (previous) {
-          if (previous.reason !== (comments || 'Approval step decision recorded.')) {
-            throw this.idempotencyConflict();
-          }
-          return requestSummary(
-            await this.requireRequest(transaction, context.agencyId, requestId),
-          );
-        }
-        const current = await this.lockRequest(transaction, context.agencyId, requestId);
-        if (!current) throw this.notFound('Approval Request');
-        if (current.status !== 'IN_PROGRESS' || current.currentStepNo === null) {
-          throw this.requestWorkflowError('decide', current.status);
-        }
-        const step = current.steps.find(
-          ({ stepNo, status }) => stepNo === current.currentStepNo && status === 'ACTIVE',
-        );
-        if (!step || !step.assignedMembershipId) {
-          throw new ApprovalServiceError(
-            'The Approval Request has no active assigned reviewer.',
-            409,
-            'APPROVAL_STEP_INVALID',
-          );
-        }
-        if (
-          step.requiresSeparateReview &&
-          context.membershipId === current.requestedByMembershipId
-        ) {
-          throw new ApprovalServiceError(
-            'The drafter cannot satisfy a step that requires separate review.',
-            403,
-            'APPROVAL_SEGREGATION_REQUIRED',
-          );
-        }
-        const delegationId = await this.assertDecisionAuthority(
-          transaction,
-          context,
-          step,
-          decisionPermission(step, decision),
-        );
-        const now = new Date();
-        await transaction.approvalDecision.create({
-          data: {
-            agencyId: context.agencyId,
-            approvalStepId: step.id,
-            decidedByMembershipId: context.membershipId,
-            decision,
-            comments: comments || null,
-            delegatedAuthorityId: delegationId,
-            requestId: context.requestId,
-          },
-        });
-        const nextStep = current.steps.find(
-          ({ stepNo, status }) => stepNo === current.currentStepNo! + 1 && status === 'PENDING',
-        );
-        const nextRequestStatus =
-          decision === 'RETURN'
-            ? 'RETURNED'
-            : decision === 'REJECT'
-              ? 'REJECTED'
-              : nextStep
-                ? 'IN_PROGRESS'
-                : 'APPROVED';
-        await transaction.approvalStep.update({
-          where: { agencyId_id: { agencyId: context.agencyId, id: step.id } },
-          data: {
-            status:
-              decision === 'APPROVE' ? 'APPROVED' : decision === 'RETURN' ? 'RETURNED' : 'REJECTED',
-            completedAt: now,
-          },
-        });
-        if (nextStep && nextRequestStatus === 'IN_PROGRESS') {
-          await transaction.approvalStep.update({
-            where: { agencyId_id: { agencyId: context.agencyId, id: nextStep.id } },
-            data: { status: 'ACTIVE', activatedAt: now },
-          });
-        }
-        const updated = await transaction.approvalRequest.update({
-          where: { agencyId_id: { agencyId: context.agencyId, id: requestId } },
-          data: {
-            status: nextRequestStatus,
-            currentStepNo:
-              nextRequestStatus === 'APPROVED' || nextRequestStatus === 'REJECTED'
-                ? null
-                : current.currentStepNo,
-            completedAt: ['APPROVED', 'REJECTED'].includes(nextRequestStatus) ? now : null,
-          },
-        });
-        if (nextRequestStatus === 'APPROVED') {
-          await this.completionHandler.complete(transaction, context, {
-            approvalRequestId: updated.id,
-            agencyId: updated.agencyId,
-            subjectType: updated.subjectType,
-            subjectId: updated.subjectId,
-            routeVersionId: updated.routeVersionId,
-          });
-        }
-        if (nextRequestStatus === 'RETURNED' || nextRequestStatus === 'REJECTED') {
-          await this.completionHandler.onDecision?.(
-            transaction,
-            context,
-            {
-              approvalRequestId: updated.id,
-              agencyId: updated.agencyId,
-              subjectType: updated.subjectType,
-              subjectId: updated.subjectId,
-              routeVersionId: updated.routeVersionId,
-            },
-            nextRequestStatus,
-          );
-        }
-        await this.writeAudit(transaction, context, {
-          action: `APPROVAL_REQUEST_${decision === 'APPROVE' ? 'APPROVED' : decision === 'RETURN' ? 'RETURNED' : 'REJECTED'}`,
-          entityType: 'ApprovalRequest',
-          entityId: requestId,
-          previousStatus: current.status,
-          newStatus: nextRequestStatus,
-          reason: comments || 'Approval step decision recorded.',
-          metadata: { stepId: step.id, stepNo: step.stepNo, delegatedAuthorityId: delegationId },
-          idempotencyKey,
-        });
-        return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
-      },
+    const previous = await this.idempotentEvent(
+      transaction,
+      context,
+      action,
+      idempotencyKey,
+      requestId,
     );
+    if (previous) {
+      if (previous.reason !== (comments || 'Approval step decision recorded.')) {
+        throw this.idempotencyConflict();
+      }
+      return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
+    }
+    const current = await this.lockRequest(transaction, context.agencyId, requestId);
+    if (!current) throw this.notFound('Approval Request');
+    if (current.status !== 'IN_PROGRESS' || current.currentStepNo === null) {
+      throw this.requestWorkflowError('decide', current.status);
+    }
+    const step = current.steps.find(
+      ({ stepNo, status }) => stepNo === current.currentStepNo && status === 'ACTIVE',
+    );
+    if (!step || !step.assignedMembershipId) {
+      throw new ApprovalServiceError(
+        'The Approval Request has no active assigned reviewer.',
+        409,
+        'APPROVAL_STEP_INVALID',
+      );
+    }
+    if (step.requiresSeparateReview && context.membershipId === current.requestedByMembershipId) {
+      throw new ApprovalServiceError(
+        'The drafter cannot satisfy a step that requires separate review.',
+        403,
+        'APPROVAL_SEGREGATION_REQUIRED',
+      );
+    }
+    const delegationId = await this.assertDecisionAuthority(
+      transaction,
+      context,
+      step,
+      decisionPermission(step, decision),
+    );
+    const now = new Date();
+    await transaction.approvalDecision.create({
+      data: {
+        agencyId: context.agencyId,
+        approvalStepId: step.id,
+        decidedByMembershipId: context.membershipId,
+        decision,
+        comments: comments || null,
+        delegatedAuthorityId: delegationId,
+        requestId: context.requestId,
+      },
+    });
+    const nextStep = current.steps.find(
+      ({ stepNo, status }) => stepNo === current.currentStepNo! + 1 && status === 'PENDING',
+    );
+    const nextRequestStatus =
+      decision === 'RETURN'
+        ? 'RETURNED'
+        : decision === 'REJECT'
+          ? 'REJECTED'
+          : nextStep
+            ? 'IN_PROGRESS'
+            : 'APPROVED';
+    await transaction.approvalStep.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: step.id } },
+      data: {
+        status:
+          decision === 'APPROVE' ? 'APPROVED' : decision === 'RETURN' ? 'RETURNED' : 'REJECTED',
+        completedAt: now,
+      },
+    });
+    if (nextStep && nextRequestStatus === 'IN_PROGRESS') {
+      await transaction.approvalStep.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: nextStep.id } },
+        data: { status: 'ACTIVE', activatedAt: now },
+      });
+    }
+    const updated = await transaction.approvalRequest.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: requestId } },
+      data: {
+        status: nextRequestStatus,
+        currentStepNo:
+          nextRequestStatus === 'APPROVED' || nextRequestStatus === 'REJECTED'
+            ? null
+            : current.currentStepNo,
+        completedAt: ['APPROVED', 'REJECTED'].includes(nextRequestStatus) ? now : null,
+      },
+    });
+    if (nextRequestStatus === 'APPROVED') {
+      await this.completionHandler.complete(transaction, context, {
+        approvalRequestId: updated.id,
+        agencyId: updated.agencyId,
+        subjectType: updated.subjectType,
+        subjectId: updated.subjectId,
+        routeVersionId: updated.routeVersionId,
+      });
+    }
+    if (nextRequestStatus === 'RETURNED' || nextRequestStatus === 'REJECTED') {
+      await this.completionHandler.onDecision?.(
+        transaction,
+        context,
+        {
+          approvalRequestId: updated.id,
+          agencyId: updated.agencyId,
+          subjectType: updated.subjectType,
+          subjectId: updated.subjectId,
+          routeVersionId: updated.routeVersionId,
+        },
+        nextRequestStatus,
+      );
+    }
+    await this.writeAudit(transaction, context, {
+      action: `APPROVAL_REQUEST_${decision === 'APPROVE' ? 'APPROVED' : decision === 'RETURN' ? 'RETURNED' : 'REJECTED'}`,
+      entityType: 'ApprovalRequest',
+      entityId: requestId,
+      previousStatus: current.status,
+      newStatus: nextRequestStatus,
+      reason: comments || 'Approval step decision recorded.',
+      metadata: { stepId: step.id, stepNo: step.stepNo, delegatedAuthorityId: delegationId },
+      idempotencyKey,
+    });
+    return requestSummary(await this.requireRequest(transaction, context.agencyId, requestId));
   }
 
   private async validateRouteDefinition(

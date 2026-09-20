@@ -10,6 +10,8 @@ export const APPROVAL_REQUEST_SUBJECT_TYPES = [
   'APPOINTMENT_ISSUANCE',
   'ADMINISTRATIVE_CORRECTION',
   'LEAVE_APPLICATION',
+  'LEAVE_MONETIZATION',
+  'LEAVE_MONETIZATION_ADJUSTMENT',
 ] as const;
 
 const routeAssignmentSchema = z.discriminatedUnion('kind', [

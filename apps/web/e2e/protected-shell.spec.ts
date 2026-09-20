@@ -5,9 +5,11 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
 }, testInfo) => {
   const requests: string[] = [];
   const dashboardStatuses: number[] = [];
+  const appUrl = testInfo.project.use.baseURL ?? 'http://localhost:3100';
+  const oidcIssuer = process.env.OIDC_ISSUER ?? 'http://127.0.0.1:4100';
   page.on('request', (request) => requests.push(request.url()));
   page.on('response', (response) => {
-    if (response.url() === 'http://localhost:3100/dashboard') {
+    if (response.url() === `${appUrl}/dashboard`) {
       dashboardStatuses.push(response.status());
     }
   });
@@ -16,7 +18,7 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
 
   expect(requests.some((url) => url.includes('/api/v1/auth/login'))).toBe(true);
   expect(dashboardStatuses[0]).toBe(307);
-  expect(requests.some((url) => url.startsWith('http://127.0.0.1:4100/authorize'))).toBe(true);
+  expect(requests.some((url) => url.startsWith(`${oidcIssuer}/authorize`))).toBe(true);
   expect(requests.some((url) => url.includes('/api/v1/auth/callback'))).toBe(true);
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
