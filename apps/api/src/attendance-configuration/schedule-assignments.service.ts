@@ -437,169 +437,186 @@ export class ScheduleAssignmentsService {
       'attendance.configuration.read',
       'SCHEDULE_ASSIGNMENT_READ_FORBIDDEN',
     );
-    const workDate = toDatabaseDate(workDateValue);
-    return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const employee = await transaction.employee.findFirst({
-        where: { agencyId: context.agencyId, id: employeeId },
-        select: { id: true, employeeNumber: true, legalName: true },
-      });
-      if (!employee) throw this.employeeNotFound();
-      const segment = await transaction.serviceSegment.findFirst({
-        where: {
-          agencyId: context.agencyId,
-          employeeId,
-          status: 'ACTIVE',
-          effectiveFrom: { lte: workDate },
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: workDate } }],
-        },
-        select: { id: true },
-      });
-      if (!segment) {
-        throw this.attendanceException(
-          'MISSING_SERVICE',
-          'No qualifying Appointed Personnel service covers the Work Date.',
-          { employeeId, workDate: workDateValue },
-        );
-      }
-      const assignments = await transaction.scheduleAssignment.findMany({
-        where: {
-          agencyId: context.agencyId,
-          employeeId,
-          effectiveFrom: { lte: workDate },
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: workDate } }],
-        },
-        orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
-        select: assignmentSelect,
-      });
-      if (assignments.length === 0) {
-        throw this.attendanceException(
-          'MISSING_SCHEDULE_ASSIGNMENT',
-          'No Schedule Assignment is effective on the Work Date.',
-          { employeeId, workDate: workDateValue },
-        );
-      }
-      if (assignments.length > 1) {
-        throw this.attendanceException(
-          'OVERLAPPING_SCHEDULE_ASSIGNMENT',
-          'More than one Schedule Assignment is effective on the Work Date.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            assignmentIds: assignments.map((assignment) => assignment.id),
-          },
-        );
-      }
-      const assignment = assignmentSummary(assignments[0]!);
-      const workScheduleVersion = await this.workSchedules.findVersionInTransaction(
+    return withDatabaseContext(databaseContext(context), (transaction) =>
+      this.resolveForWorkDateInTransaction(
         transaction,
         context.agencyId,
-        assignment.workScheduleVersionId,
-        workDate,
-      );
-      if (!workScheduleVersion) {
-        throw this.attendanceException(
-          'MISSING_WORK_SCHEDULE_VERSION',
-          'The assigned Work Schedule Version is not available for the Work Date.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            assignmentId: assignment.id,
-            workScheduleVersionId: assignment.workScheduleVersionId,
-          },
-        );
-      }
-      const workArrangementVersion = await this.workArrangements.findVersionInTransaction(
-        transaction,
-        context.agencyId,
-        assignment.workArrangementVersionId,
-        workDate,
-      );
-      if (!workArrangementVersion) {
-        throw this.attendanceException(
-          'MISSING_WORK_ARRANGEMENT_VERSION',
-          'The assigned Work Arrangement Version is not available for the Work Date.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            assignmentId: assignment.id,
-            workArrangementVersionId: assignment.workArrangementVersionId,
-          },
-        );
-      }
-      if (
-        !workArrangementVersion.permittedScheduleTypes.includes(workScheduleVersion.scheduleType)
-      ) {
-        throw this.attendanceException(
-          'INCOMPATIBLE_SCHEDULE_ARRANGEMENT',
-          'The assigned Work Arrangement Version does not permit the Work Schedule type.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            assignmentId: assignment.id,
-            scheduleType: workScheduleVersion.scheduleType,
-            permittedScheduleTypes: workArrangementVersion.permittedScheduleTypes,
-          },
-        );
-      }
-      const candidates = await this.holidayCalendars.findPublishedCandidates(
-        transaction,
-        context.agencyId,
-        workArrangementVersion.holidayCalendarId,
-        workDate,
-      );
-      if (candidates.length === 0) {
-        throw this.attendanceException(
-          'MISSING_HOLIDAY_CALENDAR_VERSION',
-          'No Holiday Calendar Version is effective on the Work Date.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            holidayCalendarId: workArrangementVersion.holidayCalendarId,
-          },
-        );
-      }
-      if (candidates.length > 1) {
-        throw this.attendanceException(
-          'AMBIGUOUS_HOLIDAY_CALENDAR_VERSION',
-          'More than one Holiday Calendar Version is effective on the Work Date.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            holidayCalendarId: workArrangementVersion.holidayCalendarId,
-            versionIds: candidates.map((candidate) => candidate.id),
-          },
-        );
-      }
-      const holidayCalendarVersion = candidates[0]!;
-      const dayRule = workScheduleVersion.dayRules.find(
-        (rule) => rule.weekday === isoWeekday(workDate),
-      );
-      if (!dayRule) {
-        throw this.attendanceException(
-          'MISSING_WORK_SCHEDULE_VERSION',
-          'The assigned Work Schedule Version has no Day Rule for the Work Date weekday.',
-          {
-            employeeId,
-            workDate: workDateValue,
-            workScheduleVersionId: workScheduleVersion.id,
-            weekday: isoWeekday(workDate),
-          },
-        );
-      }
-      const holidayDate = formatDate(workDate);
-      return {
         employeeId,
-        workDate: holidayDate,
-        assignment,
-        workScheduleVersion,
-        workArrangementVersion,
-        holidayCalendarVersion,
-        dayRule,
-        holidayEntries: holidayCalendarVersion.entries.filter(
-          (entry) => entry.holidayDate === holidayDate,
-        ),
-      };
+        workDateValue,
+      ),
+    );
+  }
+
+  /**
+   * Resolve one Work Date inside a caller-owned transaction. Attendance
+   * capture uses this seam so Employees without configuration read access can
+   * still resolve their own governing schedule and fail closed identically.
+   */
+  async resolveForWorkDateInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDateValue: string,
+  ): Promise<AttendanceResolution> {
+    const workDate = toDatabaseDate(workDateValue);
+    const employee = await transaction.employee.findFirst({
+      where: { agencyId, id: employeeId },
+      select: { id: true, employeeNumber: true, legalName: true },
     });
+    if (!employee) throw this.employeeNotFound();
+    const segment = await transaction.serviceSegment.findFirst({
+      where: {
+        agencyId,
+        employeeId,
+        status: 'ACTIVE',
+        effectiveFrom: { lte: workDate },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: workDate } }],
+      },
+      select: { id: true },
+    });
+    if (!segment) {
+      throw this.attendanceException(
+        'MISSING_SERVICE',
+        'No qualifying Appointed Personnel service covers the Work Date.',
+        { employeeId, workDate: workDateValue },
+      );
+    }
+    const assignments = await transaction.scheduleAssignment.findMany({
+      where: {
+        agencyId,
+        employeeId,
+        effectiveFrom: { lte: workDate },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: workDate } }],
+      },
+      orderBy: [{ effectiveFrom: 'desc' }, { createdAt: 'desc' }],
+      select: assignmentSelect,
+    });
+    if (assignments.length === 0) {
+      throw this.attendanceException(
+        'MISSING_SCHEDULE_ASSIGNMENT',
+        'No Schedule Assignment is effective on the Work Date.',
+        { employeeId, workDate: workDateValue },
+      );
+    }
+    if (assignments.length > 1) {
+      throw this.attendanceException(
+        'OVERLAPPING_SCHEDULE_ASSIGNMENT',
+        'More than one Schedule Assignment is effective on the Work Date.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          assignmentIds: assignments.map((assignment) => assignment.id),
+        },
+      );
+    }
+    const assignment = assignmentSummary(assignments[0]!);
+    const workScheduleVersion = await this.workSchedules.findVersionInTransaction(
+      transaction,
+      agencyId,
+      assignment.workScheduleVersionId,
+      workDate,
+    );
+    if (!workScheduleVersion) {
+      throw this.attendanceException(
+        'MISSING_WORK_SCHEDULE_VERSION',
+        'The assigned Work Schedule Version is not available for the Work Date.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          assignmentId: assignment.id,
+          workScheduleVersionId: assignment.workScheduleVersionId,
+        },
+      );
+    }
+    const workArrangementVersion = await this.workArrangements.findVersionInTransaction(
+      transaction,
+      agencyId,
+      assignment.workArrangementVersionId,
+      workDate,
+    );
+    if (!workArrangementVersion) {
+      throw this.attendanceException(
+        'MISSING_WORK_ARRANGEMENT_VERSION',
+        'The assigned Work Arrangement Version is not available for the Work Date.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          assignmentId: assignment.id,
+          workArrangementVersionId: assignment.workArrangementVersionId,
+        },
+      );
+    }
+    if (!workArrangementVersion.permittedScheduleTypes.includes(workScheduleVersion.scheduleType)) {
+      throw this.attendanceException(
+        'INCOMPATIBLE_SCHEDULE_ARRANGEMENT',
+        'The assigned Work Arrangement Version does not permit the Work Schedule type.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          assignmentId: assignment.id,
+          scheduleType: workScheduleVersion.scheduleType,
+          permittedScheduleTypes: workArrangementVersion.permittedScheduleTypes,
+        },
+      );
+    }
+    const candidates = await this.holidayCalendars.findPublishedCandidates(
+      transaction,
+      agencyId,
+      workArrangementVersion.holidayCalendarId,
+      workDate,
+    );
+    if (candidates.length === 0) {
+      throw this.attendanceException(
+        'MISSING_HOLIDAY_CALENDAR_VERSION',
+        'No Holiday Calendar Version is effective on the Work Date.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          holidayCalendarId: workArrangementVersion.holidayCalendarId,
+        },
+      );
+    }
+    if (candidates.length > 1) {
+      throw this.attendanceException(
+        'AMBIGUOUS_HOLIDAY_CALENDAR_VERSION',
+        'More than one Holiday Calendar Version is effective on the Work Date.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          holidayCalendarId: workArrangementVersion.holidayCalendarId,
+          versionIds: candidates.map((candidate) => candidate.id),
+        },
+      );
+    }
+    const holidayCalendarVersion = candidates[0]!;
+    const dayRule = workScheduleVersion.dayRules.find(
+      (rule) => rule.weekday === isoWeekday(workDate),
+    );
+    if (!dayRule) {
+      throw this.attendanceException(
+        'MISSING_WORK_SCHEDULE_VERSION',
+        'The assigned Work Schedule Version has no Day Rule for the Work Date weekday.',
+        {
+          employeeId,
+          workDate: workDateValue,
+          workScheduleVersionId: workScheduleVersion.id,
+          weekday: isoWeekday(workDate),
+        },
+      );
+    }
+    const holidayDate = formatDate(workDate);
+    return {
+      employeeId,
+      workDate: holidayDate,
+      assignment,
+      workScheduleVersion,
+      workArrangementVersion,
+      holidayCalendarVersion,
+      dayRule,
+      holidayEntries: holidayCalendarVersion.entries.filter(
+        (entry) => entry.holidayDate === holidayDate,
+      ),
+    };
   }
 
   private async assertApplicable(
@@ -649,12 +666,17 @@ export class ScheduleAssignmentsService {
   }
 
   private isOverlapViolation(error: unknown): boolean {
-    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-    if (error.code === 'P2004') return true;
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2004') return true;
+      return (
+        error.code === 'P2010' &&
+        typeof error.meta?.message === 'string' &&
+        error.meta.message.includes('schedule_assignments_effective_excl')
+      );
+    }
     return (
-      error.code === 'P2010' &&
-      typeof error.meta?.message === 'string' &&
-      error.meta.message.includes('schedule_assignments_effective_excl')
+      error instanceof Prisma.PrismaClientUnknownRequestError &&
+      error.message.includes('schedule_assignments_effective_excl')
     );
   }
 

@@ -246,6 +246,16 @@ async function seed(): Promise<void> {
     });
     await transaction.leaveMonetizationRequest.deleteMany({ where: { agencyId: agency.id } });
     await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveCalculationSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveEligibilityAssessment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationVersionDocument.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.leaveApplicationPeriod.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationDraftDocument.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplicationDraftPeriod.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.leaveApplication.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalDecision.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalStep.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalRequest.deleteMany({ where: { agencyId: agency.id } });
@@ -290,6 +300,8 @@ async function seed(): Promise<void> {
       where: { agencyId: agency.id },
     });
     await transaction.serviceRecordSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceWebClockVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationEffect.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationCase.deleteMany({ where: { agencyId: agency.id } });
@@ -307,6 +319,7 @@ async function seed(): Promise<void> {
       data: { currentServiceSegmentId: null },
     });
     await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceContext.deleteMany({ where: { agencyId: agency.id } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.plantillaPosition.updateMany({
@@ -2045,11 +2058,28 @@ async function seed(): Promise<void> {
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.auditEvent.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveCalculationSegment.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveEligibilityAssessment.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplicationVersionDocument.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplicationPeriod.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveApplicationVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.leaveApplicationDraftDocument.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplicationDraftPeriod.deleteMany({
+      where: { agencyId: foreignAgency.id },
+    });
+    await transaction.leaveApplication.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.agencyMembership.updateMany({
       where: { agencyId: foreignAgency.id },
       data: { employeeId: null },
     });
     await transaction.governmentIdentifier.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.attendanceContext.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.employee.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });

@@ -2248,7 +2248,6 @@ export class LeaveMonetizationService implements OnModuleInit {
       approvalRequestId,
       reason,
       rawIdempotencyKey,
-      { requireDrafter: false },
     );
   }
 

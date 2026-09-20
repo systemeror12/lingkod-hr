@@ -21,8 +21,11 @@ import { ApprovalModule } from './approvals/approval.module';
 import { RecruitmentModule } from './recruitment/recruitment.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { AttendanceConfigurationModule } from './attendance-configuration/attendance-configuration.module';
+import { AttendanceContextsModule } from './attendance-contexts/attendance-contexts.module';
+import { AttendanceModule } from './attendance/attendance.module';
 import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
+import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
 import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
 
 @Module({
@@ -48,8 +51,11 @@ import { LeaveMonetizationModule } from './leave-monetization/leave-monetization
     RecruitmentModule,
     AppointmentsModule,
     AttendanceConfigurationModule,
+    AttendanceContextsModule,
+    AttendanceModule,
     LeavePoliciesModule,
     LeaveAccountsModule,
+    LeaveApplicationsModule,
     LeaveMonetizationModule,
   ],
   controllers: [HealthController],

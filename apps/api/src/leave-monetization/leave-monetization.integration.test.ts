@@ -228,6 +228,7 @@ it.skipIf(!enabled)(
       { code: 'leave.monetization.cancel', scopePolicy: 'AGENCY' },
       { code: 'approvals.routes.create', scopePolicy: 'AGENCY' },
       { code: 'approvals.routes.activate', scopePolicy: 'AGENCY' },
+      { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
       { code: 'leave.types.read', scopePolicy: 'AGENCY' },
       { code: 'leave.types.manage', scopePolicy: 'AGENCY' },
       { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
@@ -238,6 +239,7 @@ it.skipIf(!enabled)(
       { code: 'leave.monetization.create', scopePolicy: 'OWN' },
       { code: 'leave.monetization.submit', scopePolicy: 'OWN' },
       { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
+      { code: 'approvals.requests.create', scopePolicy: 'OWN' },
       { code: 'leave.accounts.read', scopePolicy: 'OWN' },
     ]);
     const certifierContext = context(agency.id, certifierUser.id, certifierMembership.id, [
@@ -260,6 +262,7 @@ it.skipIf(!enabled)(
     const posterContext = context(agency.id, posterUser.id, posterMembership.id, [
       { code: 'leave.monetization.post', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.adjust', scopePolicy: 'AGENCY' },
+      { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
       { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
     ]);
     const foreignContext = context(foreignAgency.id, foreignUser.id, foreignMembership.id, [

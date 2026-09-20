@@ -513,7 +513,11 @@ export class ApprovalsService {
     routeCode: string,
     effectiveDate?: string,
   ): Promise<ApprovalRouteSummary> {
-    this.assertPermission(context, 'approvals.routes.read', 'APPROVAL_ROUTE_READ_FORBIDDEN');
+    this.assertOperationalPermission(
+      context,
+      'approvals.routes.read',
+      'APPROVAL_ROUTE_READ_FORBIDDEN',
+    );
     const asOf = approvalDate(effectiveDate);
     return routeSummary(await this.resolveRoute(transaction, context.agencyId, routeCode, asOf));
   }
@@ -815,8 +819,8 @@ export class ApprovalsService {
 
   /**
    * Internal contract: create an Approval Request in the caller's transaction.
-   * The owning domain enforces its own permission; the public `createRequest`
-   * keeps the Approval-owned check.
+   * The owning domain asserts its own scoped authority; the operational
+   * Approval create grant is still required in AGENCY or OWN scope.
    */
   async createRequestInTransaction(
     transaction: Prisma.TransactionClient,
@@ -825,6 +829,11 @@ export class ApprovalsService {
     rawIdempotencyKey?: string,
     boundRouteVersionId?: string,
   ): Promise<ApprovalRequestSummary> {
+    this.assertOperationalPermission(
+      context,
+      'approvals.requests.create',
+      'APPROVAL_REQUEST_CREATE_FORBIDDEN',
+    );
     if (!isApprovalSubjectType(input.subjectType)) {
       throw new ApprovalServiceError(
         'Board Recommendations and Selection Decisions use their Recruitment-owned records.',
@@ -1039,17 +1048,19 @@ export class ApprovalsService {
       'approvals.requests.cancel',
       'APPROVAL_REQUEST_CANCEL_FORBIDDEN',
     );
+    this.assertReason(reason, 'APPROVAL_REQUEST_REASON_REQUIRED');
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
     return withDatabaseContext(
       requestDatabaseContext(context, 'approval-transition'),
       (transaction) =>
-        this.cancelInTransaction(transaction, context, requestId, reason, rawIdempotencyKey),
+        this.cancelWorkInTransaction(transaction, context, requestId, reason, idempotencyKey, true),
     );
   }
 
   /**
-   * Internal contract: cancel an Approval Request inside the caller's
-   * transaction. The owning domain enforces its own permission and drafter
-   * rules; pass `requireDrafter: true` to keep the drafter check.
+   * Internal contract: an owning domain that already asserted its own authority
+   * cancels unfinished route work in the caller's transaction. Leave owns the
+   * withdrawal decision; Approval owns the request state.
    */
   async cancelInTransaction(
     transaction: Prisma.TransactionClient,
@@ -1057,10 +1068,27 @@ export class ApprovalsService {
     requestId: string,
     reason: string,
     rawIdempotencyKey?: string,
-    options?: { requireDrafter?: boolean },
   ): Promise<ApprovalRequestSummary> {
     this.assertReason(reason, 'APPROVAL_REQUEST_REASON_REQUIRED');
     const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    return this.cancelWorkInTransaction(
+      transaction,
+      context,
+      requestId,
+      reason,
+      idempotencyKey,
+      false,
+    );
+  }
+
+  private async cancelWorkInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    requestId: string,
+    reason: string,
+    idempotencyKey: string | null,
+    requireDrafter: boolean,
+  ): Promise<ApprovalRequestSummary> {
     const previous = await this.idempotentEvent(
       transaction,
       context,
@@ -1074,10 +1102,7 @@ export class ApprovalsService {
     }
     const current = await this.lockRequest(transaction, context.agencyId, requestId);
     if (!current) throw this.notFound('Approval Request');
-    if (
-      (options?.requireDrafter ?? true) &&
-      current.requestedByMembershipId !== context.membershipId
-    ) {
+    if (requireDrafter && current.requestedByMembershipId !== context.membershipId) {
       throw new ApprovalServiceError(
         'Only the Approval Request drafter can cancel it.',
         403,
@@ -1688,6 +1713,30 @@ export class ApprovalsService {
       !context.userId ||
       !context.membershipId ||
       !hasPermission(context, permission, { agencyId: context.agencyId })
+    ) {
+      throw new ApprovalServiceError(
+        'The current Agency Membership lacks the required permission.',
+        403,
+        code,
+      );
+    }
+  }
+
+  /**
+   * Internal contract: the owning domain already asserted its own scoped
+   * authority, so accept an operational grant in either AGENCY or OWN scope.
+   * Public Approval endpoints keep the narrower AGENCY-only check.
+   */
+  private assertOperationalPermission(
+    context: RequestContext,
+    permission: string,
+    code: string,
+  ): void {
+    if (
+      !context.agencyId ||
+      !context.userId ||
+      !context.membershipId ||
+      !context.permissions.some((grant) => grant.code === permission)
     ) {
       throw new ApprovalServiceError(
         'The current Agency Membership lacks the required permission.',
