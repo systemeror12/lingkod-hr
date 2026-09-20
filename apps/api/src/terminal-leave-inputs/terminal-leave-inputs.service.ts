@@ -18,12 +18,14 @@ import {
 /**
  * Terminal Leave Input Preservation freezes the exact sources a later
  * terminal-leave computation will rely on without calculating or authorizing
- * anything. CSC MC No. 41, s. 1998, sections 35-40 makes resignation,
- * retirement, or separation through no fault the condition precedent for
- * terminal leave. Dismissal and dropping from rolls are fault-based. The
- * sources do not say whether every termination order rests on fault, so
- * TERMINATION stays unresolved and fails closed instead of assuming an
- * entitlement. Uncovered classifications are tracked in issue #205.
+ * anything. CSC MC No. 41, s. 1998, sections 35-37 make retirement,
+ * resignation, and separation through no fault the condition precedent for
+ * terminal leave. CSC MC No. 14, s. 1999, section 65 and the 2025 RACCS,
+ * sections 73 and 135 confirm that dismissal and dropping from rolls do not
+ * forfeit it. No accepted authority states the treatment of every termination,
+ * transfer, reorganization, or other separation, so those stay unresolved and
+ * fail closed until the Separation-owned Separation Leave Credit Disposition
+ * states it (#205).
  */
 export const TERMINAL_LEAVE_INPUT_SOURCE_TYPE = 'SEPARATION_CASE';
 
@@ -38,7 +40,7 @@ export const TERMINAL_LEAVE_INPUT_HANDOFF_RESULTS = [
 
 export type TerminalLeaveInputHandoffResult = (typeof TERMINAL_LEAVE_INPUT_HANDOFF_RESULTS)[number];
 export type TerminalLeaveInputResult = 'READY' | 'INDETERMINATE';
-export type SeparationQualification = 'QUALIFYING' | 'NOT_QUALIFYING' | 'UNRESOLVED';
+export type SeparationQualification = 'QUALIFYING' | 'UNRESOLVED';
 
 export const TERMINAL_LEAVE_SEPARATION_CLASSIFICATION: Readonly<
   Record<string, SeparationQualification>
@@ -47,9 +49,8 @@ export const TERMINAL_LEAVE_SEPARATION_CLASSIFICATION: Readonly<
   RESIGNATION: 'QUALIFYING',
   DEATH: 'QUALIFYING',
   EXPIRATION: 'QUALIFYING',
-  DISMISSAL: 'NOT_QUALIFYING',
-  DROPPING_FROM_ROLLS: 'NOT_QUALIFYING',
-  TERMINATION: 'UNRESOLVED',
+  DISMISSAL: 'QUALIFYING',
+  DROPPING_FROM_ROLLS: 'QUALIFYING',
 };
 
 export function qualifySeparationType(separationType: string): SeparationQualification {
@@ -510,8 +511,9 @@ export class TerminalLeaveInputsService {
   }
 
   /**
-   * Effective Separation Cases that may be preserved. The qualification
-   * mapping is Leave-owned and unresolved classifications are withheld.
+   * Effective Separation Cases that may be preserved. Until the Separation
+   * Leave Credit Disposition handoff lands, Leave applies the accepted
+   * authority map; unresolved classifications are withheld.
    */
   async listCandidates(context: RequestContext): Promise<TerminalLeaveInputCandidate[]> {
     this.assertPermission(
@@ -617,9 +619,6 @@ export class TerminalLeaveInputsService {
         if (!separationCase) throw separationCaseNotFound();
         assertEffectiveSeparation(separationCase);
         const qualification = qualifySeparationType(separationCase.separationType);
-        if (qualification === 'NOT_QUALIFYING') {
-          throw separationNotQualifying(separationCase.separationType);
-        }
         if (qualification !== 'QUALIFYING') {
           throw separationClassificationUnresolved(separationCase.separationType);
         }
@@ -1302,15 +1301,6 @@ function separationNotEffective(status: string): TerminalLeaveInputServiceError 
     409,
     'TERMINAL_LEAVE_INPUT_SEPARATION_NOT_EFFECTIVE',
     [`STATUS:${status}`],
-  );
-}
-
-function separationNotQualifying(separationType: string): TerminalLeaveInputServiceError {
-  return new TerminalLeaveInputServiceError(
-    'That Separation type cannot qualify for terminal leave.',
-    409,
-    'TERMINAL_LEAVE_INPUT_SEPARATION_NOT_QUALIFYING',
-    [`CLASSIFICATION:${separationType}`],
   );
 }
 

@@ -453,10 +453,12 @@ it.skipIf(!enabled)(
 
       const candidates = await service.listCandidates(terminalContext);
       expect(candidates.map((candidate) => candidate.separationCaseId)).toEqual(
-        expect.arrayContaining([separationCase.id, incompleteCase.id, pendingCase.id]),
-      );
-      expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
-        dismissalCase.id,
+        expect.arrayContaining([
+          separationCase.id,
+          incompleteCase.id,
+          pendingCase.id,
+          dismissalCase.id,
+        ]),
       );
       expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
         terminationCase.id,
@@ -600,12 +602,15 @@ it.skipIf(!enabled)(
         ]),
       );
 
-      await expect(
-        service.preserve(terminalContext, { separationCaseId: dismissalCase.id }),
-      ).rejects.toMatchObject({
-        code: 'TERMINAL_LEAVE_INPUT_SEPARATION_NOT_QUALIFYING',
-        statusCode: 409,
+      const dismissed = await service.preserve(terminalContext, {
+        separationCaseId: dismissalCase.id,
       });
+      expect(dismissed.assessment.result).toBe('INDETERMINATE');
+      expect(dismissed.snapshot).toBeNull();
+      expect(
+        (dismissed.assessment.inputFacts as { separation: { qualification: string } }).separation
+          .qualification,
+      ).toBe('QUALIFYING');
       await expect(
         service.preserve(terminalContext, { separationCaseId: terminationCase.id }),
       ).rejects.toMatchObject({

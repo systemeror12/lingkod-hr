@@ -1278,7 +1278,7 @@ Immutable evaluation of terminal-leave source readiness
 | employee_id                  | uuid         | No    | FK employees            | Employee                                          |
 | separation_source_id         | uuid         | No    | Application-validated   | Exact Separation record                           |
 | separation_source_version_id | uuid         | No    | Application-validated   | Exact immutable Separation version                |
-| separation_classification    | string       | No    | Authority-bound         | Qualifying or disqualifying classification        |
+| separation_classification    | string       | No    | Authority-bound         | Separation type checked against the authority map |
 | separation_effective_date    | date         | No    |                         | Last service or effective separation date         |
 | ledger_cutoff                | datetime     | No    |                         | Knowledge cutoff                                  |
 | result                       | enum         | No    |                         | READY, INDETERMINATE                              |
