@@ -666,12 +666,17 @@ export class ScheduleAssignmentsService {
   }
 
   private isOverlapViolation(error: unknown): boolean {
-    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
-    if (error.code === 'P2004') return true;
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2004') return true;
+      return (
+        error.code === 'P2010' &&
+        typeof error.meta?.message === 'string' &&
+        error.meta.message.includes('schedule_assignments_effective_excl')
+      );
+    }
     return (
-      error.code === 'P2010' &&
-      typeof error.meta?.message === 'string' &&
-      error.meta.message.includes('schedule_assignments_effective_excl')
+      error instanceof Prisma.PrismaClientUnknownRequestError &&
+      error.message.includes('schedule_assignments_effective_excl')
     );
   }
 
