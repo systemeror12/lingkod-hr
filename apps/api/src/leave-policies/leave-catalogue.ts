@@ -78,31 +78,33 @@ export const LEAVE_QUALIFYING_EVENTS = [
 export type LeaveQualifyingEvent = (typeof LEAVE_QUALIFYING_EVENTS)[number];
 
 export interface LeaveRuleParameters {
-  earnDays?: number;
-  perServiceDays?: number;
-  annualCreditDays?: number;
-  annualDays?: number;
-  grantedDays?: number;
-  grantedMonths?: number;
-  maximumQualifyingDeliveries?: number;
-  requiredWorkingDays?: number;
-  minimumAccountCredits?: number;
-  usageWindowDays?: number;
-  maximumMonths?: number;
-  qualifyingEvent?: LeaveQualifyingEvent;
-  variants?: readonly {
-    code: LeaveQualifyingEvent;
-    grantedDays?: number;
-    grantedMonths?: number;
-  }[];
-  paid?: boolean;
-  chargesLedger?: boolean;
-  accumulation?: 'UNLIMITED' | 'NON_CUMULATIVE' | 'NOT_APPLICABLE';
-  expiration?: 'NONE' | 'YEAR_END';
-  forfeiture?: 'NONE' | 'YEAR_END_UNUSED' | 'NON_CONVERSION';
-  commutation?: 'PERMITTED' | 'NOT_COMMUTABLE' | 'NOT_SPECIFIED';
-  agencyDiscretionary?: true;
-  indeterminateSource?: true;
+  earnDays?: number | undefined;
+  perServiceDays?: number | undefined;
+  annualCreditDays?: number | undefined;
+  annualDays?: number | undefined;
+  grantedDays?: number | undefined;
+  grantedMonths?: number | undefined;
+  maximumQualifyingDeliveries?: number | undefined;
+  requiredWorkingDays?: number | undefined;
+  minimumAccountCredits?: number | undefined;
+  usageWindowDays?: number | undefined;
+  maximumMonths?: number | undefined;
+  qualifyingEvent?: LeaveQualifyingEvent | undefined;
+  variants?:
+    | readonly {
+        code: LeaveQualifyingEvent;
+        grantedDays?: number | undefined;
+        grantedMonths?: number | undefined;
+      }[]
+    | undefined;
+  paid?: boolean | undefined;
+  chargesLedger?: boolean | undefined;
+  accumulation?: 'UNLIMITED' | 'NON_CUMULATIVE' | 'NOT_APPLICABLE' | undefined;
+  expiration?: 'NONE' | 'YEAR_END' | undefined;
+  forfeiture?: 'NONE' | 'YEAR_END_UNUSED' | 'NON_CONVERSION' | undefined;
+  commutation?: 'PERMITTED' | 'NOT_COMMUTABLE' | 'NOT_SPECIFIED' | undefined;
+  agencyDiscretionary?: true | undefined;
+  indeterminateSource?: true | undefined;
 }
 
 export interface LeaveAuthorityCitation {

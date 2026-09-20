@@ -9,6 +9,7 @@ export const APPROVAL_REQUEST_SUBJECT_TYPES = [
   'MSP_REBASELINE',
   'APPOINTMENT_ISSUANCE',
   'ADMINISTRATIVE_CORRECTION',
+  'LEAVE_APPLICATION',
 ] as const;
 
 const routeAssignmentSchema = z.discriminatedUnion('kind', [
