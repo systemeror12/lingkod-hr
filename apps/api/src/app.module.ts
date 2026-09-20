@@ -27,6 +27,7 @@ import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
 import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
 import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
+import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leave-inputs.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { LeaveMonetizationModule } from './leave-monetization/leave-monetization
     LeaveAccountsModule,
     LeaveApplicationsModule,
     LeaveMonetizationModule,
+    TerminalLeaveInputsModule,
   ],
   controllers: [HealthController],
 })
