@@ -594,6 +594,10 @@ _Avoid_: Caller-supplied payout, leave ledger entry
 An authorized whole or partial correction of a Monetization Posting that preserves the original approval and effects while linking exact ledger reversals or replacements to Payroll's accepted correction handoff.
 _Avoid_: Edited monetization, immediate credit restoration
 
+**Separation Leave Credit Disposition**:
+An immutable, evidence-backed Separation-owned record of whether an Employee's accumulated leave credits receive `TERMINAL_LEAVE` treatment, transfer to another agency, are not applicable to either treatment, or remain unresolved when the Separation takes effect.
+_Avoid_: Terminal benefit eligibility, Leave input readiness, separation-type assumption
+
 **Terminal Leave Input Assessment**:
 An immutable Leave evaluation that records whether the source facts required to preserve terminal-leave inputs are `READY` or `INDETERMINATE`, including every missing or conflicting fact.
 _Avoid_: Terminal benefit eligibility, terminal payment approval

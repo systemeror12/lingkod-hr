@@ -12,6 +12,7 @@ import {
 import {
   TerminalLeaveInputsService,
   terminalLeaveInputAuditWriter,
+  type SeparationQualification,
 } from './terminal-leave-inputs.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
@@ -452,18 +453,17 @@ it.skipIf(!enabled)(
       });
 
       const candidates = await service.listCandidates(terminalContext);
-      expect(candidates.map((candidate) => candidate.separationCaseId)).toEqual(
-        expect.arrayContaining([separationCase.id, incompleteCase.id, pendingCase.id]),
+      const candidateIds = candidates.map((candidate) => candidate.separationCaseId);
+      expect(candidateIds).toEqual(
+        expect.arrayContaining([
+          separationCase.id,
+          incompleteCase.id,
+          pendingCase.id,
+          dismissalCase.id,
+        ]),
       );
-      expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
-        dismissalCase.id,
-      );
-      expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
-        terminationCase.id,
-      );
-      expect(candidates.map((candidate) => candidate.separationCaseId)).not.toContain(
-        clearedCase.id,
-      );
+      expect(candidateIds).not.toContain(terminationCase.id);
+      expect(candidateIds).not.toContain(clearedCase.id);
       expect(
         candidates.find((candidate) => candidate.separationCaseId === separationCase.id)
           ?.hasReadySnapshot,
@@ -600,12 +600,18 @@ it.skipIf(!enabled)(
         ]),
       );
 
-      await expect(
-        service.preserve(terminalContext, { separationCaseId: dismissalCase.id }),
-      ).rejects.toMatchObject({
-        code: 'TERMINAL_LEAVE_INPUT_SEPARATION_NOT_QUALIFYING',
-        statusCode: 409,
+      const dismissed = await service.preserve(terminalContext, {
+        separationCaseId: dismissalCase.id,
       });
+      expect(dismissed.assessment.result).toBe('INDETERMINATE');
+      expect(dismissed.snapshot).toBeNull();
+      expect(
+        (
+          dismissed.assessment.inputFacts as {
+            separation: { qualification: SeparationQualification };
+          }
+        ).separation.qualification,
+      ).toBe('QUALIFYING');
       await expect(
         service.preserve(terminalContext, { separationCaseId: terminationCase.id }),
       ).rejects.toMatchObject({

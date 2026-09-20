@@ -91,10 +91,12 @@ it('maps only accepted authorities to qualifying separations', () => {
   expect(qualifySeparationType('RESIGNATION')).toBe('QUALIFYING');
   expect(qualifySeparationType('DEATH')).toBe('QUALIFYING');
   expect(qualifySeparationType('EXPIRATION')).toBe('QUALIFYING');
-  expect(qualifySeparationType('DISMISSAL')).toBe('NOT_QUALIFYING');
-  expect(qualifySeparationType('DROPPING_FROM_ROLLS')).toBe('NOT_QUALIFYING');
+  expect(qualifySeparationType('DISMISSAL')).toBe('QUALIFYING');
+  expect(qualifySeparationType('DROPPING_FROM_ROLLS')).toBe('QUALIFYING');
   expect(qualifySeparationType('TERMINATION')).toBe('UNRESOLVED');
   expect(qualifySeparationType('TRANSFER')).toBe('UNRESOLVED');
+  expect(qualifySeparationType('REORGANIZATION')).toBe('UNRESOLVED');
+  expect(qualifySeparationType('OTHER')).toBe('UNRESOLVED');
 });
 
 it('validates handoff outcomes before touching the snapshot', async () => {
