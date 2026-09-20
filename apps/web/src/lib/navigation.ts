@@ -10,6 +10,7 @@ export type DestinationIcon =
   | 'authority'
   | 'qualification'
   | 'position'
+  | 'attendance'
   | 'leave'
   | 'audit';
 
@@ -132,10 +133,25 @@ const destinations: readonly (Destination & {
     permission: 'personnel.service_records.read',
   },
   {
+    href: '/attendance',
+    label: 'Attendance',
+    icon: 'attendance',
+    visible: (session) =>
+      hasPermission(session, 'attendance.events.read') ||
+      hasPermission(session, 'attendance.events.clock') ||
+      hasPermission(session, 'attendance.configuration.read'),
+  },
+  {
     href: '/attendance-configuration',
     label: 'Attendance Configuration',
     icon: 'position',
     permission: 'attendance.configuration.manage',
+  },
+  {
+    href: '/attendance-contexts',
+    label: 'Attendance Contexts',
+    icon: 'position',
+    permission: 'attendance.contexts.read',
   },
   {
     href: '/leave-policies',

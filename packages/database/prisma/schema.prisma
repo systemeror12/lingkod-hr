@@ -290,6 +290,7 @@ model AgencyMembership {
   sessions                               UserSession[]
   securityEvents                         SecurityEvent[]                    @relation("SecurityEventMembership")
   auditEvents                            AuditEvent[]                       @relation("AuditEventMembership")
+  enteredAttendanceEvents                AttendanceEvent[]                  @relation("AttendanceEventEnteredBy")
   createdDocuments                       Document[]                         @relation("DocumentCreator")
   updatedDocuments                       Document[]                         @relation("DocumentUpdater")
   createdDocumentVersions                DocumentVersion[]                  @relation("DocumentVersionCreator")
@@ -394,6 +395,7 @@ model AgencyMembership {
   recordedLeaveLedgerAdjustments         LeaveLedgerAdjustment[]              @relation("LeaveLedgerAdjustmentRecorder")
   createdLeaveApplications               LeaveApplication[]                   @relation("LeaveApplicationCreator")
   submittedLeaveApplicationVersions      LeaveApplicationVersion[]            @relation("LeaveApplicationVersionSubmitter")
+  enteredAttendanceContexts              AttendanceContext[]                  @relation("AttendanceContextRecorder")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1598,6 +1600,7 @@ model DocumentVersion {
   leaveApplicationVersionDocuments                 LeaveApplicationVersionDocument[]     @relation("LeaveApplicationVersionDocumentVersion")
   leaveApplicationFormTemplateVersions             LeaveApplicationVersion[]             @relation("LeaveApplicationVersionFormTemplate")
   leaveApplicationAttestationVersions              LeaveApplicationVersion[]             @relation("LeaveApplicationVersionAttestation")
+  attendanceContextEvidenceVersions                AttendanceContext[]                   @relation("AttendanceContextEvidenceVersion")
 
   @@unique([documentId, versionNo])
   @@unique([agencyId, id])
@@ -1863,6 +1866,8 @@ model Employee {
   scheduleAssignments    ScheduleAssignment[]    @relation("ScheduleAssignmentEmployee")
   leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
   leaveApplications      LeaveApplication[]      @relation("LeaveApplicationEmployee")
+  attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
+  attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3333,6 +3338,74 @@ model ScheduleAssignment {
 
   @@unique([agencyId, id])
   @@map("schedule_assignments")
+}
+
+model AttendanceContext {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  contextType               String    @map("context_type")
+  coverageMode              String    @map("coverage_mode")
+  workDate                  DateTime? @map("work_date") @db.Date
+  startsAt                  DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt                    DateTime? @map("ends_at") @db.Timestamptz(6)
+  reason                    String
+  sourceType                String?   @map("source_type")
+  sourceId                  String?   @map("source_id") @db.Uuid
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  enteredByMembershipId     String    @map("entered_by_membership_id") @db.Uuid
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee        Employee         @relation("AttendanceContextEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion DocumentVersion? @relation("AttendanceContextEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  enteredBy       AgencyMembership @relation("AttendanceContextRecorder", fields: [agencyId, enteredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, workDate])
+  @@index([agencyId, employeeId, startsAt])
+  @@map("attendance_contexts")
+}
+
+model AttendanceWebClockVersion {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  versionNo               Int      @map("version_no")
+  enabled                 Boolean
+  effectiveFrom           DateTime @map("effective_from") @db.Date
+  effectiveTo             DateTime? @map("effective_to") @db.Date
+  status                  String
+  reason                  String
+  activatedByMembershipId String   @map("activated_by_membership_id") @db.Uuid
+  activatedAt             DateTime @map("activated_at") @db.Timestamptz(6)
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion              Int      @default(1) @map("row_version")
+
+  @@unique([agencyId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, effectiveFrom])
+  @@map("attendance_web_clock_versions")
+}
+
+model AttendanceEvent {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String   @map("agency_id") @db.Uuid
+  employeeId            String   @map("employee_id") @db.Uuid
+  eventTime             DateTime @map("event_time") @db.Timestamptz(6)
+  eventType             String   @map("event_type")
+  source                String
+  sourceReference       String?  @map("source_reference")
+  enteredByMembershipId String?  @map("entered_by_membership_id") @db.Uuid
+  reason                String?
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee  Employee          @relation("AttendanceEventEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  enteredBy AgencyMembership? @relation("AttendanceEventEnteredBy", fields: [agencyId, enteredByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, eventTime])
+  @@index([agencyId, eventTime])
+  @@map("attendance_events")
 }
 
 model LeaveType {

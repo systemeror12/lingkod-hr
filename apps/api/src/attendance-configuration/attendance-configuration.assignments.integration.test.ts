@@ -32,14 +32,6 @@ function manilaDate(offsetDays = 0): string {
   return date.toISOString().slice(0, 10);
 }
 
-function manilaWeekdayOnOrBefore(offsetDays = 0): string {
-  const date = new Date(`${manilaDate(offsetDays)}T00:00:00.000Z`);
-  while (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
-    date.setUTCDate(date.getUTCDate() - 1);
-  }
-  return date.toISOString().slice(0, 10);
-}
-
 function dayRules() {
   return [1, 2, 3, 4, 5, 6, 7].map((weekday) =>
     weekday <= 5
@@ -817,7 +809,7 @@ it.skipIf(!enabled)(
       const overnightResolution = await assignments.resolveForWorkDate(
         context,
         overnightEmployee.id,
-        manilaWeekdayOnOrBefore(0),
+        recentWeekday(1),
       );
       expect(overnightResolution).toMatchObject({
         assignment: { id: overnightAssignment.id },

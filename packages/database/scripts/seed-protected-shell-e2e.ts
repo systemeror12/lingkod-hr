@@ -274,6 +274,8 @@ async function seed(): Promise<void> {
       where: { agencyId: agency.id },
     });
     await transaction.serviceRecordSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceEvent.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceWebClockVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationEffect.deleteMany({ where: { agencyId: agency.id } });
     await transaction.separationCase.deleteMany({ where: { agencyId: agency.id } });
@@ -291,6 +293,7 @@ async function seed(): Promise<void> {
       data: { currentServiceSegmentId: null },
     });
     await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceContext.deleteMany({ where: { agencyId: agency.id } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.positionDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.plantillaPosition.updateMany({
@@ -2032,6 +2035,7 @@ async function seed(): Promise<void> {
       data: { employeeId: null },
     });
     await transaction.governmentIdentifier.deleteMany({ where: { agencyId: foreignAgency.id } });
+    await transaction.attendanceContext.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.employee.deleteMany({ where: { agencyId: foreignAgency.id } });
     await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: foreignAgency.id } });
