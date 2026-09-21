@@ -354,43 +354,99 @@ export class AttendanceContextsService {
           'ATTENDANCE_CONTEXT_READ_FORBIDDEN',
         );
       }
-      const records = await transaction.attendanceContext.findMany({
-        where: {
-          agencyId: context.agencyId,
-          employeeId,
-          OR: [
-            { coverageMode: 'WHOLE_WORK_DATE', workDate },
-            {
-              coverageMode: 'TIMED',
-              startsAt: { lt: windowEndsAt },
-              endsAt: { gt: windowStartsAt },
-            },
-          ],
-        },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        select: contextSelect,
-      });
-      const intervals: MutableInterval[] = records.map((record) => ({
-        startsAt: record.startsAt ? record.startsAt.getTime() : windowStartsAt.getTime(),
-        endsAt: record.endsAt ? record.endsAt.getTime() : windowEndsAt.getTime(),
-        context: contextSummary(record),
-      }));
-      const coverage: AttendanceContextCoverageInterval[] = intervals.map((interval) => ({
-        context: interval.context,
-        startsAt: new Date(interval.startsAt).toISOString(),
-        endsAt: new Date(interval.endsAt).toISOString(),
-      }));
-      return {
+      return this.coverageInTransaction(
+        transaction,
+        context.agencyId,
         employeeId,
-        workDate: formatDate(workDate),
-        window: {
-          startsAt: formatInstant(windowStartsAt),
-          endsAt: formatInstant(windowEndsAt),
-        },
-        intervals: coverage,
-        conflicts: detectConflicts(intervals),
-      };
+        workDate,
+        windowStartsAt,
+        windowEndsAt,
+      );
     });
+  }
+
+  /**
+   * Resolve the Attendance Context coverage of one Work Date inside a
+   * caller-owned transaction. Attendance Day calculation uses this seam so its
+   * already-authorized caller can reuse the exact same overlap and conflict
+   * semantics without holding the read permission itself.
+   */
+  async resolveCoverageInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDateValue: string,
+    window: AttendanceContextWorkDateWindow,
+  ): Promise<AttendanceContextResolution> {
+    const workDate = toDatabaseDate(workDateValue);
+    const windowStartsAt = toDatabaseInstant(window.startsAt);
+    const windowEndsAt = toDatabaseInstant(window.endsAt);
+    if (windowEndsAt.getTime() <= windowStartsAt.getTime()) {
+      throw new AttendanceContextServiceError(
+        'The Work Date window must end after it starts.',
+        400,
+        'ATTENDANCE_CONTEXT_WINDOW_INVALID',
+      );
+    }
+    const employee = await transaction.employee.findFirst({
+      where: { agencyId, id: employeeId },
+      select: { id: true },
+    });
+    if (!employee) throw this.employeeNotFound();
+    return this.coverageInTransaction(
+      transaction,
+      agencyId,
+      employeeId,
+      workDate,
+      windowStartsAt,
+      windowEndsAt,
+    );
+  }
+
+  private async coverageInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDate: Date,
+    windowStartsAt: Date,
+    windowEndsAt: Date,
+  ): Promise<AttendanceContextResolution> {
+    const records = await transaction.attendanceContext.findMany({
+      where: {
+        agencyId,
+        employeeId,
+        OR: [
+          { coverageMode: 'WHOLE_WORK_DATE', workDate },
+          {
+            coverageMode: 'TIMED',
+            startsAt: { lt: windowEndsAt },
+            endsAt: { gt: windowStartsAt },
+          },
+        ],
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: contextSelect,
+    });
+    const intervals: MutableInterval[] = records.map((record) => ({
+      startsAt: record.startsAt ? record.startsAt.getTime() : windowStartsAt.getTime(),
+      endsAt: record.endsAt ? record.endsAt.getTime() : windowEndsAt.getTime(),
+      context: contextSummary(record),
+    }));
+    const coverage: AttendanceContextCoverageInterval[] = intervals.map((interval) => ({
+      context: interval.context,
+      startsAt: new Date(interval.startsAt).toISOString(),
+      endsAt: new Date(interval.endsAt).toISOString(),
+    }));
+    return {
+      employeeId,
+      workDate: formatDate(workDate),
+      window: {
+        startsAt: formatInstant(windowStartsAt),
+        endsAt: formatInstant(windowEndsAt),
+      },
+      intervals: coverage,
+      conflicts: detectConflicts(intervals),
+    };
   }
 
   private requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {

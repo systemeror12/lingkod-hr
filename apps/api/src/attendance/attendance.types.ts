@@ -253,6 +253,13 @@ export interface AttendanceEventCollectionWindow {
   end: Date;
 }
 
+/** The immutable facts of one Attendance Event a calculation may consume. */
+export interface AttendanceWorkDateEvent {
+  id: string;
+  eventType: AttendanceEventType;
+  eventTime: Date;
+}
+
 /**
  * The Event Collection Window of one Day Rule. A REST Day Rule has no window;
  * events associate with it by their local date instead. Collection offsets only

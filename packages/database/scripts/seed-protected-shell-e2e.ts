@@ -300,6 +300,10 @@ async function seed(): Promise<void> {
       where: { agencyId: agency.id },
     });
     await transaction.serviceRecordSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceException.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceDaySegment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceDay.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendancePeriod.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceEvent.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceWebClockVersion.deleteMany({ where: { agencyId: agency.id } });
     await transaction.outboxEvent.deleteMany({ where: { agencyId: agency.id } });
