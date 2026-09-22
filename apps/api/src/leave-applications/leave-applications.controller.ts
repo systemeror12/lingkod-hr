@@ -23,12 +23,16 @@ import {
   LeaveEligibilityOutcomeDto,
 } from './leave-applications.dto';
 import {
+  leaveApplicationCertificationSchema,
   leaveApplicationCreateSchema,
+  leaveApplicationDecisionSchema,
   leaveApplicationDocumentSchema,
   leaveApplicationDraftSchema,
   leaveApplicationIdSchema,
   leaveApplicationIdempotencyKeySchema,
   leaveApplicationListSchema,
+  leaveApplicationRecommendationSchema,
+  leaveApplicationReturnSchema,
   leaveApplicationSubmitSchema,
   leaveApplicationWithdrawSchema,
 } from './leave-applications.schemas';
@@ -221,6 +225,123 @@ export class LeaveApplicationsController {
     try {
       return new LeaveApplicationDetailDto(
         await this.service.withdraw(context, parsedId.data, parsed.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/routing')
+  @RequirePermission('leave.applications.route')
+  async route(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    if (!parsedId.success) throw this.notFound(context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.route(context, parsedId.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/certification')
+  @RequirePermission('leave.credits.certify')
+  async certify(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsed = leaveApplicationCertificationSchema.safeParse(body);
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.certify(context, parsedId.data, parsed.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/recommendation')
+  @RequirePermission('leave.applications.recommend')
+  async recommend(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsed = leaveApplicationRecommendationSchema.safeParse(body);
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.recommend(context, parsedId.data, parsed.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/decision')
+  @RequirePermission('leave.applications.approve')
+  async decide(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsed = leaveApplicationDecisionSchema.safeParse(body);
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.decide(context, parsedId.data, parsed.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/return')
+  @RequirePermission('leave.applications.return')
+  async returnToApplicant(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsed = leaveApplicationReturnSchema.safeParse(body);
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.returnToApplicant(context, parsedId.data, parsed.data, parsedKey),
       );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);

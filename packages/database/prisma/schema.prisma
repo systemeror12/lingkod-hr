@@ -133,6 +133,11 @@ model Agency {
   leaveApplicationVersionDocuments LeaveApplicationVersionDocument[]
   leaveEligibilityAssessments   LeaveEligibilityAssessment[]
   leaveCalculationSegments      LeaveCalculationSegment[]
+  leaveCreditCertifications     LeaveCreditCertification[]
+  leaveCreditCertificationLines LeaveCreditCertificationLine[]
+  leaveRecommendations          LeaveRecommendation[]
+  leaveApprovalAllocations      LeaveApprovalAllocation[]
+  leaveApprovalAllocationLines  LeaveApprovalAllocationLine[]
   leaveMonetizationRequests     LeaveMonetizationRequest[]
   leaveMonetizationVersions     LeaveMonetizationRequestVersion[]
   monetizationAllocations       LeaveMonetizationAllocation[]
@@ -345,6 +350,7 @@ model AgencyMembership {
   requestedApprovalRequests              ApprovalRequest[]                  @relation("ApprovalRequestRequester")
   assignedApprovalSteps                  ApprovalStep[]                     @relation("ApprovalStepAssignee")
   approvalDecisions                      ApprovalDecision[]                 @relation("ApprovalDecisionDecider")
+  leaveCreditCertifications              LeaveCreditCertification[]         @relation("LeaveCreditCertificationCertifier")
   createdMeritSelectionPlans             AgencyMeritSelectionPlanVersion[]  @relation("MeritSelectionPlanCreator")
   updatedMeritSelectionPlans             AgencyMeritSelectionPlanVersion[]  @relation("MeritSelectionPlanUpdater")
   createdMeritSelectionCriteriaSets      MeritSelectionCriteriaSet[]        @relation("MeritSelectionCriteriaSetCreator")
@@ -711,6 +717,9 @@ model ApprovalDecision {
   approvalStep       ApprovalStep        @relation(fields: [agencyId, approvalStepId], references: [agencyId, id], onDelete: Restrict)
   decidedBy          AgencyMembership    @relation("ApprovalDecisionDecider", fields: [agencyId, decidedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   delegatedAuthority DelegatedAuthority? @relation("ApprovalDecisionDelegation", fields: [agencyId, delegatedAuthorityId], references: [agencyId, id], onDelete: Restrict)
+  leaveCreditCertifications LeaveCreditCertification[] @relation("LeaveCreditCertificationDecision")
+  leaveRecommendations      LeaveRecommendation[]      @relation("LeaveRecommendationDecision")
+  leaveApprovalAllocations  LeaveApprovalAllocation[]  @relation("LeaveApprovalAllocationDecision")
 
   @@unique([agencyId, id])
   @@index([agencyId, approvalStepId, decidedAt])
@@ -3558,6 +3567,8 @@ model LeaveAccount {
   adjustments       LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustments")
   monetizationAllocations       LeaveMonetizationAllocation[]           @relation("LeaveMonetizationAllocationAccount")
   monetizationCertificationLines MonetizationCreditCertificationLine[]  @relation("MonetizationCertificationLineAccount")
+  creditCertificationLines       LeaveCreditCertificationLine[]         @relation("LeaveCreditCertificationLineAccount")
+  approvalAllocationLines        LeaveApprovalAllocationLine[]          @relation("LeaveApprovalAllocationLineAccount")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLines")
 
   @@unique([agencyId, id])
@@ -3614,6 +3625,7 @@ model LeaveCreditCommitment {
   succeedsCommitment LeaveCreditCommitment?  @relation("LeaveCreditCommitmentSuccession", fields: [agencyId, succeedsCommitmentId], references: [agencyId, id], onDelete: Restrict)
   supersededBy       LeaveCreditCommitment?  @relation("LeaveCreditCommitmentSuccession")
   monetizationCertificationLines MonetizationCreditCertificationLine[] @relation("MonetizationCertificationLineCommitment")
+  creditCertificationLines       LeaveCreditCertificationLine[]        @relation("LeaveCreditCertificationLineCommitment")
 
   @@unique([agencyId, id])
   @@unique([agencyId, succeedsCommitmentId])
@@ -4155,6 +4167,9 @@ model LeaveApplicationVersion {
   documents            LeaveApplicationVersionDocument[]
   assessments          LeaveEligibilityAssessment[] @relation("LeaveApplicationVersionAssessments")
   calculationSegments  LeaveCalculationSegment[]
+  creditCertification  LeaveCreditCertification?    @relation("LeaveCreditCertificationVersion")
+  recommendation       LeaveRecommendation?         @relation("LeaveRecommendationVersion")
+  approvalAllocation   LeaveApprovalAllocation?     @relation("LeaveApprovalAllocationVersion")
 
   @@unique([leaveApplicationId, versionNo])
   @@unique([approvalRequestId])
@@ -4210,6 +4225,7 @@ model LeaveEligibilityAssessment {
   leaveApplicationVersion LeaveApplicationVersion @relation("LeaveApplicationVersionAssessments", fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
   acceptedForVersions     LeaveApplicationVersion[] @relation("LeaveApplicationVersionAcceptedAssessment")
   calculationSegments     LeaveCalculationSegment[]
+  creditCertifications    LeaveCreditCertification[] @relation("LeaveCreditCertificationAssessment")
 
   @@unique([leaveApplicationVersionId, assessmentNo])
   @@unique([agencyId, leaveApplicationVersionId, id])
@@ -4239,4 +4255,107 @@ model LeaveCalculationSegment {
 
   @@unique([agencyId, id])
   @@map("leave_calculation_segments")
+}
+
+model LeaveCreditCertification {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @map("leave_application_version_id") @db.Uuid
+  eligibilityAssessmentId   String   @map("eligibility_assessment_id") @db.Uuid
+  approvalDecisionId        String   @map("approval_decision_id") @db.Uuid
+  balanceAsOf               DateTime @map("balance_as_of") @db.Date
+  ledgerRecordedThrough     DateTime @map("ledger_recorded_through") @db.Timestamptz(6)
+  certifiedByMembershipId   String   @map("certified_by_membership_id") @db.Uuid
+  certifiedAt               DateTime @default(now()) @map("certified_at") @db.Timestamptz(6)
+
+  agency                Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion @relation("LeaveCreditCertificationVersion", fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+  eligibilityAssessment LeaveEligibilityAssessment @relation("LeaveCreditCertificationAssessment", fields: [agencyId, leaveApplicationVersionId, eligibilityAssessmentId], references: [agencyId, leaveApplicationVersionId, id], onDelete: Restrict, map: "leave_credit_certifications_assessment_fkey")
+  approvalDecision      ApprovalDecision          @relation("LeaveCreditCertificationDecision", fields: [agencyId, approvalDecisionId], references: [agencyId, id], onDelete: Restrict)
+  certifiedBy           AgencyMembership          @relation("LeaveCreditCertificationCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  lines                 LeaveCreditCertificationLine[]
+
+  @@unique([leaveApplicationVersionId])
+  @@unique([agencyId, leaveApplicationVersionId])
+  @@unique([agencyId, id])
+  @@map("leave_credit_certifications")
+}
+
+model LeaveCreditCertificationLine {
+  id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String   @map("agency_id") @db.Uuid
+  leaveCreditCertificationId  String   @map("leave_credit_certification_id") @db.Uuid
+  leaveAccountId              String   @map("leave_account_id") @db.Uuid
+  postedBalance               Decimal  @map("posted_balance") @db.Decimal(12, 4)
+  activeCommitments           Decimal  @map("active_commitments") @db.Decimal(12, 4)
+  applicationQuantity         Decimal  @map("application_quantity") @db.Decimal(12, 4)
+  availableAfterApplication   Decimal  @map("available_after_application") @db.Decimal(12, 4)
+  leaveCreditCommitmentId     String   @map("leave_credit_commitment_id") @db.Uuid
+
+  agency                   Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveCreditCertification LeaveCreditCertification  @relation(fields: [agencyId, leaveCreditCertificationId], references: [agencyId, id], onDelete: Restrict)
+  leaveAccount             LeaveAccount              @relation("LeaveCreditCertificationLineAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  leaveCreditCommitment    LeaveCreditCommitment     @relation("LeaveCreditCertificationLineCommitment", fields: [agencyId, leaveCreditCommitmentId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveCreditCertificationId, leaveAccountId])
+  @@unique([agencyId, id])
+  @@map("leave_credit_certification_lines")
+}
+
+model LeaveRecommendation {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @map("leave_application_version_id") @db.Uuid
+  approvalDecisionId        String   @map("approval_decision_id") @db.Uuid
+  outcome                   String
+  reason                    String?
+  recommendedAt             DateTime @default(now()) @map("recommended_at") @db.Timestamptz(6)
+
+  agency                 Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion  @relation("LeaveRecommendationVersion", fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalDecision       ApprovalDecision          @relation("LeaveRecommendationDecision", fields: [agencyId, approvalDecisionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveApplicationVersionId])
+  @@unique([agencyId, leaveApplicationVersionId])
+  @@unique([agencyId, id])
+  @@map("leave_recommendations")
+}
+
+model LeaveApprovalAllocation {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @map("leave_application_version_id") @db.Uuid
+  approvalDecisionId        String   @map("approval_decision_id") @db.Uuid
+  decidedAt                 DateTime @default(now()) @map("decided_at") @db.Timestamptz(6)
+
+  agency                 Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion @relation("LeaveApprovalAllocationVersion", fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalDecision       ApprovalDecision         @relation("LeaveApprovalAllocationDecision", fields: [agencyId, approvalDecisionId], references: [agencyId, id], onDelete: Restrict)
+  lines                  LeaveApprovalAllocationLine[]
+
+  @@unique([leaveApplicationVersionId])
+  @@unique([agencyId, leaveApplicationVersionId])
+  @@unique([agencyId, id])
+  @@map("leave_approval_allocations")
+}
+
+model LeaveApprovalAllocationLine {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApprovalAllocationId String   @map("leave_approval_allocation_id") @db.Uuid
+  sequenceNo                Int      @map("sequence_no")
+  dateFrom                  DateTime @map("date_from") @db.Date
+  dateTo                    DateTime @map("date_to") @db.Date
+  allocationKind            String   @map("allocation_kind")
+  leaveAccountId            String?  @map("leave_account_id") @db.Uuid
+  quantity                  Decimal  @map("quantity") @db.Decimal(12, 4)
+  unitCode                  String   @map("unit_code")
+
+  agency                 Agency                   @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApprovalAllocation LeaveApprovalAllocation @relation(fields: [agencyId, leaveApprovalAllocationId], references: [agencyId, id], onDelete: Restrict)
+  leaveAccount            LeaveAccount?            @relation("LeaveApprovalAllocationLineAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveApprovalAllocationId, sequenceNo])
+  @@unique([agencyId, id])
+  @@map("leave_approval_allocation_lines")
 }

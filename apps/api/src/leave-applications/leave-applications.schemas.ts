@@ -114,6 +114,70 @@ export const leaveApplicationDocumentSchema = z
   })
   .strict();
 
+export const LEAVE_APPLICATION_QUANTITY_PATTERN = /^\d{1,8}(\.\d{1,4})?$/;
+
+export const leaveApplicationQuantitySchema = z
+  .string()
+  .regex(LEAVE_APPLICATION_QUANTITY_PATTERN, 'Enter a quantity with up to four decimal places.');
+
+export const LEAVE_APPROVAL_ALLOCATION_KINDS = [
+  'LEAVE_ACCOUNT',
+  'LEAVE_WITHOUT_PAY',
+  'NON_CREDIT',
+] as const;
+
+export const LEAVE_RECOMMENDATION_OUTCOMES = ['RECOMMEND_APPROVAL', 'RECOMMEND_REJECTION'] as const;
+
+export const leaveApplicationCertificationSchema = z
+  .object({
+    balanceAsOf: leaveApplicationDateSchema.optional(),
+  })
+  .strict();
+
+export const leaveApplicationRecommendationSchema = z
+  .object({
+    outcome: z.enum(LEAVE_RECOMMENDATION_OUTCOMES),
+    reason: leaveApplicationReasonSchema.optional(),
+    comments: leaveApplicationReasonSchema.optional(),
+  })
+  .strict()
+  .refine(({ outcome, reason }) => outcome !== 'RECOMMEND_REJECTION' || reason !== undefined, {
+    message: 'A negative recommendation requires a reason.',
+    path: ['reason'],
+  });
+
+export const leaveApplicationDecisionSchema = z
+  .object({
+    decision: z.enum(['APPROVE', 'REJECT']),
+    comments: leaveApplicationReasonSchema.optional(),
+    allocations: z
+      .array(
+        z
+          .object({
+            segmentId: leaveApplicationIdSchema,
+            allocationKind: z.enum(LEAVE_APPROVAL_ALLOCATION_KINDS),
+            quantity: leaveApplicationQuantitySchema.optional(),
+            accountQuantity: leaveApplicationQuantitySchema.optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(80)
+      .optional(),
+  })
+  .strict()
+  .refine(({ decision, comments }) => decision !== 'REJECT' || comments !== undefined, {
+    message: 'A rejection requires a reason.',
+    path: ['comments'],
+  });
+
+export const leaveApplicationReturnSchema = z
+  .object({
+    reason: leaveApplicationReasonSchema,
+    comments: leaveApplicationReasonSchema.optional(),
+  })
+  .strict();
+
 export const leaveApplicationListSchema = z
   .object({
     employeeId: leaveApplicationIdSchema.optional(),
@@ -127,3 +191,11 @@ export type LeaveApplicationDraftInput = z.infer<typeof leaveApplicationDraftSch
 export type LeaveApplicationSubmitInput = z.infer<typeof leaveApplicationSubmitSchema>;
 export type LeaveApplicationWithdrawInput = z.infer<typeof leaveApplicationWithdrawSchema>;
 export type LeaveApplicationDocumentInput = z.infer<typeof leaveApplicationDocumentSchema>;
+export type LeaveApplicationCertificationInput = z.infer<
+  typeof leaveApplicationCertificationSchema
+>;
+export type LeaveApplicationRecommendationInput = z.infer<
+  typeof leaveApplicationRecommendationSchema
+>;
+export type LeaveApplicationDecisionInput = z.infer<typeof leaveApplicationDecisionSchema>;
+export type LeaveApplicationReturnInput = z.infer<typeof leaveApplicationReturnSchema>;

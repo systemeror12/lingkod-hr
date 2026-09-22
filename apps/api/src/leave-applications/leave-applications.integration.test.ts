@@ -3,7 +3,11 @@ import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
-import { approvalAuditWriter, ApprovalsService } from '../approvals/approval.service';
+import {
+  approvalAuditWriter,
+  ApprovalCompletionRegistry,
+  ApprovalsService,
+} from '../approvals/approval.service';
 import { attendanceConfigurationAuditWriter } from '../attendance-configuration/attendance-configuration.audit';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { ScheduleAssignmentsService } from '../attendance-configuration/schedule-assignments.service';
@@ -183,12 +187,36 @@ it.skipIf(!enabled)(
         globalStatus: 'ACTIVE',
       },
     });
+    const supervisorUser = await admin.user.create({
+      data: {
+        identityProvider: 'leave-application-integration',
+        externalSubject: `leave-supervisor-${suffix}`,
+        emailNormalized: `leave-supervisor-${suffix}@example.test`,
+        displayName: 'Leave Application Supervisor',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const approverUser = await admin.user.create({
+      data: {
+        identityProvider: 'leave-application-integration',
+        externalSubject: `leave-approver-${suffix}`,
+        emailNormalized: `leave-approver-${suffix}@example.test`,
+        displayName: 'Leave Application Approver',
+        globalStatus: 'ACTIVE',
+      },
+    });
     const agencyIds = [agency.id, foreignAgency.id];
     const membership = await admin.agencyMembership.create({
       data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
     });
     const recorderMembership = await admin.agencyMembership.create({
       data: { agencyId: agency.id, userId: recorderUser.id, status: 'ACTIVE' },
+    });
+    const supervisorMembership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: supervisorUser.id, status: 'ACTIVE' },
+    });
+    const approverMembership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: approverUser.id, status: 'ACTIVE' },
     });
     const foreignMembership = await admin.agencyMembership.create({
       data: { agencyId: foreignAgency.id, userId: foreignUser.id, status: 'ACTIVE' },
@@ -203,6 +231,14 @@ it.skipIf(!enabled)(
         roleId: approverRole.id,
         effectiveFrom: new Date('2020-01-01'),
       },
+    });
+    await admin.membershipRole.createMany({
+      data: [supervisorMembership, approverMembership].map((target) => ({
+        agencyId: agency.id,
+        membershipId: target.id,
+        roleId: approverRole.id,
+        effectiveFrom: new Date('2020-01-01'),
+      })),
     });
     const unit = await admin.organizationUnit.create({
       data: { agencyId: agency.id, code: `UNIT-${suffix}`, unitType: 'DIVISION', status: 'ACTIVE' },
@@ -275,6 +311,7 @@ it.skipIf(!enabled)(
     const schedules = new WorkSchedulesService(attendanceConfigurationAuditWriter, documents);
     const arrangements = new WorkArrangementsService(attendanceConfigurationAuditWriter, documents);
     const calendars = new HolidayCalendarsService(attendanceConfigurationAuditWriter, documents);
+    const completionRegistry = new ApprovalCompletionRegistry();
     const assignments = new ScheduleAssignmentsService(
       attendanceConfigurationAuditWriter,
       documents,
@@ -282,17 +319,19 @@ it.skipIf(!enabled)(
       arrangements,
       calendars,
     );
-    const approvals = new ApprovalsService(approvalAuditWriter);
+    const approvals = new ApprovalsService(approvalAuditWriter, completionRegistry);
     const policies = new LeavePoliciesService(leavePolicyAuditWriter, documents);
     const accounts = new LeaveAccountsService(leaveAccountAuditWriter, documents);
     const applications = new LeaveApplicationsService(
       leaveApplicationAuditWriter,
       documents,
       approvals,
+      completionRegistry,
       schedules,
       arrangements,
       calendars,
     );
+    applications.onModuleInit();
 
     const agencyContext = context(agency.id, user.id, membership.id, [
       { code: 'attendance.configuration.read', scopePolicy: 'AGENCY' },
@@ -328,6 +367,17 @@ it.skipIf(!enabled)(
       { code: 'leave.applications.create', scopePolicy: 'AGENCY' },
       { code: 'leave.applications.submit', scopePolicy: 'AGENCY' },
       { code: 'leave.applications.withdraw', scopePolicy: 'AGENCY' },
+      { code: 'leave.applications.route', scopePolicy: 'AGENCY' },
+      { code: 'leave.credits.certify', scopePolicy: 'AGENCY' },
+    ]);
+    const supervisorContext = context(agency.id, supervisorUser.id, supervisorMembership.id, [
+      { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+      { code: 'leave.applications.recommend', scopePolicy: 'AGENCY' },
+    ]);
+    const approverContext = context(agency.id, approverUser.id, approverMembership.id, [
+      { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+      { code: 'leave.applications.approve', scopePolicy: 'AGENCY' },
+      { code: 'leave.applications.reject', scopePolicy: 'AGENCY' },
     ]);
     const foreignContext = context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
       { code: 'leave.applications.create', scopePolicy: 'AGENCY' },
@@ -828,12 +878,237 @@ it.skipIf(!enabled)(
         'WITHDRAWAL_EVIDENCE',
       ]);
 
+      // Certification, recommendation, and a partial approval under a three-step route.
+      const specialLeave = await policies.create(agencyContext, {
+        catalogueCode: 'SPECIAL_PRIVILEGE_LEAVE',
+      });
+      const reviewRouteCode = `LEAVE-REVIEW-ROUTE-${suffix}`;
+      const reviewPolicyVersion = await policies.createPolicyVersion(
+        agencyContext,
+        specialLeave.id,
+        {
+          effectiveDate: manilaDate(-10),
+          approvalRouteCode: reviewRouteCode,
+          applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
+          documentRequirements: {},
+          reason: 'Adopt the special privilege leave policy for the review test.',
+        },
+      );
+      await policies.linkAuthority(agencyContext, specialLeave.id, reviewPolicyVersion.id, {
+        authorityClass: 'NATIONAL_RULE',
+        documentId: nationalEvidence.documentId,
+        citation: 'Rule XVI, section 5',
+      });
+      await policies.activate(
+        agencyContext,
+        specialLeave.id,
+        reviewPolicyVersion.id,
+        'Activate special privilege leave.',
+      );
+      const reviewRoute = await approvals.createRoute(agencyContext, {
+        routeCode: reviewRouteCode,
+        domain: 'LEAVE',
+        versionNo: 1,
+        effectiveFrom,
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'leave.credits.certify',
+              assignment: { kind: 'MEMBERSHIP', membershipId: recorderMembership.id },
+              requiresSeparateReview: true,
+            },
+            {
+              stepNo: 2,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'leave.applications.recommend',
+              assignment: { kind: 'MEMBERSHIP', membershipId: supervisorMembership.id },
+              requiresSeparateReview: true,
+            },
+            {
+              stepNo: 3,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'leave.applications.approve',
+              assignment: { kind: 'MEMBERSHIP', membershipId: approverMembership.id },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      });
+      await approvals.activateRoute(
+        agencyContext,
+        reviewRoute.id,
+        'Activate the three-step leave review route.',
+      );
+      const specialAccount = await accounts.open(
+        agencyContext,
+        {
+          employeeId: employee.id,
+          leaveTypeId: specialLeave.id,
+          effectiveDate: manilaDate(-5),
+          openingQuantity: 5,
+          evidenceDocumentId: accountEvidence.documentId,
+          reason: 'Opening special privilege leave credits.',
+        },
+        `open-special-${suffix}`,
+      );
+      expect(specialAccount.balances.availableQuantity).toBe('5.0000');
+
+      const reviewApplication = await applications.create(
+        agencyContext,
+        { employeeId: employee.id, leaveTypeId: specialLeave.id },
+        `create-review-${suffix}`,
+      );
+      const reviewApplicationId = reviewApplication.application.id;
+      await applications.update(agencyContext, reviewApplicationId, {
+        reason: 'Special privilege leave for the review flow.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: periodInput,
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      const reviewPreview = await applications.preview(employeeContext, reviewApplicationId);
+      expect(reviewPreview.result, JSON.stringify(reviewPreview.missingFacts)).toBe('ELIGIBLE');
+      const reviewSubmitted = await applications.submit(
+        employeeContext,
+        reviewApplicationId,
+        submitInput,
+        `submit-review-${suffix}`,
+      );
+      const reviewVersion = reviewSubmitted.versions.at(-1)!;
+      expect(reviewVersion.approvalRequestStatus).toBe('PENDING');
+
+      const routed = await applications.route(
+        recorderContext,
+        reviewApplicationId,
+        `route-${suffix}`,
+      );
+      expect(routed.application.status).toBe('FOR_CERTIFICATION');
+      expect(routed.versions.at(-1)!.approvalRequestStatus).toBe('IN_PROGRESS');
+      expect(routed.versions.at(-1)!.approvalSteps.map(({ status }) => status)).toEqual([
+        'ACTIVE',
+        'PENDING',
+        'PENDING',
+      ]);
+
+      await expect(
+        applications.certify(
+          employeeContext,
+          reviewApplicationId,
+          {},
+          `certify-${suffix}-forbidden`,
+        ),
+      ).rejects.toMatchObject({
+        code: 'LEAVE_APPLICATION_CERTIFY_FORBIDDEN',
+        statusCode: 403,
+      });
+
+      const certified = await applications.certify(
+        recorderContext,
+        reviewApplicationId,
+        { balanceAsOf: manilaDate(0) },
+        `certify-${suffix}`,
+      );
+      expect(certified.application.status).toBe('FOR_RECOMMENDATION');
+      const certification = certified.versions.at(-1)!.certification!;
+      expect(certification.certifiedByMembershipId).toBe(recorderMembership.id);
+      expect(certification.lines).toHaveLength(1);
+      expect(certification.lines[0]).toMatchObject({
+        postedBalance: '5.0000',
+        activeCommitments: '0.0000',
+        applicationQuantity: '3.0000',
+        availableAfterApplication: '2.0000',
+      });
+
+      const recommendation = await applications.recommend(
+        supervisorContext,
+        reviewApplicationId,
+        { outcome: 'RECOMMEND_APPROVAL', comments: 'Within the approved schedule.' },
+        `recommend-${suffix}`,
+      );
+      expect(recommendation.application.status).toBe('FOR_APPROVAL');
+      expect(recommendation.versions.at(-1)!.recommendation).toMatchObject({
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+
+      const segmentId = recommendation.versions.at(-1)!.calculationSegments[0]!.id;
+      const decided = await applications.decide(
+        approverContext,
+        reviewApplicationId,
+        {
+          decision: 'APPROVE',
+          comments: 'Approved two days; the unused day is released.',
+          allocations: [
+            {
+              segmentId,
+              allocationKind: 'LEAVE_ACCOUNT',
+              quantity: '2',
+              accountQuantity: '2',
+            },
+          ],
+        },
+        `decide-${suffix}`,
+      );
+      expect(decided.application.status).toBe('APPROVED');
+      const allocation = decided.versions.at(-1)!.approvalAllocation!;
+      expect(allocation.lines).toHaveLength(1);
+      expect(allocation.lines[0]).toMatchObject({
+        allocationKind: 'LEAVE_ACCOUNT',
+        quantity: '2.0000',
+        unitCode: 'WORKING_DAY',
+      });
+
+      const commitments = await admin.leaveCreditCommitment.findMany({
+        where: {
+          agencyId: agency.id,
+          sourceType: 'LeaveApplicationVersion',
+          sourceId: reviewVersion.id,
+        },
+        orderBy: { effectiveFrom: 'asc' },
+      });
+      expect(
+        commitments.map(({ sourceCommitmentKey, status, quantity }) => ({
+          sourceCommitmentKey,
+          status,
+          quantity: quantity.toFixed(4),
+        })),
+      ).toEqual([
+        { sourceCommitmentKey: 'CERTIFIED', status: 'RELEASED', quantity: '3.0000' },
+        { sourceCommitmentKey: 'APPROVED', status: 'ACTIVE', quantity: '2.0000' },
+      ]);
+      await expect(
+        admin.auditEvent.count({
+          where: {
+            agencyId: agency.id,
+            action: 'LEAVE_APPLICATION_CERTIFIED',
+            entityId: reviewApplicationId,
+          },
+        }),
+      ).resolves.toBe(1);
+
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.auditEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leaveApplicationVersionDocument.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveApprovalAllocationLine.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveApprovalAllocation.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveRecommendation.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveCreditCertificationLine.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveCreditCertification.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });
         await transaction.leaveCalculationSegment.deleteMany({
@@ -921,7 +1196,11 @@ it.skipIf(!enabled)(
         await transaction.organizationUnit.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.agency.deleteMany({ where: { id: { in: agencyIds } } });
         await transaction.user.deleteMany({
-          where: { id: { in: [user.id, recorderUser.id, foreignUser.id] } },
+          where: {
+            id: {
+              in: [user.id, recorderUser.id, foreignUser.id, supervisorUser.id, approverUser.id],
+            },
+          },
         });
       });
       await admin.$disconnect();

@@ -1,9 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
-import { ApprovalsService } from '../approvals/approval.service';
+import {
+  ApprovalCompletionRegistry,
+  ApprovalsService,
+  type ApprovalCompletionRequest,
+} from '../approvals/approval.service';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
@@ -28,8 +32,12 @@ import {
 } from './leave-eligibility';
 import {
   LEAVE_APPLICATION_SUBMISSION_METHODS,
+  type LeaveApplicationCertificationInput,
+  type LeaveApplicationDecisionInput,
   type LeaveApplicationDocumentInput,
   type LeaveApplicationDraftInput,
+  type LeaveApplicationRecommendationInput,
+  type LeaveApplicationReturnInput,
   type LeaveApplicationSubmitInput,
   type LeaveApplicationWithdrawInput,
 } from './leave-applications.schemas';
@@ -71,6 +79,148 @@ export interface LeaveCalculationSegmentSummary {
   accountQuantity: string | null;
 }
 
+export interface LeaveCreditCertificationLineSummary {
+  id: string;
+  leaveAccountId: string;
+  leaveTypeCode: string;
+  leaveTypeName: string;
+  postedBalance: string;
+  activeCommitments: string;
+  applicationQuantity: string;
+  availableAfterApplication: string;
+  leaveCreditCommitmentId: string;
+}
+
+export interface LeaveCreditCertificationSummary {
+  id: string;
+  eligibilityAssessmentId: string;
+  approvalDecisionId: string;
+  balanceAsOf: string;
+  ledgerRecordedThrough: string;
+  certifiedByMembershipId: string;
+  certifiedByName: string | null;
+  certifiedAt: string;
+  lines: LeaveCreditCertificationLineSummary[];
+}
+
+export interface LeaveRecommendationSummary {
+  id: string;
+  approvalDecisionId: string;
+  outcome: string;
+  reason: string | null;
+  recommendedAt: string;
+}
+
+export interface LeaveApprovalAllocationLineSummary {
+  id: string;
+  sequenceNo: number;
+  dateFrom: string;
+  dateTo: string;
+  allocationKind: string;
+  leaveAccountId: string | null;
+  quantity: string;
+  unitCode: string;
+}
+
+export interface LeaveApprovalAllocationSummary {
+  id: string;
+  approvalDecisionId: string;
+  decidedAt: string;
+  lines: LeaveApprovalAllocationLineSummary[];
+}
+
+export interface LeaveApprovalDecisionSummary {
+  id: string;
+  decidedByMembershipId: string;
+  decidedByName: string | null;
+  decision: string;
+  comments: string | null;
+  decidedAt: string;
+}
+
+export interface LeaveApprovalStepSummary {
+  id: string;
+  stepNo: number;
+  status: string;
+  requiredPermission: string;
+  approvePermission: string;
+  returnPermission: string;
+  rejectPermission: string;
+  assignedRoleCode: string | null;
+  assignedMembershipId: string | null;
+  requiresSeparateReview: boolean;
+  activatedAt: string | null;
+  completedAt: string | null;
+  decisions: LeaveApprovalDecisionSummary[];
+}
+
+const LEAVE_APPROVAL_EFFECT_KIND = 'LEAVE_APPLICATION';
+
+const LEAVE_REVIEW_PERMISSIONS = [
+  'leave.credits.certify',
+  'leave.applications.recommend',
+  'leave.applications.approve',
+  'leave.applications.reject',
+] as const;
+
+const LEAVE_FINAL_DECISION_PERMISSIONS = [
+  'leave.applications.approve',
+  'leave.applications.reject',
+] as const;
+
+const CERTIFIED_COMMITMENT_KEY = 'CERTIFIED';
+const APPROVED_COMMITMENT_KEY = 'APPROVED';
+const COMMITMENT_SOURCE_TYPE = 'LeaveApplicationVersion';
+
+interface LeaveSegmentAccountCharge {
+  segmentId: string;
+  dateFrom: Date;
+  dateTo: Date;
+  requestedQuantity: Prisma.Decimal;
+  requestedUnit: string;
+  leaveAccountId: string | null;
+  accountQuantity: Prisma.Decimal;
+}
+
+interface LeaveAllocationPlanLine {
+  sequenceNo: number;
+  segmentId: string;
+  dateFrom: Date;
+  dateTo: Date;
+  allocationKind: string;
+  leaveAccountId: string | null;
+  quantity: Prisma.Decimal;
+  unitCode: string;
+  accountQuantity: Prisma.Decimal;
+}
+
+function stepApprovalDecisionId(
+  summary: {
+    steps: Array<{
+      stepNo: number;
+      decisions: Array<{ id: string; decidedByMembershipId: string; decision: string }>;
+    }>;
+  },
+  stepNo: number,
+  membershipId: string,
+): string {
+  const step = summary.steps.find((candidate) => candidate.stepNo === stepNo);
+  const decision = [...(step?.decisions ?? [])]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.decidedByMembershipId === membershipId && candidate.decision === 'APPROVE',
+    );
+  if (!decision) {
+    throw new LeaveApplicationServiceError(
+      'The Approval Step decision could not be resolved for this Leave Application.',
+      409,
+      'LEAVE_APPLICATION_APPROVAL_DECISION_REQUIRED',
+    );
+  }
+  return decision.id;
+}
+
 export interface LeaveApplicationVersionSummary {
   id: string;
   versionNo: number;
@@ -98,6 +248,10 @@ export interface LeaveApplicationVersionSummary {
   documents: LeaveApplicationDocumentSummary[];
   assessments: LeaveApplicationAssessmentSummary[];
   calculationSegments: LeaveCalculationSegmentSummary[];
+  certification: LeaveCreditCertificationSummary | null;
+  recommendation: LeaveRecommendationSummary | null;
+  approvalAllocation: LeaveApprovalAllocationSummary | null;
+  approvalSteps: LeaveApprovalStepSummary[];
 }
 
 export interface LeaveApplicationHistoryEntry {
@@ -179,6 +333,8 @@ const WITHDRAWABLE_STATUSES = [
   'NEEDS_INFORMATION',
 ] as const;
 
+const LEAVE_REVIEW_STATUSES = ['FOR_CERTIFICATION', 'FOR_RECOMMENDATION', 'FOR_APPROVAL'] as const;
+
 const UNFINISHED_REQUEST_STATUSES = ['PENDING', 'IN_PROGRESS', 'RETURNED'] as const;
 
 const MAXIMUM_PERIOD_DATES = 3660;
@@ -247,6 +403,49 @@ const segmentSelect = {
   accountQuantity: true,
 } as const;
 
+const certificationLineSelect = {
+  id: true,
+  leaveAccountId: true,
+  postedBalance: true,
+  activeCommitments: true,
+  applicationQuantity: true,
+  availableAfterApplication: true,
+  leaveCreditCommitmentId: true,
+  leaveAccount: { select: { leaveType: { select: { code: true, name: true } } } },
+} satisfies Prisma.LeaveCreditCertificationLineSelect;
+
+const certificationSelect = {
+  id: true,
+  eligibilityAssessmentId: true,
+  approvalDecisionId: true,
+  balanceAsOf: true,
+  ledgerRecordedThrough: true,
+  certifiedByMembershipId: true,
+  certifiedAt: true,
+  certifiedBy: { select: { employee: { select: { legalName: true } } } },
+  lines: { orderBy: [{ id: 'asc' }], select: certificationLineSelect },
+} satisfies Prisma.LeaveCreditCertificationSelect;
+
+const allocationLineSelect = {
+  id: true,
+  sequenceNo: true,
+  dateFrom: true,
+  dateTo: true,
+  allocationKind: true,
+  leaveAccountId: true,
+  quantity: true,
+  unitCode: true,
+} satisfies Prisma.LeaveApprovalAllocationLineSelect;
+
+const approvalDecisionSelect = {
+  id: true,
+  decidedByMembershipId: true,
+  decision: true,
+  comments: true,
+  decidedAt: true,
+  decidedBy: { select: { employee: { select: { legalName: true } } } },
+} satisfies Prisma.ApprovalDecisionSelect;
+
 const versionSelect = {
   id: true,
   versionNo: true,
@@ -267,7 +466,29 @@ const versionSelect = {
   submittedAt: true,
   leaveType: { select: { code: true, name: true } },
   approvalRouteVersion: { select: { routeCode: true } },
-  approvalRequest: { select: { status: true } },
+  approvalRequest: {
+    select: {
+      status: true,
+      steps: {
+        orderBy: { stepNo: 'asc' as const },
+        select: {
+          id: true,
+          stepNo: true,
+          status: true,
+          requiredPermission: true,
+          approvePermission: true,
+          returnPermission: true,
+          rejectPermission: true,
+          assignedRoleCode: true,
+          assignedMembershipId: true,
+          requiresSeparateReview: true,
+          activatedAt: true,
+          completedAt: true,
+          decisions: { orderBy: { decidedAt: 'asc' as const }, select: approvalDecisionSelect },
+        },
+      },
+    },
+  },
   submittedBy: { select: { employee: { select: { legalName: true } } } },
   periods: { orderBy: { sequenceNo: 'asc' as const }, select: draftPeriodSelect },
   documents: {
@@ -288,6 +509,27 @@ const versionSelect = {
   calculationSegments: {
     orderBy: [{ dateFrom: 'asc' as const }, { id: 'asc' as const }],
     select: segmentSelect,
+  },
+  creditCertification: { select: certificationSelect },
+  recommendation: {
+    select: {
+      id: true,
+      approvalDecisionId: true,
+      outcome: true,
+      reason: true,
+      recommendedAt: true,
+    },
+  },
+  approvalAllocation: {
+    select: {
+      id: true,
+      approvalDecisionId: true,
+      decidedAt: true,
+      lines: {
+        orderBy: { sequenceNo: 'asc' as const },
+        select: allocationLineSelect,
+      },
+    },
   },
 } satisfies Prisma.LeaveApplicationVersionSelect;
 
@@ -493,6 +735,75 @@ function applicationSummary(record: ApplicationRecord): LeaveApplicationSummary 
   };
 }
 
+function certificationLineSummary(record: {
+  id: string;
+  leaveAccountId: string;
+  postedBalance: Prisma.Decimal;
+  activeCommitments: Prisma.Decimal;
+  applicationQuantity: Prisma.Decimal;
+  availableAfterApplication: Prisma.Decimal;
+  leaveCreditCommitmentId: string;
+  leaveAccount: { leaveType: { code: string; name: string } };
+}): LeaveCreditCertificationLineSummary {
+  return {
+    id: record.id,
+    leaveAccountId: record.leaveAccountId,
+    leaveTypeCode: record.leaveAccount.leaveType.code,
+    leaveTypeName: record.leaveAccount.leaveType.name,
+    postedBalance: formatQuantity(record.postedBalance),
+    activeCommitments: formatQuantity(record.activeCommitments),
+    applicationQuantity: formatQuantity(record.applicationQuantity),
+    availableAfterApplication: formatQuantity(record.availableAfterApplication),
+    leaveCreditCommitmentId: record.leaveCreditCommitmentId,
+  };
+}
+
+function certificationSummary(record: {
+  id: string;
+  eligibilityAssessmentId: string;
+  approvalDecisionId: string;
+  balanceAsOf: Date;
+  ledgerRecordedThrough: Date;
+  certifiedByMembershipId: string;
+  certifiedAt: Date;
+  certifiedBy: { employee: { legalName: string } | null };
+  lines: Parameters<typeof certificationLineSummary>[0][];
+}): LeaveCreditCertificationSummary {
+  return {
+    id: record.id,
+    eligibilityAssessmentId: record.eligibilityAssessmentId,
+    approvalDecisionId: record.approvalDecisionId,
+    balanceAsOf: formatDate(record.balanceAsOf),
+    ledgerRecordedThrough: formatDateTime(record.ledgerRecordedThrough),
+    certifiedByMembershipId: record.certifiedByMembershipId,
+    certifiedByName: record.certifiedBy.employee?.legalName ?? null,
+    certifiedAt: formatDateTime(record.certifiedAt),
+    lines: record.lines.map(certificationLineSummary),
+  };
+}
+
+function allocationLineSummary(record: {
+  id: string;
+  sequenceNo: number;
+  dateFrom: Date;
+  dateTo: Date;
+  allocationKind: string;
+  leaveAccountId: string | null;
+  quantity: Prisma.Decimal;
+  unitCode: string;
+}): LeaveApprovalAllocationLineSummary {
+  return {
+    id: record.id,
+    sequenceNo: record.sequenceNo,
+    dateFrom: formatDate(record.dateFrom),
+    dateTo: formatDate(record.dateTo),
+    allocationKind: record.allocationKind,
+    leaveAccountId: record.leaveAccountId,
+    quantity: formatQuantity(record.quantity),
+    unitCode: record.unitCode,
+  };
+}
+
 function versionSummary(record: VersionRecord): LeaveApplicationVersionSummary {
   return {
     id: record.id,
@@ -523,6 +834,48 @@ function versionSummary(record: VersionRecord): LeaveApplicationVersionSummary {
     documents: record.documents.map(documentSummary),
     assessments: record.assessments.map(assessmentSummary),
     calculationSegments: record.calculationSegments.map(segmentSummary),
+    certification: record.creditCertification
+      ? certificationSummary(record.creditCertification)
+      : null,
+    recommendation: record.recommendation
+      ? {
+          id: record.recommendation.id,
+          approvalDecisionId: record.recommendation.approvalDecisionId,
+          outcome: record.recommendation.outcome,
+          reason: record.recommendation.reason,
+          recommendedAt: formatDateTime(record.recommendation.recommendedAt),
+        }
+      : null,
+    approvalAllocation: record.approvalAllocation
+      ? {
+          id: record.approvalAllocation.id,
+          approvalDecisionId: record.approvalAllocation.approvalDecisionId,
+          decidedAt: formatDateTime(record.approvalAllocation.decidedAt),
+          lines: record.approvalAllocation.lines.map(allocationLineSummary),
+        }
+      : null,
+    approvalSteps: record.approvalRequest.steps.map((step) => ({
+      id: step.id,
+      stepNo: step.stepNo,
+      status: step.status,
+      requiredPermission: step.requiredPermission,
+      approvePermission: step.approvePermission,
+      returnPermission: step.returnPermission,
+      rejectPermission: step.rejectPermission,
+      assignedRoleCode: step.assignedRoleCode,
+      assignedMembershipId: step.assignedMembershipId,
+      requiresSeparateReview: step.requiresSeparateReview,
+      activatedAt: step.activatedAt ? formatDateTime(step.activatedAt) : null,
+      completedAt: step.completedAt ? formatDateTime(step.completedAt) : null,
+      decisions: step.decisions.map((decision) => ({
+        id: decision.id,
+        decidedByMembershipId: decision.decidedByMembershipId,
+        decidedByName: decision.decidedBy.employee?.legalName ?? null,
+        decision: decision.decision,
+        comments: decision.comments,
+        decidedAt: formatDateTime(decision.decidedAt),
+      })),
+    })),
   };
 }
 
@@ -579,6 +932,50 @@ function idempotencyConflict(): LeaveApplicationServiceError {
   );
 }
 
+function routeInvalid(): LeaveApplicationServiceError {
+  return new LeaveApplicationServiceError(
+    'The bound Approval Route cannot perform that decision for this Leave Application.',
+    409,
+    'LEAVE_APPLICATION_ROUTE_INVALID',
+  );
+}
+
+function recertificationRequired(): LeaveApplicationServiceError {
+  return new LeaveApplicationServiceError(
+    'The Leave Credit Certification no longer matches the Leave Account facts; certify the Leave Application again.',
+    409,
+    'LEAVE_APPLICATION_RECERTIFICATION_REQUIRED',
+  );
+}
+
+function assessmentRequired(): LeaveApplicationServiceError {
+  return new LeaveApplicationServiceError(
+    'The Leave Application has no accepted Leave Eligibility Assessment to certify.',
+    409,
+    'LEAVE_APPLICATION_ASSESSMENT_REQUIRED',
+  );
+}
+
+function recommendationRequired(): LeaveApplicationServiceError {
+  return new LeaveApplicationServiceError(
+    'The Leave Application has no Supervisor recommendation yet.',
+    409,
+    'LEAVE_APPLICATION_RECOMMENDATION_REQUIRED',
+  );
+}
+
+function allocationInvalid(message: string): LeaveApplicationServiceError {
+  return new LeaveApplicationServiceError(message, 400, 'LEAVE_APPLICATION_ALLOCATION_INVALID');
+}
+
+function parseQuantity(value: string): Prisma.Decimal {
+  try {
+    return new Prisma.Decimal(value);
+  } catch {
+    throw allocationInvalid('Enter a valid quantity.');
+  }
+}
+
 /**
  * Leave Applications own the employee's case. Draft facts stay mutable until
  * submission; each submission or material resubmission freezes an immutable
@@ -589,16 +986,33 @@ function idempotencyConflict(): LeaveApplicationServiceError {
  * defaulting in the employee's favor.
  */
 @Injectable()
-export class LeaveApplicationsService {
+export class LeaveApplicationsService implements OnModuleInit {
   constructor(
     @Inject(LEAVE_APPLICATION_AUDIT_WRITER)
     private readonly auditWriter: LeaveApplicationAuditWriter,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
     @Inject(ApprovalsService) private readonly approvalsService: ApprovalsService,
+    @Inject(ApprovalCompletionRegistry)
+    private readonly completionRegistry: ApprovalCompletionRegistry,
     @Inject(WorkSchedulesService) private readonly workSchedules: WorkSchedulesService,
     @Inject(WorkArrangementsService) private readonly workArrangements: WorkArrangementsService,
     @Inject(HolidayCalendarsService) private readonly holidayCalendars: HolidayCalendarsService,
   ) {}
+
+  onModuleInit(): void {
+    this.completionRegistry.register('LEAVE_APPLICATION', (transaction, _context, request) =>
+      this.assertApprovalEffect(transaction, request, ['FOR_APPROVAL']),
+    );
+    this.completionRegistry.registerDecision(
+      'LEAVE_APPLICATION',
+      (transaction, _context, request, outcome) =>
+        this.assertApprovalEffect(
+          transaction,
+          request,
+          outcome === 'REJECTED' ? ['FOR_APPROVAL'] : [...LEAVE_REVIEW_STATUSES],
+        ),
+    );
+  }
 
   async list(
     context: RequestContext,
@@ -1265,16 +1679,11 @@ export class LeaveApplicationsService {
             idempotencyKey ?? undefined,
           );
         }
-        await transaction.leaveCreditCommitment.updateMany({
-          where: {
-            agencyId: context.agencyId,
-            sourceType: 'LeaveApplicationVersion',
-            sourceId: application.currentVersionId,
-            sourceCommitmentKey: 'CERTIFIED',
-            status: 'ACTIVE',
-          },
-          data: { status: 'RELEASED', endedAt: new Date() },
-        });
+        await this.releaseVersionCommitments(
+          transaction,
+          context.agencyId,
+          application.currentVersionId,
+        );
       }
       await transaction.leaveApplication.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
@@ -1298,6 +1707,538 @@ export class LeaveApplicationsService {
           applicationId,
           versionId: application.currentVersionId,
           evidenceDocumentVersionId: evidenceVersionId,
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  /**
+   * The Employee submits the case; the Agency routes it into credit
+   * certification by activating the first bound Approval Step. Routing is a
+   * separate command so a successful submission never depends on route
+   * activation, and a route that does not start with certification fails closed.
+   */
+  async route(
+    context: RequestContext,
+    applicationId: string,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(context, 'leave.applications.route', 'LEAVE_APPLICATION_ROUTE_FORBIDDEN');
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({ command: 'LEAVE_APPLICATION_ROUTED', applicationId });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_ROUTED',
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      if (application.status !== 'SUBMITTED') {
+        throw workflowError('send for credit certification', application.status);
+      }
+      const version = await this.requireVersion(transaction, context.agencyId, application);
+      const request = await transaction.approvalRequest.findFirst({
+        where: { agencyId: context.agencyId, id: version.approvalRequestId },
+        select: {
+          id: true,
+          status: true,
+          currentStepNo: true,
+          steps: { orderBy: { stepNo: 'asc' }, select: { stepNo: true, requiredPermission: true } },
+        },
+      });
+      const firstStep = request?.steps.find(({ stepNo }) => stepNo === 1);
+      if (
+        !request ||
+        request.status !== 'PENDING' ||
+        firstStep?.requiredPermission !== 'leave.credits.certify'
+      ) {
+        throw routeInvalid();
+      }
+      const summary = await this.approvalsService.submitInTransaction(
+        transaction,
+        context,
+        version.approvalRequestId,
+        idempotencyKey ?? undefined,
+        { requireDrafter: false },
+      );
+      await transaction.leaveApplication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+        data: { status: 'FOR_CERTIFICATION' },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'LEAVE_APPLICATION_ROUTED',
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: 'FOR_CERTIFICATION',
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          versionId: version.id,
+          approvalRequestId: version.approvalRequestId,
+          currentStepNo: summary.currentStepNo,
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  /**
+   * Certification freezes the account facts the certifier reviewed and raises
+   * the Leave Credit Commitments the later approval may narrow. Quantities come
+   * from the accepted Leave Eligibility Assessment; balances may be negative and
+   * are recorded as facts instead of blocking the flow.
+   */
+  async certify(
+    context: RequestContext,
+    applicationId: string,
+    input: LeaveApplicationCertificationInput,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(context, 'leave.credits.certify', 'LEAVE_APPLICATION_CERTIFY_FORBIDDEN');
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({
+      command: 'LEAVE_APPLICATION_CERTIFIED',
+      applicationId,
+      ...input,
+    });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_CERTIFIED',
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      if (application.status !== 'FOR_CERTIFICATION') {
+        throw workflowError('certify leave credits', application.status);
+      }
+      const version = await this.requireVersion(transaction, context.agencyId, application);
+      this.assertActorSeparation(context, application, version, { prohibitSubject: true });
+      const step = await this.requireActiveStep(
+        transaction,
+        context.agencyId,
+        version.approvalRequestId,
+        ['leave.credits.certify'],
+      );
+      if (!version.acceptedAssessmentId) throw assessmentRequired();
+      const balanceAsOf = toDatabaseDate(input.balanceAsOf ?? manilaToday());
+      const recordedThrough = new Date();
+      const charges = await this.segmentAccountCharges(transaction, context, application, version);
+      const applicationByAccount = new Map<string, Prisma.Decimal>();
+      for (const charge of charges) {
+        if (!charge.leaveAccountId) continue;
+        applicationByAccount.set(
+          charge.leaveAccountId,
+          (applicationByAccount.get(charge.leaveAccountId) ?? ZERO).plus(charge.accountQuantity),
+        );
+      }
+      const summary = await this.approvalsService.decideInTransaction(
+        transaction,
+        context,
+        version.approvalRequestId,
+        'APPROVE',
+        undefined,
+        idempotencyKey ?? undefined,
+        { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'CERTIFY' } },
+      );
+      const decisionId = stepApprovalDecisionId(summary, step.stepNo, context.membershipId);
+      const certification = await transaction.leaveCreditCertification.create({
+        data: {
+          agencyId: context.agencyId,
+          leaveApplicationVersionId: version.id,
+          eligibilityAssessmentId: version.acceptedAssessmentId,
+          approvalDecisionId: decisionId,
+          balanceAsOf,
+          ledgerRecordedThrough: recordedThrough,
+          certifiedByMembershipId: context.membershipId,
+          certifiedAt: recordedThrough,
+        },
+        select: { id: true },
+      });
+      for (const [leaveAccountId, applicationQuantity] of applicationByAccount) {
+        await this.lockAccount(transaction, context.agencyId, leaveAccountId);
+        const balances = await this.accountBalance(
+          transaction,
+          context.agencyId,
+          leaveAccountId,
+          balanceAsOf,
+          recordedThrough,
+        );
+        const commitment = await transaction.leaveCreditCommitment.create({
+          data: {
+            agencyId: context.agencyId,
+            leaveAccountId,
+            quantity: applicationQuantity,
+            sourceType: COMMITMENT_SOURCE_TYPE,
+            sourceId: version.id,
+            sourceCommitmentKey: CERTIFIED_COMMITMENT_KEY,
+            status: 'ACTIVE',
+            effectiveFrom: recordedThrough,
+          },
+          select: { id: true },
+        });
+        await transaction.leaveCreditCertificationLine.create({
+          data: {
+            agencyId: context.agencyId,
+            leaveCreditCertificationId: certification.id,
+            leaveAccountId,
+            postedBalance: balances.posted,
+            activeCommitments: balances.committed,
+            applicationQuantity,
+            availableAfterApplication: balances.posted
+              .minus(balances.committed)
+              .minus(applicationQuantity),
+            leaveCreditCommitmentId: commitment.id,
+          },
+        });
+      }
+      await transaction.leaveApplication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+        data: { status: 'FOR_RECOMMENDATION' },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'LEAVE_APPLICATION_CERTIFIED',
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: 'FOR_RECOMMENDATION',
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          versionId: version.id,
+          assessmentId: version.acceptedAssessmentId,
+          decisionId,
+          balanceAsOf: formatDate(balanceAsOf),
+          ledgerRecordedThrough: formatDateTime(recordedThrough),
+          accounts: [...applicationByAccount].map(([leaveAccountId, quantity]) => ({
+            leaveAccountId,
+            applicationQuantity: formatQuantity(quantity),
+          })),
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  async recommend(
+    context: RequestContext,
+    applicationId: string,
+    input: LeaveApplicationRecommendationInput,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(
+      context,
+      'leave.applications.recommend',
+      'LEAVE_APPLICATION_RECOMMEND_FORBIDDEN',
+    );
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({
+      command: 'LEAVE_APPLICATION_RECOMMENDED',
+      applicationId,
+      ...input,
+    });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_RECOMMENDED',
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      if (application.status !== 'FOR_RECOMMENDATION') {
+        throw workflowError('recommend a decision', application.status);
+      }
+      const version = await this.requireVersion(transaction, context.agencyId, application);
+      this.assertActorSeparation(context, application, version, { prohibitSubject: true });
+      await this.requireCertification(transaction, context.agencyId, version);
+      const step = await this.requireActiveStep(
+        transaction,
+        context.agencyId,
+        version.approvalRequestId,
+        ['leave.applications.recommend'],
+      );
+      const summary = await this.approvalsService.decideInTransaction(
+        transaction,
+        context,
+        version.approvalRequestId,
+        'APPROVE',
+        input.comments ?? input.reason,
+        idempotencyKey ?? undefined,
+        { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'RECOMMEND' } },
+      );
+      const decisionId = stepApprovalDecisionId(summary, step.stepNo, context.membershipId);
+      await transaction.leaveRecommendation.create({
+        data: {
+          agencyId: context.agencyId,
+          leaveApplicationVersionId: version.id,
+          approvalDecisionId: decisionId,
+          outcome: input.outcome,
+          reason: input.reason ?? null,
+        },
+      });
+      await transaction.leaveApplication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+        data: { status: 'FOR_APPROVAL' },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'LEAVE_APPLICATION_RECOMMENDED',
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: 'FOR_APPROVAL',
+        reason: input.reason ?? null,
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          versionId: version.id,
+          decisionId,
+          outcome: input.outcome,
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  async decide(
+    context: RequestContext,
+    applicationId: string,
+    input: LeaveApplicationDecisionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    const action = input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    this.assertPermission(
+      context,
+      input.decision === 'APPROVE' ? 'leave.applications.approve' : 'leave.applications.reject',
+      `LEAVE_APPLICATION_${action}_FORBIDDEN`,
+    );
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({
+      command: `LEAVE_APPLICATION_${action}`,
+      applicationId,
+      ...input,
+    });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: `LEAVE_APPLICATION_${action}`,
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      if (application.status !== 'FOR_APPROVAL') {
+        throw workflowError(
+          input.decision === 'APPROVE' ? 'approve' : 'reject',
+          application.status,
+        );
+      }
+      const version = await this.requireVersion(transaction, context.agencyId, application);
+      const certification = await this.requireCertification(transaction, context.agencyId, version);
+      this.assertActorSeparation(context, application, version, {
+        prohibitSubject: true,
+        prohibitSubmitter: true,
+        prohibitCertifier: certification.certifiedByMembershipId,
+      });
+      const recommendation = await transaction.leaveRecommendation.findFirst({
+        where: { agencyId: context.agencyId, leaveApplicationVersionId: version.id },
+        select: { id: true },
+      });
+      if (!recommendation) throw recommendationRequired();
+      const step = await this.requireActiveStep(
+        transaction,
+        context.agencyId,
+        version.approvalRequestId,
+        LEAVE_FINAL_DECISION_PERMISSIONS,
+      );
+      const charges =
+        input.decision === 'APPROVE'
+          ? await this.segmentAccountCharges(transaction, context, application, version)
+          : [];
+      const plan =
+        input.decision === 'APPROVE' ? this.buildAllocationPlan(charges, input.allocations) : [];
+      const summary = await this.approvalsService.decideInTransaction(
+        transaction,
+        context,
+        version.approvalRequestId,
+        input.decision,
+        input.comments,
+        idempotencyKey ?? undefined,
+        { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: input.decision } },
+      );
+      if (summary.status !== (input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED')) {
+        throw routeInvalid();
+      }
+      const decisionId = stepApprovalDecisionId(summary, step.stepNo, context.membershipId);
+      if (input.decision === 'APPROVE') {
+        await this.applyApprovedAllocation(transaction, context, version, plan, decisionId);
+      } else {
+        await this.releaseVersionCommitments(transaction, context.agencyId, version.id);
+      }
+      await transaction.leaveApplication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+        data: { status: input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED' },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: `LEAVE_APPLICATION_${action}`,
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        reason: input.comments ?? null,
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          versionId: version.id,
+          decisionId,
+          allocationLines:
+            input.decision === 'APPROVE'
+              ? plan.map((line) => ({
+                  segmentId: line.segmentId,
+                  allocationKind: line.allocationKind,
+                  leaveAccountId: line.leaveAccountId,
+                  quantity: formatQuantity(line.quantity),
+                  unitCode: line.unitCode,
+                }))
+              : [],
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  async returnToApplicant(
+    context: RequestContext,
+    applicationId: string,
+    input: LeaveApplicationReturnInput,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(
+      context,
+      'leave.applications.return',
+      'LEAVE_APPLICATION_RETURN_FORBIDDEN',
+    );
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({
+      command: 'LEAVE_APPLICATION_RETURNED',
+      applicationId,
+      ...input,
+    });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_RETURNED',
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      if (!(LEAVE_REVIEW_STATUSES as readonly string[]).includes(application.status)) {
+        throw workflowError('return for information', application.status);
+      }
+      const version = await this.requireVersion(transaction, context.agencyId, application);
+      await this.requireActiveStep(
+        transaction,
+        context.agencyId,
+        version.approvalRequestId,
+        LEAVE_REVIEW_PERMISSIONS,
+      );
+      const summary = await this.approvalsService.decideInTransaction(
+        transaction,
+        context,
+        version.approvalRequestId,
+        'RETURN',
+        input.reason,
+        idempotencyKey ?? undefined,
+        { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'RETURN' } },
+      );
+      if (summary.status !== 'RETURNED') throw routeInvalid();
+      await this.releaseVersionCommitments(transaction, context.agencyId, version.id);
+      await transaction.leaveApplication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+        data: { status: 'NEEDS_INFORMATION' },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'LEAVE_APPLICATION_RETURNED',
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: 'NEEDS_INFORMATION',
+        reason: input.reason,
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          versionId: version.id,
         },
       });
       return (await this.detailInTransaction(transaction, context, applicationId))!;
@@ -1870,6 +2811,461 @@ export class LeaveApplicationsService {
       }
     }
     return { documentId: evidence.document.id, versionId };
+  }
+
+  /**
+   * Domain decisions always run through the Leave Application service. When the
+   * generic approvals API reaches a Leave Application step it must fail closed:
+   * the service forwards its own `effectContext`, and a decision without it
+   * never changes the case.
+   */
+  private async assertApprovalEffect(
+    transaction: Prisma.TransactionClient,
+    request: ApprovalCompletionRequest,
+    allowedStatuses: readonly string[],
+  ): Promise<void> {
+    if (request.effectContext?.kind !== LEAVE_APPROVAL_EFFECT_KIND) {
+      throw new LeaveApplicationServiceError(
+        'Leave Application decisions must be recorded through the Leave Application authority.',
+        409,
+        'LEAVE_APPLICATION_APPROVAL_EFFECT_REQUIRED',
+      );
+    }
+    const application = await transaction.leaveApplication.findFirst({
+      where: { agencyId: request.agencyId, id: request.subjectId },
+      select: {
+        status: true,
+        currentVersion: { select: { approvalRequestId: true } },
+      },
+    });
+    if (
+      !application ||
+      !allowedStatuses.includes(application.status) ||
+      application.currentVersion?.approvalRequestId !== request.approvalRequestId
+    ) {
+      throw routeInvalid();
+    }
+  }
+
+  private async requireVersion(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    application: ApplicationRecord,
+  ): Promise<VersionRecord> {
+    if (!application.currentVersionId) {
+      throw deficiency(
+        'LEAVE_APPLICATION_VERSION_REQUIRED',
+        'The Leave Application has no submitted version to review.',
+      );
+    }
+    const version = await transaction.leaveApplicationVersion.findFirst({
+      where: { agencyId, id: application.currentVersionId },
+      select: versionSelect,
+    });
+    if (!version) throw applicationNotFound();
+    return version;
+  }
+
+  private assertActorSeparation(
+    context: RequestContext,
+    application: ApplicationRecord,
+    version: VersionRecord,
+    options: {
+      prohibitSubject?: boolean;
+      prohibitSubmitter?: boolean;
+      prohibitCertifier?: string | null;
+    },
+  ): void {
+    const separationError = () =>
+      new LeaveApplicationServiceError(
+        'A person may not review their own Leave Application; route it to another authorized reviewer.',
+        403,
+        'LEAVE_APPLICATION_SEPARATION_REQUIRED',
+      );
+    if (
+      options.prohibitSubject &&
+      application.employee.memberships.some((membership) => membership.id === context.membershipId)
+    ) {
+      throw separationError();
+    }
+    if (options.prohibitSubmitter && version.submittedByMembershipId === context.membershipId) {
+      throw separationError();
+    }
+    if (options.prohibitCertifier && options.prohibitCertifier === context.membershipId) {
+      throw separationError();
+    }
+  }
+
+  /**
+   * The bound Approval Route decides who may act. A step whose permission set
+   * does not match the command fails closed instead of adapting.
+   */
+  private async requireActiveStep(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    approvalRequestId: string,
+    expectedPermissions: readonly string[],
+  ): Promise<{ stepNo: number }> {
+    const request = await transaction.approvalRequest.findFirst({
+      where: { agencyId, id: approvalRequestId },
+      select: {
+        status: true,
+        steps: {
+          where: { status: 'ACTIVE' },
+          orderBy: { stepNo: 'asc' },
+          select: { stepNo: true, requiredPermission: true },
+        },
+      },
+    });
+    const step = request?.steps[0];
+    if (
+      !request ||
+      request.status !== 'IN_PROGRESS' ||
+      !step ||
+      !expectedPermissions.includes(step.requiredPermission)
+    ) {
+      throw routeInvalid();
+    }
+    return { stepNo: step.stepNo };
+  }
+
+  /**
+   * Quantities are frozen in the accepted assessment. Certification and
+   * approval only read them back and map each segment to the Leave Account its
+   * policy charges, failing closed when a charged account is missing or closed.
+   */
+  private async segmentAccountCharges(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    application: ApplicationRecord,
+    version: VersionRecord,
+  ): Promise<LeaveSegmentAccountCharge[]> {
+    const policyIds = [
+      ...new Set(version.calculationSegments.map(({ policyVersionId }) => policyVersionId)),
+    ];
+    const policies = await transaction.leavePolicyVersion.findMany({
+      where: { agencyId: context.agencyId, id: { in: policyIds } },
+      select: policyVersionSelect,
+    });
+    const policyById = new Map(policies.map((policy) => [policy.id, policy]));
+    const chargedTypeIds = new Set<string>();
+    for (const segment of version.calculationSegments) {
+      const policy = policyById.get(segment.policyVersionId);
+      if (!policy) {
+        throw deficiency(
+          'LEAVE_APPLICATION_POLICY_VERSION_REQUIRED',
+          'A calculation segment has no Leave Policy Version to charge.',
+        );
+      }
+      if (segment.accountQuantity !== null && chargesLeaveAccount(policy)) {
+        chargedTypeIds.add(policy.chargedLeaveTypeId ?? policy.leaveTypeId);
+      }
+    }
+    const accounts =
+      chargedTypeIds.size === 0
+        ? []
+        : await transaction.leaveAccount.findMany({
+            where: {
+              agencyId: context.agencyId,
+              employeeId: application.employeeId,
+              leaveTypeId: { in: [...chargedTypeIds] },
+            },
+            select: { id: true, leaveTypeId: true, status: true },
+          });
+    const accountByType = new Map(accounts.map((account) => [account.leaveTypeId, account]));
+    return version.calculationSegments.map((segment) => {
+      const policy = policyById.get(segment.policyVersionId)!;
+      const base = {
+        segmentId: segment.id,
+        dateFrom: segment.dateFrom,
+        dateTo: segment.dateTo,
+        requestedQuantity: segment.requestedQuantity,
+        requestedUnit: segment.requestedUnit,
+      };
+      if (segment.accountQuantity === null || !chargesLeaveAccount(policy)) {
+        return { ...base, leaveAccountId: null, accountQuantity: ZERO };
+      }
+      const account = accountByType.get(policy.chargedLeaveTypeId ?? policy.leaveTypeId);
+      if (!account) {
+        throw deficiency(
+          'LEAVE_APPLICATION_ACCOUNT_REQUIRED',
+          'The Employee has no Leave Account for a leave type charged by this application.',
+        );
+      }
+      if (account.status !== 'ACTIVE') {
+        throw deficiency(
+          'LEAVE_APPLICATION_ACCOUNT_INACTIVE',
+          `The charged Leave Account is ${account.status}.`,
+        );
+      }
+      return { ...base, leaveAccountId: account.id, accountQuantity: segment.accountQuantity };
+    });
+  }
+
+  private async requireCertification(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    version: VersionRecord,
+  ) {
+    const certification = await transaction.leaveCreditCertification.findFirst({
+      where: { agencyId, leaveApplicationVersionId: version.id },
+      select: {
+        id: true,
+        eligibilityAssessmentId: true,
+        certifiedByMembershipId: true,
+        lines: {
+          orderBy: { id: 'asc' },
+          select: {
+            leaveAccountId: true,
+            applicationQuantity: true,
+            leaveCreditCommitmentId: true,
+          },
+        },
+      },
+    });
+    if (!certification || certification.eligibilityAssessmentId !== version.acceptedAssessmentId) {
+      throw recertificationRequired();
+    }
+    for (const line of certification.lines) {
+      const account = await transaction.leaveAccount.findFirst({
+        where: { agencyId, id: line.leaveAccountId },
+        select: { status: true },
+      });
+      if (!account || account.status !== 'ACTIVE') throw recertificationRequired();
+      let commitmentId: string | null = line.leaveCreditCommitmentId;
+      let commitment: { id: string; status: string } | null = null;
+      for (let hops = 0; commitmentId && hops < 20; hops += 1) {
+        commitment = await transaction.leaveCreditCommitment.findFirst({
+          where: { agencyId, id: commitmentId },
+          select: { id: true, status: true },
+        });
+        if (!commitment || commitment.status !== 'RELEASED') break;
+        commitmentId =
+          (
+            await transaction.leaveCreditCommitment.findFirst({
+              where: { agencyId, succeedsCommitmentId: commitmentId },
+              select: { id: true },
+            })
+          )?.id ?? null;
+      }
+      if (!commitment || commitment.status !== 'ACTIVE') throw recertificationRequired();
+    }
+    return certification;
+  }
+
+  /**
+   * The approver may approve the whole application or an exact subset. Every
+   * approved account quantity either keeps the certified commitment, or releases
+   * it and raises a smaller linked successor so the case never needs a new
+   * certification.
+   */
+  private buildAllocationPlan(
+    charges: LeaveSegmentAccountCharge[],
+    allocations: LeaveApplicationDecisionInput['allocations'],
+  ): LeaveAllocationPlanLine[] {
+    const chargeBySegment = new Map(charges.map((charge) => [charge.segmentId, charge]));
+    const inputs: NonNullable<LeaveApplicationDecisionInput['allocations']> =
+      allocations ??
+      charges.map((charge) => ({
+        segmentId: charge.segmentId,
+        allocationKind: charge.leaveAccountId ? 'LEAVE_ACCOUNT' : 'LEAVE_WITHOUT_PAY',
+      }));
+    const totals = new Map<string, Prisma.Decimal>();
+    const lines: LeaveAllocationPlanLine[] = [];
+    for (const input of inputs) {
+      const charge = chargeBySegment.get(input.segmentId);
+      if (!charge) {
+        throw allocationInvalid(
+          'A decision line references a segment outside the submitted version.',
+        );
+      }
+      const quantity =
+        input.quantity === undefined ? charge.requestedQuantity : parseQuantity(input.quantity);
+      if (quantity.lessThanOrEqualTo(0) || quantity.greaterThan(charge.requestedQuantity)) {
+        throw allocationInvalid('An approved quantity must fit within the segment requested.');
+      }
+      const total = (totals.get(charge.segmentId) ?? ZERO).plus(quantity);
+      if (total.greaterThan(charge.requestedQuantity)) {
+        throw allocationInvalid('The approved quantities exceed the segment requested.');
+      }
+      totals.set(charge.segmentId, total);
+      let leaveAccountId: string | null = null;
+      let accountQuantity = ZERO;
+      if (input.allocationKind === 'LEAVE_ACCOUNT') {
+        if (!charge.leaveAccountId) {
+          throw allocationInvalid('That segment does not charge a Leave Account.');
+        }
+        leaveAccountId = charge.leaveAccountId;
+        accountQuantity =
+          input.accountQuantity === undefined ? quantity : parseQuantity(input.accountQuantity);
+        if (
+          accountQuantity.lessThanOrEqualTo(0) ||
+          accountQuantity.greaterThan(quantity) ||
+          accountQuantity.greaterThan(charge.accountQuantity)
+        ) {
+          throw allocationInvalid('The account quantity must fit within the approved quantity.');
+        }
+      } else if (input.accountQuantity !== undefined) {
+        throw allocationInvalid('Only an account allocation may carry an account quantity.');
+      }
+      lines.push({
+        sequenceNo: lines.length + 1,
+        segmentId: charge.segmentId,
+        dateFrom: charge.dateFrom,
+        dateTo: charge.dateTo,
+        allocationKind: input.allocationKind,
+        leaveAccountId,
+        quantity,
+        unitCode: charge.requestedUnit,
+        accountQuantity,
+      });
+    }
+    if (lines.length === 0) throw allocationInvalid('An approval must allocate at least one line.');
+    return lines;
+  }
+
+  private async applyApprovedAllocation(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    version: VersionRecord,
+    plan: LeaveAllocationPlanLine[],
+    decisionId: string,
+  ): Promise<void> {
+    const certification = await transaction.leaveCreditCertification.findFirst({
+      where: { agencyId: context.agencyId, leaveApplicationVersionId: version.id },
+      select: {
+        id: true,
+        lines: {
+          orderBy: { id: 'asc' },
+          select: {
+            leaveAccountId: true,
+            applicationQuantity: true,
+            leaveCreditCommitmentId: true,
+          },
+        },
+      },
+    });
+    if (!certification) throw recertificationRequired();
+    const now = new Date();
+    const allocation = await transaction.leaveApprovalAllocation.create({
+      data: {
+        agencyId: context.agencyId,
+        leaveApplicationVersionId: version.id,
+        approvalDecisionId: decisionId,
+        decidedAt: now,
+      },
+      select: { id: true },
+    });
+    await transaction.leaveApprovalAllocationLine.createMany({
+      data: plan.map((line) => ({
+        agencyId: context.agencyId,
+        leaveApprovalAllocationId: allocation.id,
+        sequenceNo: line.sequenceNo,
+        dateFrom: line.dateFrom,
+        dateTo: line.dateTo,
+        allocationKind: line.allocationKind,
+        leaveAccountId: line.leaveAccountId,
+        quantity: line.quantity,
+        unitCode: line.unitCode,
+      })),
+    });
+    const approvedByAccount = new Map<string, Prisma.Decimal>();
+    for (const line of plan) {
+      if (!line.leaveAccountId) continue;
+      approvedByAccount.set(
+        line.leaveAccountId,
+        (approvedByAccount.get(line.leaveAccountId) ?? ZERO).plus(line.accountQuantity),
+      );
+    }
+    for (const line of certification.lines) {
+      const approved = approvedByAccount.get(line.leaveAccountId) ?? ZERO;
+      if (approved.greaterThan(line.applicationQuantity)) throw recertificationRequired();
+      if (approved.equals(line.applicationQuantity)) continue;
+      await transaction.leaveCreditCommitment.update({
+        where: {
+          agencyId_id: {
+            agencyId: context.agencyId,
+            id: line.leaveCreditCommitmentId,
+          },
+        },
+        data: { status: 'RELEASED', endedAt: now },
+      });
+      if (approved.greaterThan(0)) {
+        await transaction.leaveCreditCommitment.create({
+          data: {
+            agencyId: context.agencyId,
+            leaveAccountId: line.leaveAccountId,
+            quantity: approved,
+            sourceType: COMMITMENT_SOURCE_TYPE,
+            sourceId: version.id,
+            sourceCommitmentKey: APPROVED_COMMITMENT_KEY,
+            succeedsCommitmentId: line.leaveCreditCommitmentId,
+            status: 'ACTIVE',
+            effectiveFrom: now,
+          },
+        });
+      }
+    }
+  }
+
+  private async releaseVersionCommitments(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    versionId: string,
+  ): Promise<void> {
+    await transaction.leaveCreditCommitment.updateMany({
+      where: {
+        agencyId,
+        sourceType: COMMITMENT_SOURCE_TYPE,
+        sourceId: versionId,
+        status: 'ACTIVE',
+      },
+      data: { status: 'RELEASED', endedAt: new Date() },
+    });
+  }
+
+  private async lockAccount(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    leaveAccountId: string,
+  ): Promise<void> {
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${leaveAccountId} AS uuid) FOR UPDATE`,
+    );
+  }
+
+  private async accountBalance(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    leaveAccountId: string,
+    balanceAsOf: Date,
+    recordedThrough: Date,
+  ): Promise<{ posted: Prisma.Decimal; committed: Prisma.Decimal }> {
+    const [ledger, commitments] = await Promise.all([
+      transaction.leaveLedgerEntry.aggregate({
+        where: {
+          agencyId,
+          leaveAccountId,
+          effectiveDate: { lte: balanceAsOf },
+          postedAt: { lte: recordedThrough },
+        },
+        _sum: { quantity: true },
+      }),
+      transaction.leaveCreditCommitment.aggregate({
+        where: {
+          agencyId,
+          leaveAccountId,
+          status: 'ACTIVE',
+          effectiveFrom: { lte: balanceAsOf },
+          OR: [{ endedAt: null }, { endedAt: { gt: balanceAsOf } }],
+        },
+        _sum: { quantity: true },
+      }),
+    ]);
+    return {
+      posted: ledger._sum.quantity ?? ZERO,
+      committed: commitments._sum.quantity ?? ZERO,
+    };
   }
 
   private async lockApplication(
