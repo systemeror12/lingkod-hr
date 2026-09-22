@@ -12,7 +12,10 @@ import { AttendanceContextsService } from '../attendance-contexts/attendance-con
 import { attendanceAuditWriter } from '../attendance/attendance.audit';
 import { AttendanceService } from '../attendance/attendance.service';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
-import { leaveAccountAuditWriter, LeaveAccountsService } from '../leave-accounts/leave-accounts.service';
+import {
+  leaveAccountAuditWriter,
+  LeaveAccountsService,
+} from '../leave-accounts/leave-accounts.service';
 import { attendanceDayAuditWriter } from './attendance-days.audit';
 import { AttendanceDaysService } from './attendance-days.service';
 
@@ -753,68 +756,65 @@ it.skipIf(!enabled)(
   },
 );
 
-it.skipIf(!enabled)(
-  'rolls back the whole batch when one Employee cannot be resolved',
-  async () => {
-    const admin = await createAdminClient();
-    const suffix = `${Date.now()}-attendance-day-rollback`;
-    const { agency, membership, unit, context } = await createAgency(admin, suffix);
-    const workDate = pastWeekday(4);
-    const effectiveFrom = manilaDate(-30);
+it.skipIf(!enabled)('rolls back the whole batch when one Employee cannot be resolved', async () => {
+  const admin = await createAdminClient();
+  const suffix = `${Date.now()}-attendance-day-rollback`;
+  const { agency, membership, unit, context } = await createAgency(admin, suffix);
+  const workDate = pastWeekday(4);
+  const effectiveFrom = manilaDate(-30);
 
-    try {
-      const setup = await setupSchedule(admin, {
-        context,
-        membershipId: membership.id,
-        suffix,
-        effectiveFrom,
-      });
-      const employee = await createEmployee(admin, {
+  try {
+    const setup = await setupSchedule(admin, {
+      context,
+      membershipId: membership.id,
+      suffix,
+      effectiveFrom,
+    });
+    const employee = await createEmployee(admin, {
+      agencyId: agency.id,
+      membershipId: membership.id,
+      unitId: unit.id,
+      suffix,
+      withSegment: true,
+    });
+    await withDatabaseContext(
+      {
         agencyId: agency.id,
         membershipId: membership.id,
-        unitId: unit.id,
-        suffix,
-        withSegment: true,
-      });
-      await withDatabaseContext(
-        {
-          agencyId: agency.id,
-          membershipId: membership.id,
-          capabilities: ['employee-membership-link'],
-        },
-        (transaction) =>
-          transaction.agencyMembership.update({
-            where: { agencyId_id: { agencyId: agency.id, id: membership.id } },
-            data: { employeeId: employee.id },
-          }),
-      );
-      await setup.assignments.create(context, {
-        employeeId: employee.id,
-        workScheduleVersionId: setup.scheduleVersionId,
-        workArrangementVersionId: setup.arrangementVersionId,
-        authorityDocumentVersionId: setup.assignmentEvidence.id,
-        effectiveFrom,
-      });
-
-      await expect(
-        setup.days.calculate(context, {
-          periodCode: '2026-01',
-          dateFrom: workDate,
-          dateTo: workDate,
-          employeeIds: [employee.id, '00000000-0000-4000-8000-000000000000'],
+        capabilities: ['employee-membership-link'],
+      },
+      (transaction) =>
+        transaction.agencyMembership.update({
+          where: { agencyId_id: { agencyId: agency.id, id: membership.id } },
+          data: { employeeId: employee.id },
         }),
-      ).rejects.toThrow('The Employee could not be found in this Agency.');
+    );
+    await setup.assignments.create(context, {
+      employeeId: employee.id,
+      workScheduleVersionId: setup.scheduleVersionId,
+      workArrangementVersionId: setup.arrangementVersionId,
+      authorityDocumentVersionId: setup.assignmentEvidence.id,
+      effectiveFrom,
+    });
 
-      expect(await admin.attendancePeriod.count({ where: { agencyId: agency.id } })).toBe(0);
-      expect(await admin.attendanceDay.count({ where: { agencyId: agency.id } })).toBe(0);
-      expect(
-        await admin.auditEvent.count({
-          where: { agencyId: agency.id, action: 'ATTENDANCE_DAY_CALCULATED' },
-        }),
-      ).toBe(0);
-    } finally {
-      await cleanupAgency(admin, agency.id, suffix);
-      await admin.$disconnect();
-    }
-  },
-);
+    await expect(
+      setup.days.calculate(context, {
+        periodCode: '2026-01',
+        dateFrom: workDate,
+        dateTo: workDate,
+        employeeIds: [employee.id, '00000000-0000-4000-8000-000000000000'],
+      }),
+    ).rejects.toThrow('The Employee could not be found in this Agency.');
+
+    expect(await admin.attendancePeriod.count({ where: { agencyId: agency.id } })).toBe(0);
+    expect(await admin.attendanceDay.count({ where: { agencyId: agency.id } })).toBe(0);
+    expect(
+      await admin.auditEvent.count({
+        where: { agencyId: agency.id, action: 'ATTENDANCE_DAY_CALCULATED' },
+      }),
+    ).toBe(0);
+  } finally {
+    await cleanupAgency(admin, agency.id, suffix);
+    await admin.$disconnect();
+  }
+});

@@ -338,10 +338,7 @@ function expectedIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[
   );
 }
 
-function flexibleAnchorMinute(
-  rule: MinuteDayRule,
-  qualifying: readonly Interval[],
-): number | null {
+function flexibleAnchorMinute(rule: MinuteDayRule, qualifying: readonly Interval[]): number | null {
   const earliest = rule.anchorStartMinute;
   const latest = rule.latestStartMinute;
   if (earliest === null || latest === null) return null;
@@ -370,9 +367,7 @@ interface PendingSegment {
  * uncovered minutes are absence.
  */
 function classifyDeficits(segments: PendingSegment[]): void {
-  const uncovered = segments.filter(
-    (segment) => segment.expected && segment.coverage === null,
-  );
+  const uncovered = segments.filter((segment) => segment.expected && segment.coverage === null);
   if (uncovered.length === 0) return;
   const covered = segments.filter((segment) => segment.expected && segment.coverage !== null);
   for (const segment of uncovered) {
@@ -395,7 +390,9 @@ function nightWindowIntervals(workDate: string, timezone: string): Interval[] {
   const today = dayBoundary(workDate, timezone);
   const tomorrow = dayBoundary(addDateValueDays(workDate, 1), timezone);
   const dayAfter = dayBoundary(addDateValueDays(workDate, 2), timezone);
-  const intervals: Interval[] = [{ start: today + NIGHT_WINDOW_START_MINUTE, end: tomorrow + NIGHT_WINDOW_END_MINUTE }];
+  const intervals: Interval[] = [
+    { start: today + NIGHT_WINDOW_START_MINUTE, end: tomorrow + NIGHT_WINDOW_END_MINUTE },
+  ];
   if (dayAfter - tomorrow === MINUTES_PER_DAY) {
     intervals.push({
       start: tomorrow + NIGHT_WINDOW_START_MINUTE,
@@ -457,13 +454,12 @@ function unsupportedHolidayExceptions(
   segments: readonly { holidayClassification: string | null }[],
   holidayEffectRules: Record<string, unknown>,
 ): AttendanceCalculationException[] {
-  const classifications = [...new Set(segments.map((segment) => segment.holidayClassification))].filter(
-    (value): value is string => value !== null,
-  );
+  const classifications = [
+    ...new Set(segments.map((segment) => segment.holidayClassification)),
+  ].filter((value): value is string => value !== null);
   return classifications
     .filter(
-      (classification) =>
-        !Object.prototype.hasOwnProperty.call(holidayEffectRules, classification),
+      (classification) => !Object.prototype.hasOwnProperty.call(holidayEffectRules, classification),
     )
     .map((classification) => ({
       type: 'UNSUPPORTED_HOLIDAY_EFFECT' as const,
@@ -519,9 +515,7 @@ export function calculateAttendanceDay(
     coverageType: 'WORKED' as const,
     sources: input.events.map((event) => ({ sourceType: 'ATTENDANCE_EVENT', id: event.id })),
   }));
-  const nightMinutes = totalMinutes(
-    intersect(nightWindowIntervals(workDate, timezone), worked),
-  );
+  const nightMinutes = totalMinutes(intersect(nightWindowIntervals(workDate, timezone), worked));
 
   const contextCoverage: Array<
     Interval & {

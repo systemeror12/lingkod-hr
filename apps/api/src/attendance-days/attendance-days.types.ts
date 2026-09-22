@@ -83,7 +83,8 @@ export interface AttendanceDayRuleSnapshot {
   dayRuleId?: string | null | undefined;
   holidayClassifications?: Record<string, string> | undefined;
   eventIds?: string[] | undefined;
-  coverageSources?: Array<{ sourceType: string; sourceId: string; coverageType: string }> | undefined;
+  coverageSources?:
+    Array<{ sourceType: string; sourceId: string; coverageType: string }> | undefined;
   resolutionException?:
     | {
         type: AttendanceDayExceptionType;
@@ -163,9 +164,7 @@ export interface CalculateAttendanceDaysResult {
   unchangedCount: number;
 }
 
-export type AttendanceDayReadScope =
-  | { kind: 'AGENCY' }
-  | { kind: 'SCOPED'; employeeIds: string[] };
+export type AttendanceDayReadScope = { kind: 'AGENCY' } | { kind: 'SCOPED'; employeeIds: string[] };
 
 export const calculateAttendanceDaysSchema = z
   .object({

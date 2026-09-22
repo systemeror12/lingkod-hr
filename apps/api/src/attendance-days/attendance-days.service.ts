@@ -30,7 +30,10 @@ import {
   type AttendanceCalculationException,
   type AttendanceDayExceptionType,
 } from './attendance-calculation';
-import { ATTENDANCE_DAY_AUDIT_WRITER, type AttendanceDayAuditWriter } from './attendance-days.audit';
+import {
+  ATTENDANCE_DAY_AUDIT_WRITER,
+  type AttendanceDayAuditWriter,
+} from './attendance-days.audit';
 import {
   AttendanceDayServiceError,
   type AttendanceDayCalculationResultSummary,
@@ -312,10 +315,11 @@ export class AttendanceDaysService {
         'ATTENDANCE_DAY_CALCULATE_FORBIDDEN',
       );
     }
-    const dateCount = Math.floor(
-      (toDatabaseDate(input.dateTo).getTime() - toDatabaseDate(input.dateFrom).getTime()) /
-        (24 * 60 * 60 * 1000),
-    ) + 1;
+    const dateCount =
+      Math.floor(
+        (toDatabaseDate(input.dateTo).getTime() - toDatabaseDate(input.dateFrom).getTime()) /
+          (24 * 60 * 60 * 1000),
+      ) + 1;
     if (dateCount < 1) {
       throw new AttendanceDayServiceError(
         'The calculation end date cannot precede its start date.',
@@ -338,14 +342,7 @@ export class AttendanceDaysService {
         for (let offset = 0; offset < dateCount; offset += 1) {
           const workDate = formatDate(addDays(toDatabaseDate(input.dateFrom), offset));
           days.push(
-            await this.calculateOne(
-              transaction,
-              context,
-              period,
-              employeeId,
-              workDate,
-              now,
-            ),
+            await this.calculateOne(transaction, context, period, employeeId, workDate, now),
           );
         }
       }
@@ -383,9 +380,7 @@ export class AttendanceDaysService {
         where: {
           agencyId: context.agencyId,
           isCurrent: true,
-          ...(filters.attendancePeriodId
-            ? { attendancePeriodId: filters.attendancePeriodId }
-            : {}),
+          ...(filters.attendancePeriodId ? { attendancePeriodId: filters.attendancePeriodId } : {}),
           ...employeeFilter,
           ...(filters.status ? { status: filters.status } : {}),
           ...(filters.workDateFrom || filters.workDateTo
@@ -596,7 +591,8 @@ export class AttendanceDaysService {
       });
     }
 
-    const status: AttendanceDayState = calculation.exceptions.length > 0 ? 'EXCEPTION' : 'CALCULATED';
+    const status: AttendanceDayState =
+      calculation.exceptions.length > 0 ? 'EXCEPTION' : 'CALCULATED';
     const record = await transaction.attendanceDay.create({
       data: {
         agencyId: context.agencyId,
@@ -888,7 +884,11 @@ export class AttendanceDaysService {
     if (window) return { startsAt: window.start, endsAt: window.end };
     return {
       startsAt: zonedTimeToInstant(workDate, '00:00', timezone),
-      endsAt: zonedTimeToInstant(formatDate(addDays(toDatabaseDate(workDate), 1)), '00:00', timezone),
+      endsAt: zonedTimeToInstant(
+        formatDate(addDays(toDatabaseDate(workDate), 1)),
+        '00:00',
+        timezone,
+      ),
     };
   }
 

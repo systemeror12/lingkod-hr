@@ -14,9 +14,7 @@ export const dynamic = 'force-dynamic';
 
 function hasDays(value: unknown): boolean {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    Array.isArray((value as { days?: unknown }).days)
+    typeof value === 'object' && value !== null && Array.isArray((value as { days?: unknown }).days)
   );
 }
 
@@ -50,7 +48,9 @@ export default async function AttendanceDaysPage() {
   };
   const base = config.API_URL + '/api/v1/agencies/' + session.agencyId;
   const [daysResponse, periodsResponse] = await Promise.all([
-    canRead ? fetch(base + '/attendance-days', { headers, cache: 'no-store' }) : Promise.resolve(null),
+    canRead
+      ? fetch(base + '/attendance-days', { headers, cache: 'no-store' })
+      : Promise.resolve(null),
     canRead
       ? fetch(base + '/attendance-periods', { headers, cache: 'no-store' })
       : Promise.resolve(null),

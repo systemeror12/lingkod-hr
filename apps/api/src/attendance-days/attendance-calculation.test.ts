@@ -49,7 +49,9 @@ function at(
   return { id, eventType, eventTime: manila(timeValue, dayOffset) };
 }
 
-function input(overrides: Partial<AttendanceDayCalculationInput> = {}): AttendanceDayCalculationInput {
+function input(
+  overrides: Partial<AttendanceDayCalculationInput> = {},
+): AttendanceDayCalculationInput {
   return {
     timezone: TIMEZONE,
     workDate: WORK_DATE,
@@ -62,7 +64,9 @@ function input(overrides: Partial<AttendanceDayCalculationInput> = {}): Attendan
   };
 }
 
-function coverage(overrides: Partial<AttendanceCalculationCoverage> = {}): AttendanceCalculationCoverage {
+function coverage(
+  overrides: Partial<AttendanceCalculationCoverage> = {},
+): AttendanceCalculationCoverage {
   return {
     sourceType: 'ATTENDANCE_CONTEXT',
     sourceId: 'c1',
@@ -343,7 +347,10 @@ it('anchors a flexible day on its latest permitted start when nothing qualifies'
 
 it('reports missing, duplicate, and out-of-order events without inventing time', () => {
   const missing = calculateAttendanceDay(
-    input({ events: [at('08:00', 'TIME_IN'), at('17:00', 'TIME_OUT')], dayRule: dayRule({ breaks: [lunchBreak], eventPattern: 'WITH_BREAK_EVENTS' }) }),
+    input({
+      events: [at('08:00', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+      dayRule: dayRule({ breaks: [lunchBreak], eventPattern: 'WITH_BREAK_EVENTS' }),
+    }),
   );
   expect(missing.exceptions.map((exception) => exception.type).sort()).toEqual([
     'MISSING_ATTENDANCE_EVENT',

@@ -58,7 +58,9 @@ test('calculates an Attendance Day from captured events and inspects its record'
   await page.getByLabel('Period code').fill('E2E-2026-01');
   await page.getByLabel('From', { exact: true }).fill(workDate);
   await page.getByLabel('To', { exact: true }).fill(workDate);
-  await page.getByLabel('Employees', { exact: true }).selectOption({ label: 'Alex Rivera · E2E-0001' });
+  await page
+    .getByLabel('Employees', { exact: true })
+    .selectOption({ label: 'Alex Rivera · E2E-0001' });
   await page.getByRole('button', { name: 'Calculate', exact: true }).click();
 
   await expect(page.getByRole('status')).toContainText('1 created');

@@ -145,12 +145,7 @@ const STATUS_TONES: Record<AttendanceDayStatus, string> = {
   APPROVED: 'bg-[#e7eefb] text-[#2d4f8f]',
 };
 
-const STATUSES: readonly AttendanceDayStatus[] = [
-  'PENDING',
-  'CALCULATED',
-  'EXCEPTION',
-  'APPROVED',
-];
+const STATUSES: readonly AttendanceDayStatus[] = ['PENDING', 'CALCULATED', 'EXCEPTION', 'APPROVED'];
 
 function errorMessage(value: unknown, fallback: string): string {
   if (typeof value !== 'object' || value === null) return fallback;
@@ -264,7 +259,9 @@ export function AttendanceDaysWorkspace({
       })
       .catch((failure: unknown) => {
         if (active)
-          setError(failure instanceof Error ? failure.message : 'The Attendance Day register failed.');
+          setError(
+            failure instanceof Error ? failure.message : 'The Attendance Day register failed.',
+          );
       });
     return () => {
       active = false;
@@ -285,7 +282,9 @@ export function AttendanceDaysWorkspace({
       })
       .catch((failure: unknown) => {
         if (active)
-          setError(failure instanceof Error ? failure.message : 'The Attendance Day failed to load.');
+          setError(
+            failure instanceof Error ? failure.message : 'The Attendance Day failed to load.',
+          );
       })
       .finally(() => {
         if (active) setDetailLoading(false);
@@ -614,7 +613,9 @@ export function AttendanceDaysWorkspace({
                       </td>
                       <td className="px-5 py-4 align-top">
                         <div className="grid gap-1">
-                          <span className={statusClass(day.status)}>{STATUS_LABELS[day.status]}</span>
+                          <span className={statusClass(day.status)}>
+                            {STATUS_LABELS[day.status]}
+                          </span>
                           {day.dayClassification === 'UNSCHEDULED_SERVICE' ? (
                             <span className="text-[10px] tracking-[0.07em] text-muted uppercase">
                               Unscheduled service
@@ -864,8 +865,8 @@ export function AttendanceDaysWorkspace({
                 Select an Attendance Day
               </strong>
               <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
-                Choose a day from the register to inspect its totals, segments, exceptions, and
-                rule snapshot.
+                Choose a day from the register to inspect its totals, segments, exceptions, and rule
+                snapshot.
               </p>
             </div>
           ) : (
@@ -893,9 +894,7 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
           <span className={statusClass(day.status)}>{STATUS_LABELS[day.status]}</span>
           <span className="text-xs text-muted">
             v{day.calculationVersion} · {day.isCurrent ? 'current' : 'superseded'} ·{' '}
-            {day.dayClassification === 'UNSCHEDULED_SERVICE'
-              ? 'unscheduled service'
-              : 'scheduled'}
+            {day.dayClassification === 'UNSCHEDULED_SERVICE' ? 'unscheduled service' : 'scheduled'}
           </span>
         </div>
       </div>
@@ -1049,13 +1048,17 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
           {day.ruleSnapshot.workArrangementVersionId ? (
             <div className="grid gap-0.5">
               <dt className="text-muted">Work arrangement version</dt>
-              <dd className="m-0 break-all text-ink">{day.ruleSnapshot.workArrangementVersionId}</dd>
+              <dd className="m-0 break-all text-ink">
+                {day.ruleSnapshot.workArrangementVersionId}
+              </dd>
             </div>
           ) : null}
           {day.ruleSnapshot.holidayCalendarVersionId ? (
             <div className="grid gap-0.5">
               <dt className="text-muted">Holiday calendar version</dt>
-              <dd className="m-0 break-all text-ink">{day.ruleSnapshot.holidayCalendarVersionId}</dd>
+              <dd className="m-0 break-all text-ink">
+                {day.ruleSnapshot.holidayCalendarVersionId}
+              </dd>
             </div>
           ) : null}
           {day.ruleSnapshot.resolutionException ? (
@@ -1072,9 +1075,7 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
 
       <div className="grid gap-1 text-xs text-muted">
         <span>
-          {day.calculatedAt
-            ? 'Calculated ' + instantLabel(day.calculatedAt)
-            : 'Not yet calculated'}
+          {day.calculatedAt ? 'Calculated ' + instantLabel(day.calculatedAt) : 'Not yet calculated'}
         </span>
         <span>Record created {instantLabel(day.createdAt)}</span>
       </div>
