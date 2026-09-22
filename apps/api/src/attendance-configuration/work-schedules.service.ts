@@ -62,6 +62,7 @@ export interface WorkScheduleVersionSummary {
   versionNo: number;
   scheduleType: WorkScheduleType;
   timezone: string;
+  holidayEffectRules: Prisma.JsonValue;
   authorityDocumentVersionId: string | null;
   approvingAuthority: string | null;
   versionState: WorkScheduleVersionState;
@@ -229,6 +230,7 @@ function versionSummary(record: WorkScheduleVersionRecord): WorkScheduleVersionS
     versionNo: record.versionNo,
     scheduleType: record.scheduleType as WorkScheduleType,
     timezone: record.timezone,
+    holidayEffectRules: record.holidayEffectRules,
     authorityDocumentVersionId: record.authorityDocumentVersionId,
     approvingAuthority: record.approvingAuthority,
     versionState: record.status as WorkScheduleVersionState,

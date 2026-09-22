@@ -43,6 +43,7 @@ import {
   type AttendanceWebClockStatusSummary,
   type AttendanceWebClockVersionSummary,
   type AttendanceWorkDateContext,
+  type AttendanceWorkDateEvent,
   type ClockAttendanceEventInput,
   type CreateManualAttendanceEventInput,
   type SetWebClockEnablementInput,
@@ -849,6 +850,26 @@ export class AttendanceService {
     }
     if (hasOut) return null;
     return hasIn ? 'TIME_OUT' : 'TIME_IN';
+  }
+
+  /**
+   * Expose the exact Attendance Events of one resolved Work Date inside a
+   * caller-owned transaction. Attendance Day calculation consumes the same
+   * collection window the capture path uses, so both agree on what belongs to
+   * the Work Date.
+   */
+  async workDateEventsInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    resolution: AttendanceResolution,
+  ): Promise<AttendanceWorkDateEvent[]> {
+    const records = await this.workDateEvents(transaction, agencyId, employeeId, resolution);
+    return records.map((record) => ({
+      id: record.id,
+      eventType: record.eventType as AttendanceEventType,
+      eventTime: record.eventTime,
+    }));
   }
 
   private async localDayEvents(

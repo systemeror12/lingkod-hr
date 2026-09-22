@@ -34,6 +34,24 @@ export const LEAVE_ACCOUNT_LEDGER_SOURCE_TYPES = {
   ADJUSTMENT: 'LeaveLedgerAdjustment',
 } as const;
 
+/** The source type Leave posting uses so Attendance can recognize posted leave. */
+export const LEAVE_APPLICATION_LEDGER_SOURCE_TYPE = 'LeaveApplicationVersion';
+
+/**
+ * One posted-leave fact for a Work Date. `wholeDay` is true only when the
+ * posting covers the entire Work Date; `ambiguousReason` reports a posting
+ * Attendance cannot place on the clock, which becomes a blocking exception.
+ */
+export interface PostedLeaveDayCoverage {
+  ledgerEntryId: string;
+  leaveAccountId: string;
+  leaveApplicationId: string;
+  policyVersionId: string;
+  quantity: number;
+  wholeDay: boolean;
+  ambiguousReason: string | null;
+}
+
 export interface LeaveAccountListFilters {
   employeeId?: string | undefined;
   leaveTypeId?: string | undefined;
@@ -1330,6 +1348,106 @@ export class LeaveAccountsService {
       throw idempotencyConflict();
     }
     return completed;
+  }
+
+  /**
+   * Read the posted leave that covers one Work Date inside a caller-owned
+   * transaction. Leave owns the posting; Attendance only reads the immutable
+   * ledger fact and the accepted Leave Calculation Segment behind it. A posting
+   * whose quantity cannot be placed on the clock returns an ambiguity instead of
+   * an assumed interval, so the calculation can fail closed.
+   */
+  async postedLeaveCoverageInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDateValue: string,
+  ): Promise<PostedLeaveDayCoverage[]> {
+    const workDate = toDatabaseDate(workDateValue);
+    const entries = await transaction.leaveLedgerEntry.findMany({
+      where: {
+        agencyId,
+        effectiveDate: workDate,
+        quantity: { gt: 0 },
+        sourceType: LEAVE_APPLICATION_LEDGER_SOURCE_TYPE,
+        reversesEntryId: null,
+        reversedByEntry: { none: {} },
+        leaveAccount: { employeeId },
+      },
+      orderBy: [{ postedAt: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        leaveAccountId: true,
+        quantity: true,
+        sourceId: true,
+        policyVersionId: true,
+      },
+    });
+    const coverage: PostedLeaveDayCoverage[] = [];
+    for (const entry of entries) {
+      const quantity = entry.quantity.toNumber();
+      const ambiguous = (reason: string, leaveApplicationId: string | null): void => {
+        coverage.push({
+          ledgerEntryId: entry.id,
+          leaveAccountId: entry.leaveAccountId,
+          leaveApplicationId: leaveApplicationId ?? entry.sourceId,
+          policyVersionId: entry.policyVersionId,
+          quantity,
+          wholeDay: false,
+          ambiguousReason: reason,
+        });
+      };
+      const version = await transaction.leaveApplicationVersion.findFirst({
+        where: { agencyId, id: entry.sourceId },
+        select: { id: true, leaveApplicationId: true },
+      });
+      if (!version) {
+        ambiguous('The posted leave names no Leave Application Version.', null);
+        continue;
+      }
+      const segments = await transaction.leaveCalculationSegment.findMany({
+        where: {
+          agencyId,
+          leaveApplicationVersionId: version.id,
+          policyVersionId: entry.policyVersionId,
+          dateFrom: { lte: workDate },
+          dateTo: { gte: workDate },
+        },
+        select: { requestedUnit: true },
+      });
+      if (segments.length !== 1) {
+        ambiguous(
+          'The posted leave matches no unique accepted Leave Calculation Segment.',
+          version.leaveApplicationId,
+        );
+        continue;
+      }
+      const unit = segments[0]!.requestedUnit;
+      if (unit !== 'WORKING_DAY' && unit !== 'CALENDAR_DAY') {
+        ambiguous(
+          `The posted leave unit ${unit} carries no clock placement for the Work Date.`,
+          version.leaveApplicationId,
+        );
+        continue;
+      }
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        ambiguous(
+          'The posted leave covers a fraction of the Work Date without a clock placement.',
+          version.leaveApplicationId,
+        );
+        continue;
+      }
+      coverage.push({
+        ledgerEntryId: entry.id,
+        leaveAccountId: entry.leaveAccountId,
+        leaveApplicationId: version.leaveApplicationId,
+        policyVersionId: entry.policyVersionId,
+        quantity,
+        wholeDay: true,
+        ambiguousReason: null,
+      });
+    }
+    return coverage;
   }
 
   private requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {

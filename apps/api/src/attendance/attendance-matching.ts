@@ -55,8 +55,15 @@ export interface AttendanceSequenceEvent {
   eventTime: Date;
 }
 
+export const ATTENDANCE_SEQUENCE_ISSUE_TYPES = [
+  'DUPLICATE_ATTENDANCE_EVENT',
+  'MISSING_ATTENDANCE_EVENT',
+  'OUT_OF_ORDER_ATTENDANCE_EVENT',
+] as const;
+export type AttendanceSequenceIssueType = (typeof ATTENDANCE_SEQUENCE_ISSUE_TYPES)[number];
+
 export interface AttendanceSequenceIssue {
-  type: 'DUPLICATE_ATTENDANCE_EVENT' | 'MISSING_ATTENDANCE_EVENT' | 'OUT_OF_ORDER_ATTENDANCE_EVENT';
+  type: AttendanceSequenceIssueType;
   eventType: AttendanceEventType;
   expectedCount: number;
   actualCount: number;
