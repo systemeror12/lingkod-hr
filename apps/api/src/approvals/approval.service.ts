@@ -115,12 +115,24 @@ export class ApprovalServiceError extends Error {
   }
 }
 
+/**
+ * Domain-supplied context that travels with an owning-domain decision. Approval
+ * stores nothing from it: it is handed back to the registered completion handler
+ * so a decision made through the owning domain can be told apart from the
+ * generic Approval API, which passes no context and must fail closed.
+ */
+export interface ApprovalEffectContext {
+  kind: string;
+  payload: unknown;
+}
+
 export interface ApprovalCompletionRequest {
   approvalRequestId: string;
   agencyId: string;
   subjectType: string;
   subjectId: string;
   routeVersionId: string;
+  effectContext?: ApprovalEffectContext;
 }
 
 export interface ApprovalCompletionHandler {
@@ -1173,7 +1185,9 @@ export class ApprovalsService {
   /**
    * Internal contract: record an Approval Decision inside the caller's
    * transaction so the owning domain can bind it to its own effects atomically.
-   * Decision authorization still uses the bound Approval Step snapshot.
+   * Decision authorization still uses the bound Approval Step snapshot. The
+   * optional effect context is echoed back to the completion handler so the
+   * owning domain can apply its effects against the decision it just made.
    */
   async decideInTransaction(
     transaction: Prisma.TransactionClient,
@@ -1182,6 +1196,7 @@ export class ApprovalsService {
     decision: ApprovalDecision,
     rawComments?: string,
     rawIdempotencyKey?: string,
+    effectContext?: ApprovalEffectContext,
   ): Promise<ApprovalRequestSummary> {
     this.assertDecisionReason(decision, rawComments);
     const comments = rawComments?.trim() ?? '';
@@ -1277,7 +1292,9 @@ export class ApprovalsService {
         currentStepNo:
           nextRequestStatus === 'APPROVED' || nextRequestStatus === 'REJECTED'
             ? null
-            : current.currentStepNo,
+            : nextRequestStatus === 'IN_PROGRESS'
+              ? (nextStep?.stepNo ?? current.currentStepNo)
+              : current.currentStepNo,
         completedAt: ['APPROVED', 'REJECTED'].includes(nextRequestStatus) ? now : null,
       },
     });
@@ -1288,6 +1305,7 @@ export class ApprovalsService {
         subjectType: updated.subjectType,
         subjectId: updated.subjectId,
         routeVersionId: updated.routeVersionId,
+        ...(effectContext ? { effectContext } : {}),
       });
     }
     if (nextRequestStatus === 'RETURNED' || nextRequestStatus === 'REJECTED') {
@@ -1300,6 +1318,7 @@ export class ApprovalsService {
           subjectType: updated.subjectType,
           subjectId: updated.subjectId,
           routeVersionId: updated.routeVersionId,
+          ...(effectContext ? { effectContext } : {}),
         },
         nextRequestStatus,
       );

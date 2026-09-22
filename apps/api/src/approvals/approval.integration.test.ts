@@ -277,6 +277,54 @@ it.skipIf(!enabled)(
       );
       expect(cancelled.status).toBe('CANCELLED');
       expect(cancelled.steps[0]).toMatchObject({ status: 'SKIPPED' });
+
+      const multiStepRouteCode = `SERVICE_ROUTE_MULTI_${suffix}`;
+      const multiStepRoute = await service.createRoute(requester, {
+        routeCode: multiStepRouteCode,
+        domain: 'RECRUITMENT',
+        versionNo: 1,
+        effectiveFrom: '2026-01-01',
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'approvals.requests.approve',
+              assignment: { kind: 'MEMBERSHIP', membershipId: reviewerMembership.id },
+              requiresSeparateReview: true,
+            },
+            {
+              stepNo: 2,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'approvals.requests.approve',
+              assignment: { kind: 'MEMBERSHIP', membershipId: reviewerMembership.id },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      });
+      await service.activateRoute(
+        requester,
+        multiStepRoute.id,
+        'The Agency approved this multi-step route for the Phase 6 checkpoint.',
+      );
+      const multiStepRequest = await service.createRequest(requester, {
+        routeCode: multiStepRouteCode,
+        subjectType: 'REQUEST_TO_FILL',
+        subjectId: '00000000-0000-4000-8000-000000000205',
+        effectiveDate: '2026-09-01',
+      });
+      await service.submit(requester, multiStepRequest.id);
+      const returnedMultiStep = await service.returnRequest(
+        reviewer,
+        multiStepRequest.id,
+        'The first step needs a correction before review can continue.',
+      );
+      expect(returnedMultiStep).toMatchObject({ status: 'RETURNED', currentStepNo: 1 });
+      expect(returnedMultiStep.steps[1]).toMatchObject({ status: 'PENDING' });
+      const resubmitted = await service.submit(requester, multiStepRequest.id);
+      expect(resubmitted).toMatchObject({ status: 'IN_PROGRESS', currentStepNo: 1 });
+      expect(resubmitted.steps[0]).toMatchObject({ status: 'ACTIVE' });
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");

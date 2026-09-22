@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
+import { ApprovalCompletionRegistry } from '../approvals/approval.service';
 import {
   LeaveApplicationsService,
   leaveApplicationAuditWriter,
@@ -7,9 +8,10 @@ import {
 
 const documentsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[1];
 const approvalsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[2];
-const workSchedules = {} as ConstructorParameters<typeof LeaveApplicationsService>[3];
-const workArrangements = {} as ConstructorParameters<typeof LeaveApplicationsService>[4];
-const holidayCalendars = {} as ConstructorParameters<typeof LeaveApplicationsService>[5];
+const completionRegistry = new ApprovalCompletionRegistry();
+const workSchedules = {} as ConstructorParameters<typeof LeaveApplicationsService>[4];
+const workArrangements = {} as ConstructorParameters<typeof LeaveApplicationsService>[5];
+const holidayCalendars = {} as ConstructorParameters<typeof LeaveApplicationsService>[6];
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const applicationId = '00000000-0000-4000-8000-000000000002';
@@ -32,6 +34,7 @@ function service() {
     leaveApplicationAuditWriter,
     documentsService,
     approvalsService,
+    completionRegistry,
     workSchedules,
     workArrangements,
     holidayCalendars,
@@ -94,4 +97,42 @@ it('requires leave.applications.withdraw before withdrawing', async () => {
   await expect(
     service().withdraw(context([]), applicationId, { reason: 'Trip cancelled.' }),
   ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_WITHDRAW_FORBIDDEN', statusCode: 403 });
+});
+
+it('requires leave.applications.route before routing', async () => {
+  await expect(service().route(context([]), applicationId)).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_ROUTE_FORBIDDEN',
+    statusCode: 403,
+  });
+});
+
+it('requires leave.credits.certify before certifying', async () => {
+  await expect(service().certify(context([]), applicationId, {})).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_CERTIFY_FORBIDDEN',
+    statusCode: 403,
+  });
+});
+
+it('requires leave.applications.recommend before recommending', async () => {
+  await expect(
+    service().recommend(context([]), applicationId, { outcome: 'RECOMMEND_APPROVAL' }),
+  ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_RECOMMEND_FORBIDDEN', statusCode: 403 });
+});
+
+it('requires the matching decision permission before deciding', async () => {
+  await expect(
+    service().decide(context([]), applicationId, { decision: 'APPROVE' }),
+  ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_APPROVED_FORBIDDEN', statusCode: 403 });
+  await expect(
+    service().decide(context([]), applicationId, {
+      decision: 'REJECT',
+      comments: 'Outside the entitlement.',
+    }),
+  ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_REJECTED_FORBIDDEN', statusCode: 403 });
+});
+
+it('requires leave.applications.return before returning', async () => {
+  await expect(
+    service().returnToApplicant(context([]), applicationId, { reason: 'Attach the signed form.' }),
+  ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_RETURN_FORBIDDEN', statusCode: 403 });
 });

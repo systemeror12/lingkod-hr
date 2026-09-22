@@ -1,10 +1,14 @@
 import { expect, it } from 'vitest';
 import {
+  leaveApplicationCertificationSchema,
   leaveApplicationCreateSchema,
+  leaveApplicationDecisionSchema,
   leaveApplicationDocumentSchema,
   leaveApplicationDraftSchema,
   leaveApplicationListSchema,
   leaveApplicationPeriodSchema,
+  leaveApplicationRecommendationSchema,
+  leaveApplicationReturnSchema,
   leaveApplicationSubmitSchema,
   leaveApplicationWithdrawSchema,
 } from './leave-applications.schemas';
@@ -113,4 +117,83 @@ it('bounds and defaults the application list query', () => {
   expect(leaveApplicationListSchema.safeParse({ status: 'POSTED' }).success).toBe(true);
   expect(leaveApplicationListSchema.safeParse({ status: 'UNKNOWN' }).success).toBe(false);
   expect(leaveApplicationListSchema.safeParse({ leaveTypeId: 'not-a-uuid' }).success).toBe(false);
+});
+
+it('accepts optional certification balance dates only', () => {
+  expect(leaveApplicationCertificationSchema.parse({})).toEqual({});
+  expect(leaveApplicationCertificationSchema.parse({ balanceAsOf: '2026-03-01' })).toMatchObject({
+    balanceAsOf: '2026-03-01',
+  });
+  expect(leaveApplicationCertificationSchema.safeParse({ balanceAsOf: 'March 1' }).success).toBe(
+    false,
+  );
+  expect(leaveApplicationCertificationSchema.safeParse({ unexpected: true }).success).toBe(false);
+});
+
+it('requires a reason for a negative recommendation', () => {
+  expect(
+    leaveApplicationRecommendationSchema.safeParse({ outcome: 'RECOMMEND_APPROVAL' }).success,
+  ).toBe(true);
+  expect(
+    leaveApplicationRecommendationSchema.safeParse({ outcome: 'RECOMMEND_REJECTION' }).success,
+  ).toBe(false);
+  expect(
+    leaveApplicationRecommendationSchema.safeParse({
+      outcome: 'RECOMMEND_REJECTION',
+      reason: 'The application exceeds the period allowed.',
+    }).success,
+  ).toBe(true);
+  expect(
+    leaveApplicationRecommendationSchema.safeParse({ outcome: 'RECOMMEND_LATER' }).success,
+  ).toBe(false);
+});
+
+it('requires a rejection reason and bounded allocation lines', () => {
+  expect(leaveApplicationDecisionSchema.safeParse({ decision: 'APPROVE' }).success).toBe(true);
+  expect(leaveApplicationDecisionSchema.safeParse({ decision: 'REJECT' }).success).toBe(false);
+  expect(
+    leaveApplicationDecisionSchema.safeParse({
+      decision: 'REJECT',
+      comments: 'The requested dates are not covered.',
+    }).success,
+  ).toBe(true);
+  expect(
+    leaveApplicationDecisionSchema.safeParse({
+      decision: 'APPROVE',
+      allocations: [
+        {
+          segmentId: documentId,
+          allocationKind: 'LEAVE_ACCOUNT',
+          quantity: '2',
+          accountQuantity: '1.5',
+        },
+        { segmentId: documentId, allocationKind: 'LEAVE_WITHOUT_PAY' },
+      ],
+    }).success,
+  ).toBe(true);
+  expect(
+    leaveApplicationDecisionSchema.safeParse({
+      decision: 'APPROVE',
+      allocations: [{ segmentId: documentId, allocationKind: 'BORROWED' }],
+    }).success,
+  ).toBe(false);
+  expect(
+    leaveApplicationDecisionSchema.safeParse({
+      decision: 'APPROVE',
+      allocations: [
+        { segmentId: documentId, allocationKind: 'LEAVE_ACCOUNT', quantity: '0.00005' },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    leaveApplicationDecisionSchema.safeParse({ decision: 'APPROVE', allocations: [] }).success,
+  ).toBe(false);
+});
+
+it('requires a return reason', () => {
+  expect(
+    leaveApplicationReturnSchema.safeParse({ reason: 'Attach the signed form.' }).success,
+  ).toBe(true);
+  expect(leaveApplicationReturnSchema.safeParse({}).success).toBe(false);
+  expect(leaveApplicationReturnSchema.safeParse({ reason: '   ' }).success).toBe(false);
 });

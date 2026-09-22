@@ -6,7 +6,14 @@ import type {
   LeaveApplicationPeriodSummary,
   LeaveApplicationSummary,
   LeaveApplicationVersionSummary,
+  LeaveApprovalAllocationLineSummary,
+  LeaveApprovalAllocationSummary,
+  LeaveApprovalDecisionSummary,
+  LeaveApprovalStepSummary,
   LeaveCalculationSegmentSummary,
+  LeaveCreditCertificationLineSummary,
+  LeaveCreditCertificationSummary,
+  LeaveRecommendationSummary,
 } from './leave-applications.service';
 import type { LeaveEligibilityOutcome } from './leave-eligibility';
 
@@ -84,6 +91,156 @@ export class LeaveCalculationSegmentDto {
   }
 }
 
+export class LeaveCreditCertificationLineDto {
+  readonly id: string;
+  readonly leaveAccountId: string;
+  readonly leaveTypeCode: string;
+  readonly leaveTypeName: string;
+  readonly postedBalance: string;
+  readonly activeCommitments: string;
+  readonly applicationQuantity: string;
+  readonly availableAfterApplication: string;
+  readonly leaveCreditCommitmentId: string;
+
+  constructor(line: LeaveCreditCertificationLineSummary) {
+    this.id = line.id;
+    this.leaveAccountId = line.leaveAccountId;
+    this.leaveTypeCode = line.leaveTypeCode;
+    this.leaveTypeName = line.leaveTypeName;
+    this.postedBalance = line.postedBalance;
+    this.activeCommitments = line.activeCommitments;
+    this.applicationQuantity = line.applicationQuantity;
+    this.availableAfterApplication = line.availableAfterApplication;
+    this.leaveCreditCommitmentId = line.leaveCreditCommitmentId;
+  }
+}
+
+export class LeaveCreditCertificationDto {
+  readonly id: string;
+  readonly eligibilityAssessmentId: string;
+  readonly approvalDecisionId: string;
+  readonly balanceAsOf: string;
+  readonly ledgerRecordedThrough: string;
+  readonly certifiedByMembershipId: string;
+  readonly certifiedByName: string | null;
+  readonly certifiedAt: string;
+  readonly lines: LeaveCreditCertificationLineDto[];
+
+  constructor(certification: LeaveCreditCertificationSummary) {
+    this.id = certification.id;
+    this.eligibilityAssessmentId = certification.eligibilityAssessmentId;
+    this.approvalDecisionId = certification.approvalDecisionId;
+    this.balanceAsOf = certification.balanceAsOf;
+    this.ledgerRecordedThrough = certification.ledgerRecordedThrough;
+    this.certifiedByMembershipId = certification.certifiedByMembershipId;
+    this.certifiedByName = certification.certifiedByName;
+    this.certifiedAt = certification.certifiedAt;
+    this.lines = certification.lines.map((line) => new LeaveCreditCertificationLineDto(line));
+  }
+}
+
+export class LeaveRecommendationDto {
+  readonly id: string;
+  readonly approvalDecisionId: string;
+  readonly outcome: string;
+  readonly reason: string | null;
+  readonly recommendedAt: string;
+
+  constructor(recommendation: LeaveRecommendationSummary) {
+    this.id = recommendation.id;
+    this.approvalDecisionId = recommendation.approvalDecisionId;
+    this.outcome = recommendation.outcome;
+    this.reason = recommendation.reason;
+    this.recommendedAt = recommendation.recommendedAt;
+  }
+}
+
+export class LeaveApprovalAllocationLineDto {
+  readonly id: string;
+  readonly sequenceNo: number;
+  readonly dateFrom: string;
+  readonly dateTo: string;
+  readonly allocationKind: string;
+  readonly leaveAccountId: string | null;
+  readonly quantity: string;
+  readonly unitCode: string;
+
+  constructor(line: LeaveApprovalAllocationLineSummary) {
+    this.id = line.id;
+    this.sequenceNo = line.sequenceNo;
+    this.dateFrom = line.dateFrom;
+    this.dateTo = line.dateTo;
+    this.allocationKind = line.allocationKind;
+    this.leaveAccountId = line.leaveAccountId;
+    this.quantity = line.quantity;
+    this.unitCode = line.unitCode;
+  }
+}
+
+export class LeaveApprovalAllocationDto {
+  readonly id: string;
+  readonly approvalDecisionId: string;
+  readonly decidedAt: string;
+  readonly lines: LeaveApprovalAllocationLineDto[];
+
+  constructor(allocation: LeaveApprovalAllocationSummary) {
+    this.id = allocation.id;
+    this.approvalDecisionId = allocation.approvalDecisionId;
+    this.decidedAt = allocation.decidedAt;
+    this.lines = allocation.lines.map((line) => new LeaveApprovalAllocationLineDto(line));
+  }
+}
+
+export class LeaveApprovalDecisionDto {
+  readonly id: string;
+  readonly decidedByMembershipId: string;
+  readonly decidedByName: string | null;
+  readonly decision: string;
+  readonly comments: string | null;
+  readonly decidedAt: string;
+
+  constructor(decision: LeaveApprovalDecisionSummary) {
+    this.id = decision.id;
+    this.decidedByMembershipId = decision.decidedByMembershipId;
+    this.decidedByName = decision.decidedByName;
+    this.decision = decision.decision;
+    this.comments = decision.comments;
+    this.decidedAt = decision.decidedAt;
+  }
+}
+
+export class LeaveApprovalStepDto {
+  readonly id: string;
+  readonly stepNo: number;
+  readonly status: string;
+  readonly requiredPermission: string;
+  readonly approvePermission: string;
+  readonly returnPermission: string;
+  readonly rejectPermission: string;
+  readonly assignedRoleCode: string | null;
+  readonly assignedMembershipId: string | null;
+  readonly requiresSeparateReview: boolean;
+  readonly activatedAt: string | null;
+  readonly completedAt: string | null;
+  readonly decisions: LeaveApprovalDecisionDto[];
+
+  constructor(step: LeaveApprovalStepSummary) {
+    this.id = step.id;
+    this.stepNo = step.stepNo;
+    this.status = step.status;
+    this.requiredPermission = step.requiredPermission;
+    this.approvePermission = step.approvePermission;
+    this.returnPermission = step.returnPermission;
+    this.rejectPermission = step.rejectPermission;
+    this.assignedRoleCode = step.assignedRoleCode;
+    this.assignedMembershipId = step.assignedMembershipId;
+    this.requiresSeparateReview = step.requiresSeparateReview;
+    this.activatedAt = step.activatedAt;
+    this.completedAt = step.completedAt;
+    this.decisions = step.decisions.map((decision) => new LeaveApprovalDecisionDto(decision));
+  }
+}
+
 export class LeaveApplicationVersionDto {
   readonly id: string;
   readonly versionNo: number;
@@ -111,6 +268,10 @@ export class LeaveApplicationVersionDto {
   readonly documents: LeaveApplicationDocumentDto[];
   readonly assessments: LeaveApplicationAssessmentDto[];
   readonly calculationSegments: LeaveCalculationSegmentDto[];
+  readonly certification: LeaveCreditCertificationDto | null;
+  readonly recommendation: LeaveRecommendationDto | null;
+  readonly approvalAllocation: LeaveApprovalAllocationDto | null;
+  readonly approvalSteps: LeaveApprovalStepDto[];
 
   constructor(version: LeaveApplicationVersionSummary) {
     this.id = version.id;
@@ -143,6 +304,16 @@ export class LeaveApplicationVersionDto {
     this.calculationSegments = version.calculationSegments.map(
       (segment) => new LeaveCalculationSegmentDto(segment),
     );
+    this.certification = version.certification
+      ? new LeaveCreditCertificationDto(version.certification)
+      : null;
+    this.recommendation = version.recommendation
+      ? new LeaveRecommendationDto(version.recommendation)
+      : null;
+    this.approvalAllocation = version.approvalAllocation
+      ? new LeaveApprovalAllocationDto(version.approvalAllocation)
+      : null;
+    this.approvalSteps = version.approvalSteps.map((step) => new LeaveApprovalStepDto(step));
   }
 }
 
