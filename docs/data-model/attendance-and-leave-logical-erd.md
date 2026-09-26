@@ -413,7 +413,7 @@ Correction request without overwriting raw events
 | agency_id                  | uuid         | No    | FK agencies                | Tenant                                                                                         |
 | employee_id                | uuid         | No    | FK employees               | Subject                                                                                        |
 | initiated_by_membership_id | uuid         | No    | FK agency_memberships      | Employee or scoped HR Administrator                                                            |
-| target_type                | enum         | No    |                            | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT                                                           |
+| target_type                | enum         | No    |                            | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT, POSTED_LEAVE_INPUT                                       |
 | requested_action           | enum         | No    |                            | ADD, REPLACE, VOID                                                                             |
 | target_id                  | uuid         | Yes   |                            | Existing target for replace or void                                                            |
 | status                     | enum         | No    |                            | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, FOR_AUTHORIZATION, REJECTED, CANCELLED, APPLIED |
@@ -431,6 +431,7 @@ Correction request without overwriting raw events
 - Immutable child evidence rows reference one or more Document Versions or authoritative domain records; a comment alone is insufficient.
 - Approval binds the impact preview. Open-period approval and application are atomic; a post-lock approval requires a different HR Administrator to authorize application.
 - Application preserves the original event or context and creates immutable effect rows and successor versions for every affected Work Date. A correction may span Attendance Periods.
+- `POSTED_LEAVE_INPUT` corrections originate only from an applied Leave Cancellation over a locked Work Date. The approved cancellation is the factual basis; the correction enters `FOR_AUTHORIZATION` for a different HR Administrator and cannot alter the Leave fact.
 
 **Deletion behavior:** Retain.
 
@@ -985,17 +986,21 @@ Authorized whole or partial cancellation of approved or posted leave
 
 Exact approved period and quantity targeted by cancellation
 
-| Column                      | Logical type | Null? | Key / rule                         | Description         |
-| --------------------------- | ------------ | ----- | ---------------------------------- | ------------------- |
-| id                          | uuid         | No    | PK                                 | Scope line          |
-| agency_id                   | uuid         | No    | FK agencies                        | Tenant              |
-| leave_cancellation_id       | uuid         | No    | FK leave_cancellations             | Cancellation        |
-| approval_allocation_line_id | uuid         | No    | FK leave_approval_allocation_lines | Original allocation |
-| quantity                    | decimal      | No    |                                    | Quantity cancelled  |
+| Column                      | Logical type | Null? | Key / rule                         | Description          |
+| --------------------------- | ------------ | ----- | ---------------------------------- | -------------------- |
+| id                          | uuid         | No    | PK                                 | Scope line           |
+| agency_id                   | uuid         | No    | FK agencies                        | Tenant               |
+| leave_cancellation_id       | uuid         | No    | FK leave_cancellations             | Cancellation         |
+| approval_allocation_line_id | uuid         | No    | FK leave_approval_allocation_lines | Original allocation  |
+| date_from                   | date         | No    |                                    | First cancelled date |
+| date_to                     | date         | No    |                                    | Last cancelled date  |
+| quantity                    | decimal      | No    |                                    | Quantity cancelled   |
 
 **Constraints and indexes**
 
 - Quantity is positive and cannot exceed the targeted approved allocation.
+- The cancelled dates lie within the allocation line. A partial scope includes
+  the line's first or last date so the retained period stays contiguous.
 
 **Deletion behavior:** Retain.
 

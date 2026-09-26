@@ -437,7 +437,7 @@ An expected-duty minute not covered by work, Attendance Context, or posted leave
 _Avoid_: Missing hours, duplicate deduction
 
 **Attendance Correction**:
-A routed, evidence-backed approval request to add, replace, or void an Attendance Event or Attendance Context while preserving the original record and recalculating the affected Attendance Day. Its subject, initiator, recorder, approvers, and applied effect remain distinct and traceable.
+A routed, evidence-backed approval request to add, replace, or void an Attendance Event or Attendance Context while preserving the original record and recalculating the affected Attendance Day. A Leave-originated correction replaces or voids posted leave on a locked Work Date after an applied Leave Cancellation. Its subject, initiator, recorder, approvers, and applied effect remain distinct and traceable.
 _Avoid_: Direct attendance edit, deleted clock entry
 
 **Attendance Correction Effect**:
@@ -563,7 +563,7 @@ An Employee's evidenced decision to end a submitted Leave Application before aut
 _Avoid_: Leave Cancellation, administrator cancellation
 
 **Leave Cancellation**:
-The authorized record that ends all or an exact subset of an approved or posted Leave Application while preserving its original application, certification, recommendation, approval, commitment, and posting history.
+The authorized record that ends all or an exact subset of an approved or posted Leave Application while preserving its original application, certification, recommendation, approval, commitment, and posting history. Its scope names exact cancelled dates within each affected allocation line.
 _Avoid_: Leave Withdrawal, deleting leave, editing posted leave
 
 **Leave Monetization Request**:
