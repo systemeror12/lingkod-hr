@@ -5,7 +5,8 @@ export type Breadcrumb = { label: string; href?: string };
 
 /**
  * White band at the top of a screen. Give it a `title` for a register or queue, or pass a
- * `RecordHeader` as `children` for a record page. `tabs` takes a `SectionTabList`.
+ * `RecordHeader` as `children` for a record page. `actions` sit beside the title; record pages
+ * pass theirs to `RecordHeader`. `tabs` takes a `SectionTabList`.
  */
 export function PageHeader({
   breadcrumbs,
@@ -16,6 +17,7 @@ export function PageHeader({
 }: {
   breadcrumbs: Breadcrumb[];
   title?: string;
+  /** Rendered only with `title`. */
   actions?: ReactNode;
   tabs?: ReactNode;
   children?: ReactNode;

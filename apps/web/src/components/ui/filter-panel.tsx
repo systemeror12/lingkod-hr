@@ -1,5 +1,7 @@
 'use client';
 
+import { useId } from 'react';
+
 /** Picked option values, keyed by filter group. */
 export type FilterSelection = Record<string, string[]>;
 
@@ -34,9 +36,15 @@ export function FilterPanel({
   selected: FilterSelection;
   onChange: (next: FilterSelection) => void;
 }) {
+  const titleId = useId();
   return (
-    <aside aria-label={title} className="self-start rounded-panel border border-border bg-surface">
-      <h2 className="m-0 border-b border-border px-4 py-3 text-panel-title">{title}</h2>
+    <aside
+      aria-labelledby={titleId}
+      className="self-start rounded-panel border border-border bg-surface"
+    >
+      <h2 id={titleId} className="m-0 border-b border-border px-4 py-3 text-panel-title">
+        {title}
+      </h2>
       {groups.map((group) => (
         <fieldset
           key={group.key}
@@ -56,7 +64,7 @@ export function FilterPanel({
                 checked={selected[group.key]?.includes(option.value) ?? false}
                 onChange={() => onChange(toggleFilter(selected, group.key, option.value))}
               />
-              <span className="flex-1">{option.label}</span>
+              <span className="flex-1">{option.label}</span>{' '}
               <span className="text-caption text-ink-muted tabular-nums">{option.count}</span>
             </label>
           ))}

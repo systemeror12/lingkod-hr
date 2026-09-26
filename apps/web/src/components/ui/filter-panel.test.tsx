@@ -33,5 +33,5 @@ it('renders each group as a labelled fieldset with checked state and counts', ()
   expect(html).toContain('Service status');
   expect(html.match(/type="checkbox"/g)).toHaveLength(2);
   expect(html.match(/checked=""/g)).toHaveLength(1);
-  expect(html).toMatch(/Separated<\/span><span[^>]*>3<\/span>/);
+  expect(html).toMatch(/Separated<\/span> <span[^>]*>3<\/span>/);
 });

@@ -114,7 +114,7 @@ select {
 }
 
 .workspace :where(input, select, textarea)[aria-invalid='true'] {
-  border-color: #9a3030;
+  border-color: var(--color-danger);
 }
 
 .record-form {

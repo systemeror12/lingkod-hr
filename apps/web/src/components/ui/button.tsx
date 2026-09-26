@@ -19,7 +19,6 @@ export const buttonVariants = cva(
       },
       size: {
         default: 'min-h-9 px-4',
-        icon: 'size-9 text-body',
       },
     },
     defaultVariants: {
