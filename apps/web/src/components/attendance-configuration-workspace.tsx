@@ -3144,7 +3144,6 @@ export function AttendanceConfigurationWorkspace({
           {tab === 'schedules' && canManage ? (
             <DialogTrigger asChild>
               <Button
-                className="min-h-11"
                 size="default"
                 type="button"
                 variant="primary"
@@ -3165,7 +3164,6 @@ export function AttendanceConfigurationWorkspace({
           {tab === 'arrangements' && canManage ? (
             <DialogTrigger asChild>
               <Button
-                className="min-h-11"
                 size="default"
                 type="button"
                 variant="primary"
@@ -3186,7 +3184,6 @@ export function AttendanceConfigurationWorkspace({
           {tab === 'calendars' && canManage ? (
             <DialogTrigger asChild>
               <Button
-                className="min-h-11"
                 size="default"
                 type="button"
                 variant="primary"
@@ -3207,7 +3204,6 @@ export function AttendanceConfigurationWorkspace({
           {tab === 'assignments' && canAssign ? (
             <DialogTrigger asChild>
               <Button
-                className="min-h-11"
                 size="default"
                 type="button"
                 variant="primary"

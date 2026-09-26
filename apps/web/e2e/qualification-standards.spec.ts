@@ -46,7 +46,7 @@ test('creates a Draft Qualification Standard through the shared modal contract',
     'qualification-training-hours-unit',
   );
   await expect(page.locator('#qualification-training-hours').locator('..')).toContainText('hours');
-  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveClass(/bg-canvas/);
+  await expect(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveClass(/bg-surface/);
   await expectMinimumWidth(page.getByRole('button', { name: 'Cancel', exact: true }), 64);
   await expectMinimumWidth(page.getByRole('button', { name: 'Create Draft', exact: true }), 96);
   await expect(page.getByLabel('Qualification Standard code')).toBeFocused();
@@ -71,7 +71,7 @@ test('creates a Draft Qualification Standard through the shared modal contract',
   await expect(row).toContainText('INACTIVE');
   await expect(row).toContainText('v1');
   for (const label of ['Details', 'Edit Draft', 'Validate Evidence']) {
-    await expect(row.getByRole('button', { name: label })).toHaveClass(/bg-canvas/);
+    await expect(row.getByRole('button', { name: label })).toHaveClass(/bg-surface/);
   }
   await expect(trigger).toBeFocused();
 

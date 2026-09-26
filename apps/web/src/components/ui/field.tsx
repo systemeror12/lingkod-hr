@@ -3,8 +3,8 @@
 import { cloneElement, isValidElement, useId, type ReactNode } from 'react';
 
 export const inputClass =
-  'min-h-10 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-export const labelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
+  'min-h-9 w-full rounded-control border border-border bg-surface px-2.5 text-body text-ink outline-none focus:border-primary focus:shadow-[inset_0_0_0_1px_var(--color-primary)] aria-invalid:border-danger';
+export const labelClass = 'grid gap-1 text-caption font-[650] text-ink';
 
 /** Wrap one control in its label and associate any server validation error. */
 export function Field({
@@ -33,7 +33,7 @@ export function Field({
       <span>{label}</span>
       {control}
       {error ? (
-        <span id={errorId} className="text-xs text-[#9a3030]">
+        <span id={errorId} className="text-caption font-normal text-danger">
           {error}
         </span>
       ) : null}
@@ -41,11 +41,12 @@ export function Field({
   );
 }
 
+/** Form-level error from the server, announced when it appears. Renders nothing when empty. */
 export function FormError({ message }: { message: string }) {
   return message ? (
     <p
       role="alert"
-      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] text-[#9a3030]"
+      className="m-0 rounded-control border border-danger/40 bg-danger/5 px-3 py-2.5 text-small text-danger"
     >
       {message}
     </p>

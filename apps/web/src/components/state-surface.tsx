@@ -1,5 +1,9 @@
 import type { ReactNode } from 'react';
 
+/**
+ * Full-region loading, empty, or error state. Name it with `label` or `labelledBy`, and set
+ * `busy` only while data is actually loading.
+ */
 export function StateSurface({
   label,
   labelledBy,
@@ -13,7 +17,7 @@ export function StateSurface({
 }) {
   return (
     <section
-      className="grid min-h-[54vh] place-content-center justify-items-start gap-[10px] rounded-[5px] border border-line bg-paper p-7 min-[621px]:p-10"
+      className="grid min-h-[54vh] place-content-center justify-items-start gap-2.5 rounded-panel border border-border bg-surface p-7 min-[621px]:p-10"
       aria-label={label}
       aria-labelledby={labelledBy}
       aria-busy={busy}
@@ -23,9 +27,10 @@ export function StateSurface({
   );
 }
 
+/** Short uppercase kicker above the state heading, such as "Loading" or "Unavailable". */
 export function StateCode({ children }: { children: ReactNode }) {
   return (
-    <span className="text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
+    <span className="text-caption font-[650] tracking-[0.08em] text-primary uppercase">
       {children}
     </span>
   );

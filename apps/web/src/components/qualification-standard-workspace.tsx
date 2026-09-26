@@ -613,7 +613,6 @@ export function QualificationStandardWorkspace({
           {canCreate ? (
             <DialogTrigger asChild>
               <Button
-                className="min-h-11"
                 size="default"
                 type="button"
                 variant="primary"

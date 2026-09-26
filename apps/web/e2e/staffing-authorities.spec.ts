@@ -33,9 +33,9 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await expectWithinViewport(dialog, page.viewportSize()?.width ?? 1280);
   const cancelButton = dialog.getByRole('button', { name: 'Cancel' });
   const createButton = dialog.getByRole('button', { name: 'Create Draft' });
-  await expect(cancelButton).toHaveCSS('min-height', '44px');
-  await expect(cancelButton).toHaveClass(/bg-canvas/);
-  await expect(createButton).toHaveCSS('min-height', '44px');
+  await expect(cancelButton).toHaveCSS('min-height', '36px');
+  await expect(cancelButton).toHaveClass(/bg-surface/);
+  await expect(createButton).toHaveCSS('min-height', '36px');
   const cancelBox = await cancelButton.boundingBox();
   const createBox = await createButton.boundingBox();
   expect(cancelBox).not.toBeNull();

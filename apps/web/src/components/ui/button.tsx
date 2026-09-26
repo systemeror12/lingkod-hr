@@ -2,24 +2,29 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { cn } from '../../lib/class-names';
 
+/**
+ * `primary` is the one committing action in a region, `secondary` sits beside it, and `quiet`
+ * is for low-emphasis actions such as closing a dialog. Links can borrow the classes through
+ * `buttonVariants`.
+ */
 export const buttonVariants = cva(
-  'inline-flex cursor-pointer items-center justify-center rounded-[3px] transition-colors disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-control border text-small font-[600] whitespace-nowrap no-underline transition-colors disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none',
   {
     variants: {
       variant: {
-        ghost: 'bg-white/8 text-[#b9c4d5] hover:bg-white/14 hover:text-paper',
         primary:
-          'border border-cobalt bg-cobalt px-[14px] py-[9px] text-[13px] font-[640] text-paper hover:bg-[#345f99]',
-        secondary: 'min-h-11 bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]',
+          'border-primary bg-primary text-surface hover:border-primary-hover hover:bg-primary-hover',
+        secondary: 'border-primary bg-surface text-primary hover:bg-canvas',
+        quiet: 'border-transparent bg-transparent text-ink-muted hover:bg-canvas hover:text-ink',
       },
       size: {
-        icon: 'size-[30px]',
-        default: 'h-auto',
+        default: 'min-h-9 px-4',
+        icon: 'size-9 text-body',
       },
     },
     defaultVariants: {
-      variant: 'ghost',
-      size: 'icon',
+      variant: 'quiet',
+      size: 'default',
     },
   },
 );
