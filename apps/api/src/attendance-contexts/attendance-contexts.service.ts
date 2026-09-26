@@ -5,6 +5,10 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
 import {
+  contextOverlayCoversWindow,
+  type AttendanceCorrectionContextOverlay,
+} from '../attendance-corrections/attendance-corrections.effects';
+import {
   ATTENDANCE_CONTEXT_AUDIT_WRITER,
   type AttendanceContextAuditWriter,
 } from './attendance-contexts.audit';
@@ -122,6 +126,29 @@ interface MutableInterval {
   startsAt: number;
   endsAt: number;
   context: AttendanceContextSummary;
+}
+
+function correctionOverlaySummary(
+  overlay: AttendanceCorrectionContextOverlay,
+  agencyId: string,
+  employeeId: string,
+): AttendanceContextSummary {
+  return {
+    id: overlay.effectId,
+    agencyId,
+    employee: { id: employeeId, employeeNumber: '', legalName: '' },
+    contextType: overlay.contextType as AttendanceContextType,
+    coverageMode: overlay.coverageMode as AttendanceContextCoverageMode,
+    workDate: overlay.workDate,
+    startsAt: overlay.startsAt ? formatInstant(overlay.startsAt) : null,
+    endsAt: overlay.endsAt ? formatInstant(overlay.endsAt) : null,
+    reason: overlay.reason ?? '',
+    sourceType: null,
+    sourceId: null,
+    evidence: null,
+    recordedBy: { membershipId: overlay.appliedByMembershipId, legalName: null },
+    recordedAt: formatInstant(overlay.appliedAt),
+  };
 }
 
 interface MutableConflict {
@@ -377,6 +404,7 @@ export class AttendanceContextsService {
     employeeId: string,
     workDateValue: string,
     window: AttendanceContextWorkDateWindow,
+    correctionOverlays: readonly AttendanceCorrectionContextOverlay[] = [],
   ): Promise<AttendanceContextResolution> {
     const workDate = toDatabaseDate(workDateValue);
     const windowStartsAt = toDatabaseInstant(window.startsAt);
@@ -400,6 +428,7 @@ export class AttendanceContextsService {
       workDate,
       windowStartsAt,
       windowEndsAt,
+      correctionOverlays,
     );
   }
 
@@ -410,6 +439,7 @@ export class AttendanceContextsService {
     workDate: Date,
     windowStartsAt: Date,
     windowEndsAt: Date,
+    correctionOverlays: readonly AttendanceCorrectionContextOverlay[] = [],
   ): Promise<AttendanceContextResolution> {
     const records = await transaction.attendanceContext.findMany({
       where: {
@@ -427,10 +457,26 @@ export class AttendanceContextsService {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: contextSelect,
     });
-    const intervals: MutableInterval[] = records.map((record) => ({
-      startsAt: record.startsAt ? record.startsAt.getTime() : windowStartsAt.getTime(),
-      endsAt: record.endsAt ? record.endsAt.getTime() : windowEndsAt.getTime(),
-      context: contextSummary(record),
+    const replacedTargetIds = new Set(
+      correctionOverlays
+        .filter((overlay) => overlay.effectAction !== 'ADD' && overlay.originalTargetId !== null)
+        .map((overlay) => overlay.originalTargetId!),
+    );
+    const effectiveSummaries: AttendanceContextSummary[] = records
+      .filter((record) => !replacedTargetIds.has(record.id))
+      .map(contextSummary);
+    const workDateValue = formatDate(workDate);
+    for (const overlay of correctionOverlays) {
+      if (overlay.effectAction === 'VOID') continue;
+      if (!contextOverlayCoversWindow(overlay, workDateValue, windowStartsAt, windowEndsAt)) {
+        continue;
+      }
+      effectiveSummaries.push(correctionOverlaySummary(overlay, agencyId, employeeId));
+    }
+    const intervals: MutableInterval[] = effectiveSummaries.map((summary) => ({
+      startsAt: summary.startsAt ? new Date(summary.startsAt).getTime() : windowStartsAt.getTime(),
+      endsAt: summary.endsAt ? new Date(summary.endsAt).getTime() : windowEndsAt.getTime(),
+      context: summary,
     }));
     const coverage: AttendanceContextCoverageInterval[] = intervals.map((interval) => ({
       context: interval.context,

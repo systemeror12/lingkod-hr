@@ -12,6 +12,7 @@ export const APPROVAL_REQUEST_SUBJECT_TYPES = [
   'LEAVE_APPLICATION',
   'LEAVE_MONETIZATION',
   'LEAVE_MONETIZATION_ADJUSTMENT',
+  'ATTENDANCE_CORRECTION',
 ] as const;
 
 const routeAssignmentSchema = z.discriminatedUnion('kind', [

@@ -158,6 +158,15 @@ model Agency {
   attendanceDays                AttendanceDay[]
   attendanceDaySegments         AttendanceDaySegment[]
   attendanceExceptions          AttendanceException[]
+  employeeAttendanceSubmissions EmployeeAttendanceSubmission[]
+  employeeAttendanceSubmissionDays EmployeeAttendanceSubmissionDay[]
+  attendancePeriodVersions      AttendancePeriodVersion[]
+  attendancePeriodVersionDays   AttendancePeriodVersionDay[]
+  attendanceCorrections         AttendanceCorrection[]
+  attendanceCorrectionEvidence  AttendanceCorrectionEvidence[]
+  attendanceCorrectionEffects   AttendanceCorrectionEffect[]
+  lockedAttendanceAdjustments   LockedAttendanceAdjustment[]
+  lockedAttendanceAdjustmentPeriods LockedAttendanceAdjustmentPeriod[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -317,6 +326,18 @@ model AgencyMembership {
   auditEvents                            AuditEvent[]                       @relation("AuditEventMembership")
   enteredAttendanceEvents                AttendanceEvent[]                  @relation("AttendanceEventEnteredBy")
   resolvedAttendanceExceptions           AttendanceException[]              @relation("AttendanceExceptionResolver")
+  submittedAttendanceSubmissions         EmployeeAttendanceSubmission[]     @relation("EmployeeAttendanceSubmissionSubmitter")
+  reviewedAttendanceSubmissions          EmployeeAttendanceSubmission[]     @relation("EmployeeAttendanceSubmissionReviewer")
+  submittedAttendancePeriodVersions      AttendancePeriodVersion[]          @relation("AttendancePeriodVersionSubmitter")
+  reviewedAttendancePeriodVersions       AttendancePeriodVersion[]          @relation("AttendancePeriodVersionReviewer")
+  lockedAttendancePeriodVersions         AttendancePeriodVersion[]          @relation("AttendancePeriodVersionLocker")
+  initiatedAttendanceCorrections         AttendanceCorrection[]             @relation("AttendanceCorrectionInitiator")
+  recordedAttendanceCorrections          AttendanceCorrection[]             @relation("AttendanceCorrectionRecorder")
+  decidedAttendanceCorrections           AttendanceCorrection[]             @relation("AttendanceCorrectionDecider")
+  authorizedAttendanceCorrections        AttendanceCorrection[]             @relation("AttendanceCorrectionAuthorizer")
+  appliedAttendanceCorrections           AttendanceCorrection[]             @relation("AttendanceCorrectionApplier")
+  appliedAttendanceCorrectionEffects     AttendanceCorrectionEffect[]       @relation("AttendanceCorrectionEffectApplier")
+  authorizedLockedAttendanceAdjustments  LockedAttendanceAdjustment[]       @relation("LockedAttendanceAdjustmentAuthorizer")
   createdDocuments                       Document[]                         @relation("DocumentCreator")
   updatedDocuments                       Document[]                         @relation("DocumentUpdater")
   createdDocumentVersions                DocumentVersion[]                  @relation("DocumentVersionCreator")
@@ -642,6 +663,8 @@ model ApprovalRouteVersion {
   leaveApplicationVersions     LeaveApplicationVersion[]     @relation("LeaveApplicationVersionApprovalRouteVersion")
   monetizationVersions         LeaveMonetizationRequestVersion[] @relation("MonetizationVersionApprovalRoute")
   monetizationAdjustments      MonetizationAdjustment[]          @relation("MonetizationAdjustmentApprovalRoute")
+  attendanceCorrections        AttendanceCorrection[]            @relation("AttendanceCorrectionApprovalRoute")
+  attendancePeriodVersions     AttendancePeriodVersion[]         @relation("AttendancePeriodVersionApprovalRoute")
 
   @@unique([agencyId, routeCode, versionNo])
   @@unique([agencyId, id])
@@ -1644,6 +1667,8 @@ model DocumentVersion {
   leaveApplicationFormTemplateVersions             LeaveApplicationVersion[]             @relation("LeaveApplicationVersionFormTemplate")
   leaveApplicationAttestationVersions              LeaveApplicationVersion[]             @relation("LeaveApplicationVersionAttestation")
   attendanceContextEvidenceVersions                AttendanceContext[]                   @relation("AttendanceContextEvidenceVersion")
+  attendanceSubmissionEvidenceVersions             EmployeeAttendanceSubmission[]        @relation("EmployeeAttendanceSubmissionEvidenceVersion")
+  attendanceCorrectionEvidenceVersions             AttendanceCorrectionEvidence[]        @relation("AttendanceCorrectionEvidenceVersion")
   monetizationFormTemplateVersions                 LeaveMonetizationRequestVersion[]     @relation("MonetizationFormTemplateVersion")
   monetizationAttestationVersions                  LeaveMonetizationRequestVersion[]     @relation("MonetizationAttestationVersion")
   monetizationFundingFiscalAuthorityVersions       MonetizationFundingDetermination[]    @relation("MonetizationFundingFiscalAuthorityVersion")
@@ -1915,6 +1940,8 @@ model Employee {
   attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
   attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
   attendanceDays         AttendanceDay[]         @relation("AttendanceDayEmployee")
+  attendanceSubmissions  EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionEmployee")
+  attendanceCorrections  AttendanceCorrection[]  @relation("AttendanceCorrectionEmployee")
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
@@ -3473,6 +3500,8 @@ model AttendancePeriod {
 
   agency         Agency          @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   attendanceDays AttendanceDay[] @relation("AttendanceDayPeriod")
+  submissions    EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionPeriod")
+  versions       AttendancePeriodVersion[]     @relation("AttendancePeriodVersions")
 
   @@unique([agencyId, code])
   @@unique([agencyId, id])
@@ -3520,6 +3549,8 @@ model AttendanceDay {
   holidayCalendarVersion HolidayCalendarVersion? @relation("AttendanceDayHolidayCalendarVersion", fields: [agencyId, holidayCalendarVersionId], references: [agencyId, id], onDelete: Restrict)
   segments               AttendanceDaySegment[]  @relation("AttendanceDaySegments")
   exceptions             AttendanceException[]   @relation("AttendanceDayExceptions")
+  submissionDays         EmployeeAttendanceSubmissionDay[] @relation("EmployeeAttendanceSubmissionDayAttendanceDay")
+  periodVersionDays      AttendancePeriodVersionDay[]      @relation("AttendancePeriodVersionDayAttendanceDay")
 
   @@unique([attendancePeriodId, employeeId, workDate, calculationVersion])
   @@unique([agencyId, id])
@@ -3570,6 +3601,235 @@ model AttendanceException {
   @@index([agencyId, attendanceDayId, status])
   @@index([agencyId, status, exceptionType])
   @@map("attendance_exceptions")
+}
+
+/// One Employee's attendance snapshot within an Attendance Period. Submission
+/// workflow belongs to #168; this record exists so corrections can prove the
+/// exact day versions a submission bound and mark them stale.
+model EmployeeAttendanceSubmission {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  attendancePeriodId        String    @map("attendance_period_id") @db.Uuid
+  employeeId                String    @map("employee_id") @db.Uuid
+  versionNo                 Int       @map("version_no")
+  status                    String    @default("DRAFT")
+  submittedByMembershipId   String    @map("submitted_by_membership_id") @db.Uuid
+  submittedAt               DateTime? @map("submitted_at") @db.Timestamptz(6)
+  onBehalfReason            String?   @map("on_behalf_reason")
+  evidenceDocumentVersionId String?   @map("evidence_document_version_id") @db.Uuid
+  reviewedByMembershipId    String?   @map("reviewed_by_membership_id") @db.Uuid
+  reviewedAt                DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewReason              String?   @map("review_reason")
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  attendancePeriod AttendancePeriod @relation("EmployeeAttendanceSubmissionPeriod", fields: [agencyId, attendancePeriodId], references: [agencyId, id], onDelete: Restrict)
+  employee        Employee          @relation("EmployeeAttendanceSubmissionEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  submittedBy     AgencyMembership  @relation("EmployeeAttendanceSubmissionSubmitter", fields: [agencyId, submittedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  evidenceVersion DocumentVersion?  @relation("EmployeeAttendanceSubmissionEvidenceVersion", fields: [agencyId, evidenceDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  reviewedBy      AgencyMembership? @relation("EmployeeAttendanceSubmissionReviewer", fields: [agencyId, reviewedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  days            EmployeeAttendanceSubmissionDay[] @relation("EmployeeAttendanceSubmissionDaySubmission")
+  periodVersionDays AttendancePeriodVersionDay[] @relation("AttendancePeriodVersionDaySubmission")
+
+  @@unique([attendancePeriodId, employeeId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@index([agencyId, attendancePeriodId, status])
+  @@map("employee_attendance_submissions")
+}
+
+model EmployeeAttendanceSubmissionDay {
+  agencyId          String @map("agency_id") @db.Uuid
+  employeeAttendanceSubmissionId String @map("employee_attendance_submission_id") @db.Uuid
+  attendanceDayId   String @map("attendance_day_id") @db.Uuid
+
+  agency               Agency                       @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  submission           EmployeeAttendanceSubmission @relation("EmployeeAttendanceSubmissionDaySubmission", fields: [agencyId, employeeAttendanceSubmissionId], references: [agencyId, id], onDelete: Restrict)
+  attendanceDay        AttendanceDay                @relation("EmployeeAttendanceSubmissionDayAttendanceDay", fields: [agencyId, attendanceDayId], references: [agencyId, id], onDelete: Restrict)
+
+  @@id([employeeAttendanceSubmissionId, attendanceDayId])
+  @@index([agencyId, attendanceDayId])
+  @@map("employee_attendance_submission_days")
+}
+
+/// Immutable agency-wide review and lock snapshot. Period submission, review,
+/// and lock workflow belongs to #169; corrections create complete successors
+/// without changing a locked predecessor.
+model AttendancePeriodVersion {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String    @map("agency_id") @db.Uuid
+  attendancePeriodId        String    @map("attendance_period_id") @db.Uuid
+  versionNo                 Int       @map("version_no")
+  predecessorVersionId      String?   @map("predecessor_version_id") @db.Uuid
+  status                    String
+  approvalRouteVersionId    String    @map("approval_route_version_id") @db.Uuid
+  submittedByMembershipId   String    @map("submitted_by_membership_id") @db.Uuid
+  submittedAt               DateTime  @map("submitted_at") @db.Timestamptz(6)
+  reviewedByMembershipId    String?   @map("reviewed_by_membership_id") @db.Uuid
+  reviewedAt                DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewReason              String?   @map("review_reason")
+  lockedByMembershipId      String?   @map("locked_by_membership_id") @db.Uuid
+  lockedAt                  DateTime? @map("locked_at") @db.Timestamptz(6)
+  reconciliation            Json?     @map("reconciliation")
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency          Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  attendancePeriod AttendancePeriod @relation("AttendancePeriodVersions", fields: [agencyId, attendancePeriodId], references: [agencyId, id], onDelete: Restrict)
+  predecessor     AttendancePeriodVersion? @relation("AttendancePeriodVersionPredecessor", fields: [agencyId, predecessorVersionId], references: [agencyId, id], onDelete: Restrict)
+  successors      AttendancePeriodVersion[] @relation("AttendancePeriodVersionPredecessor")
+  approvalRouteVersion ApprovalRouteVersion @relation("AttendancePeriodVersionApprovalRoute", fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  submittedBy     AgencyMembership  @relation("AttendancePeriodVersionSubmitter", fields: [agencyId, submittedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  reviewedBy      AgencyMembership? @relation("AttendancePeriodVersionReviewer", fields: [agencyId, reviewedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  lockedBy        AgencyMembership? @relation("AttendancePeriodVersionLocker", fields: [agencyId, lockedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  days            AttendancePeriodVersionDay[] @relation("AttendancePeriodVersionDayVersion")
+  adjustmentPredecessors LockedAttendanceAdjustmentPeriod[] @relation("LockedAdjustmentPredecessorPeriod")
+  adjustmentSuccessors   LockedAttendanceAdjustmentPeriod[] @relation("LockedAdjustmentSuccessorPeriod")
+
+  @@unique([attendancePeriodId, versionNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, attendancePeriodId, status])
+  @@map("attendance_period_versions")
+}
+
+model AttendancePeriodVersionDay {
+  agencyId                  String @map("agency_id") @db.Uuid
+  attendancePeriodVersionId String @map("attendance_period_version_id") @db.Uuid
+  employeeAttendanceSubmissionId String @map("employee_attendance_submission_id") @db.Uuid
+  attendanceDayId           String @map("attendance_day_id") @db.Uuid
+
+  agency               Agency                       @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  periodVersion        AttendancePeriodVersion      @relation("AttendancePeriodVersionDayVersion", fields: [agencyId, attendancePeriodVersionId], references: [agencyId, id], onDelete: Restrict)
+  submission           EmployeeAttendanceSubmission @relation("AttendancePeriodVersionDaySubmission", fields: [agencyId, employeeAttendanceSubmissionId], references: [agencyId, id], onDelete: Restrict)
+  attendanceDay        AttendanceDay                @relation("AttendancePeriodVersionDayAttendanceDay", fields: [agencyId, attendanceDayId], references: [agencyId, id], onDelete: Restrict)
+
+  @@id([attendancePeriodVersionId, attendanceDayId])
+  @@index([agencyId, attendanceDayId])
+  @@map("attendance_period_version_days")
+}
+
+/// Evidence-backed request to add, replace, or void one Attendance Event or
+/// Attendance Context without editing the original fact or finalized history.
+model AttendanceCorrection {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String    @map("agency_id") @db.Uuid
+  employeeId               String    @map("employee_id") @db.Uuid
+  initiatedByMembershipId  String    @map("initiated_by_membership_id") @db.Uuid
+  recordedByMembershipId   String    @map("recorded_by_membership_id") @db.Uuid
+  targetType               String    @map("target_type")
+  requestedAction          String    @map("requested_action")
+  targetId                 String?   @map("target_id") @db.Uuid
+  status                   String    @default("DRAFT")
+  requestedRecord          Json?     @map("requested_record")
+  reason                   String
+  approvalRouteVersionId   String    @map("approval_route_version_id") @db.Uuid
+  impactPreview            Json      @map("impact_preview")
+  submittedAt              DateTime? @map("submitted_at") @db.Timestamptz(6)
+  decidedByMembershipId    String?   @map("decided_by_membership_id") @db.Uuid
+  decidedAt                DateTime? @map("decided_at") @db.Timestamptz(6)
+  decisionReason           String?   @map("decision_reason")
+  authorizedByMembershipId String?   @map("authorized_by_membership_id") @db.Uuid
+  authorizedAt             DateTime? @map("authorized_at") @db.Timestamptz(6)
+  appliedByMembershipId    String?   @map("applied_by_membership_id") @db.Uuid
+  appliedAt                DateTime? @map("applied_at") @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  rowVersion               Int       @default(1) @map("row_version")
+
+  agency         Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee       Employee          @relation("AttendanceCorrectionEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  initiatedBy    AgencyMembership  @relation("AttendanceCorrectionInitiator", fields: [agencyId, initiatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy     AgencyMembership  @relation("AttendanceCorrectionRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvalRouteVersion ApprovalRouteVersion @relation("AttendanceCorrectionApprovalRoute", fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  decidedBy      AgencyMembership? @relation("AttendanceCorrectionDecider", fields: [agencyId, decidedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  authorizedBy   AgencyMembership? @relation("AttendanceCorrectionAuthorizer", fields: [agencyId, authorizedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  appliedBy      AgencyMembership? @relation("AttendanceCorrectionApplier", fields: [agencyId, appliedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  evidence       AttendanceCorrectionEvidence[] @relation("AttendanceCorrectionEvidence")
+  effect         AttendanceCorrectionEffect?
+  lockedAdjustment LockedAttendanceAdjustment?
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@index([agencyId, status, submittedAt])
+  @@map("attendance_corrections")
+}
+
+model AttendanceCorrectionEvidence {
+  id                   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String @map("agency_id") @db.Uuid
+  attendanceCorrectionId String @map("attendance_correction_id") @db.Uuid
+  documentVersionId    String? @map("document_version_id") @db.Uuid
+  sourceType           String? @map("source_type")
+  sourceId             String? @map("source_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency      Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  correction  AttendanceCorrection @relation("AttendanceCorrectionEvidence", fields: [agencyId, attendanceCorrectionId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion DocumentVersion? @relation("AttendanceCorrectionEvidenceVersion", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, attendanceCorrectionId])
+  @@map("attendance_correction_evidence")
+}
+
+/// Normalized immutable ADD, REPLACE, or VOID effect of one applied Attendance
+/// Correction. Later calculations consume the effect instead of editing the
+/// original immutable fact.
+model AttendanceCorrectionEffect {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String   @map("agency_id") @db.Uuid
+  attendanceCorrectionId   String   @unique @map("attendance_correction_id") @db.Uuid
+  effectAction             String   @map("effect_action")
+  targetType               String   @map("target_type")
+  originalTargetId         String?  @map("original_target_id") @db.Uuid
+  replacementRecord        Json?    @map("replacement_record")
+  appliedByMembershipId    String   @map("applied_by_membership_id") @db.Uuid
+  appliedAt                DateTime @map("applied_at") @db.Timestamptz(6)
+
+  agency      Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  correction  AttendanceCorrection @relation(fields: [agencyId, attendanceCorrectionId], references: [agencyId, id], onDelete: Restrict)
+  appliedBy   AgencyMembership  @relation("AttendanceCorrectionEffectApplier", fields: [agencyId, appliedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, attendanceCorrectionId])
+  @@index([agencyId, targetType, originalTargetId])
+  @@map("attendance_correction_effects")
+}
+
+/// Grouped post-lock application of one approved Attendance Correction. Child
+/// rows link every affected locked predecessor Attendance Period Version to its
+/// complete successor version without changing the predecessor.
+model LockedAttendanceAdjustment {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String   @map("agency_id") @db.Uuid
+  attendanceCorrectionId   String   @unique @map("attendance_correction_id") @db.Uuid
+  authorizedByMembershipId String   @map("authorized_by_membership_id") @db.Uuid
+  authorizedAt             DateTime @map("authorized_at") @db.Timestamptz(6)
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency     Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  correction AttendanceCorrection @relation(fields: [agencyId, attendanceCorrectionId], references: [agencyId, id], onDelete: Restrict)
+  authorizedBy AgencyMembership @relation("LockedAttendanceAdjustmentAuthorizer", fields: [agencyId, authorizedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  periods    LockedAttendanceAdjustmentPeriod[] @relation("LockedAttendanceAdjustmentPeriods")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, attendanceCorrectionId])
+  @@map("locked_attendance_adjustments")
+}
+
+model LockedAttendanceAdjustmentPeriod {
+  agencyId                      String @map("agency_id") @db.Uuid
+  lockedAttendanceAdjustmentId  String @map("locked_attendance_adjustment_id") @db.Uuid
+  predecessorPeriodVersionId    String @map("predecessor_period_version_id") @db.Uuid
+  successorPeriodVersionId      String @map("successor_period_version_id") @db.Uuid
+
+  agency               Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  adjustment           LockedAttendanceAdjustment @relation("LockedAttendanceAdjustmentPeriods", fields: [agencyId, lockedAttendanceAdjustmentId], references: [agencyId, id], onDelete: Restrict)
+  predecessorVersion   AttendancePeriodVersion @relation("LockedAdjustmentPredecessorPeriod", fields: [agencyId, predecessorPeriodVersionId], references: [agencyId, id], onDelete: Restrict)
+  successorVersion     AttendancePeriodVersion @relation("LockedAdjustmentSuccessorPeriod", fields: [agencyId, successorPeriodVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@id([lockedAttendanceAdjustmentId, predecessorPeriodVersionId])
+  @@index([agencyId, successorPeriodVersionId])
+  @@map("locked_attendance_adjustment_periods")
 }
 
 model LeaveType {

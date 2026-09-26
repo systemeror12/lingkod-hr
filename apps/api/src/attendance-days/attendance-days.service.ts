@@ -18,10 +18,16 @@ import {
 } from '../attendance-configuration/schedule-assignments.service';
 import {
   eventCollectionWindow,
+  localDateValue,
   zonedTimeToInstant,
   type AttendanceWorkDateEvent,
 } from '../attendance/attendance.types';
 import { LeaveAccountsService } from '../leave-accounts/leave-accounts.service';
+import {
+  applyEventCorrectionOverlays,
+  parseAppliedCorrectionOverlays,
+  type AppliedAttendanceCorrectionOverlays,
+} from '../attendance-corrections/attendance-corrections.effects';
 import {
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
@@ -356,6 +362,61 @@ export class AttendanceDaysService {
     });
   }
 
+  /**
+   * Recalculate the affected Work Dates of one applied Attendance Correction
+   * inside the caller-owned transaction. An applied correction is the only
+   * authorized path that may supersede an APPROVED Attendance Day while the
+   * original version and its segments stay retained.
+   */
+  async recalculateCorrectedWorkDates(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: { attendancePeriodId: string; employeeId: string; workDates: string[] },
+  ): Promise<AttendanceDayCalculationResultSummary[]> {
+    const period = await transaction.attendancePeriod.findFirst({
+      where: { agencyId: context.agencyId, id: input.attendancePeriodId },
+      select: periodSelect,
+    });
+    if (!period) {
+      throw new AttendanceDayServiceError(
+        'The requested Attendance Period could not be found.',
+        404,
+        'ATTENDANCE_PERIOD_NOT_FOUND',
+      );
+    }
+    const now = new Date();
+    const results: AttendanceDayCalculationResultSummary[] = [];
+    for (const workDate of input.workDates) {
+      results.push(
+        await this.calculateOne(transaction, context, period, input.employeeId, workDate, now, {
+          correctionRecalculation: true,
+        }),
+      );
+    }
+    return results;
+  }
+
+  private async appliedCorrectionOverlays(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+  ): Promise<AppliedAttendanceCorrectionOverlays> {
+    const rows = await transaction.attendanceCorrectionEffect.findMany({
+      where: { agencyId, correction: { employeeId } },
+      orderBy: [{ appliedAt: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        effectAction: true,
+        targetType: true,
+        originalTargetId: true,
+        replacementRecord: true,
+        appliedByMembershipId: true,
+        appliedAt: true,
+      },
+    });
+    return parseAppliedCorrectionOverlays(rows);
+  }
+
   async list(
     context: RequestContext,
     filters: AttendanceDayListFilters = {},
@@ -492,6 +553,7 @@ export class AttendanceDaysService {
     employeeId: string,
     workDate: string,
     now: Date,
+    options: { correctionRecalculation?: boolean } = {},
   ): Promise<AttendanceDayCalculationResultSummary> {
     const current = await transaction.attendanceDay.findFirst({
       where: {
@@ -533,8 +595,13 @@ export class AttendanceDaysService {
       }
     }
 
+    const overlays = await this.appliedCorrectionOverlays(
+      transaction,
+      context.agencyId,
+      employeeId,
+    );
     const calculation = resolution
-      ? await this.calculateResolved(transaction, context, resolution, workDate)
+      ? await this.calculateResolved(transaction, context, resolution, workDate, overlays)
       : this.unresolvedCalculation(resolutionException!, employeeId, workDate, now);
     const fingerprint = calculation.fingerprint;
     const exceptionTypes = calculation.exceptions.map((exception) => exception.type);
@@ -559,7 +626,7 @@ export class AttendanceDaysService {
         exceptionTypes,
       };
     }
-    if (current && current.status === 'APPROVED') {
+    if (current && current.status === 'APPROVED' && !options.correctionRecalculation) {
       throw new AttendanceDayServiceError(
         'An approved Attendance Day cannot be recalculated.',
         409,
@@ -678,6 +745,7 @@ export class AttendanceDaysService {
     context: RequestContext,
     resolution: AttendanceResolution,
     workDate: string,
+    overlays: AppliedAttendanceCorrectionOverlays,
   ): Promise<{
     fingerprint: string;
     snapshot: AttendanceDayRuleSnapshot;
@@ -696,19 +764,26 @@ export class AttendanceDaysService {
   }> {
     const { dayRule, workScheduleVersion } = resolution;
     const timezone = workScheduleVersion.timezone;
-    const events = await this.attendance.workDateEventsInTransaction(
+    const window = this.coverageWindow(dayRule, workDate, timezone);
+    const rawEvents = await this.attendance.workDateEventsInTransaction(
       transaction,
       context.agencyId,
       resolution.employeeId,
       resolution,
     );
-    const window = this.coverageWindow(dayRule, workDate, timezone);
+    const events = applyEventCorrectionOverlays(rawEvents, overlays.events, (eventTime) =>
+      window
+        ? eventTime.getTime() >= window.startsAt.getTime() &&
+          eventTime.getTime() <= window.endsAt.getTime()
+        : localDateValue(eventTime, timezone) === workDate,
+    );
     const contexts = await this.contexts.resolveCoverageInTransaction(
       transaction,
       context.agencyId,
       resolution.employeeId,
       workDate,
       { startsAt: window.startsAt.toISOString(), endsAt: window.endsAt.toISOString() },
+      overlays.contexts,
     );
     const coverage: AttendanceCalculationCoverage[] = [];
     for (const interval of contexts.intervals) {
@@ -892,7 +967,12 @@ export class AttendanceDaysService {
     };
   }
 
-  private async readScope(context: RequestContext): Promise<AttendanceDayReadScope> {
+  /**
+   * Resolve the exact Attendance Employee scope of the current Agency
+   * Membership. Attendance Corrections reuse the Attendance Day read scope so
+   * an Employee only lists their own requests while HR scopes stay unchanged.
+   */
+  async readScope(context: RequestContext): Promise<AttendanceDayReadScope> {
     const grants = context.permissions.filter((grant) => grant.code === 'attendance.days.read');
     if (grants.length === 0) throw this.readForbidden();
     if (grants.some((grant) => grant.scopePolicy === 'AGENCY')) {

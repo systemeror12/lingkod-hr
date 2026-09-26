@@ -24,6 +24,7 @@ import { AttendanceConfigurationModule } from './attendance-configuration/attend
 import { AttendanceContextsModule } from './attendance-contexts/attendance-contexts.module';
 import { AttendanceDaysModule } from './attendance-days/attendance-days.module';
 import { AttendanceModule } from './attendance/attendance.module';
+import { AttendanceCorrectionsModule } from './attendance-corrections/attendance-corrections.module';
 import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
 import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
@@ -56,6 +57,7 @@ import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leav
     AttendanceContextsModule,
     AttendanceDaysModule,
     AttendanceModule,
+    AttendanceCorrectionsModule,
     LeavePoliciesModule,
     LeaveAccountsModule,
     LeaveApplicationsModule,

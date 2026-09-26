@@ -21,5 +21,6 @@ import { AttendanceDaysService } from './attendance-days.service';
     AttendanceDaysService,
     { provide: ATTENDANCE_DAY_AUDIT_WRITER, useValue: attendanceDayAuditWriter },
   ],
+  exports: [AttendanceDaysService],
 })
 export class AttendanceDaysModule {}
