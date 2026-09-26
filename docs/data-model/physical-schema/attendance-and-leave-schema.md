@@ -528,7 +528,8 @@ CREATE TABLE attendance_corrections (
   employee_id uuid NOT NULL,
   initiated_by_membership_id uuid NOT NULL,
   recorded_by_membership_id uuid NOT NULL,
-  target_type text NOT NULL CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT')),
+  target_type text NOT NULL
+    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT')),
   requested_action text NOT NULL CHECK (requested_action IN ('ADD','REPLACE','VOID')),
   target_id uuid,
   status text NOT NULL
@@ -588,7 +589,8 @@ CREATE TABLE attendance_correction_effects (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   attendance_correction_id uuid NOT NULL,
   effect_action text NOT NULL CHECK (effect_action IN ('ADD','REPLACE','VOID')),
-  target_type text NOT NULL CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT')),
+  target_type text NOT NULL
+    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT')),
   original_target_id uuid,
   replacement_record jsonb,
   applied_by_membership_id uuid NOT NULL,
@@ -646,6 +648,7 @@ Applied correction transaction:
 - append sanitized audit and outbox records without partial effects.
 
 An approved correction may produce an Attendance Exception. The effect remains applied, but the affected Employee Attendance Submission becomes stale and no successor period may enter review until the exception is resolved. The input boundary forbids hard deletion or in-place mutation of the target record.
+A `POSTED_LEAVE_INPUT` correction is created only by Leave through the Attendance application service when an applied Leave Cancellation changes posted leave on a Work Date in a locked period. It `REPLACE`s the posted-leave input with the retained successor or `VOID`s it, and its evidence row references the Leave Cancellation as its authoritative source. The approved Leave Cancellation is its factual basis, so it enters at `FOR_AUTHORIZATION` without a second factual review. A different HR Administrator from the cancellation's requester and approvers authorizes it through the ordinary Locked Attendance Adjustment, which produces the successor Attendance Day and Attendance Period Versions, corrected DTRs, and adjustment publication. Attendance cannot change the Leave fact. The authorizer may only authorize or record a blocking reason, which Leave shows as the handoff's current status.
 
 ---
 
@@ -1346,7 +1349,10 @@ CREATE TABLE leave_cancellation_scopes (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   leave_cancellation_id uuid NOT NULL,
   approval_allocation_line_id uuid NOT NULL,
+  date_from date NOT NULL,
+  date_to date NOT NULL,
   quantity numeric(12,4) NOT NULL CHECK (quantity > 0),
+  CHECK (date_to >= date_from),
   FOREIGN KEY (agency_id, leave_cancellation_id)
     REFERENCES leave_cancellations (agency_id, id),
   FOREIGN KEY (agency_id, approval_allocation_line_id)
@@ -1436,11 +1442,21 @@ application projection, and appends Audit Events and outbox records, or rolls
 back all authoritative changes. Stable effect keys make retries return existing
 results.
 
+A cancellation scope names the exact cancelled dates within one approval
+allocation line. A scope covering the whole line cancels its full quantity. A
+partial scope must include the line's first or last date, so the retained
+period is one contiguous range and the retained quantity is the line quantity
+less the cancelled quantity. Cancelling dates inside a line without either
+endpoint is not supported.
+
 Applying a Leave Cancellation follows the same atomic boundary. Whole
 cancellation exactly reverses affected ledger entries. Partial cancellation
 fully reverses each affected entry and posts a replacement for the retained
 quantity with the original effective date and a later posting time. Attendance
-and Payroll return idempotent correction or adjustment identifiers. A failed
+and Payroll return idempotent correction or adjustment identifiers. For an
+unlocked Work Date, Attendance creates a successor posted-leave input and
+recalculates. For a locked Work Date, Attendance accepts a `POSTED_LEAVE_INPUT`
+Attendance Correction awaiting Locked Attendance Adjustment authorization. A failed
 effect transaction records `FAILED` separately, leaves the approved cancellation
 available for retry, and does not change the original posting. `APPLIED` means
 all required reversals or owner handoffs exist, even when an accepted downstream
