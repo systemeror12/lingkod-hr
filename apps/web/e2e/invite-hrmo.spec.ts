@@ -1,5 +1,8 @@
 import { expect, test, type Locator } from '@playwright/test';
 
+const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
+const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
+
 interface MailpitMessageSummary {
   ID: string;
   Subject: string;
@@ -131,15 +134,15 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
     ).toBeVisible();
     await expect(hrmoPage.getByRole('button', { name: 'Invite user' })).toHaveCount(0);
 
-    const me = await hrmoPage.request.get('http://localhost:3101/api/v1/auth/me', {
-      headers: { origin: 'http://localhost:3100' },
+    const me = await hrmoPage.request.get(`${apiUrl}/api/v1/auth/me`, {
+      headers: { origin: appOrigin },
     });
     expect(me.ok()).toBe(true);
     const session = (await me.json()) as { agencyId: string };
     const forbidden = await hrmoPage.request.post(
-      `http://localhost:3101/api/v1/agencies/${session.agencyId}/invitations`,
+      `${apiUrl}/api/v1/agencies/${session.agencyId}/invitations`,
       {
-        headers: { origin: 'http://localhost:3100' },
+        headers: { origin: appOrigin },
         data: { email: 'forbidden@example.test', roleCodes: ['hrmo_administrator'] },
       },
     );

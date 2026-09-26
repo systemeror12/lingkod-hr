@@ -102,6 +102,9 @@ docker compose -f infrastructure/compose.yaml up -d --wait
 pnpm db:migrate
 ```
 
+In a linked worktree, run `bash scripts/setup-worktree.sh` instead of these
+commands; see [Parallel worktrees](#parallel-worktrees).
+
 If `.env` does not exist, create it from `.env.example`. If it already exists,
 copy only newly added keys without overwriting local values. Then check that no
 old LingkodHR process owns the normal development ports before starting a new
@@ -132,6 +135,31 @@ The gate is complete when migrations report no pending work, each health check
 responds successfully, and `/dashboard` completes local OIDC login. Diagnose
 setup failures before changing application code; do not delete the local
 database or migration history as a shortcut.
+
+### Parallel worktrees
+
+Each linked worktree gets its own `.env` and its own `hris_<worktree>`
+database, so migrations, integration tests, and E2E seeds stay isolated.
+Docker containers stay shared and owned by the main checkout. Set this up from
+inside a new worktree:
+
+```bash
+bash scripts/setup-worktree.sh
+```
+
+In T3 Code, add that command as a project script with "Run on worktree
+creation" enabled. The script is safe to rerun and refuses to run in the main
+checkout.
+
+Only one dev stack can own ports `3000`–`3002` and `4100` at a time. To run
+E2E in two worktrees at once, give the second one the alternate
+[Playwright ports](#playwright-port-hotspot); Mailpit is still shared. Drop a
+removed worktree's database with:
+
+```bash
+docker compose -f infrastructure/compose.yaml exec -T postgres \
+  psql -U hris_local -d postgres -c 'DROP DATABASE "hris_<worktree>"'
+```
 
 ### Validation
 

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-const apiUrl = 'http://localhost:3101';
-const appOrigin = 'http://localhost:3100';
+const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
+const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
 const foreignUnitId = '22222222-2222-4222-8222-222222222222';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 
