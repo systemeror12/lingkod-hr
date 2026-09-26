@@ -141,7 +141,7 @@ export function ApplicationShell({
       <aside
         aria-label="Application"
         className={cn(
-          'relative flex h-auto w-full flex-col overflow-visible bg-midnight text-[#f7f9fc] min-[980px]:sticky min-[980px]:top-0 min-[980px]:h-dvh min-[980px]:border-r min-[980px]:border-white/12 min-[980px]:transition-[width] min-[980px]:duration-150 min-[980px]:ease-out motion-reduce:transition-none',
+          'relative flex h-auto w-full flex-col overflow-visible bg-midnight text-[#f7f9fc] [--color-focus:var(--color-nav-focus)] min-[980px]:sticky min-[980px]:top-0 min-[980px]:h-dvh min-[980px]:border-r min-[980px]:border-white/12 min-[980px]:transition-[width] min-[980px]:duration-150 min-[980px]:ease-out motion-reduce:transition-none',
           collapsed ? 'min-[980px]:w-[72px]' : 'min-[980px]:w-[200px]',
         )}
       >
