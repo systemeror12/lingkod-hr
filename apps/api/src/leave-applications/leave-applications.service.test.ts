@@ -1,9 +1,11 @@
 import { expect, it } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { ApprovalCompletionRegistry } from '../approvals/approval.service';
+import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
 import {
   LeaveApplicationsService,
   leaveApplicationAuditWriter,
+  permittedAllocationKinds,
 } from './leave-applications.service';
 
 const documentsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[1];
@@ -135,4 +137,46 @@ it('requires leave.applications.return before returning', async () => {
   await expect(
     service().returnToApplicant(context([]), applicationId, { reason: 'Attach the signed form.' }),
   ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_RETURN_FORBIDDEN', statusCode: 403 });
+});
+
+function kindsFor(code: string): string[] {
+  const entry = findLeaveCatalogueEntry(code);
+  if (!entry) throw new Error(`Missing catalogue entry ${code}`);
+  return [
+    ...permittedAllocationKinds({
+      chargedLeaveTypeId: entry.chargedLeaveTypeCode ? leaveTypeId : null,
+      entitlementBasis: entry.entitlementBasis,
+      ruleParameters: entry.ruleParameters,
+      leaveType: { code },
+    }),
+  ];
+}
+
+it('derives allocation kinds from the bound policy entry', () => {
+  expect(kindsFor('VACATION_LEAVE')).toEqual(['LEAVE_ACCOUNT', 'LEAVE_WITHOUT_PAY']);
+  expect(kindsFor('MANDATORY_LEAVE')).toEqual(['LEAVE_ACCOUNT', 'LEAVE_WITHOUT_PAY']);
+  expect(kindsFor('SPECIAL_PRIVILEGE_LEAVE')).toEqual(['LEAVE_ACCOUNT', 'LEAVE_WITHOUT_PAY']);
+  expect(kindsFor('MATERNITY_LEAVE')).toEqual(['NON_CREDIT']);
+  expect(kindsFor('SPECIAL_EMERGENCY_LEAVE')).toEqual(['NON_CREDIT']);
+  expect(kindsFor('STUDY_LEAVE')).toEqual(['NON_CREDIT']);
+  expect(kindsFor('LEAVE_WITHOUT_PAY')).toEqual(['LEAVE_WITHOUT_PAY']);
+});
+
+it('falls back to the catalogue when a stored policy is unreadable', () => {
+  expect(
+    permittedAllocationKinds({
+      chargedLeaveTypeId: null,
+      entitlementBasis: 'ACCRUED_ACCOUNT',
+      ruleParameters: null,
+      leaveType: { code: 'VACATION_LEAVE' },
+    }),
+  ).toEqual(['LEAVE_ACCOUNT', 'LEAVE_WITHOUT_PAY']);
+  expect(
+    permittedAllocationKinds({
+      chargedLeaveTypeId: null,
+      entitlementBasis: 'NON_CREDIT_AUTHORIZATION',
+      ruleParameters: { paid: false, chargesLedger: false },
+      leaveType: { code: 'LEAVE_WITHOUT_PAY' },
+    }),
+  ).toEqual(['LEAVE_WITHOUT_PAY']);
 });

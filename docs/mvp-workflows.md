@@ -373,10 +373,17 @@ to those accounts.
 
 The posted balance is derived only from immutable Leave Ledger Entries. HR
 certification atomically creates separate Leave Credit Commitments; an unposted
-commitment is never represented as a ledger entry. An authorized partial approval
-may replace the certified commitment only with a linked, smaller successor.
-Posting consumes the active commitment. Withdrawal, rejection, material return,
-or supersession releases it. Commitments do not silently expire.
+commitment is never represented as a ledger entry, and a commitment raised
+earlier the same day still counts as an active commitment. Every allocation kind
+is authorized by the bound Leave Policy Version: a charging policy approves
+against its certified account and classifies only the quantity the account
+cannot cover as leave without pay, while a paid non-ledger policy is non-credit
+and an unpaid policy is leave without pay. An authorized partial approval may
+replace the certified commitment only with a linked, smaller successor. Charging
+a different account, or moving credit-covered quantity to unpaid leave, requires
+a successor version and recertification. Posting consumes the active commitment.
+Withdrawal, rejection, material return, or supersession releases it. Commitments
+do not silently expire.
 
 A material change after submission creates a new immutable Leave Application
 Version and restarts evaluation, certification, and routing. Reviewer comments,

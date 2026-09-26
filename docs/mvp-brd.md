@@ -811,10 +811,14 @@ HR certification attests credit facts but does not approve leave. A Supervisor's
 immutable Leave Recommendation is advisory and proceeds to the authorized
 approving official even when negative unless an evidenced route says otherwise.
 The final official may approve the full request, approve an exact subset through
-a Leave Approval Allocation, or reject it. Where applicable authority permits,
-the allocation may divide approved quantities among charged Leave Accounts,
-another policy-authorized source, and leave without pay. It shall not add dates,
-increase quantity, change the Leave Type, or rewrite Employee-submitted facts.
+a Leave Approval Allocation, or reject it. The Leave Policy Version bound to
+each calculation segment authorizes the allocation kind: a charging policy
+approves against its certified account and classifies only the quantity the
+account cannot cover as leave without pay; a paid policy outside the ledger is
+non-credit, and an unpaid policy is leave without pay. The allocation shall not
+add dates, increase quantity, change the Leave Type, charge a different account
+than the bound policy, move credit-covered quantity to unpaid leave, or
+otherwise rewrite Employee-submitted facts.
 
 Partial approval may atomically release a certified commitment and create a
 linked successor for a smaller approved quantity without recertification. Any

@@ -126,6 +126,8 @@ export const LEAVE_APPROVAL_ALLOCATION_KINDS = [
   'NON_CREDIT',
 ] as const;
 
+export type LeaveApprovalAllocationKind = (typeof LEAVE_APPROVAL_ALLOCATION_KINDS)[number];
+
 export const LEAVE_RECOMMENDATION_OUTCOMES = ['RECOMMEND_APPROVAL', 'RECOMMEND_REJECTION'] as const;
 
 export const leaveApplicationCertificationSchema = z
@@ -155,9 +157,7 @@ export const leaveApplicationDecisionSchema = z
         z
           .object({
             segmentId: leaveApplicationIdSchema,
-            allocationKind: z.enum(LEAVE_APPROVAL_ALLOCATION_KINDS),
             quantity: leaveApplicationQuantitySchema.optional(),
-            accountQuantity: leaveApplicationQuantitySchema.optional(),
           })
           .strict(),
       )

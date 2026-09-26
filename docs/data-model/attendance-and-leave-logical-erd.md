@@ -806,6 +806,9 @@ Certified balance for an application
 
 - At most one certification per Leave Application Version. Recertification
   requires a new version rather than rewriting the prior record.
+- Posted balance is read as of `balance_as_of`, limited to ledger entries posted
+  by `ledger_recorded_through`. Other active commitments are read as of the same
+  knowledge cutoff, so a commitment raised earlier the same day still counts.
 - Current authority is derived from the continued validity of the bound version,
   assessment, commitments, and accounts. The historical certification has no
   mutable validity flag.
@@ -890,6 +893,7 @@ One exact approved period and quantity
 | date_from                    | date         | No    |                               | Inclusive start                              |
 | date_to                      | date         | No    |                               | Inclusive end                                |
 | allocation_kind              | enum         | No    |                               | LEAVE_ACCOUNT, LEAVE_WITHOUT_PAY, NON_CREDIT |
+| policy_version_id            | uuid         | No    | FK leave_policy_versions      | Authorizing policy version                   |
 | leave_account_id             | uuid         | Yes   | FK leave_accounts             | Charged account                              |
 | quantity                     | decimal      | No    |                               | Approved quantity                            |
 | unit                         | enum         | No    |                               | Source-prescribed unit                       |
@@ -899,6 +903,11 @@ One exact approved period and quantity
 - Unique `(leave_approval_allocation_id, sequence_no)`.
 - A Leave Account is required only for `LEAVE_ACCOUNT`; the bound policy must
   authorize every allocation kind and unit.
+- A ledger-charging policy authorizes `LEAVE_ACCOUNT` up to the certified
+  available balance and `LEAVE_WITHOUT_PAY` for the uncovered excess; a paid
+  non-ledger policy authorizes `NON_CREDIT`, and an unpaid policy authorizes
+  `LEAVE_WITHOUT_PAY`. A different account or a credit-covered unpaid quantity
+  requires a successor version and recertification.
 
 **Deletion behavior:** Retain.
 
