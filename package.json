@@ -10,6 +10,7 @@
     "db:generate": "pnpm --filter @lingkod-hr/database generate",
     "db:migrate": "pnpm --filter @lingkod-hr/database migrate:deploy",
     "dev": "turbo run dev",
+    "prototype:design": "echo \"Open http://localhost:3000/prototype/design\" && pnpm --filter @lingkod-hr/web dev",
     "format": "prettier --write \"apps/**/*.{js,mjs,json,ts,tsx,css}\" \"packages/**/*.{js,mjs,json,ts,tsx,css}\" \"infrastructure/**/*.{yaml,yml,json}\" \".github/workflows/*.{yaml,yml}\" \"*.{json,mjs,yaml,yml}\"",
     "format:check": "prettier --check \"apps/**/*.{js,mjs,json,ts,tsx,css}\" \"packages/**/*.{js,mjs,json,ts,tsx,css}\" \"infrastructure/**/*.{yaml,yml,json}\" \".github/workflows/*.{yaml,yml}\" \"*.{json,mjs,yaml,yml}\"",
     "lint": "turbo run lint",
