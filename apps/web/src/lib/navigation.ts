@@ -162,6 +162,14 @@ const destinations: readonly (Destination & {
       hasPermission(session, 'attendance.days.calculate'),
   },
   {
+    href: '/attendance-corrections',
+    label: 'Attendance Corrections',
+    icon: 'position',
+    visible: (session) =>
+      hasPermission(session, 'attendance.days.read') ||
+      hasPermission(session, 'attendance.corrections.create'),
+  },
+  {
     href: '/leave-policies',
     label: 'Leave Policies',
     icon: 'leave',

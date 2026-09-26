@@ -300,6 +300,19 @@ async function seed(): Promise<void> {
       where: { agencyId: agency.id },
     });
     await transaction.serviceRecordSnapshot.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.lockedAttendanceAdjustmentPeriod.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.lockedAttendanceAdjustment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceCorrectionEffect.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceCorrectionEvidence.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendanceCorrection.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendancePeriodVersionDay.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.attendancePeriodVersion.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.employeeAttendanceSubmissionDay.deleteMany({
+      where: { agencyId: agency.id },
+    });
+    await transaction.employeeAttendanceSubmission.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceException.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceDaySegment.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceDay.deleteMany({ where: { agencyId: agency.id } });
@@ -932,6 +945,47 @@ async function seed(): Promise<void> {
           versionNo: 1,
           domain: 'leave',
           stepDefinition: routeStep('approvals.requests.approve'),
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+        },
+        {
+          agencyId: agency.id,
+          routeCode: 'ATTENDANCE_CORRECTION',
+          versionNo: 1,
+          domain: 'attendance',
+          stepDefinition: routeStep('attendance.corrections.approve'),
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+        },
+        {
+          agencyId: agency.id,
+          routeCode: 'ATTENDANCE_CORRECTION_LOCKED',
+          versionNo: 1,
+          domain: 'attendance',
+          stepDefinition: {
+            steps: [
+              {
+                stepNo: 1,
+                stepMode: 'SEQUENTIAL',
+                requiredPermission: 'attendance.corrections.approve',
+                approvePermission: 'attendance.corrections.approve',
+                returnPermission: 'attendance.corrections.approve',
+                rejectPermission: 'attendance.corrections.approve',
+                assignment: { kind: 'MEMBERSHIP', membershipId: membership.id },
+                requiresSeparateReview: false,
+              },
+              {
+                stepNo: 2,
+                stepMode: 'SEQUENTIAL',
+                requiredPermission: 'attendance.corrections.authorize_locked',
+                approvePermission: 'attendance.corrections.authorize_locked',
+                returnPermission: 'attendance.corrections.authorize_locked',
+                rejectPermission: 'attendance.corrections.authorize_locked',
+                assignment: { kind: 'MEMBERSHIP', membershipId: membership.id },
+                requiresSeparateReview: false,
+              },
+            ],
+          },
           effectiveFrom: new Date('2026-01-01'),
           status: 'ACTIVE',
         },

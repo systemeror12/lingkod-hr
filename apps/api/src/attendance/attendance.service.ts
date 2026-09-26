@@ -853,6 +853,50 @@ export class AttendanceService {
   }
 
   /**
+   * Resolve which Work Date one proposed Attendance Event timestamp would join
+   * inside a caller-owned transaction. Attendance Corrections use the same
+   * collection windows the capture path uses so a previewed ADD or REPLACE
+   * names the exact Work Dates, including the prior overnight Work Date.
+   */
+  async matchEventWorkDateInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    eventTime: Date,
+  ): Promise<{ status: 'MATCHED' | 'UNMATCHED' | 'AMBIGUOUS'; workDate: string | null }> {
+    const timezone = await this.agencyTimezone(transaction, agencyId);
+    const eventLocalDate = localDateValue(eventTime, timezone);
+    const candidateDates = [eventLocalDate, addDateValueDays(eventLocalDate, -1)];
+    const candidates: AttendanceWorkDateCandidate[] = [];
+    for (const workDate of candidateDates) {
+      try {
+        const resolution = await this.assignments.resolveForWorkDateInTransaction(
+          transaction,
+          agencyId,
+          employeeId,
+          workDate,
+        );
+        candidates.push({
+          workDate,
+          resolution,
+          window: eventCollectionWindow(
+            resolution.dayRule,
+            resolution.workDate,
+            resolution.workScheduleVersion.timezone,
+          ),
+        });
+      } catch (error: unknown) {
+        if (!attendanceExceptionDetails(error)) throw error;
+      }
+    }
+    const match = matchAttendanceEvent(eventTime, eventLocalDate, candidates);
+    if (match.status === 'MATCHED' && match.matches.length === 1) {
+      return { status: 'MATCHED', workDate: match.matches[0]!.workDate };
+    }
+    return { status: match.status, workDate: null };
+  }
+
+  /**
    * Expose the exact Attendance Events of one resolved Work Date inside a
    * caller-owned transaction. Attendance Day calculation consumes the same
    * collection window the capture path uses, so both agree on what belongs to
