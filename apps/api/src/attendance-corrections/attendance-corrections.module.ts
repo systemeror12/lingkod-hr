@@ -6,6 +6,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { AuthModule } from '../auth/auth.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { DtrsModule } from '../dtrs/dtrs.module';
+import { AttendancePeriodsModule } from '../attendance-periods/attendance-periods.module';
 import {
   ATTENDANCE_CORRECTION_AUDIT_WRITER,
   attendanceCorrectionAuditWriter,
@@ -22,6 +23,7 @@ import { AttendanceCorrectionsService } from './attendance-corrections.service';
     AttendanceDaysModule,
     DocumentsModule,
     DtrsModule,
+    AttendancePeriodsModule,
   ],
   controllers: [AttendanceCorrectionsController],
   providers: [

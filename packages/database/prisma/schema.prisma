@@ -168,6 +168,8 @@ model Agency {
   lockedAttendanceAdjustments   LockedAttendanceAdjustment[]
   lockedAttendanceAdjustmentPeriods LockedAttendanceAdjustmentPeriod[]
   dtrDocuments                  DtrDocument[]
+  attendancePayrollPublications AttendancePayrollPublication[]
+  attendancePayrollFacts        AttendancePayrollFact[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -1945,6 +1947,7 @@ model Employee {
   attendanceSubmissions  EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionEmployee")
   attendanceCorrections  AttendanceCorrection[]  @relation("AttendanceCorrectionEmployee")
   dtrDocuments           DtrDocument[]           @relation("DtrDocumentEmployee")
+  attendancePayrollFacts AttendancePayrollFact[]  @relation("AttendancePayrollFactEmployee")
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
@@ -3554,6 +3557,7 @@ model AttendanceDay {
   exceptions             AttendanceException[]   @relation("AttendanceDayExceptions")
   submissionDays         EmployeeAttendanceSubmissionDay[] @relation("EmployeeAttendanceSubmissionDayAttendanceDay")
   periodVersionDays      AttendancePeriodVersionDay[]      @relation("AttendancePeriodVersionDayAttendanceDay")
+  payrollFacts           AttendancePayrollFact[]            @relation("AttendancePayrollFactAttendanceDay")
 
   @@unique([attendancePeriodId, employeeId, workDate, calculationVersion])
   @@unique([agencyId, id])
@@ -3686,6 +3690,7 @@ model AttendancePeriodVersion {
   lockedBy        AgencyMembership? @relation("AttendancePeriodVersionLocker", fields: [agencyId, lockedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   days            AttendancePeriodVersionDay[] @relation("AttendancePeriodVersionDayVersion")
   dtrDocuments    DtrDocument[] @relation("DtrDocumentPeriodVersion")
+  payrollPublications AttendancePayrollPublication[] @relation("AttendancePayrollPublicationVersion")
   adjustmentPredecessors LockedAttendanceAdjustmentPeriod[] @relation("LockedAdjustmentPredecessorPeriod")
   adjustmentSuccessors   LockedAttendanceAdjustmentPeriod[] @relation("LockedAdjustmentSuccessorPeriod")
 
@@ -3866,6 +3871,63 @@ model LockedAttendanceAdjustmentPeriod {
   @@id([lockedAttendanceAdjustmentId, predecessorPeriodVersionId])
   @@index([agencyId, successorPeriodVersionId])
   @@map("locked_attendance_adjustment_periods")
+}
+
+/// Immutable idempotent original or adjustment batch created by an Attendance
+/// Period Lock. One publication exists per Attendance Period Version; an
+/// adjustment publication identifies its predecessor and holds only changed
+/// facts. No rate, money, deduction decision, or target payroll period lives
+/// here.
+model AttendancePayrollPublication {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  attendancePeriodVersionId String   @unique @map("attendance_period_version_id") @db.Uuid
+  predecessorPublicationId  String?  @map("predecessor_publication_id") @db.Uuid
+  publicationType           String   @map("publication_type")
+  idempotencyKey            String   @map("idempotency_key")
+  publishedAt               DateTime @map("published_at") @db.Timestamptz(6)
+
+  agency                  Agency                 @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  attendancePeriodVersion AttendancePeriodVersion @relation("AttendancePayrollPublicationVersion", fields: [agencyId, attendancePeriodVersionId], references: [agencyId, id], onDelete: Restrict)
+  predecessorPublication  AttendancePayrollPublication?  @relation("AttendancePayrollPublicationPredecessor", fields: [agencyId, predecessorPublicationId], references: [agencyId, id], onDelete: Restrict)
+  successorPublications   AttendancePayrollPublication[] @relation("AttendancePayrollPublicationPredecessor")
+  facts                   AttendancePayrollFact[]           @relation("AttendancePayrollPublicationFacts")
+
+  @@unique([agencyId, idempotencyKey])
+  @@unique([agencyId, id])
+  @@map("attendance_payroll_publications")
+}
+
+/// One exact nonnegative minute quantity by publication, Employee, Work Date,
+/// attendance classification, source Attendance Day version, and holiday
+/// classification. An adjustment publication preserves prior value, corrected
+/// value, and a nonnegative INCREASE or DECREASE difference.
+model AttendancePayrollFact {
+  id                             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String    @map("agency_id") @db.Uuid
+  attendancePayrollPublicationId String    @map("attendance_payroll_publication_id") @db.Uuid
+  attendanceDayId                String    @map("attendance_day_id") @db.Uuid
+  employeeId                     String    @map("employee_id") @db.Uuid
+  workDate                       DateTime  @map("work_date") @db.Date
+  factType                       String    @map("fact_type")
+  holidayClassification          String?   @map("holiday_classification")
+  stableSourceKey                String    @map("stable_source_key")
+  correctedMinutes               Int       @map("corrected_minutes")
+  priorMinutes                   Int?      @map("prior_minutes")
+  differenceDirection            String?   @map("difference_direction")
+  differenceMinutes              Int?      @map("difference_minutes")
+  createdAt                      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency        Agency        @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  publication   AttendancePayrollPublication @relation("AttendancePayrollPublicationFacts", fields: [agencyId, attendancePayrollPublicationId], references: [agencyId, id], onDelete: Restrict)
+  attendanceDay AttendanceDay @relation("AttendancePayrollFactAttendanceDay", fields: [agencyId, attendanceDayId], references: [agencyId, id], onDelete: Restrict)
+  employee      Employee      @relation("AttendancePayrollFactEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([attendancePayrollPublicationId, stableSourceKey])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, workDate])
+  @@index([agencyId, attendanceDayId])
+  @@map("attendance_payroll_facts")
 }
 
 model LeaveType {
