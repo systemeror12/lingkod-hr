@@ -111,8 +111,10 @@ test('shows the Attendance Corrections destination in navigation', async ({ page
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  const navigation = page.getByRole('navigation', { name: 'Primary' });
+  await navigation.getByRole('button', { name: 'Time & attendance' }).click();
   await expect(
-    page.getByRole('link', { name: 'Attendance Corrections', exact: true }),
+    navigation.getByRole('link', { name: 'Attendance Corrections', exact: true }),
   ).toBeVisible();
   await page.goto('/attendance-corrections');
   await expect(
