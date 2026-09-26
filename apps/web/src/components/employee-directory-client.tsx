@@ -133,7 +133,7 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
           <p className="mt-0 mb-4 text-body text-ink-muted">
             Add the stable identity record only. Service and appointment details come later.
           </p>
-          <div className="grid gap-4 min-[620px]:grid-cols-2">
+          <div className="grid gap-4 min-[621px]:grid-cols-2">
             <Field label="Employee number" error={fieldError('employeeNumber')}>
               <input
                 className={inputClass}
@@ -203,12 +203,12 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
                 maxLength={320}
               />
             </Field>
-            <p className="m-0 border-l-2 border-info bg-canvas px-3 py-2.5 text-small text-ink-muted min-[620px]:col-span-2">
+            <p className="m-0 border-l-2 border-info bg-canvas px-3 py-2.5 text-small text-ink-muted min-[621px]:col-span-2">
               Email is contact information. It will not link or replace an Agency Membership.
             </p>
           </div>
         </Panel>
-        <div className="flex flex-col-reverse gap-2 min-[620px]:flex-row min-[620px]:justify-end">
+        <div className="flex flex-col-reverse gap-2 min-[621px]:flex-row min-[621px]:justify-end">
           <Link href="/employees" className={buttonVariants({ variant: 'secondary' })}>
             Cancel
           </Link>
