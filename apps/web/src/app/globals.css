@@ -71,14 +71,15 @@ body {
   background: var(--color-canvas);
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
-
 @layer base {
+  /* Layered so text and font utilities on controls win over the inherited font. */
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
   a {
     color: inherit;
   }
