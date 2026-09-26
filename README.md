@@ -13,6 +13,9 @@ AI-enabled Philippine Public-Sector HRIS for end-to-end workforce management—f
 
 The repository pins pnpm 11.17.0 through `package.json`.
 
+For a full Arch Linux walkthrough using the fish shell, see
+[`docs/local-setup-arch-fish.md`](docs/local-setup-arch-fish.md).
+
 Verify the required tools:
 
 ```bash
