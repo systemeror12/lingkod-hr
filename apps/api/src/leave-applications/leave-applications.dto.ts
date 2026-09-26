@@ -77,6 +77,7 @@ export class LeaveCalculationSegmentDto {
   readonly requestedQuantity: string;
   readonly requestedUnit: string;
   readonly accountQuantity: string | null;
+  readonly allocationKinds: string[];
 
   constructor(segment: LeaveCalculationSegmentSummary) {
     this.id = segment.id;
@@ -88,6 +89,7 @@ export class LeaveCalculationSegmentDto {
     this.requestedQuantity = segment.requestedQuantity;
     this.requestedUnit = segment.requestedUnit;
     this.accountQuantity = segment.accountQuantity;
+    this.allocationKinds = segment.allocationKinds;
   }
 }
 
@@ -161,6 +163,7 @@ export class LeaveApprovalAllocationLineDto {
   readonly dateFrom: string;
   readonly dateTo: string;
   readonly allocationKind: string;
+  readonly policyVersionId: string;
   readonly leaveAccountId: string | null;
   readonly quantity: string;
   readonly unitCode: string;
@@ -171,6 +174,7 @@ export class LeaveApprovalAllocationLineDto {
     this.dateFrom = line.dateFrom;
     this.dateTo = line.dateTo;
     this.allocationKind = line.allocationKind;
+    this.policyVersionId = line.policyVersionId;
     this.leaveAccountId = line.leaveAccountId;
     this.quantity = line.quantity;
     this.unitCode = line.unitCode;

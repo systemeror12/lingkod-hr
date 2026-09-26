@@ -40,6 +40,7 @@ import {
   type LeaveApplicationReturnInput,
   type LeaveApplicationSubmitInput,
   type LeaveApplicationWithdrawInput,
+  type LeaveApprovalAllocationKind,
 } from './leave-applications.schemas';
 
 export interface LeaveApplicationPeriodSummary {
@@ -77,6 +78,7 @@ export interface LeaveCalculationSegmentSummary {
   requestedQuantity: string;
   requestedUnit: string;
   accountQuantity: string | null;
+  allocationKinds: LeaveApprovalAllocationKind[];
 }
 
 export interface LeaveCreditCertificationLineSummary {
@@ -117,6 +119,7 @@ export interface LeaveApprovalAllocationLineSummary {
   dateFrom: string;
   dateTo: string;
   allocationKind: string;
+  policyVersionId: string;
   leaveAccountId: string | null;
   quantity: string;
   unitCode: string;
@@ -174,24 +177,26 @@ const COMMITMENT_SOURCE_TYPE = 'LeaveApplicationVersion';
 
 interface LeaveSegmentAccountCharge {
   segmentId: string;
+  policyVersionId: string;
   dateFrom: Date;
   dateTo: Date;
   requestedQuantity: Prisma.Decimal;
   requestedUnit: string;
   leaveAccountId: string | null;
   accountQuantity: Prisma.Decimal;
+  allocationKinds: readonly LeaveApprovalAllocationKind[];
 }
 
 interface LeaveAllocationPlanLine {
   sequenceNo: number;
   segmentId: string;
+  policyVersionId: string;
   dateFrom: Date;
   dateTo: Date;
-  allocationKind: string;
+  allocationKind: LeaveApprovalAllocationKind;
   leaveAccountId: string | null;
   quantity: Prisma.Decimal;
   unitCode: string;
-  accountQuantity: Prisma.Decimal;
 }
 
 function stepApprovalDecisionId(
@@ -401,6 +406,14 @@ const segmentSelect = {
   requestedQuantity: true,
   requestedUnit: true,
   accountQuantity: true,
+  policyVersion: {
+    select: {
+      entitlementBasis: true,
+      chargedLeaveTypeId: true,
+      ruleParameters: true,
+      leaveType: { select: { code: true } },
+    },
+  },
 } as const;
 
 const certificationLineSelect = {
@@ -432,6 +445,7 @@ const allocationLineSelect = {
   dateFrom: true,
   dateTo: true,
   allocationKind: true,
+  policyVersionId: true,
   leaveAccountId: true,
   quantity: true,
   unitCode: true,
@@ -545,6 +559,7 @@ const policyVersionSelect = {
   applicabilityRules: true,
   documentRequirements: true,
   approvalRouteCode: true,
+  leaveType: { select: { code: true } },
 } as const;
 
 type ApplicationRecord = Prisma.LeaveApplicationGetPayload<{ select: typeof applicationSelect }>;
@@ -564,6 +579,32 @@ function chargesLeaveAccount(policy: {
     policy.entitlementBasis === 'ACCRUED_ACCOUNT' ||
     policy.entitlementBasis === 'PERIODIC_ALLOWANCE'
   );
+}
+
+interface LeaveAllocationPolicy {
+  chargedLeaveTypeId: string | null;
+  entitlementBasis: string;
+  ruleParameters: unknown;
+  leaveType: { code: string };
+}
+
+/**
+ * The bound Leave Policy Version is the allocation authority. A ledger-charging
+ * policy approves against its account and classifies the quantity the certified
+ * account cannot cover as leave without pay (MC41 s.50). A paid policy outside
+ * the ledger is non-credit; an unpaid policy is leave without pay. No approver
+ * may choose a different source within a decision.
+ */
+export function permittedAllocationKinds(
+  policy: LeaveAllocationPolicy,
+): readonly LeaveApprovalAllocationKind[] {
+  if (chargesLeaveAccount(policy)) return ['LEAVE_ACCOUNT', 'LEAVE_WITHOUT_PAY'];
+  const entry = findLeaveCatalogueEntry(policy.leaveType.code);
+  const parsed = parseLeaveRuleParameters(policy.ruleParameters);
+  const parameters: LeaveRuleParameters = parsed.success
+    ? parsed.data
+    : (entry?.ruleParameters ?? {});
+  return parameters.paid === false ? ['LEAVE_WITHOUT_PAY'] : ['NON_CREDIT'];
 }
 
 function databaseContext(context: RequestContext, transition = false) {
@@ -698,6 +739,7 @@ function segmentSummary(record: {
   requestedQuantity: Prisma.Decimal;
   requestedUnit: string;
   accountQuantity: Prisma.Decimal | null;
+  policyVersion: LeaveAllocationPolicy;
 }): LeaveCalculationSegmentSummary {
   return {
     id: record.id,
@@ -710,6 +752,7 @@ function segmentSummary(record: {
     requestedUnit: record.requestedUnit,
     accountQuantity:
       record.accountQuantity === null ? null : formatQuantity(record.accountQuantity),
+    allocationKinds: [...permittedAllocationKinds(record.policyVersion)],
   };
 }
 
@@ -788,6 +831,7 @@ function allocationLineSummary(record: {
   dateFrom: Date;
   dateTo: Date;
   allocationKind: string;
+  policyVersionId: string;
   leaveAccountId: string | null;
   quantity: Prisma.Decimal;
   unitCode: string;
@@ -798,6 +842,7 @@ function allocationLineSummary(record: {
     dateFrom: formatDate(record.dateFrom),
     dateTo: formatDate(record.dateTo),
     allocationKind: record.allocationKind,
+    policyVersionId: record.policyVersionId,
     leaveAccountId: record.leaveAccountId,
     quantity: formatQuantity(record.quantity),
     unitCode: record.unitCode,
@@ -2106,8 +2151,16 @@ export class LeaveApplicationsService implements OnModuleInit {
         input.decision === 'APPROVE'
           ? await this.segmentAccountCharges(transaction, context, application, version)
           : [];
+      const availableByAccount = new Map(
+        certification.lines.map((line) => [
+          line.leaveAccountId,
+          line.postedBalance.minus(line.activeCommitments),
+        ]),
+      );
       const plan =
-        input.decision === 'APPROVE' ? this.buildAllocationPlan(charges, input.allocations) : [];
+        input.decision === 'APPROVE'
+          ? this.buildAllocationPlan(charges, input.allocations, availableByAccount)
+          : [];
       const summary = await this.approvalsService.decideInTransaction(
         transaction,
         context,
@@ -2153,6 +2206,7 @@ export class LeaveApplicationsService implements OnModuleInit {
               ? plan.map((line) => ({
                   segmentId: line.segmentId,
                   allocationKind: line.allocationKind,
+                  policyVersionId: line.policyVersionId,
                   leaveAccountId: line.leaveAccountId,
                   quantity: formatQuantity(line.quantity),
                   unitCode: line.unitCode,
@@ -2977,10 +3031,12 @@ export class LeaveApplicationsService implements OnModuleInit {
       const policy = policyById.get(segment.policyVersionId)!;
       const base = {
         segmentId: segment.id,
+        policyVersionId: policy.id,
         dateFrom: segment.dateFrom,
         dateTo: segment.dateTo,
         requestedQuantity: segment.requestedQuantity,
         requestedUnit: segment.requestedUnit,
+        allocationKinds: permittedAllocationKinds(policy),
       };
       if (segment.accountQuantity === null || !chargesLeaveAccount(policy)) {
         return { ...base, leaveAccountId: null, accountQuantity: ZERO };
@@ -3017,6 +3073,8 @@ export class LeaveApplicationsService implements OnModuleInit {
           orderBy: { id: 'asc' },
           select: {
             leaveAccountId: true,
+            postedBalance: true,
+            activeCommitments: true,
             applicationQuantity: true,
             leaveCreditCommitmentId: true,
           },
@@ -3054,71 +3112,99 @@ export class LeaveApplicationsService implements OnModuleInit {
   }
 
   /**
-   * The approver may approve the whole application or an exact subset. Every
-   * approved account quantity either keeps the certified commitment, or releases
-   * it and raises a smaller linked successor so the case never needs a new
-   * certification.
+   * The bound Leave Policy Version decides every allocation kind, so a decision
+   * only chooses how much of each segment to approve. A charging policy keeps
+   * the approved quantity its certified account can cover and classifies the
+   * uncovered excess as leave without pay (MC41 s.50); a paid policy outside
+   * the ledger approves non-credit leave, and an unpaid policy approves leave
+   * without pay. Charging a different account than the bound policy does, or
+   * converting covered credits to unpaid leave, would rewrite the request and
+   * requires a successor version and recertification instead.
    */
   private buildAllocationPlan(
     charges: LeaveSegmentAccountCharge[],
     allocations: LeaveApplicationDecisionInput['allocations'],
+    availableByAccount: Map<string, Prisma.Decimal>,
   ): LeaveAllocationPlanLine[] {
-    const chargeBySegment = new Map(charges.map((charge) => [charge.segmentId, charge]));
-    const inputs: NonNullable<LeaveApplicationDecisionInput['allocations']> =
-      allocations ??
-      charges.map((charge) => ({
-        segmentId: charge.segmentId,
-        allocationKind: charge.leaveAccountId ? 'LEAVE_ACCOUNT' : 'LEAVE_WITHOUT_PAY',
-      }));
-    const totals = new Map<string, Prisma.Decimal>();
+    const approvedBySegment = new Map<string, Prisma.Decimal>();
+    if (allocations === undefined) {
+      for (const charge of charges) {
+        approvedBySegment.set(charge.segmentId, charge.requestedQuantity);
+      }
+    } else {
+      const chargeBySegment = new Map(charges.map((charge) => [charge.segmentId, charge]));
+      for (const input of allocations) {
+        const charge = chargeBySegment.get(input.segmentId);
+        if (!charge || approvedBySegment.has(input.segmentId)) {
+          throw allocationInvalid(
+            'A decision line references a segment outside the submitted version.',
+          );
+        }
+        const quantity =
+          input.quantity === undefined ? charge.requestedQuantity : parseQuantity(input.quantity);
+        if (quantity.lessThanOrEqualTo(0) || quantity.greaterThan(charge.requestedQuantity)) {
+          throw allocationInvalid('An approved quantity must fit within the segment requested.');
+        }
+        approvedBySegment.set(input.segmentId, quantity);
+      }
+    }
+    const accountGroups = new Map<string, LeaveSegmentAccountCharge[]>();
+    for (const charge of charges) {
+      if (charge.leaveAccountId === null) continue;
+      const group = accountGroups.get(charge.leaveAccountId) ?? [];
+      group.push(charge);
+      accountGroups.set(charge.leaveAccountId, group);
+    }
+    const chargedBudgetByAccount = new Map<string, Prisma.Decimal>();
+    for (const [leaveAccountId, group] of accountGroups) {
+      const available = availableByAccount.get(leaveAccountId);
+      if (!available) throw recertificationRequired();
+      const coverable = available.lessThan(0) ? ZERO : available;
+      let approvedTotal = ZERO;
+      for (const charge of group) {
+        approvedTotal = approvedTotal.plus(approvedBySegment.get(charge.segmentId) ?? ZERO);
+      }
+      chargedBudgetByAccount.set(
+        leaveAccountId,
+        approvedTotal.lessThan(coverable) ? approvedTotal : coverable,
+      );
+    }
     const lines: LeaveAllocationPlanLine[] = [];
-    for (const input of inputs) {
-      const charge = chargeBySegment.get(input.segmentId);
-      if (!charge) {
-        throw allocationInvalid(
-          'A decision line references a segment outside the submitted version.',
-        );
-      }
-      const quantity =
-        input.quantity === undefined ? charge.requestedQuantity : parseQuantity(input.quantity);
-      if (quantity.lessThanOrEqualTo(0) || quantity.greaterThan(charge.requestedQuantity)) {
-        throw allocationInvalid('An approved quantity must fit within the segment requested.');
-      }
-      const total = (totals.get(charge.segmentId) ?? ZERO).plus(quantity);
-      if (total.greaterThan(charge.requestedQuantity)) {
-        throw allocationInvalid('The approved quantities exceed the segment requested.');
-      }
-      totals.set(charge.segmentId, total);
-      let leaveAccountId: string | null = null;
-      let accountQuantity = ZERO;
-      if (input.allocationKind === 'LEAVE_ACCOUNT') {
-        if (!charge.leaveAccountId) {
-          throw allocationInvalid('That segment does not charge a Leave Account.');
-        }
-        leaveAccountId = charge.leaveAccountId;
-        accountQuantity =
-          input.accountQuantity === undefined ? quantity : parseQuantity(input.accountQuantity);
-        if (
-          accountQuantity.lessThanOrEqualTo(0) ||
-          accountQuantity.greaterThan(quantity) ||
-          accountQuantity.greaterThan(charge.accountQuantity)
-        ) {
-          throw allocationInvalid('The account quantity must fit within the approved quantity.');
-        }
-      } else if (input.accountQuantity !== undefined) {
-        throw allocationInvalid('Only an account allocation may carry an account quantity.');
-      }
+    const emit = (
+      charge: LeaveSegmentAccountCharge,
+      allocationKind: LeaveApprovalAllocationKind,
+      leaveAccountId: string | null,
+      quantity: Prisma.Decimal,
+    ): void => {
       lines.push({
         sequenceNo: lines.length + 1,
         segmentId: charge.segmentId,
+        policyVersionId: charge.policyVersionId,
         dateFrom: charge.dateFrom,
         dateTo: charge.dateTo,
-        allocationKind: input.allocationKind,
+        allocationKind,
         leaveAccountId,
         quantity,
         unitCode: charge.requestedUnit,
-        accountQuantity,
       });
+    };
+    for (const charge of charges) {
+      const approved = approvedBySegment.get(charge.segmentId) ?? ZERO;
+      if (approved.lessThanOrEqualTo(0)) continue;
+      if (charge.leaveAccountId === null) {
+        emit(charge, charge.allocationKinds[0]!, null, approved);
+        continue;
+      }
+      const budget = chargedBudgetByAccount.get(charge.leaveAccountId)!;
+      const charged = approved.lessThan(budget) ? approved : budget;
+      chargedBudgetByAccount.set(charge.leaveAccountId, budget.minus(charged));
+      if (charged.greaterThan(0)) {
+        emit(charge, 'LEAVE_ACCOUNT', charge.leaveAccountId, charged);
+      }
+      const uncovered = approved.minus(charged);
+      if (uncovered.greaterThan(0)) {
+        emit(charge, 'LEAVE_WITHOUT_PAY', null, uncovered);
+      }
     }
     if (lines.length === 0) throw allocationInvalid('An approval must allocate at least one line.');
     return lines;
@@ -3164,6 +3250,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         dateFrom: line.dateFrom,
         dateTo: line.dateTo,
         allocationKind: line.allocationKind,
+        policyVersionId: line.policyVersionId,
         leaveAccountId: line.leaveAccountId,
         quantity: line.quantity,
         unitCode: line.unitCode,
@@ -3171,10 +3258,10 @@ export class LeaveApplicationsService implements OnModuleInit {
     });
     const approvedByAccount = new Map<string, Prisma.Decimal>();
     for (const line of plan) {
-      if (!line.leaveAccountId) continue;
+      if (line.allocationKind !== 'LEAVE_ACCOUNT' || !line.leaveAccountId) continue;
       approvedByAccount.set(
         line.leaveAccountId,
-        (approvedByAccount.get(line.leaveAccountId) ?? ZERO).plus(line.accountQuantity),
+        (approvedByAccount.get(line.leaveAccountId) ?? ZERO).plus(line.quantity),
       );
     }
     for (const line of certification.lines) {
@@ -3234,6 +3321,14 @@ export class LeaveApplicationsService implements OnModuleInit {
     );
   }
 
+  /**
+   * The posted balance is an effective-dated fact, so it is read as of the
+   * requested balance date and the ledger knowledge cutoff. Commitments are
+   * reservations made at an instant, so "other active commitments" are read as
+   * of the same knowledge cutoff; a commitment raised earlier the same day
+   * still counts. The caller reads before creating this certification's own
+   * commitment, which is therefore never part of the sum.
+   */
   private async accountBalance(
     transaction: Prisma.TransactionClient,
     agencyId: string,
@@ -3256,8 +3351,8 @@ export class LeaveApplicationsService implements OnModuleInit {
           agencyId,
           leaveAccountId,
           status: 'ACTIVE',
-          effectiveFrom: { lte: balanceAsOf },
-          OR: [{ endedAt: null }, { endedAt: { gt: balanceAsOf } }],
+          effectiveFrom: { lte: recordedThrough },
+          OR: [{ endedAt: null }, { endedAt: { gt: recordedThrough } }],
         },
         _sum: { quantity: true },
       }),

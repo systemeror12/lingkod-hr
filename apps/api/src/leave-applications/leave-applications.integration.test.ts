@@ -1034,20 +1034,17 @@ it.skipIf(!enabled)(
       });
 
       const segmentId = recommendation.versions.at(-1)!.calculationSegments[0]!.id;
+      expect(recommendation.versions.at(-1)!.calculationSegments[0]!.allocationKinds).toEqual([
+        'LEAVE_ACCOUNT',
+        'LEAVE_WITHOUT_PAY',
+      ]);
       const decided = await applications.decide(
         approverContext,
         reviewApplicationId,
         {
           decision: 'APPROVE',
           comments: 'Approved two days; the unused day is released.',
-          allocations: [
-            {
-              segmentId,
-              allocationKind: 'LEAVE_ACCOUNT',
-              quantity: '2',
-              accountQuantity: '2',
-            },
-          ],
+          allocations: [{ segmentId, quantity: '2' }],
         },
         `decide-${suffix}`,
       );
@@ -1056,6 +1053,7 @@ it.skipIf(!enabled)(
       expect(allocation.lines).toHaveLength(1);
       expect(allocation.lines[0]).toMatchObject({
         allocationKind: 'LEAVE_ACCOUNT',
+        policyVersionId: reviewPolicyVersion.id,
         quantity: '2.0000',
         unitCode: 'WORKING_DAY',
       });
@@ -1087,6 +1085,186 @@ it.skipIf(!enabled)(
           },
         }),
       ).resolves.toBe(1);
+
+      // A later certification counts the commitment the earlier same-day
+      // approval left active, so only the excess over certified availability
+      // becomes leave without pay.
+      const excessMonday = nextWeekday(8);
+      const excessFriday = addDays(excessMonday, 4);
+      const excessApplication = await applications.create(
+        agencyContext,
+        { employeeId: employee.id, leaveTypeId: specialLeave.id },
+        `create-excess-${suffix}`,
+      );
+      const excessApplicationId = excessApplication.application.id;
+      await applications.update(agencyContext, excessApplicationId, {
+        reason: 'Special privilege leave beyond the remaining credits.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: excessMonday, dateTo: excessFriday }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      const excessSubmitted = await applications.submit(
+        employeeContext,
+        excessApplicationId,
+        submitInput,
+        `submit-excess-${suffix}`,
+      );
+      const excessVersion = excessSubmitted.versions.at(-1)!;
+      expect(excessVersion.calculationSegments[0]!.requestedQuantity).toBe('5.0000');
+      await applications.route(recorderContext, excessApplicationId, `route-excess-${suffix}`);
+      const excessCertified = await applications.certify(
+        recorderContext,
+        excessApplicationId,
+        { balanceAsOf: manilaDate(0) },
+        `certify-excess-${suffix}`,
+      );
+      const excessCertification = excessCertified.versions.at(-1)!.certification!;
+      expect(excessCertification.lines).toHaveLength(1);
+      expect(excessCertification.lines[0]).toMatchObject({
+        postedBalance: '5.0000',
+        activeCommitments: '2.0000',
+        applicationQuantity: '5.0000',
+        availableAfterApplication: '-2.0000',
+      });
+      await applications.recommend(
+        supervisorContext,
+        excessApplicationId,
+        { outcome: 'RECOMMEND_APPROVAL' },
+        `recommend-excess-${suffix}`,
+      );
+      const excessDecided = await applications.decide(
+        approverContext,
+        excessApplicationId,
+        { decision: 'APPROVE', comments: 'Three days charged; two days without pay.' },
+        `decide-excess-${suffix}`,
+      );
+      expect(excessDecided.application.status).toBe('APPROVED');
+      expect(
+        excessDecided.versions
+          .at(-1)!
+          .approvalAllocation!.lines.map(({ allocationKind, policyVersionId, quantity }) => ({
+            allocationKind,
+            policyVersionId,
+            quantity,
+          })),
+      ).toEqual([
+        {
+          allocationKind: 'LEAVE_ACCOUNT',
+          policyVersionId: reviewPolicyVersion.id,
+          quantity: '3.0000',
+        },
+        {
+          allocationKind: 'LEAVE_WITHOUT_PAY',
+          policyVersionId: reviewPolicyVersion.id,
+          quantity: '2.0000',
+        },
+      ]);
+      const excessCommitments = await admin.leaveCreditCommitment.findMany({
+        where: {
+          agencyId: agency.id,
+          sourceType: 'LeaveApplicationVersion',
+          sourceId: excessVersion.id,
+        },
+        orderBy: { effectiveFrom: 'asc' },
+      });
+      expect(
+        excessCommitments.map(({ sourceCommitmentKey, status, quantity }) => ({
+          sourceCommitmentKey,
+          status,
+          quantity: quantity.toFixed(4),
+        })),
+      ).toEqual([
+        { sourceCommitmentKey: 'CERTIFIED', status: 'RELEASED', quantity: '5.0000' },
+        { sourceCommitmentKey: 'APPROVED', status: 'ACTIVE', quantity: '3.0000' },
+      ]);
+
+      // An unpaid policy authorizes leave without pay without touching any
+      // leave-credit account.
+      const withoutPay = await policies.create(agencyContext, {
+        catalogueCode: 'LEAVE_WITHOUT_PAY',
+      });
+      const withoutPayVersion = await policies.createPolicyVersion(agencyContext, withoutPay.id, {
+        effectiveDate: manilaDate(-10),
+        approvalRouteCode: reviewRouteCode,
+        applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
+        documentRequirements: {},
+        reason: 'Adopt leave without pay for the allocation test.',
+      });
+      await policies.linkAuthority(agencyContext, withoutPay.id, withoutPayVersion.id, {
+        authorityClass: 'NATIONAL_RULE',
+        documentId: nationalEvidence.documentId,
+        citation: 'section 50',
+      });
+      await policies.activate(
+        agencyContext,
+        withoutPay.id,
+        withoutPayVersion.id,
+        'Activate leave without pay.',
+      );
+      const unpaidMonday = nextWeekday(15);
+      const unpaidFriday = addDays(unpaidMonday, 4);
+      const unpaidApplication = await applications.create(
+        agencyContext,
+        { employeeId: employee.id, leaveTypeId: withoutPay.id },
+        `create-unpaid-${suffix}`,
+      );
+      const unpaidApplicationId = unpaidApplication.application.id;
+      await applications.update(agencyContext, unpaidApplicationId, {
+        reason: 'No remaining credits; unpaid leave requested.',
+        periods: [{ dateFrom: unpaidMonday, dateTo: unpaidFriday }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      const unpaidSubmitted = await applications.submit(
+        employeeContext,
+        unpaidApplicationId,
+        submitInput,
+        `submit-unpaid-${suffix}`,
+      );
+      const unpaidVersion = unpaidSubmitted.versions.at(-1)!;
+      expect(unpaidVersion.calculationSegments[0]!.allocationKinds).toEqual(['LEAVE_WITHOUT_PAY']);
+      await applications.route(recorderContext, unpaidApplicationId, `route-unpaid-${suffix}`);
+      const unpaidCertified = await applications.certify(
+        recorderContext,
+        unpaidApplicationId,
+        {},
+        `certify-unpaid-${suffix}`,
+      );
+      expect(unpaidCertified.versions.at(-1)!.certification!.lines).toEqual([]);
+      await applications.recommend(
+        supervisorContext,
+        unpaidApplicationId,
+        { outcome: 'RECOMMEND_APPROVAL' },
+        `recommend-unpaid-${suffix}`,
+      );
+      const unpaidDecided = await applications.decide(
+        approverContext,
+        unpaidApplicationId,
+        { decision: 'APPROVE', comments: 'Approved as leave without pay.' },
+        `decide-unpaid-${suffix}`,
+      );
+      expect(unpaidDecided.application.status).toBe('APPROVED');
+      expect(unpaidDecided.versions.at(-1)!.approvalAllocation!.lines).toMatchObject([
+        {
+          allocationKind: 'LEAVE_WITHOUT_PAY',
+          policyVersionId: withoutPayVersion.id,
+          leaveAccountId: null,
+          quantity: '5.0000',
+          unitCode: 'WORKING_DAY',
+        },
+      ]);
+      await expect(
+        admin.leaveCreditCommitment.count({
+          where: {
+            agencyId: agency.id,
+            sourceType: 'LeaveApplicationVersion',
+            sourceId: unpaidVersion.id,
+          },
+        }),
+      ).resolves.toBe(0);
 
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {

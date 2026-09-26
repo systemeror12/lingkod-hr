@@ -72,6 +72,7 @@ export interface LeaveCalculationSegment {
   requestedQuantity: string;
   requestedUnit: string;
   accountQuantity: string | null;
+  allocationKinds: string[];
 }
 
 export interface LeaveCreditCertificationLine {
@@ -112,6 +113,7 @@ export interface LeaveApprovalAllocationLine {
   dateFrom: string;
   dateTo: string;
   allocationKind: string;
+  policyVersionId: string;
   leaveAccountId: string | null;
   quantity: string;
   unitCode: string;
@@ -260,9 +262,7 @@ interface DocumentRow {
 }
 
 interface AllocationRow {
-  allocationKind: string;
   quantity: string;
-  accountQuantity: string;
 }
 
 type DialogKind =
@@ -752,11 +752,7 @@ export function LeaveApplicationWorkspace({
     const version = currentVersion();
     const rows: Record<string, AllocationRow> = {};
     for (const segment of version?.calculationSegments ?? []) {
-      rows[segment.id] = {
-        allocationKind: segment.accountQuantity === null ? 'LEAVE_WITHOUT_PAY' : 'LEAVE_ACCOUNT',
-        quantity: segment.requestedQuantity,
-        accountQuantity: segment.accountQuantity ?? segment.requestedQuantity,
-      };
+      rows[segment.id] = { quantity: segment.requestedQuantity };
     }
     resetAction();
     setDecisionKind('APPROVE');
@@ -773,17 +769,19 @@ export function LeaveApplicationWorkspace({
       const row = allocationRows[segment.id];
       const quantity = row?.quantity.trim() ?? '';
       if (!row || !quantity) continue;
-      const line: Record<string, unknown> = {
-        segmentId: segment.id,
-        allocationKind: row.allocationKind,
-        quantity,
-      };
-      if (row.allocationKind === 'LEAVE_ACCOUNT' && row.accountQuantity.trim()) {
-        line.accountQuantity = row.accountQuantity.trim();
-      }
-      payload.push(line);
+      payload.push({ segmentId: segment.id, quantity });
     }
     return payload;
+  }
+
+  function allocationKindLabel(segment: LeaveCalculationSegment): string {
+    if (segment.allocationKinds.includes('LEAVE_ACCOUNT')) {
+      return 'Charges certified leave credits; any uncovered excess becomes leave without pay.';
+    }
+    if (segment.allocationKinds.includes('NON_CREDIT')) {
+      return 'Approved outside the leave-credit ledger; nothing is charged to an account.';
+    }
+    return 'Approved as leave without pay.';
   }
 
   async function review(
@@ -1293,25 +1291,10 @@ export function LeaveApplicationWorkspace({
                                 {humanize(segment.requestedUnit)}
                               </span>
                             </div>
-                            <div className="grid items-end gap-3 min-[621px]:grid-cols-3">
-                              <Field htmlFor={'leave-allocation-kind-' + segment.id} label="Source">
-                                <select
-                                  className={inputClass}
-                                  id={'leave-allocation-kind-' + segment.id}
-                                  onChange={(event) => {
-                                    const value = targetValue(event);
-                                    setAllocationRows((rows) => ({
-                                      ...rows,
-                                      [segment.id]: { ...row, allocationKind: value },
-                                    }));
-                                  }}
-                                  value={row.allocationKind}
-                                >
-                                  <option value="LEAVE_ACCOUNT">Leave account</option>
-                                  <option value="LEAVE_WITHOUT_PAY">Leave without pay</option>
-                                  <option value="NON_CREDIT">Non-credit</option>
-                                </select>
-                              </Field>
+                            <div className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_180px]">
+                              <p className="m-0 text-xs leading-[1.6] text-muted">
+                                {allocationKindLabel(segment)}
+                              </p>
                               <Field
                                 htmlFor={'leave-allocation-quantity-' + segment.id}
                                 label="Approved quantity"
@@ -1330,26 +1313,6 @@ export function LeaveApplicationWorkspace({
                                   value={row.quantity}
                                 />
                               </Field>
-                              {row.allocationKind === 'LEAVE_ACCOUNT' ? (
-                                <Field
-                                  htmlFor={'leave-allocation-account-' + segment.id}
-                                  label="Charged to account"
-                                >
-                                  <input
-                                    className={inputClass}
-                                    id={'leave-allocation-account-' + segment.id}
-                                    inputMode="decimal"
-                                    onChange={(event) => {
-                                      const value = targetValue(event);
-                                      setAllocationRows((rows) => ({
-                                        ...rows,
-                                        [segment.id]: { ...row, accountQuantity: value },
-                                      }));
-                                    }}
-                                    value={row.accountQuantity}
-                                  />
-                                </Field>
-                              ) : null}
                             </div>
                           </div>
                         );
@@ -1374,7 +1337,9 @@ export function LeaveApplicationWorkspace({
               <p className="m-0 text-xs leading-[1.6] text-muted">
                 A decision cannot add dates, increase quantity, change Leave Type, or rewrite the
                 submitted facts. Approving less than the certified request narrows the certification
-                commitment through a linked successor.
+                commitment through a linked successor. The bound Leave Policy Version decides the
+                source; only the quantity the certified account cannot cover becomes leave without
+                pay.
               </p>
             </DialogBody>
             <DialogFooter>

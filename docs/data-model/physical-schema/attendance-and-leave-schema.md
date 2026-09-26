@@ -1229,6 +1229,7 @@ CREATE TABLE leave_approval_allocation_lines (
     CHECK (allocation_kind IN (
       'LEAVE_ACCOUNT','LEAVE_WITHOUT_PAY','NON_CREDIT'
     )),
+  policy_version_id uuid NOT NULL,
   leave_account_id uuid,
   quantity numeric(12,4) NOT NULL CHECK (quantity > 0),
   unit_code text NOT NULL
@@ -1243,11 +1244,16 @@ CREATE TABLE leave_approval_allocation_lines (
   ),
   FOREIGN KEY (agency_id, leave_approval_allocation_id)
     REFERENCES leave_approval_allocations (agency_id, id),
+  FOREIGN KEY (agency_id, policy_version_id)
+    REFERENCES leave_policy_versions (agency_id, id),
   FOREIGN KEY (agency_id, leave_account_id)
     REFERENCES leave_accounts (agency_id, id),
   UNIQUE (leave_approval_allocation_id, sequence_no),
   UNIQUE (agency_id, id)
 );
+
+CREATE INDEX leave_approval_allocation_lines_policy_version_idx
+ON leave_approval_allocation_lines (agency_id, policy_version_id);
 
 CREATE TABLE leave_postings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1406,10 +1412,21 @@ eligibility and classification; Leave owns requirement satisfaction and domain
 error language.
 
 HR certification locks affected Leave Accounts, freezes the certification and
-lines, and creates their commitments in one transaction. Current certification
-authority is derived rather than stored as a mutable validity flag. A partial
-approval may atomically release a commitment and create only a smaller linked
-successor in the same account.
+lines, and creates their commitments in one transaction. Posted balance is read
+as of the recorded effective balance date and ledger knowledge cutoff, and
+other active commitments are read as of the same knowledge cutoff so a
+commitment raised earlier the same day still counts. Current certification
+authority is derived rather than stored as a mutable validity flag.
+
+Every approval allocation line binds the calculation-segment Leave Policy
+Version that authorized its kind and unit. A ledger-charging policy authorizes
+only `LEAVE_ACCOUNT` for the quantity the certified account can cover and
+`LEAVE_WITHOUT_PAY` for the uncovered excess; a paid non-ledger policy
+authorizes `NON_CREDIT`, and an unpaid policy authorizes `LEAVE_WITHOUT_PAY`. A
+partial approval may atomically release a commitment and create only a smaller
+linked successor in the same account. Charging a different account, or moving
+credit-covered quantity to unpaid leave, replaces a certified fact and requires
+a successor version and recertification.
 
 Leave Posting locks affected accounts in stable order, revalidates the exact
 version, assessment, certification, commitments, allocation, and Approval

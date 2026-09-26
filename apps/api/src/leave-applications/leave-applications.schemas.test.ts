@@ -148,7 +148,7 @@ it('requires a reason for a negative recommendation', () => {
   ).toBe(false);
 });
 
-it('requires a rejection reason and bounded allocation lines', () => {
+it('requires a rejection reason and bounded allocation quantities', () => {
   expect(leaveApplicationDecisionSchema.safeParse({ decision: 'APPROVE' }).success).toBe(true);
   expect(leaveApplicationDecisionSchema.safeParse({ decision: 'REJECT' }).success).toBe(false);
   expect(
@@ -160,29 +160,19 @@ it('requires a rejection reason and bounded allocation lines', () => {
   expect(
     leaveApplicationDecisionSchema.safeParse({
       decision: 'APPROVE',
-      allocations: [
-        {
-          segmentId: documentId,
-          allocationKind: 'LEAVE_ACCOUNT',
-          quantity: '2',
-          accountQuantity: '1.5',
-        },
-        { segmentId: documentId, allocationKind: 'LEAVE_WITHOUT_PAY' },
-      ],
+      allocations: [{ segmentId: documentId, quantity: '2' }, { segmentId: documentId }],
     }).success,
   ).toBe(true);
   expect(
     leaveApplicationDecisionSchema.safeParse({
       decision: 'APPROVE',
-      allocations: [{ segmentId: documentId, allocationKind: 'BORROWED' }],
+      allocations: [{ segmentId: documentId, allocationKind: 'LEAVE_ACCOUNT' }],
     }).success,
   ).toBe(false);
   expect(
     leaveApplicationDecisionSchema.safeParse({
       decision: 'APPROVE',
-      allocations: [
-        { segmentId: documentId, allocationKind: 'LEAVE_ACCOUNT', quantity: '0.00005' },
-      ],
+      allocations: [{ segmentId: documentId, quantity: '0.00005' }],
     }).success,
   ).toBe(false);
   expect(

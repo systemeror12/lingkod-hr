@@ -3892,6 +3892,7 @@ model LeavePolicyVersion {
   accountOpenings      LeaveAccountOpening[]  @relation("LeaveAccountOpeningPolicyVersion")
   ledgerAdjustments    LeaveLedgerAdjustment[] @relation("LeaveLedgerAdjustmentPolicyVersion")
   calculationSegments  LeaveCalculationSegment[] @relation("LeaveCalculationSegmentPolicyVersion")
+  approvalAllocationLines LeaveApprovalAllocationLine[] @relation("LeaveApprovalAllocationLinePolicyVersion")
   monetizationAllocations LeaveMonetizationAllocation[] @relation("LeaveMonetizationAllocationPolicyVersion")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLinePolicyVersion")
   createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
@@ -4727,15 +4728,18 @@ model LeaveApprovalAllocationLine {
   dateFrom                  DateTime @map("date_from") @db.Date
   dateTo                    DateTime @map("date_to") @db.Date
   allocationKind            String   @map("allocation_kind")
+  policyVersionId           String   @map("policy_version_id") @db.Uuid
   leaveAccountId            String?  @map("leave_account_id") @db.Uuid
   quantity                  Decimal  @map("quantity") @db.Decimal(12, 4)
   unitCode                  String   @map("unit_code")
 
   agency                 Agency                   @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   leaveApprovalAllocation LeaveApprovalAllocation @relation(fields: [agencyId, leaveApprovalAllocationId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion          LeavePolicyVersion       @relation("LeaveApprovalAllocationLinePolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
   leaveAccount            LeaveAccount?            @relation("LeaveApprovalAllocationLineAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([leaveApprovalAllocationId, sequenceNo])
   @@unique([agencyId, id])
+  @@index([agencyId, policyVersionId])
   @@map("leave_approval_allocation_lines")
 }

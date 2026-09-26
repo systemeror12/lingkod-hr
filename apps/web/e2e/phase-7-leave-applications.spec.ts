@@ -405,8 +405,12 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
 
   await deciderDetail.getByRole('button', { name: 'Approve' }).click();
   const decision = decider.page.getByRole('region', { name: 'Record the final decision' });
+  await decision.getByLabel('Approve the full requested quantity').uncheck();
+  await expect(decision).toContainText('Charges certified leave credits');
+  await decision.getByLabel('Approved quantity').fill('2');
   await decision.getByRole('button', { name: 'Approve application' }).click();
   await expect(deciderDetail).toContainText('The Leave Application was approved.');
   await expect(deciderDetail).toContainText('APPROVED');
   await expect(deciderDetail).toContainText('Approved allocation');
+  await expect(deciderDetail).toContainText('leave account 2 working day');
 });
