@@ -15,7 +15,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import { employeeInputClass, employeeLabelClass, formatEmployeeDate } from './employee-directory';
+import { formatEmployeeDate } from './employee-directory';
+import { FormError, inputClass, labelClass } from './ui/field';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 
 interface PayrollBankAccount {
   id: string;
@@ -136,6 +141,14 @@ function selectedEvidence(value: string, documents: EvidenceDocument[] | null) {
       }
     : {};
 }
+
+const accountTone: Record<string, StatusTone> = {
+  PENDING_VERIFICATION: 'warning',
+  ACTIVE: 'success',
+  INACTIVE: 'neutral',
+  REPLACED: 'neutral',
+  CORRECTED: 'neutral',
+};
 
 function title(value: string): string {
   return value
@@ -452,28 +465,13 @@ export function PayrollBankAccountsSection({
 
   return (
     <>
-      <section
+      <Panel
         ref={section}
         tabIndex={-1}
-        aria-labelledby="payroll-bank-accounts-heading"
-        className="border-t border-line px-6 py-6 min-[700px]:px-8"
-      >
-        <div className="flex flex-col gap-4 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
-          <div>
-            <p className="m-0 text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-              Payroll protected values
-            </p>
-            <h2
-              id="payroll-bank-accounts-heading"
-              className="mt-1 mb-0 text-lg font-[680] tracking-[-.02em] text-midnight"
-            >
-              Payroll bank accounts
-            </h2>
-            <p className="mt-1 mb-0 max-w-[620px] text-xs leading-5 text-muted">
-              Account numbers stay masked. Changes do not initiate payment or claim bank acceptance.
-            </p>
-          </div>
-          {canManage ? (
+        title="Payroll bank accounts"
+        flush
+        actions={
+          canManage ? (
             <Dialog open={createOpen} onOpenChange={closeCreate}>
               <DialogTrigger asChild>
                 <Button variant="primary">Add bank account</Button>
@@ -495,14 +493,7 @@ export function PayrollBankAccountsSection({
                     </DialogClose>
                   </DialogHeader>
                   <DialogBody className="grid gap-4">
-                    {dialogError ? (
-                      <p
-                        role="alert"
-                        className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                      >
-                        {dialogError}
-                      </p>
-                    ) : null}
+                    <FormError message={dialogError ?? ''} />
                     <AccountFields values={values} change={change} includeDate />
                     {canReadEvidence ? (
                       <EvidenceField
@@ -525,118 +516,112 @@ export function PayrollBankAccountsSection({
                 </form>
               </DialogContent>
             </Dialog>
+          ) : null
+        }
+      >
+        <div className="grid gap-3 px-4 pt-3">
+          <p className="m-0 text-small text-ink-muted">
+            Account numbers stay masked. Changes do not initiate payment or claim bank acceptance.
+          </p>
+          {message ? (
+            <p role="status" className="m-0 text-small text-success">
+              {message}
+            </p>
           ) : null}
+          <FormError message={error ?? ''} />
         </div>
-        {message ? (
-          <p role="status" className="mb-0 mt-4 text-xs text-[#27633b]">
-            {message}
-          </p>
-        ) : null}
-        {error ? (
-          <p
-            role="alert"
-            className="mb-0 mt-4 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-          >
-            {error}
-          </p>
-        ) : null}
         {loading ? (
-          <p role="status" className="mb-0 mt-4 text-sm text-muted">
-            Loading payroll bank accounts…
-          </p>
+          <StateSurface compact busy>
+            <p role="status" className="m-0">
+              Loading payroll bank accounts…
+            </p>
+          </StateSurface>
         ) : !canRead ? (
-          <p className="mb-0 mt-4 text-sm text-muted">
-            Payroll bank account read access is not available.
-          </p>
+          <StateSurface compact>
+            <p className="m-0">Payroll bank account read access is not available.</p>
+          </StateSurface>
         ) : accounts.length === 0 ? (
-          <p className="mb-0 mt-4 rounded-[3px] bg-canvas px-4 py-6 text-sm text-muted">
-            No payroll bank accounts are recorded for this Employee.
-          </p>
+          <StateSurface compact>
+            <p className="m-0">No payroll bank accounts are recorded for this Employee.</p>
+          </StateSurface>
         ) : (
-          <div className="mt-4 grid gap-4">
-            {accounts.map((account) => (
-              <article
-                key={account.id}
-                className="rounded-[4px] border border-line bg-canvas/35 p-4"
-              >
-                <div className="flex flex-col gap-4 min-[760px]:flex-row min-[760px]:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="m-0 text-sm font-[680] text-midnight">
-                        {account.bankCode} · {account.accountName}
-                      </h3>
-                      <span className="rounded-full bg-[#eef3fb] px-2.5 py-1 text-[10px] font-bold text-[#34557e]">
-                        {title(account.status)}
-                      </span>
+          <Table className="mt-3">
+            <thead>
+              <tr>
+                <Th>Bank</Th>
+                <Th>Account number</Th>
+                <Th>Status</Th>
+                <Th>Effective period</Th>
+                <Th>Verification</Th>
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounts.map((account) => (
+                <Tr key={account.id} selected={account.id === historyId}>
+                  <Td>
+                    <span className="font-[600] text-ink">{account.bankCode}</span>
+                    <span className="block text-caption text-ink-muted">{account.accountName}</span>
+                  </Td>
+                  <Td className="font-mono">{account.maskedAccountNumber}</Td>
+                  <Td>
+                    <StatusTag tone={accountTone[account.status] ?? 'neutral'}>
+                      {title(account.status)}
+                    </StatusTag>
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    {formatEmployeeDate(account.effectiveFrom)} to{' '}
+                    {account.effectiveTo ? formatEmployeeDate(account.effectiveTo) : 'Open'}
+                  </Td>
+                  <Td>{title(account.verificationState)}</Td>
+                  <Td>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {canManage && account.status === 'PENDING_VERIFICATION' ? (
+                        <ActionButton
+                          label="Activate"
+                          onClick={(event) => openAction('activate', account, event)}
+                        />
+                      ) : null}
+                      {canManage && account.status === 'ACTIVE' ? (
+                        <ActionButton
+                          label="Replace"
+                          onClick={(event) => openAction('replace', account, event)}
+                        />
+                      ) : null}
+                      {canManage && account.status === 'ACTIVE' ? (
+                        <ActionButton
+                          label="Inactivate"
+                          onClick={(event) => openAction('inactivate', account, event)}
+                        />
+                      ) : null}
+                      {canManage ? (
+                        <ActionButton
+                          label="Correct"
+                          onClick={(event) => openAction('correct', account, event)}
+                        />
+                      ) : null}
+                      {canReveal ? (
+                        <ActionButton
+                          label="Reveal account number"
+                          onClick={(event) => openAction('reveal', account, event)}
+                        />
+                      ) : null}
+                      {canReadHistory ? (
+                        <ActionButton
+                          label="View history"
+                          onClick={(event) => openAction('history', account, event)}
+                        />
+                      ) : null}
                     </div>
-                    <dl className="mt-3 grid gap-x-6 gap-y-3 min-[560px]:grid-cols-3">
-                      <div>
-                        <dt className="text-[10px] font-bold text-muted uppercase">
-                          Account number
-                        </dt>
-                        <dd className="mt-1 ml-0 font-mono text-sm">
-                          {account.maskedAccountNumber}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold text-muted uppercase">
-                          Effective period
-                        </dt>
-                        <dd className="mt-1 ml-0 text-sm">
-                          {formatEmployeeDate(account.effectiveFrom)} to{' '}
-                          {account.effectiveTo ? formatEmployeeDate(account.effectiveTo) : 'Open'}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold text-muted uppercase">Verification</dt>
-                        <dd className="mt-1 ml-0 text-sm">{title(account.verificationState)}</dd>
-                      </div>
-                    </dl>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {canManage && account.status === 'PENDING_VERIFICATION' ? (
-                      <ActionButton
-                        label="Activate"
-                        onClick={(event) => openAction('activate', account, event)}
-                      />
-                    ) : null}
-                    {canManage && account.status === 'ACTIVE' ? (
-                      <ActionButton
-                        label="Replace"
-                        onClick={(event) => openAction('replace', account, event)}
-                      />
-                    ) : null}
-                    {canManage && account.status === 'ACTIVE' ? (
-                      <ActionButton
-                        label="Inactivate"
-                        onClick={(event) => openAction('inactivate', account, event)}
-                      />
-                    ) : null}
-                    {canManage ? (
-                      <ActionButton
-                        label="Correct"
-                        onClick={(event) => openAction('correct', account, event)}
-                      />
-                    ) : null}
-                    {canReveal ? (
-                      <ActionButton
-                        label="Reveal account number"
-                        onClick={(event) => openAction('reveal', account, event)}
-                      />
-                    ) : null}
-                    {canReadHistory ? (
-                      <ActionButton
-                        label="View history"
-                        onClick={(event) => openAction('history', account, event)}
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
         )}
-      </section>
+      </Panel>
 
       <Dialog
         presentation={action?.kind === 'history' ? 'form' : 'dialog'}
@@ -658,6 +643,7 @@ export function PayrollBankAccountsSection({
             });
           }}
           size="compact"
+          className={action?.kind === 'history' ? 'mt-5' : undefined}
         >
           <DialogHeader>
             <div className="grid gap-1.5">
@@ -678,48 +664,55 @@ export function PayrollBankAccountsSection({
           </DialogHeader>
           {action?.kind === 'history' ? (
             <>
-              <DialogBody className="grid gap-3">
+              <DialogBody className="p-0">
                 {dialogError ? (
-                  <p role="alert" className="m-0 text-sm text-[#8f2d2d]">
-                    {dialogError}
-                  </p>
+                  <div className="p-5">
+                    <FormError message={dialogError} />
+                  </div>
                 ) : null}
                 {busy ? (
-                  <p role="status" className="m-0 text-sm text-muted">
+                  <p role="status" className="m-0 p-5 text-small text-ink-muted">
                     Loading account history…
                   </p>
                 ) : history.length === 0 ? (
-                  <p className="m-0 text-sm text-muted">No history events were found.</p>
+                  <p className="m-0 p-5 text-small text-ink-muted">No history events were found.</p>
                 ) : (
-                  history.map((entry) => (
-                    <article
-                      key={entry.id}
-                      className="rounded-[4px] border border-line bg-canvas/35 p-4"
-                    >
-                      <strong className="text-sm text-midnight">{title(entry.action)}</strong>
-                      <p className="mt-2 mb-0 font-mono text-sm">
-                        {entry.maskedAccountNumber ?? 'Masked number unavailable'}
-                      </p>
-                      <p className="mt-2 mb-0 text-xs text-muted">
-                        {entry.actorDisplayName ?? 'Unknown actor'} ·{' '}
-                        {entry.actedAt ? formatEmployeeDate(entry.actedAt) : 'Unknown date'}
-                      </p>
-                      {entry.reason ? (
-                        <p className="mt-2 mb-0 text-xs text-muted">{entry.reason}</p>
-                      ) : null}
-                      {entry.effectiveFrom ? (
-                        <p className="mt-2 mb-0 text-xs text-muted">
-                          Effective {formatEmployeeDate(entry.effectiveFrom)} to{' '}
-                          {entry.effectiveTo ? formatEmployeeDate(entry.effectiveTo) : 'Open'}
-                        </p>
-                      ) : null}
-                      {entry.evidenceDocumentVersionId ? (
-                        <p className="mt-2 mb-0 break-all text-xs text-muted">
-                          Evidence version: {entry.evidenceDocumentVersionId}
-                        </p>
-                      ) : null}
-                    </article>
-                  ))
+                  <Table>
+                    <thead>
+                      <tr>
+                        <Th>Event</Th>
+                        <Th>Account number</Th>
+                        <Th>Effective period</Th>
+                        <Th>Actor</Th>
+                        <Th kind="date">Recorded</Th>
+                        <Th>Reason</Th>
+                        <Th>Evidence version</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((entry) => (
+                        <Tr key={entry.id}>
+                          <Td className="font-[600] text-ink">{title(entry.action)}</Td>
+                          <Td className="font-mono">
+                            {entry.maskedAccountNumber ?? 'Masked number unavailable'}
+                          </Td>
+                          <Td className="whitespace-nowrap">
+                            {entry.effectiveFrom
+                              ? `${formatEmployeeDate(entry.effectiveFrom)} to ${
+                                  entry.effectiveTo ? formatEmployeeDate(entry.effectiveTo) : 'Open'
+                                }`
+                              : null}
+                          </Td>
+                          <Td>{entry.actorDisplayName ?? 'Unknown actor'}</Td>
+                          <Td kind="date">
+                            {entry.actedAt ? formatEmployeeDate(entry.actedAt) : 'Unknown date'}
+                          </Td>
+                          <Td>{entry.reason}</Td>
+                          <Td className="break-all">{entry.evidenceDocumentVersionId}</Td>
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </Table>
                 )}
               </DialogBody>
               <DialogFooter>
@@ -733,22 +726,13 @@ export function PayrollBankAccountsSection({
           ) : (
             <form className="contents" onSubmit={submitAction}>
               <DialogBody className="grid gap-4">
-                {dialogError ? (
-                  <p
-                    role="alert"
-                    className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                  >
-                    {dialogError}
-                  </p>
-                ) : null}
+                <FormError message={dialogError ?? ''} />
                 {revealed ? (
-                  <div className="rounded-[3px] border border-[#b8cde5] bg-[#f3f7fc] p-4">
-                    <p className="m-0 text-[10px] font-bold text-muted uppercase">
-                      Full account number
-                    </p>
+                  <div className="rounded-control border border-border bg-canvas p-4">
+                    <p className="m-0 text-caption text-ink-muted">Full account number</p>
                     <output
                       aria-label="Revealed payroll bank account number"
-                      className="mt-2 block break-all font-mono text-base"
+                      className="mt-2 block break-all font-mono text-body text-ink"
                     >
                       {revealed}
                     </output>
@@ -763,26 +747,26 @@ export function PayrollBankAccountsSection({
                       />
                     ) : null}
                     {action?.kind === 'activate' ? (
-                      <label className={employeeLabelClass}>
+                      <label className={labelClass}>
                         Verified date
                         <input
                           autoFocus
                           required
                           type="date"
-                          className={employeeInputClass}
+                          className={inputClass}
                           value={values.verifiedAt}
                           onChange={change('verifiedAt')}
                         />
                       </label>
                     ) : null}
                     {action?.kind === 'inactivate' ? (
-                      <label className={employeeLabelClass}>
+                      <label className={labelClass}>
                         Inactivation date
                         <input
                           autoFocus
                           required
                           type="date"
-                          className={employeeInputClass}
+                          className={inputClass}
                           value={values.effectiveTo}
                           onChange={change('effectiveTo')}
                         />
@@ -797,12 +781,12 @@ export function PayrollBankAccountsSection({
                         onChange={change('evidence')}
                       />
                     ) : null}
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       {action?.kind === 'reveal' ? 'Reveal reason' : 'Reason'}
                       <textarea
                         autoFocus={action?.kind === 'reveal'}
                         required
-                        className={`${employeeInputClass} min-h-24 py-3`}
+                        className={`${inputClass} min-h-24 py-3`}
                         value={values.reason}
                         onChange={change('reason')}
                       />
@@ -840,9 +824,9 @@ function EvidenceField({
   onChange: (event: { currentTarget: unknown }) => void;
 }) {
   return (
-    <label className={employeeLabelClass}>
+    <label className={labelClass}>
       Evidence (optional)
-      <select className={employeeInputClass} value={value} onChange={onChange}>
+      <select className={inputClass} value={value} onChange={onChange}>
         <option value="">No evidence</option>
         {documents?.map((document) => (
           <option
@@ -853,7 +837,9 @@ function EvidenceField({
           </option>
         ))}
       </select>
-      {documents === null ? <span className="text-xs text-muted">Loading evidence…</span> : null}
+      {documents === null ? (
+        <span className="text-caption font-normal text-ink-muted">Loading evidence…</span>
+      ) : null}
     </label>
   );
 }
@@ -883,45 +869,45 @@ function AccountFields({
 }) {
   return (
     <>
-      <label className={employeeLabelClass}>
+      <label className={labelClass}>
         Bank code
         <input
           autoFocus
           required
           maxLength={40}
-          className={employeeInputClass}
+          className={inputClass}
           value={values.bankCode}
           onChange={change('bankCode')}
         />
       </label>
-      <label className={employeeLabelClass}>
+      <label className={labelClass}>
         Account name
         <input
           required
           maxLength={200}
-          className={employeeInputClass}
+          className={inputClass}
           value={values.accountName}
           onChange={change('accountName')}
         />
       </label>
-      <label className={employeeLabelClass}>
+      <label className={labelClass}>
         Account number
         <input
           required
           autoComplete="off"
           maxLength={120}
-          className={employeeInputClass}
+          className={inputClass}
           value={values.accountNumber}
           onChange={change('accountNumber')}
         />
       </label>
       {includeDate ? (
-        <label className={employeeLabelClass}>
+        <label className={labelClass}>
           Effective from
           <input
             required
             type="date"
-            className={employeeInputClass}
+            className={inputClass}
             value={values.effectiveFrom}
             onChange={change('effectiveFrom')}
           />

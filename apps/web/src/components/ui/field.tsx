@@ -3,7 +3,7 @@
 import { cloneElement, isValidElement, useId, type ReactNode } from 'react';
 
 export const inputClass =
-  'min-h-9 w-full rounded-control border border-border bg-surface px-2.5 text-body text-ink outline-none focus:border-primary focus:shadow-[inset_0_0_0_1px_var(--color-primary)] aria-invalid:border-danger';
+  'min-h-9 w-full rounded-control border border-border bg-surface px-2.5 text-body font-normal text-ink outline-none focus:border-primary focus:shadow-[inset_0_0_0_1px_var(--color-primary)] aria-invalid:border-danger';
 export const labelClass = 'grid gap-1 text-caption font-[650] text-ink';
 
 /** Wrap one control in its label and associate any server validation error. */

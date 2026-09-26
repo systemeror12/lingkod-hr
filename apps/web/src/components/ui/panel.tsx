@@ -1,9 +1,9 @@
-import { useId, type ReactNode } from 'react';
+import { useId, type ComponentPropsWithRef, type ReactNode } from 'react';
 import { cn } from '../../lib/class-names';
 
 /**
  * Titled content block. The body is padded; set `flush` when the body is a `Table` so rows
- * reach the panel edges.
+ * reach the panel edges. Other props, such as `ref` and `tabIndex`, go to the `section`.
  */
 export function Panel({
   title,
@@ -11,17 +11,18 @@ export function Panel({
   flush = false,
   className,
   children,
-}: {
+  ...props
+}: Omit<ComponentPropsWithRef<'section'>, 'title'> & {
   title: string;
   actions?: ReactNode;
   flush?: boolean;
-  className?: string;
   children: ReactNode;
 }) {
   const titleId = useId();
   return (
     <section
       aria-labelledby={titleId}
+      {...props}
       className={cn('min-w-0 rounded-panel border border-border bg-surface', className)}
     >
       <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 py-2">

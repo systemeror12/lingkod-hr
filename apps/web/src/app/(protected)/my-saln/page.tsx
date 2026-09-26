@@ -30,17 +30,15 @@ export default async function MySalnPage() {
           description="Review your released filing year, type, status, and submission timestamp."
         />
       </header>
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        <SalnComplianceSection
-          agencyId={session.agencyId}
-          endpoint={`/api/v1/agencies/${session.agencyId}/employees/me/saln-compliance`}
-          canRead
-          canManage={false}
-          canCorrect={false}
-          canReadHistory={false}
-          canReadEvidence={false}
-        />
-      </section>
+      <SalnComplianceSection
+        agencyId={session.agencyId}
+        endpoint={`/api/v1/agencies/${session.agencyId}/employees/me/saln-compliance`}
+        canRead
+        canManage={false}
+        canCorrect={false}
+        canReadHistory={false}
+        canReadEvidence={false}
+      />
     </>
   );
 }

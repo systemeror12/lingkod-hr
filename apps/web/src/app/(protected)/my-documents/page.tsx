@@ -67,17 +67,15 @@ export default async function MyDocumentsPage() {
           description="Upload your own evidence and review only Personnel Documents released to you."
         />
       </header>
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        <EmployeeDocumentsSection
-          agencyId={session.agencyId}
-          employeeId={(value as { id: string }).id}
-          canRead={canReadDocuments}
-          canManage={false}
-          canUploadOwn={canUploadOwnDocuments}
-          canBrowseSource={false}
-          canRemoveOwn={canUploadOwnDocuments}
-        />
-      </section>
+      <EmployeeDocumentsSection
+        agencyId={session.agencyId}
+        employeeId={(value as { id: string }).id}
+        canRead={canReadDocuments}
+        canManage={false}
+        canUploadOwn={canUploadOwnDocuments}
+        canBrowseSource={false}
+        canRemoveOwn={canUploadOwnDocuments}
+      />
     </>
   );
 }

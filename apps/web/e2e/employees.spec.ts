@@ -119,6 +119,7 @@ test('creates an Employee and links an Agency Membership', async ({ page }) => {
     await route.continue();
   });
 
+  await page.getByRole('tab', { name: 'Documents' }).click();
   const linkTrigger = page.getByRole('button', { name: 'Link personnel document' });
   await linkTrigger.click();
   const linkDialog = page.getByRole('dialog', { name: 'Link personnel document' });

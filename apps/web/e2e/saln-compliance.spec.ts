@@ -18,6 +18,7 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await page.getByRole('button', { name: 'Create employee' }).click();
   await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
 
+  await page.getByRole('tab', { name: 'SALN compliance' }).click();
   await page.getByRole('button', { name: 'Record filing' }).click();
   const create = page.getByRole('region', { name: 'Record SALN filing metadata' });
   await expect(create).toHaveAccessibleDescription(

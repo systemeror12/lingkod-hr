@@ -15,7 +15,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import { employeeInputClass, employeeLabelClass, formatEmployeeDate } from './employee-directory';
+import { formatEmployeeDate } from './employee-directory';
+import { cn } from '../lib/class-names';
+import { FormError, inputClass, labelClass } from './ui/field';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 
 type IdentifierType = 'UMID' | 'PAGIBIG' | 'PHILHEALTH' | 'PHILSYS_PCN' | 'TIN';
 
@@ -155,10 +161,10 @@ function formatStatus(value: string): string {
     .replace(/(^|\s)\S/g, (letter) => letter.toUpperCase());
 }
 
-function statusClass(value: string): string {
-  if (value === 'INVALID') return 'bg-[#fdeeee] text-[#8f2d2d]';
-  if (value === 'REPLACED') return 'bg-[#eef3fb] text-[#34557e]';
-  return 'bg-[#e7f4eb] text-[#27633b]';
+function statusTone(value: string): StatusTone {
+  if (value === 'INVALID') return 'danger';
+  if (value === 'REPLACED') return 'neutral';
+  return 'success';
 }
 
 function displayDate(value: string | null): string {
@@ -570,28 +576,13 @@ export function GovernmentIdentifiersSection({
 
   return (
     <>
-      <section
+      <Panel
         ref={sectionRef}
         tabIndex={-1}
-        aria-labelledby="government-identifiers-heading"
-        className="border-t border-line px-6 py-6 min-[700px]:px-8"
-      >
-        <div className="flex flex-col gap-4 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
-          <div>
-            <p className="m-0 text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-              Protected values
-            </p>
-            <h2
-              id="government-identifiers-heading"
-              className="mt-1 mb-0 text-lg font-[680] tracking-[-.02em] text-midnight"
-            >
-              Government identifiers
-            </h2>
-            <p className="mt-1 mb-0 max-w-[620px] text-xs leading-5 text-muted">
-              Routine reads stay masked. Full-value reveal is a separate audited step with a reason.
-            </p>
-          </div>
-          {canManage ? (
+        title="Government identifiers"
+        flush
+        actions={
+          canManage ? (
             <Dialog open={createOpen} onOpenChange={closeCreate}>
               <DialogTrigger asChild>
                 <Button size="default" variant="primary">
@@ -624,18 +615,11 @@ export function GovernmentIdentifiersSection({
                     </DialogClose>
                   </DialogHeader>
                   <DialogBody className="grid gap-5">
-                    {dialogError ? (
-                      <p
-                        role="alert"
-                        className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                      >
-                        {dialogError}
-                      </p>
-                    ) : null}
-                    <label className={employeeLabelClass}>
+                    <FormError message={dialogError ?? ''} />
+                    <label className={labelClass}>
                       Identifier type
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="identifierType"
                         value={createValues.identifierType}
                         onChange={(event) => {
@@ -653,11 +637,11 @@ export function GovernmentIdentifiersSection({
                         <option value="TIN">TIN</option>
                       </select>
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Identifier value
                       <input
                         autoFocus
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="value"
                         value={createValues.value}
                         onChange={(event) => {
@@ -670,13 +654,13 @@ export function GovernmentIdentifiersSection({
                         required
                       />
                       {fieldError('value') ? (
-                        <span className="text-xs text-[#8f2d2d]">{fieldError('value')}</span>
+                        <span className="text-caption text-danger">{fieldError('value')}</span>
                       ) : null}
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Verified date
                       <input
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="verifiedAt"
                         type="date"
                         value={createValues.verifiedAt}
@@ -689,10 +673,10 @@ export function GovernmentIdentifiersSection({
                         }}
                       />
                       {fieldError('verifiedAt') ? (
-                        <span className="text-xs text-[#8f2d2d]">{fieldError('verifiedAt')}</span>
+                        <span className="text-caption text-danger">{fieldError('verifiedAt')}</span>
                       ) : null}
                     </label>
-                    <p className="m-0 border-l-2 border-cobalt bg-[#f3f7fc] px-3 py-2.5 text-xs leading-[1.55] text-muted">
+                    <p className="m-0 border-l-2 border-info bg-canvas px-3 py-2.5 text-small text-ink-muted">
                       If the current value changes, replace the identifier instead of overwriting it
                       so retained history stays intact.
                     </p>
@@ -710,172 +694,151 @@ export function GovernmentIdentifiersSection({
                 </form>
               </DialogContent>
             </Dialog>
+          ) : null
+        }
+      >
+        <div className="grid gap-3 px-4 pt-3">
+          <p className="m-0 text-small text-ink-muted">
+            Routine reads stay masked. Full-value reveal is a separate audited step with a reason.
+          </p>
+          {message ? (
+            <p
+              role="status"
+              className={cn(
+                'm-0 text-small',
+                messageTone === 'ok' ? 'text-success' : 'text-danger',
+              )}
+            >
+              {message}
+            </p>
           ) : null}
+          <FormError message={error ?? ''} />
         </div>
-        {message ? (
-          <p
-            role="status"
-            className={`mb-0 mt-4 text-xs ${messageTone === 'ok' ? 'text-[#27633b]' : 'text-[#8f2d2d]'}`}
-          >
-            {message}
-          </p>
-        ) : null}
-        {error ? (
-          <p
-            role="alert"
-            className="mb-0 mt-4 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-          >
-            {error}
-          </p>
-        ) : null}
         {loading ? (
-          <p
-            role="status"
-            className="mb-0 mt-4 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted"
-          >
-            Loading government identifiers…
-          </p>
+          <StateSurface compact busy>
+            <p role="status" className="m-0">
+              Loading government identifiers…
+            </p>
+          </StateSurface>
         ) : !canRead ? (
-          <p className="mb-0 mt-4 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted">
-            Government identifier read access is not available in this Agency Context.
-          </p>
+          <StateSurface compact>
+            <p className="m-0">
+              Government identifier read access is not available in this Agency Context.
+            </p>
+          </StateSurface>
         ) : identifiers.length === 0 ? (
-          <p className="mb-0 mt-4 rounded-[3px] bg-canvas px-4 py-6 text-sm text-muted">
-            No government identifiers are recorded for this Employee.
-          </p>
+          <StateSurface compact>
+            <p className="m-0">No government identifiers are recorded for this Employee.</p>
+          </StateSurface>
         ) : (
-          <div className="mt-4 grid gap-4">
-            {identifiers.map((identifier) => (
-              <article
-                key={identifier.id}
-                className="rounded-[4px] border border-line bg-canvas/35 px-4 py-4"
-              >
-                <div className="flex flex-col gap-4 min-[760px]:flex-row min-[760px]:items-start min-[760px]:justify-between">
-                  <div className="grid gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="m-0 text-sm font-[680] text-midnight">
-                        {formatIdentifierType(identifier.identifierType)}
-                      </h3>
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(identifier.status)}`}
-                      >
-                        {formatStatus(identifier.status)}
-                      </span>
+          <Table className="mt-3">
+            <thead>
+              <tr>
+                <Th>Type</Th>
+                <Th>Value</Th>
+                <Th>Status</Th>
+                <Th kind="date">Verified</Th>
+                <Th kind="date">Recorded</Th>
+                <Th kind="date">Last updated</Th>
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </tr>
+            </thead>
+            <tbody>
+              {identifiers.map((identifier) => (
+                <Tr key={identifier.id} selected={identifier.id === historyId}>
+                  <Td className="font-[600] text-ink">
+                    {formatIdentifierType(identifier.identifierType)}
+                  </Td>
+                  <Td className="font-mono">{identifier.maskedValue}</Td>
+                  <Td>
+                    <StatusTag tone={statusTone(identifier.status)}>
+                      {formatStatus(identifier.status)}
+                    </StatusTag>
+                  </Td>
+                  <Td kind="date">{displayDate(identifier.verifiedAt)}</Td>
+                  <Td kind="date">{displayDate(identifier.createdAt)}</Td>
+                  <Td kind="date">{displayDate(identifier.updatedAt)}</Td>
+                  <Td>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {canReveal ? (
+                        <Button
+                          size="default"
+                          type="button"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={(event) => {
+                            rememberOpener(revealOpener, event);
+                            resetDialogState();
+                            setRevealReason('');
+                            setRevealedValue(null);
+                            setRevealTarget(identifier);
+                          }}
+                        >
+                          Reveal value
+                        </Button>
+                      ) : null}
+                      {canManage && identifier.status === 'ACTIVE' ? (
+                        <Button
+                          size="default"
+                          type="button"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={(event) => {
+                            rememberOpener(replaceOpener, event);
+                            resetDialogState();
+                            setReplaceValues({
+                              value: '',
+                              verifiedAt: normalizeDate(identifier.verifiedAt),
+                              reason: '',
+                            });
+                            setReplaceTarget(identifier);
+                          }}
+                        >
+                          Replace
+                        </Button>
+                      ) : null}
+                      {canManage && identifier.status === 'ACTIVE' ? (
+                        <Button
+                          size="default"
+                          type="button"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={(event) => {
+                            rememberOpener(invalidateOpener, event);
+                            resetDialogState();
+                            setInvalidateReason('');
+                            setInvalidateTarget(identifier);
+                          }}
+                        >
+                          Invalidate
+                        </Button>
+                      ) : null}
+                      {canReadHistory ? (
+                        <Button
+                          size="default"
+                          type="button"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={(event) => {
+                            historyFocusId.current = identifier.id;
+                            rememberOpener(historyOpener, event);
+                            navigation.navigate({ identifierHistory: identifier.id });
+                          }}
+                          data-history-opener={identifier.id}
+                        >
+                          View history
+                        </Button>
+                      ) : null}
                     </div>
-                    <dl className="grid gap-x-6 gap-y-3 min-[560px]:grid-cols-2">
-                      <div>
-                        <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                          Value
-                        </dt>
-                        <dd className="mt-1 ml-0">
-                          <span className="font-mono text-sm text-ink">
-                            {identifier.maskedValue}
-                          </span>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                          Verified
-                        </dt>
-                        <dd className="mt-1 ml-0 text-sm text-ink">
-                          {displayDate(identifier.verifiedAt)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                          Recorded
-                        </dt>
-                        <dd className="mt-1 ml-0 text-sm text-ink">
-                          {displayDate(identifier.createdAt)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                          Last updated
-                        </dt>
-                        <dd className="mt-1 ml-0 text-sm text-ink">
-                          {displayDate(identifier.updatedAt)}
-                        </dd>
-                      </div>
-                    </dl>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {canReveal ? (
-                      <Button
-                        size="default"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={(event) => {
-                          rememberOpener(revealOpener, event);
-                          resetDialogState();
-                          setRevealReason('');
-                          setRevealedValue(null);
-                          setRevealTarget(identifier);
-                        }}
-                      >
-                        Reveal value
-                      </Button>
-                    ) : null}
-                    {canManage && identifier.status === 'ACTIVE' ? (
-                      <Button
-                        size="default"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={(event) => {
-                          rememberOpener(replaceOpener, event);
-                          resetDialogState();
-                          setReplaceValues({
-                            value: '',
-                            verifiedAt: normalizeDate(identifier.verifiedAt),
-                            reason: '',
-                          });
-                          setReplaceTarget(identifier);
-                        }}
-                      >
-                        Replace
-                      </Button>
-                    ) : null}
-                    {canManage && identifier.status === 'ACTIVE' ? (
-                      <Button
-                        size="default"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={(event) => {
-                          rememberOpener(invalidateOpener, event);
-                          resetDialogState();
-                          setInvalidateReason('');
-                          setInvalidateTarget(identifier);
-                        }}
-                      >
-                        Invalidate
-                      </Button>
-                    ) : null}
-                    {canReadHistory ? (
-                      <Button
-                        size="default"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={(event) => {
-                          historyFocusId.current = identifier.id;
-                          rememberOpener(historyOpener, event);
-                          navigation.navigate({ identifierHistory: identifier.id });
-                        }}
-                        data-history-opener={identifier.id}
-                      >
-                        View history
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              </article>
-            ))}
-          </div>
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
         )}
-      </section>
+      </Panel>
 
       <Dialog open={Boolean(revealTarget)} onOpenChange={closeReveal}>
         <DialogContent
@@ -907,44 +870,35 @@ export function GovernmentIdentifiersSection({
               </DialogClose>
             </DialogHeader>
             <DialogBody className="grid gap-5">
-              {dialogError ? (
-                <p
-                  role="alert"
-                  className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                >
-                  {dialogError}
-                </p>
-              ) : null}
+              <FormError message={dialogError ?? ''} />
               {revealedValue ? (
-                <div className="grid gap-2 rounded-[3px] border border-[#b8cde5] bg-[#f3f7fc] px-4 py-4">
-                  <p className="m-0 text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                    Full value
-                  </p>
+                <div className="grid gap-2 rounded-control border border-border bg-canvas p-4">
+                  <p className="m-0 text-caption text-ink-muted">Full value</p>
                   <output
                     aria-label="Revealed government identifier value"
-                    className="break-all font-mono text-base text-midnight"
+                    className="break-all font-mono text-body text-ink"
                   >
                     {revealedValue}
                   </output>
-                  <p className="m-0 text-xs leading-5 text-muted">
+                  <p className="m-0 text-small text-ink-muted">
                     This value is shown only in this audited reveal dialog. Close the dialog when
                     you are finished.
                   </p>
                 </div>
               ) : (
                 <>
-                  <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted">
+                  <p className="m-0 text-small text-ink-muted">
                     {revealTarget
                       ? formatIdentifierType(revealTarget.identifierType)
                       : 'Identifier'}{' '}
                     is masked as {revealTarget?.maskedValue ?? 'Unavailable'} until reveal
                     completes.
                   </p>
-                  <label className={employeeLabelClass}>
+                  <label className={labelClass}>
                     Reveal reason
                     <textarea
                       autoFocus
-                      className={`${employeeInputClass} min-h-28 py-3`}
+                      className={`${inputClass} min-h-28 py-3`}
                       name="reason"
                       value={revealReason}
                       onChange={(event) => setRevealReason(currentValue(event))}
@@ -1008,19 +962,12 @@ export function GovernmentIdentifiersSection({
               </DialogClose>
             </DialogHeader>
             <DialogBody className="grid gap-5">
-              {dialogError ? (
-                <p
-                  role="alert"
-                  className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                >
-                  {dialogError}
-                </p>
-              ) : null}
-              <label className={employeeLabelClass}>
+              <FormError message={dialogError ?? ''} />
+              <label className={labelClass}>
                 New identifier value
                 <input
                   autoFocus
-                  className={employeeInputClass}
+                  className={inputClass}
                   name="value"
                   value={replaceValues.value}
                   onChange={(event) => {
@@ -1033,13 +980,13 @@ export function GovernmentIdentifiersSection({
                   required
                 />
                 {fieldError('value') ? (
-                  <span className="text-xs text-[#8f2d2d]">{fieldError('value')}</span>
+                  <span className="text-caption text-danger">{fieldError('value')}</span>
                 ) : null}
               </label>
-              <label className={employeeLabelClass}>
+              <label className={labelClass}>
                 Verified date
                 <input
-                  className={employeeInputClass}
+                  className={inputClass}
                   name="verifiedAt"
                   type="date"
                   value={replaceValues.verifiedAt}
@@ -1052,13 +999,13 @@ export function GovernmentIdentifiersSection({
                   }}
                 />
                 {fieldError('verifiedAt') ? (
-                  <span className="text-xs text-[#8f2d2d]">{fieldError('verifiedAt')}</span>
+                  <span className="text-caption text-danger">{fieldError('verifiedAt')}</span>
                 ) : null}
               </label>
-              <label className={employeeLabelClass}>
+              <label className={labelClass}>
                 Replacement reason
                 <textarea
-                  className={`${employeeInputClass} min-h-28 py-3`}
+                  className={`${inputClass} min-h-28 py-3`}
                   name="reason"
                   value={replaceValues.reason}
                   onChange={(event) => {
@@ -1071,7 +1018,7 @@ export function GovernmentIdentifiersSection({
                   required
                 />
                 {fieldError('reason') ? (
-                  <span className="text-xs text-[#8f2d2d]">{fieldError('reason')}</span>
+                  <span className="text-caption text-danger">{fieldError('reason')}</span>
                 ) : null}
               </label>
             </DialogBody>
@@ -1119,32 +1066,25 @@ export function GovernmentIdentifiersSection({
               </DialogClose>
             </DialogHeader>
             <DialogBody className="grid gap-5">
-              {dialogError ? (
-                <p
-                  role="alert"
-                  className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                >
-                  {dialogError}
-                </p>
-              ) : null}
-              <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted">
+              <FormError message={dialogError ?? ''} />
+              <p className="m-0 text-small text-ink-muted">
                 {invalidateTarget
                   ? formatIdentifierType(invalidateTarget.identifierType)
                   : 'Identifier'}{' '}
                 is currently shown as {invalidateTarget?.maskedValue ?? 'Unavailable'}.
               </p>
-              <label className={employeeLabelClass}>
+              <label className={labelClass}>
                 Invalidation reason
                 <textarea
                   autoFocus
-                  className={`${employeeInputClass} min-h-28 py-3`}
+                  className={`${inputClass} min-h-28 py-3`}
                   name="reason"
                   value={invalidateReason}
                   onChange={(event) => setInvalidateReason(currentValue(event))}
                   required
                 />
                 {fieldError('reason') ? (
-                  <span className="text-xs text-[#8f2d2d]">{fieldError('reason')}</span>
+                  <span className="text-caption text-danger">{fieldError('reason')}</span>
                 ) : null}
               </label>
             </DialogBody>
@@ -1172,7 +1112,7 @@ export function GovernmentIdentifiersSection({
           onCloseAutoFocus={(event) => {
             event.preventDefault();
           }}
-          size="compact"
+          className="mt-5"
         >
           <DialogHeader>
             <div className="grid gap-1.5">
@@ -1194,72 +1134,48 @@ export function GovernmentIdentifiersSection({
               </Button>
             </DialogClose>
           </DialogHeader>
-          <DialogBody className="grid gap-3">
+          <DialogBody className="p-0">
             {historyLoading ? (
-              <p className="m-0 text-sm text-muted" role="status">
+              <p className="m-0 p-5 text-small text-ink-muted" role="status">
                 Loading identifier history…
               </p>
             ) : historyError ? (
-              <p
-                role="alert"
-                className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-              >
-                {historyError}
-              </p>
+              <div className="p-5">
+                <FormError message={historyError} />
+              </div>
             ) : historyEntries.length === 0 ? (
-              <p className="m-0 text-sm text-muted">No history events were found.</p>
+              <p className="m-0 p-5 text-small text-ink-muted">No history events were found.</p>
             ) : (
-              historyEntries.map((entry) => (
-                <article
-                  key={entry.id}
-                  className="rounded-[4px] border border-line bg-canvas/35 p-4"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <strong className="text-sm text-midnight">
-                      {historyActionLabel(entry.action)}
-                    </strong>
-                    {entry.status ? (
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(entry.status)}`}
-                      >
-                        {formatStatus(entry.status)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <dl className="mt-3 grid gap-x-6 gap-y-3 min-[560px]:grid-cols-2">
-                    <div>
-                      <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                        Masked value
-                      </dt>
-                      <dd className="mt-1 ml-0 font-mono text-sm text-ink">
-                        {entry.maskedValue ?? 'Not recorded'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                        Recorded
-                      </dt>
-                      <dd className="mt-1 ml-0 text-sm text-ink">{displayDate(entry.actedAt)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                        Actor
-                      </dt>
-                      <dd className="mt-1 ml-0 text-sm text-ink">
-                        {entry.actorDisplayName ?? 'Not recorded'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                        Reason
-                      </dt>
-                      <dd className="mt-1 ml-0 text-sm text-ink">
-                        {entry.reason ?? 'Not recorded'}
-                      </dd>
-                    </div>
-                  </dl>
-                </article>
-              ))
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Event</Th>
+                    <Th>Status</Th>
+                    <Th>Masked value</Th>
+                    <Th kind="date">Recorded</Th>
+                    <Th>Actor</Th>
+                    <Th>Reason</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyEntries.map((entry) => (
+                    <Tr key={entry.id}>
+                      <Td className="font-[600] text-ink">{historyActionLabel(entry.action)}</Td>
+                      <Td>
+                        {entry.status ? (
+                          <StatusTag tone={statusTone(entry.status)}>
+                            {formatStatus(entry.status)}
+                          </StatusTag>
+                        ) : null}
+                      </Td>
+                      <Td className="font-mono">{entry.maskedValue ?? 'Not recorded'}</Td>
+                      <Td kind="date">{displayDate(entry.actedAt)}</Td>
+                      <Td>{entry.actorDisplayName ?? 'Not recorded'}</Td>
+                      <Td>{entry.reason ?? 'Not recorded'}</Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
             )}
           </DialogBody>
           <DialogFooter>
