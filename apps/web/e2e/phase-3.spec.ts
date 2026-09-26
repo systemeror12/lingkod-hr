@@ -76,11 +76,12 @@ test.describe('Phase 3 acceptance gate', () => {
     });
 
     const navigation = page.getByRole('navigation', { name: 'Primary' });
-    const rail = page.getByRole('complementary', { name: 'Application' });
     await page.getByRole('button', { name: 'Collapse navigation' }).click();
     await expect(page.getByRole('button', { name: 'Expand navigation' })).toBeFocused();
-    await navigation.getByRole('link', { name: 'Dashboard' }).hover();
-    await expect(rail.getByRole('tooltip', { name: 'Dashboard' })).toBeVisible();
+    await expect(navigation.getByRole('link', { name: 'Work queue' })).toHaveAttribute(
+      'title',
+      'Work queue',
+    );
     await page.screenshot({
       path: testInfo.outputPath('phase3-collapsed-rail.png'),
       fullPage: true,

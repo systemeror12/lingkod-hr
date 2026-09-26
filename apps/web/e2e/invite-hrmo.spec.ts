@@ -127,6 +127,10 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
         name: 'Users & Access',
       }),
     ).toHaveCount(0);
+    await hrmoPage
+      .getByRole('navigation', { name: 'Primary' })
+      .getByRole('button', { name: 'Structure' })
+      .click();
     await expect(
       hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
         name: 'Organization',

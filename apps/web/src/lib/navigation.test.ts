@@ -3,6 +3,8 @@ import {
   authorizedDestinations,
   canManageHrmoInvitations,
   isDestinationCurrent,
+  lifecycleStages,
+  navigationGroups,
   recordHref,
 } from './navigation';
 import type { ActiveSession } from './session';
@@ -79,4 +81,43 @@ it('retains Agency Profile navigation for memberships permitted only to read the
       ({ href }) => href === '/organization',
     ),
   ).toBe(true);
+});
+
+it('groups authorized destinations by lifecycle stage below the Work queue', () => {
+  const own = session('employee', ['leave.applications.create', 'audit.events.read']);
+  own.permissions = [
+    ...own.permissions,
+    { code: 'personnel.pds.read', scopePolicy: 'OWN' },
+    { code: 'personnel.documents.read', scopePolicy: 'OWN' },
+    { code: 'personnel.saln_compliance.read', scopePolicy: 'OWN' },
+  ];
+
+  const { workQueue, groups } = navigationGroups(authorizedDestinations(own));
+
+  expect(workQueue.map(({ label }) => label)).toEqual(['Work queue']);
+  expect(groups.map(({ stage }) => stage)).toEqual(['Personnel', 'Leave', 'Oversight']);
+  expect(groups[0]!.destinations.map(({ label }) => label)).toEqual([
+    'My PDS',
+    'My Documents',
+    'My SALN Compliance',
+  ]);
+  expect(groups[1]!.destinations.map(({ href }) => href)).toEqual(['/leave-applications']);
+  expect(groups[2]!.destinations.map(({ href }) => href)).toEqual(['/audit']);
+});
+
+it('orders every stage along the personnel lifecycle', () => {
+  const administrator = session('agency_administrator', [
+    'security.users.invite',
+    'security.users.update_roles',
+    'organization.units.read',
+    'recruitment.requests.read',
+    'personnel.employees.read',
+    'attendance.events.read',
+    'leave.types.read',
+  ]);
+
+  const { groups } = navigationGroups(authorizedDestinations(administrator));
+
+  expect(groups.map(({ stage }) => stage)).toEqual(lifecycleStages);
+  expect(groups.at(-1)!.destinations.map(({ href }) => href)).toEqual(['/users-access']);
 });
