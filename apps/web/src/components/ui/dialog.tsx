@@ -15,7 +15,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '../../lib/class-names';
 
 const dialogContentVariants = cva(
-  'relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-[5px] border border-line bg-paper shadow-[0_18px_55px_rgb(23_32_51/20%)]',
+  'relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-panel border border-border bg-surface shadow-[0_12px_40px_rgb(15_34_64/22%)]',
   {
     variants: {
       size: {
@@ -56,7 +56,11 @@ type BrowserDocument = {
   removeEventListener(type: string, listener: (event: unknown) => void): void;
 };
 
-/** Full record work uses the page; confirmations retain the modal focus boundary. */
+/**
+ * `presentation="form"` renders full record work inline on the page; the default modal suits
+ * confirmations. Compose `DialogContent` from `DialogHeader` (title and description),
+ * `DialogBody`, and `DialogFooter`.
+ */
 export function Dialog({
   presentation = 'dialog',
   ...props
@@ -190,7 +194,7 @@ function InlineRecord({
       aria-busy={busy}
       aria-describedby={descriptionId}
       className={cn(
-        'record-form flex min-w-0 flex-col rounded-[5px] border border-line bg-paper outline-none',
+        'record-form flex min-w-0 flex-col rounded-panel border border-border bg-surface outline-none',
         className,
       )}
     >
@@ -258,7 +262,7 @@ export const DialogContent = forwardRef<
   }
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-midnight/35 [padding:max(1rem,env(safe-area-inset-top))_max(1rem,env(safe-area-inset-right))_max(1rem,env(safe-area-inset-bottom))_max(1rem,env(safe-area-inset-left))]">
+      <DialogPrimitive.Overlay className="fixed inset-0 z-20 grid place-items-center overflow-y-auto bg-nav/40 [padding:max(1rem,env(safe-area-inset-top))_max(1rem,env(safe-area-inset-right))_max(1rem,env(safe-area-inset-bottom))_max(1rem,env(safe-area-inset-left))]">
         <DialogPrimitive.Content
           ref={ref}
           className={cn(dialogContentVariants({ size }), className)}
@@ -279,7 +283,7 @@ export const DialogHeader = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEle
     <div
       ref={ref}
       className={cn(
-        'flex shrink-0 min-w-0 items-start justify-between gap-4 border-b border-line px-6 py-5 min-[621px]:px-8',
+        'flex shrink-0 min-w-0 items-start justify-between gap-4 border-b border-border px-5 py-4',
         className,
       )}
       {...props}
@@ -296,7 +300,7 @@ export const DialogTitle = forwardRef<
   return (
     <DialogPrimitive.Title
       ref={ref}
-      className={cn('m-0 text-xl font-[680] tracking-[-0.025em] text-midnight', className)}
+      className={cn('m-0 text-page-title text-ink', className)}
       {...props}
       {...(titleId ? { id: titleId } : {})}
     />
@@ -310,7 +314,7 @@ export const DialogDescription = forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn('m-0 text-[13px] leading-[1.6] text-muted', className)}
+    className={cn('m-0 text-small text-ink-muted', className)}
     {...props}
   />
 ));
@@ -318,11 +322,7 @@ DialogDescription.displayName = DialogPrimitive.Description.displayName;
 
 export const DialogBody = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={cn('min-h-0 flex-1 overflow-y-auto px-6 py-6 min-[621px]:px-8', className)}
-      {...props}
-    />
+    <div ref={ref} className={cn('min-h-0 flex-1 overflow-y-auto p-5', className)} {...props} />
   ),
 );
 DialogBody.displayName = 'DialogBody';
@@ -332,7 +332,7 @@ export const DialogFooter = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEle
     <div
       ref={ref}
       className={cn(
-        'flex shrink-0 flex-col-reverse gap-3 border-t border-line px-6 py-5 min-[621px]:flex-row min-[621px]:justify-end min-[621px]:px-8',
+        'flex shrink-0 flex-col-reverse gap-2 border-t border-border px-5 py-3 min-[621px]:flex-row min-[621px]:justify-end',
         className,
       )}
       {...props}

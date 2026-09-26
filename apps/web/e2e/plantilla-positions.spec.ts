@@ -101,7 +101,7 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   const linkButtonBox = await linkTrigger.boundingBox();
   expect(linkButtonBox).not.toBeNull();
   if (!linkButtonBox) throw new Error('Evidence link trigger geometry was unavailable.');
-  expect(linkButtonBox.height).toBe(44);
+  expect(linkButtonBox.height).toBe(36);
 
   const removeTrigger = page.getByRole('button', { name: 'Remove link' }).first();
   await removeTrigger.click();

@@ -552,7 +552,6 @@ export function StaffingAuthorityWorkspace({
           {canCreate ? (
             <DialogTrigger asChild>
               <Button
-                className="min-h-11"
                 size="default"
                 type="button"
                 variant="primary"
@@ -941,13 +940,7 @@ export function StaffingAuthorityWorkspace({
                   Cancel
                 </Button>
               </DialogClose>
-              <Button
-                className="min-h-11"
-                disabled={busy}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Saving…' : dialog === 'edit' ? 'Save Draft' : 'Create Draft'}
               </Button>
             </DialogFooter>
@@ -982,13 +975,7 @@ export function StaffingAuthorityWorkspace({
                   Cancel
                 </Button>
               </DialogClose>
-              <Button
-                className="min-h-11"
-                disabled={busy}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Validating…' : 'Validate Evidence'}
               </Button>
             </DialogFooter>
@@ -1014,13 +1001,7 @@ export function StaffingAuthorityWorkspace({
                   Cancel
                 </Button>
               </DialogClose>
-              <Button
-                className="min-h-11"
-                disabled={busy}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Activating…' : 'Activate Staffing Authority'}
               </Button>
             </DialogFooter>
@@ -1055,13 +1036,7 @@ export function StaffingAuthorityWorkspace({
                   Cancel
                 </Button>
               </DialogClose>
-              <Button
-                className="min-h-11"
-                disabled={busy}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Superseding…' : 'Supersede Staffing Authority'}
               </Button>
             </DialogFooter>
@@ -1105,13 +1080,7 @@ export function StaffingAuthorityWorkspace({
                   Cancel
                 </Button>
               </DialogClose>
-              <Button
-                className="min-h-11"
-                disabled={busy}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy} size="default" type="submit" variant="primary">
                 {busy ? 'Revoking…' : 'Record Revocation'}
               </Button>
             </DialogFooter>

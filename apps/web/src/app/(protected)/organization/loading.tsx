@@ -4,8 +4,8 @@ export default function Loading() {
   return (
     <StateSurface label="Loading Organization Units" busy>
       <StateCode>Loading</StateCode>
-      <div className="h-[10px] w-[min(380px,70vw)] rounded-sm bg-pale-blue" />
-      <div className="h-[10px] w-[min(230px,50vw)] rounded-sm bg-pale-blue" />
+      <div className="h-[10px] w-[min(380px,70vw)] rounded-control bg-border-subtle" />
+      <div className="h-[10px] w-[min(230px,50vw)] rounded-control bg-border-subtle" />
     </StateSurface>
   );
 }

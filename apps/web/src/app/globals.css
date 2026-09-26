@@ -71,14 +71,15 @@ body {
   background: var(--color-canvas);
 }
 
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
-
 @layer base {
+  /* Layered so text and font utilities on controls win over the inherited font. */
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
   a {
     color: inherit;
   }
@@ -114,7 +115,7 @@ select {
 }
 
 .workspace :where(input, select, textarea)[aria-invalid='true'] {
-  border-color: #9a3030;
+  border-color: var(--color-danger);
 }
 
 .record-form {
