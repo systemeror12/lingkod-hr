@@ -23,6 +23,7 @@ export default async function globalSetup(): Promise<void> {
       'infrastructure/compose.yaml',
       'up',
       '-d',
+      '--no-recreate',
       'postgres',
       'seaweedfs',
       'mailpit',
