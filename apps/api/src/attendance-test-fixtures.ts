@@ -17,6 +17,8 @@ import { attendanceAuditWriter } from './attendance/attendance.audit';
 import { AttendanceService } from './attendance/attendance.service';
 import { attendanceDayAuditWriter } from './attendance-days/attendance-days.audit';
 import { AttendanceDaysService } from './attendance-days/attendance-days.service';
+import { attendancePeriodAuditWriter } from './attendance-periods/attendance-periods.audit';
+import { AttendancePeriodsService } from './attendance-periods/attendance-periods.service';
 import { attendanceSubmissionAuditWriter } from './attendance-submissions/attendance-submissions.audit';
 import { AttendanceSubmissionsService } from './attendance-submissions/attendance-submissions.service';
 import { documentAuditWriter, DocumentsService } from './documents/documents.service';
@@ -74,6 +76,11 @@ export const attendanceAdministratorPermissions: RequestContext['permissions'] =
   { code: 'attendance.submissions.cancel', scopePolicy: 'AGENCY' },
   { code: 'attendance.reports.read', scopePolicy: 'AGENCY' },
   { code: 'attendance.dtr.generate', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.submit', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.return', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.approve', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.lock', scopePolicy: 'AGENCY' },
+  { code: 'attendance.payroll_publications.read', scopePolicy: 'AGENCY' },
   { code: 'documents.evidence.read', scopePolicy: 'AGENCY' },
   { code: 'approvals.routes.create', scopePolicy: 'AGENCY' },
   { code: 'approvals.routes.activate', scopePolicy: 'AGENCY' },
@@ -88,6 +95,10 @@ export const attendanceOfficerPermissions: RequestContext['permissions'] = [
   { code: 'attendance.submissions.approve', scopePolicy: 'ASSIGNED_OFFICE' },
   { code: 'attendance.submissions.cancel', scopePolicy: 'OWN' },
   { code: 'attendance.reports.read', scopePolicy: 'ASSIGNED_OFFICE' },
+  { code: 'attendance.periods.return', scopePolicy: 'ASSIGNED_OFFICE' },
+  { code: 'attendance.periods.approve', scopePolicy: 'ASSIGNED_OFFICE' },
+  { code: 'attendance.payroll_publications.read', scopePolicy: 'ASSIGNED_OFFICE' },
+  { code: 'approvals.routes.read', scopePolicy: 'OWN' },
 ];
 
 export const attendanceEmployeePermissions: RequestContext['permissions'] = [
@@ -98,7 +109,7 @@ export const attendanceEmployeePermissions: RequestContext['permissions'] = [
   { code: 'attendance.reports.read', scopePolicy: 'OWN' },
 ];
 
-function dayRules() {
+function dayRules(collectionAfterMinutes = 0) {
   return [1, 2, 3, 4, 5, 6, 7].map((weekday) =>
     weekday <= 5
       ? {
@@ -109,7 +120,7 @@ function dayRules() {
           requiredMinutes: 480,
           eventPattern: 'WITH_BREAK_EVENTS' as const,
           collectionBeforeMinutes: 0,
-          collectionAfterMinutes: 0,
+          collectionAfterMinutes,
           breaks: [{ breakStartTime: '12:00', breakEndTime: '13:00' }],
         }
       : {
@@ -206,6 +217,7 @@ export function attendanceWorkflowServices() {
   );
   const dtrs = new DtrsService(dtrAuditWriter, documents);
   const approvals = new ApprovalsService(approvalAuditWriter, new ApprovalCompletionRegistry());
+  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs);
   return {
     documents,
     schedules,
@@ -218,6 +230,7 @@ export function attendanceWorkflowServices() {
     days,
     submissions,
     dtrs,
+    periods,
     approvals,
   };
 }
@@ -245,7 +258,15 @@ export interface AttendanceWorkflowFixture {
 }
 
 export async function createAttendanceWorkflowFixture(
-  options: { periodDates?: string[]; events?: boolean | 'partial'; assignment?: boolean } = {},
+  options: {
+    periodDates?: string[];
+    events?: boolean | 'partial';
+    eventTimes?: ReadonlyArray<
+      readonly ['TIME_IN' | 'BREAK_OUT' | 'BREAK_IN' | 'TIME_OUT', string]
+    >;
+    collectionAfterMinutes?: number;
+    assignment?: boolean;
+  } = {},
 ): Promise<AttendanceWorkflowFixture> {
   const admin = await createAdminClient();
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-workflow`;
@@ -407,7 +428,7 @@ export async function createAttendanceWorkflowFixture(
     name: 'Ordinary Work Schedule',
     scheduleType: 'REGULAR',
     effectiveDate: effectiveFrom,
-    dayRules: dayRules(),
+    dayRules: dayRules(options.collectionAfterMinutes ?? 0),
   });
   const scheduleActive = await services.schedules.activate(
     administratorContext,
@@ -449,14 +470,15 @@ export async function createAttendanceWorkflowFixture(
   const eventIds = {} as Record<'TIME_IN' | 'BREAK_OUT' | 'BREAK_IN' | 'TIME_OUT', string>;
   if (options.events !== false) {
     const eventTimes =
-      options.events === 'partial'
+      options.eventTimes ??
+      (options.events === 'partial'
         ? ([['TIME_IN', '08:00']] as const)
         : ([
             ['TIME_IN', '08:00'],
             ['BREAK_OUT', '12:00'],
             ['BREAK_IN', '13:00'],
             ['TIME_OUT', '16:00'],
-          ] as const);
+          ] as const));
     for (const [eventType, timeValue] of eventTimes) {
       const event = await admin.attendanceEvent.create({
         data: {
@@ -517,6 +539,8 @@ export async function cleanupAttendanceWorkflowAgency(
   await admin.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     await transaction.dtrDocument.deleteMany({ where: { agencyId } });
+    await transaction.attendancePayrollFact.deleteMany({ where: { agencyId } });
+    await transaction.attendancePayrollPublication.deleteMany({ where: { agencyId } });
     await transaction.attendancePeriodVersionDay.deleteMany({ where: { agencyId } });
     await transaction.attendancePeriodVersion.deleteMany({ where: { agencyId } });
     await transaction.employeeAttendanceSubmissionDay.deleteMany({ where: { agencyId } });

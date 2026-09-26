@@ -27,6 +27,7 @@ import {
 } from '../approvals/approval.service';
 import { DocumentsService } from '../documents/documents.service';
 import { DtrsService } from '../dtrs/dtrs.service';
+import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
 import {
   ATTENDANCE_CORRECTION_AUDIT_WRITER,
   type AttendanceCorrectionAuditWriter,
@@ -250,6 +251,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     @Inject(ScheduleAssignmentsService) private readonly assignments: ScheduleAssignmentsService,
     @Inject(DocumentsService) private readonly documents: DocumentsService,
     @Inject(DtrsService) private readonly dtrs: DtrsService,
+    @Inject(AttendancePeriodsService) private readonly periods: AttendancePeriodsService,
   ) {}
 
   onModuleInit(): void {
@@ -858,6 +860,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     await this.lockCorrection(transaction, context.agencyId, request.subjectId);
     const record = await this.requireCorrection(transaction, context, request.subjectId);
     if (record.approvalRouteVersionId !== request.routeVersionId) throw this.routeInvalid();
+    // Serialize against a concurrent Attendance Period lock before refreshing
+    // the impact preview, so the preview cannot be computed against a period
+    // that is locking at the same moment.
+    const storedPreview = parseImpactPreview(record.impactPreview);
+    await this.periods.lockAttendancePeriodsInTransaction(
+      transaction,
+      context.agencyId,
+      unique(storedPreview.days.map((day) => day.attendancePeriodId)),
+    );
     const preview = await this.computePreviewFromRecord(transaction, context, record);
     await this.assertPreviewUnchanged(record, preview);
     const locked = preview.lockedPeriodVersionIds.length > 0;
@@ -942,6 +953,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       );
     }
     const finalizedDtrDocumentIds: string[] = [];
+    const payrollPublicationIds: string[] = [];
     for (const successorVersionId of adjustment?.successorVersionIds ?? []) {
       const generated = await this.dtrs.materializeForLockedVersionInTransaction(
         transaction,
@@ -949,6 +961,12 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         successorVersionId,
       );
       finalizedDtrDocumentIds.push(...generated.dtrDocumentIds);
+      const publication = await this.periods.materializePublicationForLockedVersionInTransaction(
+        transaction,
+        context,
+        successorVersionId,
+      );
+      payrollPublicationIds.push(publication.publication.id);
     }
     await transaction.attendanceCorrection.update({
       where: { agencyId_id: { agencyId: context.agencyId, id: record.id } },
@@ -990,6 +1008,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         lockedAttendanceAdjustmentId: adjustment?.id ?? null,
         successorPeriodVersionIds: adjustment?.successorVersionIds ?? [],
         finalizedDtrDocumentIds,
+        payrollPublicationIds,
       },
     });
   }

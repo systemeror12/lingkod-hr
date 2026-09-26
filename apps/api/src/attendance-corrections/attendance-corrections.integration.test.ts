@@ -18,6 +18,8 @@ import { attendanceAuditWriter } from '../attendance/attendance.audit';
 import { AttendanceService } from '../attendance/attendance.service';
 import { attendanceDayAuditWriter } from '../attendance-days/attendance-days.audit';
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
+import { attendancePeriodAuditWriter } from '../attendance-periods/attendance-periods.audit';
+import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { dtrAuditWriter } from '../dtrs/dtrs.audit';
 import { DtrsService } from '../dtrs/dtrs.service';
@@ -52,6 +54,11 @@ const agencyAdminPermissions: RequestContext['permissions'] = [
   { code: 'attendance.corrections.reject', scopePolicy: 'AGENCY' },
   { code: 'attendance.corrections.authorize_locked', scopePolicy: 'AGENCY' },
   { code: 'attendance.corrections.cancel', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.submit', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.return', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.approve', scopePolicy: 'AGENCY' },
+  { code: 'attendance.periods.lock', scopePolicy: 'AGENCY' },
+  { code: 'attendance.payroll_publications.read', scopePolicy: 'AGENCY' },
   { code: 'approvals.routes.read', scopePolicy: 'AGENCY' },
   { code: 'approvals.routes.create', scopePolicy: 'AGENCY' },
   { code: 'approvals.routes.activate', scopePolicy: 'AGENCY' },
@@ -371,6 +378,7 @@ function services() {
   const registry = new ApprovalCompletionRegistry();
   const approvals = new ApprovalsService(approvalAuditWriter, registry);
   const dtrs = new DtrsService(dtrAuditWriter, documentsService);
+  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs);
   const corrections = new AttendanceCorrectionsService(
     attendanceCorrectionAuditWriter,
     approvals,
@@ -380,6 +388,7 @@ function services() {
     assignments,
     documentsService,
     dtrs,
+    periods,
   );
   corrections.onModuleInit();
   return {
@@ -393,6 +402,7 @@ function services() {
     days,
     approvals,
     dtrs,
+    periods,
     corrections,
   };
 }
@@ -556,6 +566,8 @@ async function cleanupAgency(admin: PrismaClient, agencyId: string, suffix: stri
     await transaction.attendanceCorrectionEffect.deleteMany({ where: { agencyId } });
     await transaction.attendanceCorrectionEvidence.deleteMany({ where: { agencyId } });
     await transaction.attendanceCorrection.deleteMany({ where: { agencyId } });
+    await transaction.attendancePayrollFact.deleteMany({ where: { agencyId } });
+    await transaction.attendancePayrollPublication.deleteMany({ where: { agencyId } });
     await transaction.attendancePeriodVersionDay.deleteMany({ where: { agencyId } });
     await transaction.attendancePeriodVersion.deleteMany({ where: { agencyId } });
     await transaction.employeeAttendanceSubmissionDay.deleteMany({ where: { agencyId } });
@@ -741,12 +753,16 @@ async function createFixture(options: { seedDay?: boolean } = {}): Promise<Fixtu
   };
 }
 
-async function evidence(admin: PrismaClient, fixture: Fixture): Promise<string> {
+async function evidence(
+  admin: PrismaClient,
+  fixture: Fixture,
+  label = 'evidence',
+): Promise<string> {
   const version = await createEvidence(
     admin,
     fixture.agencyId,
     fixture.membershipId,
-    `${fixture.suffix}-evidence`,
+    `${fixture.suffix}-${label}`,
     'ATTENDANCE_CORRECTION_EVIDENCE',
   );
   return version.id;
@@ -952,6 +968,116 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
+  'serializes an Attendance Period lock against an open-period Attendance Correction',
+  async () => {
+    const fixture = await createFixture();
+    const { admin, services } = fixture;
+    try {
+      const submission = await admin.employeeAttendanceSubmission.create({
+        data: {
+          agencyId: fixture.agencyId,
+          attendancePeriodId: fixture.periodId,
+          employeeId: fixture.employeeId,
+          versionNo: 1,
+          status: 'APPROVED',
+          submittedByMembershipId: fixture.employeeContext.membershipId,
+          submittedAt: new Date(),
+          reviewedByMembershipId: fixture.approverMembershipId,
+          reviewedAt: new Date(),
+          reviewReason: 'Seed submission approved for the lock race.',
+        },
+      });
+      await admin.employeeAttendanceSubmissionDay.create({
+        data: {
+          agencyId: fixture.agencyId,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId: fixture.attendanceDayId,
+        },
+      });
+      await admin.attendanceDay.update({
+        where: { id: fixture.attendanceDayId },
+        data: { status: 'APPROVED' },
+      });
+      const route = await services.approvals.createRoute(fixture.context, {
+        routeCode: 'DTR-PERIOD-LOCK',
+        domain: 'ATTENDANCE',
+        versionNo: 1,
+        effectiveFrom: manilaDate(-30),
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'attendance.periods.approve',
+              assignment: { kind: 'MEMBERSHIP', membershipId: fixture.approverMembershipId },
+              requiresSeparateReview: false,
+            },
+          ],
+        },
+      });
+      await services.approvals.activateRoute(
+        fixture.context,
+        route.id,
+        'Activate the Attendance Period lock route.',
+      );
+      const version = await services.periods.submitForReview(fixture.context, fixture.periodId);
+      await services.periods.approve(fixture.approverContext, version.version.id, {});
+
+      const documentVersionId = await evidence(admin, fixture);
+      const created = await services.corrections.create(fixture.employeeContext, {
+        targetType: 'ATTENDANCE_EVENT',
+        requestedAction: 'REPLACE',
+        targetId: fixture.eventIds.TIME_OUT,
+        requestedRecord: {
+          eventType: 'TIME_OUT',
+          eventTime: manilaInstant(fixture.workDate, '17:00').toISOString(),
+        },
+        reason: 'The Employee clocked out early but rendered full duty.',
+        evidence: [{ documentVersionId }],
+      });
+      await services.corrections.submit(fixture.employeeContext, created.correction.id);
+
+      const [lockResult, correctionResult] = await Promise.allSettled([
+        services.periods.lock(fixture.context, version.version.id),
+        services.corrections.approve(fixture.approverContext, created.correction.id, 'Approved.'),
+      ]);
+
+      const lockedVersion = await admin.attendancePeriodVersion.findUniqueOrThrow({
+        where: { id: version.version.id },
+      });
+      const correction = await admin.attendanceCorrection.findUniqueOrThrow({
+        where: { id: created.correction.id },
+      });
+      const period = await admin.attendancePeriod.findUniqueOrThrow({
+        where: { id: fixture.periodId },
+      });
+      if (lockResult.status === 'fulfilled') {
+        expect(correctionResult.status).toBe('rejected');
+        expect(lockedVersion.status).toBe('LOCKED');
+        expect(period.status).toBe('FINALIZED');
+        expect(correction.status).not.toBe('APPLIED');
+        expect(
+          await admin.attendancePayrollPublication.count({ where: { agencyId: fixture.agencyId } }),
+        ).toBe(1);
+        expect(await admin.dtrDocument.count({ where: { agencyId: fixture.agencyId } })).toBe(1);
+      } else {
+        expect(correctionResult.status).toBe('fulfilled');
+        expect(lockedVersion.status).toBe('APPROVED');
+        expect(period.status).toBe('OPEN');
+        expect(correction.status).toBe('APPLIED');
+        expect(
+          await admin.attendancePayrollPublication.count({ where: { agencyId: fixture.agencyId } }),
+        ).toBe(0);
+        expect(await admin.dtrDocument.count({ where: { agencyId: fixture.agencyId } })).toBe(0);
+      }
+    } finally {
+      await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'requires a different HR Administrator for a locked-period correction and creates a successor Attendance Period Version',
   async () => {
     const fixture = await createFixture();
@@ -1005,6 +1131,41 @@ it.skipIf(!enabled)(
           employeeAttendanceSubmissionId: submission.id,
           attendanceDayId: fixture.attendanceDayId,
         },
+      });
+      const predecessorPublication = await admin.attendancePayrollPublication.create({
+        data: {
+          agencyId: fixture.agencyId,
+          attendancePeriodVersionId: predecessor.id,
+          publicationType: 'ORIGINAL',
+          idempotencyKey: `seed-original:${predecessor.id}`,
+          publishedAt: new Date(),
+        },
+      });
+      await admin.attendancePayrollFact.createMany({
+        data: [
+          {
+            agencyId: fixture.agencyId,
+            attendancePayrollPublicationId: predecessorPublication.id,
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: new Date(`${fixture.workDate}T00:00:00.000Z`),
+            factType: 'EXPECTED',
+            holidayClassification: null,
+            stableSourceKey: `${fixture.employeeId}|${fixture.workDate}|EXPECTED|NONE`,
+            correctedMinutes: 480,
+          },
+          {
+            agencyId: fixture.agencyId,
+            attendancePayrollPublicationId: predecessorPublication.id,
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: new Date(`${fixture.workDate}T00:00:00.000Z`),
+            factType: 'WORKED',
+            holidayClassification: null,
+            stableSourceKey: `${fixture.employeeId}|${fixture.workDate}|WORKED|NONE`,
+            correctedMinutes: 420,
+          },
+        ],
       });
       await admin.attendancePeriod.update({
         where: { id: fixture.periodId },
@@ -1075,6 +1236,23 @@ it.skipIf(!enabled)(
       expect(successor.days).toHaveLength(1);
       expect(successor.days[0]?.attendanceDayId).not.toBe(fixture.attendanceDayId);
 
+      const successorPublication = await admin.attendancePayrollPublication.findFirstOrThrow({
+        where: { attendancePeriodVersionId: successor.id },
+        include: { facts: true },
+      });
+      expect(successorPublication.publicationType).toBe('ADJUSTMENT');
+      expect(successorPublication.predecessorPublicationId).toBe(predecessorPublication.id);
+      expect(successorPublication.facts.find((fact) => fact.factType === 'WORKED')).toMatchObject({
+        priorMinutes: 420,
+        correctedMinutes: 480,
+        differenceDirection: 'INCREASE',
+        differenceMinutes: 60,
+      });
+      expect(
+        successorPublication.facts.find((fact) => fact.factType === 'EXPECTED'),
+      ).toBeUndefined();
+      expect(successorPublication.facts).toHaveLength(1);
+
       const staleSubmission = await admin.employeeAttendanceSubmission.findUniqueOrThrow({
         where: { id: submission.id },
       });
@@ -1111,6 +1289,207 @@ it.skipIf(!enabled)(
         attendancePeriodId: fixture.periodId,
       });
       expect(allDtrs).toHaveLength(2);
+    } finally {
+      await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'carries the effective prior value into a chained successor Attendance Payroll Publication',
+  async () => {
+    const fixture = await createFixture();
+    const { admin, services } = fixture;
+    try {
+      const route = await admin.approvalRouteVersion.findFirstOrThrow({
+        where: { agencyId: fixture.agencyId, routeCode: ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE },
+      });
+      const submission = await admin.employeeAttendanceSubmission.create({
+        data: {
+          agencyId: fixture.agencyId,
+          attendancePeriodId: fixture.periodId,
+          employeeId: fixture.employeeId,
+          versionNo: 1,
+          status: 'APPROVED',
+          submittedByMembershipId: fixture.employeeContext.membershipId,
+          submittedAt: new Date(),
+          reviewedByMembershipId: fixture.approverMembershipId,
+          reviewedAt: new Date(),
+          reviewReason: 'Seed submission approved.',
+        },
+      });
+      await admin.employeeAttendanceSubmissionDay.create({
+        data: {
+          agencyId: fixture.agencyId,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId: fixture.attendanceDayId,
+        },
+      });
+      const predecessor = await admin.attendancePeriodVersion.create({
+        data: {
+          agencyId: fixture.agencyId,
+          attendancePeriodId: fixture.periodId,
+          versionNo: 1,
+          status: 'LOCKED',
+          approvalRouteVersionId: route.id,
+          submittedByMembershipId: fixture.membershipId,
+          submittedAt: new Date(),
+          reviewedByMembershipId: fixture.approverMembershipId,
+          reviewedAt: new Date(),
+          reviewReason: 'Seed period reviewed.',
+          lockedByMembershipId: fixture.authorizerMembershipId,
+          lockedAt: new Date(),
+          reconciliation: { seed: true },
+        },
+      });
+      await admin.attendancePeriodVersionDay.create({
+        data: {
+          agencyId: fixture.agencyId,
+          attendancePeriodVersionId: predecessor.id,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId: fixture.attendanceDayId,
+        },
+      });
+      const predecessorPublication = await admin.attendancePayrollPublication.create({
+        data: {
+          agencyId: fixture.agencyId,
+          attendancePeriodVersionId: predecessor.id,
+          publicationType: 'ORIGINAL',
+          idempotencyKey: `seed-original:${predecessor.id}`,
+          publishedAt: new Date(),
+        },
+      });
+      await admin.attendancePayrollFact.createMany({
+        data: [
+          {
+            agencyId: fixture.agencyId,
+            attendancePayrollPublicationId: predecessorPublication.id,
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: new Date(`${fixture.workDate}T00:00:00.000Z`),
+            factType: 'EXPECTED',
+            holidayClassification: null,
+            stableSourceKey: `${fixture.employeeId}|${fixture.workDate}|EXPECTED|NONE`,
+            correctedMinutes: 480,
+          },
+          {
+            agencyId: fixture.agencyId,
+            attendancePayrollPublicationId: predecessorPublication.id,
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: new Date(`${fixture.workDate}T00:00:00.000Z`),
+            factType: 'WORKED',
+            holidayClassification: null,
+            stableSourceKey: `${fixture.employeeId}|${fixture.workDate}|WORKED|NONE`,
+            correctedMinutes: 420,
+          },
+          {
+            agencyId: fixture.agencyId,
+            attendancePayrollPublicationId: predecessorPublication.id,
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: new Date(`${fixture.workDate}T00:00:00.000Z`),
+            factType: 'UNDERTIME',
+            holidayClassification: null,
+            stableSourceKey: `${fixture.employeeId}|${fixture.workDate}|UNDERTIME|NONE`,
+            correctedMinutes: 60,
+          },
+        ],
+      });
+      await admin.attendancePeriod.update({
+        where: { id: fixture.periodId },
+        data: { status: 'FINALIZED' },
+      });
+      await services.dtrs.materializeForLockedVersionInTransaction(
+        admin,
+        fixture.authorizerContext,
+        predecessor.id,
+      );
+
+      const firstEvidence = await evidence(admin, fixture, 'evidence-first');
+      const first = await services.corrections.create(fixture.employeeContext, {
+        targetType: 'ATTENDANCE_EVENT',
+        requestedAction: 'REPLACE',
+        targetId: fixture.eventIds.TIME_IN,
+        requestedRecord: {
+          eventType: 'TIME_IN',
+          eventTime: manilaInstant(fixture.workDate, '08:30').toISOString(),
+        },
+        reason: 'The Employee started duty late.',
+        evidence: [{ documentVersionId: firstEvidence }],
+      });
+      await services.corrections.submit(fixture.employeeContext, first.correction.id);
+      await services.corrections.approve(
+        fixture.approverContext,
+        first.correction.id,
+        'Factual approval recorded.',
+      );
+      const firstApplied = await services.corrections.authorizeLocked(
+        fixture.authorizerContext,
+        first.correction.id,
+        'Authorization recorded.',
+      );
+      expect(firstApplied.correction.status).toBe('APPLIED');
+      const firstSuccessorId = firstApplied.lockedAdjustment!.periods[0]!.successorPeriodVersionId;
+      const firstPublication = await admin.attendancePayrollPublication.findFirstOrThrow({
+        where: { attendancePeriodVersionId: firstSuccessorId },
+        include: { facts: true },
+      });
+      expect(firstPublication.publicationType).toBe('ADJUSTMENT');
+      expect(firstPublication.facts.map((fact) => fact.factType).sort()).toEqual([
+        'TARDINESS',
+        'WORKED',
+      ]);
+
+      const secondEvidence = await evidence(admin, fixture, 'evidence-second');
+      const second = await services.corrections.create(fixture.employeeContext, {
+        targetType: 'ATTENDANCE_EVENT',
+        requestedAction: 'REPLACE',
+        targetId: fixture.eventIds.TIME_OUT,
+        requestedRecord: {
+          eventType: 'TIME_OUT',
+          eventTime: manilaInstant(fixture.workDate, '16:30').toISOString(),
+        },
+        reason: 'The Employee clocked out later than recorded.',
+        evidence: [{ documentVersionId: secondEvidence }],
+      });
+      await services.corrections.submit(fixture.employeeContext, second.correction.id);
+      await services.corrections.approve(
+        fixture.approverContext,
+        second.correction.id,
+        'Factual approval recorded.',
+      );
+      const secondApplied = await services.corrections.authorizeLocked(
+        fixture.authorizerContext,
+        second.correction.id,
+        'Authorization recorded.',
+      );
+      expect(secondApplied.correction.status).toBe('APPLIED');
+      const secondSuccessorId =
+        secondApplied.lockedAdjustment!.periods[0]!.successorPeriodVersionId;
+      const secondSuccessor = await admin.attendancePeriodVersion.findUniqueOrThrow({
+        where: { id: secondSuccessorId },
+      });
+      expect(secondSuccessor.predecessorVersionId).toBe(firstSuccessorId);
+      const secondPublication = await admin.attendancePayrollPublication.findFirstOrThrow({
+        where: { attendancePeriodVersionId: secondSuccessorId },
+        include: { facts: true },
+      });
+      expect(secondPublication.predecessorPublicationId).toBe(firstPublication.id);
+      expect(secondPublication.facts.find((fact) => fact.factType === 'UNDERTIME')).toMatchObject({
+        priorMinutes: 60,
+        correctedMinutes: 30,
+        differenceDirection: 'DECREASE',
+        differenceMinutes: 30,
+      });
+      expect(secondPublication.facts.find((fact) => fact.factType === 'WORKED')).toMatchObject({
+        priorMinutes: 390,
+        correctedMinutes: 420,
+        differenceDirection: 'INCREASE',
+        differenceMinutes: 30,
+      });
+      expect(secondPublication.facts).toHaveLength(2);
     } finally {
       await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
       await admin.$disconnect();

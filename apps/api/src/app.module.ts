@@ -26,6 +26,7 @@ import { AttendanceDaysModule } from './attendance-days/attendance-days.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { AttendanceCorrectionsModule } from './attendance-corrections/attendance-corrections.module';
 import { AttendanceSubmissionsModule } from './attendance-submissions/attendance-submissions.module';
+import { AttendancePeriodsModule } from './attendance-periods/attendance-periods.module';
 import { DtrsModule } from './dtrs/dtrs.module';
 import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
@@ -61,6 +62,7 @@ import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leav
     AttendanceModule,
     AttendanceCorrectionsModule,
     AttendanceSubmissionsModule,
+    AttendancePeriodsModule,
     DtrsModule,
     LeavePoliciesModule,
     LeaveAccountsModule,

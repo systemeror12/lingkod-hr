@@ -179,6 +179,17 @@ const destinations: readonly (Destination & {
       hasPermission(session, 'attendance.submissions.create'),
   },
   {
+    href: '/attendance-periods',
+    label: 'Attendance Periods',
+    icon: 'position',
+    visible: (session) =>
+      hasPermission(session, 'attendance.reports.read') ||
+      hasPermission(session, 'attendance.periods.submit') ||
+      hasPermission(session, 'attendance.periods.return') ||
+      hasPermission(session, 'attendance.periods.approve') ||
+      hasPermission(session, 'attendance.periods.lock'),
+  },
+  {
     href: '/leave-policies',
     label: 'Leave Policies',
     icon: 'leave',

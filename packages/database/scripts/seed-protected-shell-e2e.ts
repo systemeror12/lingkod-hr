@@ -84,7 +84,10 @@ const dtrFixture = {
   agencyId: 'd7a00000-0000-4000-8000-000000000001',
   membershipId: 'd7a00000-0000-4000-8000-000000000002',
   employeeId: 'd7a00000-0000-4000-8000-000000000003',
+  reviewerMembershipId: 'd7a00000-0000-4000-8000-000000000004',
 } as const;
+
+const dtrReviewerInvitationToken = 'dtr-reviewer-invitation-token-0000000000000';
 
 /**
  * Dedicated Daily Time Record journey: one agency whose only membership is
@@ -99,6 +102,12 @@ async function seedDtrFixture(): Promise<void> {
   });
   await prisma.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.attendancePayrollFact.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.attendancePayrollPublication.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
     await transaction.dtrDocument.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
     await transaction.documentVersion.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
     await transaction.document.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
@@ -165,9 +174,30 @@ async function seedDtrFixture(): Promise<void> {
     });
     await transaction.organizationUnit.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
     await transaction.employee.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.invitation.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.userSession.deleteMany({
+      where: {
+        agencyMembershipId: {
+          in: [dtrFixture.membershipId, dtrFixture.reviewerMembershipId],
+        },
+      },
+    });
     await transaction.agencyMembership.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
     await transaction.agency.deleteMany({ where: { id: dtrFixture.agencyId } });
-    await transaction.user.deleteMany({ where: { externalSubject: 'local-dtr-reviewer' } });
+    await transaction.externalIdentityLink.deleteMany({
+      where: {
+        issuer,
+        subject: `local-${createHash('sha256').update('dtr.reviewer@example.test').digest('hex').slice(0, 24)}`,
+      },
+    });
+    const reviewer = await transaction.user.findUnique({
+      where: { emailNormalized: 'dtr.reviewer@example.test' },
+      select: { id: true },
+    });
+    if (reviewer) {
+      await transaction.externalIdentityLink.deleteMany({ where: { userId: reviewer.id } });
+      await transaction.user.deleteMany({ where: { id: reviewer.id } });
+    }
   });
 
   await prisma.$transaction(async (transaction) => {
@@ -252,21 +282,37 @@ async function seedDtrFixture(): Promise<void> {
       where: { id: employee.id },
       data: { currentServiceSegmentId: dtrServiceSegment.id },
     });
+    // The reviewer is a second person. Local OIDC signs the reviewer identity
+    // through the seeded invitation so the browser journey can prove
+    // transaction-level separation of duties between reviewer and locker.
+    const reviewerEmail = 'dtr.reviewer@example.test';
     const reviewerUser = await transaction.user.create({
       data: {
         identityProvider: issuer,
-        externalSubject: 'local-dtr-reviewer',
-        emailNormalized: 'dtr.reviewer@example.test',
+        externalSubject: `local-${createHash('sha256').update(reviewerEmail).digest('hex').slice(0, 24)}`,
+        emailNormalized: reviewerEmail,
         displayName: 'DTR Journey Reviewer',
         globalStatus: 'ACTIVE',
+        emailVerifiedAt: new Date(),
       },
     });
     const reviewerMembership = await transaction.agencyMembership.create({
       data: {
+        id: dtrFixture.reviewerMembershipId,
         agencyId: agency.id,
         userId: reviewerUser.id,
-        status: 'ACTIVE',
-        activatedAt: new Date('2026-01-01'),
+        status: 'INVITED',
+      },
+    });
+    await transaction.invitation.create({
+      data: {
+        agencyId: agency.id,
+        emailNormalized: reviewerEmail,
+        invitedByMembershipId: membership.id,
+        tokenHash: createHash('sha256').update(dtrReviewerInvitationToken).digest(),
+        requestedRoleCodes: ['hrmo_administrator'],
+        expiresAt: new Date('2099-01-01'),
+        status: 'PENDING',
       },
     });
     const authorityDocument = await transaction.document.create({
@@ -521,7 +567,17 @@ async function seedDtrFixture(): Promise<void> {
         routeCode: 'DTR-PERIOD-LOCK',
         versionNo: 1,
         domain: 'ATTENDANCE',
-        stepDefinition: { steps: [] },
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'attendance.periods.approve',
+              assignment: { kind: 'MEMBERSHIP', membershipId: reviewerMembership.id },
+              requiresSeparateReview: false,
+            },
+          ],
+        },
         effectiveFrom: new Date('2026-01-01'),
         status: 'ACTIVE',
       },
