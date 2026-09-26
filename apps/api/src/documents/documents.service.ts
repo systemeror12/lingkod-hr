@@ -712,6 +712,73 @@ export class DocumentsService {
     return { ok: true, document: { ...document, currentVersion } };
   }
 
+  /**
+   * Internal contract: an owning domain records the exact rendering it
+   * produced as an issued Document Version inside its own authoritative
+   * transaction. The bytes are retained by the caller's immutable source, so
+   * no object is uploaded here; the Version records the rendering identity.
+   */
+  async createIssuedVersionInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: {
+      documentType: string;
+      classification: DocumentClassification;
+      content: Buffer;
+      mimeType: string;
+    },
+  ): Promise<{ documentId: string; versionId: string }> {
+    const contentHash = createHash('sha256').update(input.content).digest('hex');
+    const document = await transaction.document.create({
+      data: {
+        agencyId: context.agencyId,
+        documentNo: null,
+        documentType: input.documentType,
+        classification: input.classification,
+        status: 'APPROVED',
+        createdByMembershipId: context.membershipId,
+      },
+      select: { id: true },
+    });
+    const version = await transaction.documentVersion.create({
+      data: {
+        agencyId: context.agencyId,
+        documentId: document.id,
+        versionNo: 1,
+        storageKey: `rendered/${randomUUID()}`,
+        contentHash,
+        mimeType: input.mimeType,
+        sizeBytes: BigInt(input.content.byteLength),
+        createdByMembershipId: context.membershipId,
+        issuedAt: new Date(),
+      },
+      select: { id: true },
+    });
+    await transaction.document.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: document.id } },
+      data: { currentVersionId: version.id, updatedByMembershipId: context.membershipId },
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'DOCUMENT_VERSION_CREATED',
+      entityType: 'DocumentVersion',
+      entityId: version.id,
+      previousStatus: null,
+      newStatus: 'APPROVED',
+      requestId: context.requestId,
+      metadata: {
+        versionNo: 1,
+        documentType: input.documentType,
+        mimeType: input.mimeType,
+        sizeBytes: input.content.byteLength,
+      },
+    });
+    return { documentId: document.id, versionId: version.id };
+  }
+
   /** Internal contract: another domain may validate an exact finalized version without owning Documents. */
   async resolveFinalizedVersionInTransaction(
     transaction: Prisma.TransactionClient,

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveAttendanceEmployeeScope } from '../attendance-scope';
 import { AttendanceContextsService } from '../attendance-contexts/attendance-contexts.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import {
@@ -363,6 +364,29 @@ export class AttendanceDaysService {
   }
 
   /**
+   * Internal contract: Employee Attendance Submission approval marks only the
+   * exact bound Attendance Day versions APPROVED. A concurrent recalculation
+   * changes the current pointer instead, so the caller sees a short count.
+   */
+  async approveSubmittedVersionsInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    attendanceDayIds: readonly string[],
+  ): Promise<number> {
+    if (attendanceDayIds.length === 0) return 0;
+    const approved = await transaction.attendanceDay.updateMany({
+      where: {
+        agencyId: context.agencyId,
+        id: { in: [...attendanceDayIds] },
+        status: 'CALCULATED',
+        isCurrent: true,
+      },
+      data: { status: 'APPROVED' },
+    });
+    return approved.count;
+  }
+
+  /**
    * Recalculate the affected Work Dates of one applied Attendance Correction
    * inside the caller-owned transaction. An applied correction is the only
    * authorized path that may supersede an APPROVED Attendance Day while the
@@ -643,6 +667,7 @@ export class AttendanceDaysService {
       _max: { calculationVersion: true },
     });
     const calculationVersion = (maxVersion._max.calculationVersion ?? 0) + 1;
+    let staleSubmissionIds: string[] = [];
     if (current) {
       await transaction.attendanceDay.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
@@ -656,6 +681,7 @@ export class AttendanceDaysService {
           resolvedByMembershipId: context.membershipId,
         },
       });
+      staleSubmissionIds = await this.markSubmissionsStale(transaction, context, [current.id]);
     }
 
     const status: AttendanceDayState =
@@ -728,6 +754,7 @@ export class AttendanceDaysService {
         calculationVersion,
         fingerprint,
         exceptionTypes,
+        staleSubmissionIds,
       },
     });
     return {
@@ -737,7 +764,36 @@ export class AttendanceDaysService {
       status,
       outcome: current ? 'RECALCULATED' : 'CREATED',
       exceptionTypes,
+      staleSubmissionIds,
     };
+  }
+
+  /**
+   * Any Employee Attendance Submission bound to a superseded Attendance Day
+   * version stops being current and must be resubmitted. A STALE submission
+   * never returns to an active state.
+   */
+  private async markSubmissionsStale(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    supersededDayIds: readonly string[],
+  ): Promise<string[]> {
+    if (supersededDayIds.length === 0) return [];
+    const links = await transaction.employeeAttendanceSubmissionDay.findMany({
+      where: { agencyId: context.agencyId, attendanceDayId: { in: [...supersededDayIds] } },
+      select: { employeeAttendanceSubmissionId: true },
+    });
+    const submissionIds = [...new Set(links.map((link) => link.employeeAttendanceSubmissionId))];
+    if (submissionIds.length === 0) return [];
+    await transaction.employeeAttendanceSubmission.updateMany({
+      where: {
+        agencyId: context.agencyId,
+        id: { in: submissionIds },
+        status: { in: ['DRAFT', 'SUBMITTED', 'RETURNED', 'APPROVED'] },
+      },
+      data: { status: 'STALE' },
+    });
+    return submissionIds;
   }
 
   private async calculateResolved(
@@ -973,35 +1029,9 @@ export class AttendanceDaysService {
    * an Employee only lists their own requests while HR scopes stay unchanged.
    */
   async readScope(context: RequestContext): Promise<AttendanceDayReadScope> {
-    const grants = context.permissions.filter((grant) => grant.code === 'attendance.days.read');
-    if (grants.length === 0) throw this.readForbidden();
-    if (grants.some((grant) => grant.scopePolicy === 'AGENCY')) {
-      return { kind: 'AGENCY' };
-    }
-    const scopePolicies = new Set(grants.map((grant) => grant.scopePolicy));
-    const employeeIds = new Set<string>();
-    await withDatabaseContext(databaseContext(context), async (transaction) => {
-      if (scopePolicies.has('OWN')) {
-        const membership = await transaction.agencyMembership.findFirst({
-          where: { agencyId: context.agencyId, id: context.membershipId },
-          select: { employeeId: true },
-        });
-        if (membership?.employeeId) employeeIds.add(membership.employeeId);
-      }
-      if (scopePolicies.has('ASSIGNED_OFFICE') && context.primaryOrganizationUnitId) {
-        const segments = await transaction.serviceSegment.findMany({
-          where: {
-            agencyId: context.agencyId,
-            organizationUnitId: context.primaryOrganizationUnitId,
-            status: 'ACTIVE',
-          },
-          select: { employeeId: true },
-        });
-        for (const segment of segments) employeeIds.add(segment.employeeId);
-      }
-    });
-    if (employeeIds.size === 0) throw this.readForbidden();
-    return { kind: 'SCOPED', employeeIds: [...employeeIds] };
+    const scope = await resolveAttendanceEmployeeScope(context, 'attendance.days.read');
+    if (!scope) throw this.readForbidden();
+    return scope;
   }
 
   private dayNotFound(): AttendanceDayServiceError {

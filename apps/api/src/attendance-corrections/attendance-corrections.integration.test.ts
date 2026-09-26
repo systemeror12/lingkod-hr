@@ -19,6 +19,8 @@ import { AttendanceService } from '../attendance/attendance.service';
 import { attendanceDayAuditWriter } from '../attendance-days/attendance-days.audit';
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
+import { dtrAuditWriter } from '../dtrs/dtrs.audit';
+import { DtrsService } from '../dtrs/dtrs.service';
 import {
   leaveAccountAuditWriter,
   LeaveAccountsService,
@@ -41,6 +43,8 @@ const agencyAdminPermissions: RequestContext['permissions'] = [
   { code: 'attendance.contexts.create', scopePolicy: 'AGENCY' },
   { code: 'attendance.days.calculate', scopePolicy: 'AGENCY' },
   { code: 'attendance.days.read', scopePolicy: 'AGENCY' },
+  { code: 'attendance.reports.read', scopePolicy: 'AGENCY' },
+  { code: 'attendance.dtr.generate', scopePolicy: 'AGENCY' },
   { code: 'attendance.corrections.create', scopePolicy: 'AGENCY' },
   { code: 'attendance.corrections.submit', scopePolicy: 'AGENCY' },
   { code: 'attendance.corrections.return', scopePolicy: 'AGENCY' },
@@ -366,6 +370,7 @@ function services() {
   );
   const registry = new ApprovalCompletionRegistry();
   const approvals = new ApprovalsService(approvalAuditWriter, registry);
+  const dtrs = new DtrsService(dtrAuditWriter, documentsService);
   const corrections = new AttendanceCorrectionsService(
     attendanceCorrectionAuditWriter,
     approvals,
@@ -374,6 +379,7 @@ function services() {
     attendance,
     assignments,
     documentsService,
+    dtrs,
   );
   corrections.onModuleInit();
   return {
@@ -386,6 +392,7 @@ function services() {
     contexts,
     days,
     approvals,
+    dtrs,
     corrections,
   };
 }
@@ -586,6 +593,7 @@ async function cleanupAgency(admin: PrismaClient, agencyId: string, suffix: stri
       data: { currentVersionId: null },
     });
     await transaction.workSchedule.deleteMany({ where: { agencyId } });
+    await transaction.dtrDocument.deleteMany({ where: { agencyId } });
     await transaction.documentVersion.deleteMany({ where: { agencyId } });
     await transaction.document.updateMany({
       where: { agencyId },
@@ -1002,6 +1010,12 @@ it.skipIf(!enabled)(
         where: { id: fixture.periodId },
         data: { status: 'FINALIZED' },
       });
+      const predecessorDtrs = await services.dtrs.materializeForLockedVersionInTransaction(
+        admin,
+        fixture.authorizerContext,
+        predecessor.id,
+      );
+      expect(predecessorDtrs.dtrDocumentIds).toHaveLength(1);
 
       const documentVersionId = await evidence(admin, fixture);
       const created = await services.corrections.create(fixture.employeeContext, {
@@ -1071,6 +1085,32 @@ it.skipIf(!enabled)(
       });
       expect(untouchedPredecessor.status).toBe('LOCKED');
       expect(untouchedPredecessor.reconciliation).toMatchObject({ seed: true });
+
+      const correctedDtr = await admin.dtrDocument.findFirstOrThrow({
+        where: {
+          agencyId: fixture.agencyId,
+          attendancePeriodVersionId: successor.id,
+        },
+      });
+      expect(correctedDtr.classification).toBe('CORRECTED');
+      expect(correctedDtr.predecessorDtrDocumentId).toBe(predecessorDtrs.dtrDocumentIds[0]);
+      expect(correctedDtr.outputType).toBe('PRINTABLE_SYSTEM_VIEW');
+      const correctedEffect = await admin.attendanceCorrectionEffect.findFirstOrThrow({
+        where: { agencyId: fixture.agencyId, attendanceCorrectionId: created.correction.id },
+      });
+      expect(JSON.stringify(correctedDtr.sourceManifest)).toContain(correctedEffect.id);
+      const currentDtrs = await services.dtrs.list(fixture.authorizerContext, {
+        attendancePeriodId: fixture.periodId,
+        currentOnly: true,
+      });
+      expect(currentDtrs).toHaveLength(1);
+      expect(currentDtrs[0]!.id).toBe(correctedDtr.id);
+      expect(currentDtrs[0]!.classification).toBe('CORRECTED');
+      expect(currentDtrs[0]!.isCurrent).toBe(true);
+      const allDtrs = await services.dtrs.list(fixture.authorizerContext, {
+        attendancePeriodId: fixture.periodId,
+      });
+      expect(allDtrs).toHaveLength(2);
     } finally {
       await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
       await admin.$disconnect();

@@ -80,6 +80,480 @@ async function resetProfile(agency: {
   });
 }
 
+const dtrFixture = {
+  agencyId: 'd7a00000-0000-4000-8000-000000000001',
+  membershipId: 'd7a00000-0000-4000-8000-000000000002',
+  employeeId: 'd7a00000-0000-4000-8000-000000000003',
+} as const;
+
+/**
+ * Dedicated Daily Time Record journey: one agency whose only membership is
+ * linked to its Employee and owns a locked Attendance Period Version. Keeping
+ * this fixture in its own agency leaves the main protected-shell journeys
+ * untouched while the DTR workspace exercises its whole submitted and
+ * finalized lineage.
+ */
+async function seedDtrFixture(): Promise<void> {
+  const user = await prisma.user.findFirstOrThrow({
+    where: { emailNormalized: 'marisol.santos@example.test' },
+  });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    await transaction.dtrDocument.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.documentVersion.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.document.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.attendancePeriodVersionDay.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.attendancePeriodVersion.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.employeeAttendanceSubmissionDay.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.employeeAttendanceSubmission.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.attendanceException.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.attendanceDaySegment.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.attendanceDay.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.attendancePeriod.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.attendanceEvent.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.scheduleAssignment.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.holidayCalendarEntry.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.workArrangementVersion.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.workArrangement.updateMany({
+      where: { agencyId: dtrFixture.agencyId },
+      data: { currentVersionId: null },
+    });
+    await transaction.workArrangement.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.holidayCalendarVersion.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.holidayCalendar.updateMany({
+      where: { agencyId: dtrFixture.agencyId },
+      data: { currentVersionId: null },
+    });
+    await transaction.holidayCalendar.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.workScheduleBreakInterval.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.workScheduleDayRule.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.workScheduleVersion.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.workSchedule.updateMany({
+      where: { agencyId: dtrFixture.agencyId },
+      data: { currentVersionId: null },
+    });
+    await transaction.workSchedule.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.approvalRouteVersion.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.membershipRole.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.employee.updateMany({
+      where: { agencyId: dtrFixture.agencyId },
+      data: { currentServiceSegmentId: null },
+    });
+    await transaction.serviceSegment.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.organizationUnit.updateMany({
+      where: { agencyId: dtrFixture.agencyId },
+      data: { currentVersionId: null },
+    });
+    await transaction.organizationUnitVersion.deleteMany({
+      where: { agencyId: dtrFixture.agencyId },
+    });
+    await transaction.organizationUnit.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.employee.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.agencyMembership.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
+    await transaction.agency.deleteMany({ where: { id: dtrFixture.agencyId } });
+    await transaction.user.deleteMany({ where: { externalSubject: 'local-dtr-reviewer' } });
+  });
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+    const agency = await transaction.agency.create({
+      data: {
+        id: dtrFixture.agencyId,
+        code: 'E2E-DTR',
+        name: 'Daily Time Record Journey Agency',
+        acronym: 'DTR',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const membership = await transaction.agencyMembership.create({
+      data: {
+        id: dtrFixture.membershipId,
+        agencyId: agency.id,
+        userId: user.id,
+        status: 'ACTIVE',
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    const employee = await transaction.employee.create({
+      data: {
+        id: dtrFixture.employeeId,
+        agencyId: agency.id,
+        employeeNumber: 'E2E-DTR-0001',
+        legalName: 'DTR Journey Employee',
+        birthDate: new Date('1990-01-01'),
+        sex: 'FEMALE',
+        civilStatus: 'SINGLE',
+        contactEmail: 'dtr.journey@example.test',
+        serviceStatus: 'ACTIVE',
+        firstGovernmentServiceDate: new Date('2020-01-01'),
+        agencyServiceStartDate: new Date('2020-01-01'),
+        createdByMembershipId: membership.id,
+        updatedByMembershipId: membership.id,
+      },
+    });
+    await transaction.agencyMembership.update({
+      where: { id: membership.id },
+      data: { employeeId: employee.id },
+    });
+    const dtrUnit = await transaction.organizationUnit.create({
+      data: {
+        agencyId: agency.id,
+        code: 'DTR-UNIT',
+        unitType: 'DIVISION',
+        status: 'ACTIVE',
+      },
+    });
+    const dtrUnitVersion = await transaction.organizationUnitVersion.create({
+      data: {
+        agencyId: agency.id,
+        organizationUnitId: dtrUnit.id,
+        versionNo: 1,
+        name: 'Daily Time Record Division',
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        domainStatus: 'ACTIVE',
+      },
+    });
+    await transaction.organizationUnit.update({
+      where: { id: dtrUnit.id },
+      data: { currentVersionId: dtrUnitVersion.id },
+    });
+    const dtrServiceSegment = await transaction.serviceSegment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        organizationUnitId: dtrUnit.id,
+        appointmentStatus: 'PERMANENT',
+        salaryGrade: 18,
+        salaryStep: 2,
+        effectiveFrom: new Date('2020-01-01'),
+        status: 'ACTIVE',
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.employee.update({
+      where: { id: employee.id },
+      data: { currentServiceSegmentId: dtrServiceSegment.id },
+    });
+    const reviewerUser = await transaction.user.create({
+      data: {
+        identityProvider: issuer,
+        externalSubject: 'local-dtr-reviewer',
+        emailNormalized: 'dtr.reviewer@example.test',
+        displayName: 'DTR Journey Reviewer',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const reviewerMembership = await transaction.agencyMembership.create({
+      data: {
+        agencyId: agency.id,
+        userId: reviewerUser.id,
+        status: 'ACTIVE',
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    const authorityDocument = await transaction.document.create({
+      data: {
+        agencyId: agency.id,
+        documentType: 'SCHEDULE_ASSIGNMENT_AUTHORITY',
+        classification: 'INTERNAL',
+        status: 'APPROVED',
+        createdByMembershipId: membership.id,
+      },
+    });
+    const authorityVersion = await transaction.documentVersion.create({
+      data: {
+        agencyId: agency.id,
+        documentId: authorityDocument.id,
+        versionNo: 1,
+        storageKey: `e2e-dtr-authority-${authorityDocument.id}`,
+        contentHash: 'a'.repeat(64),
+        mimeType: 'application/pdf',
+        sizeBytes: 1,
+        issuedAt: new Date('2026-01-01'),
+        createdByMembershipId: membership.id,
+      },
+    });
+    await transaction.document.update({
+      where: { id: authorityDocument.id },
+      data: { currentVersionId: authorityVersion.id },
+    });
+    for (const roleCode of ['employee', 'personnel_records_officer', 'hrmo_administrator']) {
+      const role = await transaction.role.findFirstOrThrow({
+        where: { agencyId: null, code: roleCode, status: 'ACTIVE' },
+      });
+      await transaction.membershipRole.create({
+        data: {
+          agencyId: agency.id,
+          membershipId: membership.id,
+          roleId: role.id,
+          effectiveFrom: new Date('2026-01-01'),
+        },
+      });
+    }
+    const holidayCalendar = await transaction.holidayCalendar.create({
+      data: {
+        agencyId: agency.id,
+        code: 'DTR-PH',
+        name: 'DTR Philippine Holidays',
+        scopeType: 'AGENCY',
+        scopeReference: 'Agency-wide',
+      },
+    });
+    const holidayVersion = await transaction.holidayCalendarVersion.create({
+      data: {
+        agencyId: agency.id,
+        holidayCalendarId: holidayCalendar.id,
+        versionNo: 1,
+        authorityDocumentVersionId: authorityVersion.id,
+        approvingAuthority: 'Office of the President',
+        effectiveFrom: new Date('2026-01-01'),
+        status: 'ACTIVE',
+        activatedByMembershipId: membership.id,
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    await transaction.holidayCalendar.update({
+      where: { id: holidayCalendar.id },
+      data: { currentVersionId: holidayVersion.id },
+    });
+    const schedule = await transaction.workSchedule.create({
+      data: { agencyId: agency.id, code: 'DTR-ORDINARY', name: 'DTR Ordinary Work Schedule' },
+    });
+    const scheduleVersion = await transaction.workScheduleVersion.create({
+      data: {
+        agencyId: agency.id,
+        workScheduleId: schedule.id,
+        versionNo: 1,
+        scheduleType: 'REGULAR',
+        timezone: 'Asia/Manila',
+        authorityDocumentVersionId: authorityVersion.id,
+        approvingAuthority: 'Office of the President',
+        status: 'ACTIVE',
+        effectiveFrom: new Date('2026-01-01'),
+        activatedByMembershipId: membership.id,
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    for (const weekday of [1, 2, 3, 4, 5]) {
+      await transaction.workScheduleDayRule.create({
+        data: {
+          agencyId: agency.id,
+          workScheduleVersionId: scheduleVersion.id,
+          weekday,
+          ruleType: 'FIXED',
+          dutyStartTime: new Date(Date.UTC(1970, 0, 1, 8, 0)),
+          dutyEndTime: new Date(Date.UTC(1970, 0, 1, 17, 0)),
+          requiredMinutes: 480,
+          eventPattern: 'IN_OUT',
+          collectionBeforeMinutes: 0,
+          collectionAfterMinutes: 0,
+          breaks: {
+            create: [
+              {
+                sequenceNo: 1,
+                breakStartTime: new Date(Date.UTC(1970, 0, 1, 12, 0)),
+                breakEndTime: new Date(Date.UTC(1970, 0, 1, 13, 0)),
+              },
+            ],
+          },
+        },
+      });
+    }
+    for (const weekday of [6, 7]) {
+      await transaction.workScheduleDayRule.create({
+        data: {
+          agencyId: agency.id,
+          workScheduleVersionId: scheduleVersion.id,
+          weekday,
+          ruleType: 'REST',
+          requiredMinutes: 0,
+          eventPattern: 'IN_OUT',
+          collectionBeforeMinutes: 0,
+          collectionAfterMinutes: 0,
+        },
+      });
+    }
+    await transaction.workSchedule.update({
+      where: { id: schedule.id },
+      data: { currentVersionId: scheduleVersion.id },
+    });
+    const arrangement = await transaction.workArrangement.create({
+      data: { agencyId: agency.id, code: 'DTR-ONSITE', name: 'DTR Onsite Work Arrangement' },
+    });
+    const arrangementVersion = await transaction.workArrangementVersion.create({
+      data: {
+        agencyId: agency.id,
+        workArrangementId: arrangement.id,
+        versionNo: 1,
+        arrangementType: 'ONSITE',
+        permittedScheduleTypes: ['REGULAR'],
+        holidayCalendarId: holidayCalendar.id,
+        authorityDocumentVersionId: authorityVersion.id,
+        approvingAuthority: 'Office of the President',
+        status: 'ACTIVE',
+        effectiveFrom: new Date('2026-01-01'),
+        activatedByMembershipId: membership.id,
+        activatedAt: new Date('2026-01-01'),
+      },
+    });
+    await transaction.workArrangement.update({
+      where: { id: arrangement.id },
+      data: { currentVersionId: arrangementVersion.id },
+    });
+    const scheduleAssignment = await transaction.scheduleAssignment.create({
+      data: {
+        agencyId: agency.id,
+        employeeId: employee.id,
+        workScheduleVersionId: scheduleVersion.id,
+        workArrangementVersionId: arrangementVersion.id,
+        authorityDocumentVersionId: authorityVersion.id,
+        effectiveFrom: new Date('2026-01-01'),
+        assignedByMembershipId: membership.id,
+      },
+    });
+    const eventIds: string[] = [];
+    for (const [eventType, hour] of [
+      ['TIME_IN', 8],
+      ['BREAK_OUT', 12],
+      ['BREAK_IN', 13],
+      ['TIME_OUT', 16],
+    ] as const) {
+      const event = await transaction.attendanceEvent.create({
+        data: {
+          agencyId: agency.id,
+          employeeId: employee.id,
+          eventTime: new Date(`2026-01-05T${String(hour).padStart(2, '0')}:00:00+08:00`),
+          eventType,
+          source: 'MANUAL',
+          enteredByMembershipId: membership.id,
+          reason: 'Daily Time Record journey fixture.',
+        },
+      });
+      eventIds.push(event.id);
+    }
+    const mondayRule = await transaction.workScheduleDayRule.findFirstOrThrow({
+      where: { agencyId: agency.id, workScheduleVersionId: scheduleVersion.id, weekday: 1 },
+    });
+    const period = await transaction.attendancePeriod.create({
+      data: {
+        agencyId: agency.id,
+        code: 'E2E-DTR-2026-01',
+        dateFrom: new Date('2026-01-01'),
+        dateTo: new Date('2026-01-31'),
+        status: 'FINALIZED',
+      },
+    });
+    const day = await transaction.attendanceDay.create({
+      data: {
+        agencyId: agency.id,
+        attendancePeriodId: period.id,
+        employeeId: employee.id,
+        workDate: new Date('2026-01-05'),
+        scheduleAssignmentId: scheduleAssignment.id,
+        workScheduleVersionId: scheduleVersion.id,
+        workArrangementVersionId: arrangementVersion.id,
+        holidayCalendarVersionId: holidayVersion.id,
+        dayClassification: 'SCHEDULED',
+        status: 'APPROVED',
+        expectedMinutes: 480,
+        workedMinutes: 480,
+        coverageMinutes: 480,
+        calculationVersion: 1,
+        ruleSnapshot: {
+          fingerprint: 'e'.repeat(64),
+          timezone: 'Asia/Manila',
+          assignmentId: scheduleAssignment.id,
+          workScheduleVersionId: scheduleVersion.id,
+          workArrangementVersionId: arrangementVersion.id,
+          holidayCalendarVersionId: holidayVersion.id,
+          dayRuleId: mondayRule.id,
+          holidayClassifications: {},
+          eventIds,
+          coverageSources: [],
+          capturedAt: '2026-01-05T00:00:00.000Z',
+        },
+        isCurrent: true,
+        calculatedAt: new Date('2026-01-05T09:00:00.000Z'),
+      },
+    });
+    const submission = await transaction.employeeAttendanceSubmission.create({
+      data: {
+        agencyId: agency.id,
+        attendancePeriodId: period.id,
+        employeeId: employee.id,
+        versionNo: 1,
+        status: 'APPROVED',
+        submittedByMembershipId: membership.id,
+        submittedAt: new Date('2026-01-06T01:00:00.000Z'),
+        reviewedByMembershipId: reviewerMembership.id,
+        reviewedAt: new Date('2026-01-06T02:00:00.000Z'),
+        reviewReason: 'Daily Time Record journey fixture.',
+      },
+    });
+    await transaction.employeeAttendanceSubmissionDay.create({
+      data: {
+        agencyId: agency.id,
+        employeeAttendanceSubmissionId: submission.id,
+        attendanceDayId: day.id,
+      },
+    });
+    const routeVersion = await transaction.approvalRouteVersion.create({
+      data: {
+        agencyId: agency.id,
+        routeCode: 'DTR-PERIOD-LOCK',
+        versionNo: 1,
+        domain: 'ATTENDANCE',
+        stepDefinition: { steps: [] },
+        effectiveFrom: new Date('2026-01-01'),
+        status: 'ACTIVE',
+      },
+    });
+    const periodVersion = await transaction.attendancePeriodVersion.create({
+      data: {
+        agencyId: agency.id,
+        attendancePeriodId: period.id,
+        versionNo: 1,
+        status: 'LOCKED',
+        approvalRouteVersionId: routeVersion.id,
+        submittedByMembershipId: membership.id,
+        submittedAt: new Date('2026-01-06T02:00:00.000Z'),
+        reviewedByMembershipId: reviewerMembership.id,
+        reviewedAt: new Date('2026-01-06T03:00:00.000Z'),
+        reviewReason: 'Daily Time Record journey fixture.',
+        lockedByMembershipId: membership.id,
+        lockedAt: new Date('2026-01-06T04:00:00.000Z'),
+        reconciliation: { source: 'E2E_DTR_FIXTURE' },
+      },
+    });
+    await transaction.attendancePeriodVersionDay.create({
+      data: {
+        agencyId: agency.id,
+        attendancePeriodVersionId: periodVersion.id,
+        employeeAttendanceSubmissionId: submission.id,
+        attendanceDayId: day.id,
+      },
+    });
+  });
+}
+
 async function seed(): Promise<void> {
   const agency = await prisma.agency.upsert({
     where: { code: 'E2E-WORK-QUEUE' },
@@ -304,6 +778,7 @@ async function seed(): Promise<void> {
       where: { agencyId: agency.id },
     });
     await transaction.lockedAttendanceAdjustment.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.dtrDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceCorrectionEffect.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceCorrectionEvidence.deleteMany({ where: { agencyId: agency.id } });
     await transaction.attendanceCorrection.deleteMany({ where: { agencyId: agency.id } });
@@ -1588,6 +2063,7 @@ async function seed(): Promise<void> {
         assignedByMembershipId: membership.id,
       },
     });
+
     const actionEvidence = await Promise.all(
       ['NOSI', 'CURRENT_COMPENSATION', 'PERFORMANCE_OR_SERVICE', 'SERVICE_CONTINUITY'].map((type) =>
         evidence(`E2E-ACTION-${type}`, type),
@@ -2212,6 +2688,7 @@ async function seed(): Promise<void> {
       },
     });
   });
+  await seedDtrFixture();
 }
 
 seed()

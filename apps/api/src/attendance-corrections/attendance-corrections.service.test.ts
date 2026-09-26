@@ -25,6 +25,7 @@ function service() {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
   );
 }
 
@@ -36,6 +37,7 @@ describe('AttendanceCorrectionsService authorization gates', () => {
       attendanceCorrectionAuditWriter,
       {} as never,
       registry,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

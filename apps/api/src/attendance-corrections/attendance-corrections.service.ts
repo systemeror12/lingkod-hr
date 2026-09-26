@@ -26,6 +26,7 @@ import {
   type ApprovalRouteSummary,
 } from '../approvals/approval.service';
 import { DocumentsService } from '../documents/documents.service';
+import { DtrsService } from '../dtrs/dtrs.service';
 import {
   ATTENDANCE_CORRECTION_AUDIT_WRITER,
   type AttendanceCorrectionAuditWriter,
@@ -248,6 +249,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     @Inject(AttendanceService) private readonly attendance: AttendanceService,
     @Inject(ScheduleAssignmentsService) private readonly assignments: ScheduleAssignmentsService,
     @Inject(DocumentsService) private readonly documents: DocumentsService,
+    @Inject(DtrsService) private readonly dtrs: DtrsService,
   ) {}
 
   onModuleInit(): void {
@@ -927,9 +929,9 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       if (current) successorDayIds.set(day.workDate, current.id);
     }
     const staleSubmissionIds = await this.markSubmissionsStale(transaction, context, preview);
-    let adjustmentId: string | null = null;
+    let adjustment: { id: string; successorVersionIds: string[] } | null = null;
     if (locked) {
-      adjustmentId = await this.createLockedAdjustment(
+      adjustment = await this.createLockedAdjustment(
         transaction,
         context,
         record,
@@ -938,6 +940,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         staleSubmissionIds,
         now,
       );
+    }
+    const finalizedDtrDocumentIds: string[] = [];
+    for (const successorVersionId of adjustment?.successorVersionIds ?? []) {
+      const generated = await this.dtrs.materializeForLockedVersionInTransaction(
+        transaction,
+        context,
+        successorVersionId,
+      );
+      finalizedDtrDocumentIds.push(...generated.dtrDocumentIds);
     }
     await transaction.attendanceCorrection.update({
       where: { agencyId_id: { agencyId: context.agencyId, id: record.id } },
@@ -976,7 +987,9 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         affectedWorkDates: preview.days.map((day) => day.workDate),
         successorAttendanceDayIds: [...successorDayIds.values()],
         staleSubmissionIds,
-        lockedAttendanceAdjustmentId: adjustmentId,
+        lockedAttendanceAdjustmentId: adjustment?.id ?? null,
+        successorPeriodVersionIds: adjustment?.successorVersionIds ?? [],
+        finalizedDtrDocumentIds,
       },
     });
   }
@@ -1015,7 +1028,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     successorDayIds: ReadonlyMap<string, string>,
     staleSubmissionIds: readonly string[],
     now: Date,
-  ): Promise<string> {
+  ): Promise<{ id: string; successorVersionIds: string[] }> {
     const adjustment = await transaction.lockedAttendanceAdjustment.create({
       data: {
         agencyId: context.agencyId,
@@ -1025,6 +1038,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       },
       select: { id: true },
     });
+    const successorVersionIds: string[] = [];
     for (const lockedVersionId of unique(preview.lockedPeriodVersionIds)) {
       const predecessor = await transaction.attendancePeriodVersion.findFirst({
         where: { agencyId: context.agencyId, id: lockedVersionId },
@@ -1083,6 +1097,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         },
         select: { id: true },
       });
+      successorVersionIds.push(successor.id);
       const membershipRows: Prisma.AttendancePeriodVersionDayCreateManyInput[] = [];
       for (const row of predecessor.days) {
         const workDate = formatDate(row.attendanceDay.workDate);
@@ -1109,7 +1124,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         },
       });
     }
-    return adjustment.id;
+    return { id: adjustment.id, successorVersionIds };
   }
 
   private async findByIdInTransaction(

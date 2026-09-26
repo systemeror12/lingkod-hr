@@ -154,6 +154,7 @@ export interface AttendanceDayCalculationResultSummary {
   status: AttendanceDayState | null;
   outcome: AttendanceDayCalculationOutcome;
   exceptionTypes: AttendanceDayExceptionType[];
+  staleSubmissionIds?: string[];
 }
 
 export interface CalculateAttendanceDaysResult {
