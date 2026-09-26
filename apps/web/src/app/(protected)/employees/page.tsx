@@ -9,7 +9,7 @@ import { StateCode, StateSurface } from '../../../components/state-surface';
 import { EmployeeStatus, formatEmployeeDate } from '../../../components/employee-directory';
 import { PageHeader } from '../../../components/ui/page-header';
 import { Panel } from '../../../components/ui/panel';
-import { Table, TableFooter, Td, Th, Tr } from '../../../components/ui/table';
+import { Table, Td, Th, Tr } from '../../../components/ui/table';
 
 export const metadata: Metadata = { title: 'Employees' };
 export const dynamic = 'force-dynamic';
@@ -93,7 +93,7 @@ export default async function EmployeesPage() {
         </StateSurface>
       ) : (
         <Panel
-          title="Preboarding employees"
+          title="Employees"
           flush
           actions={
             <p className="m-0 text-caption text-ink-muted">
@@ -130,7 +130,6 @@ export default async function EmployeesPage() {
               ))}
             </tbody>
           </Table>
-          <TableFooter shown={employees.length} total={employees.length} />
         </Panel>
       )}
     </>
