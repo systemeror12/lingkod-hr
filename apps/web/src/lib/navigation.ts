@@ -170,6 +170,15 @@ const destinations: readonly (Destination & {
       hasPermission(session, 'attendance.corrections.create'),
   },
   {
+    href: '/attendance-dtrs',
+    label: 'Daily Time Records',
+    icon: 'position',
+    visible: (session) =>
+      hasPermission(session, 'attendance.days.read') ||
+      hasPermission(session, 'attendance.reports.read') ||
+      hasPermission(session, 'attendance.submissions.create'),
+  },
+  {
     href: '/leave-policies',
     label: 'Leave Policies',
     icon: 'leave',

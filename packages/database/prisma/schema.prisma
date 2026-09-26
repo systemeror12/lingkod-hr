@@ -167,6 +167,7 @@ model Agency {
   attendanceCorrectionEffects   AttendanceCorrectionEffect[]
   lockedAttendanceAdjustments   LockedAttendanceAdjustment[]
   lockedAttendanceAdjustmentPeriods LockedAttendanceAdjustmentPeriod[]
+  dtrDocuments                  DtrDocument[]
 
   @@unique([id, code])
   @@map("agencies")
@@ -1668,6 +1669,7 @@ model DocumentVersion {
   leaveApplicationAttestationVersions              LeaveApplicationVersion[]             @relation("LeaveApplicationVersionAttestation")
   attendanceContextEvidenceVersions                AttendanceContext[]                   @relation("AttendanceContextEvidenceVersion")
   attendanceSubmissionEvidenceVersions             EmployeeAttendanceSubmission[]        @relation("EmployeeAttendanceSubmissionEvidenceVersion")
+  dtrDocumentVersions                              DtrDocument[]                         @relation("DtrDocumentDocumentVersion")
   attendanceCorrectionEvidenceVersions             AttendanceCorrectionEvidence[]        @relation("AttendanceCorrectionEvidenceVersion")
   monetizationFormTemplateVersions                 LeaveMonetizationRequestVersion[]     @relation("MonetizationFormTemplateVersion")
   monetizationAttestationVersions                  LeaveMonetizationRequestVersion[]     @relation("MonetizationAttestationVersion")
@@ -1942,6 +1944,7 @@ model Employee {
   attendanceDays         AttendanceDay[]         @relation("AttendanceDayEmployee")
   attendanceSubmissions  EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionEmployee")
   attendanceCorrections  AttendanceCorrection[]  @relation("AttendanceCorrectionEmployee")
+  dtrDocuments           DtrDocument[]           @relation("DtrDocumentEmployee")
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
@@ -3682,6 +3685,7 @@ model AttendancePeriodVersion {
   reviewedBy      AgencyMembership? @relation("AttendancePeriodVersionReviewer", fields: [agencyId, reviewedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   lockedBy        AgencyMembership? @relation("AttendancePeriodVersionLocker", fields: [agencyId, lockedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   days            AttendancePeriodVersionDay[] @relation("AttendancePeriodVersionDayVersion")
+  dtrDocuments    DtrDocument[] @relation("DtrDocumentPeriodVersion")
   adjustmentPredecessors LockedAttendanceAdjustmentPeriod[] @relation("LockedAdjustmentPredecessorPeriod")
   adjustmentSuccessors   LockedAttendanceAdjustmentPeriod[] @relation("LockedAdjustmentSuccessorPeriod")
 
@@ -3705,6 +3709,38 @@ model AttendancePeriodVersionDay {
   @@id([attendancePeriodVersionId, attendanceDayId])
   @@index([agencyId, attendanceDayId])
   @@map("attendance_period_version_days")
+}
+
+/// Immutable Finalized Daily Time Record for one Employee and Attendance
+/// Period Version. The source manifest retains the exact Attendance Day
+/// versions, segments, and presentation sources behind the Printable System
+/// View. Earlier artifacts stay in history; the latest locked successor is
+/// current, and a finalized DTR is never overwritten.
+model DtrDocument {
+  id                             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                       String   @map("agency_id") @db.Uuid
+  attendancePeriodVersionId      String   @map("attendance_period_version_id") @db.Uuid
+  employeeId                     String   @map("employee_id") @db.Uuid
+  predecessorDtrDocumentId       String?  @map("predecessor_dtr_document_id") @db.Uuid
+  classification                 String
+  outputType                     String   @map("output_type")
+  documentVersionId              String   @map("document_version_id") @db.Uuid
+  authoritativeTemplateReference Json?    @map("authoritative_template_reference")
+  sourceManifest                 Json     @map("source_manifest")
+  generatedAt                    DateTime @map("generated_at") @db.Timestamptz(6)
+
+  agency                  Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  attendancePeriodVersion AttendancePeriodVersion @relation("DtrDocumentPeriodVersion", fields: [agencyId, attendancePeriodVersionId], references: [agencyId, id], onDelete: Restrict)
+  employee                Employee                @relation("DtrDocumentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  predecessor             DtrDocument?            @relation("DtrDocumentPredecessor", fields: [agencyId, predecessorDtrDocumentId], references: [agencyId, id], onDelete: Restrict)
+  successors              DtrDocument[]           @relation("DtrDocumentPredecessor")
+  documentVersion         DocumentVersion         @relation("DtrDocumentDocumentVersion", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([attendancePeriodVersionId, employeeId])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId])
+  @@index([agencyId, attendancePeriodVersionId])
+  @@map("dtr_documents")
 }
 
 /// Evidence-backed request to add, replace, or void one Attendance Event or
