@@ -44,6 +44,7 @@ type FocusableElement = {
 };
 
 type InlineElement = {
+  closest(selector: string): unknown;
   contains(node: unknown): boolean;
   focus(): void;
   querySelector(selector: string): FocusableElement | null;
@@ -148,7 +149,8 @@ function InlineRecord({
       };
       if (keyboard.key !== 'Tab' || keyboard.defaultPrevented) return;
       const element = ref.current as unknown as InlineElement | null;
-      if (!element) return;
+      // A Form left open in a hidden tab panel must not hold the visible page's focus.
+      if (!element || element.closest('[hidden]')) return;
       const active = browserDocument.activeElement;
       const targets = focusable();
       if (targets.length === 0) {

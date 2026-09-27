@@ -160,6 +160,7 @@ test('maintains masked payroll bank accounts through shared dialogs', async ({ p
   await page.getByLabel('Contact email').fill(`bank.${stamp}@example.test`);
   await page.getByRole('button', { name: 'Create employee' }).click();
 
+  await page.getByRole('tab', { name: 'Payroll bank accounts' }).click();
   await expect(page.getByRole('heading', { name: 'Payroll bank accounts' })).toBeVisible();
   await page.getByRole('button', { name: 'Add bank account' }).click();
   const create = page.getByRole('dialog', { name: 'Add payroll bank account' });

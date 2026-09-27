@@ -18,6 +18,7 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await page.getByRole('button', { name: 'Create employee' }).click();
   await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
 
+  await page.getByRole('tab', { name: 'SALN compliance' }).click();
   await page.getByRole('button', { name: 'Record filing' }).click();
   const create = page.getByRole('region', { name: 'Record SALN filing metadata' });
   await expect(create).toHaveAccessibleDescription(
@@ -74,4 +75,12 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await expect(history.getByText('2026 · ANNUAL', { exact: true })).toBeVisible();
   await expect(history.getByText('2026 · ANNUAL UPDATED', { exact: true })).toBeVisible();
   await expect(history.getByText('2026 · ANNUAL CORRECTED', { exact: true })).toBeVisible();
+
+  // The history stays open in the hidden SALN tab without trapping focus on the visible one.
+  const detailsTab = page.getByRole('tab', { name: 'Details' });
+  await detailsTab.click();
+  await expect(history).toBeHidden();
+  await detailsTab.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeFocused();
 });

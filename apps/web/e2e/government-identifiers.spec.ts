@@ -215,6 +215,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   await page.getByRole('button', { name: 'Create employee' }).click();
 
   await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
+  await page.getByRole('tab', { name: 'Government identifiers' }).click();
   await expect(
     page.getByRole('heading', { name: 'Government identifiers', exact: true }),
   ).toBeVisible();
@@ -313,6 +314,6 @@ test('manages masked government identifiers through the shared dialogs', async (
   await expect(invalidateDialog).toBeHidden();
   await expect(page.getByText('Invalid', { exact: true })).toBeVisible();
   await expect(
-    page.locator('section[aria-labelledby="government-identifiers-heading"]'),
+    page.getByRole('region', { name: 'Government identifiers', exact: true }),
   ).toBeFocused();
 });
