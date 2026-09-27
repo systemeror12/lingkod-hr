@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
-import { Field } from './ui/field';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
 import { Button, buttonVariants } from './ui/button';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import { GovernmentIdentifiersSection } from './government-identifiers-client';
@@ -120,116 +122,102 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
   }
 
   return (
-    <>
-      <Link
-        href="/employees"
-        className="mb-6 inline-block text-xs font-[650] text-cobalt no-underline"
-      >
-        ← Employee directory
-      </Link>
-      <header className="mb-7">
-        <EmployeePageTitle
-          eyebrow="Personnel records"
-          title="Create preboarding employee"
-          description="Add the stable identity record only. Service and appointment details come later."
-        />
-      </header>
-      <form onSubmit={submit} className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        {error && (
-          <p
-            role="alert"
-            className="m-0 border-b border-line bg-[#fdeeee] px-6 py-4 text-sm text-[#8f2d2d] min-[620px]:px-8"
-          >
-            {error}
+    <div className="grid gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Employees', href: '/employees' }, { label: 'Create employee' }]}
+        title="Create preboarding employee"
+      />
+      <form onSubmit={submit} className="grid gap-4">
+        <FormError message={error ?? ''} />
+        <Panel title="Stable identity record">
+          <p className="mt-0 mb-4 text-body text-ink-muted">
+            Add the stable identity record only. Service and appointment details come later.
           </p>
-        )}
-        <div className="grid gap-5 px-6 py-7 min-[620px]:grid-cols-2 min-[700px]:px-8">
-          <Field label="Employee number" error={fieldError('employeeNumber')}>
-            <input
-              className={employeeInputClass}
-              name="employeeNumber"
-              value={values.employeeNumber}
-              onChange={change('employeeNumber')}
-              required
-              maxLength={80}
-            />
-          </Field>
-          <Field label="Legal name" error={fieldError('legalName')}>
-            <input
-              className={employeeInputClass}
-              name="legalName"
-              value={values.legalName}
-              onChange={change('legalName')}
-              placeholder="Given, middle, family name"
-              required
-              maxLength={300}
-            />
-          </Field>
-          <Field label="Birth date" error={fieldError('birthDate')}>
-            <input
-              className={employeeInputClass}
-              name="birthDate"
-              type="date"
-              value={values.birthDate}
-              onChange={change('birthDate')}
-              required
-            />
-          </Field>
-          <Field label="Sex" error={fieldError('sex')}>
-            <select
-              className={employeeInputClass}
-              name="sex"
-              value={values.sex}
-              onChange={change('sex')}
-              required
-            >
-              <option value="FEMALE">Female</option>
-              <option value="MALE">Male</option>
-            </select>
-          </Field>
-          <Field label="Civil status" error={fieldError('civilStatus')}>
-            <select
-              className={employeeInputClass}
-              name="civilStatus"
-              value={values.civilStatus}
-              onChange={change('civilStatus')}
-              required
-            >
-              <option value="SINGLE">Single</option>
-              <option value="MARRIED">Married</option>
-              <option value="WIDOWED">Widowed</option>
-              <option value="SEPARATED">Separated</option>
-            </select>
-          </Field>
-          <Field label="Contact email" error={fieldError('contactEmail')}>
-            <input
-              className={employeeInputClass}
-              name="contactEmail"
-              type="email"
-              value={values.contactEmail}
-              onChange={change('contactEmail')}
-              placeholder="name@example.com"
-              required
-              maxLength={320}
-            />
-          </Field>
-          <p className="mb-0 border-l-2 border-[#d99a32] bg-[#fff9ec] p-4 text-xs leading-5 text-[#70490f] min-[620px]:col-span-2">
-            Email is contact information. It will not link or replace an Agency Membership.
-          </p>
-        </div>
-        <footer className="flex flex-col-reverse gap-3 border-t border-line px-6 py-5 min-[620px]:flex-row min-[620px]:justify-end min-[700px]:px-8">
-          <Link
-            href="/employees"
-            className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink no-underline hover:bg-[#e8edf3]"
-          >
+          <div className="grid gap-4 min-[621px]:grid-cols-2">
+            <Field label="Employee number" error={fieldError('employeeNumber')}>
+              <input
+                className={inputClass}
+                name="employeeNumber"
+                value={values.employeeNumber}
+                onChange={change('employeeNumber')}
+                required
+                maxLength={80}
+              />
+            </Field>
+            <Field label="Legal name" error={fieldError('legalName')}>
+              <input
+                className={inputClass}
+                name="legalName"
+                value={values.legalName}
+                onChange={change('legalName')}
+                placeholder="Given, middle, family name"
+                required
+                maxLength={300}
+              />
+            </Field>
+            <Field label="Birth date" error={fieldError('birthDate')}>
+              <input
+                className={inputClass}
+                name="birthDate"
+                type="date"
+                value={values.birthDate}
+                onChange={change('birthDate')}
+                required
+              />
+            </Field>
+            <Field label="Sex" error={fieldError('sex')}>
+              <select
+                className={inputClass}
+                name="sex"
+                value={values.sex}
+                onChange={change('sex')}
+                required
+              >
+                <option value="FEMALE">Female</option>
+                <option value="MALE">Male</option>
+              </select>
+            </Field>
+            <Field label="Civil status" error={fieldError('civilStatus')}>
+              <select
+                className={inputClass}
+                name="civilStatus"
+                value={values.civilStatus}
+                onChange={change('civilStatus')}
+                required
+              >
+                <option value="SINGLE">Single</option>
+                <option value="MARRIED">Married</option>
+                <option value="WIDOWED">Widowed</option>
+                <option value="SEPARATED">Separated</option>
+              </select>
+            </Field>
+            <Field label="Contact email" error={fieldError('contactEmail')}>
+              <input
+                className={inputClass}
+                name="contactEmail"
+                type="email"
+                value={values.contactEmail}
+                onChange={change('contactEmail')}
+                placeholder="name@example.com"
+                required
+                maxLength={320}
+              />
+            </Field>
+            <p className="m-0 border-l-2 border-info bg-canvas px-3 py-2.5 text-small text-ink-muted min-[621px]:col-span-2">
+              Email is contact information. It will not link or replace an Agency Membership.
+            </p>
+          </div>
+        </Panel>
+        <div className="flex flex-col-reverse gap-2 min-[621px]:flex-row min-[621px]:justify-end">
+          <Link href="/employees" className={buttonVariants({ variant: 'secondary' })}>
             Cancel
           </Link>
-          <Button type="submit" variant="primary" size="default" disabled={submitting}>
+          <Button type="submit" variant="primary" disabled={submitting}>
             {submitting ? 'Creating…' : 'Create employee'}
           </Button>
-        </footer>
+        </div>
       </form>
-    </>
+    </div>
   );
 }
 
