@@ -181,6 +181,7 @@ export function EmployeeDocumentsSection({
   const [selectedDocumentId, setSelectedDocumentId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const [loading, setLoading] = useState(canRead);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -216,8 +217,10 @@ export function EmployeeDocumentsSection({
       if (!response.ok)
         throw new Error(errorMessage(value, 'Personnel Documents could not be loaded.'));
       setDocuments(parseDocumentList(value));
+      setLoadFailed(false);
       setError(null);
     } catch (caught: unknown) {
+      setLoadFailed(true);
       setError(
         caught instanceof Error ? caught.message : 'Personnel Documents could not be loaded.',
       );
@@ -681,7 +684,11 @@ export function EmployeeDocumentsSection({
         </StateSurface>
       ) : documents.length === 0 ? (
         <StateSurface compact>
-          <p className="m-0">No Personnel Documents are visible in this scope.</p>
+          <p className="m-0">
+            {loadFailed
+              ? 'Personnel Documents are unavailable until the list loads. Reload the page to try again.'
+              : 'No Personnel Documents are visible in this scope.'}
+          </p>
         </StateSurface>
       ) : (
         <Table className="mt-3">
