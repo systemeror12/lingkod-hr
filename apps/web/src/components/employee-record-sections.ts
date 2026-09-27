@@ -1,9 +1,5 @@
 export type EmployeeRecordSection =
-  | 'details'
-  | 'documents'
-  | 'identifiers'
-  | 'bank-accounts'
-  | 'saln';
+  'details' | 'documents' | 'identifiers' | 'bank-accounts' | 'saln';
 
 /** URL parameters each section uses to open one of its records. */
 const sectionParameters: [EmployeeRecordSection, string[]][] = [
@@ -20,7 +16,5 @@ const sectionParameters: [EmployeeRecordSection, string[]][] = [
 export function employeeRecordSectionFor(search: {
   has(name: string): boolean;
 }): EmployeeRecordSection | null {
-  return (
-    sectionParameters.find(([, names]) => names.some((name) => search.has(name)))?.[0] ?? null
-  );
+  return sectionParameters.find(([, names]) => names.some((name) => search.has(name)))?.[0] ?? null;
 }
