@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { getConfig } from '@lingkod-hr/config';
 import { cookies } from 'next/headers';
 import {
@@ -8,6 +7,7 @@ import {
 } from '../../../components/agency-profile-workspace';
 import { OrganizationWorkspace } from '../../../components/organization-workspace';
 import { ShellState } from '../../../components/shell-state';
+import { SectionTabLinks } from '../../../components/ui/section-tabs';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 import { manilaToday } from '../../../lib/manila-date';
 
@@ -83,7 +83,8 @@ export default async function OrganizationPage({
     );
   }
 
-  const showProfile = (await searchParams).workspace === 'agency' || !canReadUnits;
+  const showProfile =
+    canReadProfile && ((await searchParams).workspace === 'agency' || !canReadUnits);
   const config = getConfig();
   const cookieStore = await cookies();
   const requestOptions = {
@@ -167,48 +168,45 @@ export default async function OrganizationPage({
     initialHierarchy = (await hierarchyResponse.json()) as OrganizationHierarchyResponse;
   }
 
-  return (
-    <div className="grid min-w-0 gap-5">
-      <nav
-        aria-label="Organization workspace"
-        className="flex gap-4 border-b border-line pb-3 text-sm text-cobalt"
-      >
-        {canReadUnits ? (
-          <Link href="/organization" aria-current={!showProfile ? 'page' : undefined}>
-            Organization Units
-          </Link>
-        ) : null}
-        {canReadProfile ? (
-          <Link
-            href="/organization?workspace=agency"
-            aria-current={showProfile ? 'page' : undefined}
-          >
-            Agency Profile
-          </Link>
-        ) : null}
-      </nav>
-      {profile && showProfile ? (
-        <AgencyProfileWorkspace
-          agencyId={session.agencyId}
-          canUpdate={hasPermission(session, 'organization.agency.update')}
-          initial={profile}
-        />
-      ) : null}
-      {initial && initialHierarchy && !showProfile ? (
-        <section className="grid min-w-0 gap-5">
-          <OrganizationWorkspace
-            key={initialHierarchy.asOf}
-            agencyId={session.agencyId}
-            canAbolish={hasPermission(session, 'organization.units.abolish')}
-            canActivate={hasPermission(session, 'organization.units.activate')}
-            canCreate={hasPermission(session, 'organization.units.create')}
-            canInactivate={hasPermission(session, 'organization.units.inactivate')}
-            canUpdate={hasPermission(session, 'organization.units.update')}
-            initial={initial}
-            initialHierarchy={initialHierarchy}
-          />
-        </section>
-      ) : null}
-    </div>
+  const tabs = (
+    <SectionTabLinks
+      label="Organization workspace"
+      tabs={[
+        ...(canReadUnits
+          ? [{ href: '/organization', label: 'Organization Units', current: !showProfile }]
+          : []),
+        ...(canReadProfile
+          ? [
+              {
+                href: '/organization?workspace=agency',
+                label: 'Agency Profile',
+                current: showProfile,
+              },
+            ]
+          : []),
+      ]}
+    />
   );
+
+  return profile && showProfile ? (
+    <AgencyProfileWorkspace
+      agencyId={session.agencyId}
+      canUpdate={hasPermission(session, 'organization.agency.update')}
+      initial={profile}
+      tabs={tabs}
+    />
+  ) : initial && initialHierarchy ? (
+    <OrganizationWorkspace
+      key={initialHierarchy.asOf}
+      agencyId={session.agencyId}
+      canAbolish={hasPermission(session, 'organization.units.abolish')}
+      canActivate={hasPermission(session, 'organization.units.activate')}
+      canCreate={hasPermission(session, 'organization.units.create')}
+      canInactivate={hasPermission(session, 'organization.units.inactivate')}
+      canUpdate={hasPermission(session, 'organization.units.update')}
+      initial={initial}
+      initialHierarchy={initialHierarchy}
+      tabs={tabs}
+    />
+  ) : null;
 }

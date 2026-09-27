@@ -268,7 +268,7 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   const verticalConnector = page.locator('[data-tree-connector="vertical"]');
   await expect(verticalConnector.first()).toBeVisible();
   await expect(verticalConnector.first()).toHaveCSS('width', '1px');
-  await expect(verticalConnector.first()).toHaveCSS('background-color', 'rgb(174, 184, 199)');
+  await expect(verticalConnector.first()).toHaveCSS('background-color', 'rgb(212, 217, 225)');
   const childHierarchyButton = page
     .getByRole('navigation', { name: 'Organization hierarchy' })
     .getByRole('button', { name: new RegExp(childName) });

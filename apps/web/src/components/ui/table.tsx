@@ -55,6 +55,20 @@ export function Td({
   );
 }
 
+/** Body cell that names its row, such as a record's official name. */
+export function RowHeader({ className, ...props }: ComponentPropsWithoutRef<'th'>) {
+  return (
+    <th
+      scope="row"
+      className={cn(
+        'border-b border-border-subtle px-4 py-2.5 text-left align-top font-[600] text-ink',
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 /**
  * Body row with a hover tint. `selected` marks the row whose record is open elsewhere on the
  * page and exposes it as the current item.
