@@ -16,6 +16,7 @@ it('associates server validation errors with the labeled control and preserves i
   expect(errorId).toBeTruthy();
   expect(html).toContain(`aria-describedby="number-help ${errorId}"`);
   expect(html).toContain('Already used');
+  expect(html).toMatch(/<span id="[^"]+" role="alert"/);
 });
 
 it('announces a form error that callers can make focusable, and renders nothing without one', () => {

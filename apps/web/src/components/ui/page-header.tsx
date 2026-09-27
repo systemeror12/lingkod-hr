@@ -6,7 +6,7 @@ export type Breadcrumb = { label: string; href?: string };
 /**
  * White band at the top of a screen. Give it a `title` for a register or queue, or pass a
  * `RecordHeader` as `children` for a record page. `actions` sit beside the title; record pages
- * pass theirs to `RecordHeader`. `tabs` takes a `SectionTabList`. Place it first in the page: it
+ * pass theirs to `RecordHeader`. `tabs` takes a `SectionTabList`, or `SectionTabLinks` when each tab is its own page. Place it first in the page: it
  * cancels the shell's `main` padding (`--workspace-gutter` and `py-6`) so the band spans the
  * workspace edge to edge.
  */

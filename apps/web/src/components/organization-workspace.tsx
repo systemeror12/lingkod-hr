@@ -1048,13 +1048,13 @@ export function OrganizationWorkspace({
             }
           >
             {hierarchyLoading ? (
-              <StateSurface compact busy>
+              <StateSurface label="Effective hierarchy status" compact busy>
                 <p className="m-0" role="status">
                   Loading effective hierarchy…
                 </p>
               </StateSurface>
             ) : rows.length === 0 && !selectedId ? (
-              <StateSurface compact>
+              <StateSurface label="Effective hierarchy status" compact>
                 <strong className="font-[650] text-ink">
                   No active Organization Units on this date.
                 </strong>
@@ -1066,7 +1066,6 @@ export function OrganizationWorkspace({
               <div
                 className="grid content-start gap-5 p-4"
                 aria-label="Selected Organization Unit"
-                aria-busy={hierarchyLoading}
                 role="region"
               >
                 <div>
@@ -1228,13 +1227,13 @@ export function OrganizationWorkspace({
                 Version and transition evidence as of {dateLabel(asOf)}
               </p>
               {historyLoading ? (
-                <StateSurface compact busy>
+                <StateSurface label="Organization Unit history status" compact busy>
                   <p className="m-0" role="status">
                     Loading history…
                   </p>
                 </StateSurface>
               ) : historyError ? (
-                <StateSurface compact>
+                <StateSurface label="Organization Unit history status" compact>
                   <p className="m-0 text-danger" role="alert">
                     {historyError}
                   </p>
@@ -1369,7 +1368,7 @@ export function OrganizationWorkspace({
               }
             >
               {registeredUnits.length === 0 ? (
-                <StateSurface compact>
+                <StateSurface label="Organization Unit register status" compact>
                   <p className="m-0">No activated Organization Units yet.</p>
                 </StateSurface>
               ) : (
@@ -1421,7 +1420,7 @@ export function OrganizationWorkspace({
             }
           >
             {draftCount === 0 ? (
-              <StateSurface compact>
+              <StateSurface label="Draft Organization Units status" compact>
                 <p className="m-0">No Draft Organization Units.</p>
               </StateSurface>
             ) : (
