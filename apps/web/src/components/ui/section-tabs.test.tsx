@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it } from 'vitest';
-import { SectionTabList, SectionTabPanel, SectionTabs } from './section-tabs';
+import { SectionTabLinks, SectionTabList, SectionTabPanel, SectionTabs } from './section-tabs';
 
 it('renders a labelled tablist whose selected tab controls its panel', () => {
   const html = renderToStaticMarkup(
@@ -27,4 +27,23 @@ it('renders a labelled tablist whose selected tab controls its panel', () => {
   expect(html).toMatch(
     new RegExp(`role="tabpanel"[^>]*aria-labelledby="${tabId}"[^>]*id="${panelId}"`),
   );
+});
+
+it('renders page-switching tabs as a labelled navigation that marks the current page', () => {
+  const html = renderToStaticMarkup(
+    <SectionTabLinks
+      label="Organization workspace"
+      tabs={[
+        { href: '/organization', label: 'Organization Units', current: false },
+        { href: '/organization?workspace=agency', label: 'Agency Profile', current: true },
+      ]}
+    />,
+  );
+  expect(html).toMatch(/^<nav aria-label="Organization workspace"/);
+  const links = [...html.matchAll(/<a[^>]*>[^<]*<\/a>/g)].map((match) => match[0]);
+  expect(links).toHaveLength(2);
+  expect(links[0]).toContain('href="/organization"');
+  expect(links[0]).not.toContain('aria-current');
+  expect(links[1]).toContain('aria-current="page"');
+  expect(links[1]).toContain('Agency Profile');
 });

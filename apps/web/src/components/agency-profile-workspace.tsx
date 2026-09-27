@@ -1,8 +1,10 @@
 'use client';
 
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { cn } from '../lib/class-names';
 import { useRecordNavigation } from './record-navigation';
-
-import { useEffect, useRef, useState } from 'react';
+import { StateCode, StateSurface } from './state-surface';
+import { Button } from './ui/button';
 import {
   Dialog,
   DialogBody,
@@ -13,6 +15,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 export type AgencyProfileType = 'NGA' | 'LGU' | 'SUC' | 'GOCC_ORIGINAL_CHARTER' | 'OTHER';
 export type AgencyProfileVersionState = 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'VOIDED';
@@ -106,27 +113,24 @@ function agencyTypeLabel(value: AgencyProfileType): string {
   return agencyTypes.find((type) => type.value === value)?.label ?? value;
 }
 
+/** Keep a stored value selectable when it is outside the usual options. */
+function optionsWith(options: string[], value: string): string[] {
+  return options.includes(value) ? options : [value, ...options];
+}
+
 function currencyLabel(value: string): string {
   return value === 'PHP' ? 'PHP — Philippine peso' : value;
 }
 
-function stateClass(state: AgencyProfileVersionState): string {
-  return {
-    DRAFT: 'bg-[#fff3d6] text-[#79531c]',
-    ACTIVE: 'bg-[#e8f3ec] text-[#27613e]',
-    SUPERSEDED: 'bg-pale-blue text-cobalt',
-    VOIDED: 'bg-[#f2e9ea] text-[#7a3036]',
-  }[state];
-}
+const versionTone: Record<AgencyProfileVersionState, StatusTone> = {
+  DRAFT: 'warning',
+  ACTIVE: 'success',
+  SUPERSEDED: 'neutral',
+  VOIDED: 'danger',
+};
 
 function StateBadge({ state }: { state: AgencyProfileVersionState }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-[760] tracking-[0.08em] ${stateClass(state)}`}
-    >
-      {state}
-    </span>
-  );
+  return <StatusTag tone={versionTone[state]}>{state}</StatusTag>;
 }
 
 function FieldList({ version }: { version: AgencyProfileVersion }) {
@@ -142,13 +146,11 @@ function FieldList({ version }: { version: AgencyProfileVersion }) {
     effectiveFrom: periodLabel(version),
   };
   return (
-    <dl className="m-0 grid gap-0 sm:grid-cols-2">
+    <dl className="m-0 grid gap-x-10 gap-y-4 min-[620px]:grid-cols-2">
       {editableFields.map(({ key, label }) => (
-        <div className="border-t border-line py-4 sm:odd:pr-6 sm:even:pl-6" key={key}>
-          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">{label}</dt>
-          <dd className="m-0 mt-1.5 text-[13px] leading-[1.5] font-[620] text-ink">
-            {values[key]}
-          </dd>
+        <div key={key}>
+          <dt className="text-caption text-ink-muted">{label}</dt>
+          <dd className="m-0 text-body font-[600] text-ink">{values[key]}</dd>
         </div>
       ))}
     </dl>
@@ -222,54 +224,6 @@ function isProfileResponse(value: unknown): value is AgencyProfileResponse {
   );
 }
 
-function PageHeading({
-  draft,
-  canUpdate,
-  selected,
-  onPrepare,
-  onEdit,
-}: {
-  draft: AgencyProfileVersion | null;
-  canUpdate: boolean;
-  selected: AgencyProfileVersion | null;
-  onPrepare(): void;
-  onEdit(opener: FocusableField): void;
-}) {
-  return (
-    <header className="flex flex-wrap items-start justify-between gap-5">
-      <div className="grid max-w-[700px] gap-2">
-        <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-          Organization / Agency Profile
-        </p>
-        <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-          Agency record through time
-        </h1>
-        <p className="m-0 max-w-[660px] text-sm leading-[1.65] text-muted">
-          Choose an effective period first. The workbench shows exactly which Agency identity
-          applied, including retained corrections.
-        </p>
-      </div>
-      {canUpdate && !draft ? (
-        <button
-          className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
-          type="button"
-          onClick={onPrepare}
-        >
-          Prepare successor
-        </button>
-      ) : canUpdate && draft && selected?.id === draft.id ? (
-        <button
-          className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
-          type="button"
-          onClick={(event) => onEdit(event.currentTarget as unknown as FocusableField)}
-        >
-          Continue draft
-        </button>
-      ) : null}
-    </header>
-  );
-}
-
 function ProfileDialog({
   mode,
   draft,
@@ -309,6 +263,48 @@ function ProfileDialog({
     setValues((current) => (current ? { ...current, [field]: value } : current));
   }
 
+  function fieldRef(field: string, first: boolean) {
+    return (element: FocusableField | null) => {
+      registerField(field, element);
+      if (first) firstFieldRef.current = element;
+    };
+  }
+
+  function control(key: ProfileField, values: EditableProfile, first: boolean): ReactNode {
+    const props = {
+      ref: fieldRef(key, first),
+      className: inputClass,
+      value: values[key],
+      onChange: (event: { target: unknown }) =>
+        setField(key, (event.target as { value: string }).value),
+    };
+    const options =
+      key === 'agencyType'
+        ? agencyTypes
+        : key === 'defaultTimezone'
+          ? optionsWith(timezoneOptions, values.defaultTimezone).map((value) => ({
+              value,
+              label: value,
+            }))
+          : key === 'defaultCurrency'
+            ? optionsWith(currencyOptions, values.defaultCurrency).map((value) => ({
+                value,
+                label: currencyOptions.includes(value) ? currencyLabel(value) : value,
+              }))
+            : null;
+    return options ? (
+      <select {...props}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    ) : (
+      <input {...props} type="text" />
+    );
+  }
+
   return (
     <Dialog
       presentation={mode === 'edit' ? 'form' : 'dialog'}
@@ -328,9 +324,6 @@ function ProfileDialog({
       >
         <DialogHeader>
           <div className="grid min-w-0 gap-1.5">
-            <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
-              Agency Profile / {draft?.id.slice(0, 8)}
-            </p>
             <DialogTitle>
               {mode === 'activate' ? 'Review activation' : 'Edit draft successor'}
             </DialogTitle>
@@ -341,119 +334,67 @@ function ProfileDialog({
             </DialogDescription>
           </div>
           <DialogClose asChild>
-            <button
-              className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
+            <Button
+              className="min-w-9 shrink-0 px-0 text-xl"
               type="button"
               aria-label="Close Agency Profile dialog"
               disabled={submitting}
             >
               ×
-            </button>
+            </Button>
           </DialogClose>
         </DialogHeader>
 
         <DialogBody>
-          {formError ? (
-            <p
-              className="mb-5 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-              role="alert"
-            >
-              {formError}
-            </p>
-          ) : null}
+          <FormError className="mb-4" message={formError} />
           {mode === 'activate' ? (
             <form
-              className="grid gap-5"
+              className="grid gap-4"
               id="activate-agency-profile-form"
               onSubmit={(event) => {
                 event.preventDefault();
                 onActivate(effectiveDate, reason);
               }}
             >
-              <div className="rounded-[4px] border border-[#c9d5e5] bg-[#f1f5fb] p-4">
+              <div className="grid gap-1 rounded-control border border-border bg-canvas px-3 py-2.5">
                 <div className="flex items-center justify-between gap-3">
-                  <strong className="text-sm text-midnight">{draft?.officialName}</strong>
+                  <strong className="text-small font-[650] text-ink">{draft?.officialName}</strong>
                   <StateBadge state="DRAFT" />
                 </div>
-                <p className="mt-2 mb-0 text-xs leading-[1.55] text-muted">
-                  The prior version closes the day before this effectivity. Current reads remain
-                  date-aware, and the activation is recorded in the Audit Log.
+                <p className="m-0 text-caption text-ink-muted">
+                  In one step, the prior version closes the day before this effectivity, the
+                  successor activates, the current projection refreshes, and the activation is
+                  recorded in the Audit Log.
                 </p>
               </div>
-              <label
-                className="grid gap-2 text-sm font-[650] text-ink"
-                htmlFor="agency-profile-effective-date"
-              >
-                Effective date
+              <Field label="Effective date" error={fieldErrors.effectiveDate}>
                 <input
-                  ref={(element) => {
-                    registerField('effectiveDate', element);
-                    if (mode === 'activate') firstFieldRef.current = element;
-                  }}
-                  className="min-h-11 rounded-[3px] border border-line bg-paper px-3 font-normal"
-                  id="agency-profile-effective-date"
+                  ref={fieldRef('effectiveDate', mode === 'activate')}
+                  className={inputClass}
                   type="date"
                   min={tomorrow()}
                   value={effectiveDate}
-                  aria-invalid={Boolean(fieldErrors.effectiveDate)}
-                  aria-describedby={
-                    fieldErrors.effectiveDate ? 'agency-profile-effective-date-error' : undefined
-                  }
                   onChange={(event) =>
                     setEffectiveDate((event.target as unknown as { value: string }).value)
                   }
                   required
                 />
-                {fieldErrors.effectiveDate ? (
-                  <span
-                    className="text-xs leading-[1.5] text-[#7a3036]"
-                    id="agency-profile-effective-date-error"
-                  >
-                    {fieldErrors.effectiveDate}
-                  </span>
-                ) : null}
-              </label>
-              <label
-                className="grid gap-2 text-sm font-[650] text-ink"
-                htmlFor="agency-profile-activation-reason"
-              >
-                Reason for change
+              </Field>
+              <Field label="Reason for change" error={fieldErrors.reason}>
                 <textarea
-                  ref={(element) => registerField('reason', element)}
-                  className="min-h-24 resize-y rounded-[3px] border border-line bg-paper p-3 font-normal"
-                  id="agency-profile-activation-reason"
+                  ref={fieldRef('reason', false)}
+                  className={cn(inputClass, 'min-h-24 resize-y py-2')}
                   value={reason}
-                  aria-invalid={Boolean(fieldErrors.reason)}
-                  aria-describedby={
-                    fieldErrors.reason ? 'agency-profile-activation-reason-error' : undefined
-                  }
                   onChange={(event) =>
                     setReason((event.target as unknown as { value: string }).value)
                   }
                   required
                 />
-                {fieldErrors.reason ? (
-                  <span
-                    className="text-xs leading-[1.5] text-[#7a3036]"
-                    id="agency-profile-activation-reason-error"
-                  >
-                    {fieldErrors.reason}
-                  </span>
-                ) : null}
-              </label>
-              <div className="grid grid-cols-[92px_1fr] overflow-hidden rounded-[4px] border border-line text-xs">
-                <span className="grid place-items-center bg-midnight font-mono font-bold text-white">
-                  ATOMIC
-                </span>
-                <span className="px-4 py-3 leading-[1.55] text-muted">
-                  Close prior period · activate successor · refresh the current projection · append
-                  the audit event
-                </span>
-              </div>
+              </Field>
             </form>
           ) : activeValues ? (
             <form
-              className="grid gap-5"
+              className="grid gap-4"
               id="edit-agency-profile-form"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -461,178 +402,56 @@ function ProfileDialog({
               }}
             >
               {editableFields.map(({ key, label, optional }, index) => (
-                <label
-                  className="grid gap-2 text-sm font-[650] text-ink"
-                  htmlFor={`agency-profile-${key}`}
+                <Field
                   key={key}
+                  label={
+                    optional ? (
+                      <>
+                        {label} <span className="font-normal text-ink-muted">(optional)</span>
+                      </>
+                    ) : (
+                      label
+                    )
+                  }
+                  error={fieldErrors[key]}
                 >
-                  {label}
-                  {optional ? (
-                    <span className="ml-1 font-normal text-muted">(optional)</span>
-                  ) : null}
-                  {key === 'agencyType' ? (
-                    <select
-                      ref={(element) => {
-                        registerField(key, element);
-                        if (index === 0) firstFieldRef.current = element;
-                      }}
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 font-normal text-ink"
-                      id={`agency-profile-${key}`}
-                      value={activeValues[key]}
-                      aria-invalid={Boolean(fieldErrors[key])}
-                      aria-describedby={
-                        fieldErrors[key] ? `agency-profile-${key}-error` : undefined
-                      }
-                      onChange={(event) =>
-                        setField(key, (event.target as unknown as { value: string }).value)
-                      }
-                    >
-                      {agencyTypes.map((type) => (
-                        <option key={type.value} value={type.value}>
-                          {type.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : key === 'defaultTimezone' ? (
-                    <select
-                      ref={(element) => {
-                        registerField(key, element);
-                        if (index === 0) firstFieldRef.current = element;
-                      }}
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 font-normal text-ink"
-                      id={`agency-profile-${key}`}
-                      value={activeValues[key]}
-                      aria-invalid={Boolean(fieldErrors[key])}
-                      aria-describedby={
-                        fieldErrors[key] ? `agency-profile-${key}-error` : undefined
-                      }
-                      onChange={(event) =>
-                        setField(key, (event.target as unknown as { value: string }).value)
-                      }
-                    >
-                      {timezoneOptions.includes(activeValues.defaultTimezone) ? null : (
-                        <option value={activeValues.defaultTimezone}>
-                          {activeValues.defaultTimezone}
-                        </option>
-                      )}
-                      {timezoneOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : key === 'defaultCurrency' ? (
-                    <select
-                      ref={(element) => {
-                        registerField(key, element);
-                        if (index === 0) firstFieldRef.current = element;
-                      }}
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 font-normal text-ink"
-                      id={`agency-profile-${key}`}
-                      value={activeValues[key]}
-                      aria-invalid={Boolean(fieldErrors[key])}
-                      aria-describedby={
-                        fieldErrors[key] ? `agency-profile-${key}-error` : undefined
-                      }
-                      onChange={(event) =>
-                        setField(key, (event.target as unknown as { value: string }).value)
-                      }
-                    >
-                      {currencyOptions.includes(activeValues.defaultCurrency) ? null : (
-                        <option value={activeValues.defaultCurrency}>
-                          {activeValues.defaultCurrency}
-                        </option>
-                      )}
-                      {currencyOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {currencyLabel(option)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      ref={(element) => {
-                        registerField(key, element);
-                        if (index === 0) firstFieldRef.current = element;
-                      }}
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 font-normal text-ink"
-                      id={`agency-profile-${key}`}
-                      type="text"
-                      value={activeValues[key]}
-                      aria-invalid={Boolean(fieldErrors[key])}
-                      aria-describedby={
-                        fieldErrors[key] ? `agency-profile-${key}-error` : undefined
-                      }
-                      onChange={(event) =>
-                        setField(key, (event.target as unknown as { value: string }).value)
-                      }
-                    />
-                  )}
-                  {fieldErrors[key] ? (
-                    <span
-                      className="text-xs leading-[1.5] text-[#7a3036]"
-                      id={`agency-profile-${key}-error`}
-                    >
-                      {fieldErrors[key]}
-                    </span>
-                  ) : null}
-                </label>
+                  {control(key, activeValues, index === 0)}
+                </Field>
               ))}
-              <label
-                className="grid gap-2 text-sm font-[650] text-ink"
-                htmlFor="agency-profile-proposed-date"
-              >
-                Proposed effective date
+              <Field label="Proposed effective date" error={fieldErrors.effectiveFrom}>
                 <input
-                  ref={(element) => registerField('effectiveFrom', element)}
-                  className="min-h-11 rounded-[3px] border border-line bg-paper px-3 font-normal"
-                  id="agency-profile-proposed-date"
+                  ref={fieldRef('effectiveFrom', false)}
+                  className={inputClass}
                   type="date"
                   min={tomorrow()}
                   value={activeValues.effectiveFrom}
-                  aria-invalid={Boolean(fieldErrors.effectiveFrom)}
-                  aria-describedby={
-                    fieldErrors.effectiveFrom ? 'agency-profile-proposed-date-error' : undefined
-                  }
                   onChange={(event) =>
                     setField('effectiveFrom', (event.target as unknown as { value: string }).value)
                   }
                   required
                 />
-                {fieldErrors.effectiveFrom ? (
-                  <span
-                    className="text-xs leading-[1.5] text-[#7a3036]"
-                    id="agency-profile-proposed-date-error"
-                  >
-                    {fieldErrors.effectiveFrom}
-                  </span>
-                ) : null}
-              </label>
+              </Field>
             </form>
           ) : null}
         </DialogBody>
 
         <DialogFooter>
-          <span className="mr-auto hidden text-[11px] text-muted min-[621px]:block">
+          <span className="mr-auto hidden self-center text-caption text-ink-muted min-[621px]:block">
             Draft changes are saved to this Agency Context only.
           </span>
           <DialogClose asChild>
-            <button
-              className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-              type="button"
-              disabled={submitting}
-            >
+            <Button variant="secondary" type="button" disabled={submitting}>
               Cancel
-            </button>
+            </Button>
           </DialogClose>
-          <button
-            className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white disabled:pointer-events-none disabled:opacity-60"
+          <Button
+            variant="primary"
             type="submit"
             form={mode === 'activate' ? 'activate-agency-profile-form' : 'edit-agency-profile-form'}
             disabled={submitting}
           >
             {submitting ? 'Saving…' : mode === 'activate' ? 'Activate successor' : 'Save draft'}
-          </button>
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -643,10 +462,13 @@ export function AgencyProfileWorkspace({
   agencyId,
   canUpdate,
   initial,
+  tabs,
 }: {
   agencyId: string;
   canUpdate: boolean;
   initial: AgencyProfileResponse;
+  /** Workspace tabs for the page header band. */
+  tabs: ReactNode;
 }) {
   const [data, setData] = useState(initial);
   const navigation = useRecordNavigation();
@@ -840,189 +662,166 @@ export function AgencyProfileWorkspace({
     }
   }
 
+  const canEditSelected = canUpdate && draft !== null && selected?.id === draft.id;
+
   return (
-    <div className="grid min-w-0 gap-7">
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Structure' }, { label: 'Organization' }]}
+        title="Agency record through time"
+        actions={
+          canUpdate && !draft ? (
+            <Button variant="primary" type="button" onClick={() => void prepareDraft()}>
+              Prepare successor
+            </Button>
+          ) : canEditSelected ? (
+            <Button
+              variant="primary"
+              type="button"
+              onClick={(event) =>
+                openDialog('edit', event.currentTarget as unknown as FocusableField)
+              }
+            >
+              Continue draft
+            </Button>
+          ) : null
+        }
+        tabs={tabs}
+      />
       {navigation.search.has('agencyVersion') && !selected ? (
-        <p role="alert">This Agency Profile version is missing or unavailable.</p>
+        <p className="m-0 text-small text-danger" role="alert">
+          This Agency Profile version is missing or unavailable.
+        </p>
       ) : null}
       {notice ? (
-        <p
-          className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
-          role="status"
-        >
+        <p className="m-0 text-small text-success" role="status">
           {notice}
         </p>
       ) : null}
-      {formError && !dialogMode ? (
-        <p
-          className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-          role="alert"
-        >
-          {formError}
-        </p>
-      ) : null}
-      <PageHeading
-        draft={draft}
-        canUpdate={canUpdate}
-        selected={selected}
-        onPrepare={() => void prepareDraft()}
-        onEdit={(opener) => openDialog('edit', opener)}
-      />
+      {!dialogMode ? <FormError message={formError} /> : null}
 
       {selected ? (
-        <section className="grid min-h-[610px] overflow-hidden rounded-[5px] border border-line bg-paper lg:grid-cols-[280px_1fr]">
-          <nav
-            className="border-b border-line bg-[#f8fafc] p-4 lg:border-r lg:border-b-0"
-            aria-label="Agency Profile Versions"
-          >
-            <p className="mt-1 mb-4 px-2 text-[10px] font-bold tracking-[0.1em] text-muted uppercase">
-              Effective-date rail
-            </p>
-            <div className="grid grid-cols-[repeat(5,minmax(190px,1fr))] gap-2 overflow-x-auto pb-2 lg:grid-cols-1 lg:overflow-visible lg:pb-0">
+        <div className="grid items-start gap-5 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <Panel title="Effective-date rail" flush>
+            <nav
+              className="grid grid-cols-[repeat(5,minmax(180px,1fr))] overflow-x-auto lg:grid-cols-1"
+              aria-label="Agency Profile Versions"
+            >
               {data.versions.map((version) => (
                 <button
-                  className={`relative grid min-h-[84px] gap-1 rounded-[3px] border bg-paper p-3 text-left before:absolute before:top-0 before:bottom-0 before:left-0 before:w-[3px] before:bg-transparent ${selected.id === version.id ? 'border-[#aebfd6] shadow-[0_5px_16px_rgb(23_32_51/8%)] before:bg-cobalt' : 'border-transparent hover:bg-[#fafbfd]'}`}
+                  className="grid cursor-pointer gap-0.5 border-0 border-b border-border-subtle bg-surface px-4 py-3 text-left last:border-b-0 hover:bg-canvas aria-pressed:bg-primary/8 aria-pressed:shadow-[inset_3px_0_0_var(--color-primary)]"
                   key={version.id}
                   type="button"
                   aria-pressed={selected.id === version.id}
                   onClick={() => selectVersion(version.id)}
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[11px] font-bold text-cobalt">
-                      V{version.versionNo}
-                    </span>
+                  <span className="flex items-center justify-between gap-2 text-caption font-[650] text-primary">
+                    V{version.versionNo}
                     {version.versionState === 'DRAFT' ? (
-                      <span className="text-[9px] font-bold text-muted">NEXT</span>
+                      <span className="text-ink-muted">NEXT</span>
                     ) : null}
                   </span>
-                  <span className="text-xs font-[650] text-midnight">{periodLabel(version)}</span>
-                  <span className="text-[11px] text-muted">
+                  <span className="text-small font-[600] text-ink">{periodLabel(version)}</span>
+                  <span className="text-caption text-ink-muted">
                     {version.versionState.toLowerCase()}
                   </span>
                 </button>
               ))}
-            </div>
-          </nav>
+            </nav>
+          </Panel>
 
-          <article className="min-w-0">
-            <header className="border-b border-line p-5 sm:p-7">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <StateBadge state={selected.versionState} />
-                  <span className="font-mono text-xs text-muted">Version {selected.versionNo}</span>
-                </div>
-                <span className="rounded-[3px] border border-line bg-[#fafbfd] px-3 py-2 font-mono text-xs text-ink">
-                  {periodLabel(selected)}
-                </span>
+          <article className="min-w-0 rounded-panel border border-border bg-surface">
+            <header className="grid gap-2 border-b border-border px-4 py-4">
+              <div className="flex flex-wrap items-center gap-3 text-caption text-ink-muted">
+                <StateBadge state={selected.versionState} />
+                <span>Version {selected.versionNo}</span>
+                <span>{periodLabel(selected)}</span>
               </div>
-              <h2 className="mt-6 mb-2 text-[clamp(23px,3vw,34px)] leading-[1.15] font-[680] tracking-[-0.03em] text-midnight">
-                {selected.officialName}
-              </h2>
-              <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-                <span>{selected.acronym ?? 'No acronym recorded'}</span>
-                <span aria-hidden="true">·</span>
-                <span>{agencyTypeLabel(selected.agencyType)}</span>
-                <span className="rounded-full bg-[#f0f2f5] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
-                  Domain status: {selected.domainStatus}
-                </span>
-              </div>
+              <h2 className="m-0 text-page-title text-ink">{selected.officialName}</h2>
+              <p className="m-0 text-small text-ink-muted">
+                {selected.acronym ?? 'No acronym recorded'} · {agencyTypeLabel(selected.agencyType)}{' '}
+                · Domain status: {selected.domainStatus}
+              </p>
             </header>
-            <div className="p-5 sm:p-7">
+            <div className="p-4">
               <FieldList version={selected} />
-              {canUpdate && draft && selected.id === draft.id ? (
-                <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-6">
-                  <button
-                    className="min-h-10 rounded-[3px] bg-pale-blue px-4 text-sm font-[650] text-cobalt hover:bg-[#d7e3f4]"
+              {canEditSelected ? (
+                <div className="mt-5 flex flex-wrap gap-2 border-t border-border-subtle pt-4">
+                  <Button
+                    variant="secondary"
                     type="button"
                     onClick={(event) =>
                       openDialog('edit', event.currentTarget as unknown as FocusableField)
                     }
                   >
                     Edit proposed fields
-                  </button>
-                  <button
-                    className="min-h-10 rounded-[3px] bg-midnight px-4 text-sm font-[650] text-white hover:bg-[#273650]"
+                  </Button>
+                  <Button
+                    variant="primary"
                     type="button"
                     onClick={(event) =>
                       openDialog('activate', event.currentTarget as unknown as FocusableField)
                     }
                   >
                     Review activation
-                  </button>
+                  </Button>
                 </div>
               ) : null}
             </div>
           </article>
-        </section>
+        </div>
       ) : (
-        <section className="rounded-[5px] border border-line bg-paper px-6 py-12">
-          <strong className="text-[15px] font-[650] text-midnight">
+        <StateSurface labelledBy="agency-profile-empty-title">
+          <StateCode>Empty</StateCode>
+          <h2 className="m-0 text-panel-title text-ink" id="agency-profile-empty-title">
             No Agency Profile version is available.
-          </strong>
-          <p className="mt-2 mb-0 text-[13px] leading-[1.6] text-muted">
+          </h2>
+          <p className="m-0 max-w-[500px] text-body text-ink-muted">
             The Agency must have an effective-dated profile before this surface can be administered.
           </p>
-        </section>
+        </StateSurface>
       )}
 
-      <section
-        className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
-        aria-labelledby="profile-history-heading"
-      >
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4">
-          <div>
-            <h2 className="m-0 text-sm font-[680] text-midnight" id="profile-history-heading">
-              Retained history
-            </h2>
-            <p className="mt-1 mb-0 text-xs text-muted">
-              Every published definition remains reconstructable by effective date.
-            </p>
-          </div>
-          <span className="font-mono text-[11px] text-muted">
+      <Panel
+        title="Retained history"
+        flush
+        actions={
+          <span className="text-caption text-ink-muted tabular-nums">
             {data.versions.length} version{data.versions.length === 1 ? '' : 's'}
           </span>
-        </header>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-[13px]">
-            <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-              <tr>
-                <th className="px-5 py-3" scope="col">
-                  Version
-                </th>
-                <th className="px-5 py-3" scope="col">
-                  Effective period
-                </th>
-                <th className="px-5 py-3" scope="col">
-                  Official name
-                </th>
-                <th className="px-5 py-3" scope="col">
-                  State
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.versions.map((version) => (
-                <tr className="border-t border-line hover:bg-[#fafbfd]" key={version.id}>
-                  <th className="px-5 py-4 text-left font-mono text-xs text-cobalt" scope="row">
-                    <button
-                      className="inline-flex rounded-[3px] bg-pale-blue px-2 py-1 font-mono text-xs text-cobalt hover:bg-[#d7e3f4]"
-                      type="button"
-                      onClick={() => selectVersion(version.id)}
-                    >
-                      V{version.versionNo}
-                    </button>
-                  </th>
-                  <td className="px-5 py-4 text-muted">{periodLabel(version)}</td>
-                  <td className="px-5 py-4 font-[620] text-ink">{version.officialName}</td>
-                  <td className="px-5 py-4">
-                    <StateBadge state={version.versionState} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+        }
+      >
+        <Table className="min-w-[720px]">
+          <thead>
+            <tr>
+              <Th>Version</Th>
+              <Th kind="date">Effective period</Th>
+              <Th>Official name</Th>
+              <Th>State</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.versions.map((version) => (
+              <Tr key={version.id} selected={selected?.id === version.id}>
+                <RowHeader>
+                  <button
+                    className="cursor-pointer border-0 bg-transparent p-0 font-[600] text-primary hover:underline"
+                    type="button"
+                    onClick={() => selectVersion(version.id)}
+                  >
+                    V{version.versionNo}
+                  </button>
+                </RowHeader>
+                <Td kind="date">{periodLabel(version)}</Td>
+                <Td>{version.officialName}</Td>
+                <Td>
+                  <StateBadge state={version.versionState} />
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      </Panel>
 
       <ProfileDialog
         mode={dialogMode}
