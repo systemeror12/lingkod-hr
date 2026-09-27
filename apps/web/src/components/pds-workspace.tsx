@@ -2,8 +2,9 @@
 
 import { useRecordNavigation } from './record-navigation';
 
-import Link from 'next/link';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { cn } from '../lib/class-names';
+import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -16,9 +17,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
+import { FormError } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { RecordHeader } from './ui/record-header';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, Td, Th, Tr } from './ui/table';
 import {
-  EmployeeInitials,
-  EmployeePageTitle,
   employeeInputClass,
   employeeLabelClass,
   formatEmployeeDate,
@@ -471,10 +476,10 @@ function ToggleField({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-3 text-sm font-[560] text-ink">
+    <label className="flex items-center gap-2 text-small font-[600] text-ink">
       <input
         data-pds-field={field}
-        className="size-4 rounded border border-line"
+        className="size-4 accent-primary"
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange((event.target as unknown as { checked: boolean }).checked)}
@@ -588,7 +593,7 @@ function EvidenceFields({
           onChange('documentVersionId', documentVersionId);
         }}
       />
-      <p className="m-0 text-xs leading-5 text-muted">
+      <p className="m-0 text-caption text-ink-muted">
         Select one finalized same-Agency Document Version. Source storage is shared and is not
         copied into the PDS.
       </p>
@@ -606,10 +611,10 @@ function FormSection({
   children: ReactNode;
 }) {
   return (
-    <fieldset className="m-0 grid gap-4 border-0 border-t border-line p-0 pt-5 first:border-t-0 first:pt-0">
-      <legend className="m-0 flex items-baseline gap-3 p-0">
-        <span className="font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">{item}</span>
-        <span className="text-sm font-[680] text-midnight">{title}</span>
+    <fieldset className="m-0 grid gap-4 border-0 border-t border-border p-0 pt-5 first:border-t-0 first:pt-0">
+      <legend className="m-0 flex items-baseline gap-2 p-0">
+        <span className="text-caption font-[650] text-primary tabular-nums">{item}</span>
+        <span className="text-panel-title text-ink">{title}</span>
       </legend>
       {children}
     </fieldset>
@@ -638,13 +643,13 @@ function RepeatableRow({
   return (
     <fieldset
       aria-labelledby={labelId}
-      className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+      className="grid gap-4 rounded-panel border border-border-subtle bg-canvas p-4"
     >
       <legend id={labelId} className="sr-only">
         {label}
       </legend>
       <div className="flex flex-col gap-3 min-[620px]:flex-row min-[620px]:items-center min-[620px]:justify-between">
-        <strong aria-hidden="true" className="text-xs font-[680] text-ink">
+        <strong aria-hidden="true" className="text-small font-[650] text-ink">
           {label}
         </strong>
         <div className="flex flex-wrap gap-2">
@@ -685,7 +690,7 @@ function RepeatableRow({
 }
 
 function EmptyRows({ message }: { message: string }) {
-  return <p className="m-0 text-sm leading-6 text-muted">{message}</p>;
+  return <p className="m-0 text-small text-ink-muted">{message}</p>;
 }
 
 function DetailValue({
@@ -697,9 +702,55 @@ function DetailValue({
 }) {
   return (
     <div>
-      <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-[560] text-ink">{display(value)}</dd>
+      <dt className="text-caption text-ink-muted">{label}</dt>
+      <dd className="m-0 break-words text-body font-[600] text-ink">{display(value)}</dd>
     </div>
+  );
+}
+
+/** Read-only panel listing one repeating PDS section as a table, or its empty state. */
+function RowsPanel({
+  title,
+  empty,
+  columns,
+  rows,
+}: {
+  title: string;
+  empty: string;
+  columns: readonly (readonly [label: string, kind?: 'numeric' | 'date'])[];
+  rows: { key: string; cells: (string | number | null | undefined)[] }[];
+}) {
+  return (
+    <Panel title={title} flush>
+      {rows.length === 0 ? (
+        <StateSurface compact>
+          <p className="m-0">{empty}</p>
+        </StateSurface>
+      ) : (
+        <Table>
+          <thead>
+            <tr>
+              {columns.map(([label, kind]) => (
+                <Th key={label} kind={kind ?? 'text'}>
+                  {label}
+                </Th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <Tr key={row.key}>
+                {row.cells.map((cell, index) => (
+                  <Td key={columns[index]?.[0] ?? index} kind={columns[index]?.[1] ?? 'text'}>
+                    {display(cell)}
+                  </Td>
+                ))}
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </Panel>
   );
 }
 
@@ -743,20 +794,15 @@ function RowButtons({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const colors =
-    status === 'DRAFT' || status === 'RETURNED'
-      ? 'bg-[#fff2d9] text-[#82520d]'
-      : status === 'CERTIFIED'
-        ? 'bg-[#e7f4eb] text-[#27633b]'
-        : 'bg-pale-blue text-cobalt';
-  return (
-    <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${colors}`}
-    >
-      {status}
-    </span>
-  );
+const pdsStatusTone: Record<string, StatusTone> = {
+  DRAFT: 'warning',
+  RETURNED: 'warning',
+  SUBMITTED: 'info',
+  CERTIFIED: 'success',
+};
+
+function PdsStatus({ status }: { status: string }) {
+  return <StatusTag tone={pdsStatusTone[status] ?? 'neutral'}>{status}</StatusTag>;
 }
 
 function WorkflowDialog({
@@ -776,7 +822,7 @@ function WorkflowDialog({
   onClose: (open: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const errorRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
 
   useEffect(() => {
     if (error) (errorRef.current as { focus: () => void } | null)?.focus();
@@ -797,16 +843,7 @@ function WorkflowDialog({
         </DialogHeader>
         <DialogBody>
           <form id="pds-workflow-form" className="grid gap-4" onSubmit={onSubmit}>
-            {error && (
-              <div
-                ref={errorRef}
-                tabIndex={-1}
-                role="alert"
-                className="rounded-[3px] border-l-2 border-[#b64040] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d] outline-none"
-              >
-                {error}
-              </div>
-            )}
+            <FormError ref={errorRef} tabIndex={-1} message={error ?? ''} />
             {needsReason ? (
               <TextAreaField
                 label={action === 'return' ? 'Return reason' : 'Correction reason'}
@@ -815,7 +852,7 @@ function WorkflowDialog({
                 required
               />
             ) : (
-              <p className="m-0 text-sm leading-6 text-muted">
+              <p className="m-0 text-small text-ink-muted">
                 This action uses the current version exactly as shown.
               </p>
             )}
@@ -844,7 +881,7 @@ function WorkflowDialog({
 
 export function PdsWorkspace({
   agencyId,
-  employeeName,
+  employee,
   initialList,
   initialDetail,
   canUpdate,
@@ -856,10 +893,10 @@ export function PdsWorkspace({
   canGenerateOutputs = false,
   canBrowseEvidence,
   createUrl,
-  backHref,
 }: {
   agencyId: string;
-  employeeName?: string;
+  /** The Employee whose PDS an HR user maintains; omit on the user's own PDS. */
+  employee?: { name: string; href: string };
   initialList: PdsVersionListData;
   initialDetail: PdsDetailData | null;
   canUpdate: boolean;
@@ -871,7 +908,6 @@ export function PdsWorkspace({
   canGenerateOutputs?: boolean;
   canBrowseEvidence: boolean;
   createUrl: string;
-  backHref: string;
 }) {
   const [list, setList] = useState(initialList);
   const [detail, setDetail] = useState(initialDetail);
@@ -888,7 +924,7 @@ export function PdsWorkspace({
   const [deficiencyField, setDeficiencyField] = useState<string | null>(null);
   const [evidenceOptions, setEvidenceOptions] = useState<PdsEvidenceOption[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
-  const errorRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
   const workflowReturnFocusRef = useRef<{ focus(): void } | null>(null);
   const navigation = useRecordNavigation();
   const versionId = navigation.search.get('pdsVersion');
@@ -1239,54 +1275,66 @@ export function PdsWorkspace({
   const education = detail?.education ?? [];
   const eligibility = detail?.eligibility ?? [];
 
-  return (
-    <>
-      <Link
-        href={backHref}
-        className="mb-6 inline-block text-xs font-[650] text-cobalt no-underline"
-      >
-        ← {employeeName ? 'Employee record' : 'Dashboard'}
-      </Link>
-      <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-        <div className="flex items-center gap-4">
-          {employeeName && <EmployeeInitials name={employeeName} large />}
-          <EmployeePageTitle
-            eyebrow="CS Form No. 212 · Revised 2026 Draft"
-            title={employeeName ? `${employeeName} · PDS` : 'My Personal Data Sheet'}
-            description="Maintain personal, family, qualifications, work, voluntary, development, and WES draft information."
-          />
-        </div>
+  const showForm = canUpdate && (editable || canCreate);
 
-        {detail?.fieldScope === 'FULL' && workflowActions.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-2">
-            {workflowActions.map((action) => (
-              <Button
-                key={action}
-                type="button"
-                variant="secondary"
-                size="default"
-                disabled={workflowBusy}
-                onClick={(event) =>
-                  openWorkflow(action, event.currentTarget as unknown as { focus(): void })
-                }
-              >
-                {workflowCopy[action].submit}
-              </Button>
-            ))}
-          </div>
-        )}
-      </header>
-      {canUpdate && (editable || canCreate) && (
-        <Dialog
-          presentation="form"
-          open={open}
-          onOpenChange={(next) => !submitting && setOpen(next)}
+  // The Dialog root renders no markup. It wraps the page so the trigger can sit in the record
+  // header while the inline form renders below it.
+  return (
+    <Dialog presentation="form" open={open} onOpenChange={(next) => !submitting && setOpen(next)}>
+      <div className="grid gap-5">
+        <PageHeader
+          breadcrumbs={
+            employee
+              ? [
+                  { label: 'Personnel' },
+                  { label: 'Employee directory', href: '/employees' },
+                  { label: employee.name, href: employee.href },
+                  { label: 'Personal Data Sheet' },
+                ]
+              : [{ label: 'Personnel' }, { label: 'My PDS' }]
+          }
         >
-          <DialogTrigger asChild>
-            <Button variant="primary" size="default" onClick={openForm}>
-              {editable ? 'Edit Draft PDS' : 'Create Draft PDS'}
-            </Button>
-          </DialogTrigger>
+          <RecordHeader
+            name={employee ? `${employee.name} · PDS` : 'My Personal Data Sheet'}
+            description="CS Form No. 212 · Revised 2026 Draft"
+            status={detail ? <PdsStatus status={detail.status} /> : null}
+            facts={
+              detail
+                ? [
+                    { label: 'Version', value: `v${detail.versionNo}` },
+                    { label: 'As of', value: formatEmployeeDate(detail.asOfDate) },
+                    { label: 'Form contract', value: detail.formVersion },
+                  ]
+                : []
+            }
+            actions={
+              <>
+                {detail?.fieldScope === 'FULL' &&
+                  workflowActions.map((action) => (
+                    <Button
+                      key={action}
+                      type="button"
+                      variant="secondary"
+                      disabled={workflowBusy}
+                      onClick={(event) =>
+                        openWorkflow(action, event.currentTarget as unknown as { focus(): void })
+                      }
+                    >
+                      {workflowCopy[action].submit}
+                    </Button>
+                  ))}
+                {showForm && (
+                  <DialogTrigger asChild>
+                    <Button variant="primary" onClick={openForm}>
+                      {editable ? 'Edit Draft PDS' : 'Create Draft PDS'}
+                    </Button>
+                  </DialogTrigger>
+                )}
+              </>
+            }
+          />
+        </PageHeader>
+        {showForm && (
           <DialogContent
             aria-describedby="pds-dialog-description"
             onOpenAutoFocus={(event) => {
@@ -1309,18 +1357,9 @@ export function PdsWorkspace({
             </DialogHeader>
             <DialogBody>
               <form id="pds-form" className="grid gap-6" onSubmit={submit}>
-                {error && (
-                  <div
-                    ref={errorRef}
-                    tabIndex={-1}
-                    role="alert"
-                    className="rounded-[3px] border-l-2 border-[#b64040] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d] outline-none"
-                  >
-                    {error}
-                  </div>
-                )}
-                <div className="grid gap-3 border-l-2 border-cobalt bg-pale-blue px-4 py-3 text-xs leading-5 text-[#34557e]">
-                  <strong className="font-[680] text-midnight">Draft record</strong>
+                <FormError ref={errorRef} tabIndex={-1} message={error ?? ''} />
+                <div className="grid gap-1 rounded-control border border-info/30 bg-info/5 px-3 py-2.5 text-small text-ink">
+                  <strong className="font-[650]">Draft record</strong>
                   <span>
                     This record can be changed while it is Draft or Returned. Submission and
                     certification are separate workflows.
@@ -1481,7 +1520,7 @@ export function PdsWorkspace({
                 <FormSection item="17–18" title="Residential and permanent address">
                   <div className="grid gap-5">
                     <div className="grid gap-3">
-                      <h3 className="m-0 text-xs font-[680] text-ink">Residential address</h3>
+                      <h3 className="m-0 text-small font-[650] text-ink">Residential address</h3>
                       <AddressFields
                         value={form.personal.residentialAddress}
                         fieldPrefix="personal.residentialAddress"
@@ -1489,7 +1528,7 @@ export function PdsWorkspace({
                       />
                     </div>
                     <div className="grid gap-3">
-                      <h3 className="m-0 text-xs font-[680] text-ink">Permanent address</h3>
+                      <h3 className="m-0 text-small font-[650] text-ink">Permanent address</h3>
                       <AddressFields
                         value={form.personal.permanentAddress}
                         fieldPrefix="personal.permanentAddress"
@@ -1539,7 +1578,7 @@ export function PdsWorkspace({
                         onChange={(value) => changeSpouse('telephoneNumber', value)}
                       />
                     </div>
-                    <h3 className="m-0 text-xs font-[680] text-ink">Spouse business address</h3>
+                    <h3 className="m-0 text-small font-[650] text-ink">Spouse business address</h3>
                     <AddressFields
                       value={form.spouse.businessAddress}
                       fieldPrefix="family.spouse.businessAddress"
@@ -2539,10 +2578,10 @@ export function PdsWorkspace({
                     {form.education.map((record, index) => (
                       <div
                         key={index}
-                        className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        className="grid gap-3 rounded-panel border border-border-subtle bg-canvas p-4"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                          <strong className="text-xs font-[680] text-ink">
+                          <strong className="text-small font-[650] text-ink">
                             Education {index + 1}
                           </strong>
                           <RowButtons
@@ -2657,10 +2696,10 @@ export function PdsWorkspace({
                     {form.eligibility.map((record, index) => (
                       <div
                         key={index}
-                        className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        className="grid gap-3 rounded-panel border border-border-subtle bg-canvas p-4"
                       >
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                          <strong className="text-xs font-[680] text-ink">
+                          <strong className="text-small font-[650] text-ink">
                             Eligibility {index + 1}
                           </strong>
                           <RowButtons
@@ -2801,7 +2840,7 @@ export function PdsWorkspace({
                     {declarationFields.map(([key, label, detailsKey]) => (
                       <div
                         key={key}
-                        className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                        className="grid gap-3 rounded-panel border border-border-subtle bg-canvas p-4"
                       >
                         <SelectField
                           label={label}
@@ -3068,11 +3107,11 @@ export function PdsWorkspace({
                   </div>
                 </FormSection>
                 <FormSection item="42" title="Certification and evidence">
-                  <div className="grid gap-3 rounded-[3px] border border-line bg-[#fafbfd] p-4">
-                    <strong className="text-xs font-[680] text-ink">
+                  <div className="grid gap-3 rounded-panel border border-border-subtle bg-canvas p-4">
+                    <strong className="text-small font-[650] text-ink">
                       Employee certification statements
                     </strong>
-                    <p className="text-sm leading-6 text-ink-muted">
+                    <p className="m-0 text-small text-ink-muted">
                       {pdsCertificationStatements.truthDeclaration}
                     </p>
                     <ToggleField
@@ -3089,7 +3128,7 @@ export function PdsWorkspace({
                         }))
                       }
                     />
-                    <p className="text-sm leading-6 text-ink-muted">
+                    <p className="m-0 text-small text-ink-muted">
                       {pdsCertificationStatements.verificationAuthorization}
                     </p>
                     <ToggleField
@@ -3106,7 +3145,7 @@ export function PdsWorkspace({
                         }))
                       }
                     />
-                    <p className="text-sm leading-6 text-ink-muted">
+                    <p className="m-0 text-small text-ink-muted">
                       {pdsCertificationStatements.misrepresentationWarning}
                     </p>
                     <ToggleField
@@ -3342,8 +3381,8 @@ export function PdsWorkspace({
                       }
                     />
                   </div>
-                  <div className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4">
-                    <strong className="text-xs font-[680] text-ink">Per-page signatures</strong>
+                  <div className="grid gap-4 rounded-panel border border-border-subtle bg-canvas p-4">
+                    <strong className="text-small font-[650] text-ink">Per-page signatures</strong>
                     {form.certification.pageSignatures.map((signature, index) => (
                       <div key={signature.pageNo} className="grid gap-4 min-[620px]:grid-cols-3">
                         <TextField
@@ -3421,71 +3460,61 @@ export function PdsWorkspace({
               </Button>
             </DialogFooter>
           </DialogContent>
-        </Dialog>
-      )}
-      {versionError ? <p role="alert">{versionError}</p> : null}
+        )}
 
-      <WorkflowDialog
-        action={workflowAction}
-        busy={workflowBusy}
-        error={workflowError}
-        reason={workflowReason}
-        onReasonChange={setWorkflowReason}
-        onClose={closeWorkflow}
-        onSubmit={submitWorkflow}
-      />
+        <WorkflowDialog
+          action={workflowAction}
+          busy={workflowBusy}
+          error={workflowError}
+          reason={workflowReason}
+          onReasonChange={setWorkflowReason}
+          onClose={closeWorkflow}
+          onSubmit={submitWorkflow}
+        />
 
-      {message && (
-        <p
-          role="status"
-          className={`mb-5 text-xs ${messageTone === 'ok' ? 'text-[#27633b]' : 'text-[#8f2d2d]'}`}
-        >
-          {message}
-        </p>
-      )}
-
-      <div hidden={open}>
-        <div className="mb-5 grid gap-4 min-[761px]:grid-cols-[minmax(0,1.5fr)_minmax(220px,.7fr)]">
-          <section
-            className="rounded-[5px] border border-line bg-paper"
-            aria-labelledby="pds-record-heading"
+        {message && (
+          <p
+            role="status"
+            className={cn('m-0 text-small', messageTone === 'ok' ? 'text-success' : 'text-danger')}
           >
-            <header className="flex min-h-[58px] items-center justify-between gap-4 border-b border-line px-5">
-              <div>
-                <p className="m-0 font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">
-                  C1
-                </p>
-                <h2 id="pds-record-heading" className="mt-1 mb-0 text-sm font-[680] text-midnight">
-                  PDS draft information
-                </h2>
-              </div>
-              {detail && <StatusBadge status={detail.status} />}
-            </header>
-            {!detail ? (
-              <div className="grid gap-2 px-5 py-8">
-                <strong className="text-sm font-[650] text-midnight">No Draft PDS yet.</strong>
-                <p className="m-0 max-w-[560px] text-sm leading-6 text-muted">
-                  Create the first Draft to begin recording personal, family, work, voluntary, and
-                  learning history plus WES rows.
-                </p>
-              </div>
-            ) : detail.fieldScope === 'REDACTED' ? (
-              <div className="border-l-2 border-[#d99a32] bg-[#fff9ec] px-5 py-5 text-sm leading-6 text-[#70490f]">
-                Personal, family, work, development, and WES fields are withheld for this access
-                scope. Version metadata is visible for Agency-safe record history.
-              </div>
+            {message}
+          </p>
+        )}
+
+        <div
+          hidden={open}
+          className="grid items-start gap-5 min-[1100px]:grid-cols-[minmax(0,1fr)_minmax(240px,300px)]"
+        >
+          <div className="grid min-w-0 gap-5">
+            {versionError || !detail || detail.fieldScope === 'REDACTED' ? (
+              <Panel title="Personal Data Sheet" flush>
+                <StateSurface compact busy={!versionError && !detail && Boolean(versionId)}>
+                  {versionError ? (
+                    <p role="alert" className="m-0 text-danger">
+                      {versionError}
+                    </p>
+                  ) : !detail && versionId ? (
+                    <p className="m-0">Loading PDS version…</p>
+                  ) : !detail ? (
+                    <>
+                      <strong className="font-[650] text-ink">No Draft PDS yet.</strong>
+                      <p className="m-0 max-w-[560px]">
+                        Create the first Draft to begin recording personal, family, work, voluntary,
+                        and learning history plus WES rows.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="m-0 max-w-[560px]">
+                      Personal, family, work, development, and WES fields are withheld for this
+                      access scope. Version metadata is visible for Agency-safe record history.
+                    </p>
+                  )}
+                </StateSurface>
+              </Panel>
             ) : (
-              <div className="grid gap-7 px-5 py-6 min-[700px]:px-8">
-                <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-3">
-                  <DetailValue label="Version" value={`v${detail.versionNo}`} />
-                  <DetailValue label="As of" value={formatEmployeeDate(detail.asOfDate)} />
-                  <DetailValue label="Form contract" value={detail.formVersion} />
-                </dl>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Items 1–16
-                  </h3>
-                  <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-3">
+              <>
+                <Panel title="Items 1–16 · Personal information">
+                  <dl className="m-0 grid gap-x-8 gap-y-4 min-[620px]:grid-cols-3">
                     <DetailValue
                       label="Name"
                       value={
@@ -3519,12 +3548,9 @@ export function PdsWorkspace({
                     <DetailValue label="Weight (kg)" value={personal?.weightKilograms} />
                     <DetailValue label="Blood type" value={personal?.bloodType} />
                   </dl>
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Items 17–21
-                  </h3>
-                  <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                </Panel>
+                <Panel title="Items 17–21 · Address and contact">
+                  <dl className="m-0 grid gap-x-8 gap-y-4 min-[620px]:grid-cols-2">
                     <DetailValue
                       label="Residential address"
                       value={
@@ -3545,12 +3571,9 @@ export function PdsWorkspace({
                     <DetailValue label="Mobile" value={personal?.mobileNumber} />
                     <DetailValue label="Email" value={personal?.emailAddress} />
                   </dl>
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Items 22–25 · Family
-                  </h3>
-                  <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                </Panel>
+                <Panel title="Items 22–25 · Family">
+                  <dl className="m-0 grid gap-x-8 gap-y-4 min-[620px]:grid-cols-2">
                     <DetailValue label="Spouse" value={family?.spouse?.fullName} />
                     <DetailValue
                       label="Children"
@@ -3566,170 +3589,108 @@ export function PdsWorkspace({
                     <DetailValue label="Father" value={family?.father?.fullName} />
                     <DetailValue label="Mother’s maiden name" value={family?.mother?.fullName} />
                   </dl>
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Work experience
-                  </h3>
-                  {detailWorkExperience.length === 0 ? (
-                    <EmptyRows message="No work-experience rows recorded." />
-                  ) : (
-                    <div className="grid gap-4">
-                      {detailWorkExperience.map((row, index) => (
-                        <div
-                          key={row.id ?? `work-${index}`}
-                          className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
-                        >
-                          <strong className="text-xs font-[680] text-ink">
-                            Work experience {index + 1}
-                          </strong>
-                          <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
-                            <DetailValue
-                              label="Inclusive dates"
-                              value={sequenceLabel(
-                                stringValue(row.inclusiveFrom),
-                                stringValue(row.inclusiveTo),
-                                Boolean(row.isCurrent),
-                              )}
-                            />
-                            <DetailValue label="Position title" value={row.positionTitle} />
-                            <DetailValue
-                              label="Department / agency / office / company"
-                              value={row.departmentAgencyOfficeCompany}
-                            />
-                            <DetailValue label="Monthly salary" value={row.monthlySalary} />
-                            <DetailValue label="Salary grade / step" value={row.salaryGradeStep} />
-                            <DetailValue
-                              label="Status of appointment"
-                              value={row.appointmentStatus}
-                            />
-                            <DetailValue
-                              label="Government service"
-                              value={
-                                row.governmentService === 'Y'
-                                  ? 'Yes'
-                                  : row.governmentService === 'N'
-                                    ? 'No'
-                                    : null
-                              }
-                            />
-                            <DetailValue label="Evidence document ID" value={row.documentId} />
-                            <DetailValue
-                              label="Evidence document version ID"
-                              value={row.documentVersionId}
-                            />
-                          </dl>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Voluntary work
-                  </h3>
-                  {detailVoluntaryWork.length === 0 ? (
-                    <EmptyRows message="No voluntary-work rows recorded." />
-                  ) : (
-                    <div className="grid gap-4">
-                      {detailVoluntaryWork.map((row, index) => (
-                        <div
-                          key={row.id ?? `voluntary-${index}`}
-                          className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
-                        >
-                          <strong className="text-xs font-[680] text-ink">
-                            Voluntary work {index + 1}
-                          </strong>
-                          <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
-                            <DetailValue
-                              label="Organization name and address"
-                              value={row.organizationNameAddress}
-                            />
-                            <DetailValue
-                              label="Inclusive dates"
-                              value={sequenceLabel(
-                                stringValue(row.inclusiveFrom),
-                                stringValue(row.inclusiveTo),
-                              )}
-                            />
-                            <DetailValue label="Number of hours" value={row.hours} />
-                            <DetailValue
-                              label="Position / nature of work"
-                              value={row.positionNatureOfWork}
-                            />
-                            <DetailValue label="Evidence document ID" value={row.documentId} />
-                            <DetailValue
-                              label="Evidence document version ID"
-                              value={row.documentVersionId}
-                            />
-                          </dl>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Learning and development
-                  </h3>
-                  {detailLearningAndDevelopment.length === 0 ? (
-                    <EmptyRows message="No learning-and-development rows recorded." />
-                  ) : (
-                    <div className="grid gap-4">
-                      {detailLearningAndDevelopment.map((row, index) => (
-                        <div
-                          key={row.id ?? `learning-${index}`}
-                          className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
-                        >
-                          <strong className="text-xs font-[680] text-ink">
-                            Learning and development {index + 1}
-                          </strong>
-                          <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
-                            <DetailValue
-                              label="Intervention / training title"
-                              value={row.interventionTitle}
-                            />
-                            <DetailValue
-                              label="Attendance dates"
-                              value={sequenceLabel(
-                                stringValue(row.attendanceFrom),
-                                stringValue(row.attendanceTo),
-                              )}
-                            />
-                            <DetailValue label="Number of hours" value={row.hours} />
-                            <DetailValue label="Type" value={row.type} />
-                            <DetailValue
-                              label="Conducted / sponsored by"
-                              value={row.conductedSponsoredBy}
-                            />
-                            <DetailValue label="Evidence document ID" value={row.documentId} />
-                            <DetailValue
-                              label="Evidence document version ID"
-                              value={row.documentVersionId}
-                            />
-                          </dl>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Work Experience Sheet
-                  </h3>
+                </Panel>
+                <RowsPanel
+                  title="Work experience"
+                  empty="No work-experience rows recorded."
+                  columns={[
+                    ['Inclusive dates', 'date'],
+                    ['Position title'],
+                    ['Department / agency / office / company'],
+                    ['Monthly salary', 'numeric'],
+                    ['Salary grade / step'],
+                    ['Status of appointment'],
+                    ['Government service'],
+                    ['Evidence document ID'],
+                    ['Evidence document version ID'],
+                  ]}
+                  rows={detailWorkExperience.map((row, index) => ({
+                    key: row.id ?? `work-${index}`,
+                    cells: [
+                      sequenceLabel(
+                        stringValue(row.inclusiveFrom),
+                        stringValue(row.inclusiveTo),
+                        Boolean(row.isCurrent),
+                      ),
+                      row.positionTitle,
+                      row.departmentAgencyOfficeCompany,
+                      row.monthlySalary,
+                      row.salaryGradeStep,
+                      row.appointmentStatus,
+                      row.governmentService === 'Y'
+                        ? 'Yes'
+                        : row.governmentService === 'N'
+                          ? 'No'
+                          : null,
+                      row.documentId,
+                      row.documentVersionId,
+                    ],
+                  }))}
+                />
+                <RowsPanel
+                  title="Voluntary work"
+                  empty="No voluntary-work rows recorded."
+                  columns={[
+                    ['Organization name and address'],
+                    ['Inclusive dates', 'date'],
+                    ['Number of hours', 'numeric'],
+                    ['Position / nature of work'],
+                    ['Evidence document ID'],
+                    ['Evidence document version ID'],
+                  ]}
+                  rows={detailVoluntaryWork.map((row, index) => ({
+                    key: row.id ?? `voluntary-${index}`,
+                    cells: [
+                      row.organizationNameAddress,
+                      sequenceLabel(stringValue(row.inclusiveFrom), stringValue(row.inclusiveTo)),
+                      row.hours,
+                      row.positionNatureOfWork,
+                      row.documentId,
+                      row.documentVersionId,
+                    ],
+                  }))}
+                />
+                <RowsPanel
+                  title="Learning and development"
+                  empty="No learning-and-development rows recorded."
+                  columns={[
+                    ['Intervention / training title'],
+                    ['Attendance dates', 'date'],
+                    ['Number of hours', 'numeric'],
+                    ['Type'],
+                    ['Conducted / sponsored by'],
+                    ['Evidence document ID'],
+                    ['Evidence document version ID'],
+                  ]}
+                  rows={detailLearningAndDevelopment.map((row, index) => ({
+                    key: row.id ?? `learning-${index}`,
+                    cells: [
+                      row.interventionTitle,
+                      sequenceLabel(stringValue(row.attendanceFrom), stringValue(row.attendanceTo)),
+                      row.hours,
+                      row.type,
+                      row.conductedSponsoredBy,
+                      row.documentId,
+                      row.documentVersionId,
+                    ],
+                  }))}
+                />
+                <Panel title="Work Experience Sheet" flush={detailWes.length === 0}>
                   {detailWes.length === 0 ? (
-                    <EmptyRows message="No Work Experience Sheet artifacts recorded." />
+                    <StateSurface compact>
+                      <p className="m-0">No Work Experience Sheet artifacts recorded.</p>
+                    </StateSurface>
                   ) : (
                     <div className="grid gap-4">
                       {detailWes.map((artifact, artifactIndex) => (
                         <div
                           key={artifact.id ?? `wes-${artifactIndex}`}
-                          className="grid gap-4 rounded-[3px] border border-line bg-[#fafbfd] p-4"
+                          className="grid gap-4 rounded-panel border border-border-subtle bg-canvas p-4"
                         >
-                          <strong className="text-xs font-[680] text-ink">
+                          <strong className="text-small font-[650] text-ink">
                             WES artifact {artifactIndex + 1}
                           </strong>
-                          <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                          <dl className="m-0 grid gap-x-8 gap-y-4 min-[620px]:grid-cols-2">
                             <DetailValue label="Context key" value={artifact.contextKey} />
                             <DetailValue label="Evidence document ID" value={artifact.documentId} />
                             <DetailValue
@@ -3748,12 +3709,12 @@ export function PdsWorkspace({
                               return (
                                 <div
                                   key={entry.id ?? `wes-entry-${entryIndex}`}
-                                  className="grid gap-4 rounded-[3px] border border-line bg-paper p-4"
+                                  className="grid gap-4 rounded-panel border border-border-subtle bg-surface p-4"
                                 >
-                                  <strong className="text-xs font-[680] text-ink">
+                                  <strong className="text-small font-[650] text-ink">
                                     WES entry {entryIndex + 1}
                                   </strong>
-                                  <dl className="grid gap-x-8 gap-y-5 min-[620px]:grid-cols-2">
+                                  <dl className="m-0 grid gap-x-8 gap-y-4 min-[620px]:grid-cols-2">
                                     <DetailValue
                                       label="Parent work row"
                                       value={
@@ -3796,128 +3757,105 @@ export function PdsWorkspace({
                       ))}
                     </div>
                   )}
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Item 26 · Education
-                  </h3>
-                  {education.length ? (
-                    <div className="grid gap-3">
-                      {education.map((record, index) => (
-                        <dl
-                          key={record.id ?? index}
-                          className="grid gap-x-8 gap-y-5 rounded-[3px] border border-line bg-[#fafbfd] p-4 min-[620px]:grid-cols-3"
-                        >
-                          <DetailValue label="Level" value={record.level} />
-                          <DetailValue label="School" value={record.schoolName} />
-                          <DetailValue label="Degree / course" value={record.degreeCourse} />
-                          <DetailValue
-                            label="Period of attendance"
-                            value={record.periodOfAttendance}
-                          />
-                          <DetailValue
-                            label="Highest level / units"
-                            value={record.highestLevelUnits}
-                          />
-                          <DetailValue label="Year graduated" value={record.yearGraduated} />
-                          <DetailValue label="Honors" value={record.honors} />
-                          <DetailValue label="Document ID" value={record.documentId} />
-                          <DetailValue
-                            label="Document version ID"
-                            value={record.documentVersionId}
-                          />
-                        </dl>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="m-0 text-sm text-muted">No education rows recorded.</p>
-                  )}
-                </div>
-                <div className="grid gap-4">
-                  <h3 className="m-0 text-xs font-[680] tracking-[.04em] text-cobalt uppercase">
-                    Item 27 · Eligibility
-                  </h3>
-                  {eligibility.length ? (
-                    <div className="grid gap-3">
-                      {eligibility.map((record, index) => (
-                        <dl
-                          key={record.id ?? index}
-                          className="grid gap-x-8 gap-y-5 rounded-[3px] border border-line bg-[#fafbfd] p-4 min-[620px]:grid-cols-3"
-                        >
-                          <DetailValue
-                            label="Eligibility / category"
-                            value={record.eligibilityName}
-                          />
-                          <DetailValue label="Rating" value={record.rating} />
-                          <DetailValue
-                            label="Exam / conferment date"
-                            value={record.examDate ? formatEmployeeDate(record.examDate) : null}
-                          />
-                          <DetailValue label="Exam / conferment place" value={record.examPlace} />
-                          <DetailValue label="License number" value={record.licenseNo} />
-                          <DetailValue
-                            label="Valid until"
-                            value={record.validUntil ? formatEmployeeDate(record.validUntil) : null}
-                          />
-                          <DetailValue label="Document ID" value={record.documentId} />
-                          <DetailValue
-                            label="Document version ID"
-                            value={record.documentVersionId}
-                          />
-                        </dl>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="m-0 text-sm text-muted">No eligibility rows recorded.</p>
-                  )}
-                </div>
-              </div>
+                </Panel>
+                <RowsPanel
+                  title="Item 26 · Education"
+                  empty="No education rows recorded."
+                  columns={[
+                    ['Level'],
+                    ['School'],
+                    ['Degree / course'],
+                    ['Period of attendance'],
+                    ['Highest level / units'],
+                    ['Year graduated', 'numeric'],
+                    ['Honors'],
+                    ['Document ID'],
+                    ['Document version ID'],
+                  ]}
+                  rows={education.map((record, index) => ({
+                    key: record.id ?? `education-${index}`,
+                    cells: [
+                      record.level,
+                      record.schoolName,
+                      record.degreeCourse,
+                      record.periodOfAttendance,
+                      record.highestLevelUnits,
+                      record.yearGraduated,
+                      record.honors,
+                      record.documentId,
+                      record.documentVersionId,
+                    ],
+                  }))}
+                />
+                <RowsPanel
+                  title="Item 27 · Eligibility"
+                  empty="No eligibility rows recorded."
+                  columns={[
+                    ['Eligibility / category'],
+                    ['Rating'],
+                    ['Exam / conferment date', 'date'],
+                    ['Exam / conferment place'],
+                    ['License number'],
+                    ['Valid until', 'date'],
+                    ['Document ID'],
+                    ['Document version ID'],
+                  ]}
+                  rows={eligibility.map((record, index) => ({
+                    key: record.id ?? `eligibility-${index}`,
+                    cells: [
+                      record.eligibilityName,
+                      record.rating,
+                      record.examDate ? formatEmployeeDate(record.examDate) : null,
+                      record.examPlace,
+                      record.licenseNo,
+                      record.validUntil ? formatEmployeeDate(record.validUntil) : null,
+                      record.documentId,
+                      record.documentVersionId,
+                    ],
+                  }))}
+                />
+              </>
             )}
-          </section>
+          </div>
 
-          <section
-            className="rounded-[5px] border border-line bg-paper"
-            aria-labelledby="pds-history-heading"
-          >
-            <header className="flex min-h-[58px] items-center border-b border-line px-5">
-              <div>
-                <p className="m-0 font-mono text-[10px] font-bold tracking-[.1em] text-cobalt">
-                  RECORD HISTORY
-                </p>
-                <h2 id="pds-history-heading" className="mt-1 mb-0 text-sm font-[680] text-midnight">
-                  Versions
-                </h2>
-              </div>
-            </header>
+          <Panel title="Versions" flush>
             {list.versions.length === 0 ? (
-              <p className="m-0 px-5 py-6 text-sm text-muted">No versions recorded.</p>
+              <StateSurface compact>
+                <p className="m-0">No versions recorded.</p>
+              </StateSurface>
             ) : (
-              <ul className="m-0 list-none p-0">
-                {list.versions.map((version) => (
-                  <li
-                    key={version.id}
-                    className="flex items-center justify-between gap-3 border-b border-line px-5 py-4 last:border-b-0"
-                  >
-                    <div className="grid gap-1">
-                      <button
-                        type="button"
-                        className="text-left font-mono text-xs text-cobalt underline"
-                        onClick={() => navigation.navigate({ pdsVersion: version.id })}
-                      >
-                        v{version.versionNo}
-                      </button>
-                      <span className="text-xs text-muted">
-                        As of {formatEmployeeDate(version.asOfDate)}
-                      </span>
-                    </div>
-                    <StatusBadge status={version.status} />
-                  </li>
-                ))}
-              </ul>
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>Version</Th>
+                    <Th>As of</Th>
+                    <Th>Status</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.versions.map((version) => (
+                    <Tr key={version.id} selected={version.id === detail?.id}>
+                      <Td>
+                        <button
+                          type="button"
+                          className="cursor-pointer border-0 bg-transparent p-0 text-small text-primary underline hover:text-primary-hover"
+                          onClick={() => navigation.navigate({ pdsVersion: version.id })}
+                        >
+                          v{version.versionNo}
+                        </button>
+                      </Td>
+                      <Td kind="date">{formatEmployeeDate(version.asOfDate)}</Td>
+                      <Td>
+                        <PdsStatus status={version.status} />
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
             )}
-          </section>
+          </Panel>
         </div>
       </div>
-    </>
+    </Dialog>
   );
 }

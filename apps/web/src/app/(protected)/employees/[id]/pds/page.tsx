@@ -105,7 +105,7 @@ export default async function EmployeePdsPage({ params }: { params: Promise<{ id
   return (
     <PdsWorkspace
       agencyId={session.agencyId}
-      employeeName={(employee as { legalName: string }).legalName}
+      employee={{ name: (employee as { legalName: string }).legalName, href: `/employees/${id}` }}
       initialList={list}
       initialDetail={detail}
       canUpdate={canAgencyUpdate}
@@ -117,7 +117,6 @@ export default async function EmployeePdsPage({ params }: { params: Promise<{ id
       canGenerateOutputs={canAgencyUpdate}
       canBrowseEvidence={hasPermission(session, 'documents.evidence.read')}
       createUrl={`/api/v1/agencies/${session.agencyId}/employees/${id}/pds`}
-      backHref={`/employees/${id}`}
     />
   );
 }
