@@ -12,6 +12,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../../../components/ui/dialog';
+import { StateSurface } from '../../../components/state-surface';
+import { Button } from '../../../components/ui/button';
+import { FormError, inputClass, labelClass } from '../../../components/ui/field';
+import { PageHeader } from '../../../components/ui/page-header';
+import { Panel } from '../../../components/ui/panel';
+import { StatusTag } from '../../../components/ui/status-tag';
+import { Table, Td, Th, Tr } from '../../../components/ui/table';
 
 interface PendingInvitation {
   id: string;
@@ -41,15 +48,15 @@ function errorMessage(value: unknown): string {
     : 'The invitation could not be sent. Try again.';
 }
 
-function expiryLabel(value: string): string {
+function formatExpiryDate(value: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Expiry unavailable';
-  return `Expires ${date.toLocaleDateString('en-PH', {
+  if (Number.isNaN(date.getTime())) return 'Unavailable';
+  return date.toLocaleDateString('en-PH', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     timeZone: 'Asia/Manila',
-  })}`;
+  });
 }
 
 export function InvitationPanel({
@@ -128,91 +135,75 @@ export function InvitationPanel({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <div className="grid gap-7">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid max-w-[650px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Users &amp; Access
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Invite an HRMO Administrator
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              Send one secure, single-use invitation for HRMO work in this Agency Context. The
-              invitee establishes identity through the approved sign-in provider.
-            </p>
-          </div>
-          <DialogTrigger asChild>
-            <button
-              className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
-              type="button"
-              onClick={() => setError('')}
-            >
-              Invite user
-            </button>
-          </DialogTrigger>
-        </header>
+      <div className="grid gap-5">
+        <PageHeader
+          breadcrumbs={[{ label: 'Oversight' }, { label: 'Users & Access' }]}
+          title="Invite an HRMO Administrator"
+          actions={
+            <DialogTrigger asChild>
+              <Button variant="primary" type="button" onClick={() => setError('')}>
+                Invite user
+              </Button>
+            </DialogTrigger>
+          }
+        />
+        <p className="m-0 max-w-[650px] text-small text-ink-muted">
+          Send one secure, single-use invitation for HRMO work in this Agency Context. The invitee
+          establishes identity through the approved sign-in provider.
+        </p>
 
         {sentEmail ? (
           <p
-            className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
+            className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-ink"
             role="status"
           >
             Invitation sent to <strong>{sentEmail}</strong>. The pending handoff is now visible
             below.
           </p>
         ) : null}
-        {error && !open ? (
-          <p
-            className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-            role="alert"
-          >
-            {error}
-          </p>
-        ) : null}
+        {!open ? <FormError message={error} /> : null}
 
-        <section
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          aria-labelledby="pending-heading"
+        <Panel
+          title="Pending invitations"
+          flush
+          actions={
+            <span className="text-caption text-ink-muted tabular-nums">{pending.pendingCount}</span>
+          }
         >
-          <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
-            <h2 className="m-0 text-sm font-[670] text-midnight" id="pending-heading">
-              Pending invitations
-            </h2>
-            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-              {pending.pendingCount}
-            </span>
-          </header>
           {pending.invitations.length === 0 ? (
-            <div className="grid min-h-[190px] place-content-center gap-2 px-6 py-10 text-left">
-              <strong className="text-[15px] font-[650] text-midnight">
+            <StateSurface compact labelledBy="pending-empty-title">
+              <strong className="text-body font-[650] text-ink" id="pending-empty-title">
                 No pending invitations.
               </strong>
-              <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
+              <p className="m-0">
                 Invite one HRMO Administrator when your Agency is ready to hand off HR work.
               </p>
-            </div>
+            </StateSurface>
           ) : (
-            <ul className="m-0 list-none divide-y divide-line p-0">
-              {pending.invitations.map((invitation) => (
-                <li
-                  className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
-                  key={invitation.id}
-                >
-                  <div className="grid gap-1">
-                    <strong className="text-sm font-[650] text-midnight">{invitation.email}</strong>
-                    <span className="text-xs text-muted">
-                      HRMO Administrator · {expiryLabel(invitation.expiresAt)}
-                    </span>
-                  </div>
-                  <span className="text-xs font-[650] tracking-[0.04em] text-cobalt uppercase">
-                    Pending
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Email address</Th>
+                  <Th>Role</Th>
+                  <Th kind="date">Expires</Th>
+                  <Th>Status</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.invitations.map((invitation) => (
+                  <Tr key={invitation.id}>
+                    <Td className="font-[600] text-ink">{invitation.email}</Td>
+                    <Td>HRMO Administrator</Td>
+                    <Td kind="date">{formatExpiryDate(invitation.expiresAt)}</Td>
+                    <Td>
+                      <StatusTag tone="warning">Pending</StatusTag>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
           )}
-        </section>
+        </Panel>
 
         <DialogContent
           size="compact"
@@ -224,9 +215,6 @@ export function InvitationPanel({
         >
           <DialogHeader>
             <div className="grid min-w-0 gap-1.5">
-              <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-                New invitation
-              </p>
               <DialogTitle>Invite user</DialogTitle>
               <DialogDescription>
                 Send a secure, single-use invitation for an HRMO Administrator in this Agency
@@ -234,25 +222,22 @@ export function InvitationPanel({
               </DialogDescription>
             </div>
             <DialogClose asChild>
-              <button
-                className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                type="button"
-                aria-label="Close invitation dialog"
-                disabled={submitting}
-              >
-                ×
-              </button>
+              <Button type="button" aria-label="Close invitation dialog" disabled={submitting}>
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
+              </Button>
             </DialogClose>
           </DialogHeader>
           <DialogBody>
             <form className="grid gap-5" id="invite-form" onSubmit={submit}>
-              <div className="grid gap-2">
-                <label className="text-sm font-[650] text-ink" htmlFor="invite-email">
+              <div className="grid gap-1">
+                <label className={labelClass} htmlFor="invite-email">
                   Email address
                 </label>
                 <input
                   ref={emailRef}
-                  className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
+                  className={inputClass}
                   id="invite-email"
                   name="email"
                   type="email"
@@ -265,26 +250,22 @@ export function InvitationPanel({
                     setEmail((event.target as unknown as { value: string }).value)
                   }
                 />
-                <span className="text-xs leading-[1.5] text-muted" id="invite-email-help">
+                <span className="text-caption text-ink-muted" id="invite-email-help">
                   Use the verified email address of the individual who will accept the invitation.
                 </span>
                 {error ? (
-                  <span
-                    className="text-xs leading-[1.5] text-[#7a3036]"
-                    id="invite-error"
-                    role="alert"
-                  >
+                  <span className="text-caption text-danger" id="invite-error" role="alert">
                     {error}
                   </span>
                 ) : null}
               </div>
-              <fieldset className="grid gap-2 border-0 p-0">
-                <legend className="text-sm font-[650] text-ink">Role</legend>
-                <label className="flex min-h-11 items-center gap-3 rounded-[3px] border border-line bg-canvas px-3 text-sm text-ink">
+              <fieldset className="m-0 grid gap-1 border-0 p-0">
+                <legend className={labelClass}>Role</legend>
+                <label className="flex min-h-9 items-center gap-3 rounded-control border border-border bg-canvas px-2.5 py-2 text-small text-ink">
                   <input type="radio" name="role" value="hrmo_administrator" checked readOnly />
                   <span>
                     <strong className="font-[650]">HRMO Administrator</strong>
-                    <span className="block text-xs text-muted">
+                    <span className="block text-caption text-ink-muted">
                       HR management without unrestricted system administration.
                     </span>
                   </span>
@@ -294,22 +275,13 @@ export function InvitationPanel({
           </DialogBody>
           <DialogFooter>
             <DialogClose asChild>
-              <button
-                className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                type="button"
-                disabled={submitting}
-              >
+              <Button variant="secondary" type="button" disabled={submitting}>
                 Cancel
-              </button>
+              </Button>
             </DialogClose>
-            <button
-              className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
-              type="submit"
-              form="invite-form"
-              disabled={submitting}
-            >
+            <Button variant="primary" type="submit" form="invite-form" disabled={submitting}>
               {submitting ? 'Sending…' : 'Send invitation'}
-            </button>
+            </Button>
           </DialogFooter>
         </DialogContent>
       </div>
