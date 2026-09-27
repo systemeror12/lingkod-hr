@@ -100,8 +100,9 @@ body {
   color: var(--color-midnight);
 }
 
-/* Shared workspace density. Domain forms retain their own layout and validation. */
-.workspace h1 {
+/* Shared workspace density. Domain forms retain their own layout and validation.
+   Unlayered, so it beats utilities; workbench titles opt out until legacy styles go. */
+.workspace h1:not(.text-page-title) {
   font-size: clamp(1.5rem, 2vw, 1.875rem);
   line-height: 1.2;
 }
