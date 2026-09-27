@@ -69,7 +69,7 @@ export default async function EmployeesPage() {
   const employees = (value as { employees: EmployeeRow[] }).employees;
   const linked = employees.filter((employee) => employee.membershipId).length;
   return (
-    <>
+    <div className="grid gap-5">
       <PageHeader
         breadcrumbs={[{ label: 'Personnel' }]}
         title="Employee directory"
@@ -132,6 +132,6 @@ export default async function EmployeesPage() {
           </Table>
         </Panel>
       )}
-    </>
+    </div>
   );
 }
