@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { getConfig } from '@lingkod-hr/config';
 import { EmployeeDocumentsSection } from '../../../components/employee-documents-client';
-import { EmployeePageTitle } from '../../../components/employee-directory';
 import { ShellState } from '../../../components/shell-state';
+import { PageHeader } from '../../../components/ui/page-header';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 
 export const metadata: Metadata = { title: 'My Documents' };
@@ -59,14 +59,8 @@ export default async function MyDocumentsPage() {
   }
 
   return (
-    <>
-      <header className="mb-7">
-        <EmployeePageTitle
-          eyebrow="Employee self-service"
-          title="My Documents"
-          description="Upload your own evidence and review only Personnel Documents released to you."
-        />
-      </header>
+    <div className="grid gap-5">
+      <PageHeader breadcrumbs={[{ label: 'Personnel' }]} title="My Documents" />
       <EmployeeDocumentsSection
         agencyId={session.agencyId}
         employeeId={(value as { id: string }).id}
@@ -76,6 +70,6 @@ export default async function MyDocumentsPage() {
         canBrowseSource={false}
         canRemoveOwn={canUploadOwnDocuments}
       />
-    </>
+    </div>
   );
 }
