@@ -1,3 +1,4 @@
+import { StatusTag } from './ui/status-tag';
 export { inputClass as employeeInputClass, labelClass as employeeLabelClass } from './ui/field';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -14,11 +15,7 @@ export function titleCase(value: string): string {
 
 export function EmployeeStatus({ linked }: { linked: boolean }) {
   return (
-    <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${linked ? 'bg-[#e7f4eb] text-[#27633b]' : 'bg-[#fff2d9] text-[#82520d]'}`}
-    >
-      {linked ? 'LINKED' : 'UNLINKED'}
-    </span>
+    <StatusTag tone={linked ? 'success' : 'warning'}>{linked ? 'LINKED' : 'UNLINKED'}</StatusTag>
   );
 }
 
