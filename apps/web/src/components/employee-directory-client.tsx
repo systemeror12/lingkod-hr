@@ -122,7 +122,7 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
   }
 
   return (
-    <>
+    <div className="grid gap-5">
       <PageHeader
         breadcrumbs={[{ label: 'Employees', href: '/employees' }, { label: 'Create employee' }]}
         title="Create preboarding employee"
@@ -217,7 +217,7 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
           </Button>
         </div>
       </form>
-    </>
+    </div>
   );
 }
 
