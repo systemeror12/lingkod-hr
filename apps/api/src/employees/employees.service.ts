@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { EMPLOYEE_LIST_LIMIT, type EmployeeListQuery } from './employees.schemas';
 
 export interface EmployeeInput {
   employeeNumber: string;
@@ -45,6 +46,18 @@ export interface EmployeeServiceProjection {
   salaryStep: number | null;
   effectiveFrom: string;
   effectiveTo: string | null;
+}
+
+/** Record counts per filter value, each counted under the search and the other group's filter. */
+export interface EmployeeListFacets {
+  serviceStatus: Record<string, number>;
+  membership: { LINKED: number; UNLINKED: number };
+}
+
+export interface EmployeeListPage {
+  employees: EmployeeSummary[];
+  total: number;
+  facets: EmployeeListFacets;
 }
 
 export interface EmployeeDetail extends EmployeeSummary {
@@ -110,8 +123,6 @@ export class EmployeeServiceError extends Error {
   }
 }
 
-const EMPLOYEE_LIST_LIMIT = 200;
-
 const employeeSelect = {
   id: true,
   agencyId: true,
@@ -152,6 +163,26 @@ type EmployeeRecord = Prisma.EmployeeGetPayload<{ select: typeof employeeSelect 
 type LinkableMembershipRecord = Prisma.AgencyMembershipGetPayload<{
   select: typeof linkableMembershipSelect;
 }>;
+
+function searchWhere(q: string | undefined): Prisma.EmployeeWhereInput {
+  if (!q) return {};
+  return {
+    OR: [
+      { employeeNumber: { contains: q, mode: 'insensitive' } },
+      { legalName: { contains: q, mode: 'insensitive' } },
+    ],
+  };
+}
+
+function serviceStatusWhere(statuses: readonly string[]): Prisma.EmployeeWhereInput {
+  return statuses.length ? { serviceStatus: { in: [...statuses] } } : {};
+}
+
+/** Selecting both or neither link state leaves the register unfiltered. */
+function membershipWhere(links: readonly string[]): Prisma.EmployeeWhereInput {
+  if (links.length !== 1) return {};
+  return links[0] === 'LINKED' ? { memberships: { some: {} } } : { memberships: { none: {} } };
+}
 
 function databaseContext(context: RequestContext, membershipLink = false) {
   return requestDatabaseContext(
@@ -236,16 +267,43 @@ export class EmployeesService {
     private readonly auditWriter: EmployeeAuditWriter,
   ) {}
 
-  async list(context: RequestContext): Promise<EmployeeSummary[]> {
+  async list(context: RequestContext, query: EmployeeListQuery): Promise<EmployeeListPage> {
     this.assertPermission(context, 'personnel.employees.read', 'EMPLOYEE_READ_FORBIDDEN');
+    const agency = { agencyId: context.agencyId };
+    const search = searchWhere(query.q);
+    const byStatus = serviceStatusWhere(query.serviceStatus);
+    const byMembership = membershipWhere(query.membership);
+    const where = { AND: [agency, search, byStatus, byMembership] };
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const records = await transaction.employee.findMany({
-        where: { agencyId: context.agencyId },
-        orderBy: { createdAt: 'desc' },
-        take: EMPLOYEE_LIST_LIMIT,
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: query.offset,
+        take: query.limit,
         select: employeeSelect,
       });
-      return records.map(employeeSummary);
+      const total = await transaction.employee.count({ where });
+      const statusCounts = await transaction.employee.groupBy({
+        by: ['serviceStatus'],
+        where: { AND: [agency, search, byMembership] },
+        _count: { _all: true },
+      });
+      const linked = await transaction.employee.count({
+        where: { AND: [agency, search, byStatus, membershipWhere(['LINKED'])] },
+      });
+      const unlinked = await transaction.employee.count({
+        where: { AND: [agency, search, byStatus, membershipWhere(['UNLINKED'])] },
+      });
+      return {
+        employees: records.map(employeeSummary),
+        total,
+        facets: {
+          serviceStatus: Object.fromEntries(
+            statusCounts.map((row) => [row.serviceStatus, row._count._all]),
+          ),
+          membership: { LINKED: linked, UNLINKED: unlinked },
+        },
+      };
     });
   }
 

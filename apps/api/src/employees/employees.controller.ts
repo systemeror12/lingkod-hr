@@ -8,6 +8,7 @@ import {
   Inject,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -19,6 +20,7 @@ import { EmployeeDetailDto, EmployeeDto, EmployeeListResponseDto } from './emplo
 import {
   employeeCreateSchema,
   employeeIdSchema,
+  employeeListQuerySchema,
   employeeMembershipLinkSchema,
 } from './employees.schemas';
 import { EmployeeServiceError, EmployeesService } from './employees.service';
@@ -54,11 +56,23 @@ export class EmployeesController {
   @RequirePermission('personnel.employees.read')
   async list(
     @Param('agencyId') agencyId: string,
+    @Query() query: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<EmployeeListResponseDto> {
     this.assertReadAgency(agencyId, context);
+    const parsed = employeeListQuerySchema.safeParse(query ?? {});
+    if (!parsed.success) {
+      throw this.invalidInput(
+        parsed.error.issues,
+        context,
+        'Enter a supported Employee search, filter, or page.',
+      );
+    }
     try {
-      return new EmployeeListResponseDto(await this.service.list(context));
+      return new EmployeeListResponseDto(
+        await this.service.list(context, parsed.data),
+        parsed.data,
+      );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

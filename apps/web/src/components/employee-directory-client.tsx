@@ -10,14 +10,14 @@ import { PageHeader } from './ui/page-header';
 import { Panel } from './ui/panel';
 import { RecordHeader } from './ui/record-header';
 import { SectionTabList, SectionTabPanel, SectionTabs } from './ui/section-tabs';
-import { StatusTag, type StatusTone } from './ui/status-tag';
+import { StatusTag } from './ui/status-tag';
 import { useRecordNavigation } from './record-navigation';
 import { employeeRecordSectionFor, type EmployeeRecordSection } from './employee-record-sections';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import { GovernmentIdentifiersSection } from './government-identifiers-client';
 import { PayrollBankAccountsSection } from './payroll-bank-accounts-client';
 import { SalnComplianceSection } from './saln-compliance-section';
-import { formatEmployeeDate, titleCase } from './employee-directory';
+import { EmployeeServiceStatus, formatEmployeeDate, titleCase } from './employee-directory';
 
 export interface EmployeeMembershipSummary {
   id: string;
@@ -43,19 +43,6 @@ export interface EmployeeDetailData {
 
 interface ErrorEnvelope {
   error?: { message?: string; fields?: Record<string, string> };
-}
-
-const serviceStatusTone: Record<string, StatusTone> = {
-  PREBOARDING: 'info',
-  ACTIVE: 'success',
-  ON_EXTENDED_LEAVE: 'warning',
-  SUSPENDED: 'danger',
-  SEPARATED: 'neutral',
-  DECEASED: 'neutral',
-};
-
-function humanize(value: string): string {
-  return titleCase(value.replaceAll('_', ' '));
 }
 
 function membershipLabel(membership: EmployeeMembershipSummary): string {
@@ -399,11 +386,7 @@ export function EmployeeDetailView({
       >
         <RecordHeader
           name={detail.legalName}
-          status={
-            <StatusTag tone={serviceStatusTone[detail.serviceStatus] ?? 'neutral'}>
-              {humanize(detail.serviceStatus)}
-            </StatusTag>
-          }
+          status={<EmployeeServiceStatus status={detail.serviceStatus} />}
           facts={[
             { label: 'Employee no.', value: detail.employeeNumber },
             {
