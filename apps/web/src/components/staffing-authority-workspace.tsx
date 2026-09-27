@@ -3,7 +3,7 @@
 import { Field, inputClass, FormError } from './ui/field';
 
 import { useRecordNavigation } from './record-navigation';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Dialog,
   DialogBody,
@@ -448,7 +448,7 @@ export function StaffingAuthorityWorkspace({
   }
 
   function recordActions(authority: StaffingAuthority) {
-    function open(kind: DialogKind) {
+    function openAction(kind: DialogKind) {
       return (event: { currentTarget: EventTarget }) =>
         openDialog(kind, authority, event.currentTarget as unknown as { focus(): void });
     }
@@ -469,24 +469,24 @@ export function StaffingAuthorityWorkspace({
             variant="secondary"
             onClick={(event) => {
               setDraft(draftValues(authority));
-              open('edit')(event);
+              openAction('edit')(event);
             }}
           >
             Edit Draft
           </Button>
         ) : null}
         {authority.status === 'DRAFT' && canValidateEvidence ? (
-          <Button type="button" variant="secondary" onClick={open('evidence')}>
+          <Button type="button" variant="secondary" onClick={openAction('evidence')}>
             Validate Evidence
           </Button>
         ) : null}
         {authority.status === 'DRAFT' && canActivate ? (
-          <Button type="button" variant="primary" onClick={open('activate')}>
+          <Button type="button" variant="primary" onClick={openAction('activate')}>
             Activate
           </Button>
         ) : null}
         {authority.status === 'ACTIVE' && canSupersede ? (
-          <Button type="button" variant="secondary" onClick={open('supersede')}>
+          <Button type="button" variant="secondary" onClick={openAction('supersede')}>
             Supersede
           </Button>
         ) : null}
@@ -495,7 +495,7 @@ export function StaffingAuthorityWorkspace({
             className="border-danger text-danger hover:bg-danger/5"
             type="button"
             variant="secondary"
-            onClick={open('revoke')}
+            onClick={openAction('revoke')}
           >
             Revoke
           </Button>
@@ -536,6 +536,8 @@ export function StaffingAuthorityWorkspace({
             canCreate ? (
               <DialogTrigger asChild>
                 <Button
+                  // Hidden rather than unmounted, so focus can return here when the form closes.
+                  hidden={inline}
                   type="button"
                   variant="primary"
                   onClick={(event) => {
@@ -552,7 +554,14 @@ export function StaffingAuthorityWorkspace({
           }
         />
 
-        <Panel title="Agency register" flush hidden={inline}>
+        <Panel
+          title="Agency register"
+          flush
+          hidden={inline}
+          actions={
+            <span className="text-caption text-ink-muted">Agency scoped · Evidence required</span>
+          }
+        >
           <div className="grid gap-3 px-4 pt-3">
             <p className="m-0 text-small text-ink-muted">
               Record the evidence-backed authorities that can support Organization and Plantilla
@@ -565,7 +574,7 @@ export function StaffingAuthorityWorkspace({
             ) : null}
           </div>
           {authorities.length === 0 ? (
-            <StateSurface compact>
+            <StateSurface compact label="Staffing Authority register">
               <strong className="text-body font-[650] text-ink">
                 No Staffing Authorities yet.
               </strong>
@@ -674,7 +683,7 @@ export function StaffingAuthorityWorkspace({
             <DialogBody className="grid gap-6">
               {selected ? recordActions(selected) : null}
               {detailLoading ? (
-                <StateSurface compact busy>
+                <StateSurface compact busy label="Authority history">
                   <p className="m-0">Loading authority history…</p>
                 </StateSurface>
               ) : null}
@@ -682,25 +691,27 @@ export function StaffingAuthorityWorkspace({
               {detail ? (
                 <>
                   <dl className="m-0 grid gap-x-10 gap-y-4 min-[621px]:grid-cols-2">
-                    {[
-                      ['Official reference', detail.authority.referenceNo],
-                      ['Authority type', typeLabel(detail.authority.authorityType)],
-                      ['Issue date', dateLabel(detail.authority.issuedDate)],
-                      ['Effective date', dateLabel(detail.authority.effectiveDate)],
+                    {(
                       [
-                        'Status',
-                        <StatusTag key="status" tone={statusTone[detail.authority.status]}>
-                          {detail.authority.status}
-                        </StatusTag>,
-                      ],
-                      [
-                        'Revocation effectivity',
-                        detail.authority.revokedEffectiveDate
-                          ? dateLabel(detail.authority.revokedEffectiveDate)
-                          : '—',
-                      ],
-                    ].map(([label, value]) => (
-                      <div key={label as string}>
+                        ['Official reference', detail.authority.referenceNo],
+                        ['Authority type', typeLabel(detail.authority.authorityType)],
+                        ['Issue date', dateLabel(detail.authority.issuedDate)],
+                        ['Effective date', dateLabel(detail.authority.effectiveDate)],
+                        [
+                          'Status',
+                          <StatusTag key="status" tone={statusTone[detail.authority.status]}>
+                            {detail.authority.status}
+                          </StatusTag>,
+                        ],
+                        [
+                          'Revocation effectivity',
+                          detail.authority.revokedEffectiveDate
+                            ? dateLabel(detail.authority.revokedEffectiveDate)
+                            : '—',
+                        ],
+                      ] satisfies [string, ReactNode][]
+                    ).map(([label, value]) => (
+                      <div key={label}>
                         <dt className="text-caption text-ink-muted">{label}</dt>
                         <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
                       </div>

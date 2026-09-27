@@ -26,6 +26,7 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await trigger.click();
   const dialog = page.getByRole('region', { name: 'Register Staffing Authority' });
   await expect(dialog).toBeVisible();
+  await expect(trigger).toBeHidden();
   await expect(dialog).toHaveAccessibleDescription(
     'Record official metadata first. The record remains Draft until External Evidence is linked and validated.',
   );
@@ -72,6 +73,7 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await row.getByRole('button', { name: 'Details' }).click();
   const record = page.getByRole('region', { name: `Staffing Authority · ${reference}` });
   await expect(record).toBeVisible();
+  await expect(trigger).toBeHidden();
   await expect(record.getByRole('table', { name: 'History' })).toContainText(
     'STAFFING_AUTHORITY_DRAFT_CREATED',
   );
