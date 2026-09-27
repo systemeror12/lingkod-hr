@@ -184,3 +184,38 @@ test('keeps Employee creation values after a network failure and permits retry',
   await expect(page.getByLabel('Legal name')).toHaveValue('Retry Employee');
   await expect(page.getByRole('button', { name: 'Create employee', exact: true })).toBeEnabled();
 });
+
+test('searches and filters the Employee register through the URL', async ({ page }) => {
+  const stamp = Date.now();
+  const employeeNumber = `E2E-SEARCH-${stamp}`;
+  const legalName = `E2E Searchable ${stamp}`;
+
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
+  await page.goto('/employees/new');
+  await page.getByLabel('Employee number').fill(employeeNumber);
+  await page.getByLabel('Legal name').fill(legalName);
+  await page.getByLabel('Birth date').fill('1991-02-03');
+  await page.getByLabel('Contact email').fill(`e2e.search.${stamp}@example.test`);
+  await page.getByRole('button', { name: 'Create employee', exact: true }).click();
+  await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
+
+  await page.goto('/employees');
+  const search = page.getByRole('searchbox', { name: 'Search employees' });
+  await search.fill(employeeNumber.toLowerCase());
+  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`q=${employeeNumber.toLowerCase()}`));
+  await expect(page.getByText('Showing 1–1 of 1')).toBeVisible();
+  await expect(page.getByRole('link', { name: legalName })).toBeVisible();
+
+  const filters = page.getByRole('complementary', { name: 'Filters' });
+  await expect(filters.getByRole('checkbox', { name: /Preboarding/ })).toBeVisible();
+  await filters.getByRole('checkbox', { name: /^Linked/ }).check();
+  await expect(page).toHaveURL(/membership=LINKED/);
+  await expect(page.getByText('No matches · 0 total')).toBeVisible();
+  await expect(page.getByRole('link', { name: legalName })).toBeHidden();
+
+  await page.goBack();
+  await expect(page.getByRole('link', { name: legalName })).toBeVisible();
+  await expect(search).toHaveValue(employeeNumber.toLowerCase());
+});

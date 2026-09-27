@@ -77,7 +77,7 @@ it('does not disclose the directory outside the active Agency', async () => {
   const service = serviceMock();
   const controller = new EmployeesController(service as never);
 
-  await expect(controller.list(otherAgencyId, context)).rejects.toMatchObject({
+  await expect(controller.list(otherAgencyId, {}, context)).rejects.toMatchObject({
     status: 404,
     response: {
       error: { code: 'EMPLOYEE_NOT_FOUND', requestId: context.requestId },
@@ -88,13 +88,26 @@ it('does not disclose the directory outside the active Agency', async () => {
 
 it('returns the Agency directory and preserves typed service failures', async () => {
   const service = serviceMock();
-  service.list.mockResolvedValue([employee]);
+  const facets = {
+    serviceStatus: { PREBOARDING: 1 },
+    membership: { LINKED: 0, UNLINKED: 1 },
+  };
+  service.list.mockResolvedValue({ employees: [employee], total: 1, facets });
   const controller = new EmployeesController(service as never);
 
-  await expect(controller.list(agencyId, context)).resolves.toEqual({
+  await expect(controller.list(agencyId, {}, context)).resolves.toEqual({
     employees: [expect.objectContaining({ id: employeeId, employeeNumber: 'NEDA-2026-0042' })],
+    total: 1,
+    limit: 200,
+    offset: 0,
+    facets,
   });
-  expect(service.list).toHaveBeenCalledWith(context);
+  expect(service.list).toHaveBeenCalledWith(context, {
+    serviceStatus: [],
+    membership: [],
+    limit: 200,
+    offset: 0,
+  });
 
   service.create.mockRejectedValue(
     new EmployeeServiceError(
@@ -109,6 +122,40 @@ it('returns the Agency directory and preserves typed service failures', async ()
       error: { code: 'EMPLOYEE_NUMBER_CONFLICT', requestId: context.requestId },
     },
   });
+});
+
+it('searches, filters, and pages the register and rejects unsupported query values', async () => {
+  const service = serviceMock();
+  service.list.mockResolvedValue({
+    employees: [],
+    total: 75,
+    facets: { serviceStatus: {}, membership: { LINKED: 0, UNLINKED: 0 } },
+  });
+  const controller = new EmployeesController(service as never);
+
+  await expect(
+    controller.list(
+      agencyId,
+      { q: 'Santos', serviceStatus: 'ACTIVE', membership: 'LINKED', limit: '25', offset: '50' },
+      context,
+    ),
+  ).resolves.toMatchObject({ total: 75, limit: 25, offset: 50 });
+  expect(service.list).toHaveBeenCalledWith(context, {
+    q: 'Santos',
+    serviceStatus: ['ACTIVE'],
+    membership: ['LINKED'],
+    limit: 25,
+    offset: 50,
+  });
+
+  service.list.mockClear();
+  await expect(
+    controller.list(agencyId, { serviceStatus: 'RETIRED' }, context),
+  ).rejects.toMatchObject({
+    status: 400,
+    response: { error: { code: 'INVALID_INPUT', fields: { serviceStatus: expect.any(String) } } },
+  });
+  expect(service.list).not.toHaveBeenCalled();
 });
 
 it('rejects malformed Employee ids and invalid link bodies', async () => {

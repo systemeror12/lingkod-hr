@@ -38,7 +38,9 @@ it('rechecks the create permission before opening an Employee record', async () 
 it('rechecks the read permission before listing Employees', async () => {
   const service = new EmployeesService(employeeAuditWriter);
 
-  await expect(service.list(context([]))).rejects.toMatchObject({
+  await expect(
+    service.list(context([]), { serviceStatus: [], membership: [], limit: 200, offset: 0 }),
+  ).rejects.toMatchObject({
     code: 'EMPLOYEE_READ_FORBIDDEN',
     statusCode: 403,
   });
