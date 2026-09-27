@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { Button } from './ui/button';
 import { Field, inputClass } from './ui/field';
+import { DetailRow, GuidedPanel, RecordStatus } from './recruitment-record';
+import { StateSurface } from './state-surface';
 
 export interface StageAggregateRecord {
   ruleVersionId: string;
@@ -168,61 +170,6 @@ function dateTimeLabel(value: string | null): string {
   return Number.isNaN(parsed.getTime())
     ? value
     : parsed.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-function statusTone(status: string): 'blue' | 'amber' | 'green' | 'gray' | 'red' {
-  if (status === 'COMPLETED') return 'green';
-  if (status === 'SCHEDULED') return 'amber';
-  if (status === 'CANCELLED' || status === 'NO_SHOW') return 'red';
-  return 'blue';
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const tones = {
-    blue: 'border-[#b9cce5] bg-[#edf2f9] text-[#315d98]',
-    amber: 'border-[#decba7] bg-[#fff8e9] text-[#755421]',
-    green: 'border-[#b6d9c3] bg-[#eef9f1] text-[#296442]',
-    gray: 'border-line bg-canvas text-muted',
-    red: 'border-[#e8b6b6] bg-[#fff4f4] text-[#9a3030]',
-  };
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.06em] uppercase ${tones[statusTone(status)]}`}
-    >
-      {status.replaceAll('_', ' ')}
-    </span>
-  );
-}
-
-function Panel({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="grid gap-4 rounded-[4px] border border-line bg-paper p-5 shadow-[0_7px_20px_rgb(23_32_51/4%)]">
-      <div className="grid gap-1">
-        <h2 className="m-0 text-[17px] font-[720] tracking-[-0.02em] text-midnight">{title}</h2>
-        {description ? (
-          <p className="m-0 text-[13px] leading-[1.55] text-muted">{description}</p>
-        ) : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-1 border-b border-line/70 py-3 last:border-b-0">
-      <dt className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">{label}</dt>
-      <dd className="m-0 text-sm leading-[1.5] text-ink">{children}</dd>
-    </div>
-  );
 }
 
 function aggregateSummary(aggregate: StageAggregateRecord | null): string {
@@ -397,35 +344,35 @@ export function RecruitmentEvaluationPanels({
 
   return (
     <div className="grid gap-5">
-      <Panel
+      <GuidedPanel
         title="Merit selection stages"
         description="The bound Merit Selection Criteria Set defines the typed criteria, rating scales, cutoffs, evidence, evaluator eligibility, aggregation, rounding, and tie order. Stages advance in the configured order."
       >
         {record.selectionPlanIssue ? (
-          <p className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-sm text-[#9a3030]">
+          <p className="m-0 rounded-control border border-danger/40 bg-danger/5 px-3 py-2.5 text-small text-danger">
             {record.selectionPlanIssue}
           </p>
         ) : plan ? (
           <div className="grid gap-3">
-            <span className="text-xs text-muted">
+            <span className="text-caption text-ink-muted">
               Criteria set {plan.criteriaCode} · plan version {plan.planVersionId}
             </span>
             {plan.stages.map((stage) => (
               <div
-                className="grid gap-2 rounded-[3px] border border-line px-3 py-3"
+                className="grid gap-2 rounded-control border border-border px-3 py-3"
                 key={stage.stageCode}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={stage.status} />
-                  <strong className="text-sm font-[680] text-midnight">{stage.label}</strong>
-                  <span className="text-xs text-muted">
+                  <RecordStatus status={stage.status} />
+                  <strong className="text-body font-[650] text-ink">{stage.label}</strong>
+                  <span className="text-caption text-ink-muted">
                     {stage.stageCode} · {stage.stageType.toLowerCase()}
                   </span>
                 </div>
                 {stage.criteria.length ? (
                   <div className="grid gap-1">
                     {stage.criteria.map((criterion) => (
-                      <span className="text-xs text-muted" key={criterion.criterionCode}>
+                      <span className="text-caption text-ink-muted" key={criterion.criterionCode}>
                         <strong className="text-ink">{criterion.criterionCode}</strong> ·{' '}
                         {criterion.criterionType.replaceAll('_', ' ').toLowerCase()} · weight{' '}
                         {criterion.weight} ·{' '}
@@ -441,14 +388,14 @@ export function RecruitmentEvaluationPanels({
                     ))}
                   </div>
                 ) : (
-                  <span className="text-xs text-muted">
+                  <span className="text-caption text-ink-muted">
                     Feedback score {stage.feedback?.minimumScore} to {stage.feedback?.maximumScore}{' '}
                     · pass {stage.feedback?.passingScore}
                     {stage.feedback?.evidenceRequired ? ' · evidence required' : ''}
                     {stage.feedback?.commentsRequired ? ' · comment required' : ''}
                   </span>
                 )}
-                <span className="text-xs text-muted">
+                <span className="text-caption text-ink-muted">
                   Aggregation {stage.aggregation.evaluatorMethod.replaceAll('_', ' ')} across
                   evaluators
                   {stage.aggregation.method
@@ -464,28 +411,30 @@ export function RecruitmentEvaluationPanels({
             ))}
           </div>
         ) : (
-          <p className="m-0 text-sm text-muted">No supported selection configuration is bound.</p>
+          <StateSurface compact label="Merit selection stages status">
+            <p className="m-0">No supported selection configuration is bound.</p>
+          </StateSurface>
         )}
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
+      <GuidedPanel
         title="Assessments"
         description="Schedule the configured assessment stage and record typed criterion results. Results are immutable; a correction appends a linked replacement and every aggregate is recomputed from the recorded inputs."
       >
-        <div className="grid gap-3 border-b border-line pb-4">
+        <div className="grid gap-3 border-b border-border pb-4">
           {record.assessments.length ? (
             record.assessments.map((assessment) => (
               <div
-                className="grid gap-3 rounded-[3px] border border-line px-3 py-3"
+                className="grid gap-3 rounded-control border border-border px-3 py-3"
                 key={assessment.id}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={assessment.status} />
-                  <strong className="text-sm font-[680] text-midnight">
+                  <RecordStatus status={assessment.status} />
+                  <strong className="text-body font-[650] text-ink">
                     {plan?.stages.find(({ stageCode }) => stageCode === assessment.stageCode)
                       ?.label ?? assessment.stageCode}
                   </strong>
-                  <span className="text-xs text-muted">
+                  <span className="text-caption text-ink-muted">
                     scheduled {dateTimeLabel(assessment.scheduledAt)}
                     {assessment.completedAt
                       ? ` · completed ${dateTimeLabel(assessment.completedAt)}`
@@ -496,7 +445,7 @@ export function RecruitmentEvaluationPanels({
                   </span>
                 </div>
                 {assessment.outcomeReason ? (
-                  <span className="text-xs text-muted">
+                  <span className="text-caption text-ink-muted">
                     Outcome reason: {assessment.outcomeReason}
                   </span>
                 ) : null}
@@ -528,10 +477,10 @@ export function RecruitmentEvaluationPanels({
                 <div className="grid gap-1">
                   {assessment.results.map((result) => (
                     <div
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line/70 px-3 py-2 text-xs"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border-subtle px-3 py-2 text-caption"
                       key={result.id}
                     >
-                      <span className="text-muted">
+                      <span className="text-ink-muted">
                         <strong className="text-ink">{result.criterionCode}</strong> · v
                         {result.versionNo} · score {result.score}
                         {result.rating ? ` · ${result.rating}` : ''} · evaluator{' '}
@@ -544,7 +493,7 @@ export function RecruitmentEvaluationPanels({
                       evaluationOpen &&
                       result.evaluatedByMembershipId === membershipId ? (
                         <button
-                          className="rounded-[2px] text-cobalt underline-offset-2 hover:underline"
+                          className="cursor-pointer border-0 bg-transparent p-0 font-[600] text-primary hover:underline"
                           type="button"
                           onClick={() => {
                             const criterion = plan?.stages
@@ -580,11 +529,13 @@ export function RecruitmentEvaluationPanels({
                     </div>
                   ))}
                   {assessment.results.length === 0 ? (
-                    <span className="text-xs text-muted">No evaluator results recorded yet.</span>
+                    <span className="text-caption text-ink-muted">
+                      No evaluator results recorded yet.
+                    </span>
                   ) : null}
                 </div>
                 {canManageAssessments && evaluationOpen && assessment.status === 'SCHEDULED' ? (
-                  <div className="flex flex-wrap items-end gap-3 border-t border-line pt-3">
+                  <div className="flex flex-wrap items-end gap-3 border-t border-border pt-3">
                     <Field
                       label="Assessment outcome reason"
                       htmlFor={`assessment-outcome-${assessment.id}`}
@@ -602,7 +553,6 @@ export function RecruitmentEvaluationPanels({
                       onClick={() =>
                         void onCommand(assessmentActionPath(assessment.id, 'complete'))
                       }
-                      size="default"
                       variant="primary"
                     >
                       Complete assessment
@@ -614,7 +564,6 @@ export function RecruitmentEvaluationPanels({
                           reason: outcomeReason,
                         })
                       }
-                      size="default"
                       variant="secondary"
                     >
                       Cancel assessment
@@ -626,7 +575,6 @@ export function RecruitmentEvaluationPanels({
                           ...(outcomeReason ? { reason: outcomeReason } : {}),
                         })
                       }
-                      size="default"
                       variant="secondary"
                     >
                       Record assessment no-show
@@ -645,7 +593,6 @@ export function RecruitmentEvaluationPanels({
                           correctionReason: '',
                         });
                       }}
-                      size="default"
                       variant="secondary"
                     >
                       Record assessment result
@@ -655,7 +602,9 @@ export function RecruitmentEvaluationPanels({
               </div>
             ))
           ) : (
-            <span className="text-sm text-muted">No assessment recorded yet.</span>
+            <StateSurface compact label="Assessments status">
+              <p className="m-0">No assessment recorded yet.</p>
+            </StateSurface>
           )}
         </div>
 
@@ -695,7 +644,6 @@ export function RecruitmentEvaluationPanels({
                       : {}),
                   })
                 }
-                size="default"
                 variant="secondary"
               >
                 Schedule assessment
@@ -705,13 +653,13 @@ export function RecruitmentEvaluationPanels({
         ) : null}
 
         {canManageAssessments && evaluationOpen && resultEditor ? (
-          <div className="grid gap-3 border-t border-line pt-4">
+          <div className="grid gap-3 border-t border-border pt-4">
             <div className="flex flex-wrap items-center gap-2">
-              <strong className="text-sm font-[680] text-midnight">
+              <strong className="text-body font-[650] text-ink">
                 {resultEditor.mode === 'record' ? 'Record result' : 'Correct result'}
               </strong>
               {resultEditor.mode === 'correct' ? (
-                <span className="text-xs text-muted">
+                <span className="text-caption text-ink-muted">
                   Version{' '}
                   {selectedAssessment?.results.find(({ id }) => id === resultEditor.resultId)
                     ?.versionNo ?? ''}{' '}
@@ -849,49 +797,43 @@ export function RecruitmentEvaluationPanels({
                     body,
                   ).then(() => setResultEditor(null));
                 }}
-                size="default"
                 variant="primary"
               >
                 {resultEditor.mode === 'record' ? 'Save assessment result' : 'Save correction'}
               </Button>
-              <Button
-                disabled={busy}
-                onClick={() => setResultEditor(null)}
-                size="default"
-                variant="secondary"
-              >
+              <Button disabled={busy} onClick={() => setResultEditor(null)} variant="secondary">
                 Close result editor
               </Button>
             </div>
           </div>
         ) : null}
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
+      <GuidedPanel
         title="Interviews"
         description="Schedule the configured interview stage and record versioned interviewer feedback. Completed feedback is immutable."
       >
-        <div className="grid gap-3 border-b border-line pb-4">
+        <div className="grid gap-3 border-b border-border pb-4">
           {record.interviews.length ? (
             record.interviews.map((interview) => (
               <div
-                className="grid gap-3 rounded-[3px] border border-line px-3 py-3"
+                className="grid gap-3 rounded-control border border-border px-3 py-3"
                 key={interview.id}
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={interview.status} />
-                  <strong className="text-sm font-[680] text-midnight">
+                  <RecordStatus status={interview.status} />
+                  <strong className="text-body font-[650] text-ink">
                     {plan?.stages.find(({ stageCode }) => stageCode === interview.stageCode)
                       ?.label ?? interview.stageCode}
                   </strong>
-                  <span className="text-xs text-muted">
+                  <span className="text-caption text-ink-muted">
                     {dateTimeLabel(interview.scheduledAt)}
                     {interview.locationOrLink ? ` · ${interview.locationOrLink}` : ''}
                     {interview.panelName ? ` · ${interview.panelName}` : ''}
                   </span>
                 </div>
                 {interview.outcomeReason ? (
-                  <span className="text-xs text-muted">
+                  <span className="text-caption text-ink-muted">
                     Outcome reason: {interview.outcomeReason}
                   </span>
                 ) : null}
@@ -906,10 +848,10 @@ export function RecruitmentEvaluationPanels({
                 <div className="grid gap-1">
                   {interview.feedback.map((feedback) => (
                     <div
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line/70 px-3 py-2 text-xs"
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border-subtle px-3 py-2 text-caption"
                       key={feedback.id}
                     >
-                      <span className="text-muted">
+                      <span className="text-ink-muted">
                         <strong className="text-ink">
                           {feedback.recommendation.replaceAll('_', ' ')}
                         </strong>
@@ -926,7 +868,7 @@ export function RecruitmentEvaluationPanels({
                       evaluationOpen &&
                       feedback.interviewerMembershipId === membershipId ? (
                         <button
-                          className="rounded-[2px] text-cobalt underline-offset-2 hover:underline"
+                          className="cursor-pointer border-0 bg-transparent p-0 font-[600] text-primary hover:underline"
                           type="button"
                           onClick={() =>
                             setFeedbackEditor({
@@ -947,13 +889,13 @@ export function RecruitmentEvaluationPanels({
                     </div>
                   ))}
                   {interview.feedback.length === 0 ? (
-                    <span className="text-xs text-muted">
+                    <span className="text-caption text-ink-muted">
                       No interviewer feedback recorded yet.
                     </span>
                   ) : null}
                 </div>
                 {canManageInterviews && evaluationOpen && interview.status === 'SCHEDULED' ? (
-                  <div className="flex flex-wrap items-end gap-3 border-t border-line pt-3">
+                  <div className="flex flex-wrap items-end gap-3 border-t border-border pt-3">
                     <Field
                       label="Interview outcome reason"
                       htmlFor={`interview-outcome-${interview.id}`}
@@ -969,7 +911,6 @@ export function RecruitmentEvaluationPanels({
                     <Button
                       disabled={busy}
                       onClick={() => void onCommand(interviewActionPath(interview.id, 'complete'))}
-                      size="default"
                       variant="primary"
                     >
                       Complete interview
@@ -981,7 +922,6 @@ export function RecruitmentEvaluationPanels({
                           reason: outcomeReason,
                         })
                       }
-                      size="default"
                       variant="secondary"
                     >
                       Cancel interview
@@ -993,7 +933,6 @@ export function RecruitmentEvaluationPanels({
                           ...(outcomeReason ? { reason: outcomeReason } : {}),
                         })
                       }
-                      size="default"
                       variant="secondary"
                     >
                       Record interview no-show
@@ -1011,7 +950,6 @@ export function RecruitmentEvaluationPanels({
                           correctionReason: '',
                         })
                       }
-                      size="default"
                       variant="secondary"
                     >
                       Record interview feedback
@@ -1021,7 +959,9 @@ export function RecruitmentEvaluationPanels({
               </div>
             ))
           ) : (
-            <span className="text-sm text-muted">No interview recorded yet.</span>
+            <StateSurface compact label="Interviews status">
+              <p className="m-0">No interview recorded yet.</p>
+            </StateSurface>
           )}
         </div>
 
@@ -1077,7 +1017,6 @@ export function RecruitmentEvaluationPanels({
                     ...(panelName ? { panelName } : {}),
                   })
                 }
-                size="default"
                 variant="secondary"
               >
                 Schedule interview
@@ -1087,8 +1026,8 @@ export function RecruitmentEvaluationPanels({
         ) : null}
 
         {canManageInterviews && evaluationOpen && feedbackEditor ? (
-          <div className="grid gap-3 border-t border-line pt-4">
-            <strong className="text-sm font-[680] text-midnight">
+          <div className="grid gap-3 border-t border-border pt-4">
+            <strong className="text-body font-[650] text-ink">
               {feedbackEditor.mode === 'record'
                 ? 'Record interview feedback'
                 : 'Correct interview feedback'}
@@ -1185,23 +1124,17 @@ export function RecruitmentEvaluationPanels({
                     feedbackBody,
                   ).then(() => setFeedbackEditor(null));
                 }}
-                size="default"
                 variant="primary"
               >
                 {feedbackEditor.mode === 'record' ? 'Submit feedback' : 'Save feedback correction'}
               </Button>
-              <Button
-                disabled={busy}
-                onClick={() => setFeedbackEditor(null)}
-                size="default"
-                variant="secondary"
-              >
+              <Button disabled={busy} onClick={() => setFeedbackEditor(null)} variant="secondary">
                 Close feedback editor
               </Button>
             </div>
           </div>
         ) : null}
-      </Panel>
+      </GuidedPanel>
     </div>
   );
 }

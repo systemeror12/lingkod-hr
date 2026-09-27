@@ -8,9 +8,15 @@ import {
   type InterviewRecord,
   type SelectionPlanRecord,
 } from './recruitment-evaluation-panels';
+import { DetailRow, GuidedPanel, RecordStatus } from './recruitment-record';
 import { useRecordNavigation } from './record-navigation';
+import { StateCode, StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { SectionTabLinks } from './ui/section-tabs';
+import { RowHeader, Table, TableFooter, Td, Th, Tr } from './ui/table';
 
 type Section = 'requests' | 'publications' | 'applications' | 'sessions' | 'decisions';
 type View = 'tree' | 'form' | 'kanban';
@@ -552,62 +558,6 @@ function addDays(value: string, days: number): string {
   return parsed.toISOString().slice(0, 10);
 }
 
-function statusTone(status: string): 'blue' | 'amber' | 'green' | 'gray' | 'red' {
-  if (status === 'APPROVED' || status === 'PUBLISHED') return 'green';
-  if (status === 'FOR_REVIEW' || status === 'FOR_APPROVAL') return 'amber';
-  if (status === 'REJECTED' || status === 'CANCELLED') return 'red';
-  if (status === 'CLOSED' || status === 'REPUBLISHED') return 'gray';
-  return 'blue';
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const tones = {
-    blue: 'border-[#b9cce5] bg-[#edf2f9] text-[#315d98]',
-    amber: 'border-[#decba7] bg-[#fff8e9] text-[#755421]',
-    green: 'border-[#b6d9c3] bg-[#eef9f1] text-[#296442]',
-    gray: 'border-line bg-canvas text-muted',
-    red: 'border-[#e8b6b6] bg-[#fff4f4] text-[#9a3030]',
-  };
-  return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.06em] uppercase ${tones[statusTone(status)]}`}
-    >
-      {status.replaceAll('_', ' ')}
-    </span>
-  );
-}
-
-function Panel({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="grid gap-4 rounded-[4px] border border-line bg-paper p-5 shadow-[0_7px_20px_rgb(23_32_51/4%)]">
-      <div className="grid gap-1">
-        <h2 className="m-0 text-[17px] font-[720] tracking-[-0.02em] text-midnight">{title}</h2>
-        {description ? (
-          <p className="m-0 text-[13px] leading-[1.55] text-muted">{description}</p>
-        ) : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid gap-1 border-b border-line/70 py-3 last:border-b-0">
-      <dt className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">{label}</dt>
-      <dd className="m-0 text-sm leading-[1.5] text-ink">{children}</dd>
-    </div>
-  );
-}
-
 function channelNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) =>
@@ -652,6 +602,56 @@ async function sendDelete(path: string): Promise<unknown> {
   return value;
 }
 
+/** A section's register table, or its empty state when there are no records. */
+function Register({
+  label,
+  empty,
+  count,
+  head,
+  children,
+}: {
+  label: string;
+  empty: string;
+  count: number;
+  head: ReactNode;
+  children: ReactNode;
+}) {
+  if (count === 0) {
+    return (
+      <StateSurface compact label={`${label} status`}>
+        <p className="m-0">{empty}</p>
+      </StateSurface>
+    );
+  }
+  return (
+    <>
+      <Table aria-label={label} className="min-w-[760px]">
+        <thead>
+          <tr>{head}</tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </Table>
+      <TableFooter shown={count} total={count} />
+    </>
+  );
+}
+
+function RecordLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
+      type="button"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Secondary({ children }: { children: ReactNode }) {
+  return <span className="block text-caption font-normal text-ink-muted">{children}</span>;
+}
+
 function RequestTree({
   records,
   selectedId,
@@ -662,33 +662,35 @@ function RequestTree({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="grid gap-2" aria-label="Requests to Fill">
-      {records.length === 0 ? (
-        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-          No Requests to Fill yet.
-        </p>
-      ) : (
-        records.map((record) => (
-          <button
-            className={`grid gap-2 rounded-[3px] border px-4 py-3 text-left transition-colors ${selectedId === record.id ? 'border-cobalt bg-[#f1f5fb]' : 'border-line bg-paper hover:border-[#aebed3]'}`}
-            key={record.id}
-            type="button"
-            onClick={() => onSelect(record.id)}
-          >
-            <span className="flex flex-wrap items-center justify-between gap-2">
-              <strong className="text-sm font-[680] text-midnight">{record.requestNo}</strong>
-              <StatusBadge status={record.status} />
-            </span>
-            <span className="text-[13px] text-ink">
-              {record.position.itemNumber} · {record.position.title}
-            </span>
-            <span className="text-xs text-muted">
-              {record.position.organizationUnitName} · SG {record.position.salaryGrade}
-            </span>
-          </button>
-        ))
-      )}
-    </div>
+    <Register
+      label="Requests to Fill"
+      empty="No Requests to Fill yet."
+      count={records.length}
+      head={
+        <>
+          <Th>Record</Th>
+          <Th>Vacancy</Th>
+          <Th>Office</Th>
+          <Th>Status</Th>
+        </>
+      }
+    >
+      {records.map((record) => (
+        <Tr key={record.id} selected={selectedId === record.id}>
+          <RowHeader>
+            <RecordLink onClick={() => onSelect(record.id)}>{record.requestNo}</RecordLink>
+          </RowHeader>
+          <Td>
+            {record.position.itemNumber} · {record.position.title}
+            <Secondary>SG {record.position.salaryGrade}</Secondary>
+          </Td>
+          <Td>{record.position.organizationUnitName}</Td>
+          <Td>
+            <RecordStatus status={record.status} />
+          </Td>
+        </Tr>
+      ))}
+    </Register>
   );
 }
 
@@ -702,33 +704,37 @@ function PublicationTree({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="grid gap-2" aria-label="Vacancy Publications">
-      {records.length === 0 ? (
-        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-          No Vacancy Publications yet.
-        </p>
-      ) : (
-        records.map((record) => (
-          <button
-            className={`grid gap-2 rounded-[3px] border px-4 py-3 text-left transition-colors ${selectedId === record.id ? 'border-cobalt bg-[#f1f5fb]' : 'border-line bg-paper hover:border-[#aebed3]'}`}
-            key={record.id}
-            type="button"
-            onClick={() => onSelect(record.id)}
-          >
-            <span className="flex flex-wrap items-center justify-between gap-2">
-              <strong className="text-sm font-[680] text-midnight">{record.publicationNo}</strong>
-              <StatusBadge status={record.status} />
-            </span>
-            <span className="text-[13px] text-ink">
-              {record.position.itemNumber} · {record.position.title}
-            </span>
-            <span className="text-xs text-muted">
-              {dateLabel(record.openingDate)} — {dateLabel(record.closingDate)} · {record.requestNo}
-            </span>
-          </button>
-        ))
-      )}
-    </div>
+    <Register
+      label="Vacancy Publications"
+      empty="No Vacancy Publications yet."
+      count={records.length}
+      head={
+        <>
+          <Th>Record</Th>
+          <Th>Vacancy</Th>
+          <Th kind="date">Posting period</Th>
+          <Th>Status</Th>
+        </>
+      }
+    >
+      {records.map((record) => (
+        <Tr key={record.id} selected={selectedId === record.id}>
+          <RowHeader>
+            <RecordLink onClick={() => onSelect(record.id)}>{record.publicationNo}</RecordLink>
+            <Secondary>{record.requestNo}</Secondary>
+          </RowHeader>
+          <Td>
+            {record.position.itemNumber} · {record.position.title}
+          </Td>
+          <Td kind="date">
+            {dateLabel(record.openingDate)} — {dateLabel(record.closingDate)}
+          </Td>
+          <Td>
+            <RecordStatus status={record.status} />
+          </Td>
+        </Tr>
+      ))}
+    </Register>
   );
 }
 
@@ -782,16 +788,16 @@ function RequestDraft({
   }
 
   return (
-    <Panel
+    <GuidedPanel
       title="Open a Request to Fill"
       description="Start only from an authorized, current VACANT Plantilla Position. The server resolves the governing MSP and approval routes during review."
     >
       <form className="grid max-w-[780px] gap-5" onSubmit={submit}>
-        {error ? <FormError message={error} /> : null}
+        <FormError message={error} />
         {vacancies.length === 0 ? (
-          <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-4 text-sm text-muted">
-            No Recruitable Vacancy is available in this Agency Context.
-          </p>
+          <StateSurface compact label="Request to Fill intake status">
+            <p className="m-0">No Recruitable Vacancy is available in this Agency Context.</p>
+          </StateSurface>
         ) : (
           <>
             <Field label="Recruitable Vacancy" htmlFor="request-position">
@@ -820,22 +826,17 @@ function RequestDraft({
               />
             </Field>
             <div className="flex flex-wrap items-center gap-3">
-              <Button
-                disabled={busy || submitting || !position}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy || submitting || !position} type="submit" variant="primary">
                 {busy || submitting ? 'Opening…' : 'Open draft request'}
               </Button>
-              <span className="text-xs text-muted">
+              <span className="text-caption text-ink-muted">
                 The draft remains editable only through Recruitment controls.
               </span>
             </div>
           </>
         )}
       </form>
-    </Panel>
+    </GuidedPanel>
   );
 }
 
@@ -970,7 +971,7 @@ function PublicationDraft({
   }
 
   return (
-    <Panel
+    <GuidedPanel
       title={republishSourceId ? 'Prepare a linked republication' : 'Prepare a Vacancy Publication'}
       description={
         republishSourceId
@@ -979,11 +980,13 @@ function PublicationDraft({
       }
     >
       <form className="grid max-w-[900px] gap-5" onSubmit={submit}>
-        {error ? <FormError message={error} /> : null}
+        <FormError message={error} />
         {approved.length === 0 ? (
-          <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-4 text-sm text-muted">
-            An approved Request to Fill is required before a publication draft can be prepared.
-          </p>
+          <StateSurface compact label="Vacancy Publication intake status">
+            <p className="m-0">
+              An approved Request to Fill is required before a publication draft can be prepared.
+            </p>
+          </StateSurface>
         ) : (
           <>
             <div className="grid gap-4 min-[720px]:grid-cols-2">
@@ -1105,14 +1108,14 @@ function PublicationDraft({
                 </Field>
               </div>
             ) : null}
-            <div className="grid gap-2 rounded-[3px] border border-[#c7d6e8] bg-[#f4f7fb] px-4 py-3 text-xs leading-[1.55] text-ink">
-              <strong className="font-[680] text-midnight">Required posting package</strong>
+            <div className="grid gap-2 rounded-control border border-info/40 bg-info/5 px-4 py-3 text-caption text-ink">
+              <strong className="font-[650] text-ink">Required posting package</strong>
               <span>
                 CSC Field Office, CSC Job Portal, and three agency posting places are prepared with
                 finalized evidence documents ({evidenceOptions.length} available).
               </span>
               {evidenceOptions.length < 5 ? (
-                <span className="font-[650] text-[#9a3030]">
+                <span className="font-[650] text-danger">
                   At least five finalized Agency Documents are needed for this guided package.
                 </span>
               ) : null}
@@ -1128,7 +1131,6 @@ function PublicationDraft({
                   (Boolean(republishSourceId) &&
                     (!republishReason || !republishAuthorityDocumentVersionId))
                 }
-                size="default"
                 type="submit"
                 variant="primary"
               >
@@ -1138,14 +1140,14 @@ function PublicationDraft({
                     ? 'Prepare linked republication'
                     : 'Prepare draft publication'}
               </Button>
-              <span className="text-xs text-muted">
+              <span className="text-caption text-ink-muted">
                 The publication remains a DRAFT until submitted for approval.
               </span>
             </div>
           </>
         )}
       </form>
-    </Panel>
+    </GuidedPanel>
   );
 }
 
@@ -1166,14 +1168,14 @@ function RequestDetail({
   const [authorityDocumentVersionId, setAuthorityDocumentVersionId] = useState('');
   return (
     <div className="grid gap-5">
-      <Panel
+      <GuidedPanel
         title={`${record.requestNo} · ${record.position.title}`}
         description={`${record.position.itemNumber} · ${record.position.organizationUnitName}`}
       >
         <div className="grid gap-4 min-[720px]:grid-cols-2">
           <dl className="m-0">
             <DetailRow label="Status">
-              <StatusBadge status={record.status} />
+              <RecordStatus status={record.status} />
             </DetailRow>
             <DetailRow label="Requesting office">
               {record.requestingUnit.name} ({record.requestingUnit.code})
@@ -1204,7 +1206,7 @@ function RequestDetail({
             </DetailRow>
           </dl>
         </div>
-        <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-border pt-4">
           {record.status === 'DRAFT' && permissions.submitRequest ? (
             <Button
               disabled={busy}
@@ -1213,7 +1215,6 @@ function RequestDetail({
                   `/api/v1/agencies/${agencyId}/recruitment/requests-to-fill/${record.id}/submit`,
                 )
               }
-              size="default"
               variant="primary"
             >
               Submit for review
@@ -1227,7 +1228,6 @@ function RequestDetail({
                   `/api/v1/agencies/${agencyId}/recruitment/requests-to-fill/${record.id}/review`,
                 )
               }
-              size="default"
               variant="primary"
             >
               Begin controlled review
@@ -1242,7 +1242,6 @@ function RequestDetail({
                   {},
                 )
               }
-              size="default"
               variant="primary"
             >
               Approve request
@@ -1257,7 +1256,6 @@ function RequestDetail({
                   { comments: 'Request rejected during controlled review.' },
                 )
               }
-              size="default"
               variant="secondary"
             >
               Reject
@@ -1273,7 +1271,6 @@ function RequestDetail({
                   { reason: 'Request cancelled by Recruitment.' },
                 );
               }}
-              size="default"
               variant="secondary"
             >
               Cancel request
@@ -1289,16 +1286,15 @@ function RequestDetail({
                   { reason: 'Request closed after Recruitment.' },
                 );
               }}
-              size="default"
               variant="secondary"
             >
               Close request
             </Button>
           ) : null}
         </div>
-      </Panel>
+      </GuidedPanel>
       {record.status === 'FOR_REVIEW' && permissions.rebaselineRequest ? (
-        <Panel
+        <GuidedPanel
           title="MSP rebaseline"
           description="This appends a new governing binding set before publication. The former bindings and reason remain in the audit history."
         >
@@ -1333,36 +1329,35 @@ function RequestDetail({
                   { reason: rebaselineReason, authorityDocumentVersionId },
                 )
               }
-              size="default"
               variant="secondary"
             >
               Record rebaseline
             </Button>
           </div>
-        </Panel>
+        </GuidedPanel>
       ) : null}
       {record.rebaselines.length ? (
-        <Panel
+        <GuidedPanel
           title="Rebaseline history"
           description="Append-only snapshots of changes made before publication."
         >
           <div className="grid gap-3">
             {record.rebaselines.map((item) => (
               <div
-                className="grid gap-1 rounded-[3px] border border-line px-3 py-3 text-xs"
+                className="grid gap-1 rounded-control border border-border px-3 py-3 text-caption"
                 key={item.id}
               >
                 <strong className="text-ink">
                   {dateTimeLabel(item.createdAt)} · {item.reason}
                 </strong>
-                <span className="text-muted">
+                <span className="text-ink-muted">
                   Authority evidence: {item.authorityDocumentVersionId ?? '—'} · binding set{' '}
                   {record.governingConfiguration.bindingSetNo}
                 </span>
               </div>
             ))}
           </div>
-        </Panel>
+        </GuidedPanel>
       ) : null}
     </div>
   );
@@ -1395,14 +1390,14 @@ function PublicationDetail({
   );
   return (
     <div className="grid gap-5">
-      <Panel
+      <GuidedPanel
         title={`${record.publicationNo} · ${record.position.title}`}
         description={`${record.position.itemNumber} · linked to ${record.requestNo}`}
       >
         <div className="grid gap-4 min-[720px]:grid-cols-2">
           <dl className="m-0">
             <DetailRow label="Status">
-              <StatusBadge status={record.status} />
+              <RecordStatus status={record.status} />
             </DetailRow>
             <DetailRow label="Opening period">
               {dateLabel(record.openingDate)} — {dateLabel(record.closingDate)}
@@ -1429,7 +1424,7 @@ function PublicationDetail({
             </DetailRow>
           </dl>
         </div>
-        <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-border pt-4">
           {record.status === 'DRAFT' && permissions.submitPublication ? (
             <Button
               disabled={busy}
@@ -1438,7 +1433,6 @@ function PublicationDetail({
                   `/api/v1/agencies/${agencyId}/recruitment/vacancy-publications/${record.id}/submit`,
                 )
               }
-              size="default"
               variant="primary"
             >
               Submit for approval
@@ -1453,7 +1447,6 @@ function PublicationDetail({
                   {},
                 )
               }
-              size="default"
               variant="primary"
             >
               Approve and publish
@@ -1472,7 +1465,6 @@ function PublicationDetail({
                   },
                 );
               }}
-              size="default"
               variant="secondary"
             >
               Close publication
@@ -1488,7 +1480,6 @@ function PublicationDetail({
                   { reason: transitionReason, authorityDocumentVersionId },
                 );
               }}
-              size="default"
               variant="secondary"
             >
               Cancel publication
@@ -1496,19 +1487,14 @@ function PublicationDetail({
           ) : null}
           {(['CLOSED', 'CANCELLED'] as string[]).includes(record.status) &&
           permissions.republishPublication ? (
-            <Button
-              disabled={busy}
-              onClick={() => onRepublish(record)}
-              size="default"
-              variant="secondary"
-            >
+            <Button disabled={busy} onClick={() => onRepublish(record)} variant="secondary">
               Prepare republication
             </Button>
           ) : null}
         </div>
         {(record.status === 'PUBLISHED' && permissions.closePublication) ||
         (record.status === 'PUBLISHED' && permissions.cancelPublication) ? (
-          <div className="grid gap-3 border-t border-line pt-4 min-[720px]:grid-cols-2">
+          <div className="grid gap-3 border-t border-border pt-4 min-[720px]:grid-cols-2">
             <Field label="Transition reason" htmlFor="publication-transition-reason">
               <input
                 className={inputClass}
@@ -1539,8 +1525,8 @@ function PublicationDetail({
             </Field>
           </div>
         ) : null}
-      </Panel>
-      <Panel
+      </GuidedPanel>
+      <GuidedPanel
         title="Publication evidence"
         description="Each posting channel keeps its own evidence reference and document version."
       >
@@ -1548,23 +1534,23 @@ function PublicationDetail({
           {record.evidence.length ? (
             record.evidence.map((item) => (
               <div
-                className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line px-3 py-2 text-xs"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border px-3 py-2 text-caption"
                 key={item.id}
               >
                 <span className="font-[650] text-ink">
                   {item.channelType.replaceAll('_', ' ')} · {item.location}
                 </span>
-                <span className="text-muted">
+                <span className="text-ink-muted">
                   {dateTimeLabel(item.publishedAt)} ·{' '}
                   {item.evidenceDocumentVersionId ?? 'No evidence version'}
                 </span>
               </div>
             ))
           ) : (
-            <span className="text-sm text-muted">No evidence records.</span>
+            <span className="text-body text-ink-muted">No evidence records.</span>
           )}
         </div>
-      </Panel>
+      </GuidedPanel>
     </div>
   );
 }
@@ -1579,57 +1565,40 @@ function ApplicationTree({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto" aria-label="Applications">
-      {records.length === 0 ? (
-        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-          No Applications received yet.
-        </p>
-      ) : (
-        <table className="w-full min-w-[760px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
-              <th className="px-3 py-2">Record</th>
-              <th className="px-3 py-2">Reference</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Evidence</th>
-              <th className="px-3 py-2">Standing</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((record) => (
-              <tr
-                className={`border-b border-line/70 align-top ${selectedId === record.id ? 'bg-[#f1f5fb]' : ''}`}
-                key={record.id}
-              >
-                <td className="px-3 py-2">
-                  <button
-                    className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
-                    type="button"
-                    onClick={() => onSelect(record.id)}
-                  >
-                    {record.applicationNo}
-                  </button>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">
-                  {record.applicant.fullName}
-                  {record.applicant.email ? (
-                    <span className="block text-xs text-muted">{record.applicant.email}</span>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">
-                  {record.position.title}
-                  <span className="block text-xs text-muted">{record.publicationNo}</span>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">{evidenceSummary(record)}</td>
-                <td className="px-3 py-2">
-                  <StatusBadge status={record.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    <Register
+      label="Applications"
+      empty="No Applications received yet."
+      count={records.length}
+      head={
+        <>
+          <Th>Record</Th>
+          <Th>Applicant</Th>
+          <Th>Vacancy</Th>
+          <Th>Evidence</Th>
+          <Th>Standing</Th>
+        </>
+      }
+    >
+      {records.map((record) => (
+        <Tr key={record.id} selected={selectedId === record.id}>
+          <RowHeader>
+            <RecordLink onClick={() => onSelect(record.id)}>{record.applicationNo}</RecordLink>
+          </RowHeader>
+          <Td>
+            {record.applicant.fullName}
+            {record.applicant.email ? <Secondary>{record.applicant.email}</Secondary> : null}
+          </Td>
+          <Td>
+            {record.position.title}
+            <Secondary>{record.publicationNo}</Secondary>
+          </Td>
+          <Td>{evidenceSummary(record)}</Td>
+          <Td>
+            <RecordStatus status={record.status} />
+          </Td>
+        </Tr>
+      ))}
+    </Register>
   );
 }
 
@@ -1659,37 +1628,40 @@ function ApplicationKanban({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2" aria-label="Application board">
+    <div className="flex gap-3 overflow-x-auto p-4" aria-label="Application board">
       {KANBAN_COLUMNS.map(([status, label]) => {
         const cards = records.filter((record) => record.status === status);
         return (
           <section
-            className="grid min-w-[230px] flex-1 content-start gap-2 rounded-[3px] border border-line bg-canvas/60 p-3"
+            aria-labelledby={`kanban-${status}`}
+            className="grid min-w-[230px] flex-1 content-start gap-2 rounded-panel border border-border bg-canvas p-3"
             key={status}
           >
-            <h3 className="m-0 flex items-center justify-between gap-2 text-[11px] font-bold tracking-[0.06em] text-muted uppercase">
+            <h3
+              className="m-0 flex items-center justify-between gap-2 text-caption font-[650] text-ink"
+              id={`kanban-${status}`}
+            >
               {label}
-              <span className="rounded-full border border-line bg-paper px-2 py-0.5 text-[10px] text-ink">
-                {cards.length}
-              </span>
+              <span className="text-ink-muted">{cards.length}</span>
             </h3>
             {cards.length === 0 ? (
-              <p className="m-0 rounded-[3px] border border-dashed border-line px-3 py-4 text-center text-xs text-muted">
-                No Applications
-              </p>
+              <p className="m-0 px-1 py-3 text-caption text-ink-muted">No Applications</p>
             ) : (
               cards.map((record) => (
                 <button
-                  className={`grid gap-1.5 rounded-[3px] border bg-paper px-3 py-3 text-left transition-colors ${selectedId === record.id ? 'border-cobalt bg-[#f1f5fb]' : 'border-line hover:border-[#aebed3]'}`}
+                  aria-current={selectedId === record.id ? 'true' : undefined}
+                  className="grid cursor-pointer gap-1 rounded-control border border-border bg-surface px-3 py-2.5 text-left hover:border-primary aria-[current=true]:border-primary aria-[current=true]:shadow-[inset_3px_0_0_var(--color-primary)]"
                   key={record.id}
                   type="button"
                   onClick={() => onSelect(record.id)}
                 >
-                  <span className="text-xs font-bold text-cobalt">{record.applicationNo}</span>
-                  <strong className="text-sm font-[680] text-midnight">
+                  <span className="text-caption font-[650] text-primary">
+                    {record.applicationNo}
+                  </span>
+                  <strong className="text-small font-[650] text-ink">
                     {record.applicant.fullName}
                   </strong>
-                  <span className="text-xs text-muted">
+                  <span className="text-caption text-ink-muted">
                     {record.position.title} · {evidenceSummary(record)}
                   </span>
                 </button>
@@ -1776,16 +1748,16 @@ function ApplicationDraft({
   }
 
   return (
-    <Panel
+    <GuidedPanel
       title="Record an Application"
       description="Normal intake is accepted only while the Vacancy Publication is open. Intake beyond the period requires an explicit late-handling reason and finalized authority evidence."
     >
       <form className="grid max-w-[900px] gap-5" onSubmit={submit}>
-        {error ? <FormError message={error} /> : null}
+        <FormError message={error} />
         {open.length === 0 ? (
-          <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-4 text-sm text-muted">
-            No open Vacancy Publication is available for intake.
-          </p>
+          <StateSurface compact label="Application intake status">
+            <p className="m-0">No open Vacancy Publication is available for intake.</p>
+          </StateSurface>
         ) : (
           <>
             <Field label="Open Vacancy Publication" htmlFor="application-publication">
@@ -1865,7 +1837,7 @@ function ApplicationDraft({
                 onChange={(event) => setPrivacyNoticeVersion(inputValue(event))}
               />
             </Field>
-            <label className="flex items-start gap-3 text-[13px] leading-[1.6] text-ink">
+            <label className="flex items-start gap-3 text-small text-ink">
               <input
                 checked={consented}
                 className="mt-1 h-4 w-4"
@@ -1880,17 +1852,17 @@ function ApplicationDraft({
               </span>
             </label>
             {publication && beforeOpening ? (
-              <p className="m-0 rounded-[3px] border border-[#c7d6e8] bg-[#f4f7fb] px-4 py-3 text-sm text-ink">
+              <p className="m-0 rounded-control border border-info/40 bg-info/5 px-4 py-3 text-body text-ink">
                 This Vacancy Publication opens on {dateLabel(publication.openingDate)}. Intake is
                 not yet accepted.
               </p>
             ) : null}
             {publication && lateAcceptanceRequired ? (
-              <div className="grid gap-4 rounded-[3px] border border-[#decba7] bg-[#fff8e9] p-4">
-                <strong className="text-sm font-[680] text-[#755421]">
+              <div className="grid gap-4 rounded-control border border-warning/40 bg-warning/5 p-4">
+                <strong className="text-body font-[650] text-warning">
                   Authorized late handling required
                 </strong>
-                <p className="m-0 text-xs leading-[1.6] text-[#755421]">
+                <p className="m-0 text-caption text-warning">
                   The publication period has elapsed. Record the source-backed basis and finalized
                   authority evidence together.
                 </p>
@@ -1936,20 +1908,19 @@ function ApplicationDraft({
                   (lateAcceptanceRequired &&
                     (!lateAcceptanceReason || !lateAuthorityDocumentVersionId))
                 }
-                size="default"
                 type="submit"
                 variant="primary"
               >
                 {busy || submitting ? 'Recording…' : 'Record Application'}
               </Button>
-              <span className="text-xs text-muted">
+              <span className="text-caption text-ink-muted">
                 Evidence documents are linked on the Application record before screening.
               </span>
             </div>
           </>
         )}
       </form>
-    </Panel>
+    </GuidedPanel>
   );
 }
 
@@ -2019,12 +1990,10 @@ function ScreeningEditor({
     <div className="grid gap-4">
       <div className="grid gap-3">
         {entries.map((entry) => (
-          <div className="grid gap-2 rounded-[3px] border border-line p-3" key={entry.area}>
+          <div className="grid gap-2 rounded-control border border-border p-3" key={entry.area}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <strong className="text-[13px] font-[680] text-midnight">
-                {areaLabel(entry.area)}
-              </strong>
-              <label className="flex items-center gap-2 text-xs text-muted">
+              <strong className="text-small font-[650] text-ink">{areaLabel(entry.area)}</strong>
+              <label className="flex items-center gap-2 text-caption text-ink-muted">
                 Result
                 <select
                   aria-label={`${areaLabel(entry.area)} result`}
@@ -2040,16 +2009,17 @@ function ScreeningEditor({
             </div>
             {entry.result === 'MEETS' || entry.result === 'DOES_NOT_MEET' ? (
               <div className="grid gap-1">
-                <span className="text-[10px] font-bold tracking-[0.06em] text-muted uppercase">
-                  Evidence
-                </span>
+                <span className="text-caption font-normal text-ink-muted">Evidence</span>
                 {record.documents.length === 0 ? (
-                  <span className="text-xs text-[#9a3030]">
+                  <span className="text-caption text-danger">
                     Link at least one evidence document before assessing this area.
                   </span>
                 ) : (
                   record.documents.map((document) => (
-                    <label className="flex items-center gap-2 text-xs text-ink" key={document.id}>
+                    <label
+                      className="flex items-center gap-2 text-caption text-ink"
+                      key={document.id}
+                    >
                       <input
                         aria-label={`${areaLabel(entry.area)} evidence ${
                           document.documentNo ?? document.documentType
@@ -2070,7 +2040,7 @@ function ScreeningEditor({
             ) : null}
             <input
               aria-label={`${areaLabel(entry.area)} note`}
-              className={`${inputClass} min-h-8 py-1 text-xs`}
+              className={`${inputClass} min-h-8 py-1 text-caption`}
               placeholder="Optional note for this area"
               value={entry.note}
               onChange={(event) => updateEntry(entry.area, { note: inputValue(event) })}
@@ -2159,12 +2129,11 @@ function ScreeningEditor({
                 : `/api/v1/agencies/${agencyId}/recruitment/applications/${record.id}/screen`;
             void onCommand(target, body);
           }}
-          size="default"
           variant="primary"
         >
           {busy ? 'Saving…' : mode === 'correct' ? 'Record correction' : 'Record screening'}
         </Button>
-        <span className="text-xs text-muted">
+        <span className="text-caption text-ink-muted">
           Recorded outcome: <strong className="text-ink">{derived.replaceAll('_', ' ')}</strong>
           {derived === 'NOT_QUALIFIED' && !canDisqualify
             ? ' · Your Membership cannot record a not-qualified result.'
@@ -2243,14 +2212,14 @@ function ApplicationDetail({
 
   return (
     <div className="grid gap-5">
-      <Panel
+      <GuidedPanel
         title={`${record.applicationNo} · ${record.applicant.fullName}`}
         description={`${record.position.itemNumber} · ${record.position.title} · ${record.publicationNo}`}
       >
         <div className="grid gap-4 min-[720px]:grid-cols-2">
           <dl className="m-0">
             <DetailRow label="Standing">
-              <StatusBadge status={record.status} />
+              <RecordStatus status={record.status} />
             </DetailRow>
             <DetailRow label="Applicant">
               {record.applicant.fullName}
@@ -2285,7 +2254,7 @@ function ApplicationDetail({
             </DetailRow>
           </dl>
         </div>
-        <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-border pt-4">
           {record.status === 'INCOMPLETE' && permissions.updateApplication ? (
             <Button
               disabled={busy || !lifecycleReason}
@@ -2295,7 +2264,6 @@ function ApplicationDetail({
                   { reason: lifecycleReason },
                 )
               }
-              size="default"
               variant="primary"
             >
               Complete application
@@ -2314,7 +2282,6 @@ function ApplicationDetail({
                   },
                 );
               }}
-              size="default"
               variant="secondary"
             >
               Withdraw
@@ -2330,7 +2297,6 @@ function ApplicationDetail({
                   { reason: lifecycleReason },
                 );
               }}
-              size="default"
               variant="secondary"
             >
               Close application
@@ -2373,9 +2339,9 @@ function ApplicationDetail({
             ) : null}
           </div>
         ) : null}
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
+      <GuidedPanel
         title="Bound Qualification Standard"
         description="Screening compares evidence with this exact Qualification Standard Version bound to the Recruitment Case."
       >
@@ -2387,8 +2353,8 @@ function ApplicationDetail({
               </DetailRow>
             ))}
           </dl>
-          <div className="grid content-start gap-2 text-sm text-ink">
-            <strong className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
+          <div className="grid content-start gap-2 text-body text-ink">
+            <strong className="text-caption font-normal text-ink-muted">
               Applicable screening areas
             </strong>
             {qualification.applicableAreas.map((area) => (
@@ -2396,9 +2362,9 @@ function ApplicationDetail({
             ))}
           </div>
         </div>
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
+      <GuidedPanel
         title="Application evidence"
         description="Finalized Agency Document Versions linked to this Application. Evidence cannot be removed once a completed screening cites it."
       >
@@ -2406,19 +2372,19 @@ function ApplicationDetail({
           {record.documents.length ? (
             record.documents.map((document) => (
               <div
-                className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line px-3 py-2 text-xs"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border px-3 py-2 text-caption"
                 key={document.id}
               >
                 <span className="font-[650] text-ink">
                   {document.documentNo ?? document.documentType} · v{document.versionNo} ·{' '}
                   {document.purpose.replaceAll('_', ' ')}
                 </span>
-                <span className="flex items-center gap-3 text-muted">
+                <span className="flex items-center gap-3 text-ink-muted">
                   {dateTimeLabel(document.linkedAt)}
                   {permissions.updateApplication &&
                   (record.status === 'RECEIVED' || record.status === 'INCOMPLETE') ? (
                     <button
-                      className="rounded-[2px] text-[#9a3030] underline-offset-2 hover:underline"
+                      className="cursor-pointer border-0 bg-transparent p-0 font-[600] text-danger hover:underline"
                       type="button"
                       onClick={() =>
                         void onCommand(
@@ -2435,11 +2401,11 @@ function ApplicationDetail({
               </div>
             ))
           ) : (
-            <span className="text-sm text-muted">No evidence linked yet.</span>
+            <span className="text-body text-ink-muted">No evidence linked yet.</span>
           )}
         </div>
         {editable && permissions.updateApplication ? (
-          <div className="grid gap-3 border-t border-line pt-4 min-[720px]:grid-cols-3">
+          <div className="grid gap-3 border-t border-border pt-4 min-[720px]:grid-cols-3">
             <Field label="Purpose" htmlFor="application-document-purpose">
               <select
                 className={inputClass}
@@ -2490,7 +2456,6 @@ function ApplicationDetail({
                     },
                   )
                 }
-                size="default"
                 variant="secondary"
               >
                 Link evidence
@@ -2498,25 +2463,25 @@ function ApplicationDetail({
             </div>
           </div>
         ) : null}
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
+      <GuidedPanel
         title="Qualification screening"
         description="Assess each applicable area against the bound standard. The recorded outcome follows from the area results and requires supporting evidence; completed results are never overwritten."
       >
         {record.latestScreening ? (
-          <div className="grid gap-3 border-b border-line pb-4">
+          <div className="grid gap-3 border-b border-border pb-4">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={record.latestScreening.result} />
-              <span className="text-xs text-muted">
+              <RecordStatus status={record.latestScreening.result} />
+              <span className="text-caption text-ink-muted">
                 v{record.latestScreening.versionNo} ·{' '}
                 {dateTimeLabel(record.latestScreening.screenedAt)}
               </span>
             </div>
-            <p className="m-0 text-sm leading-[1.6] text-ink">{record.latestScreening.reason}</p>
+            <p className="m-0 text-body text-ink">{record.latestScreening.reason}</p>
             <div className="grid gap-1">
               {record.latestScreening.areaResults.map((entry) => (
-                <span className="text-xs text-muted" key={entry.area}>
+                <span className="text-caption text-ink-muted" key={entry.area}>
                   <strong className="text-ink">{areaLabel(entry.area)}</strong>{' '}
                   {entry.result.replaceAll('_', ' ')}
                   {entry.evidenceDocumentVersionIds.length
@@ -2527,13 +2492,13 @@ function ApplicationDetail({
               ))}
             </div>
             {record.latestScreening.correctionReason ? (
-              <span className="text-xs text-[#755421]">
+              <span className="text-caption text-warning">
                 Correction basis: {record.latestScreening.correctionReason}
               </span>
             ) : null}
           </div>
         ) : (
-          <p className="m-0 border-b border-line pb-4 text-sm text-muted">
+          <p className="m-0 border-b border-border pb-4 text-body text-ink-muted">
             No screening result recorded yet.
           </p>
         )}
@@ -2548,10 +2513,10 @@ function ApplicationDetail({
             onCommand={onCommand}
           />
         ) : null}
-      </Panel>
+      </GuidedPanel>
 
       {record.screenings.length > 1 ? (
-        <Panel
+        <GuidedPanel
           title="Screening history"
           description="Every completed result is preserved. Corrections append a linked replacement version."
         >
@@ -2561,18 +2526,18 @@ function ApplicationDetail({
               .reverse()
               .map((screening) => (
                 <div
-                  className="grid gap-1 rounded-[3px] border border-line px-3 py-3 text-xs"
+                  className="grid gap-1 rounded-control border border-border px-3 py-3 text-caption"
                   key={screening.id}
                 >
                   <strong className="text-ink">
                     v{screening.versionNo} · {screening.result.replaceAll('_', ' ')} ·{' '}
                     {dateTimeLabel(screening.screenedAt)}
                   </strong>
-                  <span className="text-muted">{screening.reason}</span>
+                  <span className="text-ink-muted">{screening.reason}</span>
                 </div>
               ))}
           </div>
-        </Panel>
+        </GuidedPanel>
       ) : null}
 
       <RecruitmentEvaluationPanels
@@ -2628,18 +2593,18 @@ function ApplicationBoardPanel({
     record.status === 'RECOMMENDED' && (permissions.selectCandidate || permissions.decideSelection);
   if (related.length === 0 && !latestDecision) {
     return (
-      <Panel
+      <GuidedPanel
         title="HRMPSB deliberation"
         description="This Application is included in the board process when deliberation starts."
       >
-        <p className="m-0 text-sm text-muted">
+        <p className="m-0 text-body text-ink-muted">
           No Selection Board Session or Selection Decision references this Application yet.
         </p>
-      </Panel>
+      </GuidedPanel>
     );
   }
   return (
-    <Panel
+    <GuidedPanel
       title="HRMPSB deliberation"
       description="Participation, conflict declarations, quorum, and the advisory recommendation for this Application. The Board Recommendation is advisory; the Selection Decision is separate."
     >
@@ -2652,15 +2617,18 @@ function ApplicationBoardPanel({
             (conflict) => conflict.applicationId === record.id,
           );
           return (
-            <div className="grid gap-3 rounded-[3px] border border-line px-4 py-4" key={session.id}>
+            <div
+              className="grid gap-3 rounded-control border border-border px-4 py-4"
+              key={session.id}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="text-sm font-[680] text-midnight">
+                <strong className="text-body font-[650] text-ink">
                   {session.requestNo} · {dateLabel(session.sessionDate)} · {session.boardCode} v
                   {session.boardVersionNo}
                 </strong>
-                <StatusBadge status={session.status} />
+                <RecordStatus status={session.status} />
               </div>
-              <span className="text-xs text-muted">
+              <span className="text-caption text-ink-muted">
                 Eligible participation:{' '}
                 {quorum
                   ? `${quorum.presentVotingMembers} of ${quorum.eligibleVotingMembers} present · requires ${quorum.requiredVotingMembers} · national floor ${quorum.nationalFloor} of ${quorum.votingSeats} voting seats`
@@ -2676,7 +2644,7 @@ function ApplicationBoardPanel({
                     ({ membershipId }) => membershipId === member.membershipId,
                   );
                   return (
-                    <span className="text-xs text-muted" key={member.id}>
+                    <span className="text-caption text-ink-muted" key={member.id}>
                       <strong className="text-ink">{member.memberName}</strong> · {member.seatCode}{' '}
                       · {member.isAlternate ? 'Alternate' : 'Principal'} ·{' '}
                       {participation?.attendanceStatus ?? 'Not recorded'}
@@ -2688,26 +2656,28 @@ function ApplicationBoardPanel({
                 })}
               </div>
               {recommendation ? (
-                <span className="text-sm text-ink">
+                <span className="text-body text-ink">
                   Board Recommendation: {recommendation.recommendation.replaceAll('_', ' ')}
                   {recommendation.rankNo ? ` · rank ${recommendation.rankNo}` : ''}
                   {recommendation.reason ? ` · ${recommendation.reason}` : ''}
                 </span>
               ) : (
-                <span className="text-xs text-muted">No Board Recommendation recorded yet.</span>
+                <span className="text-caption text-ink-muted">
+                  No Board Recommendation recorded yet.
+                </span>
               )}
             </div>
           );
         })}
 
         {latestDecision ? (
-          <div className="grid gap-2 rounded-[3px] border border-line px-4 py-4">
+          <div className="grid gap-2 rounded-control border border-border px-4 py-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <strong className="text-sm font-[680] text-midnight">Selection Decision</strong>
-              <StatusBadge status={latestDecision.decision} />
+              <strong className="text-body font-[650] text-ink">Selection Decision</strong>
+              <RecordStatus status={latestDecision.decision} />
             </div>
-            <span className="text-sm text-ink">{latestDecision.reason}</span>
-            <span className="text-xs text-muted">
+            <span className="text-body text-ink">{latestDecision.reason}</span>
+            <span className="text-caption text-ink-muted">
               {dateTimeLabel(latestDecision.decidedAt)}
               {latestDecision.handoff
                 ? ` · Plantilla Position ${latestDecision.handoff.itemNumber} reserved and handed to Appointment`
@@ -2728,7 +2698,7 @@ function ApplicationBoardPanel({
           />
         ) : null}
       </div>
-    </Panel>
+    </GuidedPanel>
   );
 }
 
@@ -2756,10 +2726,10 @@ function AuthorityActionPanel({
     (document) => document.status !== 'VOIDED' && document.version.issuedAt,
   );
   return (
-    <div className="grid gap-4 rounded-[3px] border border-line bg-canvas/50 px-4 py-4 min-[900px]:grid-cols-2">
+    <div className="grid gap-4 rounded-control border border-border bg-canvas px-4 py-4 min-[900px]:grid-cols-2">
       <div className="min-[900px]:col-span-2">
-        <strong className="text-sm font-[680] text-midnight">Appointing authority action</strong>
-        <p className="m-0 text-xs leading-[1.6] text-muted">
+        <strong className="text-body font-[650] text-ink">Appointing authority action</strong>
+        <p className="m-0 text-caption text-ink-muted">
           Selection does not issue an Appointment or establish service. A no-selection decision can
           be closed afterwards; a returned board output reopens deliberation.
         </p>
@@ -2819,7 +2789,6 @@ function AuthorityActionPanel({
               },
             )
           }
-          size="default"
           variant="primary"
         >
           Record Selection Decision
@@ -2839,62 +2808,47 @@ function SessionTree({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto" aria-label="HRMPSB Sessions">
-      {records.length === 0 ? (
-        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-          No HRMPSB Session has been convened yet.
-        </p>
-      ) : (
-        <table className="w-full min-w-[760px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
-              <th className="px-3 py-2">Record</th>
-              <th className="px-3 py-2">Vacancy</th>
-              <th className="px-3 py-2">Roster</th>
-              <th className="px-3 py-2">Applicants</th>
-              <th className="px-3 py-2">Standing</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((record) => (
-              <tr
-                className={`border-b border-line/70 align-top ${selectedId === record.id ? 'bg-[#f1f5fb]' : ''}`}
-                key={record.id}
-              >
-                <td className="px-3 py-2">
-                  <button
-                    className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
-                    type="button"
-                    onClick={() => onSelect(record.id)}
-                  >
-                    {record.requestNo} · {dateLabel(record.sessionDate)}
-                  </button>
-                  <span className="block text-xs text-muted">
-                    {record.boardCode} v{record.boardVersionNo}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">
-                  {record.publicationNo}
-                  <span className="block text-xs text-muted">
-                    {record.position.itemNumber} · {record.position.title ?? '—'}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">
-                  {record.roster.length} member{record.roster.length === 1 ? '' : 's'}
-                  <span className="block text-xs text-muted">
-                    {record.participations.length} participation recorded
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">{record.quorum.length}</td>
-                <td className="px-3 py-2">
-                  <StatusBadge status={record.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    <Register
+      label="HRMPSB Sessions"
+      empty="No HRMPSB Session has been convened yet."
+      count={records.length}
+      head={
+        <>
+          <Th>Record</Th>
+          <Th>Vacancy</Th>
+          <Th>Roster</Th>
+          <Th kind="numeric">Applicants</Th>
+          <Th>Standing</Th>
+        </>
+      }
+    >
+      {records.map((record) => (
+        <Tr key={record.id} selected={selectedId === record.id}>
+          <RowHeader>
+            <RecordLink onClick={() => onSelect(record.id)}>
+              {record.requestNo} · {dateLabel(record.sessionDate)}
+            </RecordLink>
+            <Secondary>
+              {record.boardCode} v{record.boardVersionNo}
+            </Secondary>
+          </RowHeader>
+          <Td>
+            {record.publicationNo}
+            <Secondary>
+              {record.position.itemNumber} · {record.position.title ?? '—'}
+            </Secondary>
+          </Td>
+          <Td>
+            {record.roster.length} member{record.roster.length === 1 ? '' : 's'}
+            <Secondary>{record.participations.length} participation recorded</Secondary>
+          </Td>
+          <Td kind="numeric">{record.quorum.length}</Td>
+          <Td>
+            <RecordStatus status={record.status} />
+          </Td>
+        </Tr>
+      ))}
+    </Register>
   );
 }
 
@@ -2908,62 +2862,47 @@ function SelectionDecisionTree({
   onSelect: (id: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto" aria-label="Selection Decisions">
-      {records.length === 0 ? (
-        <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-8 text-center text-sm text-muted">
-          No Selection Decision has been recorded yet.
-        </p>
-      ) : (
-        <table className="w-full min-w-[760px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
-              <th className="px-3 py-2">Record</th>
-              <th className="px-3 py-2">Application</th>
-              <th className="px-3 py-2">Vacancy</th>
-              <th className="px-3 py-2">Basis</th>
-              <th className="px-3 py-2">Standing</th>
-            </tr>
-          </thead>
-          <tbody>
-            {records.map((record) => (
-              <tr
-                className={`border-b border-line/70 align-top ${selectedId === record.id ? 'bg-[#f1f5fb]' : ''}`}
-                key={record.id}
-              >
-                <td className="px-3 py-2">
-                  <button
-                    className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
-                    type="button"
-                    onClick={() => onSelect(record.id)}
-                  >
-                    {record.applicationNo} · {dateLabel(record.decidedAt)}
-                  </button>
-                  <span className="block text-xs text-muted">
-                    {record.boardDefinitionCode} v{record.boardDefinitionVersionNo}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">{record.applicantName}</td>
-                <td className="px-3 py-2 text-[13px] text-ink">
-                  {record.position.itemNumber}
-                  <span className="block text-xs text-muted">{record.position.title ?? '—'}</span>
-                </td>
-                <td className="px-3 py-2 text-[13px] text-ink">
-                  {record.reason}
-                  {record.handoff ? (
-                    <span className="block text-xs text-muted">
-                      Handed off {dateTimeLabel(record.handoff.handedOffAt)}
-                    </span>
-                  ) : null}
-                </td>
-                <td className="px-3 py-2">
-                  <StatusBadge status={record.decision} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    <Register
+      label="Selection Decisions"
+      empty="No Selection Decision has been recorded yet."
+      count={records.length}
+      head={
+        <>
+          <Th>Record</Th>
+          <Th>Application</Th>
+          <Th>Vacancy</Th>
+          <Th>Basis</Th>
+          <Th>Standing</Th>
+        </>
+      }
+    >
+      {records.map((record) => (
+        <Tr key={record.id} selected={selectedId === record.id}>
+          <RowHeader>
+            <RecordLink onClick={() => onSelect(record.id)}>
+              {record.applicationNo} · {dateLabel(record.decidedAt)}
+            </RecordLink>
+            <Secondary>
+              {record.boardDefinitionCode} v{record.boardDefinitionVersionNo}
+            </Secondary>
+          </RowHeader>
+          <Td>{record.applicantName}</Td>
+          <Td>
+            {record.position.itemNumber}
+            <Secondary>{record.position.title ?? '—'}</Secondary>
+          </Td>
+          <Td>
+            {record.reason}
+            {record.handoff ? (
+              <Secondary>Handed off {dateTimeLabel(record.handoff.handedOffAt)}</Secondary>
+            ) : null}
+          </Td>
+          <Td>
+            <RecordStatus status={record.decision} />
+          </Td>
+        </Tr>
+      ))}
+    </Register>
   );
 }
 
@@ -3009,16 +2948,16 @@ function SessionDraft({
   }
 
   return (
-    <Panel
+    <GuidedPanel
       title="Convene an HRMPSB Session"
       description="The bound Board Definition and its effective Board Appointments are resolved server-side. The roster snapshot is frozen when deliberation begins."
     >
       <form className="grid max-w-[900px] gap-5" onSubmit={submit}>
-        {error ? <FormError message={error} /> : null}
+        <FormError message={error} />
         {eligible.length === 0 ? (
-          <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-4 text-sm text-muted">
-            No published Vacancy Publication is available for deliberation.
-          </p>
+          <StateSurface compact label="HRMPSB Session intake status">
+            <p className="m-0">No published Vacancy Publication is available for deliberation.</p>
+          </StateSurface>
         ) : (
           <>
             <Field label="Published vacancy" htmlFor="session-publication">
@@ -3048,20 +2987,19 @@ function SessionDraft({
             <div className="flex flex-wrap items-center gap-3">
               <Button
                 disabled={busy || submitting || !vacancyPublicationId}
-                size="default"
                 type="submit"
                 variant="primary"
               >
                 {busy || submitting ? 'Convening…' : 'Convene Session'}
               </Button>
-              <span className="text-xs text-muted">
+              <span className="text-caption text-ink-muted">
                 Participant attendance and conflict declarations are recorded on the draft Session.
               </span>
             </div>
           </>
         )}
       </form>
-    </Panel>
+    </GuidedPanel>
   );
 }
 
@@ -3126,7 +3064,6 @@ function RecommendationEditor({
               },
             )
           }
-          size="default"
           variant="primary"
         >
           Record
@@ -3157,32 +3094,35 @@ function ApplicantDeliberationPanel({
   return (
     <div className="grid gap-4">
       {record.quorum.length === 0 ? (
-        <p className="m-0 text-sm text-muted">
+        <p className="m-0 text-body text-ink-muted">
           Applicant-specific quorum is frozen when deliberation starts.
         </p>
       ) : (
         record.quorum.map((quorum) => {
           const recommendation = recommendationFor(quorum.applicationId);
           return (
-            <div className="grid gap-3 rounded-[3px] border border-line px-4 py-4" key={quorum.id}>
+            <div
+              className="grid gap-3 rounded-control border border-border px-4 py-4"
+              key={quorum.id}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <strong className="text-sm font-[680] text-midnight">
+                <strong className="text-body font-[650] text-ink">
                   {quorum.applicationNo} · {quorum.applicantName}
                 </strong>
-                <StatusBadge status={quorum.applicationStatus} />
+                <RecordStatus status={quorum.applicationStatus} />
               </div>
-              <span className="text-xs text-muted">
+              <span className="text-caption text-ink-muted">
                 {quorum.presentVotingMembers} of {quorum.eligibleVotingMembers} eligible voting
                 members present · requires {quorum.requiredVotingMembers} · national floor{' '}
                 {quorum.nationalFloor} of {quorum.votingSeats} voting seats ·{' '}
                 {quorum.satisfied ? 'quorum satisfied' : 'quorum not satisfied'}
               </span>
               {recommendation ? (
-                <span className="text-sm text-ink">
+                <span className="text-body text-ink">
                   Board Recommendation: {recommendation.recommendation.replaceAll('_', ' ')}
                   {recommendation.rankNo ? ` · rank ${recommendation.rankNo}` : ''}
                   {recommendation.reason ? ` · ${recommendation.reason}` : ''}
-                  <span className="block text-xs text-muted">
+                  <span className="block text-caption text-ink-muted">
                     Advisory only. The Selection Decision is separate.
                   </span>
                 </span>
@@ -3195,7 +3135,7 @@ function ApplicantDeliberationPanel({
                   agencyId={agencyId}
                 />
               ) : (
-                <span className="text-xs text-muted">
+                <span className="text-caption text-ink-muted">
                   No Board Recommendation recorded for this Application yet.
                 </span>
               )}
@@ -3204,7 +3144,7 @@ function ApplicantDeliberationPanel({
         })
       )}
       {!frozen && permissions.submitDeliberations ? (
-        <p className="m-0 text-xs text-muted">
+        <p className="m-0 text-caption text-ink-muted">
           {applications.length} qualified Application(s) are included when deliberation starts.
         </p>
       ) : null}
@@ -3250,14 +3190,14 @@ function SessionDetail({
 
   return (
     <div className="grid gap-5">
-      <Panel
+      <GuidedPanel
         title={`HRMPSB Session · ${record.requestNo}`}
         description={`${record.sessionDate} · ${record.boardCode} v${record.boardVersionNo} · ${record.publicationNo}`}
       >
         <div className="grid gap-4 min-[720px]:grid-cols-2">
           <dl className="m-0">
             <DetailRow label="Standing">
-              <StatusBadge status={record.status} />
+              <RecordStatus status={record.status} />
             </DetailRow>
             <DetailRow label="Vacancy">
               {record.position.itemNumber} · {record.position.title ?? '—'} ·{' '}
@@ -3283,7 +3223,7 @@ function SessionDetail({
             ) : null}
           </dl>
         </div>
-        <div className="flex flex-wrap gap-2 border-t border-line pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-border pt-4">
           {draft && permissions.submitDeliberations ? (
             <Button
               disabled={busy}
@@ -3293,116 +3233,110 @@ function SessionDetail({
                   {},
                 )
               }
-              size="default"
               variant="primary"
             >
               Start deliberation
             </Button>
           ) : null}
         </div>
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
-        title="Roster and attendance"
-        description="The roster snapshot copies each Board Appointment, seat, and voting standing. One person cannot hold two voting seats or act as both voting member and secretariat. Attendance is recorded before deliberation begins."
-      >
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
-                <th className="px-3 py-2">Member</th>
-                <th className="px-3 py-2">Seat</th>
-                <th className="px-3 py-2">Role</th>
-                <th className="px-3 py-2">Appointment</th>
-                <th className="px-3 py-2">Attendance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {record.roster.map((member) => {
-                const participation = participationFor(member.membershipId);
-                return (
-                  <tr className="border-b border-line/70 align-top" key={member.id}>
-                    <td className="px-3 py-2 text-[13px] font-[650] text-ink">
-                      {member.memberName}
-                      {participation?.signedAt ? (
-                        <span className="block text-xs text-muted">
-                          Acknowledged {dateTimeLabel(participation.signedAt)}
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-2 text-[13px] text-ink">{member.seatCode}</td>
-                    <td className="px-3 py-2 text-[13px] text-ink">
-                      {member.boardRole.replaceAll('_', ' ')}
-                      {member.isVoting ? '' : ' · non-voting'}
-                    </td>
-                    <td className="px-3 py-2 text-[13px] text-ink">
-                      {member.isAlternate ? 'Alternate' : 'Principal'}
-                    </td>
-                    <td className="px-3 py-2">
-                      {participation ? (
-                        <StatusBadge status={participation.attendanceStatus} />
-                      ) : draft && permissions.submitDeliberations ? (
-                        <span className="flex items-center gap-2">
-                          <select
-                            aria-label={`Attendance for ${member.memberName}`}
-                            className={inputClass}
-                            value={attendance[member.id] ?? 'PRESENT'}
-                            onChange={(event) =>
-                              setAttendance((current) => ({
-                                ...current,
-                                [member.id]: inputValue(event),
-                              }))
-                            }
-                          >
-                            {BOARD_ATTENDANCE_STATUSES.map((value) => (
-                              <option key={value} value={value}>
-                                {value}
-                              </option>
-                            ))}
-                          </select>
-                          <Button
-                            disabled={busy}
-                            onClick={() =>
-                              onCommand(
-                                `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/participation`,
-                                {
-                                  rosterSnapshotMemberId: member.id,
-                                  attendanceStatus: attendance[member.id] ?? 'PRESENT',
-                                },
-                              )
-                            }
-                            size="default"
-                            variant="secondary"
-                          >
-                            Record
-                          </Button>
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted">Not recorded</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p className="m-0 text-xs text-muted">
+      <Panel title="Roster and attendance" flush>
+        <p className="m-0 px-4 pt-3 text-small text-ink-muted">
+          The roster snapshot copies each Board Appointment, seat, and voting standing. One person
+          cannot hold two voting seats or act as both voting member and secretariat. Attendance is
+          recorded before deliberation begins.
+        </p>
+        <Table aria-label="Roster and attendance" className="mt-3 min-w-[720px]">
+          <thead>
+            <tr>
+              <Th>Member</Th>
+              <Th>Seat</Th>
+              <Th>Role</Th>
+              <Th>Appointment</Th>
+              <Th>Attendance</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {record.roster.map((member) => {
+              const participation = participationFor(member.membershipId);
+              return (
+                <Tr key={member.id}>
+                  <RowHeader>
+                    {member.memberName}
+                    {participation?.signedAt ? (
+                      <Secondary>Acknowledged {dateTimeLabel(participation.signedAt)}</Secondary>
+                    ) : null}
+                  </RowHeader>
+                  <Td>{member.seatCode}</Td>
+                  <Td>
+                    {member.boardRole.replaceAll('_', ' ')}
+                    {member.isVoting ? '' : ' · non-voting'}
+                  </Td>
+                  <Td>{member.isAlternate ? 'Alternate' : 'Principal'}</Td>
+                  <Td>
+                    {participation ? (
+                      <RecordStatus status={participation.attendanceStatus} />
+                    ) : draft && permissions.submitDeliberations ? (
+                      <span className="flex items-center gap-2">
+                        <select
+                          aria-label={`Attendance for ${member.memberName}`}
+                          className={inputClass}
+                          value={attendance[member.id] ?? 'PRESENT'}
+                          onChange={(event) =>
+                            setAttendance((current) => ({
+                              ...current,
+                              [member.id]: inputValue(event),
+                            }))
+                          }
+                        >
+                          {BOARD_ATTENDANCE_STATUSES.map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          disabled={busy}
+                          onClick={() =>
+                            onCommand(
+                              `/api/v1/agencies/${agencyId}/recruitment/sessions/${record.id}/participation`,
+                              {
+                                rosterSnapshotMemberId: member.id,
+                                attendanceStatus: attendance[member.id] ?? 'PRESENT',
+                              },
+                            )
+                          }
+                          variant="secondary"
+                        >
+                          Record
+                        </Button>
+                      </span>
+                    ) : (
+                      <span className="text-caption text-ink-muted">Not recorded</span>
+                    )}
+                  </Td>
+                </Tr>
+              );
+            })}
+          </tbody>
+        </Table>
+        <p className="m-0 px-4 py-2.5 text-caption text-ink-muted">
           An alternate counts only through their own recorded participation and declaration.
         </p>
       </Panel>
 
-      <Panel
+      <GuidedPanel
         title="Conflict declarations and recusals"
         description="A conflicted or recused participant is excluded from the affected applicant's evaluation and quorum."
       >
         <div className="grid gap-3">
           {record.conflicts.length === 0 ? (
-            <span className="text-sm text-muted">No conflict declaration recorded.</span>
+            <span className="text-body text-ink-muted">No conflict declaration recorded.</span>
           ) : (
             record.conflicts.map((conflict) => (
               <div
-                className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line px-3 py-2 text-xs"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border px-3 py-2 text-caption"
                 key={conflict.id}
               >
                 <span className="font-[650] text-ink">
@@ -3414,12 +3348,12 @@ function SessionDetail({
                   )?.applicationNo ?? conflict.applicationId}{' '}
                   · {conflict.hasConflict ? 'Conflicted' : 'No conflict'}
                 </span>
-                <span className="text-muted">{conflict.details ?? ''}</span>
+                <span className="text-ink-muted">{conflict.details ?? ''}</span>
               </div>
             ))
           )}
           {draft && (permissions.recommendBoard || permissions.submitDeliberations) ? (
-            <div className="grid gap-3 border-t border-line pt-4 min-[900px]:grid-cols-2">
+            <div className="grid gap-3 border-t border-border pt-4 min-[900px]:grid-cols-2">
               <Field label="Participant" htmlFor="conflict-participation">
                 <select
                   className={inputClass}
@@ -3485,7 +3419,6 @@ function SessionDetail({
                       },
                     )
                   }
-                  size="default"
                   variant="secondary"
                 >
                   Declare
@@ -3494,9 +3427,9 @@ function SessionDetail({
             </div>
           ) : null}
         </div>
-      </Panel>
+      </GuidedPanel>
 
-      <Panel
+      <GuidedPanel
         title="Applicant deliberations"
         description="Quorum is validated per Application. Board Recommendations remain advisory and distinct from the Selection Decision."
       >
@@ -3508,10 +3441,10 @@ function SessionDetail({
           onCommand={onCommand}
           agencyId={agencyId}
         />
-      </Panel>
+      </GuidedPanel>
 
       {record.status === 'IN_PROGRESS' && permissions.submitDeliberations ? (
-        <Panel
+        <GuidedPanel
           title="Board output"
           description="Issue the versioned Comprehensive Candidate Evaluation Report, link the minutes, and complete the Session."
         >
@@ -3552,7 +3485,6 @@ function SessionDetail({
                     },
                   )
                 }
-                size="default"
                 variant="secondary"
               >
                 Issue report
@@ -3584,7 +3516,6 @@ function SessionDetail({
                     },
                   )
                 }
-                size="default"
                 variant="primary"
               >
                 Complete deliberation
@@ -3592,15 +3523,15 @@ function SessionDetail({
             </div>
           </div>
           {record.reports.length === 0 ? (
-            <p className="m-0 text-xs text-muted">
+            <p className="m-0 text-caption text-ink-muted">
               The advisory Evaluation Report must be issued before the Session can complete.
             </p>
           ) : null}
-        </Panel>
+        </GuidedPanel>
       ) : null}
 
       {draft && permissions.submitDeliberations ? (
-        <Panel
+        <GuidedPanel
           title="Cancel Session"
           description="A draft Session can be cancelled before deliberation begins."
         >
@@ -3623,14 +3554,13 @@ function SessionDetail({
                     { reason: cancelReason },
                   );
                 }}
-                size="default"
                 variant="secondary"
               >
                 Cancel Session
               </Button>
             </div>
           </div>
-        </Panel>
+        </GuidedPanel>
       ) : null}
     </div>
   );
@@ -3657,14 +3587,14 @@ function SelectionDecisionDetail({
     (permissions.selectCandidate || permissions.decideSelection);
   return (
     <div className="grid gap-5">
-      <Panel
+      <GuidedPanel
         title={`Selection Decision · ${record.applicationNo}`}
         description={`${record.applicantName} · ${record.position.itemNumber} · ${record.position.title ?? '—'}`}
       >
         <div className="grid gap-4 min-[720px]:grid-cols-2">
           <dl className="m-0">
             <DetailRow label="Decision">
-              <StatusBadge status={record.decision} />
+              <RecordStatus status={record.decision} />
             </DetailRow>
             <DetailRow label="Recorded basis">{record.reason}</DetailRow>
             <DetailRow label="Decided">{dateTimeLabel(record.decidedAt)}</DetailRow>
@@ -3688,52 +3618,50 @@ function SelectionDecisionDetail({
               {record.sessionId} · {record.boardDefinitionCode} v{record.boardDefinitionVersionNo}
             </DetailRow>
             <DetailRow label="Application standing">
-              <StatusBadge status={record.applicationStatus} />
+              <RecordStatus status={record.applicationStatus} />
             </DetailRow>
           </dl>
         </div>
-        <p className="m-0 border-t border-line pt-4 text-xs text-muted">
+        <p className="m-0 border-t border-border pt-4 text-caption text-ink-muted">
           The Selection Decision is the appointing authority&apos;s recruitment-domain choice. It
           does not issue an Appointment, reserve Employee service, or occupy the Plantilla Position
           beyond the Plantilla reservation.
         </p>
-      </Panel>
+      </GuidedPanel>
 
       {record.handoff ? (
-        <Panel
+        <GuidedPanel
           title="Selected-candidate handoff"
           description="Immutable selected-candidate package handed to Appointment. Recruitment never inserts Appointment rows."
         >
           <div className="grid gap-3">
-            <DetailRow label="Reserved Plantilla Position">
-              {record.handoff.itemNumber} · reserved through Plantilla
-            </DetailRow>
-            <DetailRow label="Handed off">{dateTimeLabel(record.handoff.handedOffAt)}</DetailRow>
-            <DetailRow label="Appointment accepted">
-              {record.handoff.acceptedAt ? dateTimeLabel(record.handoff.acceptedAt) : 'Not yet'}
-            </DetailRow>
+            <dl className="m-0">
+              <DetailRow label="Reserved Plantilla Position">
+                {record.handoff.itemNumber} · reserved through Plantilla
+              </DetailRow>
+              <DetailRow label="Handed off">{dateTimeLabel(record.handoff.handedOffAt)}</DetailRow>
+              <DetailRow label="Appointment accepted">
+                {record.handoff.acceptedAt ? dateTimeLabel(record.handoff.acceptedAt) : 'Not yet'}
+              </DetailRow>
+            </dl>
             <div>
-              <Button
-                onClick={() => setShowPackage((current) => !current)}
-                size="default"
-                variant="secondary"
-              >
+              <Button onClick={() => setShowPackage((current) => !current)} variant="secondary">
                 {showPackage
                   ? 'Hide selected-candidate package'
                   : 'Preview selected-candidate package'}
               </Button>
             </div>
             {showPackage ? (
-              <pre className="m-0 max-h-[420px] overflow-auto rounded-[3px] border border-line bg-canvas p-4 text-xs leading-[1.6] text-ink">
+              <pre className="m-0 max-h-[420px] overflow-auto rounded-control border border-border bg-canvas p-4 text-caption text-ink">
                 {JSON.stringify(record.handoff.selectionPackage, null, 2)}
               </pre>
             ) : null}
           </div>
-        </Panel>
+        </GuidedPanel>
       ) : null}
 
       {canDecide ? (
-        <Panel
+        <GuidedPanel
           title="Appointing authority action"
           description="Select the recommended candidate, record no selection, or return the board output for further review. Each action records the required basis."
         >
@@ -3746,7 +3674,7 @@ function SelectionDecisionDetail({
             onCommand={onCommand}
             agencyId={agencyId}
           />
-        </Panel>
+        </GuidedPanel>
       ) : null}
     </div>
   );
@@ -3937,24 +3865,16 @@ export function RecruitmentWorkspace(props: Props) {
           : section === 'sessions'
             ? props.canSubmitDeliberations
             : false;
-  const hasSectionRead =
-    section === 'requests'
-      ? props.canReadRequests
-      : section === 'publications'
-        ? props.canReadPublications
-        : section === 'applications'
-          ? props.canReadApplications
-          : props.canReadDeliberations;
-  const sectionTitle =
-    section === 'requests'
-      ? 'Requests to Fill'
-      : section === 'publications'
-        ? 'Vacancy Publications'
-        : section === 'applications'
-          ? 'Applications'
-          : section === 'sessions'
-            ? 'HRMPSB Sessions'
-            : 'Selection Decisions';
+  const sections: { value: Section; label: string; canRead: boolean }[] = [
+    { value: 'requests', label: 'Requests to Fill', canRead: props.canReadRequests },
+    { value: 'publications', label: 'Vacancy Publications', canRead: props.canReadPublications },
+    { value: 'applications', label: 'Applications', canRead: props.canReadApplications },
+    { value: 'sessions', label: 'HRMPSB Sessions', canRead: props.canReadDeliberations },
+    { value: 'decisions', label: 'Selection Decisions', canRead: props.canReadDeliberations },
+  ];
+  const current = sections.find(({ value }) => value === section);
+  const sectionTitle = current?.label ?? '';
+  const hasSectionRead = current?.canRead ?? false;
   const newLabel =
     section === 'requests'
       ? 'New request to fill'
@@ -3963,197 +3883,122 @@ export function RecruitmentWorkspace(props: Props) {
         : section === 'applications'
           ? 'New application'
           : 'Convene HRMPSB Session';
+  const views: [View, string][] = [
+    ['tree', 'Tree'],
+    ['form', 'Form'],
+    ...(applicationsOnly ? [['kanban', 'Kanban'] as [View, string]] : []),
+  ];
+  const openRecord = (id: string) => navigation.navigate({ view: 'form', selected: id, new: null });
 
   return (
-    <div className="grid gap-6">
-      <header className="grid gap-2">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid gap-1">
-            <span className="text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Recruitment Casework
-            </span>
-            <h1 className="m-0 text-[28px] font-[760] tracking-[-0.035em] text-midnight">
-              Recruitment
-            </h1>
-            <p className="m-0 max-w-[720px] text-sm leading-[1.6] text-muted">
-              Open a controlled Request to Fill from a Recruitable Vacancy, publish an
-              evidence-backed vacancy package, and screen applicant evidence against the bound
-              Qualification Standard Version.
-            </p>
-          </div>
-          {canCreateInSection ? (
-            <Button
-              onClick={() =>
-                navigation.navigate({
-                  section,
-                  view: 'form',
-                  selected: null,
-                  new:
-                    section === 'requests'
-                      ? 'request'
-                      : section === 'publications'
-                        ? 'publication'
-                        : section === 'applications'
-                          ? 'application'
-                          : 'session',
-                })
-              }
-              size="default"
-              variant="primary"
+    <div className="grid gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Merit selection' }, { label: 'Recruitment' }]}
+        title="Recruitment"
+        actions={
+          <>
+            <div
+              className="flex items-center gap-0.5 rounded-control border border-border bg-surface p-0.5"
+              role="group"
+              aria-label="Record view"
             >
-              {newLabel}
-            </Button>
-          ) : null}
-        </div>
-      </header>
+              {views.map(([value, label]) => (
+                <button
+                  className="cursor-pointer rounded-control border-0 bg-transparent px-3 py-1.5 text-caption font-[650] text-ink-muted hover:text-ink aria-pressed:bg-canvas aria-pressed:text-ink"
+                  key={value}
+                  type="button"
+                  aria-pressed={view === value}
+                  onClick={() =>
+                    // Form keeps an open draft; Tree and Kanban leave it.
+                    navigation.navigate(
+                      value === 'form' ? { view: value } : { view: value, new: null },
+                    )
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {canCreateInSection ? (
+              <Button
+                onClick={() =>
+                  navigation.navigate({
+                    section,
+                    view: 'form',
+                    selected: null,
+                    new:
+                      section === 'requests'
+                        ? 'request'
+                        : section === 'publications'
+                          ? 'publication'
+                          : section === 'applications'
+                            ? 'application'
+                            : 'session',
+                  })
+                }
+                variant="primary"
+              >
+                {newLabel}
+              </Button>
+            ) : null}
+          </>
+        }
+        tabs={
+          <SectionTabLinks
+            label="Recruitment records"
+            tabs={sections
+              .filter(({ canRead }) => canRead)
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
-        <nav className="flex flex-wrap gap-1" aria-label="Recruitment records">
-          {props.canReadRequests ? (
-            <button
-              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'requests' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
-              type="button"
-              onClick={() =>
-                navigation.navigate({ section: 'requests', selected: null, new: null })
-              }
-            >
-              Requests to Fill
-            </button>
-          ) : null}
-          {props.canReadPublications ? (
-            <button
-              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'publications' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
-              type="button"
-              onClick={() =>
-                navigation.navigate({ section: 'publications', selected: null, new: null })
-              }
-            >
-              Vacancy Publications
-            </button>
-          ) : null}
-          {props.canReadApplications ? (
-            <button
-              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'applications' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
-              type="button"
-              onClick={() =>
-                navigation.navigate({ section: 'applications', selected: null, new: null })
-              }
-            >
-              Applications
-            </button>
-          ) : null}
-          {props.canReadDeliberations ? (
-            <button
-              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'sessions' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
-              type="button"
-              onClick={() =>
-                navigation.navigate({ section: 'sessions', selected: null, new: null })
-              }
-            >
-              HRMPSB Sessions
-            </button>
-          ) : null}
-          {props.canReadDeliberations ? (
-            <button
-              className={`rounded-[3px] px-3 py-2 text-xs font-[680] ${section === 'decisions' ? 'bg-midnight text-paper' : 'text-muted hover:bg-canvas hover:text-ink'}`}
-              type="button"
-              onClick={() =>
-                navigation.navigate({ section: 'decisions', selected: null, new: null })
-              }
-            >
-              Selection Decisions
-            </button>
-          ) : null}
-        </nav>
-        <div
-          className="flex items-center gap-1 rounded-[3px] border border-line bg-paper p-1"
-          aria-label="Record view"
-        >
-          <button
-            className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'tree' ? 'bg-canvas text-ink' : 'text-muted'}`}
-            type="button"
-            aria-pressed={view === 'tree'}
-            onClick={() => navigation.navigate({ view: 'tree', new: null })}
-          >
-            Tree
-          </button>
-          <button
-            className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'form' ? 'bg-canvas text-ink' : 'text-muted'}`}
-            type="button"
-            aria-pressed={view === 'form'}
-            onClick={() => navigation.navigate({ view: 'form' })}
-          >
-            Form
-          </button>
-          {applicationsOnly ? (
-            <button
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'kanban' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              type="button"
-              aria-pressed={view === 'kanban'}
-              onClick={() => navigation.navigate({ view: 'kanban', new: null })}
-            >
-              Kanban
-            </button>
-          ) : null}
-        </div>
-      </div>
+              .map(({ value, label }) => ({
+                href: navigation.href({ section: value, selected: null, new: null }),
+                label,
+                current: section === value,
+              }))}
+          />
+        }
+      />
 
-      {error ? <FormError message={error} /> : null}
+      <FormError message={error} />
       {!hasSectionRead ? (
-        <Panel title="No access in this view">
-          <p className="m-0 text-sm text-muted">
+        <StateSurface labelledBy="recruitment-access-title">
+          <StateCode>Not authorized</StateCode>
+          <h2 className="m-0 text-panel-title text-ink" id="recruitment-access-title">
+            No access in this view
+          </h2>
+          <p className="m-0 max-w-[500px] text-body text-ink-muted">
             Your active Agency Membership does not permit this Recruitment register.
           </p>
-        </Panel>
+        </StateSurface>
       ) : null}
       {hasSectionRead && view === 'tree' ? (
-        <Panel
-          title={sectionTitle}
-          description="Select a record to inspect its status, evidence, and next permitted action."
-        >
+        <Panel title={sectionTitle} flush>
+          <p className="m-0 px-4 pt-3 pb-3 text-small text-ink-muted">
+            Select a record to inspect its status, evidence, and next permitted action.
+          </p>
           {section === 'requests' ? (
-            <RequestTree
-              records={requests}
-              selectedId={selectedId}
-              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
-            />
+            <RequestTree records={requests} selectedId={selectedId} onSelect={openRecord} />
           ) : section === 'publications' ? (
-            <PublicationTree
-              records={publications}
-              selectedId={selectedId}
-              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
-            />
+            <PublicationTree records={publications} selectedId={selectedId} onSelect={openRecord} />
           ) : section === 'applications' ? (
-            <ApplicationTree
-              records={applications}
-              selectedId={selectedId}
-              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
-            />
+            <ApplicationTree records={applications} selectedId={selectedId} onSelect={openRecord} />
           ) : section === 'sessions' ? (
-            <SessionTree
-              records={sessions}
-              selectedId={selectedId}
-              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
-            />
+            <SessionTree records={sessions} selectedId={selectedId} onSelect={openRecord} />
           ) : (
             <SelectionDecisionTree
               records={decisions}
               selectedId={selectedId}
-              onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
+              onSelect={openRecord}
             />
           )}
         </Panel>
       ) : null}
       {hasSectionRead && view === 'kanban' && applicationsOnly ? (
-        <Panel
-          title="Applications"
-          description="Tree and Kanban show the same Applications. Open a card to record evidence and screening on its Form."
-        >
-          <ApplicationKanban
-            records={applications}
-            selectedId={selectedId}
-            onSelect={(id) => navigation.navigate({ view: 'form', selected: id, new: null })}
-          />
+        <Panel title="Applications" flush>
+          <p className="m-0 px-4 pt-3 text-small text-ink-muted">
+            Tree and Kanban show the same Applications. Open a card to record evidence and screening
+            on its Form.
+          </p>
+          <ApplicationKanban records={applications} selectedId={selectedId} onSelect={openRecord} />
         </Panel>
       ) : null}
       {hasSectionRead && view === 'form' && newRecord === 'request' ? (
@@ -4290,11 +4135,15 @@ export function RecruitmentWorkspace(props: Props) {
       !selectedApplication &&
       !selectedSession &&
       !selectedDecision ? (
-        <Panel title="Select a Recruitment record">
-          <p className="m-0 text-sm text-muted">
+        <StateSurface labelledBy="recruitment-select-title">
+          <StateCode>No record selected</StateCode>
+          <h2 className="m-0 text-panel-title text-ink" id="recruitment-select-title">
+            Select a Recruitment record
+          </h2>
+          <p className="m-0 max-w-[500px] text-body text-ink-muted">
             Choose a record from Tree view or start a new controlled case.
           </p>
-        </Panel>
+        </StateSurface>
       ) : null}
     </div>
   );
