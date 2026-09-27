@@ -17,7 +17,7 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/plantilla-positions');
   await expect(
-    page.getByRole('heading', { name: 'Plantilla positions', exact: true }),
+    page.getByRole('heading', { name: 'Plantilla Positions', exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /HRM-000142/ })).toBeVisible();
 
@@ -154,7 +154,7 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/plantilla-positions');
   await expect(
-    page.getByRole('heading', { name: 'Plantilla positions', exact: true }),
+    page.getByRole('heading', { name: 'Plantilla Positions', exact: true }),
   ).toBeVisible();
 
   await page.getByRole('button', { name: 'Create proposed position' }).click();
