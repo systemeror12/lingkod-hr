@@ -29,15 +29,9 @@ test('opens My Documents in the workbench with its truthful states and upload di
   await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toHaveText('Personnel');
   await expect(page.getByRole('heading', { level: 1, name: 'My Documents' })).toBeVisible();
 
+  // The seeded fixture Employee has no Personnel Documents.
   const panel = page.getByRole('region', { name: 'Personnel Documents' });
-  await expect(panel.getByText('Loading Personnel Documents…')).toBeHidden();
-  if ((await panel.getByRole('table').count()) === 0) {
-    await expect(
-      panel.getByText('No Personnel Documents are visible in this scope.'),
-    ).toBeVisible();
-  } else {
-    await expect(panel.getByRole('columnheader', { name: 'Release state' })).toBeVisible();
-  }
+  await expect(panel.getByText('No Personnel Documents are visible in this scope.')).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Link personnel document' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('my-documents.png'), fullPage: true });
 
@@ -54,4 +48,11 @@ test('opens My Documents in the workbench with its truthful states and upload di
   await dialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(dialog).toBeHidden();
   await expect(upload).toBeFocused();
+
+  // A failed list load must not read as an empty list.
+  await page.route('**/api/v1/agencies/*/employees/*/documents', (route) => route.abort('failed'));
+  await page.reload();
+  await expect(panel.getByRole('alert')).toBeVisible();
+  await expect(panel.getByText(/Personnel Documents are unavailable/)).toBeVisible();
+  await expect(panel.getByText('No Personnel Documents are visible in this scope.')).toHaveCount(0);
 });
