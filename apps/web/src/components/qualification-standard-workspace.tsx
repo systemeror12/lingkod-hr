@@ -1,9 +1,11 @@
 'use client';
 
-import { Field, inputClass, FormError } from './ui/field';
-
-import { RecordReturn, useRecordNavigation } from './record-navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { cn } from '../lib/class-names';
+import { manilaToday } from '../lib/manila-date';
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
+import { Button } from './ui/button';
 import {
   Dialog,
   DialogBody,
@@ -15,8 +17,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import { Button } from './ui/button';
-import { manilaToday } from '../lib/manila-date';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, Td, Th, Tr } from './ui/table';
 
 type VersionState = 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'VOIDED';
 type EvidenceKind = 'SOURCE' | 'APPROVAL';
@@ -104,6 +109,40 @@ interface FormValues {
 type DialogKind =
   'create' | 'edit' | 'evidence' | 'activate' | 'successor' | 'correction' | 'detail';
 
+const draftDescription =
+  'Record the requirements for one Draft version. The stable Standard remains inactive until both source and approval External Evidence are validated.';
+
+/** Title and description for each dialog, given the selected Standard's code. */
+const dialogCopy: Record<DialogKind, (code: string) => { title: string; description: string }> = {
+  create: () => ({ title: 'Create Qualification Standard', description: draftDescription }),
+  edit: () => ({ title: 'Edit Draft Qualification Standard', description: draftDescription }),
+  evidence: (code) => ({
+    title: 'Validate Evidence · ' + code,
+    description:
+      'Pin the selected same-Agency External Evidence version and record the validation reason.',
+  }),
+  activate: (code) => ({
+    title: 'Activate ' + code,
+    description:
+      'Activation checks effectivity, evidence, and overlap atomically. Published requirements cannot be edited.',
+  }),
+  correction: (code) => ({
+    title: 'Correct Version · ' + code,
+    description:
+      'Use a reasoned correction when a published fact is wrong. The original version is voided and retained in history.',
+  }),
+  successor: (code) => ({
+    title: 'Create Successor · ' + code,
+    description:
+      'The successor copies the current requirements and receives a later effective date. It remains Draft until reviewed.',
+  }),
+  detail: (code) => ({
+    title: 'Qualification Standard · ' + code,
+    description:
+      'Inspect effective-dated versions, pinned evidence, and the immutable transition history.',
+  }),
+};
+
 function emptyValues(): FormValues {
   return {
     code: '',
@@ -136,12 +175,18 @@ function errorMessage(value: unknown, fallback: string): string {
   return typeof error?.message === 'string' ? error.message : fallback;
 }
 
-function statusClass(status: 'ACTIVE' | 'INACTIVE' | VersionState): string {
-  if (status === 'ACTIVE') return 'bg-[#e8f3ed] text-[#316647]';
-  if (status === 'SUPERSEDED' || status === 'VOIDED' || status === 'INACTIVE') {
-    return 'bg-[#f0f2f5] text-muted';
-  }
-  return 'bg-[#fff3d6] text-[#79531c]';
+type DisplayedStatus = QualificationStandard['status'] | VersionState;
+
+const statusTone: Record<DisplayedStatus, StatusTone> = {
+  ACTIVE: 'success',
+  INACTIVE: 'neutral',
+  DRAFT: 'warning',
+  SUPERSEDED: 'neutral',
+  VOIDED: 'neutral',
+};
+
+function Status({ status }: { status: DisplayedStatus }) {
+  return <StatusTag tone={statusTone[status]}>{status}</StatusTag>;
 }
 
 function versionValues(
@@ -537,7 +582,6 @@ export function QualificationStandardWorkspace({
         ) : null}
         {standard.draft && canActivate ? (
           <Button
-            className="min-h-9 px-3 text-xs"
             size="default"
             type="button"
             variant="primary"
@@ -562,9 +606,9 @@ export function QualificationStandardWorkspace({
         ) : null}
         {standard.currentVersion && canUpdate ? (
           <Button
-            className="border border-[#d9a5a5] bg-paper px-3 py-2 text-xs font-[650] text-[#9a3030] hover:bg-[#fff4f4]"
             size="default"
             type="button"
+            variant="secondary"
             onClick={(event) =>
               openCorrection(
                 standard,
@@ -581,124 +625,96 @@ export function QualificationStandardWorkspace({
   }
 
   const selectedTitle = selected?.code || 'Qualification Standard';
+  const copy = dialogCopy[dialog ?? 'detail'](selectedTitle);
   const dialogDescriptionId = 'qualification-standard-dialog-description';
+
+  // Create, Edit Draft, and Details replace the register with an inline record; Correct Version
+  // opens below it.
+  const registerHidden = dialog === 'detail' || dialog === 'create' || dialog === 'edit';
 
   return (
     <Dialog
-      presentation={
-        dialog === 'detail' || dialog === 'create' || dialog === 'edit' || dialog === 'correction'
-          ? 'form'
-          : 'dialog'
-      }
+      presentation={registerHidden || dialog === 'correction' ? 'form' : 'dialog'}
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div
-        hidden={dialog === 'detail' || dialog === 'create' || dialog === 'edit'}
-        className="min-w-0 space-y-5"
-      >
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[760px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Qualification register
+      <div className="grid min-w-0 gap-5">
+        <PageHeader
+          breadcrumbs={[{ label: 'Structure' }]}
+          title="Qualification Standards"
+          actions={
+            canCreate ? (
+              // Hidden rather than unmounted so focus can return to it when the form closes.
+              <DialogTrigger asChild>
+                <Button
+                  hidden={registerHidden}
+                  size="default"
+                  type="button"
+                  variant="primary"
+                  onClick={(event) => {
+                    resetAction();
+                    setValues(emptyValues());
+                    returnFocusRef.current = event.currentTarget as unknown as { focus(): void };
+                    dialogRef.current = 'create';
+                    setDialog('create');
+                  }}
+                >
+                  Create Qualification Standard
+                </Button>
+              </DialogTrigger>
+            ) : null
+          }
+        />
+
+        <div hidden={registerHidden} className="grid min-w-0 gap-5">
+          {success ? (
+            <p
+              className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+              role="status"
+            >
+              {success}
             </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Qualification Standards
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              Maintain stable Agency Qualification Standards through evidence-backed,
-              effective-dated versions. Published versions are immutable.
-            </p>
-          </div>
-          {canCreate ? (
-            <DialogTrigger asChild>
-              <Button
-                size="default"
-                type="button"
-                variant="primary"
-                onClick={(event) => {
-                  resetAction();
-                  setValues(emptyValues());
-                  returnFocusRef.current = event.currentTarget as unknown as { focus(): void };
-                  dialogRef.current = 'create';
-                  setDialog('create');
-                }}
-              >
-                Create Qualification Standard
-              </Button>
-            </DialogTrigger>
           ) : null}
-        </header>
 
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
-          </p>
-        ) : null}
-
-        <section
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          aria-labelledby="qualification-standard-register-heading"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2
-                className="m-0 text-sm font-[670] text-midnight"
-                id="qualification-standard-register-heading"
-              >
-                Agency register
-              </h2>
-              <span className="text-xs text-muted">
+          <Panel
+            title="Agency register"
+            flush
+            actions={
+              <span className="text-caption text-ink-muted tabular-nums">
                 {standards.length === 1 ? '1 standard' : standards.length + ' standards'}
               </span>
-            </div>
-            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-              Agency scoped · Evidence required
-            </span>
-          </header>
-
-          {standards.length === 0 ? (
-            <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12">
-              <strong className="text-[15px] font-[650] text-midnight">
-                No Qualification Standards yet.
-              </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                Create a Draft with the official minimum requirements, then link and validate source
-                and approval External Evidence before activation.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+            }
+          >
+            {standards.length === 0 ? (
+              <StateSurface compact labelledBy="qualification-standards-empty">
+                <strong className="font-[650] text-ink" id="qualification-standards-empty">
+                  No Qualification Standards yet.
+                </strong>
+                <p className="m-0 max-w-[560px]">
+                  Create a Draft with the official minimum requirements, then link and validate
+                  source and approval External Evidence before activation.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table className="min-w-[860px]">
+                <thead>
                   <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Standard
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Current effectivity
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Draft
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
+                    <Th>Standard</Th>
+                    <Th>Current effectivity</Th>
+                    <Th>Draft</Th>
+                    <Th>Status</Th>
+                    <Th>
                       <span className="sr-only">Actions</span>
-                    </th>
+                    </Th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody>
                   {standards.map((standard) => (
-                    <tr key={standard.id}>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
+                    <Tr key={standard.id}>
+                      <Td>
+                        <div className="grid gap-0.5">
                           <button
-                            className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
+                            className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
                             type="button"
                             onClick={(event) =>
                               void openDetail(
@@ -709,272 +725,230 @@ export function QualificationStandardWorkspace({
                           >
                             {standard.code}
                           </button>
-                          <span className="text-xs text-muted">{standard.name}</span>
+                          <span className="text-caption text-ink-muted">{standard.name}</span>
                         </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
+                      </Td>
+                      <Td kind="date">
                         {standard.currentVersion
                           ? 'v' +
                             standard.currentVersion.versionNo +
                             ' · ' +
                             dateLabel(standard.currentVersion.effectiveFrom)
                           : 'No active version'}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
+                      </Td>
+                      <Td kind="date" className="text-ink-muted">
                         {standard.draft
                           ? 'v' +
                             standard.draft.versionNo +
                             ' · ' +
                             dateLabel(standard.draft.effectiveFrom)
                           : 'None'}
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            statusClass(standard.status)
-                          }
-                        >
-                          {standard.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 align-top">{recordActions(standard)}</td>
-                    </tr>
+                      </Td>
+                      <Td>
+                        <Status status={standard.status} />
+                      </Td>
+                      <Td>{recordActions(standard)}</Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
-
-      {dialog === 'detail' ? (
-        <div className="mb-4">
-          <RecordReturn href={navigation.href({ record: null, view: null })}>
-            ← Qualification Standards
-          </RecordReturn>
+              </Table>
+            )}
+          </Panel>
         </div>
-      ) : null}
-      <DialogContent
-        aria-describedby={dialogDescriptionId}
-        className={dialog === 'create' || dialog === 'edit' ? 'max-w-[980px]' : undefined}
-      >
-        <DialogHeader>
-          <div className="grid min-w-0 gap-1.5">
-            <p className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase">
-              Qualification register
-            </p>
-            <DialogTitle>
-              {dialog === 'create'
-                ? 'Create Qualification Standard'
-                : dialog === 'edit'
-                  ? 'Edit Draft Qualification Standard'
-                  : dialog === 'evidence'
-                    ? 'Validate Evidence · ' + selectedTitle
-                    : dialog === 'activate'
-                      ? 'Activate ' + selectedTitle
-                      : dialog === 'correction'
-                        ? 'Correct Version · ' + selectedTitle
-                        : dialog === 'successor'
-                          ? 'Create Successor · ' + selectedTitle
-                          : 'Qualification Standard · ' + selectedTitle}
-            </DialogTitle>
-            <DialogDescription id={dialogDescriptionId}>
-              {dialog === 'create' || dialog === 'edit'
-                ? 'Record the requirements for one Draft version. The stable Standard remains inactive until both source and approval External Evidence are validated.'
-                : dialog === 'evidence'
-                  ? 'Pin the selected same-Agency External Evidence version and record the validation reason.'
-                  : dialog === 'activate'
-                    ? 'Activation checks effectivity, evidence, and overlap atomically. Published requirements cannot be edited.'
-                    : dialog === 'correction'
-                      ? 'Use a reasoned correction when a published fact is wrong. The original version is voided and retained in history.'
-                      : dialog === 'successor'
-                        ? 'The successor copies the current requirements and receives a later effective date. It remains Draft until reviewed.'
-                        : 'Inspect effective-dated versions, pinned evidence, and the immutable transition history.'}
-            </DialogDescription>
-          </div>
-          <DialogClose asChild>
-            <Button
-              aria-label="Close Qualification Standard dialog"
-              className="border border-line bg-paper text-muted hover:bg-canvas"
-              disabled={busy}
-              type="button"
-            >
-              <span aria-hidden="true" className="text-xl leading-none">
-                ×
-              </span>
-            </Button>
-          </DialogClose>
-        </DialogHeader>
 
         {dialog === 'detail' ? (
-          <>
-            {selected ? <div className="p-4">{recordActions(selected)}</div> : null}
-            <DetailBody detail={detail} detailLoading={detailLoading} error={error} />
-          </>
-        ) : dialog === 'evidence' ? (
-          <EvidenceForm
-            busy={busy}
-            documentId={documentId}
-            evidenceKind={evidenceKind}
-            error={error}
-            onDocumentChange={setDocumentId}
-            onKindChange={setEvidenceKind}
-            onReasonChange={setReason}
-            onSubmit={submitEvidence}
-            reason={reason}
-          />
-        ) : dialog === 'activate' ? (
-          <ReasonForm
-            busy={busy}
-            buttonLabel="Activate Version"
-            description={
-              'Version ' +
-              selected?.draft?.versionNo +
-              ' becomes immutable after activation. Both source and approval evidence must be validated first.'
-            }
-            error={error}
-            id="qualification-activation-reason"
-            onReasonChange={setReason}
-            onSubmit={submitActivation}
-            reason={reason}
-          />
-        ) : dialog === 'correction' ? (
-          <form onSubmit={(event) => void submitCorrection(event)}>
-            <DialogBody className="grid gap-5">
-              {error ? <FormError message={error} /> : null}
-              <p className="m-0 rounded-[3px] bg-[#fff4f4] px-4 py-3 text-sm leading-[1.6] text-[#9a3030]">
-                Version {correctionVersion?.versionNo} remains in history as VOIDED. The corrected
-                replacement keeps the original effectivity and evidence pins.
-              </p>
-              {requirementsForm(values, setValue, false)}
-              <Field htmlFor="qualification-correction-reason" label="Correction reason">
-                <textarea
-                  className={inputClass}
-                  id="qualification-correction-reason"
-                  onChange={(event) => setReason(targetValue(event))}
-                  required
-                  rows={3}
-                  value={reason}
-                />
-              </Field>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Recording…' : 'Void and Replace'}
+          <div>
+            <RecordReturn href={navigation.href({ record: null, view: null })}>
+              ← Qualification Standards
+            </RecordReturn>
+          </div>
+        ) : null}
+        <DialogContent
+          aria-describedby={dialogDescriptionId}
+          className={dialog === 'create' || dialog === 'edit' ? 'max-w-[980px]' : undefined}
+        >
+          <DialogHeader>
+            <div className="grid min-w-0 gap-1">
+              <DialogTitle>{copy.title}</DialogTitle>
+              <DialogDescription id={dialogDescriptionId}>{copy.description}</DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button
+                aria-label="Close Qualification Standard dialog"
+                className="px-2.5"
+                disabled={busy}
+                type="button"
+              >
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
               </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'create' || dialog === 'edit' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onSubmit={(event) => void submitDraft(event)}
-          >
-            <DialogBody className="grid auto-rows-max content-start gap-6">
-              {error ? <FormError message={error} /> : null}
-              <section className="grid gap-4" aria-labelledby="qualification-matrix-record">
-                <div className="flex flex-wrap items-end justify-between gap-3 border-b-2 border-midnight pb-3">
-                  <div>
-                    <p className="m-0 text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
-                      Qualification record
-                    </p>
-                    <h3
-                      className="m-0 mt-1 text-base font-[700] text-midnight"
-                      id="qualification-matrix-record"
-                    >
+            </DialogClose>
+          </DialogHeader>
+
+          {dialog === 'detail' ? (
+            <>
+              {selected ? <div className="px-5 pt-4">{recordActions(selected)}</div> : null}
+              <DetailBody detail={detail} detailLoading={detailLoading} error={error} />
+            </>
+          ) : dialog === 'evidence' ? (
+            <EvidenceForm
+              busy={busy}
+              documentId={documentId}
+              evidenceKind={evidenceKind}
+              error={error}
+              onDocumentChange={setDocumentId}
+              onKindChange={setEvidenceKind}
+              onReasonChange={setReason}
+              onSubmit={submitEvidence}
+              reason={reason}
+            />
+          ) : dialog === 'activate' ? (
+            <ReasonForm
+              busy={busy}
+              buttonLabel="Activate Version"
+              description={
+                'Version ' +
+                selected?.draft?.versionNo +
+                ' becomes immutable after activation. Both source and approval evidence must be validated first.'
+              }
+              error={error}
+              id="qualification-activation-reason"
+              onReasonChange={setReason}
+              onSubmit={submitActivation}
+              reason={reason}
+            />
+          ) : dialog === 'correction' ? (
+            <form onSubmit={(event) => void submitCorrection(event)}>
+              <DialogBody className="grid gap-5">
+                <FormError message={error} />
+                <p className="m-0 border-l-2 border-danger bg-canvas px-3 py-2.5 text-small text-ink">
+                  Version {correctionVersion?.versionNo} remains in history as VOIDED. The corrected
+                  replacement keeps the original effectivity and evidence pins.
+                </p>
+                {requirementsForm(values, setValue, false)}
+                <Field htmlFor="qualification-correction-reason" label="Correction reason">
+                  <textarea
+                    className={inputClass}
+                    id="qualification-correction-reason"
+                    onChange={(event) => setReason(targetValue(event))}
+                    required
+                    rows={3}
+                    value={reason}
+                  />
+                </Field>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Recording…' : 'Void and Replace'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : dialog === 'create' || dialog === 'edit' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              onSubmit={(event) => void submitDraft(event)}
+            >
+              <DialogBody className="grid auto-rows-max content-start gap-6">
+                <FormError message={error} />
+                <section className="grid gap-4" aria-labelledby="qualification-matrix-record">
+                  <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
+                    <h3 className="m-0 text-panel-title text-ink" id="qualification-matrix-record">
                       Minimum qualification matrix
                     </h3>
+                    <div className="w-full max-w-[280px]">
+                      <Field htmlFor="qualification-standard-effective-date" label="Effective date">
+                        <input
+                          className={inputClass}
+                          id="qualification-standard-effective-date"
+                          onChange={(event) => setValue('effectiveDate', targetValue(event))}
+                          required
+                          type="date"
+                          value={values.effectiveDate}
+                        />
+                      </Field>
+                    </div>
                   </div>
-                  <div className="w-full max-w-[280px]">
-                    <Field htmlFor="qualification-standard-effective-date" label="Effective date">
-                      <input
-                        className={inputClass}
-                        id="qualification-standard-effective-date"
-                        onChange={(event) => setValue('effectiveDate', targetValue(event))}
-                        required
-                        type="date"
-                        value={values.effectiveDate}
-                      />
-                    </Field>
-                  </div>
-                </div>
-                {dialog === 'create' ? (
-                  <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
-                    <Field
-                      htmlFor="qualification-standard-code"
-                      label="Qualification Standard code"
-                    >
-                      <input
-                        autoFocus
-                        data-autofocus=""
-                        className={inputClass}
-                        id="qualification-standard-code"
-                        maxLength={80}
-                        onChange={(event) => setValue('code', targetValue(event))}
-                        required
-                        value={values.code}
-                      />
-                    </Field>
-                    <Field
-                      htmlFor="qualification-standard-name"
-                      label="Qualification Standard name"
-                    >
-                      <input
-                        className={inputClass}
-                        id="qualification-standard-name"
-                        maxLength={200}
-                        onChange={(event) => setValue('name', targetValue(event))}
-                        required
-                        value={values.name}
-                      />
-                    </Field>
-                  </div>
-                ) : null}
-              </section>
-              {qualificationMatrixForm(values, setValue)}
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+                  {dialog === 'create' ? (
+                    <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
+                      <Field
+                        htmlFor="qualification-standard-code"
+                        label="Qualification Standard code"
+                      >
+                        <input
+                          autoFocus
+                          data-autofocus=""
+                          className={inputClass}
+                          id="qualification-standard-code"
+                          maxLength={80}
+                          onChange={(event) => setValue('code', targetValue(event))}
+                          required
+                          value={values.code}
+                        />
+                      </Field>
+                      <Field
+                        htmlFor="qualification-standard-name"
+                        label="Qualification Standard name"
+                      >
+                        <input
+                          className={inputClass}
+                          id="qualification-standard-name"
+                          maxLength={200}
+                          onChange={(event) => setValue('name', targetValue(event))}
+                          required
+                          value={values.name}
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+                </section>
+                {qualificationMatrixForm(values, setValue)}
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Saving…' : dialog === 'create' ? 'Create Draft' : 'Save Draft'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : dialog === 'create' ? 'Create Draft' : 'Save Draft'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : (
-          <DialogBody className="grid gap-5">
-            {error ? <FormError message={error} /> : null}
-            <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm leading-[1.6] text-muted">
-              The next version copies the current published requirements and receives a later
-              effective date. It remains Draft until reviewed and activated.
-            </p>
-            <DialogFooter className="-mx-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : (
+            <>
+              <DialogBody className="grid gap-5">
+                <FormError message={error} />
+                <p className="m-0 text-body text-ink-muted">
+                  The next version copies the current published requirements and receives a later
+                  effective date. It remains Draft until reviewed and activated.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  disabled={busy}
+                  onClick={() => void submitSuccessor()}
+                  size="default"
+                  type="button"
+                  variant="primary"
+                >
+                  {busy ? 'Creating…' : 'Create Successor'}
                 </Button>
-              </DialogClose>
-              <Button
-                disabled={busy}
-                onClick={() => void submitSuccessor()}
-                size="default"
-                type="button"
-                variant="primary"
-              >
-                {busy ? 'Creating…' : 'Create Successor'}
-              </Button>
-            </DialogFooter>
-          </DialogBody>
-        )}
-      </DialogContent>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </div>
     </Dialog>
   );
 }
@@ -999,11 +973,11 @@ function NumberRequirementInput({
   values: FormValues;
 }) {
   return (
-    <div className="flex w-full max-w-[280px] overflow-hidden rounded-[3px] border border-line bg-paper focus-within:border-cobalt focus-within:ring-2 focus-within:ring-cobalt/15">
+    <div className="flex w-full max-w-[280px] overflow-hidden rounded-control border border-border bg-surface focus-within:border-primary focus-within:shadow-[inset_0_0_0_1px_var(--color-primary)]">
       <input
         aria-describedby={`${id}-unit`}
         aria-label={label}
-        className="min-h-11 min-w-0 flex-1 bg-paper px-3 text-sm text-ink outline-none"
+        className="min-h-9 min-w-0 flex-1 border-0 bg-surface px-2.5 text-body text-ink outline-none"
         id={id}
         min="0"
         onChange={(event) => setValue(field, targetValue(event))}
@@ -1012,7 +986,7 @@ function NumberRequirementInput({
         value={values[field]}
       />
       <span
-        className="inline-flex min-w-[78px] items-center justify-center border-l border-line bg-canvas px-3 text-xs font-[650] text-muted"
+        className="inline-flex min-w-[78px] items-center justify-center border-l border-border bg-canvas px-3 text-caption font-[650] text-ink-muted"
         id={`${id}-unit`}
       >
         {unit}
@@ -1077,7 +1051,7 @@ function ListRequirementField({
         rows={4}
         value={listText(values[field])}
       />
-      <span className="text-xs leading-5 font-normal text-muted">One requirement per line.</span>
+      <span className="font-normal text-ink-muted">One requirement per line.</span>
     </Field>
   );
 }
@@ -1092,8 +1066,8 @@ function MatrixRow({
   label: string;
 }) {
   return (
-    <div className="grid border-b border-line last:border-b-0 min-[700px]:grid-cols-[150px_minmax(0,1fr)]">
-      <label className="bg-canvas px-4 py-4 text-xs font-[680] text-midnight" htmlFor={htmlFor}>
+    <div className="grid border-b border-border-subtle last:border-b-0 min-[700px]:grid-cols-[150px_minmax(0,1fr)]">
+      <label className="bg-canvas px-4 py-3 text-caption font-[650] text-ink" htmlFor={htmlFor}>
         {label}
       </label>
       <div className="px-4 py-3">{children}</div>
@@ -1105,12 +1079,12 @@ function qualificationMatrixForm(values: FormValues, setValue: FormValueSetter):
   return (
     <>
       <section
-        className="overflow-hidden rounded-[3px] border border-line"
+        className="overflow-hidden rounded-panel border border-border"
         aria-label="Core minimum requirements"
       >
-        <div className="hidden grid-cols-[150px_minmax(0,1fr)] bg-midnight text-[10px] font-bold tracking-[0.08em] text-paper uppercase min-[700px]:grid">
-          <span className="px-4 py-2.5">Criterion</span>
-          <span className="px-4 py-2.5">Minimum requirement</span>
+        <div className="hidden grid-cols-[150px_minmax(0,1fr)] border-b border-border bg-canvas text-caption font-[650] text-ink min-[700px]:grid">
+          <span className="px-4 py-2">Criterion</span>
+          <span className="px-4 py-2">Minimum requirement</span>
         </div>
         <MatrixRow htmlFor="qualification-education" label="Education">
           <textarea
@@ -1156,7 +1130,7 @@ function qualificationMatrixForm(values: FormValues, setValue: FormValueSetter):
         </MatrixRow>
       </section>
       <section className="grid gap-4">
-        <h3 className="m-0 text-sm font-[680] text-midnight">Additional requirements</h3>
+        <h3 className="m-0 text-panel-title text-ink">Additional requirements</h3>
         <div className="grid gap-4 min-[760px]:grid-cols-2">
           <ListRequirementField
             field="competencyRequirements"
@@ -1196,7 +1170,7 @@ function requirementsForm(
 ): ReactNode {
   return (
     <fieldset className="grid gap-4">
-      <legend className="mb-1 text-sm font-[670] text-midnight">Minimum requirements</legend>
+      <legend className="mb-1 text-panel-title text-ink">Minimum requirements</legend>
       {includeEffectiveDate ? (
         <Field htmlFor="qualification-standard-effective-date" label="Effective date">
           <input
@@ -1258,7 +1232,7 @@ function requirementsForm(
         label="Structured competency requirements (JSON array)"
       >
         <textarea
-          className={inputClass + ' font-mono text-xs'}
+          className={cn(inputClass, 'font-mono text-caption')}
           id="qualification-competencies"
           onChange={(event) => setValue('competencyRequirements', targetValue(event))}
           rows={5}
@@ -1267,7 +1241,7 @@ function requirementsForm(
       </Field>
       <Field htmlFor="qualification-licenses" label="License requirements (JSON array)">
         <textarea
-          className={inputClass + ' font-mono text-xs'}
+          className={cn(inputClass, 'font-mono text-caption')}
           id="qualification-licenses"
           onChange={(event) => setValue('licenseRequirements', targetValue(event))}
           rows={4}
@@ -1311,13 +1285,13 @@ function EvidenceForm({
   return (
     <form onSubmit={(event) => void onSubmit(event)}>
       <DialogBody className="grid gap-5">
-        {error ? <FormError message={error} /> : null}
+        <FormError message={error} />
         <fieldset className="grid gap-4">
-          <legend className="mb-1 text-sm font-[670] text-midnight">Evidence role</legend>
+          <legend className="mb-1 text-panel-title text-ink">Evidence role</legend>
           <div className="grid gap-3 min-[621px]:grid-cols-2">
             {(['SOURCE', 'APPROVAL'] as const).map((kind) => (
               <label
-                className="flex min-h-11 items-center gap-2 rounded-[3px] border border-line px-3 text-sm text-ink"
+                className="flex min-h-9 items-center gap-2 rounded-control border border-border px-3 text-body text-ink"
                 key={kind}
               >
                 <input
@@ -1388,10 +1362,8 @@ function ReasonForm({
   return (
     <form onSubmit={(event) => void onSubmit(event)}>
       <DialogBody className="grid gap-5">
-        {error ? <FormError message={error} /> : null}
-        <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm leading-[1.6] text-muted">
-          {description}
-        </p>
+        <FormError message={error} />
+        <p className="m-0 text-body text-ink-muted">{description}</p>
         <Field htmlFor={id} label="Reason">
           <textarea
             autoFocus
@@ -1420,14 +1392,14 @@ function ReasonForm({
 
 function EvidenceDetails({ label, evidence }: { label: string; evidence: Evidence | null }) {
   return (
-    <div className="grid gap-1 rounded-[3px] border border-line bg-paper px-3 py-2 text-xs">
-      <strong className="text-ink">{label}</strong>
+    <div className="grid gap-0.5 rounded-control border border-border bg-surface px-3 py-2 text-caption">
+      <strong className="font-[650] text-ink">{label}</strong>
       {evidence ? (
         <>
-          <span className="text-muted">
+          <span className="text-ink-muted">
             {evidence.documentNo ?? evidence.documentId} · version {evidence.versionNo}
           </span>
-          <span className="text-muted">
+          <span className="text-ink-muted">
             Validated{' '}
             {new Date(evidence.validatedAt).toLocaleString('en-PH', {
               dateStyle: 'medium',
@@ -1438,8 +1410,17 @@ function EvidenceDetails({ label, evidence }: { label: string; evidence: Evidenc
           <span className="break-words text-ink">{evidence.validationReason}</span>
         </>
       ) : (
-        <span className="text-muted">Not validated</span>
+        <span className="text-ink-muted">Not validated</span>
       )}
+    </div>
+  );
+}
+
+function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-caption text-ink-muted">{label}</dt>
+      <dd className="m-0 text-body text-ink">{children}</dd>
     </div>
   );
 }
@@ -1454,164 +1435,133 @@ function DetailBody({
   error: string;
 }) {
   return (
-    <DialogBody>
-      {detailLoading ? <p className="m-0 text-sm text-muted">Loading standard history…</p> : null}
-      {error ? <FormError message={error} /> : null}
-      {detail ? (
-        <div className="grid gap-7">
-          <dl className="grid gap-4 text-sm min-[621px]:grid-cols-2">
-            <div>
-              <dt className="text-xs text-muted">Code</dt>
-              <dd className="m-0 font-[650] text-ink">{detail.standard.code}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted">Name</dt>
-              <dd className="m-0 text-ink">{detail.standard.name}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted">Stable status</dt>
-              <dd className="m-0 text-ink">{detail.standard.status}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted">Effective on {dateLabel(detail.asOf)}</dt>
-              <dd className="m-0 text-ink">
+    <>
+      <DialogBody className="grid gap-5">
+        {detailLoading ? (
+          <StateSurface compact busy label="Qualification Standard history">
+            <p className="m-0">Loading standard history…</p>
+          </StateSurface>
+        ) : null}
+        <FormError message={error} />
+        {detail ? (
+          <>
+            <dl className="m-0 grid gap-4 min-[621px]:grid-cols-2">
+              <Fact label="Code">
+                <span className="font-[600]">{detail.standard.code}</span>
+              </Fact>
+              <Fact label="Name">{detail.standard.name}</Fact>
+              <Fact label="Stable status">
+                <Status status={detail.standard.status} />
+              </Fact>
+              <Fact label={'Effective on ' + dateLabel(detail.asOf)}>
                 {detail.effective
                   ? 'Version ' + detail.effective.versionNo
                   : 'No effective version'}
-              </dd>
-            </div>
-          </dl>
-          <section
-            className="grid gap-3"
-            aria-labelledby="qualification-standard-version-history-title"
-          >
-            <h3
-              className="m-0 text-sm font-[670] text-midnight"
-              id="qualification-standard-version-history-title"
-            >
-              Version history
-            </h3>
-            <div className="grid gap-3">
-              {detail.versions.map((version) => (
-                <article
-                  className="grid gap-2 rounded-[3px] border border-line bg-canvas px-4 py-3 text-sm"
-                  key={version.id}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-ink">Version {version.versionNo}</strong>
-                    <div className="flex flex-wrap gap-2">
-                      <span
-                        className={
-                          'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ' +
-                          statusClass(version.versionState)
-                        }
-                      >
-                        {version.versionState}
-                      </span>
-                      <span
-                        className={
-                          'rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ' +
-                          statusClass(version.lifecycleStatus)
-                        }
-                      >
-                        {version.lifecycleStatus}
-                      </span>
+              </Fact>
+            </dl>
+            <Panel title="Version history">
+              <div className="grid gap-4">
+                {detail.versions.map((version) => (
+                  <article
+                    className="grid gap-3 border-b border-border-subtle pb-4 last:border-b-0 last:pb-0"
+                    key={version.id}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="grid gap-0.5">
+                        <strong className="text-body font-[650] text-ink">
+                          Version {version.versionNo}
+                        </strong>
+                        <span className="text-caption text-ink-muted">
+                          {dateLabel(version.effectiveFrom)}
+                          {version.effectiveTo
+                            ? ' – ' + dateLabel(version.effectiveTo)
+                            : ' – open-ended'}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Status status={version.versionState} />
+                        <Status status={version.lifecycleStatus} />
+                      </div>
                     </div>
-                  </div>
-                  <span className="text-xs text-muted">
-                    {dateLabel(version.effectiveFrom)}
-                    {version.effectiveTo ? ' – ' + dateLabel(version.effectiveTo) : ' – open-ended'}
-                  </span>
-                  <dl className="grid gap-2 text-xs text-muted min-[621px]:grid-cols-2">
-                    <div>
-                      <dt>Education</dt>
-                      <dd className="m-0 text-ink">
+                    <dl className="m-0 grid gap-3 min-[621px]:grid-cols-2">
+                      <Fact label="Education">
                         {version.educationRequirement || 'Not specified'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Eligibility</dt>
-                      <dd className="m-0 text-ink">
+                      </Fact>
+                      <Fact label="Eligibility">
                         {version.eligibilityRequirement || 'Not specified'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Training hours</dt>
-                      <dd className="m-0 text-ink">
+                      </Fact>
+                      <Fact label="Training hours">
                         {version.trainingHoursRequired ?? 'Not specified'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Experience months</dt>
-                      <dd className="m-0 text-ink">
+                      </Fact>
+                      <Fact label="Experience months">
                         {version.experienceMonthsRequired ?? 'Not specified'}
-                      </dd>
+                      </Fact>
+                      <Fact label="Competencies">
+                        <span className="font-mono text-caption break-words">
+                          {JSON.stringify(version.competencyRequirements)}
+                        </span>
+                      </Fact>
+                      <Fact label="Licenses">
+                        <span className="font-mono text-caption break-words">
+                          {JSON.stringify(version.licenseRequirements)}
+                        </span>
+                      </Fact>
+                      <div className="min-[621px]:col-span-2">
+                        <Fact label="Special requirements">
+                          {version.specialRequirements || 'Not specified'}
+                        </Fact>
+                      </div>
+                    </dl>
+                    <div className="grid gap-2 min-[621px]:grid-cols-2">
+                      <EvidenceDetails
+                        label="Source External Evidence"
+                        evidence={version.sourceEvidence}
+                      />
+                      <EvidenceDetails
+                        label="Approval External Evidence"
+                        evidence={version.approvalEvidence}
+                      />
                     </div>
-                    <div>
-                      <dt>Competencies</dt>
-                      <dd className="m-0 break-words font-mono text-[11px] text-ink">
-                        {JSON.stringify(version.competencyRequirements)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Licenses</dt>
-                      <dd className="m-0 break-words font-mono text-[11px] text-ink">
-                        {JSON.stringify(version.licenseRequirements)}
-                      </dd>
-                    </div>
-                    <div className="min-[621px]:col-span-2">
-                      <dt>Special requirements</dt>
-                      <dd className="m-0 text-ink">
-                        {version.specialRequirements || 'Not specified'}
-                      </dd>
-                    </div>
-                  </dl>
-                  <div className="grid gap-2 min-[621px]:grid-cols-2">
-                    <EvidenceDetails
-                      label="Source External Evidence"
-                      evidence={version.sourceEvidence}
-                    />
-                    <EvidenceDetails
-                      label="Approval External Evidence"
-                      evidence={version.approvalEvidence}
-                    />
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-          <section
-            className="grid gap-3"
-            aria-labelledby="qualification-standard-audit-history-title"
-          >
-            <h3
-              className="m-0 text-sm font-[670] text-midnight"
-              id="qualification-standard-audit-history-title"
-            >
-              Transition history
-            </h3>
-            {detail.history.length ? (
-              <ol className="m-0 grid gap-2 pl-5 text-xs text-muted">
-                {detail.history.map((entry) => (
-                  <li key={entry.id}>
-                    {entry.action} · {entry.reason ?? 'No reason recorded'} ·{' '}
-                    {dateLabel(entry.occurredAt)}
-                  </li>
+                  </article>
                 ))}
-              </ol>
-            ) : (
-              <p className="m-0 text-xs text-muted">No transitions recorded.</p>
-            )}
-          </section>
-        </div>
-      ) : null}
-      <DialogFooter className="-mx-6 mt-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
+              </div>
+            </Panel>
+            <Panel title="Transition history" flush>
+              {detail.history.length ? (
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Action</Th>
+                      <Th>Reason</Th>
+                      <Th kind="date">Recorded</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.history.map((entry) => (
+                      <Tr key={entry.id}>
+                        <Td>{entry.action}</Td>
+                        <Td>{entry.reason ?? 'No reason recorded'}</Td>
+                        <Td kind="date">{dateLabel(entry.occurredAt)}</Td>
+                      </Tr>
+                    ))}
+                  </tbody>
+                </Table>
+              ) : (
+                <StateSurface compact label="Transition history">
+                  <p className="m-0">No transitions recorded.</p>
+                </StateSurface>
+              )}
+            </Panel>
+          </>
+        ) : null}
+      </DialogBody>
+      <DialogFooter>
         <DialogClose asChild>
           <Button size="default" type="button" variant="secondary">
             Close
           </Button>
         </DialogClose>
       </DialogFooter>
-    </DialogBody>
+    </>
   );
 }
