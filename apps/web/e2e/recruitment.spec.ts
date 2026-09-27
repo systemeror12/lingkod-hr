@@ -61,7 +61,7 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   await page.getByRole('button', { name: 'Approve request' }).click();
   await expectStatus(page, 'APPROVED');
 
-  await page.getByRole('button', { name: 'Vacancy Publications' }).click();
+  await page.getByRole('link', { name: 'Vacancy Publications', exact: true }).click();
   await page.getByRole('button', { name: 'New publication' }).click();
   await page.getByLabel('Exact CS Form No. 9 Document Version').selectOption({ index: 1 });
   await page.getByLabel('HR contact name').fill('Marisol Santos');
@@ -102,7 +102,7 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   await expectStatus(page, 'PUBLISHED');
   await expect(page.getByText(/Republication of/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByRole('link', { name: 'Applications', exact: true }).click();
   await page.getByRole('button', { name: 'New application' }).click();
   await page.getByLabel('First name').fill('Ana');
   await page.getByLabel('Last name').fill('Reyes');
@@ -254,7 +254,7 @@ test('drives HRMPSB deliberation, the advisory report, and the Selection Decisio
   await expect(page.getByRole('heading', { name: 'Recruitment' })).toBeVisible();
 
   // The seeded publication period has elapsed and screening is complete.
-  await page.getByRole('button', { name: 'HRMPSB Sessions' }).click();
+  await page.getByRole('link', { name: 'HRMPSB Sessions', exact: true }).click();
   await page.getByRole('button', { name: 'Convene HRMPSB Session' }).click();
   await selectOptionByText(page, 'Published vacancy', 'HRM-000144');
   await page.getByRole('button', { name: 'Convene Session' }).click();
@@ -281,7 +281,7 @@ test('drives HRMPSB deliberation, the advisory report, and the Selection Decisio
   // The appointing authority records the separate Selection Decision.
   await page.getByRole('button', { name: 'Tree' }).click();
   await expect(page.getByRole('heading', { name: 'HRMPSB Sessions' })).toBeVisible();
-  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByRole('link', { name: 'Applications', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
   await page
     .getByRole('button', { name: /APP-\d+/ })
@@ -299,7 +299,7 @@ test('drives HRMPSB deliberation, the advisory report, and the Selection Decisio
 
   await page.getByRole('button', { name: 'Tree' }).click();
   await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
-  await page.getByRole('button', { name: 'Selection Decisions' }).click();
+  await page.getByRole('link', { name: 'Selection Decisions', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Selection Decisions' })).toBeVisible();
   await page
     .getByRole('button', { name: /APP-\d+/ })
