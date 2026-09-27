@@ -139,6 +139,7 @@ export function SalnComplianceSection({
   const [selected, setSelected] = useState<SalnRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(canRead);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
@@ -148,8 +149,10 @@ export function SalnComplianceSection({
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(errorMessage(body));
       setItems(parseRecords(body));
+      setLoadFailed(false);
       setError(null);
     } catch (caught: unknown) {
+      setLoadFailed(true);
       setError(
         caught instanceof Error ? caught.message : 'SALN compliance records could not be loaded.',
       );
@@ -331,7 +334,11 @@ export function SalnComplianceSection({
         </StateSurface>
       ) : items.length === 0 ? (
         <StateSurface compact>
-          <p className="m-0">No SALN compliance metadata is recorded.</p>
+          <p className="m-0">
+            {loadFailed
+              ? 'SALN compliance metadata is unavailable.'
+              : 'No SALN compliance metadata is recorded.'}
+          </p>
         </StateSurface>
       ) : (
         <Table className="mt-3">
