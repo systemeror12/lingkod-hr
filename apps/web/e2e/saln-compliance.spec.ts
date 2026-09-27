@@ -84,3 +84,23 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await page.keyboard.press('Tab');
   await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeFocused();
 });
+
+test('My SALN Compliance reports a failed load without claiming an empty record', async ({
+  page,
+}) => {
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
+  await page.route('**/api/v1/agencies/*/employees/me/saln-compliance', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: 'SALN compliance is temporarily unavailable.' } }),
+    }),
+  );
+  await page.goto('/my-saln');
+  await expect(page.getByRole('heading', { level: 1, name: 'My SALN Compliance' })).toBeVisible();
+  const panel = page.getByRole('region', { name: 'SALN filing compliance' });
+  await expect(panel.getByRole('alert')).toHaveText('SALN compliance is temporarily unavailable.');
+  await expect(panel.getByText('SALN compliance metadata is unavailable.')).toBeVisible();
+  await expect(panel.getByText('No SALN compliance metadata is recorded.')).toHaveCount(0);
+});
