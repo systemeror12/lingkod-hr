@@ -40,21 +40,6 @@ export function EmployeeStatus({ linked }: { linked: boolean }) {
   );
 }
 
-export function EmployeeInitials({ name, large = false }: { name: string; large?: boolean }) {
-  return (
-    <span
-      className={`grid shrink-0 place-items-center rounded-full bg-pale-blue font-[720] text-cobalt ${large ? 'size-16 text-xl' : 'size-9 text-xs'}`}
-    >
-      {name
-        .split(' ')
-        .filter((part) => part.length > 1)
-        .slice(0, 2)
-        .map((part) => part[0])
-        .join('')}
-    </span>
-  );
-}
-
 export function EmployeePageTitle({
   eyebrow,
   title,
