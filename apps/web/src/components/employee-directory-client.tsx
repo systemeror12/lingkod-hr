@@ -406,6 +406,7 @@ export function EmployeeDetailView({
     <SectionTabs
       value={selected}
       onValueChange={(value) => setSection(value as EmployeeRecordSection)}
+      className="grid gap-5"
     >
       <PageHeader
         breadcrumbs={[

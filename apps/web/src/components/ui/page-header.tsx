@@ -6,8 +6,9 @@ export type Breadcrumb = { label: string; href?: string };
 /**
  * White band at the top of a screen. Give it a `title` for a register or queue, or pass a
  * `RecordHeader` as `children` for a record page. `actions` sit beside the title; record pages
- * pass theirs to `RecordHeader`. `tabs` takes a `SectionTabList`. Place it first in the page:
- * it cancels the shell's main padding so the band spans the full width.
+ * pass theirs to `RecordHeader`. `tabs` takes a `SectionTabList`. Place it first in the page: it
+ * cancels the shell's `main` padding (`--workspace-gutter` and `py-6`) so the band spans the
+ * workspace edge to edge.
  */
 export function PageHeader({
   breadcrumbs,
@@ -24,7 +25,7 @@ export function PageHeader({
   children?: ReactNode;
 }) {
   return (
-    <header className="-mx-4 -mt-6 mb-6 border-b border-border bg-surface px-4 pt-5 min-[621px]:-mx-6 min-[621px]:px-6 min-[980px]:-mx-8 min-[980px]:px-8">
+    <header className="-mx-(--workspace-gutter) -mt-6 border-b border-border bg-surface px-(--workspace-gutter) pt-5">
       <nav aria-label="Breadcrumb">
         <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0 text-caption text-ink-muted">
           {breadcrumbs.map((crumb, index) => (

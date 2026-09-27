@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { PageHeader } from '../../../components/ui/page-header';
+import { Panel } from '../../../components/ui/panel';
 import { authorizedDestinations } from '../../../lib/navigation';
 import { getActiveSession } from '../../../lib/session';
 
@@ -10,74 +12,44 @@ export default async function DashboardPage() {
   const availableWork = authorizedDestinations(session).filter(({ href }) => href !== '/dashboard');
   const roleNames =
     session.effectiveRoles.map(({ name }) => name).join(', ') || 'No effective role';
+  const context = [
+    { label: 'Agency', value: session.agency.name },
+    ...(session.agency.acronym ? [{ label: 'Acronym', value: session.agency.acronym }] : []),
+    { label: 'Signed in as', value: session.identity.displayName },
+    { label: 'Effective roles', value: roleNames },
+  ];
 
   return (
-    <div className="grid gap-[30px]">
-      <header className="grid max-w-[720px] gap-2">
-        <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-          Dashboard
-        </p>
-        <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-          Work queue
-        </h1>
-        <p className="mt-0.5 mb-0 text-sm leading-[1.65] text-muted">
-          Review the work available in your active Agency Context.
-        </p>
-      </header>
+    <div className="grid gap-5">
+      <PageHeader breadcrumbs={[{ label: 'Dashboard' }]} title="Work queue" />
 
-      <section
-        className="grid grid-cols-1 rounded-[5px] border border-line bg-paper min-[761px]:grid-cols-[minmax(0,1.5fr)_minmax(180px,0.75fr)]"
-        aria-label="Signed-in context"
-      >
-        <div className="grid gap-[15px] border-b border-line p-6 min-[761px]:border-r min-[761px]:border-b-0">
-          <p className="m-0 text-[10px] font-bold tracking-[0.08em] text-muted uppercase">Agency</p>
-          <strong className="text-lg font-[660] text-midnight">{session.agency.name}</strong>
-          <span className="text-[13px] text-muted">
-            {session.agency.acronym ?? 'Active Agency Context'}
-          </span>
-        </div>
-        <div className="grid content-center gap-1.5 bg-[#fafbfd] p-6">
-          <p className="m-0 text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-            Signed in as
-          </p>
-          <strong className="text-[13px] font-[650]">{session.identity.displayName}</strong>
-          <span className="text-[13px] text-muted">{roleNames}</span>
-        </div>
-      </section>
+      <Panel title="Signed-in context">
+        <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+          {context.map(({ label, value }) => (
+            <div key={label}>
+              <dt className="text-caption text-ink-muted">{label}</dt>
+              <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </Panel>
 
-      <div className="grid grid-cols-1 gap-[18px] min-[761px]:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.75fr)]">
-        <section
-          className="min-h-[250px] rounded-[5px] border border-line bg-paper"
-          aria-labelledby="queue-heading"
-        >
-          <header className="flex min-h-[54px] items-center justify-between border-b border-line px-5">
-            <h2 className="m-0 text-sm font-[670] text-midnight" id="queue-heading">
-              Current work
-            </h2>
-            <span className="text-[11px] text-muted">Today</span>
-          </header>
-          <div className="grid min-h-[195px] place-content-center justify-items-start gap-[7px] p-7">
-            <strong className="text-[15px] font-[650] text-midnight">No work is waiting.</strong>
-            <p className="m-0 max-w-[410px] text-[13px] leading-[1.6] text-muted">
+      <div className="grid grid-cols-1 items-start gap-5 min-[761px]:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.75fr)]">
+        <Panel title="Current work">
+          <div className="grid gap-1.5 py-8">
+            <strong className="text-body font-[600] text-ink">No work is waiting.</strong>
+            <p className="m-0 max-w-[410px] text-body text-ink-muted">
               New authorized tasks will appear here as they enter your Agency work queue.
             </p>
           </div>
-        </section>
+        </Panel>
 
-        <section
-          className="min-h-[250px] rounded-[5px] border border-line bg-paper"
-          aria-labelledby="destinations-heading"
-        >
-          <header className="flex min-h-[54px] items-center justify-between border-b border-line px-5">
-            <h2 className="m-0 text-sm font-[670] text-midnight" id="destinations-heading">
-              Available destinations
-            </h2>
-          </header>
-          <ul className="m-0 grid list-none py-1">
+        <Panel title="Available destinations" flush>
+          <ul className="m-0 grid list-none p-0">
             {availableWork.map((destination) => (
-              <li className="border-t border-line first:border-t-0" key={destination.href}>
+              <li className="border-t border-border-subtle first:border-t-0" key={destination.href}>
                 <Link
-                  className="flex min-h-[58px] items-center justify-between gap-4 px-5 text-[13px] font-[610] text-ink no-underline after:text-cobalt after:content-['→'] hover:bg-pale-blue"
+                  className="flex min-h-11 items-center justify-between gap-4 px-4 text-small font-[600] text-ink no-underline after:text-primary after:content-['→'] hover:bg-canvas"
                   href={destination.href}
                 >
                   {destination.label}
@@ -85,7 +57,7 @@ export default async function DashboardPage() {
               </li>
             ))}
           </ul>
-        </section>
+        </Panel>
       </div>
     </div>
   );
