@@ -470,6 +470,7 @@ test('gates the representative protected personnel journey', async ({
 
       await page.setViewportSize({ width: 1280, height: 720 });
       await page.goto(`/employees/${employeeId}`);
+      await page.getByRole('tab', { name: 'Government identifiers' }).click();
       await expect(page.getByText(protectedValue, { exact: true })).toHaveCount(0);
       await expect(page.getByText(created.maskedValue, { exact: true })).toBeVisible();
       const trigger = page.getByRole('button', { name: 'Reveal value' });
