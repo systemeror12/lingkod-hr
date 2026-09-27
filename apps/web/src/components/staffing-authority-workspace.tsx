@@ -2,7 +2,7 @@
 
 import { Field, inputClass, FormError } from './ui/field';
 
-import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { useRecordNavigation } from './record-navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Dialog,
@@ -16,6 +16,11 @@ import {
   DialogTrigger,
 } from './ui/dialog';
 import { Button } from './ui/button';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, TableFooter, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 import { manilaToday } from '../lib/manila-date';
 
 type AuthorityType = 'LAW' | 'EXECUTIVE_ORDER' | 'DBM_APPROVAL' | 'BOARD_RESOLUTION' | 'OTHER';
@@ -123,11 +128,14 @@ function errorMessage(value: unknown, fallback: string): string {
   return typeof error?.message === 'string' ? error.message : fallback;
 }
 
-function statusClass(status: AuthorityStatus): string {
-  if (status === 'ACTIVE') return 'bg-[#e8f3ed] text-[#316647]';
-  if (status === 'REVOKED' || status === 'SUPERSEDED') return 'bg-[#f0f2f5] text-muted';
-  return 'bg-[#fff3d6] text-[#79531c]';
-}
+const statusTone: Record<AuthorityStatus, StatusTone> = {
+  DRAFT: 'warning',
+  ACTIVE: 'success',
+  SUPERSEDED: 'neutral',
+  REVOKED: 'neutral',
+};
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
 
 function authorityPayload(values: DraftValues): Record<string, unknown> {
   const sourceMetadata = Object.fromEntries(
@@ -440,10 +448,13 @@ export function StaffingAuthorityWorkspace({
   }
 
   function recordActions(authority: StaffingAuthority) {
+    function open(kind: DialogKind) {
+      return (event: { currentTarget: EventTarget }) =>
+        openDialog(kind, authority, event.currentTarget as unknown as { focus(): void });
+    }
     return (
       <div className="flex flex-wrap justify-end gap-2">
         <Button
-          size="default"
           type="button"
           variant="secondary"
           onClick={(event) =>
@@ -454,66 +465,37 @@ export function StaffingAuthorityWorkspace({
         </Button>
         {authority.status === 'DRAFT' && canUpdate ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) => {
               setDraft(draftValues(authority));
-              openDialog('edit', authority, event.currentTarget as unknown as { focus(): void });
+              open('edit')(event);
             }}
           >
             Edit Draft
           </Button>
         ) : null}
         {authority.status === 'DRAFT' && canValidateEvidence ? (
-          <Button
-            size="default"
-            type="button"
-            variant="secondary"
-            onClick={(event) =>
-              openDialog('evidence', authority, event.currentTarget as unknown as { focus(): void })
-            }
-          >
+          <Button type="button" variant="secondary" onClick={open('evidence')}>
             Validate Evidence
           </Button>
         ) : null}
         {authority.status === 'DRAFT' && canActivate ? (
-          <Button
-            className="min-h-9 px-3 text-xs"
-            size="default"
-            type="button"
-            variant="primary"
-            onClick={(event) =>
-              openDialog('activate', authority, event.currentTarget as unknown as { focus(): void })
-            }
-          >
+          <Button type="button" variant="primary" onClick={open('activate')}>
             Activate
           </Button>
         ) : null}
         {authority.status === 'ACTIVE' && canSupersede ? (
-          <Button
-            size="default"
-            type="button"
-            variant="secondary"
-            onClick={(event) =>
-              openDialog(
-                'supersede',
-                authority,
-                event.currentTarget as unknown as { focus(): void },
-              )
-            }
-          >
+          <Button type="button" variant="secondary" onClick={open('supersede')}>
             Supersede
           </Button>
         ) : null}
         {authority.status === 'ACTIVE' && canRevoke ? (
           <Button
-            className="border border-[#d9a5a5] bg-paper px-3 py-2 text-xs font-[650] text-[#9a3030] hover:bg-[#fff4f4]"
-            size="default"
+            className="border-danger text-danger hover:bg-danger/5"
             type="button"
-            onClick={(event) =>
-              openDialog('revoke', authority, event.currentTarget as unknown as { focus(): void })
-            }
+            variant="secondary"
+            onClick={open('revoke')}
           >
             Revoke
           </Button>
@@ -523,570 +505,525 @@ export function StaffingAuthorityWorkspace({
   }
 
   const selectedTitle = selected?.referenceNo || 'Staffing Authority';
+  const inline = dialog === 'detail' || dialog === 'create' || dialog === 'edit';
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Structure' }];
+  // Create and Edit leave the URL alone, so only the detail view can link back to the register.
+  if (dialog === 'detail') {
+    breadcrumbs.push(
+      { label: 'Staffing Authorities', href: navigation.href({ record: null, view: null }) },
+      { label: selectedTitle },
+    );
+  } else if (dialog === 'create' || dialog === 'edit') {
+    breadcrumbs.push(
+      { label: 'Staffing Authorities' },
+      { label: dialog === 'create' ? 'Register' : `Edit ${selectedTitle}` },
+    );
+  }
 
+  // The Dialog root renders no markup. The page header stays mounted so its Register trigger can
+  // take focus back when the inline form closes.
   return (
     <Dialog
-      presentation={
-        dialog === 'detail' || dialog === 'create' || dialog === 'edit' ? 'form' : 'dialog'
-      }
+      presentation={inline ? 'form' : 'dialog'}
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div
-        hidden={dialog === 'detail' || dialog === 'create' || dialog === 'edit'}
-        className="min-w-0 space-y-5"
-      >
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[720px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Authority register
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Staffing Authorities
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
+      <div className="grid gap-5">
+        <PageHeader
+          breadcrumbs={breadcrumbs}
+          title="Staffing Authorities"
+          actions={
+            canCreate ? (
+              <DialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={(event) => {
+                    setDraft(emptyDraft());
+                    returnFocusRef.current = event.currentTarget as unknown as { focus(): void };
+                    resetAction();
+                    setDialog('create');
+                  }}
+                >
+                  Register Staffing Authority
+                </Button>
+              </DialogTrigger>
+            ) : null
+          }
+        />
+
+        <Panel title="Agency register" flush hidden={inline}>
+          <div className="grid gap-3 px-4 pt-3">
+            <p className="m-0 text-small text-ink-muted">
               Record the evidence-backed authorities that can support Organization and Plantilla
               actions. Drafts never authorize an action.
             </p>
+            {success ? (
+              <p role="status" className="m-0 text-small text-success">
+                {success}
+              </p>
+            ) : null}
           </div>
-          {canCreate ? (
-            <DialogTrigger asChild>
-              <Button
-                size="default"
-                type="button"
-                variant="primary"
-                onClick={(event) => {
-                  setDraft(emptyDraft());
-                  returnFocusRef.current = event.currentTarget as unknown as { focus(): void };
-                  resetAction();
-                  setDialog('create');
-                }}
-              >
-                Register Staffing Authority
-              </Button>
-            </DialogTrigger>
-          ) : null}
-        </header>
-
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
-          </p>
-        ) : null}
-
-        <section
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          aria-labelledby="staffing-authority-register-heading"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2
-                className="m-0 text-sm font-[670] text-midnight"
-                id="staffing-authority-register-heading"
-              >
-                Agency register
-              </h2>
-              <span className="text-xs text-muted">
-                {authorities.length === 1 ? '1 authority' : `${authorities.length} authorities`}
-              </span>
-            </div>
-            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-              Agency scoped · Evidence required
-            </span>
-          </header>
-
           {authorities.length === 0 ? (
-            <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12">
-              <strong className="text-[15px] font-[650] text-midnight">
+            <StateSurface compact>
+              <strong className="text-body font-[650] text-ink">
                 No Staffing Authorities yet.
               </strong>
-              <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
+              <p className="m-0 max-w-[520px]">
                 Register a Draft with its official reference and source metadata, then link and
                 validate External Evidence before activation.
               </p>
-            </div>
+            </StateSurface>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+            <>
+              <Table className="mt-3 min-w-[760px]">
+                <thead>
                   <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Authority
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Effectivity
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Evidence
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
+                    <Th>Authority</Th>
+                    <Th kind="date">Effectivity</Th>
+                    <Th>Evidence</Th>
+                    <Th>Status</Th>
+                    <Th>
                       <span className="sr-only">Actions</span>
-                    </th>
+                    </Th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody>
                   {authorities.map((authority) => (
-                    <tr key={authority.id}>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <button
-                            className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
-                            type="button"
-                            onClick={(event) =>
-                              void openDetail(
-                                authority,
-                                event.currentTarget as unknown as { focus(): void },
-                              )
-                            }
-                          >
-                            {authority.referenceNo}
-                          </button>
-                          <span className="text-xs text-muted">
-                            {typeLabel(authority.authorityType)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        {dateLabel(authority.effectiveDate)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
+                    <Tr key={authority.id}>
+                      <Td>
+                        <button
+                          className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
+                          type="button"
+                          onClick={(event) =>
+                            void openDetail(
+                              authority,
+                              event.currentTarget as unknown as { focus(): void },
+                            )
+                          }
+                        >
+                          {authority.referenceNo}
+                        </button>
+                        <span className="block text-caption text-ink-muted">
+                          {typeLabel(authority.authorityType)}
+                        </span>
+                      </Td>
+                      <Td kind="date">{dateLabel(authority.effectiveDate)}</Td>
+                      <Td className="text-ink-muted">
                         {authority.evidence
                           ? `Validated · ${authority.evidence.documentNo ?? authority.evidence.documentId}`
                           : 'Not linked'}
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ${statusClass(authority.status)}`}
-                        >
+                      </Td>
+                      <Td>
+                        <StatusTag tone={statusTone[authority.status]}>
                           {authority.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 align-top">{recordActions(authority)}</td>
-                    </tr>
+                        </StatusTag>
+                      </Td>
+                      <Td>{recordActions(authority)}</Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
+              </Table>
+              <TableFooter shown={authorities.length} total={authorities.length} />
+            </>
           )}
-        </section>
-      </div>
+        </Panel>
 
-      {dialog === 'detail' ? (
-        <div className="mb-4">
-          <RecordReturn href={navigation.href({ record: null, view: null })}>
-            ← Staffing Authorities
-          </RecordReturn>
-        </div>
-      ) : null}
-      <DialogContent aria-describedby="staffing-authority-dialog-description">
-        <DialogHeader>
-          <div className="grid min-w-0 gap-1.5">
-            <p className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase">
-              Staffing Authority register
-            </p>
-            <DialogTitle>
-              {dialog === 'create'
-                ? 'Register Staffing Authority'
-                : dialog === 'edit'
-                  ? 'Edit Draft Staffing Authority'
+        <DialogContent aria-describedby="staffing-authority-dialog-description">
+          <DialogHeader>
+            <div className="grid min-w-0 gap-1.5">
+              <DialogTitle>
+                {dialog === 'create'
+                  ? 'Register Staffing Authority'
+                  : dialog === 'edit'
+                    ? 'Edit Draft Staffing Authority'
+                    : dialog === 'evidence'
+                      ? `Validate Evidence · ${selectedTitle}`
+                      : dialog === 'activate'
+                        ? `Activate ${selectedTitle}`
+                        : dialog === 'supersede'
+                          ? `Supersede ${selectedTitle}`
+                          : dialog === 'revoke'
+                            ? `Revoke ${selectedTitle}`
+                            : `Staffing Authority · ${selectedTitle}`}
+              </DialogTitle>
+              <DialogDescription id="staffing-authority-dialog-description">
+                {dialog === 'create' || dialog === 'edit'
+                  ? 'Record official metadata first. The record remains Draft until External Evidence is linked and validated.'
                   : dialog === 'evidence'
-                    ? `Validate Evidence · ${selectedTitle}`
+                    ? 'Review the same-Agency External Evidence and record why it supports this authority.'
                     : dialog === 'activate'
-                      ? `Activate ${selectedTitle}`
+                      ? 'Activation is available only after validated External Evidence is present.'
                       : dialog === 'supersede'
-                        ? `Supersede ${selectedTitle}`
+                        ? 'Use a validated Draft successor to close this authority prospectively.'
                         : dialog === 'revoke'
-                          ? `Revoke ${selectedTitle}`
-                          : `Staffing Authority · ${selectedTitle}`}
-            </DialogTitle>
-            <DialogDescription id="staffing-authority-dialog-description">
-              {dialog === 'create' || dialog === 'edit'
-                ? 'Record official metadata first. The record remains Draft until External Evidence is linked and validated.'
-                : dialog === 'evidence'
-                  ? 'Review the same-Agency External Evidence and record why it supports this authority.'
-                  : dialog === 'activate'
-                    ? 'Activation is available only after validated External Evidence is present.'
-                    : dialog === 'supersede'
-                      ? 'Use a validated Draft successor to close this authority prospectively.'
-                      : dialog === 'revoke'
-                        ? 'Record the effective revocation and its supporting evidence. Existing position history is not rewritten.'
-                        : 'Inspect the authority, its evidence, and its immutable transition history.'}
-            </DialogDescription>
-          </div>
-          <DialogClose asChild>
-            <Button
-              aria-label="Close Staffing Authority dialog"
-              className="border border-line bg-paper text-muted hover:bg-canvas"
-              disabled={busy}
-              type="button"
-            >
-              <span aria-hidden="true" className="text-xl leading-none">
-                ×
-              </span>
-            </Button>
-          </DialogClose>
-        </DialogHeader>
+                          ? 'Record the effective revocation and its supporting evidence. Existing position history is not rewritten.'
+                          : 'Inspect the authority, its evidence, and its immutable transition history.'}
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button aria-label="Close Staffing Authority dialog" disabled={busy} type="button">
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
+              </Button>
+            </DialogClose>
+          </DialogHeader>
 
-        {dialog === 'detail' ? (
-          <DialogBody>
-            {selected ? recordActions(selected) : null}
-            {detailLoading ? (
-              <p className="m-0 text-sm text-muted">Loading authority history…</p>
-            ) : null}
-            {error ? <FormError message={error} /> : null}
-            {detail ? (
-              <div className="grid gap-7">
-                <dl className="grid gap-4 text-sm min-[621px]:grid-cols-2">
-                  <div>
-                    <dt className="text-xs text-muted">Official reference</dt>
-                    <dd className="m-0 font-[650] text-ink">{detail.authority.referenceNo}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted">Authority type</dt>
-                    <dd className="m-0 text-ink">{typeLabel(detail.authority.authorityType)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted">Issue date</dt>
-                    <dd className="m-0 text-ink">{dateLabel(detail.authority.issuedDate)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted">Effective date</dt>
-                    <dd className="m-0 text-ink">{dateLabel(detail.authority.effectiveDate)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted">Status</dt>
-                    <dd className="m-0 text-ink">{detail.authority.status}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted">Revocation effectivity</dt>
-                    <dd className="m-0 text-ink">
-                      {detail.authority.revokedEffectiveDate
-                        ? dateLabel(detail.authority.revokedEffectiveDate)
-                        : '—'}
-                    </dd>
-                  </div>
-                </dl>
-                <section className="grid gap-2" aria-labelledby="authority-source-metadata-title">
-                  <h3
-                    className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase"
-                    id="authority-source-metadata-title"
-                  >
-                    Source metadata
-                  </h3>
-                  <pre className="m-0 overflow-auto rounded-[3px] border border-line bg-canvas p-3 font-mono text-xs leading-[1.6] whitespace-pre-wrap text-ink">
-                    {JSON.stringify(detail.authority.sourceMetadata, null, 2)}
-                  </pre>
-                </section>
-                <section className="grid gap-2" aria-labelledby="authority-evidence-title">
-                  <h3
-                    className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase"
-                    id="authority-evidence-title"
-                  >
-                    External Evidence
-                  </h3>
-                  <div className="rounded-[3px] border border-line bg-canvas px-3 py-3 text-sm text-ink">
-                    {detail.authority.evidence ? (
-                      <>
-                        {detail.authority.evidence.documentNo ??
-                          detail.authority.evidence.documentId}{' '}
-                        · {detail.authority.evidence.status} · validated{' '}
-                        {dateLabel(detail.authority.evidence.validatedAt)}
-                      </>
-                    ) : (
-                      'No validated External Evidence linked.'
-                    )}
-                  </div>
-                  {detail.authority.revocationEvidence ? (
-                    <div className="rounded-[3px] border border-line bg-canvas px-3 py-3 text-sm text-ink">
-                      Revocation evidence:{' '}
-                      {detail.authority.revocationEvidence.documentNo ??
-                        detail.authority.revocationEvidence.documentId}{' '}
-                      · {detail.authority.revocationEvidence.status}
-                    </div>
-                  ) : null}
-                </section>
-                <section className="grid gap-2" aria-labelledby="authority-history-title">
-                  <h3
-                    className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase"
-                    id="authority-history-title"
-                  >
-                    History
-                  </h3>
-                  {detail.history.length ? (
-                    <ol className="m-0 grid list-none gap-3 p-0">
-                      {detail.history.map((event) => (
-                        <li
-                          className="rounded-[3px] border border-line bg-canvas px-3 py-3 text-xs leading-[1.6] text-ink"
-                          key={event.id}
-                        >
-                          <strong className="font-[680]">{event.action}</strong> ·{' '}
-                          {event.previousStatus ?? 'None'} → {event.newStatus ?? '—'}
-                          {event.effectiveDate
-                            ? ` · effective ${dateLabel(event.effectiveDate)}`
-                            : ''}
-                          {event.reason ? (
-                            <span className="block text-muted">{event.reason}</span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ol>
-                  ) : (
-                    <p className="m-0 text-sm text-muted">No transition history recorded.</p>
-                  )}
-                </section>
-              </div>
-            ) : null}
-          </DialogBody>
-        ) : dialog === 'create' || dialog === 'edit' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col"
-            onSubmit={(event) => void submitDraft(event)}
-          >
-            <DialogBody className="grid gap-5">
-              <div className="grid gap-5 min-[621px]:grid-cols-2">
-                <Field label="Authority type">
-                  <select
-                    className={inputClass}
-                    value={draft.authorityType}
-                    onChange={(event) =>
-                      setDraftField('authorityType', targetValue(event) as AuthorityType)
-                    }
-                  >
-                    {authorityTypes.map((type) => (
-                      <option key={type.value} value={type.value}>
-                        {type.label}
-                      </option>
+          {dialog === 'detail' ? (
+            <DialogBody className="grid gap-6">
+              {selected ? recordActions(selected) : null}
+              {detailLoading ? (
+                <StateSurface compact busy>
+                  <p className="m-0">Loading authority history…</p>
+                </StateSurface>
+              ) : null}
+              <FormError message={error} />
+              {detail ? (
+                <>
+                  <dl className="m-0 grid gap-x-10 gap-y-4 min-[621px]:grid-cols-2">
+                    {[
+                      ['Official reference', detail.authority.referenceNo],
+                      ['Authority type', typeLabel(detail.authority.authorityType)],
+                      ['Issue date', dateLabel(detail.authority.issuedDate)],
+                      ['Effective date', dateLabel(detail.authority.effectiveDate)],
+                      [
+                        'Status',
+                        <StatusTag key="status" tone={statusTone[detail.authority.status]}>
+                          {detail.authority.status}
+                        </StatusTag>,
+                      ],
+                      [
+                        'Revocation effectivity',
+                        detail.authority.revokedEffectiveDate
+                          ? dateLabel(detail.authority.revokedEffectiveDate)
+                          : '—',
+                      ],
+                    ].map(([label, value]) => (
+                      <div key={label as string}>
+                        <dt className="text-caption text-ink-muted">{label}</dt>
+                        <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
+                      </div>
                     ))}
-                  </select>
-                </Field>
-                <Field label="Official reference">
-                  <input
-                    className={inputClass}
-                    autoFocus={dialog === 'create' || dialog === 'edit'}
-                    data-autofocus={dialog === 'create' || dialog === 'edit' ? '' : undefined}
-                    maxLength={200}
-                    required
-                    value={draft.referenceNo}
-                    onChange={(event) => setDraftField('referenceNo', targetValue(event))}
-                  />
-                </Field>
-                <Field label="Issue date">
-                  <input
-                    className={inputClass}
-                    type="date"
-                    required
-                    value={draft.issuedDate}
-                    onChange={(event) => setDraftField('issuedDate', targetValue(event))}
-                  />
-                </Field>
-                <Field label="Effective date">
-                  <input
-                    className={inputClass}
-                    type="date"
-                    required
-                    value={draft.effectiveDate}
-                    onChange={(event) => setDraftField('effectiveDate', targetValue(event))}
-                  />
-                </Field>
-              </div>
-              <div className="grid gap-3">
-                <div>
-                  <h3 className="m-0 text-sm font-[670] text-midnight">Source metadata</h3>
-                  <p className="m-0 mt-1 text-xs text-muted">
-                    Optional locator details for the official source.
-                  </p>
-                </div>
+                  </dl>
+                  <section className="grid gap-2" aria-labelledby="authority-source-metadata-title">
+                    <h3 className={sectionTitleClass} id="authority-source-metadata-title">
+                      Source metadata
+                    </h3>
+                    <pre className="m-0 overflow-auto rounded-control border border-border bg-canvas p-3 font-mono text-caption whitespace-pre-wrap text-ink">
+                      {JSON.stringify(detail.authority.sourceMetadata, null, 2)}
+                    </pre>
+                  </section>
+                  <section className="grid gap-2" aria-labelledby="authority-evidence-title">
+                    <h3 className={sectionTitleClass} id="authority-evidence-title">
+                      External Evidence
+                    </h3>
+                    <p className="m-0 text-body text-ink">
+                      {detail.authority.evidence ? (
+                        <>
+                          {detail.authority.evidence.documentNo ??
+                            detail.authority.evidence.documentId}{' '}
+                          · {detail.authority.evidence.status} · validated{' '}
+                          {dateLabel(detail.authority.evidence.validatedAt)}
+                        </>
+                      ) : (
+                        'No validated External Evidence linked.'
+                      )}
+                    </p>
+                    {detail.authority.revocationEvidence ? (
+                      <p className="m-0 text-body text-ink">
+                        Revocation evidence:{' '}
+                        {detail.authority.revocationEvidence.documentNo ??
+                          detail.authority.revocationEvidence.documentId}{' '}
+                        · {detail.authority.revocationEvidence.status}
+                      </p>
+                    ) : null}
+                  </section>
+                  <section className="grid gap-2" aria-labelledby="authority-history-title">
+                    <h3 className={sectionTitleClass} id="authority-history-title">
+                      History
+                    </h3>
+                    {detail.history.length ? (
+                      <div className="rounded-control border border-border">
+                        <Table aria-labelledby="authority-history-title">
+                          <thead>
+                            <tr>
+                              <Th>Action</Th>
+                              <Th>Status change</Th>
+                              <Th kind="date">Effective</Th>
+                              <Th>Reason</Th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detail.history.map((event) => (
+                              <Tr key={event.id}>
+                                <Td className="font-[600] text-ink">{event.action}</Td>
+                                <Td className="whitespace-nowrap">
+                                  {event.previousStatus ?? 'None'} → {event.newStatus ?? '—'}
+                                </Td>
+                                <Td kind="date">
+                                  {event.effectiveDate ? dateLabel(event.effectiveDate) : '—'}
+                                </Td>
+                                <Td className="text-ink-muted">{event.reason ?? '—'}</Td>
+                              </Tr>
+                            ))}
+                          </tbody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <p className="m-0 text-small text-ink-muted">
+                        No transition history recorded.
+                      </p>
+                    )}
+                  </section>
+                </>
+              ) : null}
+            </DialogBody>
+          ) : dialog === 'create' || dialog === 'edit' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col"
+              onSubmit={(event) => void submitDraft(event)}
+            >
+              <DialogBody className="grid gap-5">
                 <div className="grid gap-5 min-[621px]:grid-cols-2">
-                  <Field label="Source issuer">
+                  <Field label="Authority type">
+                    <select
+                      className={inputClass}
+                      value={draft.authorityType}
+                      onChange={(event) =>
+                        setDraftField('authorityType', targetValue(event) as AuthorityType)
+                      }
+                    >
+                      {authorityTypes.map((type) => (
+                        <option key={type.value} value={type.value}>
+                          {type.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Official reference">
                     <input
                       className={inputClass}
-                      maxLength={500}
-                      value={draft.sourceIssuer}
-                      onChange={(event) => setDraftField('sourceIssuer', targetValue(event))}
+                      autoFocus={dialog === 'create' || dialog === 'edit'}
+                      data-autofocus={dialog === 'create' || dialog === 'edit' ? '' : undefined}
+                      maxLength={200}
+                      required
+                      value={draft.referenceNo}
+                      onChange={(event) => setDraftField('referenceNo', targetValue(event))}
                     />
                   </Field>
-                  <Field label="Source title">
+                  <Field label="Issue date">
                     <input
                       className={inputClass}
-                      maxLength={500}
-                      value={draft.sourceTitle}
-                      onChange={(event) => setDraftField('sourceTitle', targetValue(event))}
+                      type="date"
+                      required
+                      value={draft.issuedDate}
+                      onChange={(event) => setDraftField('issuedDate', targetValue(event))}
+                    />
+                  </Field>
+                  <Field label="Effective date">
+                    <input
+                      className={inputClass}
+                      type="date"
+                      required
+                      value={draft.effectiveDate}
+                      onChange={(event) => setDraftField('effectiveDate', targetValue(event))}
                     />
                   </Field>
                 </div>
-                <Field label="Source locator">
+                <div className="grid gap-3">
+                  <div>
+                    <h3 className={sectionTitleClass}>Source metadata</h3>
+                    <p className="m-0 mt-1 text-caption text-ink-muted">
+                      Optional locator details for the official source.
+                    </p>
+                  </div>
+                  <div className="grid gap-5 min-[621px]:grid-cols-2">
+                    <Field label="Source issuer">
+                      <input
+                        className={inputClass}
+                        maxLength={500}
+                        value={draft.sourceIssuer}
+                        onChange={(event) => setDraftField('sourceIssuer', targetValue(event))}
+                      />
+                    </Field>
+                    <Field label="Source title">
+                      <input
+                        className={inputClass}
+                        maxLength={500}
+                        value={draft.sourceTitle}
+                        onChange={(event) => setDraftField('sourceTitle', targetValue(event))}
+                      />
+                    </Field>
+                  </div>
+                  <Field label="Source locator">
+                    <input
+                      className={inputClass}
+                      maxLength={500}
+                      value={draft.sourceLocator}
+                      onChange={(event) => setDraftField('sourceLocator', targetValue(event))}
+                    />
+                  </Field>
+                </div>
+                <FormError message={error} />
+              </DialogBody>
+              <DialogFooter>
+                <span className="mr-auto hidden self-center text-caption text-ink-muted min-[621px]:block">
+                  Draft only · External Evidence is required before activation.
+                </span>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Saving…' : dialog === 'edit' ? 'Save Draft' : 'Create Draft'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : dialog === 'evidence' ? (
+            <form onSubmit={(event) => void submitEvidence(event)}>
+              <DialogBody className="grid gap-5">
+                <Field label="External Evidence document ID">
                   <input
                     className={inputClass}
-                    maxLength={500}
-                    value={draft.sourceLocator}
-                    onChange={(event) => setDraftField('sourceLocator', targetValue(event))}
+                    autoFocus
+                    required
+                    pattern="[0-9a-fA-F-]{36}"
+                    value={documentId}
+                    onChange={(event) => setDocumentId(targetValue(event))}
                   />
                 </Field>
-              </div>
-              {error ? <FormError message={error} /> : null}
-            </DialogBody>
-            <DialogFooter>
-              <span className="mr-auto hidden text-[11px] text-muted min-[621px]:block">
-                Draft only · External Evidence is required before activation.
-              </span>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+                <Field label="Validation reason">
+                  <textarea
+                    className={`${inputClass} min-h-28 py-3`}
+                    maxLength={500}
+                    required
+                    value={reason}
+                    onChange={(event) => setReason(targetValue(event))}
+                  />
+                </Field>
+                <FormError message={error} />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Validating…' : 'Validate Evidence'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : dialog === 'edit' ? 'Save Draft' : 'Create Draft'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'evidence' ? (
-          <form onSubmit={(event) => void submitEvidence(event)}>
-            <DialogBody className="grid gap-5">
-              <Field label="External Evidence document ID">
-                <input
-                  className={inputClass}
-                  autoFocus
-                  required
-                  pattern="[0-9a-fA-F-]{36}"
-                  value={documentId}
-                  onChange={(event) => setDocumentId(targetValue(event))}
-                />
-              </Field>
-              <Field label="Validation reason">
-                <textarea
-                  className={`${inputClass} min-h-28 py-3`}
-                  maxLength={500}
-                  required
-                  value={reason}
-                  onChange={(event) => setReason(targetValue(event))}
-                />
-              </Field>
-              {error ? <FormError message={error} /> : null}
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : dialog === 'activate' ? (
+            <form onSubmit={(event) => void submitActivation(event)}>
+              <DialogBody className="grid gap-5">
+                <Field label="Activation reason">
+                  <textarea
+                    className={`${inputClass} min-h-28 py-3`}
+                    autoFocus
+                    maxLength={500}
+                    required
+                    value={reason}
+                    onChange={(event) => setReason(targetValue(event))}
+                  />
+                </Field>
+                <FormError message={error} />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Activating…' : 'Activate Staffing Authority'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Validating…' : 'Validate Evidence'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'activate' ? (
-          <form onSubmit={(event) => void submitActivation(event)}>
-            <DialogBody className="grid gap-5">
-              <Field label="Activation reason">
-                <textarea
-                  className={`${inputClass} min-h-28 py-3`}
-                  autoFocus
-                  maxLength={500}
-                  required
-                  value={reason}
-                  onChange={(event) => setReason(targetValue(event))}
-                />
-              </Field>
-              {error ? <FormError message={error} /> : null}
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : dialog === 'supersede' ? (
+            <form onSubmit={(event) => void submitSupersession(event)}>
+              <DialogBody className="grid gap-5">
+                <Field label="Successor Draft ID">
+                  <input
+                    className={inputClass}
+                    autoFocus
+                    required
+                    pattern="[0-9a-fA-F-]{36}"
+                    value={successorId}
+                    onChange={(event) => setSuccessorId(targetValue(event))}
+                  />
+                </Field>
+                <Field label="Supersession reason">
+                  <textarea
+                    className={`${inputClass} min-h-28 py-3`}
+                    maxLength={500}
+                    required
+                    value={reason}
+                    onChange={(event) => setReason(targetValue(event))}
+                  />
+                </Field>
+                <FormError message={error} />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Superseding…' : 'Supersede Staffing Authority'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Activating…' : 'Activate Staffing Authority'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'supersede' ? (
-          <form onSubmit={(event) => void submitSupersession(event)}>
-            <DialogBody className="grid gap-5">
-              <Field label="Successor Draft ID">
-                <input
-                  className={inputClass}
-                  autoFocus
-                  required
-                  pattern="[0-9a-fA-F-]{36}"
-                  value={successorId}
-                  onChange={(event) => setSuccessorId(targetValue(event))}
-                />
-              </Field>
-              <Field label="Supersession reason">
-                <textarea
-                  className={`${inputClass} min-h-28 py-3`}
-                  maxLength={500}
-                  required
-                  value={reason}
-                  onChange={(event) => setReason(targetValue(event))}
-                />
-              </Field>
-              {error ? <FormError message={error} /> : null}
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : (
+            <form onSubmit={(event) => void submitRevocation(event)}>
+              <DialogBody className="grid gap-5">
+                <Field label="Revocation effective date">
+                  <input
+                    className={inputClass}
+                    autoFocus
+                    type="date"
+                    required
+                    value={revocationDate}
+                    onChange={(event) => setRevocationDate(targetValue(event))}
+                  />
+                </Field>
+                <Field label="Revocation reason">
+                  <textarea
+                    className={`${inputClass} min-h-28 py-3`}
+                    maxLength={500}
+                    required
+                    value={reason}
+                    onChange={(event) => setReason(targetValue(event))}
+                  />
+                </Field>
+                <Field label="Revocation evidence document ID">
+                  <input
+                    className={inputClass}
+                    required
+                    pattern="[0-9a-fA-F-]{36}"
+                    value={documentId}
+                    onChange={(event) => setDocumentId(targetValue(event))}
+                  />
+                </Field>
+                <FormError message={error} />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} size="default" type="submit" variant="primary">
+                  {busy ? 'Revoking…' : 'Record Revocation'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Superseding…' : 'Supersede Staffing Authority'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : (
-          <form onSubmit={(event) => void submitRevocation(event)}>
-            <DialogBody className="grid gap-5">
-              <Field label="Revocation effective date">
-                <input
-                  className={inputClass}
-                  autoFocus
-                  type="date"
-                  required
-                  value={revocationDate}
-                  onChange={(event) => setRevocationDate(targetValue(event))}
-                />
-              </Field>
-              <Field label="Revocation reason">
-                <textarea
-                  className={`${inputClass} min-h-28 py-3`}
-                  maxLength={500}
-                  required
-                  value={reason}
-                  onChange={(event) => setReason(targetValue(event))}
-                />
-              </Field>
-              <Field label="Revocation evidence document ID">
-                <input
-                  className={inputClass}
-                  required
-                  pattern="[0-9a-fA-F-]{36}"
-                  value={documentId}
-                  onChange={(event) => setDocumentId(targetValue(event))}
-                />
-              </Field>
-              {error ? <FormError message={error} /> : null}
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Revoking…' : 'Record Revocation'}
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </div>
     </Dialog>
   );
 }

@@ -69,6 +69,18 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await expect(row).toContainText('Not linked');
   await expect(trigger).toBeFocused();
 
+  await row.getByRole('button', { name: 'Details' }).click();
+  const record = page.getByRole('region', { name: `Staffing Authority · ${reference}` });
+  await expect(record).toBeVisible();
+  await expect(record.getByRole('table', { name: 'History' })).toContainText(
+    'STAFFING_AUTHORITY_DRAFT_CREATED',
+  );
+  const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' });
+  await expect(breadcrumb).toContainText(reference);
+  await breadcrumb.getByRole('link', { name: 'Staffing Authorities' }).click();
+  await expect(record).toBeHidden();
+  await expect(page.getByRole('region', { name: 'Agency register' })).toBeVisible();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await trigger.click();
   await expectWithinViewport(dialog, 390);
