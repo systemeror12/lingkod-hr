@@ -120,8 +120,9 @@ first, then leave the setup reproducible for the next machine.
   animations that waste GPU time on high-refresh displays.
 - If a rule here conflicts with the requested task, name the conflict and get
   explicit developer approval before breaking the rule.
-- After the implementation tickets are done, **always** write the playwright
-  script on the chat to help the developers to test UI themselves.
+- After the implementation tickets are done, **always** put the playwright
+  test script on the chat to help the developers to test UI themselves.
+  Example: pnpm --filter @lingkod-hr/web exec playwright test e2e/<test_name> --headed
 
 ## Agent skills
 
