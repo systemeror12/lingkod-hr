@@ -7,7 +7,7 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   await expect(page.getByRole('heading', { name: 'Appointments', exact: true })).toBeVisible();
 
   const eligible = page.getByRole('region', { name: 'Eligible selections' });
-  const eligibleRow = eligible.getByRole('listitem').filter({ hasText: 'Appointment Candidate' });
+  const eligibleRow = eligible.getByRole('row').filter({ hasText: 'Appointment Candidate' });
   await expect(eligibleRow).toBeVisible();
   await eligibleRow.getByRole('button', { name: 'Prepare Appointment' }).click();
 
@@ -37,8 +37,19 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
   await expect(detail.getByLabel('Workflow status')).toContainText('DRAFT');
 
   await detail.getByRole('tab', { name: 'Review & issuance' }).click();
-  await expect(detail.getByText('APPOINTMENT RETURNED · DRAFT')).toBeVisible();
-  await expect(detail.getByText('APPOINTMENT SUBMITTED · FOR REVIEW')).toBeVisible();
+  const reviewHistory = detail.getByRole('table', { name: 'Review history' });
+  await expect(
+    reviewHistory
+      .getByRole('row')
+      .filter({ hasText: 'APPOINTMENT RETURNED' })
+      .getByRole('cell', { name: 'DRAFT', exact: true }),
+  ).toBeVisible();
+  await expect(
+    reviewHistory
+      .getByRole('row')
+      .filter({ hasText: 'APPOINTMENT SUBMITTED' })
+      .getByRole('cell', { name: 'FOR REVIEW', exact: true }),
+  ).toBeVisible();
 
   await detail.getByRole('tab', { name: 'Preparation & evidence' }).click();
   await detail.getByRole('button', { name: 'Submit for review' }).click();
@@ -117,7 +128,11 @@ test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({
     .getByLabel('Authority evidence (finalized Document Version)')
     .selectOption({ index: 1 });
   await assumptionCorrection.getByRole('button', { name: 'Record Assumption correction' }).click();
-  await expect(detail.getByText('v2 · actual')).toBeVisible();
+  await expect(
+    detail
+      .getByRole('table', { name: 'Assumption history' })
+      .getByRole('cell', { name: 'v2 · corrected', exact: true }),
+  ).toBeVisible();
 
   await detail.getByRole('tab', { name: 'Review & issuance' }).click();
   await expect(detail.getByText('APPOINTMENT EXTERNAL SUBMISSION RECORDED')).toHaveCount(0);

@@ -12,7 +12,7 @@ test('activates the Employee service from an assumed Appointment', async ({ page
   await expect(page.getByRole('heading', { name: 'Appointments', exact: true })).toBeVisible();
 
   const eligible = page.getByRole('region', { name: 'Eligible selections' });
-  const eligibleRow = eligible.getByRole('listitem').filter({ hasText: 'Activation Candidate' });
+  const eligibleRow = eligible.getByRole('row').filter({ hasText: 'Activation Candidate' });
   await expect(eligibleRow).toBeVisible();
   await eligibleRow.getByRole('button', { name: 'Prepare Appointment' }).click();
 

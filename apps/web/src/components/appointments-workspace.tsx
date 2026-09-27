@@ -1,10 +1,25 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { manilaToday } from '../lib/manila-date';
 import { useRecordNavigation } from './record-navigation';
+import { StateCode, StateSurface } from './state-surface';
 import { Button } from './ui/button';
+import {
+  Dialog as FormDialog,
+  DialogBody,
+  DialogClose,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
 import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { SectionTabList, SectionTabPanel, SectionTabs } from './ui/section-tabs';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 type WorkflowStatus = 'DRAFT' | 'FOR_REVIEW' | 'FOR_SIGNATURE' | 'ISSUED' | 'CANCELLED';
 type VersionStatus = 'DRAFT' | 'ISSUED' | 'SUPERSEDED';
@@ -352,6 +367,8 @@ interface Props {
   initialSelected: string | null;
 }
 
+type Opener = { focus(): void; isConnected: boolean; disabled: boolean };
+
 interface ExternalForm {
   appointmentVersionId: string;
   eventType: string;
@@ -540,64 +557,68 @@ function defaultExternalForm(
   };
 }
 
-function statusTone(status: string): 'blue' | 'amber' | 'green' | 'gray' | 'red' {
-  if (status === 'ISSUED' || status === 'APPROVED' || status === 'VALIDATED') return 'green';
+function statusTone(status: string): StatusTone {
+  if (status === 'ISSUED' || status === 'APPROVED' || status === 'VALIDATED') return 'success';
   if (status === 'FOR_REVIEW' || status === 'FOR_SIGNATURE' || status === 'RETURNED')
-    return 'amber';
-  if (status === 'CANCELLED' || status === 'DISAPPROVED' || status === 'INVALIDATED') return 'red';
-  if (status === 'SUPERSEDED' || status === 'NOT_SUBMITTED') return 'gray';
-  return 'blue';
+    return 'warning';
+  if (status === 'CANCELLED' || status === 'DISAPPROVED' || status === 'INVALIDATED')
+    return 'danger';
+  if (status === 'SUPERSEDED' || status === 'NOT_SUBMITTED') return 'neutral';
+  return 'info';
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const tones = {
-    blue: 'border-[#b9cce5] bg-[#edf2f9] text-[#315d98]',
-    amber: 'border-[#decba7] bg-[#fff8e9] text-[#755421]',
-    green: 'border-[#b6d9c3] bg-[#eef9f1] text-[#296442]',
-    gray: 'border-line bg-canvas text-muted',
-    red: 'border-[#e8b6b6] bg-[#fff4f4] text-[#9a3030]',
-  };
+  return <StatusTag tone={statusTone(status)}>{label(status)}</StatusTag>;
+}
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+const noteClass = 'm-0 text-caption text-ink-muted';
+const factsClass = 'm-0 grid gap-x-10 gap-y-4 min-[621px]:grid-cols-2';
+
+function DetailRow({ label: term, children }: { label: string; children: ReactNode }) {
   return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-[0.06em] uppercase ${tones[statusTone(status)]}`}
-    >
-      {label(status)}
-    </span>
+    <div className="min-w-0">
+      <dt className="text-caption text-ink-muted">{term}</dt>
+      <dd className="m-0 text-body break-words text-ink">{children}</dd>
+    </div>
   );
 }
 
-function Panel({
+/** Titled block inside the Appointment record; `aria-labelledby` names it for navigation. */
+function RecordSection({
   title,
-  description,
+  actions,
   children,
 }: {
   title: string;
-  description?: string;
+  actions?: ReactNode;
   children: ReactNode;
 }) {
+  const titleId = useId();
   return (
-    <section
-      aria-label={title}
-      className="grid gap-4 rounded-[4px] border border-line bg-paper p-5 shadow-[0_7px_20px_rgb(23_32_51/4%)]"
-    >
-      <div className="grid gap-1">
-        <h2 className="m-0 text-[17px] font-[720] tracking-[-0.02em] text-midnight">{title}</h2>
-        {description ? (
-          <p className="m-0 text-[13px] leading-[1.55] text-muted">{description}</p>
-        ) : null}
+    <section className="grid gap-3" aria-labelledby={titleId}>
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className={sectionTitleClass} id={titleId}>
+          {title}
+        </h3>
+        {actions}
       </div>
       {children}
     </section>
   );
 }
 
-function DetailRow({ label: term, children }: { label: string; children: ReactNode }) {
+/** Bordered table for a record's history, named by `label`. */
+function HistoryTable({ label: name, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid gap-1 border-b border-line/70 py-3 last:border-b-0">
-      <dt className="text-[10px] font-bold tracking-[0.07em] text-muted uppercase">{term}</dt>
-      <dd className="m-0 text-sm leading-[1.5] text-ink">{children}</dd>
+    <div className="rounded-control border border-border">
+      <Table aria-label={name}>{children}</Table>
     </div>
   );
+}
+
+function evidenceLabel(evidence: AppointmentRecordedEvidence): string {
+  return `${evidence.documentNo ?? label(evidence.documentType)} v${evidence.versionNo}`;
 }
 
 function documentOptionLabel(document: DocumentVersionOption): string {
@@ -666,8 +687,8 @@ function VersionFields({
   idPrefix: string;
 }) {
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-4 sm:grid-cols-2">
+    <div className="grid gap-5">
+      <div className="grid gap-5 min-[621px]:grid-cols-2">
         <Field label="Employment status" htmlFor={`${idPrefix}-employment`}>
           <select
             className={inputClass}
@@ -744,10 +765,10 @@ function VersionFields({
           </select>
         </Field>
       </div>
-      <p className="m-0 rounded-[3px] border border-line bg-canvas px-3 py-2 text-[13px] text-muted">
+      <p className="m-0 rounded-control border border-border bg-canvas px-3 py-2 text-small text-ink-muted">
         Appointing authority: <strong className="text-ink">{authorityLabel}</strong>
       </p>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-5 min-[621px]:grid-cols-2">
         <Field label="Appointment form (finalized Document Version)" htmlFor={`${idPrefix}-form`}>
           <select
             className={inputClass}
@@ -788,8 +809,8 @@ function VersionFields({
           </Field>
         ) : null}
       </div>
-      <fieldset className="grid gap-3 rounded-[3px] border border-line p-4">
-        <legend className="px-1 text-xs font-[650] text-ink">Exact evidence versions</legend>
+      <fieldset className="m-0 grid gap-3 rounded-control border border-border p-4">
+        <legend className="px-1 text-caption font-[650] text-ink">Exact evidence versions</legend>
         {REQUIRED_ROLES.map(([role, roleLabel]) => (
           <Field key={role} label={roleLabel} htmlFor={`${idPrefix}-evidence-${role}`}>
             <select
@@ -823,7 +844,8 @@ export function AppointmentsWorkspace(props: Props) {
   const [selections, setSelections] = useState(props.initialSelections);
   const [selectionsHasMore, setSelectionsHasMore] = useState(props.initialSelectionsHasMore);
   const [settings, setSettings] = useState(props.initialSettings);
-  const [detail, setDetail] = useState<AppointmentDetail | null>(null);
+  const [loadedDetail, setLoadedDetail] = useState<AppointmentDetail | null>(null);
+  const [failedDetailId, setFailedDetailId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(props.initialSelected);
   const [tab, setTab] = useState<Tab>('preparation');
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -848,11 +870,15 @@ export function AppointmentsWorkspace(props: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const openerRef = useRef<Opener | null>(null);
+  const detailRef = useRef<HTMLElement | null>(null);
 
   const selected = useMemo(
     () => appointments.find((appointment) => appointment.id === selectedId) ?? null,
     [appointments, selectedId],
   );
+  // A previously loaded record stays in state until the next one arrives; never label it as the new selection.
+  const detail = loadedDetail?.id === selectedId ? loadedDetail : null;
   const currentVersion = detail?.currentVersion ?? selected?.currentVersion ?? null;
   const issuedVersions = (detail?.versions ?? []).filter((version) => version.status === 'ISSUED');
   const externalRegulatoryStatus =
@@ -868,21 +894,24 @@ export function AppointmentsWorkspace(props: Props) {
   const activation = detail?.activation ?? null;
 
   async function loadDetail(appointmentId: string): Promise<void> {
+    setFailedDetailId(null);
     const response = await fetch(
       `/api/v1/agencies/${props.agencyId}/appointments/${appointmentId}`,
       { credentials: 'include' },
     );
     const value: unknown = await response.json().catch(() => null);
     if (!response.ok) {
+      setFailedDetailId(appointmentId);
       setError(errorMessage(value, 'The Appointment record could not be loaded.'));
       return;
     }
-    setDetail(value as AppointmentDetail);
+    setFailedDetailId(null);
+    setLoadedDetail(value as AppointmentDetail);
   }
 
   useEffect(() => {
     if (selectedId) void loadDetail(selectedId);
-    else setDetail(null);
+    else setLoadedDetail(null);
   }, [selectedId]);
 
   function select(appointmentId: string): void {
@@ -1390,153 +1419,231 @@ export function AppointmentsWorkspace(props: Props) {
   }
 
   const canPrepare = props.canCreate && settings !== null;
-  const dialogTitle =
-    dialog === 'prepare'
-      ? 'Prepare Appointment'
-      : dialog === 'update'
-        ? 'Update Draft version'
-        : dialog === 'return'
-          ? 'Return for correction'
-          : dialog === 'cancel'
-            ? 'Cancel Appointment'
-            : dialog === 'correct'
-              ? 'Prepare a linked correction'
-              : dialog === 'settings'
-                ? 'Agency appointment configuration'
-                : dialog === 'external-submission'
-                  ? 'Record CSC submission event'
-                  : dialog === 'external-action'
-                    ? 'Record official CSC action'
-                    : dialog === 'receipt'
-                      ? 'Record appointee acknowledgment of receipt'
-                      : dialog === 'oath'
-                        ? 'Record Oath of Office'
-                        : dialog === 'oath-correction'
-                          ? 'Correct the Oath of Office'
-                          : dialog === 'assumption'
-                            ? 'Certify Assumption to Duty'
-                            : dialog === 'assumption-correction'
-                              ? 'Correct the Assumption to Duty'
-                              : dialog === 'assumption-failure'
-                                ? 'Record failure to assume'
-                                : dialog === 'assumption-cancellation'
-                                  ? 'Cancel before assumption'
-                                  : dialog === 'activation'
-                                    ? 'Activate Employee service'
-                                    : '';
+  const correctionReady = reason.trim() !== '' && authorityDocumentVersionId !== '';
+  const dialogSpec: Record<
+    Exclude<Dialog, null>,
+    { title: string; submit: string; ready: boolean; run: () => Promise<void> }
+  > = {
+    prepare: {
+      title: 'Prepare Appointment',
+      submit: 'Prepare Draft',
+      ready: true,
+      run: savePrepare,
+    },
+    update: { title: 'Update Draft version', submit: 'Save Draft', ready: true, run: saveUpdate },
+    return: {
+      title: 'Return for correction',
+      submit: 'Return for correction',
+      ready: reason.trim() !== '',
+      run: saveReturn,
+    },
+    cancel: {
+      title: 'Cancel Appointment',
+      submit: 'Cancel Appointment',
+      ready: correctionReady,
+      run: saveCancel,
+    },
+    correct: {
+      title: 'Prepare a linked correction',
+      submit: 'Prepare correction Draft',
+      ready: correctionReady,
+      run: saveCorrect,
+    },
+    settings: {
+      title: 'Agency appointment configuration',
+      submit: 'Record configuration',
+      ready: settingsForm.statusEvidenceDocumentVersionId !== '',
+      run: saveSettings,
+    },
+    'external-submission': {
+      title: 'Record CSC submission event',
+      submit: 'Record submission event',
+      ready:
+        externalForm.appointmentVersionId !== '' &&
+        externalForm.occurredAt !== '' &&
+        externalForm.receivingOffice.trim() !== '' &&
+        externalForm.evidenceDocumentVersionId !== '',
+      run: saveExternalSubmission,
+    },
+    'external-action': {
+      title: 'Record official CSC action',
+      submit: 'Record official action',
+      ready:
+        externalForm.appointmentVersionId !== '' &&
+        externalForm.action !== '' &&
+        externalForm.occurredAt !== '' &&
+        externalForm.externalReference.trim() !== '' &&
+        externalForm.evidenceDocumentVersionId !== '',
+      run: saveExternalAction,
+    },
+    receipt: {
+      title: 'Record appointee acknowledgment of receipt',
+      submit: 'Record acknowledgment',
+      ready: receiptForm.acknowledgedAt !== '' && receiptForm.documentVersionId !== '',
+      run: saveReceipt,
+    },
+    oath: {
+      title: 'Record Oath of Office',
+      submit: 'Record Oath',
+      ready:
+        oathForm.oathDate !== '' &&
+        oathForm.authority.trim() !== '' &&
+        oathForm.documentVersionId !== '',
+      run: saveOath,
+    },
+    'oath-correction': {
+      title: 'Correct the Oath of Office',
+      submit: 'Record Oath correction',
+      ready:
+        oathForm.oathDate !== '' &&
+        oathForm.authority.trim() !== '' &&
+        oathForm.documentVersionId !== '' &&
+        oathForm.reason.trim() !== '' &&
+        oathForm.authorityDocumentVersionId !== '',
+      run: saveOathCorrection,
+    },
+    assumption: {
+      title: 'Certify Assumption to Duty',
+      submit: 'Certify Assumption to Duty',
+      ready:
+        assumptionForm.actualAssumptionDate !== '' &&
+        assumptionForm.certifyingAuthority.trim() !== '' &&
+        assumptionForm.certifiedAt !== '' &&
+        assumptionForm.documentVersionId !== '',
+      run: saveAssumption,
+    },
+    'assumption-correction': {
+      title: 'Correct the Assumption to Duty',
+      submit: 'Record Assumption correction',
+      ready:
+        assumptionForm.actualAssumptionDate !== '' &&
+        assumptionForm.certifyingAuthority.trim() !== '' &&
+        assumptionForm.certifiedAt !== '' &&
+        assumptionForm.documentVersionId !== '' &&
+        assumptionForm.reason.trim() !== '' &&
+        assumptionForm.authorityDocumentVersionId !== '',
+      run: saveAssumptionCorrection,
+    },
+    'assumption-failure': {
+      title: 'Record failure to assume',
+      submit: 'Record failure to assume',
+      ready:
+        outcomeForm.noticeDate !== '' &&
+        outcomeForm.deadlineDate !== '' &&
+        outcomeForm.outcomeDate !== '' &&
+        outcomeForm.reason.trim() !== '' &&
+        outcomeForm.authorityDocumentVersionId !== '' &&
+        outcomeForm.evidenceDocumentVersionId !== '',
+      run: saveAssumptionFailure,
+    },
+    'assumption-cancellation': {
+      title: 'Cancel before assumption',
+      submit: 'Record cancellation',
+      ready:
+        outcomeForm.outcomeDate !== '' &&
+        outcomeForm.reason.trim() !== '' &&
+        outcomeForm.authorityDocumentVersionId !== '' &&
+        outcomeForm.evidenceDocumentVersionId !== '',
+      run: saveAssumptionCancellation,
+    },
+    activation: {
+      title: 'Activate Employee service',
+      submit: 'Activate service',
+      ready:
+        activationForm.employeeNumber.trim() !== '' &&
+        activationForm.birthDate !== '' &&
+        activationForm.contactEmail.trim() !== '',
+      run: saveActivation,
+    },
+  };
+  const activeDialog = dialog ? dialogSpec[dialog] : null;
+
+  // The form sits outside the page region, so this remembers the page control that opened it.
+  function rememberOpener(event: { target: EventTarget }): void {
+    const button = (
+      event.target as unknown as { closest(selector: string): Opener | null }
+    ).closest('button');
+    if (button) openerRef.current = button;
+  }
+
+  // Return focus to the opener, or to the record when the transition removed the opener.
+  function restoreFocus(): void {
+    const opener = openerRef.current;
+    if (opener?.isConnected && !opener.disabled) opener.focus();
+    else (detailRef.current as unknown as { focus(): void } | null)?.focus();
+  }
+
+  const workflowActions = detail ? (
+    <>
+      {detail.workflowStatus === 'DRAFT' && props.canCreate ? (
+        <Button type="button" variant="secondary" onClick={openUpdate}>
+          Update Draft
+        </Button>
+      ) : null}
+      {detail.workflowStatus === 'DRAFT' && props.canSubmit ? (
+        <Button type="button" variant="primary" disabled={busy} onClick={() => void submit()}>
+          Submit for review
+        </Button>
+      ) : null}
+      {detail.workflowStatus === 'FOR_REVIEW' && props.canReturn ? (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy}
+          onClick={() => {
+            setReason('');
+            setError('');
+            setSuccess('');
+            setDialog('return');
+          }}
+        >
+          Return for correction
+        </Button>
+      ) : null}
+      {detail.workflowStatus === 'FOR_REVIEW' && props.canEndorse ? (
+        <Button type="button" variant="primary" disabled={busy} onClick={() => void endorse()}>
+          Endorse for signature
+        </Button>
+      ) : null}
+      {detail.workflowStatus === 'FOR_SIGNATURE' && props.canIssue ? (
+        <Button type="button" variant="primary" disabled={busy} onClick={() => void issue()}>
+          Issue Appointment
+        </Button>
+      ) : null}
+      {detail.workflowStatus === 'ISSUED' && props.canCreate ? (
+        <Button type="button" variant="secondary" onClick={openCorrect}>
+          Prepare linked correction
+        </Button>
+      ) : null}
+      {(detail.workflowStatus === 'FOR_SIGNATURE' || detail.workflowStatus === 'ISSUED') &&
+      props.canCancel ? (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy}
+          onClick={() => {
+            setReason('');
+            setAuthorityDocumentVersionId('');
+            setError('');
+            setSuccess('');
+            setDialog('cancel');
+          }}
+        >
+          Cancel Appointment
+        </Button>
+      ) : null}
+    </>
+  ) : null;
 
   return (
     <div className="grid gap-5">
-      <header className="grid gap-2">
-        <p className="m-0 text-[11px] font-bold tracking-[0.08em] text-muted uppercase">
-          Personnel administration
-        </p>
-        <h1 className="m-0 text-[26px] font-[740] tracking-[-0.03em] text-midnight">
-          Appointments
-        </h1>
-        <p className="m-0 max-w-[70ch] text-sm leading-[1.6] text-muted">
-          Prepare an Appointment from an immutable selected-candidate package, route it through
-          review and signature, and retain every version and evidence link. Issuance alone neither
-          occupies the Plantilla item nor activates Employee service.
-        </p>
-      </header>
-
-      <FormError message={error} />
-      {success ? (
-        <p
-          role="status"
-          className="m-0 rounded-[3px] border border-[#b6d9c3] bg-[#eef9f1] px-3 py-3 text-[13px] text-[#296442]"
-        >
-          {success}
-        </p>
-      ) : null}
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-        <Panel
-          title="Eligible selections"
-          description="Handed-off Selection Decisions available for preparation. The reservation, evidence, and configuration contract are revalidated when the Draft is saved."
-        >
-          {selections.length === 0 ? (
-            <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
-              No handed-off Selection Decisions are waiting for preparation.
-            </p>
-          ) : (
-            <ul className="m-0 grid list-none gap-2 p-0">
-              {selections.map((selection) => (
-                <li
-                  className="grid gap-2 rounded-[3px] border border-line px-4 py-3"
-                  key={selection.handoffId}
-                >
-                  <span className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-sm font-[680] text-midnight">
-                      {selection.applicant.fullName}
-                    </strong>
-                    {selection.appointment ? (
-                      <StatusBadge status={selection.appointment.workflowStatus} />
-                    ) : (
-                      <span className="text-[11px] font-bold tracking-[0.06em] text-muted uppercase">
-                        Awaiting preparation
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-[13px] text-ink">
-                    {selection.position.itemNumber} · {selection.position.title ?? 'Untitled item'}{' '}
-                    · SG {selection.position.salaryGrade ?? '—'}
-                  </span>
-                  <span className="text-xs text-muted">
-                    {selection.applicant.applicationNo} · handed off{' '}
-                    {dateTimeLabel(selection.handedOffAt)}
-                  </span>
-                  <span className="flex flex-wrap gap-2">
-                    {selection.appointment ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="secondary"
-                        onClick={() => select(selection.appointment!.id)}
-                      >
-                        Open Appointment
-                      </Button>
-                    ) : (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="primary"
-                        disabled={!canPrepare}
-                        onClick={() => openPrepare(selection)}
-                      >
-                        Prepare Appointment
-                      </Button>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {selectionsHasMore ? (
-            <p className="m-0 text-xs text-muted">
-              Only the most recent handed-off Selection Decisions are shown. Prepare or cancel an
-              Appointment to reduce the list.
-            </p>
-          ) : null}
-          {settings === null ? (
-            <p className="m-0 rounded-[3px] border border-[#decba7] bg-[#fff8e9] px-3 py-2 text-[13px] text-[#755421]">
-              Agency appointment configuration is missing. Record the evidenced regulatory status
-              before preparing an Appointment.
-            </p>
-          ) : null}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs text-muted">
-              {settings
-                ? `${settings.regulatoryStatus} · ${settings.formVariant}`
-                : 'No Agency configuration recorded'}
-            </span>
-            {props.canManageSettings ? (
+      <div className="grid gap-5" onClickCapture={rememberOpener}>
+        <PageHeader
+          breadcrumbs={[{ label: 'Merit selection' }]}
+          title="Appointments"
+          actions={
+            props.canManageSettings ? (
               <Button
-                size="default"
-                className="min-h-9"
                 type="button"
                 variant="secondary"
                 onClick={() => {
@@ -1552,790 +1659,778 @@ export function AppointmentsWorkspace(props: Props) {
               >
                 Configure
               </Button>
-            ) : null}
-          </div>
-        </Panel>
+            ) : null
+          }
+        />
+
+        <p className="m-0 max-w-[80ch] text-small text-ink-muted">
+          Prepare an Appointment from an immutable selected-candidate package, route it through
+          review and signature, and retain every version and evidence link. Issuance alone neither
+          occupies the Plantilla item nor activates Employee service.
+        </p>
+
+        {dialog ? null : <FormError message={error} />}
+        {success ? (
+          <p
+            role="status"
+            className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+          >
+            {success}
+          </p>
+        ) : null}
 
         <Panel
-          title="Appointment register"
-          description="Every prepared Appointment with its current workflow status."
+          title="Eligible selections"
+          flush
+          actions={
+            <span className="text-caption text-ink-muted">
+              {settings
+                ? `${settings.regulatoryStatus} · ${settings.formVariant}`
+                : 'No Agency configuration recorded'}
+            </span>
+          }
         >
-          {appointments.length === 0 ? (
-            <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
-              No Appointments prepared yet.
+          <div className="grid gap-3 px-4 pt-3">
+            <p className={noteClass}>
+              Handed-off Selection Decisions available for preparation. The reservation, evidence,
+              and configuration contract are revalidated when the Draft is saved.
             </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[560px] border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-line text-[10px] font-bold tracking-[0.07em] text-muted uppercase">
-                    <th className="px-3 py-2">Appointee</th>
-                    <th className="px-3 py-2">Position</th>
-                    <th className="px-3 py-2">Workflow</th>
-                    <th className="px-3 py-2">CSC standing</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {appointments.map((appointment) => (
-                    <tr
-                      className={`border-b border-line/70 align-top ${selectedId === appointment.id ? 'bg-[#f1f5fb]' : ''}`}
-                      key={appointment.id}
-                    >
-                      <td className="px-3 py-2">
-                        <button
-                          className="rounded-[2px] text-left text-sm font-[680] text-cobalt underline-offset-2 hover:underline"
-                          type="button"
-                          onClick={() => select(appointment.id)}
-                        >
-                          {appointment.appointee.fullName}
-                        </button>
-                        <span className="block text-xs text-muted">
-                          {appointment.appointee.applicationNo}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-[13px] text-ink">
-                        {appointment.position.itemNumber}
-                        <span className="block text-xs text-muted">
-                          {appointment.position.title ?? 'Untitled item'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <StatusBadge status={appointment.workflowStatus} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <StatusBadge status={appointment.externalStanding} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Panel>
-      </div>
-
-      {selected && detail ? (
-        <Panel
-          title={detail.appointee.fullName}
-          description={`${detail.position.itemNumber} · ${detail.position.title ?? 'Untitled item'}`}
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <span aria-label="Workflow status">
-              <StatusBadge status={detail.workflowStatus} />
-            </span>
-            <span aria-label="External standing">
-              <StatusBadge status={detail.externalStanding} />
-            </span>
-            <span className="text-[13px] text-muted">
-              {currentVersion
-                ? `Current version v${currentVersion.versionNo} · ${label(currentVersion.status)}`
-                : 'No version recorded'}
-            </span>
-            {detail.issuedAt ? (
-              <span className="text-[13px] text-muted">
-                Issued {dateTimeLabel(detail.issuedAt)}
-              </span>
+            {settings === null ? (
+              <p className="m-0 rounded-control border border-warning/40 bg-warning/5 px-3 py-2.5 text-small text-warning">
+                Agency appointment configuration is missing. Record the evidenced regulatory status
+                before preparing an Appointment.
+              </p>
             ) : null}
           </div>
-
-          <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
-            <DetailRow label="Selected Application">
-              {detail.appointee.applicationNo} · {detail.appointee.personKey}
-            </DetailRow>
-            <DetailRow label="Recruitment handoff">{detail.recruitmentHandoffId}</DetailRow>
-            <DetailRow label="Agency form path">
-              {detail.settings
-                ? `${detail.settings.regulatoryStatus} · ${detail.settings.formVariant}`
-                : 'Agency configuration missing'}
-            </DetailRow>
-            <DetailRow label="Reserved Plantilla Position">
-              {detail.position.itemNumber} · SG {detail.position.salaryGrade ?? '—'}
-            </DetailRow>
-          </dl>
-
-          <div className="flex flex-wrap gap-2" role="tablist" aria-label="Appointment sections">
-            {(
-              [
-                ['preparation', 'Preparation & evidence'],
-                ['review', 'Review & issuance'],
-                ['oath', 'Oath & assumption'],
-                ['csc', 'CSC transactions'],
-              ] as const
-            ).map(([value, name]) => (
-              <Button
-                key={value}
-                size="default"
-                className={`min-h-9 border px-3 ${tab === value ? 'border-cobalt bg-[#edf2f9] text-cobalt' : 'border-line bg-paper text-muted'}`}
-                type="button"
-                role="tab"
-                aria-selected={tab === value}
-                onClick={() => setTab(value)}
-              >
-                {name}
-              </Button>
-            ))}
-          </div>
-
-          {tab === 'preparation' ? (
-            <div className="grid gap-4">
-              <h3 className="m-0 text-sm font-[700] text-midnight">Exact evidence versions</h3>
-              {detail.versions.map((version) => (
-                <div
-                  aria-label={`Version v${version.versionNo}`}
-                  className="grid gap-3 rounded-[3px] border border-line p-4"
-                  key={version.id}
-                >
-                  <span className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-sm font-[680] text-midnight">
-                      Version v{version.versionNo}
-                      {version.replacesVersionId ? ' · linked correction' : ''}
-                    </strong>
-                    <StatusBadge status={version.status} />
-                  </span>
-                  <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
-                    <DetailRow label="Employment status">
-                      {label(version.employmentStatus)}
-                    </DetailRow>
-                    <DetailRow label="Nature">{label(version.natureOfAppointment)}</DetailRow>
-                    <DetailRow label="Salary">
-                      SG {version.salaryGrade} step {version.salaryStep}
-                    </DetailRow>
-                    <DetailRow label="Effectivity">{dateLabel(version.effectivityDate)}</DetailRow>
-                    <DetailRow label="Signature">{label(version.signatureMethod)}</DetailRow>
-                    <DetailRow label="Appointment form">
-                      {version.appointmentDocumentVersionId}
-                    </DetailRow>
-                    {version.correctionReason ? (
-                      <DetailRow label="Correction reason">{version.correctionReason}</DetailRow>
-                    ) : null}
-                  </dl>
-                  {version.evidence.length === 0 ? (
-                    <p className="m-0 text-[13px] text-muted">No evidence links recorded.</p>
-                  ) : (
-                    <ul className="m-0 grid list-none gap-1 p-0">
-                      {version.evidence.map((entry) => (
-                        <li
-                          className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 py-1.5 text-[13px] text-ink last:border-b-0"
-                          key={entry.id}
-                        >
-                          <span className="font-[620]">{label(entry.linkRole)}</span>
-                          <span className="text-muted">
-                            {entry.documentNo ?? entry.documentType} · v{entry.versionNo} ·{' '}
-                            {dateLabel(entry.issuedAt)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : tab === 'review' ? (
-            <div className="grid gap-4">
-              <h3 className="m-0 text-sm font-[700] text-midnight">
-                Preparation, review and signature
-              </h3>
-              <ul className="m-0 grid list-none gap-1 p-0">
-                {detail.history.length === 0 ? (
-                  <li className="text-[13px] text-muted">No review history recorded.</li>
-                ) : (
-                  detail.history.map((entry) => (
-                    <li
-                      className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
-                      key={entry.id}
-                    >
-                      <span className="text-[13px] font-[650] text-ink">
-                        {label(entry.action)}
-                        {entry.newStatus ? ` · ${label(entry.newStatus)}` : ''}
+          {selections.length === 0 ? (
+            <StateSurface compact label="No eligible selections">
+              <p className="m-0">No handed-off Selection Decisions are waiting for preparation.</p>
+            </StateSurface>
+          ) : (
+            <Table className="mt-3 min-w-[760px]">
+              <thead>
+                <tr>
+                  <Th>Applicant</Th>
+                  <Th>Plantilla item</Th>
+                  <Th kind="date">Handed off</Th>
+                  <Th>Appointment</Th>
+                  <Th>
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </tr>
+              </thead>
+              <tbody>
+                {selections.map((selection) => (
+                  <Tr key={selection.handoffId}>
+                    <RowHeader>
+                      {selection.applicant.fullName}
+                      <span className="block text-caption font-normal text-ink-muted">
+                        {selection.applicant.applicationNo}
                       </span>
-                      <span className="text-xs text-muted">
-                        {dateTimeLabel(entry.occurredAt)}
-                        {entry.reason ? ` · ${entry.reason}` : ''}
+                    </RowHeader>
+                    <Td>
+                      {selection.position.itemNumber} · SG {selection.position.salaryGrade ?? '—'}
+                      <span className="block text-caption text-ink-muted">
+                        {selection.position.title ?? 'Untitled item'}
                       </span>
-                    </li>
-                  ))
-                )}
-              </ul>
-              <p className="m-0 text-[12px] leading-[1.55] text-muted">
-                Issued corrections require a linked successor with its own reason, authority and
-                evidence. Issuance alone creates no Employee service and leaves the Plantilla
-                reservation in place.
-              </p>
-            </div>
-          ) : tab === 'oath' ? (
-            <div className="grid gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-[13px] text-muted">Assumption to Duty</span>
-                <span aria-label="Assumption status">
-                  <StatusBadge
-                    status={
-                      assumption?.status ?? (acknowledgment || oath ? 'PENDING' : 'NOT_RECORDED')
-                    }
-                  />
-                </span>
-              </div>
-              <p className="m-0 text-[12px] leading-[1.55] text-muted">
-                Receipt, Oath and Assumption bind to this exact issued version. Certification is
-                complete without CSC action, and a correction is refused once service has been
-                activated from the assumption.
-              </p>
-              {detail.workflowStatus !== 'ISSUED' ? (
-                <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
-                  Oath and Assumption open once an Appointment Version is issued.
-                </p>
-              ) : (
-                <>
-                  <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
-                    <DetailRow label="Acknowledged receipt">
-                      {acknowledgment
-                        ? `${dateTimeLabel(acknowledgment.acknowledgedAt)} · ${acknowledgment.evidence.documentNo ?? label(acknowledgment.evidence.documentType)} v${acknowledgment.evidence.versionNo}`
-                        : 'Not recorded'}
-                    </DetailRow>
-                    <DetailRow label="Oath">
-                      {oath?.currentVersion
-                        ? `${dateLabel(oath.currentVersion.oathDate)} · ${oath.currentVersion.authority} · v${oath.currentVersion.versionNo}`
-                        : 'Not recorded'}
-                    </DetailRow>
-                    <DetailRow label="Actual assumption">
-                      {assumption?.currentVersion
-                        ? `${dateLabel(assumption.currentVersion.actualAssumptionDate)} · certified by ${assumption.currentVersion.certifyingAuthority}`
-                        : 'Not recorded'}
-                    </DetailRow>
-                    <DetailRow label="Recorded outcome">
-                      {assumption?.outcome
-                        ? `${label(assumption.outcome.outcome)} · ${dateLabel(assumption.outcome.outcomeDate)}`
-                        : 'None recorded'}
-                    </DetailRow>
-                  </dl>
-                  <div className="flex flex-wrap gap-2">
-                    {!acknowledgment && props.canRecordReceipt ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="primary"
-                        disabled={busy}
-                        onClick={openReceipt}
-                      >
-                        Record acknowledgment
-                      </Button>
-                    ) : null}
-                    {acknowledgment && !oath && props.canRecordOath ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="primary"
-                        disabled={busy}
-                        onClick={() => openOath()}
-                      >
-                        Record Oath
-                      </Button>
-                    ) : null}
-                    {oath && assumptionPending && props.canRecordOath ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => openOathCorrection()}
-                      >
-                        Correct Oath
-                      </Button>
-                    ) : null}
-                    {oath &&
-                    assumptionPending &&
-                    !assumption?.currentVersion &&
-                    props.canCertifyAssumption ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="primary"
-                        disabled={busy}
-                        onClick={() => openAssumption()}
-                      >
-                        Certify Assumption to Duty
-                      </Button>
-                    ) : null}
-                    {assumption?.status === 'ASSUMED' && props.canCorrectAssumption ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => openAssumptionCorrection()}
-                      >
-                        Correct Assumption to Duty
-                      </Button>
-                    ) : null}
-                    {assumptionPending && props.canFailAssumption ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => openOutcome('assumption-failure')}
-                      >
-                        Record failure to assume
-                      </Button>
-                    ) : null}
-                    {assumptionPending && props.canCancelAssumption ? (
-                      <Button
-                        size="default"
-                        className="min-h-9"
-                        type="button"
-                        variant="secondary"
-                        disabled={busy}
-                        onClick={() => openOutcome('assumption-cancellation')}
-                      >
-                        Cancel before assumption
-                      </Button>
-                    ) : null}
-                  </div>
-                  {oath && oath.versions.length > 0 ? (
-                    <div className="grid gap-2">
-                      <h3 className="m-0 text-sm font-[700] text-midnight">Oath history</h3>
-                      <ul className="m-0 grid list-none gap-1 p-0">
-                        {oath.versions.map((entry) => (
-                          <li
-                            className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
-                            key={entry.id}
-                          >
-                            <span className="text-[13px] font-[650] text-ink">
-                              v{entry.versionNo} · {dateLabel(entry.oathDate)} · {entry.authority}
-                              {entry.replacesOathVersionId ? ' · corrected' : ''}
-                            </span>
-                            <span className="text-xs text-muted">
-                              {entry.evidence.documentNo ?? label(entry.evidence.documentType)} v
-                              {entry.evidence.versionNo}
-                              {entry.place ? ` · ${entry.place}` : ''}
-                              {entry.permittedVirtualMethod
-                                ? ` · ${entry.permittedVirtualMethod}`
-                                : ''}
-                              {entry.correctionReason ? ` · ${entry.correctionReason}` : ''}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {assumption && assumption.versions.length > 0 ? (
-                    <div className="grid gap-2">
-                      <h3 className="m-0 text-sm font-[700] text-midnight">Assumption history</h3>
-                      <ul className="m-0 grid list-none gap-1 p-0">
-                        {assumption.versions.map((entry) => (
-                          <li
-                            className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
-                            key={entry.id}
-                          >
-                            <span className="text-[13px] font-[650] text-ink">
-                              v{entry.versionNo} · actual {dateLabel(entry.actualAssumptionDate)} ·
-                              certified by {entry.certifyingAuthority}
-                              {entry.replacesAssumptionVersionId ? ' · corrected' : ''}
-                            </span>
-                            <span className="text-xs text-muted">
-                              {entry.evidence.documentNo ?? label(entry.evidence.documentType)} v
-                              {entry.evidence.versionNo} · certified{' '}
-                              {dateTimeLabel(entry.certifiedAt)}
-                              {entry.correctionReason ? ` · ${entry.correctionReason}` : ''}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {assumption?.outcome ? (
-                    <div className="grid gap-2">
-                      <h3 className="m-0 text-sm font-[700] text-midnight">
-                        {label(assumption.outcome.outcome)}
-                      </h3>
-                      <p className="m-0 text-xs leading-[1.55] text-muted">
-                        {dateLabel(assumption.outcome.outcomeDate)}
-                        {assumption.outcome.noticeDate
-                          ? ` · notice ${dateLabel(assumption.outcome.noticeDate)}`
-                          : ''}
-                        {assumption.outcome.deadlineDate
-                          ? ` · deadline ${dateLabel(assumption.outcome.deadlineDate)}`
-                          : ''}
-                        {` · ${assumption.outcome.reason}`}
-                      </p>
-                    </div>
-                  ) : null}
-                  <div className="grid gap-3 rounded-[3px] border border-line px-4 py-4">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <h3 className="m-0 text-sm font-[700] text-midnight">
-                        Employee service activation
-                      </h3>
-                      <StatusBadge
-                        status={
-                          activation
-                            ? 'ACTIVE'
-                            : assumption?.status === 'ASSUMED'
-                              ? 'READY'
-                              : 'PENDING'
-                        }
-                      />
-                    </div>
-                    <p className="m-0 text-[12px] leading-[1.55] text-muted">
-                      Activation runs only from the assumed Appointment Contract. Personnel creates
-                      the Employee and initial Service Segment, Plantilla occupies the reserved item
-                      and records the Position Incumbency, and Recruitment closes the selected
-                      Application, Vacancy Publication, and Request to Fill in one transaction.
-                    </p>
-                    {activation ? (
-                      <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
-                        <DetailRow label="Employee">
-                          {activation.legalName} · {activation.employeeNumber}
-                        </DetailRow>
-                        <DetailRow label="Service effective from">
-                          {dateLabel(activation.effectiveFrom)}
-                        </DetailRow>
-                        <DetailRow label="Appointment status">
-                          {label(activation.appointmentStatus)}
-                        </DetailRow>
-                        <DetailRow label="Service Segment">{activation.serviceSegmentId}</DetailRow>
-                      </dl>
-                    ) : null}
-                    {!activation && assumption?.status === 'ASSUMED' && props.canActivateService ? (
-                      <span>
+                    </Td>
+                    <Td kind="date">{dateTimeLabel(selection.handedOffAt)}</Td>
+                    <Td>
+                      {selection.appointment ? (
+                        <StatusBadge status={selection.appointment.workflowStatus} />
+                      ) : (
+                        <span className="text-caption text-ink-muted">Awaiting preparation</span>
+                      )}
+                    </Td>
+                    <Td className="text-right">
+                      {selection.appointment ? (
                         <Button
-                          size="default"
-                          className="min-h-9"
+                          type="button"
+                          variant="secondary"
+                          onClick={() => select(selection.appointment!.id)}
+                        >
+                          Open Appointment
+                        </Button>
+                      ) : (
+                        <Button
                           type="button"
                           variant="primary"
-                          disabled={busy}
-                          onClick={openActivation}
+                          disabled={!canPrepare}
+                          onClick={() => openPrepare(selection)}
                         >
-                          Activate service
+                          Prepare Appointment
                         </Button>
-                      </span>
-                    ) : null}
-                    {!activation && assumption?.status !== 'ASSUMED' ? (
-                      <p className="m-0 text-xs text-muted">
-                        Activation opens once the Assumption to Duty is certified for the current
-                        issued version.
-                      </p>
-                    ) : null}
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className="grid gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-[13px] text-muted">External standing</span>
-                <span aria-label="External standing">
-                  <StatusBadge status={detail.externalStanding} />
-                </span>
-              </div>
-              <p className="m-0 text-[12px] leading-[1.55] text-muted">
-                Submission and official action events are append-only and bind to an exact issued
-                version. They never change the workflow status, employment status, nature of
-                appointment, or the issued instrument.
-              </p>
-              {issuedVersions.length === 0 ? (
-                <p className="m-0 rounded-[3px] border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
-                  External tracking opens once an Appointment Version is issued.
-                </p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {props.canRecordExternalEvents ? (
-                    <Button
-                      size="default"
-                      className="min-h-9"
-                      type="button"
-                      variant="primary"
-                      disabled={busy || detail.settings === null}
-                      onClick={() => openExternal('external-submission')}
-                    >
-                      Record submission event
-                    </Button>
-                  ) : null}
-                  {props.canRecordExternalActions ? (
-                    <Button
-                      size="default"
-                      className="min-h-9"
-                      type="button"
-                      variant="secondary"
-                      disabled={busy || detail.settings === null}
-                      onClick={() => openExternal('external-action')}
-                    >
-                      Record official action
-                    </Button>
-                  ) : null}
-                </div>
-              )}
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="grid gap-2">
-                  <h3 className="m-0 text-sm font-[700] text-midnight">Submission history</h3>
-                  {detail.externalSubmissions.length === 0 ? (
-                    <p className="m-0 text-[13px] text-muted">No submission events recorded.</p>
-                  ) : (
-                    <ul className="m-0 grid list-none gap-1 p-0">
-                      {detail.externalSubmissions.map((entry) => (
-                        <li
-                          className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
-                          key={entry.id}
-                        >
-                          <span className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-[13px] font-[650] text-ink">
-                              {label(entry.eventType)}
-                            </span>
-                            <span className="text-xs text-muted">
-                              {dateTimeLabel(entry.occurredAt)}
-                            </span>
-                          </span>
-                          <span className="text-xs text-muted">
-                            {entry.externalReference ? `${entry.externalReference} · ` : ''}
-                            {entry.receivingOffice} ·{' '}
-                            {entry.evidence.documentNo ?? label(entry.evidence.documentType)} v
-                            {entry.evidence.versionNo}
-                            {entry.reason ? ` · ${entry.reason}` : ''}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div className="grid gap-2">
-                  <h3 className="m-0 text-sm font-[700] text-midnight">Official action history</h3>
-                  {detail.externalActions.length === 0 ? (
-                    <p className="m-0 text-[13px] text-muted">No official actions recorded.</p>
-                  ) : (
-                    <ul className="m-0 grid list-none gap-1 p-0">
-                      {detail.externalActions.map((entry) => (
-                        <li
-                          className="grid gap-0.5 border-b border-line/60 py-2 last:border-b-0"
-                          key={entry.id}
-                        >
-                          <span className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-[13px] font-[650] text-ink">
-                              {label(entry.action)}
-                            </span>
-                            <span className="text-xs text-muted">
-                              {dateTimeLabel(entry.actionAt)}
-                            </span>
-                          </span>
-                          <span className="text-xs text-muted">
-                            {entry.externalReference} ·{' '}
-                            {entry.evidence.documentNo ?? label(entry.evidence.documentType)} v
-                            {entry.evidence.versionNo}
-                            {entry.reason ? ` · ${entry.reason}` : ''}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2">
-            {detail.workflowStatus === 'DRAFT' && props.canCreate ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="secondary"
-                onClick={openUpdate}
-              >
-                Update Draft
-              </Button>
-            ) : null}
-            {detail.workflowStatus === 'DRAFT' && props.canSubmit ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy}
-                onClick={() => void submit()}
-              >
-                Submit for review
-              </Button>
-            ) : null}
-            {detail.workflowStatus === 'FOR_REVIEW' && props.canReturn ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => {
-                  setReason('');
-                  setError('');
-                  setSuccess('');
-                  setDialog('return');
-                }}
-              >
-                Return for correction
-              </Button>
-            ) : null}
-            {detail.workflowStatus === 'FOR_REVIEW' && props.canEndorse ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy}
-                onClick={() => void endorse()}
-              >
-                Endorse for signature
-              </Button>
-            ) : null}
-            {detail.workflowStatus === 'FOR_SIGNATURE' && props.canIssue ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy}
-                onClick={() => void issue()}
-              >
-                Issue Appointment
-              </Button>
-            ) : null}
-            {detail.workflowStatus === 'ISSUED' && props.canCreate ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="secondary"
-                onClick={openCorrect}
-              >
-                Prepare linked correction
-              </Button>
-            ) : null}
-            {(detail.workflowStatus === 'FOR_SIGNATURE' || detail.workflowStatus === 'ISSUED') &&
-            props.canCancel ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => {
-                  setReason('');
-                  setAuthorityDocumentVersionId('');
-                  setError('');
-                  setSuccess('');
-                  setDialog('cancel');
-                }}
-              >
-                Cancel Appointment
-              </Button>
-            ) : null}
-          </div>
-        </Panel>
-      ) : selected ? (
-        <p className="m-0 text-sm text-muted">Loading the Appointment record…</p>
-      ) : null}
-
-      {dialog ? (
-        <section
-          aria-label={dialogTitle}
-          className="grid gap-4 rounded-[4px] border border-cobalt/40 bg-paper p-5 shadow-[0_10px_28px_rgb(23_32_51/8%)]"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="m-0 text-[17px] font-[720] text-midnight">{dialogTitle}</h2>
-            <Button
-              size="default"
-              className="min-h-9"
-              type="button"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => setDialog(null)}
-            >
-              Close
-            </Button>
-          </div>
-          <FormError message={error} />
-
-          {(dialog === 'prepare' || dialog === 'update' || dialog === 'correct') && (
-            <VersionFields
-              form={form}
-              setForm={setForm}
-              documents={props.documents}
-              authorityLabel={props.displayName}
-              idPrefix={dialog}
-            />
-          )}
-
-          {(dialog === 'return' || dialog === 'cancel' || dialog === 'correct') && (
-            <Field label="Reason" htmlFor={`${dialog}-reason`}>
-              <textarea
-                className={`${inputClass} min-h-20 py-2`}
-                id={`${dialog}-reason`}
-                value={reason}
-                onChange={(event) => setReason(inputValue(event))}
-              />
-            </Field>
-          )}
-
-          {(dialog === 'cancel' || dialog === 'correct') && (
-            <Field
-              label="Authority evidence (finalized Document Version)"
-              htmlFor={`${dialog}-authority`}
-            >
-              <select
-                className={inputClass}
-                id={`${dialog}-authority`}
-                value={authorityDocumentVersionId}
-                onChange={(event) => setAuthorityDocumentVersionId(inputValue(event))}
-              >
-                <option value="">
-                  {dialog === 'cancel'
-                    ? 'Select the cancellation authority'
-                    : 'Select the correction authority'}
-                </option>
-                {props.documents.map((document) => (
-                  <option key={document.version.id} value={document.version.id}>
-                    {documentOptionLabel(document)}
-                  </option>
+                      )}
+                    </Td>
+                  </Tr>
                 ))}
-              </select>
-            </Field>
+              </tbody>
+            </Table>
           )}
+          {selectionsHasMore ? (
+            <p className={`${noteClass} px-4 py-2.5`}>
+              Only the most recent handed-off Selection Decisions are shown. Prepare or cancel an
+              Appointment to reduce the list.
+            </p>
+          ) : null}
+        </Panel>
 
-          {dialog === 'settings' ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Regulatory status" htmlFor="settings-status">
-                <select
-                  className={inputClass}
-                  id="settings-status"
-                  value={settingsForm.regulatoryStatus}
-                  onChange={(event) =>
-                    setSettingsForm({
-                      ...settingsForm,
-                      regulatoryStatus: inputValue(event) as RegulatoryStatus,
-                    })
-                  }
-                >
-                  <option value="REGULATED">REGULATED</option>
-                  <option value="ACCREDITED_OR_DEREGULATED">ACCREDITED OR DEREGULATED</option>
-                </select>
+        <Panel title="Appointment register" flush>
+          <p className={`${noteClass} px-4 pt-3`}>
+            Every prepared Appointment with its current workflow status.
+          </p>
+          {appointments.length === 0 ? (
+            <StateSurface compact label="No Appointments">
+              <p className="m-0">No Appointments prepared yet.</p>
+            </StateSurface>
+          ) : (
+            <Table className="mt-3 min-w-[640px]">
+              <thead>
+                <tr>
+                  <Th>Appointee</Th>
+                  <Th>Plantilla item</Th>
+                  <Th>Workflow</Th>
+                  <Th>CSC standing</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {appointments.map((appointment) => (
+                  <Tr key={appointment.id} selected={selectedId === appointment.id}>
+                    <RowHeader>
+                      <button
+                        className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
+                        type="button"
+                        onClick={() => select(appointment.id)}
+                      >
+                        {appointment.appointee.fullName}
+                      </button>
+                      <span className="block text-caption font-normal text-ink-muted">
+                        {appointment.appointee.applicationNo}
+                      </span>
+                    </RowHeader>
+                    <Td>
+                      {appointment.position.itemNumber}
+                      <span className="block text-caption text-ink-muted">
+                        {appointment.position.title ?? 'Untitled item'}
+                      </span>
+                    </Td>
+                    <Td>
+                      <StatusBadge status={appointment.workflowStatus} />
+                    </Td>
+                    <Td>
+                      <StatusBadge status={appointment.externalStanding} />
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </Panel>
+
+        {selected && detail ? (
+          <Panel
+            ref={detailRef}
+            tabIndex={-1}
+            title={detail.appointee.fullName}
+            actions={workflowActions}
+          >
+            <div className="grid gap-5">
+              <div className="grid gap-3">
+                <p className="m-0 text-small text-ink-muted">
+                  {detail.position.itemNumber} · {detail.position.title ?? 'Untitled item'}
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span aria-label="Workflow status">
+                    <StatusBadge status={detail.workflowStatus} />
+                  </span>
+                  <span aria-label="External standing">
+                    <StatusBadge status={detail.externalStanding} />
+                  </span>
+                  <span className="text-small text-ink-muted">
+                    {currentVersion
+                      ? `Current version v${currentVersion.versionNo} · ${label(currentVersion.status)}`
+                      : 'No version recorded'}
+                  </span>
+                  {detail.issuedAt ? (
+                    <span className="text-small text-ink-muted">
+                      Issued {dateTimeLabel(detail.issuedAt)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <dl className={factsClass}>
+                <DetailRow label="Selected Application">
+                  {detail.appointee.applicationNo} · {detail.appointee.personKey}
+                </DetailRow>
+                <DetailRow label="Recruitment handoff">{detail.recruitmentHandoffId}</DetailRow>
+                <DetailRow label="Agency form path">
+                  {detail.settings
+                    ? `${detail.settings.regulatoryStatus} · ${detail.settings.formVariant}`
+                    : 'Agency configuration missing'}
+                </DetailRow>
+                <DetailRow label="Reserved Plantilla Position">
+                  {detail.position.itemNumber} · SG {detail.position.salaryGrade ?? '—'}
+                </DetailRow>
+              </dl>
+
+              <SectionTabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+                <div className="border-b border-border">
+                  <SectionTabList
+                    label="Appointment sections"
+                    tabs={[
+                      { value: 'preparation', label: 'Preparation & evidence' },
+                      { value: 'review', label: 'Review & issuance' },
+                      { value: 'oath', label: 'Oath & assumption' },
+                      { value: 'csc', label: 'CSC transactions' },
+                    ]}
+                  />
+                </div>
+
+                <SectionTabPanel value="preparation" className="grid gap-4 pt-5">
+                  <h3 className={sectionTitleClass}>Exact evidence versions</h3>
+                  {detail.versions.map((version) => (
+                    <section
+                      aria-label={`Version v${version.versionNo}`}
+                      className="grid gap-4 rounded-control border border-border p-4"
+                      key={version.id}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <strong className="text-body font-[650] text-ink">
+                          Version v{version.versionNo}
+                          {version.replacesVersionId ? ' · linked correction' : ''}
+                        </strong>
+                        <StatusBadge status={version.status} />
+                      </div>
+                      <dl className={factsClass}>
+                        <DetailRow label="Employment status">
+                          {label(version.employmentStatus)}
+                        </DetailRow>
+                        <DetailRow label="Nature">{label(version.natureOfAppointment)}</DetailRow>
+                        <DetailRow label="Salary">
+                          SG {version.salaryGrade} step {version.salaryStep}
+                        </DetailRow>
+                        <DetailRow label="Effectivity">
+                          {dateLabel(version.effectivityDate)}
+                        </DetailRow>
+                        <DetailRow label="Signature">{label(version.signatureMethod)}</DetailRow>
+                        <DetailRow label="Appointment form">
+                          {version.appointmentDocumentVersionId}
+                        </DetailRow>
+                        {version.correctionReason ? (
+                          <DetailRow label="Correction reason">
+                            {version.correctionReason}
+                          </DetailRow>
+                        ) : null}
+                      </dl>
+                      {version.evidence.length === 0 ? (
+                        <p className={noteClass}>No evidence links recorded.</p>
+                      ) : (
+                        <HistoryTable label="Evidence links">
+                          <thead>
+                            <tr>
+                              <Th>Evidence role</Th>
+                              <Th>Document</Th>
+                              <Th kind="numeric">Version</Th>
+                              <Th kind="date">Issued</Th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {version.evidence.map((entry) => (
+                              <Tr key={entry.id}>
+                                <Td className="font-[600] text-ink">{label(entry.linkRole)}</Td>
+                                <Td>{entry.documentNo ?? entry.documentType}</Td>
+                                <Td kind="numeric">v{entry.versionNo}</Td>
+                                <Td kind="date">{dateLabel(entry.issuedAt)}</Td>
+                              </Tr>
+                            ))}
+                          </tbody>
+                        </HistoryTable>
+                      )}
+                    </section>
+                  ))}
+                </SectionTabPanel>
+
+                <SectionTabPanel value="review" className="grid gap-4 pt-5">
+                  <RecordSection title="Preparation, review and signature">
+                    {detail.history.length === 0 ? (
+                      <p className={noteClass}>No review history recorded.</p>
+                    ) : (
+                      <HistoryTable label="Review history">
+                        <thead>
+                          <tr>
+                            <Th>Action</Th>
+                            <Th>Resulting status</Th>
+                            <Th kind="date">Recorded</Th>
+                            <Th>Reason</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.history.map((entry) => (
+                            <Tr key={entry.id}>
+                              <Td className="font-[600] text-ink">{label(entry.action)}</Td>
+                              <Td>{entry.newStatus ? label(entry.newStatus) : '—'}</Td>
+                              <Td kind="date">{dateTimeLabel(entry.occurredAt)}</Td>
+                              <Td className="text-ink-muted">{entry.reason ?? '—'}</Td>
+                            </Tr>
+                          ))}
+                        </tbody>
+                      </HistoryTable>
+                    )}
+                  </RecordSection>
+                  <p className={noteClass}>
+                    Issued corrections require a linked successor with its own reason, authority and
+                    evidence. Issuance alone creates no Employee service and leaves the Plantilla
+                    reservation in place.
+                  </p>
+                </SectionTabPanel>
+
+                <SectionTabPanel value="oath" className="grid gap-5 pt-5">
+                  <div className="grid gap-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-small text-ink-muted">Assumption to Duty</span>
+                      <span aria-label="Assumption status">
+                        <StatusBadge
+                          status={
+                            assumption?.status ??
+                            (acknowledgment || oath ? 'PENDING' : 'NOT_RECORDED')
+                          }
+                        />
+                      </span>
+                    </div>
+                    <p className={noteClass}>
+                      Receipt, Oath and Assumption bind to this exact issued version. Certification
+                      is complete without CSC action, and a correction is refused once service has
+                      been activated from the assumption.
+                    </p>
+                  </div>
+                  {detail.workflowStatus !== 'ISSUED' ? (
+                    <StateSurface compact label="Oath and assumption not open">
+                      <p className="m-0">
+                        Oath and Assumption open once an Appointment Version is issued.
+                      </p>
+                    </StateSurface>
+                  ) : (
+                    <>
+                      <dl className={factsClass}>
+                        <DetailRow label="Acknowledged receipt">
+                          {acknowledgment
+                            ? `${dateTimeLabel(acknowledgment.acknowledgedAt)} · ${evidenceLabel(acknowledgment.evidence)}`
+                            : 'Not recorded'}
+                        </DetailRow>
+                        <DetailRow label="Oath">
+                          {oath?.currentVersion
+                            ? `${dateLabel(oath.currentVersion.oathDate)} · ${oath.currentVersion.authority} · v${oath.currentVersion.versionNo}`
+                            : 'Not recorded'}
+                        </DetailRow>
+                        <DetailRow label="Actual assumption">
+                          {assumption?.currentVersion
+                            ? `${dateLabel(assumption.currentVersion.actualAssumptionDate)} · certified by ${assumption.currentVersion.certifyingAuthority}`
+                            : 'Not recorded'}
+                        </DetailRow>
+                        <DetailRow label="Recorded outcome">
+                          {assumption?.outcome
+                            ? `${label(assumption.outcome.outcome)} · ${dateLabel(assumption.outcome.outcomeDate)}`
+                            : 'None recorded'}
+                        </DetailRow>
+                      </dl>
+                      <div className="flex flex-wrap gap-2">
+                        {!acknowledgment && props.canRecordReceipt ? (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            disabled={busy}
+                            onClick={openReceipt}
+                          >
+                            Record acknowledgment
+                          </Button>
+                        ) : null}
+                        {acknowledgment && !oath && props.canRecordOath ? (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            disabled={busy}
+                            onClick={() => openOath()}
+                          >
+                            Record Oath
+                          </Button>
+                        ) : null}
+                        {oath && assumptionPending && props.canRecordOath ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => openOathCorrection()}
+                          >
+                            Correct Oath
+                          </Button>
+                        ) : null}
+                        {oath &&
+                        assumptionPending &&
+                        !assumption?.currentVersion &&
+                        props.canCertifyAssumption ? (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            disabled={busy}
+                            onClick={() => openAssumption()}
+                          >
+                            Certify Assumption to Duty
+                          </Button>
+                        ) : null}
+                        {assumption?.status === 'ASSUMED' && props.canCorrectAssumption ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => openAssumptionCorrection()}
+                          >
+                            Correct Assumption to Duty
+                          </Button>
+                        ) : null}
+                        {assumptionPending && props.canFailAssumption ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => openOutcome('assumption-failure')}
+                          >
+                            Record failure to assume
+                          </Button>
+                        ) : null}
+                        {assumptionPending && props.canCancelAssumption ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => openOutcome('assumption-cancellation')}
+                          >
+                            Cancel before assumption
+                          </Button>
+                        ) : null}
+                      </div>
+                      {oath && oath.versions.length > 0 ? (
+                        <RecordSection title="Oath history">
+                          <HistoryTable label="Oath history">
+                            <thead>
+                              <tr>
+                                <Th>Version</Th>
+                                <Th kind="date">Oath date</Th>
+                                <Th>Authority</Th>
+                                <Th>Place or method</Th>
+                                <Th>Evidence</Th>
+                                <Th>Correction reason</Th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {oath.versions.map((entry) => (
+                                <Tr key={entry.id}>
+                                  <Td className="font-[600] whitespace-nowrap text-ink">
+                                    v{entry.versionNo}
+                                    {entry.replacesOathVersionId ? ' · corrected' : ''}
+                                  </Td>
+                                  <Td kind="date">{dateLabel(entry.oathDate)}</Td>
+                                  <Td>{entry.authority}</Td>
+                                  <Td>
+                                    {[entry.place, entry.permittedVirtualMethod]
+                                      .filter(Boolean)
+                                      .join(' · ') || '—'}
+                                  </Td>
+                                  <Td>{evidenceLabel(entry.evidence)}</Td>
+                                  <Td className="text-ink-muted">
+                                    {entry.correctionReason ?? '—'}
+                                  </Td>
+                                </Tr>
+                              ))}
+                            </tbody>
+                          </HistoryTable>
+                        </RecordSection>
+                      ) : null}
+                      {assumption && assumption.versions.length > 0 ? (
+                        <RecordSection title="Assumption history">
+                          <HistoryTable label="Assumption history">
+                            <thead>
+                              <tr>
+                                <Th>Version</Th>
+                                <Th kind="date">Actual assumption</Th>
+                                <Th>Certifying authority</Th>
+                                <Th kind="date">Certified</Th>
+                                <Th>Evidence</Th>
+                                <Th>Correction reason</Th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {assumption.versions.map((entry) => (
+                                <Tr key={entry.id}>
+                                  <Td className="font-[600] whitespace-nowrap text-ink">
+                                    v{entry.versionNo}
+                                    {entry.replacesAssumptionVersionId ? ' · corrected' : ''}
+                                  </Td>
+                                  <Td kind="date">{dateLabel(entry.actualAssumptionDate)}</Td>
+                                  <Td>{entry.certifyingAuthority}</Td>
+                                  <Td kind="date">{dateTimeLabel(entry.certifiedAt)}</Td>
+                                  <Td>{evidenceLabel(entry.evidence)}</Td>
+                                  <Td className="text-ink-muted">
+                                    {entry.correctionReason ?? '—'}
+                                  </Td>
+                                </Tr>
+                              ))}
+                            </tbody>
+                          </HistoryTable>
+                        </RecordSection>
+                      ) : null}
+                      {assumption?.outcome ? (
+                        <RecordSection title={label(assumption.outcome.outcome)}>
+                          <p className="m-0 text-small text-ink-muted">
+                            {dateLabel(assumption.outcome.outcomeDate)}
+                            {assumption.outcome.noticeDate
+                              ? ` · notice ${dateLabel(assumption.outcome.noticeDate)}`
+                              : ''}
+                            {assumption.outcome.deadlineDate
+                              ? ` · deadline ${dateLabel(assumption.outcome.deadlineDate)}`
+                              : ''}
+                            {` · ${assumption.outcome.reason}`}
+                          </p>
+                        </RecordSection>
+                      ) : null}
+                      <div className="rounded-control border border-border p-4">
+                        <RecordSection
+                          title="Employee service activation"
+                          actions={
+                            <StatusBadge
+                              status={
+                                activation
+                                  ? 'ACTIVE'
+                                  : assumption?.status === 'ASSUMED'
+                                    ? 'READY'
+                                    : 'PENDING'
+                              }
+                            />
+                          }
+                        >
+                          <p className={noteClass}>
+                            Activation runs only from the assumed Appointment Contract. Personnel
+                            creates the Employee and initial Service Segment, Plantilla occupies the
+                            reserved item and records the Position Incumbency, and Recruitment
+                            closes the selected Application, Vacancy Publication, and Request to
+                            Fill in one transaction.
+                          </p>
+                          {activation ? (
+                            <dl className={factsClass}>
+                              <DetailRow label="Employee">
+                                {activation.legalName} · {activation.employeeNumber}
+                              </DetailRow>
+                              <DetailRow label="Service effective from">
+                                {dateLabel(activation.effectiveFrom)}
+                              </DetailRow>
+                              <DetailRow label="Appointment status">
+                                {label(activation.appointmentStatus)}
+                              </DetailRow>
+                              <DetailRow label="Service Segment">
+                                {activation.serviceSegmentId}
+                              </DetailRow>
+                            </dl>
+                          ) : null}
+                          {!activation &&
+                          assumption?.status === 'ASSUMED' &&
+                          props.canActivateService ? (
+                            <span>
+                              <Button
+                                type="button"
+                                variant="primary"
+                                disabled={busy}
+                                onClick={openActivation}
+                              >
+                                Activate service
+                              </Button>
+                            </span>
+                          ) : null}
+                          {!activation && assumption?.status !== 'ASSUMED' ? (
+                            <p className={noteClass}>
+                              Activation opens once the Assumption to Duty is certified for the
+                              current issued version.
+                            </p>
+                          ) : null}
+                        </RecordSection>
+                      </div>
+                    </>
+                  )}
+                </SectionTabPanel>
+
+                <SectionTabPanel value="csc" className="grid gap-5 pt-5">
+                  <div className="grid gap-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-small text-ink-muted">External standing</span>
+                      <span aria-label="External standing">
+                        <StatusBadge status={detail.externalStanding} />
+                      </span>
+                    </div>
+                    <p className={noteClass}>
+                      Submission and official action events are append-only and bind to an exact
+                      issued version. They never change the workflow status, employment status,
+                      nature of appointment, or the issued instrument.
+                    </p>
+                  </div>
+                  {issuedVersions.length === 0 ? (
+                    <StateSurface compact label="CSC tracking not open">
+                      <p className="m-0">
+                        External tracking opens once an Appointment Version is issued.
+                      </p>
+                    </StateSurface>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {props.canRecordExternalEvents ? (
+                        <Button
+                          type="button"
+                          variant="primary"
+                          disabled={busy || detail.settings === null}
+                          onClick={() => openExternal('external-submission')}
+                        >
+                          Record submission event
+                        </Button>
+                      ) : null}
+                      {props.canRecordExternalActions ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={busy || detail.settings === null}
+                          onClick={() => openExternal('external-action')}
+                        >
+                          Record official action
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                  <RecordSection title="Submission history">
+                    {detail.externalSubmissions.length === 0 ? (
+                      <p className={noteClass}>No submission events recorded.</p>
+                    ) : (
+                      <HistoryTable label="Submission history">
+                        <thead>
+                          <tr>
+                            <Th>Event</Th>
+                            <Th kind="date">Occurred</Th>
+                            <Th>Reference</Th>
+                            <Th>Receiving office</Th>
+                            <Th>Evidence</Th>
+                            <Th>Reason</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.externalSubmissions.map((entry) => (
+                            <Tr key={entry.id}>
+                              <Td className="font-[600] text-ink">{label(entry.eventType)}</Td>
+                              <Td kind="date">{dateTimeLabel(entry.occurredAt)}</Td>
+                              <Td>{entry.externalReference ?? '—'}</Td>
+                              <Td>{entry.receivingOffice}</Td>
+                              <Td>{evidenceLabel(entry.evidence)}</Td>
+                              <Td className="text-ink-muted">{entry.reason ?? '—'}</Td>
+                            </Tr>
+                          ))}
+                        </tbody>
+                      </HistoryTable>
+                    )}
+                  </RecordSection>
+                  <RecordSection title="Official action history">
+                    {detail.externalActions.length === 0 ? (
+                      <p className={noteClass}>No official actions recorded.</p>
+                    ) : (
+                      <HistoryTable label="Official action history">
+                        <thead>
+                          <tr>
+                            <Th>Action</Th>
+                            <Th kind="date">Action at</Th>
+                            <Th>Reference</Th>
+                            <Th>Evidence</Th>
+                            <Th>Reason</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.externalActions.map((entry) => (
+                            <Tr key={entry.id}>
+                              <Td className="font-[600] text-ink">{label(entry.action)}</Td>
+                              <Td kind="date">{dateTimeLabel(entry.actionAt)}</Td>
+                              <Td>{entry.externalReference}</Td>
+                              <Td>{evidenceLabel(entry.evidence)}</Td>
+                              <Td className="text-ink-muted">{entry.reason ?? '—'}</Td>
+                            </Tr>
+                          ))}
+                        </tbody>
+                      </HistoryTable>
+                    )}
+                  </RecordSection>
+                </SectionTabPanel>
+              </SectionTabs>
+            </div>
+          </Panel>
+        ) : selected ? (
+          <Panel title={selected.appointee.fullName} flush>
+            {failedDetailId === selected.id ? (
+              <StateSurface compact label="Appointment record unavailable">
+                <StateCode>Unavailable</StateCode>
+                <p className="m-0">
+                  The Appointment record could not be loaded. Refresh the page to try again.
+                </p>
+              </StateSurface>
+            ) : (
+              <StateSurface compact busy label="Loading the Appointment record">
+                <p className="m-0">Loading the Appointment record…</p>
+              </StateSurface>
+            )}
+          </Panel>
+        ) : null}
+      </div>
+
+      <FormDialog
+        presentation="form"
+        open={dialog !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setDialog(null);
+        }}
+      >
+        <DialogContent onCloseAutoFocus={restoreFocus}>
+          <DialogHeader>
+            <DialogTitle>{activeDialog?.title}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="grid gap-5">
+            <FormError message={error} />
+            {(dialog === 'prepare' || dialog === 'update' || dialog === 'correct') && (
+              <VersionFields
+                form={form}
+                setForm={setForm}
+                documents={props.documents}
+                authorityLabel={props.displayName}
+                idPrefix={dialog}
+              />
+            )}
+
+            {(dialog === 'return' || dialog === 'cancel' || dialog === 'correct') && (
+              <Field label="Reason" htmlFor={`${dialog}-reason`}>
+                <textarea
+                  className={`${inputClass} min-h-20 py-2`}
+                  id={`${dialog}-reason`}
+                  value={reason}
+                  onChange={(event) => setReason(inputValue(event))}
+                />
               </Field>
+            )}
+
+            {(dialog === 'cancel' || dialog === 'correct') && (
               <Field
-                label="Status evidence (finalized Document Version)"
-                htmlFor="settings-evidence"
+                label="Authority evidence (finalized Document Version)"
+                htmlFor={`${dialog}-authority`}
               >
                 <select
                   className={inputClass}
-                  id="settings-evidence"
-                  value={settingsForm.statusEvidenceDocumentVersionId}
-                  onChange={(event) =>
-                    setSettingsForm({
-                      ...settingsForm,
-                      statusEvidenceDocumentVersionId: inputValue(event),
-                    })
-                  }
+                  id={`${dialog}-authority`}
+                  value={authorityDocumentVersionId}
+                  onChange={(event) => setAuthorityDocumentVersionId(inputValue(event))}
                 >
-                  <option value="">Select the regulatory status evidence</option>
+                  <option value="">
+                    {dialog === 'cancel'
+                      ? 'Select the cancellation authority'
+                      : 'Select the correction authority'}
+                  </option>
                   {props.documents.map((document) => (
                     <option key={document.version.id} value={document.version.id}>
                       {documentOptionLabel(document)}
@@ -2343,479 +2438,215 @@ export function AppointmentsWorkspace(props: Props) {
                   ))}
                 </select>
               </Field>
-            </div>
-          ) : null}
+            )}
 
-          {dialog === 'external-submission' || dialog === 'external-action' ? (
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Issued version" htmlFor={`${dialog}-version`}>
+            {dialog === 'settings' ? (
+              <div className="grid gap-5 min-[621px]:grid-cols-2">
+                <Field label="Regulatory status" htmlFor="settings-status">
                   <select
                     className={inputClass}
-                    id={`${dialog}-version`}
-                    value={externalForm.appointmentVersionId}
+                    id="settings-status"
+                    value={settingsForm.regulatoryStatus}
+                    onChange={(event) =>
+                      setSettingsForm({
+                        ...settingsForm,
+                        regulatoryStatus: inputValue(event) as RegulatoryStatus,
+                      })
+                    }
+                  >
+                    <option value="REGULATED">REGULATED</option>
+                    <option value="ACCREDITED_OR_DEREGULATED">ACCREDITED OR DEREGULATED</option>
+                  </select>
+                </Field>
+                <Field
+                  label="Status evidence (finalized Document Version)"
+                  htmlFor="settings-evidence"
+                >
+                  <select
+                    className={inputClass}
+                    id="settings-evidence"
+                    value={settingsForm.statusEvidenceDocumentVersionId}
+                    onChange={(event) =>
+                      setSettingsForm({
+                        ...settingsForm,
+                        statusEvidenceDocumentVersionId: inputValue(event),
+                      })
+                    }
+                  >
+                    <option value="">Select the regulatory status evidence</option>
+                    {props.documents.map((document) => (
+                      <option key={document.version.id} value={document.version.id}>
+                        {documentOptionLabel(document)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            ) : null}
+
+            {dialog === 'external-submission' || dialog === 'external-action' ? (
+              <div className="grid gap-4">
+                <div className="grid gap-5 min-[621px]:grid-cols-2">
+                  <Field label="Issued version" htmlFor={`${dialog}-version`}>
+                    <select
+                      className={inputClass}
+                      id={`${dialog}-version`}
+                      value={externalForm.appointmentVersionId}
+                      onChange={(event) =>
+                        setExternalForm({
+                          ...externalForm,
+                          appointmentVersionId: inputValue(event),
+                        })
+                      }
+                    >
+                      {issuedVersions.map((version) => (
+                        <option key={version.id} value={version.id}>
+                          Version v{version.versionNo} · issued {dateLabel(version.issuedAt)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  {dialog === 'external-submission' ? (
+                    <Field label="Submission event" htmlFor="external-event">
+                      <select
+                        className={inputClass}
+                        id="external-event"
+                        value={externalForm.eventType}
+                        onChange={(event) =>
+                          setExternalForm({ ...externalForm, eventType: inputValue(event) })
+                        }
+                      >
+                        {EXTERNAL_SUBMISSION_TYPES.map((eventType) => (
+                          <option key={eventType} value={eventType}>
+                            {label(eventType)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  ) : (
+                    <Field label="Official action" htmlFor="external-action">
+                      <select
+                        className={inputClass}
+                        id="external-action"
+                        value={externalForm.action}
+                        onChange={(event) =>
+                          setExternalForm({ ...externalForm, action: inputValue(event) })
+                        }
+                      >
+                        {externalActionsFor(externalRegulatoryStatus).map((action) => (
+                          <option key={action} value={action}>
+                            {label(action)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field
+                    label={
+                      dialog === 'external-submission'
+                        ? 'External reference (optional)'
+                        : 'External reference'
+                    }
+                    htmlFor="external-reference"
+                  >
+                    <input
+                      className={inputClass}
+                      id="external-reference"
+                      value={externalForm.externalReference}
+                      onChange={(event) =>
+                        setExternalForm({ ...externalForm, externalReference: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label={dialog === 'external-submission' ? 'Occurred at' : 'Action at'}
+                    htmlFor="external-occurred"
+                  >
+                    <input
+                      className={inputClass}
+                      id="external-occurred"
+                      type="datetime-local"
+                      value={externalForm.occurredAt}
+                      onChange={(event) =>
+                        setExternalForm({ ...externalForm, occurredAt: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  {dialog === 'external-submission' ? (
+                    <Field label="Receiving office" htmlFor="external-office">
+                      <input
+                        className={inputClass}
+                        id="external-office"
+                        value={externalForm.receivingOffice}
+                        onChange={(event) =>
+                          setExternalForm({ ...externalForm, receivingOffice: inputValue(event) })
+                        }
+                      />
+                    </Field>
+                  ) : null}
+                </div>
+                <Field
+                  label="Exact evidence (finalized Document Version)"
+                  htmlFor="external-evidence"
+                >
+                  <select
+                    className={inputClass}
+                    id="external-evidence"
+                    value={externalForm.evidenceDocumentVersionId}
                     onChange={(event) =>
                       setExternalForm({
                         ...externalForm,
-                        appointmentVersionId: inputValue(event),
-                      })
-                    }
-                  >
-                    {issuedVersions.map((version) => (
-                      <option key={version.id} value={version.id}>
-                        Version v{version.versionNo} · issued {dateLabel(version.issuedAt)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                {dialog === 'external-submission' ? (
-                  <Field label="Submission event" htmlFor="external-event">
-                    <select
-                      className={inputClass}
-                      id="external-event"
-                      value={externalForm.eventType}
-                      onChange={(event) =>
-                        setExternalForm({ ...externalForm, eventType: inputValue(event) })
-                      }
-                    >
-                      {EXTERNAL_SUBMISSION_TYPES.map((eventType) => (
-                        <option key={eventType} value={eventType}>
-                          {label(eventType)}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                ) : (
-                  <Field label="Official action" htmlFor="external-action">
-                    <select
-                      className={inputClass}
-                      id="external-action"
-                      value={externalForm.action}
-                      onChange={(event) =>
-                        setExternalForm({ ...externalForm, action: inputValue(event) })
-                      }
-                    >
-                      {externalActionsFor(externalRegulatoryStatus).map((action) => (
-                        <option key={action} value={action}>
-                          {label(action)}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                )}
-                <Field
-                  label={
-                    dialog === 'external-submission'
-                      ? 'External reference (optional)'
-                      : 'External reference'
-                  }
-                  htmlFor="external-reference"
-                >
-                  <input
-                    className={inputClass}
-                    id="external-reference"
-                    value={externalForm.externalReference}
-                    onChange={(event) =>
-                      setExternalForm({ ...externalForm, externalReference: inputValue(event) })
-                    }
-                  />
-                </Field>
-                <Field
-                  label={dialog === 'external-submission' ? 'Occurred at' : 'Action at'}
-                  htmlFor="external-occurred"
-                >
-                  <input
-                    className={inputClass}
-                    id="external-occurred"
-                    type="datetime-local"
-                    value={externalForm.occurredAt}
-                    onChange={(event) =>
-                      setExternalForm({ ...externalForm, occurredAt: inputValue(event) })
-                    }
-                  />
-                </Field>
-                {dialog === 'external-submission' ? (
-                  <Field label="Receiving office" htmlFor="external-office">
-                    <input
-                      className={inputClass}
-                      id="external-office"
-                      value={externalForm.receivingOffice}
-                      onChange={(event) =>
-                        setExternalForm({ ...externalForm, receivingOffice: inputValue(event) })
-                      }
-                    />
-                  </Field>
-                ) : null}
-              </div>
-              <Field
-                label="Exact evidence (finalized Document Version)"
-                htmlFor="external-evidence"
-              >
-                <select
-                  className={inputClass}
-                  id="external-evidence"
-                  value={externalForm.evidenceDocumentVersionId}
-                  onChange={(event) =>
-                    setExternalForm({
-                      ...externalForm,
-                      evidenceDocumentVersionId: inputValue(event),
-                    })
-                  }
-                >
-                  <option value="">Select the exact evidence version</option>
-                  {props.documents.map((document) => (
-                    <option key={document.version.id} value={document.version.id}>
-                      {documentOptionLabel(document)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Reason (optional)" htmlFor="external-reason">
-                <textarea
-                  className={`${inputClass} min-h-20 py-2`}
-                  id="external-reason"
-                  value={externalForm.reason}
-                  onChange={(event) =>
-                    setExternalForm({ ...externalForm, reason: inputValue(event) })
-                  }
-                />
-              </Field>
-            </div>
-          ) : null}
-
-          {dialog === 'receipt' ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Acknowledged at" htmlFor="receipt-acknowledged">
-                <input
-                  className={inputClass}
-                  id="receipt-acknowledged"
-                  type="datetime-local"
-                  value={receiptForm.acknowledgedAt}
-                  onChange={(event) =>
-                    setReceiptForm({ ...receiptForm, acknowledgedAt: inputValue(event) })
-                  }
-                />
-              </Field>
-              <Field label="Exact evidence (finalized Document Version)" htmlFor="receipt-evidence">
-                <select
-                  className={inputClass}
-                  id="receipt-evidence"
-                  value={receiptForm.documentVersionId}
-                  onChange={(event) =>
-                    setReceiptForm({ ...receiptForm, documentVersionId: inputValue(event) })
-                  }
-                >
-                  <option value="">Select the acknowledgment evidence</option>
-                  {props.documents.map((document) => (
-                    <option key={document.version.id} value={document.version.id}>
-                      {documentOptionLabel(document)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          ) : null}
-
-          {dialog === 'oath' || dialog === 'oath-correction' ? (
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Oath date" htmlFor="oath-date">
-                  <input
-                    className={inputClass}
-                    id="oath-date"
-                    type="date"
-                    value={oathForm.oathDate}
-                    onChange={(event) => setOathForm({ ...oathForm, oathDate: inputValue(event) })}
-                  />
-                </Field>
-                <Field label="Administered by" htmlFor="oath-administered-by">
-                  <input
-                    className={inputClass}
-                    id="oath-administered-by"
-                    value={props.displayName}
-                    readOnly
-                  />
-                </Field>
-                <Field label="Authority" htmlFor="oath-authority">
-                  <input
-                    className={inputClass}
-                    id="oath-authority"
-                    placeholder="e.g., City Mayor"
-                    value={oathForm.authority}
-                    onChange={(event) => setOathForm({ ...oathForm, authority: inputValue(event) })}
-                  />
-                </Field>
-                <Field label="Place (optional)" htmlFor="oath-place">
-                  <input
-                    className={inputClass}
-                    id="oath-place"
-                    value={oathForm.place}
-                    onChange={(event) => setOathForm({ ...oathForm, place: inputValue(event) })}
-                  />
-                </Field>
-                <Field label="Permitted virtual method (optional)" htmlFor="oath-method">
-                  <input
-                    className={inputClass}
-                    id="oath-method"
-                    value={oathForm.permittedVirtualMethod}
-                    onChange={(event) =>
-                      setOathForm({ ...oathForm, permittedVirtualMethod: inputValue(event) })
-                    }
-                  />
-                </Field>
-                <Field label="Exact evidence (finalized Document Version)" htmlFor="oath-evidence">
-                  <select
-                    className={inputClass}
-                    id="oath-evidence"
-                    value={oathForm.documentVersionId}
-                    onChange={(event) =>
-                      setOathForm({ ...oathForm, documentVersionId: inputValue(event) })
-                    }
-                  >
-                    <option value="">Select the oath evidence</option>
-                    {props.documents.map((document) => (
-                      <option key={document.version.id} value={document.version.id}>
-                        {documentOptionLabel(document)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-              {dialog === 'oath-correction' ? (
-                <>
-                  <Field label="Reason" htmlFor="oath-correction-reason">
-                    <textarea
-                      className={`${inputClass} min-h-20 py-2`}
-                      id="oath-correction-reason"
-                      value={oathForm.reason}
-                      onChange={(event) => setOathForm({ ...oathForm, reason: inputValue(event) })}
-                    />
-                  </Field>
-                  <Field
-                    label="Authority evidence (finalized Document Version)"
-                    htmlFor="oath-correction-authority"
-                  >
-                    <select
-                      className={inputClass}
-                      id="oath-correction-authority"
-                      value={oathForm.authorityDocumentVersionId}
-                      onChange={(event) =>
-                        setOathForm({
-                          ...oathForm,
-                          authorityDocumentVersionId: inputValue(event),
-                        })
-                      }
-                    >
-                      <option value="">Select the correction authority</option>
-                      {props.documents.map((document) => (
-                        <option key={document.version.id} value={document.version.id}>
-                          {documentOptionLabel(document)}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-
-          {dialog === 'assumption' || dialog === 'assumption-correction' ? (
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Actual assumption date" htmlFor="assumption-date">
-                  <input
-                    className={inputClass}
-                    id="assumption-date"
-                    type="date"
-                    value={assumptionForm.actualAssumptionDate}
-                    onChange={(event) =>
-                      setAssumptionForm({
-                        ...assumptionForm,
-                        actualAssumptionDate: inputValue(event),
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Certified by" htmlFor="assumption-certified-by">
-                  <input
-                    className={inputClass}
-                    id="assumption-certified-by"
-                    value={props.displayName}
-                    readOnly
-                  />
-                </Field>
-                <Field label="Certifying authority" htmlFor="assumption-authority">
-                  <input
-                    className={inputClass}
-                    id="assumption-authority"
-                    value={assumptionForm.certifyingAuthority}
-                    onChange={(event) =>
-                      setAssumptionForm({
-                        ...assumptionForm,
-                        certifyingAuthority: inputValue(event),
-                      })
-                    }
-                  />
-                </Field>
-                <Field label="Certified at" htmlFor="assumption-certified-at">
-                  <input
-                    className={inputClass}
-                    id="assumption-certified-at"
-                    type="datetime-local"
-                    value={assumptionForm.certifiedAt}
-                    onChange={(event) =>
-                      setAssumptionForm({ ...assumptionForm, certifiedAt: inputValue(event) })
-                    }
-                  />
-                </Field>
-                <Field
-                  label="Exact evidence (finalized Document Version)"
-                  htmlFor="assumption-evidence"
-                >
-                  <select
-                    className={inputClass}
-                    id="assumption-evidence"
-                    value={assumptionForm.documentVersionId}
-                    onChange={(event) =>
-                      setAssumptionForm({ ...assumptionForm, documentVersionId: inputValue(event) })
-                    }
-                  >
-                    <option value="">Select the certification evidence</option>
-                    {props.documents.map((document) => (
-                      <option key={document.version.id} value={document.version.id}>
-                        {documentOptionLabel(document)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-              {dialog === 'assumption-correction' ? (
-                <>
-                  <Field label="Reason" htmlFor="assumption-correction-reason">
-                    <textarea
-                      className={`${inputClass} min-h-20 py-2`}
-                      id="assumption-correction-reason"
-                      value={assumptionForm.reason}
-                      onChange={(event) =>
-                        setAssumptionForm({ ...assumptionForm, reason: inputValue(event) })
-                      }
-                    />
-                  </Field>
-                  <Field
-                    label="Authority evidence (finalized Document Version)"
-                    htmlFor="assumption-correction-authority"
-                  >
-                    <select
-                      className={inputClass}
-                      id="assumption-correction-authority"
-                      value={assumptionForm.authorityDocumentVersionId}
-                      onChange={(event) =>
-                        setAssumptionForm({
-                          ...assumptionForm,
-                          authorityDocumentVersionId: inputValue(event),
-                        })
-                      }
-                    >
-                      <option value="">Select the correction authority</option>
-                      {props.documents.map((document) => (
-                        <option key={document.version.id} value={document.version.id}>
-                          {documentOptionLabel(document)}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-
-          {dialog === 'assumption-failure' || dialog === 'assumption-cancellation' ? (
-            <div className="grid gap-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                {dialog === 'assumption-failure' ? (
-                  <>
-                    <Field label="Notice date" htmlFor="outcome-notice-date">
-                      <input
-                        className={inputClass}
-                        id="outcome-notice-date"
-                        type="date"
-                        value={outcomeForm.noticeDate}
-                        onChange={(event) =>
-                          setOutcomeForm({ ...outcomeForm, noticeDate: inputValue(event) })
-                        }
-                      />
-                    </Field>
-                    <Field label="Deadline date" htmlFor="outcome-deadline-date">
-                      <input
-                        className={inputClass}
-                        id="outcome-deadline-date"
-                        type="date"
-                        value={outcomeForm.deadlineDate}
-                        onChange={(event) =>
-                          setOutcomeForm({ ...outcomeForm, deadlineDate: inputValue(event) })
-                        }
-                      />
-                    </Field>
-                  </>
-                ) : null}
-                <Field label="Outcome date" htmlFor="outcome-date">
-                  <input
-                    className={inputClass}
-                    id="outcome-date"
-                    type="date"
-                    value={outcomeForm.outcomeDate}
-                    onChange={(event) =>
-                      setOutcomeForm({ ...outcomeForm, outcomeDate: inputValue(event) })
-                    }
-                  />
-                </Field>
-                <Field label="Authorized by" htmlFor="outcome-authorized-by">
-                  <input
-                    className={inputClass}
-                    id="outcome-authorized-by"
-                    value={props.displayName}
-                    readOnly
-                  />
-                </Field>
-                <Field
-                  label="Authority evidence (finalized Document Version)"
-                  htmlFor="outcome-authority"
-                >
-                  <select
-                    className={inputClass}
-                    id="outcome-authority"
-                    value={outcomeForm.authorityDocumentVersionId}
-                    onChange={(event) =>
-                      setOutcomeForm({
-                        ...outcomeForm,
-                        authorityDocumentVersionId: inputValue(event),
-                      })
-                    }
-                  >
-                    <option value="">Select the outcome authority</option>
-                    {props.documents.map((document) => (
-                      <option key={document.version.id} value={document.version.id}>
-                        {documentOptionLabel(document)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field
-                  label="Exact evidence (finalized Document Version)"
-                  htmlFor="outcome-evidence"
-                >
-                  <select
-                    className={inputClass}
-                    id="outcome-evidence"
-                    value={outcomeForm.evidenceDocumentVersionId}
-                    onChange={(event) =>
-                      setOutcomeForm({
-                        ...outcomeForm,
                         evidenceDocumentVersionId: inputValue(event),
                       })
                     }
                   >
-                    <option value="">Select the outcome evidence</option>
+                    <option value="">Select the exact evidence version</option>
+                    {props.documents.map((document) => (
+                      <option key={document.version.id} value={document.version.id}>
+                        {documentOptionLabel(document)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Reason (optional)" htmlFor="external-reason">
+                  <textarea
+                    className={`${inputClass} min-h-20 py-2`}
+                    id="external-reason"
+                    value={externalForm.reason}
+                    onChange={(event) =>
+                      setExternalForm({ ...externalForm, reason: inputValue(event) })
+                    }
+                  />
+                </Field>
+              </div>
+            ) : null}
+
+            {dialog === 'receipt' ? (
+              <div className="grid gap-5 min-[621px]:grid-cols-2">
+                <Field label="Acknowledged at" htmlFor="receipt-acknowledged">
+                  <input
+                    className={inputClass}
+                    id="receipt-acknowledged"
+                    type="datetime-local"
+                    value={receiptForm.acknowledgedAt}
+                    onChange={(event) =>
+                      setReceiptForm({ ...receiptForm, acknowledgedAt: inputValue(event) })
+                    }
+                  />
+                </Field>
+                <Field
+                  label="Exact evidence (finalized Document Version)"
+                  htmlFor="receipt-evidence"
+                >
+                  <select
+                    className={inputClass}
+                    id="receipt-evidence"
+                    value={receiptForm.documentVersionId}
+                    onChange={(event) =>
+                      setReceiptForm({ ...receiptForm, documentVersionId: inputValue(event) })
+                    }
+                  >
+                    <option value="">Select the acknowledgment evidence</option>
                     {props.documents.map((document) => (
                       <option key={document.version.id} value={document.version.id}>
                         {documentOptionLabel(document)}
@@ -2824,359 +2655,444 @@ export function AppointmentsWorkspace(props: Props) {
                   </select>
                 </Field>
               </div>
-              <Field label="Reason" htmlFor="outcome-reason">
-                <textarea
-                  className={`${inputClass} min-h-20 py-2`}
-                  id="outcome-reason"
-                  value={outcomeForm.reason}
-                  onChange={(event) =>
-                    setOutcomeForm({ ...outcomeForm, reason: inputValue(event) })
-                  }
-                />
-              </Field>
-            </div>
-          ) : null}
+            ) : null}
 
-          {dialog === 'activation' ? (
-            <div className="grid gap-4">
-              <dl className="m-0 grid gap-0 sm:grid-cols-2 sm:gap-x-6">
-                <DetailRow label="Appointee">{detail?.appointee.fullName ?? '—'}</DetailRow>
-                <DetailRow label="Plantilla item">
-                  {detail
-                    ? `${detail.position.itemNumber} · ${detail.position.title ?? 'Untitled item'} · SG ${detail.position.salaryGrade ?? '—'}`
-                    : '—'}
-                </DetailRow>
-              </dl>
-              <p className="m-0 text-[12px] leading-[1.55] text-muted">
-                The Employee legal name and service dates come from the assumed Appointment
-                Contract. The Employee number and identity facts are recorded once and reused for
-                later personnel actions.
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Employee number" htmlFor="activation-number">
-                  <input
-                    className={inputClass}
-                    id="activation-number"
-                    value={activationForm.employeeNumber}
-                    onChange={(event) =>
-                      setActivationForm({ ...activationForm, employeeNumber: inputValue(event) })
-                    }
-                  />
-                </Field>
-                <Field label="Birth date" htmlFor="activation-birth-date">
-                  <input
-                    className={inputClass}
-                    id="activation-birth-date"
-                    type="date"
-                    value={activationForm.birthDate}
-                    onChange={(event) =>
-                      setActivationForm({ ...activationForm, birthDate: inputValue(event) })
-                    }
-                  />
-                </Field>
-                <Field label="Sex" htmlFor="activation-sex">
-                  <select
-                    className={inputClass}
-                    id="activation-sex"
-                    value={activationForm.sex}
-                    onChange={(event) =>
-                      setActivationForm({ ...activationForm, sex: inputValue(event) })
-                    }
+            {dialog === 'oath' || dialog === 'oath-correction' ? (
+              <div className="grid gap-4">
+                <div className="grid gap-5 min-[621px]:grid-cols-2">
+                  <Field label="Oath date" htmlFor="oath-date">
+                    <input
+                      className={inputClass}
+                      id="oath-date"
+                      type="date"
+                      value={oathForm.oathDate}
+                      onChange={(event) =>
+                        setOathForm({ ...oathForm, oathDate: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Administered by" htmlFor="oath-administered-by">
+                    <input
+                      className={inputClass}
+                      id="oath-administered-by"
+                      value={props.displayName}
+                      readOnly
+                    />
+                  </Field>
+                  <Field label="Authority" htmlFor="oath-authority">
+                    <input
+                      className={inputClass}
+                      id="oath-authority"
+                      placeholder="e.g., City Mayor"
+                      value={oathForm.authority}
+                      onChange={(event) =>
+                        setOathForm({ ...oathForm, authority: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Place (optional)" htmlFor="oath-place">
+                    <input
+                      className={inputClass}
+                      id="oath-place"
+                      value={oathForm.place}
+                      onChange={(event) => setOathForm({ ...oathForm, place: inputValue(event) })}
+                    />
+                  </Field>
+                  <Field label="Permitted virtual method (optional)" htmlFor="oath-method">
+                    <input
+                      className={inputClass}
+                      id="oath-method"
+                      value={oathForm.permittedVirtualMethod}
+                      onChange={(event) =>
+                        setOathForm({ ...oathForm, permittedVirtualMethod: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label="Exact evidence (finalized Document Version)"
+                    htmlFor="oath-evidence"
                   >
-                    {ACTIVATION_SEXES.map((sex) => (
-                      <option key={sex} value={sex}>
-                        {label(sex)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Civil status" htmlFor="activation-civil-status">
-                  <select
-                    className={inputClass}
-                    id="activation-civil-status"
-                    value={activationForm.civilStatus}
-                    onChange={(event) =>
-                      setActivationForm({ ...activationForm, civilStatus: inputValue(event) })
-                    }
+                    <select
+                      className={inputClass}
+                      id="oath-evidence"
+                      value={oathForm.documentVersionId}
+                      onChange={(event) =>
+                        setOathForm({ ...oathForm, documentVersionId: inputValue(event) })
+                      }
+                    >
+                      <option value="">Select the oath evidence</option>
+                      {props.documents.map((document) => (
+                        <option key={document.version.id} value={document.version.id}>
+                          {documentOptionLabel(document)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                {dialog === 'oath-correction' ? (
+                  <>
+                    <Field label="Reason" htmlFor="oath-correction-reason">
+                      <textarea
+                        className={`${inputClass} min-h-20 py-2`}
+                        id="oath-correction-reason"
+                        value={oathForm.reason}
+                        onChange={(event) =>
+                          setOathForm({ ...oathForm, reason: inputValue(event) })
+                        }
+                      />
+                    </Field>
+                    <Field
+                      label="Authority evidence (finalized Document Version)"
+                      htmlFor="oath-correction-authority"
+                    >
+                      <select
+                        className={inputClass}
+                        id="oath-correction-authority"
+                        value={oathForm.authorityDocumentVersionId}
+                        onChange={(event) =>
+                          setOathForm({
+                            ...oathForm,
+                            authorityDocumentVersionId: inputValue(event),
+                          })
+                        }
+                      >
+                        <option value="">Select the correction authority</option>
+                        {props.documents.map((document) => (
+                          <option key={document.version.id} value={document.version.id}>
+                            {documentOptionLabel(document)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {dialog === 'assumption' || dialog === 'assumption-correction' ? (
+              <div className="grid gap-4">
+                <div className="grid gap-5 min-[621px]:grid-cols-2">
+                  <Field label="Actual assumption date" htmlFor="assumption-date">
+                    <input
+                      className={inputClass}
+                      id="assumption-date"
+                      type="date"
+                      value={assumptionForm.actualAssumptionDate}
+                      onChange={(event) =>
+                        setAssumptionForm({
+                          ...assumptionForm,
+                          actualAssumptionDate: inputValue(event),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Certified by" htmlFor="assumption-certified-by">
+                    <input
+                      className={inputClass}
+                      id="assumption-certified-by"
+                      value={props.displayName}
+                      readOnly
+                    />
+                  </Field>
+                  <Field label="Certifying authority" htmlFor="assumption-authority">
+                    <input
+                      className={inputClass}
+                      id="assumption-authority"
+                      value={assumptionForm.certifyingAuthority}
+                      onChange={(event) =>
+                        setAssumptionForm({
+                          ...assumptionForm,
+                          certifyingAuthority: inputValue(event),
+                        })
+                      }
+                    />
+                  </Field>
+                  <Field label="Certified at" htmlFor="assumption-certified-at">
+                    <input
+                      className={inputClass}
+                      id="assumption-certified-at"
+                      type="datetime-local"
+                      value={assumptionForm.certifiedAt}
+                      onChange={(event) =>
+                        setAssumptionForm({ ...assumptionForm, certifiedAt: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label="Exact evidence (finalized Document Version)"
+                    htmlFor="assumption-evidence"
                   >
-                    {ACTIVATION_CIVIL_STATUSES.map((civilStatus) => (
-                      <option key={civilStatus} value={civilStatus}>
-                        {label(civilStatus)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Contact email" htmlFor="activation-contact-email">
-                  <input
-                    className={inputClass}
-                    id="activation-contact-email"
-                    type="email"
-                    value={activationForm.contactEmail}
+                    <select
+                      className={inputClass}
+                      id="assumption-evidence"
+                      value={assumptionForm.documentVersionId}
+                      onChange={(event) =>
+                        setAssumptionForm({
+                          ...assumptionForm,
+                          documentVersionId: inputValue(event),
+                        })
+                      }
+                    >
+                      <option value="">Select the certification evidence</option>
+                      {props.documents.map((document) => (
+                        <option key={document.version.id} value={document.version.id}>
+                          {documentOptionLabel(document)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                {dialog === 'assumption-correction' ? (
+                  <>
+                    <Field label="Reason" htmlFor="assumption-correction-reason">
+                      <textarea
+                        className={`${inputClass} min-h-20 py-2`}
+                        id="assumption-correction-reason"
+                        value={assumptionForm.reason}
+                        onChange={(event) =>
+                          setAssumptionForm({ ...assumptionForm, reason: inputValue(event) })
+                        }
+                      />
+                    </Field>
+                    <Field
+                      label="Authority evidence (finalized Document Version)"
+                      htmlFor="assumption-correction-authority"
+                    >
+                      <select
+                        className={inputClass}
+                        id="assumption-correction-authority"
+                        value={assumptionForm.authorityDocumentVersionId}
+                        onChange={(event) =>
+                          setAssumptionForm({
+                            ...assumptionForm,
+                            authorityDocumentVersionId: inputValue(event),
+                          })
+                        }
+                      >
+                        <option value="">Select the correction authority</option>
+                        {props.documents.map((document) => (
+                          <option key={document.version.id} value={document.version.id}>
+                            {documentOptionLabel(document)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {dialog === 'assumption-failure' || dialog === 'assumption-cancellation' ? (
+              <div className="grid gap-4">
+                <div className="grid gap-5 min-[621px]:grid-cols-2">
+                  {dialog === 'assumption-failure' ? (
+                    <>
+                      <Field label="Notice date" htmlFor="outcome-notice-date">
+                        <input
+                          className={inputClass}
+                          id="outcome-notice-date"
+                          type="date"
+                          value={outcomeForm.noticeDate}
+                          onChange={(event) =>
+                            setOutcomeForm({ ...outcomeForm, noticeDate: inputValue(event) })
+                          }
+                        />
+                      </Field>
+                      <Field label="Deadline date" htmlFor="outcome-deadline-date">
+                        <input
+                          className={inputClass}
+                          id="outcome-deadline-date"
+                          type="date"
+                          value={outcomeForm.deadlineDate}
+                          onChange={(event) =>
+                            setOutcomeForm({ ...outcomeForm, deadlineDate: inputValue(event) })
+                          }
+                        />
+                      </Field>
+                    </>
+                  ) : null}
+                  <Field label="Outcome date" htmlFor="outcome-date">
+                    <input
+                      className={inputClass}
+                      id="outcome-date"
+                      type="date"
+                      value={outcomeForm.outcomeDate}
+                      onChange={(event) =>
+                        setOutcomeForm({ ...outcomeForm, outcomeDate: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Authorized by" htmlFor="outcome-authorized-by">
+                    <input
+                      className={inputClass}
+                      id="outcome-authorized-by"
+                      value={props.displayName}
+                      readOnly
+                    />
+                  </Field>
+                  <Field
+                    label="Authority evidence (finalized Document Version)"
+                    htmlFor="outcome-authority"
+                  >
+                    <select
+                      className={inputClass}
+                      id="outcome-authority"
+                      value={outcomeForm.authorityDocumentVersionId}
+                      onChange={(event) =>
+                        setOutcomeForm({
+                          ...outcomeForm,
+                          authorityDocumentVersionId: inputValue(event),
+                        })
+                      }
+                    >
+                      <option value="">Select the outcome authority</option>
+                      {props.documents.map((document) => (
+                        <option key={document.version.id} value={document.version.id}>
+                          {documentOptionLabel(document)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field
+                    label="Exact evidence (finalized Document Version)"
+                    htmlFor="outcome-evidence"
+                  >
+                    <select
+                      className={inputClass}
+                      id="outcome-evidence"
+                      value={outcomeForm.evidenceDocumentVersionId}
+                      onChange={(event) =>
+                        setOutcomeForm({
+                          ...outcomeForm,
+                          evidenceDocumentVersionId: inputValue(event),
+                        })
+                      }
+                    >
+                      <option value="">Select the outcome evidence</option>
+                      {props.documents.map((document) => (
+                        <option key={document.version.id} value={document.version.id}>
+                          {documentOptionLabel(document)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Reason" htmlFor="outcome-reason">
+                  <textarea
+                    className={`${inputClass} min-h-20 py-2`}
+                    id="outcome-reason"
+                    value={outcomeForm.reason}
                     onChange={(event) =>
-                      setActivationForm({ ...activationForm, contactEmail: inputValue(event) })
+                      setOutcomeForm({ ...outcomeForm, reason: inputValue(event) })
                     }
                   />
                 </Field>
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            {dialog === 'prepare' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy}
-                onClick={() => void savePrepare()}
-              >
-                Prepare Draft
-              </Button>
-            ) : null}
-            {dialog === 'update' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy}
-                onClick={() => void saveUpdate()}
-              >
-                Save Draft
-              </Button>
-            ) : null}
-            {dialog === 'return' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy || reason.trim() === ''}
-                onClick={() => void saveReturn()}
-              >
-                Return for correction
-              </Button>
-            ) : null}
-            {dialog === 'cancel' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy || reason.trim() === '' || authorityDocumentVersionId === ''}
-                onClick={() => void saveCancel()}
-              >
-                Cancel Appointment
-              </Button>
-            ) : null}
-            {dialog === 'correct' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy || reason.trim() === '' || authorityDocumentVersionId === ''}
-                onClick={() => void saveCorrect()}
-              >
-                Prepare correction Draft
-              </Button>
-            ) : null}
-            {dialog === 'settings' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={busy || settingsForm.statusEvidenceDocumentVersionId === ''}
-                onClick={() => void saveSettings()}
-              >
-                Record configuration
-              </Button>
-            ) : null}
-            {dialog === 'external-submission' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  externalForm.appointmentVersionId === '' ||
-                  externalForm.occurredAt === '' ||
-                  externalForm.receivingOffice.trim() === '' ||
-                  externalForm.evidenceDocumentVersionId === ''
-                }
-                onClick={() => void saveExternalSubmission()}
-              >
-                Record submission event
-              </Button>
-            ) : null}
-            {dialog === 'external-action' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  externalForm.appointmentVersionId === '' ||
-                  externalForm.action === '' ||
-                  externalForm.occurredAt === '' ||
-                  externalForm.externalReference.trim() === '' ||
-                  externalForm.evidenceDocumentVersionId === ''
-                }
-                onClick={() => void saveExternalAction()}
-              >
-                Record official action
-              </Button>
-            ) : null}
-            {dialog === 'receipt' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy || receiptForm.acknowledgedAt === '' || receiptForm.documentVersionId === ''
-                }
-                onClick={() => void saveReceipt()}
-              >
-                Record acknowledgment
-              </Button>
-            ) : null}
-            {dialog === 'oath' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  oathForm.oathDate === '' ||
-                  oathForm.authority.trim() === '' ||
-                  oathForm.documentVersionId === ''
-                }
-                onClick={() => void saveOath()}
-              >
-                Record Oath
-              </Button>
-            ) : null}
-            {dialog === 'oath-correction' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  oathForm.oathDate === '' ||
-                  oathForm.authority.trim() === '' ||
-                  oathForm.documentVersionId === '' ||
-                  oathForm.reason.trim() === '' ||
-                  oathForm.authorityDocumentVersionId === ''
-                }
-                onClick={() => void saveOathCorrection()}
-              >
-                Record Oath correction
-              </Button>
-            ) : null}
-            {dialog === 'assumption' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  assumptionForm.actualAssumptionDate === '' ||
-                  assumptionForm.certifyingAuthority.trim() === '' ||
-                  assumptionForm.certifiedAt === '' ||
-                  assumptionForm.documentVersionId === ''
-                }
-                onClick={() => void saveAssumption()}
-              >
-                Certify Assumption to Duty
-              </Button>
-            ) : null}
-            {dialog === 'assumption-correction' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  assumptionForm.actualAssumptionDate === '' ||
-                  assumptionForm.certifyingAuthority.trim() === '' ||
-                  assumptionForm.certifiedAt === '' ||
-                  assumptionForm.documentVersionId === '' ||
-                  assumptionForm.reason.trim() === '' ||
-                  assumptionForm.authorityDocumentVersionId === ''
-                }
-                onClick={() => void saveAssumptionCorrection()}
-              >
-                Record Assumption correction
-              </Button>
-            ) : null}
-            {dialog === 'assumption-failure' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  outcomeForm.noticeDate === '' ||
-                  outcomeForm.deadlineDate === '' ||
-                  outcomeForm.outcomeDate === '' ||
-                  outcomeForm.reason.trim() === '' ||
-                  outcomeForm.authorityDocumentVersionId === '' ||
-                  outcomeForm.evidenceDocumentVersionId === ''
-                }
-                onClick={() => void saveAssumptionFailure()}
-              >
-                Record failure to assume
-              </Button>
-            ) : null}
-            {dialog === 'assumption-cancellation' ? (
-              <Button
-                size="default"
-                className="min-h-9"
-                type="button"
-                variant="primary"
-                disabled={
-                  busy ||
-                  outcomeForm.outcomeDate === '' ||
-                  outcomeForm.reason.trim() === '' ||
-                  outcomeForm.authorityDocumentVersionId === '' ||
-                  outcomeForm.evidenceDocumentVersionId === ''
-                }
-                onClick={() => void saveAssumptionCancellation()}
-              >
-                Record cancellation
-              </Button>
-            ) : null}
             {dialog === 'activation' ? (
+              <div className="grid gap-4">
+                <dl className={factsClass}>
+                  <DetailRow label="Appointee">{detail?.appointee.fullName ?? '—'}</DetailRow>
+                  <DetailRow label="Plantilla item">
+                    {detail
+                      ? `${detail.position.itemNumber} · ${detail.position.title ?? 'Untitled item'} · SG ${detail.position.salaryGrade ?? '—'}`
+                      : '—'}
+                  </DetailRow>
+                </dl>
+                <p className={noteClass}>
+                  The Employee legal name and service dates come from the assumed Appointment
+                  Contract. The Employee number and identity facts are recorded once and reused for
+                  later personnel actions.
+                </p>
+                <div className="grid gap-5 min-[621px]:grid-cols-2">
+                  <Field label="Employee number" htmlFor="activation-number">
+                    <input
+                      className={inputClass}
+                      id="activation-number"
+                      value={activationForm.employeeNumber}
+                      onChange={(event) =>
+                        setActivationForm({ ...activationForm, employeeNumber: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Birth date" htmlFor="activation-birth-date">
+                    <input
+                      className={inputClass}
+                      id="activation-birth-date"
+                      type="date"
+                      value={activationForm.birthDate}
+                      onChange={(event) =>
+                        setActivationForm({ ...activationForm, birthDate: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Sex" htmlFor="activation-sex">
+                    <select
+                      className={inputClass}
+                      id="activation-sex"
+                      value={activationForm.sex}
+                      onChange={(event) =>
+                        setActivationForm({ ...activationForm, sex: inputValue(event) })
+                      }
+                    >
+                      {ACTIVATION_SEXES.map((sex) => (
+                        <option key={sex} value={sex}>
+                          {label(sex)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Civil status" htmlFor="activation-civil-status">
+                    <select
+                      className={inputClass}
+                      id="activation-civil-status"
+                      value={activationForm.civilStatus}
+                      onChange={(event) =>
+                        setActivationForm({ ...activationForm, civilStatus: inputValue(event) })
+                      }
+                    >
+                      {ACTIVATION_CIVIL_STATUSES.map((civilStatus) => (
+                        <option key={civilStatus} value={civilStatus}>
+                          {label(civilStatus)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Contact email" htmlFor="activation-contact-email">
+                    <input
+                      className={inputClass}
+                      id="activation-contact-email"
+                      type="email"
+                      value={activationForm.contactEmail}
+                      onChange={(event) =>
+                        setActivationForm({ ...activationForm, contactEmail: inputValue(event) })
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
+            ) : null}
+          </DialogBody>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="quiet" disabled={busy}>
+                Close
+              </Button>
+            </DialogClose>
+            {activeDialog ? (
               <Button
-                size="default"
-                className="min-h-9"
                 type="button"
                 variant="primary"
-                disabled={
-                  busy ||
-                  activationForm.employeeNumber.trim() === '' ||
-                  activationForm.birthDate === '' ||
-                  activationForm.contactEmail.trim() === ''
-                }
-                onClick={() => void saveActivation()}
+                disabled={busy || !activeDialog.ready}
+                onClick={() => void activeDialog.run()}
               >
-                Activate service
+                {activeDialog.submit}
               </Button>
             ) : null}
-          </div>
-        </section>
-      ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </FormDialog>
     </div>
   );
 }
