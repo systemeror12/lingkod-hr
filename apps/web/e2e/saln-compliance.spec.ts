@@ -75,4 +75,12 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await expect(history.getByText('2026 · ANNUAL', { exact: true })).toBeVisible();
   await expect(history.getByText('2026 · ANNUAL UPDATED', { exact: true })).toBeVisible();
   await expect(history.getByText('2026 · ANNUAL CORRECTED', { exact: true })).toBeVisible();
+
+  // The history stays open in the hidden SALN tab without trapping focus on the visible one.
+  const detailsTab = page.getByRole('tab', { name: 'Details' });
+  await detailsTab.click();
+  await expect(history).toBeHidden();
+  await detailsTab.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeFocused();
 });
