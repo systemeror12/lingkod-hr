@@ -106,7 +106,7 @@ test('uses shared modals for generation, preview, replacement, and history', asy
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/service-records');
-  await expect(page.getByRole('heading', { name: 'Service records' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Service Records', exact: true })).toBeVisible();
 
   const trigger = page.getByRole('button', { name: 'Generate record' });
   await trigger.click();
