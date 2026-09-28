@@ -1,11 +1,10 @@
 'use client';
 
-import { Field, inputClass } from './ui/field';
-
-import { RecordReturn, useRecordNavigation } from './record-navigation';
-
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { cn } from '../lib/class-names';
 import { manilaToday } from '../lib/manila-date';
+import { useRecordNavigation } from './record-navigation';
+import { StateCode, StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -17,6 +16,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 const ACTION_TYPES = [
   'REASSIGNMENT',
@@ -419,12 +423,20 @@ function errorMessage(value: unknown, fallback: string): string {
   return typeof error?.message === 'string' ? error.message : fallback;
 }
 
-function statusClass(status: ActionStatus): string {
-  if (status === 'APPROVED' || status === 'EFFECTIVE') return 'bg-[#e8f3ed] text-[#316647]';
-  if (status === 'REJECTED' || status === 'CANCELLED' || status === 'SUPERSEDED')
-    return 'bg-[#f0f2f5] text-muted';
-  if (status === 'FOR_APPROVAL') return 'bg-[#e8edf8] text-[#315f99]';
-  return 'bg-[#fff3d6] text-[#79531c]';
+const STATUS_TONE: Record<ActionStatus, StatusTone> = {
+  DRAFT: 'warning',
+  FOR_REVIEW: 'warning',
+  RETURNED: 'warning',
+  FOR_APPROVAL: 'info',
+  APPROVED: 'success',
+  EFFECTIVE: 'success',
+  REJECTED: 'neutral',
+  CANCELLED: 'neutral',
+  SUPERSEDED: 'neutral',
+};
+
+function ActionStatusTag({ status }: { status: ActionStatus }) {
+  return <StatusTag tone={STATUS_TONE[status]}>{status.replaceAll('_', ' ')}</StatusTag>;
 }
 
 function targetValues(action?: PersonnelAction): Record<string, string> {
@@ -799,164 +811,146 @@ export function PersonnelActionWorkspace({
           : 3
     : 0;
 
+  const inline = Boolean(recordId) || dialog === 'prepare';
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Personnel' }];
+  if (recordId) {
+    breadcrumbs.push(
+      {
+        label: 'Personnel Actions',
+        href: navigation.href({ record: null, view: null, section: null }),
+      },
+      { label: selected?.employee.legalName ?? 'Personnel Action' },
+    );
+  } else if (dialog === 'prepare') {
+    // Preparing a new action leaves the URL alone, so there is no register link to follow.
+    breadcrumbs.push({ label: 'Personnel Actions' }, { label: 'Prepare' });
+  }
+
   return (
-    <div className="grid min-w-0 gap-7">
-      {recordId ? (
-        <RecordReturn href={navigation.href({ record: null, view: null, section: null })}>
-          ← Personnel Actions
-        </RecordReturn>
-      ) : null}
-      {recordId && error ? <p role="alert">{error}</p> : null}
-      {recordId && !selectedId && !error ? <p role="status">Loading record…</p> : null}
-      <div hidden={Boolean(recordId) || dialog === 'prepare'} className="space-y-5">
-        <header className="flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-          <div>
-            <p className="mb-2 text-[10px] font-bold tracking-[.12em] text-cobalt uppercase">
-              Personnel records / Phase 5
-            </p>
-            <h1 className="m-0 text-[30px] font-[700] tracking-[-.035em] text-midnight">
-              Personnel actions
-            </h1>
-            <p className="mt-2 max-w-[680px] text-sm leading-6 text-muted">
-              Prepare evidence-backed actions, resolve deficiencies, and record the applicable
-              authority’s decision without changing service facts before effectuation.
-            </p>
-          </div>
-          {canPrepare ? (
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={breadcrumbs}
+        title="Personnel Actions"
+        actions={
+          canPrepare ? (
             <Button
               disabled={referenceLoading}
+              // Hidden rather than unmounted, so focus can return here when the form closes.
+              hidden={inline}
               onClick={(event) => {
                 const trigger = event.currentTarget as unknown as { focus(): void };
                 openPrepare('create', undefined, () => trigger.focus());
               }}
-              size="default"
               type="button"
               variant="primary"
             >
               {referenceLoading ? 'Loading references…' : 'Prepare action'}
             </Button>
-          ) : null}
-        </header>
+          ) : null
+        }
+      />
 
-        <section
-          className="grid grid-cols-2 border-y border-line bg-paper min-[700px]:grid-cols-4"
-          aria-label="Personnel Action authority chain"
-        >
-          {['Prepare', 'Review', 'Authority', 'Effectuation'].map((label, index) => (
-            <div className="border-r border-line px-4 py-4 last:border-r-0" key={label}>
-              <span className="font-mono text-[10px] font-bold text-cobalt">0{index + 1}</span>
-              <strong className="mt-1 block text-xs text-midnight">{label}</strong>
-              <span className="mt-1 block text-[11px] leading-4 text-muted">
-                {index === 0
-                  ? 'Typed facts + evidence'
-                  : index === 1
-                    ? 'Return or endorse'
-                    : index === 2
-                      ? 'Approve or reject'
-                      : 'Owned by effect service'}
-              </span>
-            </div>
-          ))}
-        </section>
+      {recordId && dialog === null ? (
+        error ? (
+          <StateSurface label="Personnel Action unavailable">
+            <StateCode>Unavailable</StateCode>
+            <p className="m-0 max-w-[500px] text-body text-ink" role="alert">
+              {error}
+            </p>
+          </StateSurface>
+        ) : !selected ? (
+          <StateSurface busy label="Loading the Personnel Action">
+            <StateCode>Loading</StateCode>
+            <p className="m-0 text-body text-ink-muted">Loading the Personnel Action…</p>
+          </StateSurface>
+        ) : null
+      ) : null}
 
+      <div hidden={inline} className="grid gap-5">
+        <p className="m-0 max-w-[80ch] text-small text-ink-muted">
+          Prepare evidence-backed actions, resolve deficiencies, and record the applicable
+          authority’s decision. Each action moves through preparation, review, and the authority’s
+          decision; service facts change only at effectuation.
+        </p>
+        {dialog === null ? <FormError message={error} /> : null}
         {success ? (
           <p
-            className="m-0 border border-[#b8d8c0] bg-[#f1faf3] px-4 py-3 text-sm text-[#316647]"
+            className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
             role="status"
           >
             {success}
           </p>
         ) : null}
-        {error && dialog === null ? <ErrorMessage message={error} /> : null}
 
-        <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
+        <Panel title="Personnel Action register" flush>
           {actions.length === 0 ? (
-            <div className="px-5 py-10">
-              <strong className="block text-sm text-midnight">No Personnel Actions yet</strong>
-              <p className="m-0 mt-2 max-w-[560px] text-sm leading-6 text-muted">
+            <StateSurface compact label="Personnel Action register">
+              <strong className="text-body font-[650] text-ink">No Personnel Actions yet.</strong>
+              <p className="m-0 max-w-[560px]">
                 Start when the Employee has a current Service Segment and the exact authority and
                 supporting evidence are available.
               </p>
-            </div>
+            </StateSurface>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] border-collapse text-left">
-                <thead className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
-                  <tr>
-                    <th className="px-5 py-3">Employee</th>
-                    <th className="px-5 py-3">Action</th>
-                    <th className="px-5 py-3">Effectivity</th>
-                    <th className="px-5 py-3">State</th>
-                    <th>
-                      <span className="sr-only">Open</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {actions.map((action) => (
-                    <tr
-                      className="border-b border-line last:border-0 hover:bg-[#f8fafd]"
-                      key={action.id}
-                    >
-                      <td className="px-5 py-4">
-                        <button
-                          className="text-left"
-                          onClick={() => void openDetail(action)}
-                          type="button"
-                        >
-                          <strong className="block text-sm text-ink">
-                            {action.employee.legalName}
-                          </strong>
-                          <span className="font-mono text-xs text-muted">
-                            {action.employee.employeeNumber}
-                          </span>
-                        </button>
-                      </td>
-                      <td className="px-5 py-4 text-sm text-ink">
-                        {CONTRACTS[action.actionType].label}
-                        <span className="mt-1 block font-mono text-[11px] text-muted">
-                          v{action.currentVersion.versionNo}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-xs text-muted">
-                        {dateLabel(action.currentVersion.proposedEffectivity)}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(action.status)}`}
-                        >
-                          {action.status.replaceAll('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="px-5">
-                        <button
-                          aria-label={`Open action for ${action.employee.legalName}`}
-                          className="text-lg text-cobalt"
-                          onClick={() => void openDetail(action)}
-                          type="button"
-                        >
-                          →
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table className="min-w-[760px]">
+              <thead>
+                <tr>
+                  <Th>Employee</Th>
+                  <Th>Action</Th>
+                  <Th kind="date">Effectivity</Th>
+                  <Th>State</Th>
+                  <Th>
+                    <span className="sr-only">Actions</span>
+                  </Th>
+                </tr>
+              </thead>
+              <tbody>
+                {actions.map((action) => (
+                  <Tr key={action.id}>
+                    <RowHeader>
+                      {action.employee.legalName}
+                      <span className="block text-caption font-normal text-ink-muted">
+                        {action.employee.employeeNumber}
+                      </span>
+                    </RowHeader>
+                    <Td>
+                      {CONTRACTS[action.actionType].label}
+                      <span className="block text-caption text-ink-muted">
+                        Version {action.currentVersion.versionNo}
+                      </span>
+                    </Td>
+                    <Td kind="date">{dateLabel(action.currentVersion.proposedEffectivity)}</Td>
+                    <Td>
+                      <ActionStatusTag status={action.status} />
+                    </Td>
+                    <Td className="text-right">
+                      <Button
+                        aria-label={`Open action for ${action.employee.legalName}`}
+                        onClick={() => openDetail(action)}
+                        type="button"
+                        variant="secondary"
+                      >
+                        Open
+                      </Button>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
           )}
-        </section>
-        {nextCursor ? (
-          <div className="flex justify-center">
-            <Button
-              disabled={busy}
-              onClick={() => void loadMore()}
-              type="button"
-              variant="secondary"
-            >
-              {busy ? 'Loading…' : 'Load more'}
-            </Button>
-          </div>
-        ) : null}
+          {nextCursor ? (
+            <div className="flex justify-center px-4 py-2.5">
+              <Button
+                disabled={busy}
+                onClick={() => void loadMore()}
+                type="button"
+                variant="secondary"
+              >
+                {busy ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          ) : null}
+        </Panel>
       </div>
 
       <Dialog
@@ -975,7 +969,6 @@ export function PersonnelActionWorkspace({
         {dialog === 'prepare' ? (
           <DialogContent
             aria-describedby="personnel-action-prepare-description"
-            className="max-w-[920px]"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               returnFocusRef.current?.();
@@ -986,7 +979,7 @@ export function PersonnelActionWorkspace({
             }}
           >
             <DialogHeader>
-              <div>
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>
                   {mode === 'replace'
                     ? 'Prepare replacement action'
@@ -1001,12 +994,12 @@ export function PersonnelActionWorkspace({
               </div>
               <CloseButton busy={busy} label="Close Personnel Action preparation" />
             </DialogHeader>
-            <form onSubmit={save}>
+            <form className="flex min-h-0 flex-1 flex-col" onSubmit={save}>
               <DialogBody className="grid gap-6">
-                <ErrorMessage message={error} />
+                <FormError message={error} />
                 <section className="grid gap-4">
-                  <SectionTitle>Action identity</SectionTitle>
-                  <div className="grid gap-4 min-[700px]:grid-cols-3">
+                  <h3 className={sectionTitleClass}>Action identity</h3>
+                  <div className="grid gap-4 min-[621px]:grid-cols-3">
                     <Field htmlFor="action-employee" label="Employee">
                       <select
                         className={inputClass}
@@ -1060,8 +1053,8 @@ export function PersonnelActionWorkspace({
                   </div>
                 </section>
                 <section className="grid gap-4">
-                  <SectionTitle>Action-specific target facts</SectionTitle>
-                  <div className="grid gap-4 min-[700px]:grid-cols-2">
+                  <h3 className={sectionTitleClass}>Action-specific target facts</h3>
+                  <div className="grid gap-4 min-[621px]:grid-cols-2">
                     {CONTRACTS[actionType].fields.map((field) => (
                       <TargetField
                         appointments={appointmentCandidates}
@@ -1079,14 +1072,14 @@ export function PersonnelActionWorkspace({
                   </div>
                 </section>
                 <section className="grid gap-4">
-                  <SectionTitle>Exact authority and supporting evidence</SectionTitle>
+                  <h3 className={sectionTitleClass}>Exact authority and supporting evidence</h3>
                   <div className="grid gap-3">
                     {evidenceRows(actionType).map(({ type, required }) => (
                       <div
-                        className="grid gap-3 rounded-[3px] border border-line p-3 min-[700px]:grid-cols-[170px_1fr_170px] min-[700px]:items-end"
+                        className="grid gap-3 rounded-control border border-border p-3 min-[621px]:grid-cols-[170px_1fr_170px] min-[621px]:items-end"
                         key={type}
                       >
-                        <strong className="font-mono text-[11px] text-midnight">
+                        <strong className="text-caption font-[650] text-ink">
                           {type.replaceAll('_', ' ')}
                           {required ? '' : ' (optional)'}
                         </strong>
@@ -1146,30 +1139,25 @@ export function PersonnelActionWorkspace({
                 </section>
                 <Field htmlFor="action-reason" label="Preparation reason">
                   <textarea
-                    className={`${inputClass} min-h-24 py-3`}
+                    className={`${inputClass} min-h-24 py-2`}
                     id="action-reason"
                     onChange={(event) => setReason(targetValue(event))}
                     required
                     value={reason}
                   />
                 </Field>
-                <p className="m-0 border-l-[3px] border-cobalt bg-[#edf3fb] px-4 py-3 text-[13px] leading-6 text-muted">
+                <p className="m-0 rounded-control border border-info/40 bg-info/5 px-3 py-2.5 text-small text-ink">
                   Approval preserves this exact version as pending effectuation. It does not update
                   Employee, Service Segment, Position, or compensation facts.
                 </p>
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                  <Button disabled={busy} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button
-                  disabled={busy || referenceLoading}
-                  size="default"
-                  type="submit"
-                  variant="primary"
-                >
+                <Button disabled={busy || referenceLoading} type="submit" variant="primary">
                   {busy ? 'Saving…' : mode === 'replace' ? 'Prepare replacement' : 'Save draft'}
                 </Button>
               </DialogFooter>
@@ -1178,13 +1166,13 @@ export function PersonnelActionWorkspace({
         ) : null}
 
         {dialog === 'detail' && selected ? (
-          <DialogContent
-            aria-describedby="personnel-action-detail-description"
-            className="max-w-[840px]"
-          >
+          <DialogContent aria-describedby="personnel-action-detail-description">
             <DialogHeader>
-              <div>
-                <DialogTitle>{selected.employee.legalName}</DialogTitle>
+              <div className="grid min-w-0 gap-1.5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <DialogTitle>{selected.employee.legalName}</DialogTitle>
+                  <ActionStatusTag status={selected.status} />
+                </div>
                 <DialogDescription id="personnel-action-detail-description">
                   {CONTRACTS[selected.actionType].label} · {selected.employee.employeeNumber}
                 </DialogDescription>
@@ -1192,120 +1180,14 @@ export function PersonnelActionWorkspace({
               <CloseButton busy={busy} label="Close Personnel Action details" />
             </DialogHeader>
             <DialogBody className="grid gap-6">
-              <ErrorMessage message={error} />
-              <div className="grid grid-cols-4 border-y border-line">
-                {['Prepare', 'Review', 'Authority', 'Effectuation'].map((label, index) => (
-                  <div
-                    className={`border-r border-line px-3 py-3 last:border-r-0 ${index <= stage ? 'bg-[#edf3fb]' : ''}`}
-                    key={label}
-                  >
-                    <span className="block font-mono text-[10px] text-cobalt">0{index + 1}</span>
-                    <strong className="text-[11px] text-midnight">{label}</strong>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span
-                  className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold ${statusClass(selected.status)}`}
-                >
-                  {selected.status.replaceAll('_', ' ')}
-                </span>
-                <span className="font-mono text-xs text-muted">
-                  Version {selected.currentVersion.versionNo}
-                </span>
-              </div>
-              <div className="grid gap-5 min-[700px]:grid-cols-2">
-                <DetailGroup title="Source and effectivity">
-                  <DetailRow
-                    label="Service Segment"
-                    value={selected.currentVersion.fromServiceSegment.id}
-                  />
-                  <DetailRow
-                    label="Current salary"
-                    value={`SG ${selected.currentVersion.fromServiceSegment.salaryGrade ?? '—'}, Step ${selected.currentVersion.fromServiceSegment.salaryStep ?? '—'}`}
-                  />
-                  <DetailRow
-                    label="Effectivity"
-                    value={dateLabel(selected.currentVersion.proposedEffectivity)}
-                  />
-                </DetailGroup>
-                <DetailGroup title="Workflow authority">
-                  <DetailRow label="Prepared by" value={selected.preparedBy.displayName} />
-                  <DetailRow
-                    label="Approved by"
-                    value={selected.approvedBy?.displayName ?? 'Pending'}
-                  />
-                  <DetailRow
-                    label="Delegation"
-                    value={selected.approvalDelegationId ?? 'Direct or pending'}
-                  />
-                  {selected.effect ? (
-                    <DetailRow
-                      label="Effective result"
-                      value={`SG ${selected.effect.salaryGrade ?? '—'}, Step ${selected.effect.salaryStep ?? '—'}`}
-                    />
-                  ) : null}
-                </DetailGroup>
-                <DetailGroup title="Target facts">
-                  {selected.currentVersion.targetPositionId ? (
-                    <DetailRow
-                      label="Target Plantilla Position"
-                      value={selected.currentVersion.targetPositionId}
-                    />
-                  ) : null}
-                  {selected.currentVersion.targetOrganizationUnitId ? (
-                    <DetailRow
-                      label="Target Organization Unit"
-                      value={selected.currentVersion.targetOrganizationUnitId}
-                    />
-                  ) : null}
-                  {Object.entries(selected.currentVersion.targetFacts).map(([key, value]) => {
-                    const candidate =
-                      key === 'appointmentVersionId' && typeof value === 'string'
-                        ? appointmentCandidates.find(
-                            ({ appointmentVersionId }) => appointmentVersionId === value,
-                          )
-                        : undefined;
-                    return (
-                      <DetailRow
-                        key={key}
-                        label={
-                          key === 'appointmentVersionId'
-                            ? 'Assumed Appointment'
-                            : key.replaceAll(/([A-Z])/g, ' $1')
-                        }
-                        value={
-                          candidate
-                            ? `${candidate.appointee.fullName} · ${candidate.applicationNo} · ${candidate.natureOfAppointment.replaceAll('_', ' ')}`
-                            : value === null
-                              ? 'Not applicable'
-                              : String(value)
-                        }
-                      />
-                    );
-                  })}
-                </DetailGroup>
-                <DetailGroup title="Exact evidence">
-                  {selected.currentVersion.evidence.map((item) => (
-                    <DetailRow
-                      key={item.id}
-                      label={item.evidenceType.replaceAll('_', ' ')}
-                      value={`${item.document.documentNo ?? item.document.documentType} · v${item.document.versionNo}`}
-                    />
-                  ))}
-                </DetailGroup>
-              </div>
-              <div className="rounded-[3px] bg-canvas px-4 py-3 text-sm leading-6 text-ink">
-                <strong className="mr-2 text-xs text-muted">Reason</strong>
-                {selected.currentVersion.reason}
-              </div>
+              <FormError message={error} />
+              <AuthorityChain stage={stage} />
               <div className="flex flex-wrap gap-2">
                 {canPrepare &&
                 preparedByMe &&
                 (selected.status === 'DRAFT' || selected.status === 'RETURNED') ? (
                   <Button
                     onClick={() => openPrepare('edit', selected)}
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1318,7 +1200,6 @@ export function PersonnelActionWorkspace({
                   <Button
                     disabled={busy}
                     onClick={() => void submit()}
-                    size="default"
                     type="button"
                     variant="primary"
                   >
@@ -1328,7 +1209,6 @@ export function PersonnelActionWorkspace({
                 {canReturn && selected.status === 'FOR_REVIEW' ? (
                   <Button
                     onClick={() => openTransition('RETURN')}
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1336,24 +1216,14 @@ export function PersonnelActionWorkspace({
                   </Button>
                 ) : null}
                 {canEndorse && selected.status === 'FOR_REVIEW' ? (
-                  <Button
-                    onClick={() => openTransition('ENDORSE')}
-                    size="default"
-                    type="button"
-                    variant="primary"
-                  >
+                  <Button onClick={() => openTransition('ENDORSE')} type="button" variant="primary">
                     Endorse
                   </Button>
                 ) : null}
                 {!preparedByMe &&
                 (canApprove || authority.canApprove) &&
                 selected.status === 'FOR_APPROVAL' ? (
-                  <Button
-                    onClick={() => openTransition('APPROVE')}
-                    size="default"
-                    type="button"
-                    variant="primary"
-                  >
+                  <Button onClick={() => openTransition('APPROVE')} type="button" variant="primary">
                     Approve
                   </Button>
                 ) : null}
@@ -1362,7 +1232,6 @@ export function PersonnelActionWorkspace({
                 selected.status === 'FOR_APPROVAL' ? (
                   <Button
                     onClick={() => openTransition('REJECT')}
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1374,7 +1243,6 @@ export function PersonnelActionWorkspace({
                   selected.status === 'APPROVED') ? (
                   <Button
                     onClick={() => openTransition('CANCEL')}
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1386,7 +1254,6 @@ export function PersonnelActionWorkspace({
                 selected.effectuationAvailable ? (
                   <Button
                     onClick={() => openTransition('EFFECTUATE')}
-                    size="default"
                     type="button"
                     variant="primary"
                   >
@@ -1396,7 +1263,6 @@ export function PersonnelActionWorkspace({
                 {canCorrect && ['APPROVED', 'EFFECTIVE'].includes(selected.status) ? (
                   <Button
                     onClick={() => openPrepare('replace', selected)}
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1407,7 +1273,6 @@ export function PersonnelActionWorkspace({
                   <Button
                     disabled={busy}
                     onClick={() => void openHistory()}
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1415,6 +1280,103 @@ export function PersonnelActionWorkspace({
                   </Button>
                 ) : null}
               </div>
+              <div className="grid gap-x-10 gap-y-6 min-[621px]:grid-cols-2">
+                <DetailGroup title="Source and effectivity">
+                  <DetailRow label="Version">{selected.currentVersion.versionNo}</DetailRow>
+                  <DetailRow label="Service Segment">
+                    {selected.currentVersion.fromServiceSegment.id}
+                  </DetailRow>
+                  <DetailRow label="Current salary">
+                    SG {selected.currentVersion.fromServiceSegment.salaryGrade ?? '—'}, Step{' '}
+                    {selected.currentVersion.fromServiceSegment.salaryStep ?? '—'}
+                  </DetailRow>
+                  <DetailRow label="Effectivity">
+                    {dateLabel(selected.currentVersion.proposedEffectivity)}
+                  </DetailRow>
+                </DetailGroup>
+                <DetailGroup title="Workflow authority">
+                  <DetailRow label="Prepared by">{selected.preparedBy.displayName}</DetailRow>
+                  <DetailRow label="Approved by">
+                    {selected.approvedBy?.displayName ?? 'Pending'}
+                  </DetailRow>
+                  <DetailRow label="Delegation">
+                    {selected.approvalDelegationId ?? 'Direct or pending'}
+                  </DetailRow>
+                  {selected.effect ? (
+                    <DetailRow label="Effective result">
+                      {`SG ${selected.effect.salaryGrade ?? '—'}, Step ${selected.effect.salaryStep ?? '—'}`}
+                    </DetailRow>
+                  ) : null}
+                </DetailGroup>
+                <DetailGroup title="Target facts">
+                  {selected.currentVersion.targetPositionId ? (
+                    <DetailRow label="Target Plantilla Position">
+                      {selected.currentVersion.targetPositionId}
+                    </DetailRow>
+                  ) : null}
+                  {selected.currentVersion.targetOrganizationUnitId ? (
+                    <DetailRow label="Target Organization Unit">
+                      {selected.currentVersion.targetOrganizationUnitId}
+                    </DetailRow>
+                  ) : null}
+                  {Object.entries(selected.currentVersion.targetFacts).map(([key, value]) => {
+                    const candidate =
+                      key === 'appointmentVersionId' && typeof value === 'string'
+                        ? appointmentCandidates.find(
+                            ({ appointmentVersionId }) => appointmentVersionId === value,
+                          )
+                        : undefined;
+                    return (
+                      <DetailRow
+                        key={key}
+                        label={
+                          key === 'appointmentVersionId' ? 'Assumed Appointment' : factLabel(key)
+                        }
+                      >
+                        {candidate
+                          ? `${candidate.appointee.fullName} · ${candidate.applicationNo} · ${candidate.natureOfAppointment.replaceAll('_', ' ')}`
+                          : value === null
+                            ? 'Not applicable'
+                            : String(value)}
+                      </DetailRow>
+                    );
+                  })}
+                </DetailGroup>
+                <DetailGroup title="Reason">
+                  <DetailRow label="Preparation reason">{selected.currentVersion.reason}</DetailRow>
+                </DetailGroup>
+              </div>
+              <section className="grid gap-3">
+                <h3 className={sectionTitleClass}>Exact evidence</h3>
+                {selected.currentVersion.evidence.length === 0 ? (
+                  <p className="m-0 text-small text-ink-muted">No evidence linked.</p>
+                ) : (
+                  <div className="rounded-control border border-border">
+                    <Table aria-label="Exact evidence">
+                      <thead>
+                        <tr>
+                          <Th>Evidence</Th>
+                          <Th>Document</Th>
+                          <Th kind="numeric">Version</Th>
+                          <Th kind="date">Source date</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selected.currentVersion.evidence.map((item) => (
+                          <Tr key={item.id}>
+                            <Td className="font-[600] text-ink">
+                              {item.evidenceType.replaceAll('_', ' ')}
+                            </Td>
+                            <Td>{item.document.documentNo ?? item.document.documentType}</Td>
+                            <Td kind="numeric">v{item.document.versionNo}</Td>
+                            <Td kind="date">{dateLabel(item.sourceDate)}</Td>
+                          </Tr>
+                        ))}
+                      </tbody>
+                    </Table>
+                  </div>
+                )}
+              </section>
             </DialogBody>
           </DialogContent>
         ) : null}
@@ -1422,7 +1384,7 @@ export function PersonnelActionWorkspace({
         {dialog === 'transition' && selected ? (
           <DialogContent aria-describedby="personnel-action-transition-description" size="compact">
             <DialogHeader>
-              <div>
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>{transitionLabel(transition)} Personnel Action</DialogTitle>
                 <DialogDescription id="personnel-action-transition-description">
                   {transition === 'EFFECTUATE'
@@ -1437,37 +1399,34 @@ export function PersonnelActionWorkspace({
               </div>
               <CloseButton busy={busy} label="Close Personnel Action transition" />
             </DialogHeader>
-            <form onSubmit={recordTransition}>
+            <form className="flex min-h-0 flex-1 flex-col" onSubmit={recordTransition}>
               <DialogBody className="grid gap-5">
-                <ErrorMessage message={error} />
+                <FormError message={error} />
                 {transition === 'EFFECTUATE' ? (
                   selected.actionType === 'SALARY_ADJUSTMENT' ||
                   selected.actionType === 'STEP_INCREMENT' ? (
-                    <div className="grid gap-2 text-sm leading-6 text-ink">
-                      <DetailRow
-                        label="Effectivity"
-                        value={dateLabel(selected.currentVersion.proposedEffectivity)}
-                      />
-                      <DetailRow
-                        label="New compensation"
-                        value={`SG ${selected.actionType === 'SALARY_ADJUSTMENT' ? String(selected.currentVersion.targetFacts.newSalaryGrade) : (selected.currentVersion.fromServiceSegment.salaryGrade ?? '—')}, Step ${String(selected.currentVersion.targetFacts.newSalaryStep)}`}
-                      />
-                    </div>
+                    <dl className="m-0 grid gap-2">
+                      <DetailRow label="Effectivity">
+                        {dateLabel(selected.currentVersion.proposedEffectivity)}
+                      </DetailRow>
+                      <DetailRow label="New compensation">
+                        {`SG ${selected.actionType === 'SALARY_ADJUSTMENT' ? String(selected.currentVersion.targetFacts.newSalaryGrade) : (selected.currentVersion.fromServiceSegment.salaryGrade ?? '—')}, Step ${String(selected.currentVersion.targetFacts.newSalaryStep)}`}
+                      </DetailRow>
+                    </dl>
                   ) : isMovementAction(selected.actionType) ? (
-                    <div className="grid gap-2 text-sm leading-6 text-ink">
-                      <DetailRow
-                        label="Effectivity"
-                        value={dateLabel(selected.currentVersion.proposedEffectivity)}
-                      />
-                      <DetailRow
-                        label="Source Service Segment"
-                        value={selected.currentVersion.fromServiceSegment.id}
-                      />
-                      <DetailRow
-                        label="Target Plantilla Position"
-                        value={selected.currentVersion.targetPositionId ?? '—'}
-                      />
-                      <p className="m-0 text-sm leading-6 text-ink">
+                    <div className="grid gap-3">
+                      <dl className="m-0 grid gap-2">
+                        <DetailRow label="Effectivity">
+                          {dateLabel(selected.currentVersion.proposedEffectivity)}
+                        </DetailRow>
+                        <DetailRow label="Source Service Segment">
+                          {selected.currentVersion.fromServiceSegment.id}
+                        </DetailRow>
+                        <DetailRow label="Target Plantilla Position">
+                          {selected.currentVersion.targetPositionId ?? '—'}
+                        </DetailRow>
+                      </dl>
+                      <p className="m-0 text-body text-ink">
                         {selected.actionType === 'COMPARABLE_REINSTATEMENT'
                           ? 'This creates the successor Service Segment and Position Incumbency from the assumed Appointment and occupies the reserved target item. The preserved closed source Segment is not modified.'
                           : 'This closes the source Service Segment and Position Incumbency on the day before effectivity, releases the source item, and occupies the reserved target item from the assumed Appointment.'}{' '}
@@ -1475,7 +1434,7 @@ export function PersonnelActionWorkspace({
                       </p>
                     </div>
                   ) : (
-                    <p className="m-0 text-sm leading-6 text-ink">
+                    <p className="m-0 text-body text-ink">
                       This closes or restores the Employee’s preserved service history and updates
                       the occupied Plantilla Position atomically. The approved version remains
                       immutable.
@@ -1485,7 +1444,7 @@ export function PersonnelActionWorkspace({
                   <Field htmlFor="action-transition-reason" label="Reason">
                     <textarea
                       autoFocus
-                      className={`${inputClass} min-h-24 py-3`}
+                      className={`${inputClass} min-h-24 py-2`}
                       id="action-transition-reason"
                       onChange={(event) => setTransitionReason(targetValue(event))}
                       required
@@ -1496,11 +1455,11 @@ export function PersonnelActionWorkspace({
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                  <Button disabled={busy} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button disabled={busy} size="default" type="submit" variant="primary">
+                <Button disabled={busy} type="submit" variant="primary">
                   {busy
                     ? transition === 'EFFECTUATE'
                       ? 'Effectuating…'
@@ -1515,12 +1474,9 @@ export function PersonnelActionWorkspace({
         ) : null}
 
         {dialog === 'history' && selected ? (
-          <DialogContent
-            aria-describedby="personnel-action-history-description"
-            className="max-w-[760px]"
-          >
+          <DialogContent aria-describedby="personnel-action-history-description">
             <DialogHeader>
-              <div>
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Personnel Action history</DialogTitle>
                 <DialogDescription id="personnel-action-history-description">
                   Immutable versions and material transitions for {selected.employee.legalName}.
@@ -1529,29 +1485,48 @@ export function PersonnelActionWorkspace({
               <CloseButton busy={busy} label="Close Personnel Action history" />
             </DialogHeader>
             <DialogBody className="grid gap-3">
-              {history.map((entry) => (
-                <article className="grid gap-1 border-l-2 border-line px-4 py-3" key={entry.id}>
-                  <div className="flex justify-between gap-2">
-                    <strong className="text-sm text-midnight">
-                      {entry.action.replaceAll('_', ' ')}
-                    </strong>
-                    <time className="text-xs text-muted">
-                      {new Date(entry.occurredAt).toLocaleString('en-PH')}
-                    </time>
-                  </div>
-                  <span className="text-xs text-muted">
-                    {entry.previousStatus ?? '—'} → {entry.newStatus ?? '—'} ·{' '}
-                    {entry.actor.displayName ?? 'System'}
-                  </span>
-                  {entry.reason ? (
-                    <p className="m-0 text-sm leading-6 text-ink">{entry.reason}</p>
-                  ) : null}
-                </article>
-              ))}
+              {history.length === 0 ? (
+                <StateSurface compact label="Personnel Action history">
+                  <p className="m-0">No history recorded.</p>
+                </StateSurface>
+              ) : (
+                <div className="rounded-control border border-border">
+                  <Table aria-label="Transitions" className="min-w-[640px]">
+                    <thead>
+                      <tr>
+                        <Th>Event</Th>
+                        <Th>Status change</Th>
+                        <Th>Actor</Th>
+                        <Th kind="date">Recorded</Th>
+                        <Th>Reason</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((entry) => (
+                        <Tr key={entry.id}>
+                          <Td className="font-[600] text-ink">
+                            {entry.action.replaceAll('_', ' ')}
+                          </Td>
+                          <Td className="whitespace-nowrap">
+                            {entry.previousStatus ?? '—'} → {entry.newStatus ?? '—'}
+                          </Td>
+                          <Td>{entry.actor.displayName ?? 'System'}</Td>
+                          <Td kind="date">
+                            <time dateTime={entry.occurredAt}>
+                              {new Date(entry.occurredAt).toLocaleString('en-PH')}
+                            </time>
+                          </Td>
+                          <Td className="text-ink-muted">{entry.reason ?? '—'}</Td>
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              )}
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button size="default" type="button" variant="secondary">
+                <Button type="button" variant="secondary">
                   Close
                 </Button>
               </DialogClose>
@@ -1680,22 +1655,7 @@ function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
 }
 
-function SectionTitle({ children }: { children: ReactNode }) {
-  return (
-    <h2 className="m-0 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase">{children}</h2>
-  );
-}
-
-function ErrorMessage({ message }: { message: string }) {
-  return message ? (
-    <p
-      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] text-[#9a3030]"
-      role="alert"
-    >
-      {message}
-    </p>
-  ) : null;
-}
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
 
 function CloseButton({ busy, label }: { busy: boolean; label: string }) {
   return (
@@ -1709,22 +1669,55 @@ function CloseButton({ busy, label }: { busy: boolean; label: string }) {
   );
 }
 
+const STAGES = ['Prepare', 'Review', 'Authority', 'Effectuation'] as const;
+
+/** The four workflow stages, with every stage up to `stage` marked as reached. */
+function AuthorityChain({ stage }: { stage: number }) {
+  return (
+    <ol
+      aria-label="Authority chain"
+      className="m-0 grid list-none grid-cols-2 gap-px overflow-hidden rounded-control border border-border bg-border p-0 min-[621px]:grid-cols-4"
+    >
+      {STAGES.map((label, index) => (
+        <li
+          className={cn(
+            'bg-surface px-3 py-2 text-caption',
+            index <= stage
+              ? 'font-[650] text-ink shadow-[inset_0_3px_0_var(--color-primary)]'
+              : 'text-ink-muted',
+          )}
+          key={label}
+        >
+          <span className="block font-normal text-ink-muted">Step {index + 1}</span>
+          {label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function DetailGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="grid gap-3 border-t border-line pt-3">
-      <SectionTitle>{title}</SectionTitle>
-      <div className="grid gap-2">{children}</div>
+    <section className="grid content-start gap-3">
+      <h3 className={sectionTitleClass}>{title}</h3>
+      <dl className="m-0 grid gap-2">{children}</dl>
     </section>
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid gap-1 min-[520px]:grid-cols-[130px_1fr]">
-      <span className="text-xs text-muted">{label}</span>
-      <span className="break-all text-sm text-ink">{value}</span>
+    <div className="grid gap-1 min-[621px]:grid-cols-[150px_1fr]">
+      <dt className="text-caption text-ink-muted">{label}</dt>
+      <dd className="m-0 text-body [overflow-wrap:anywhere] text-ink">{children}</dd>
     </div>
   );
+}
+
+/** `newSalaryStep` → `New salary step`. */
+function factLabel(key: string): string {
+  const words = key.replaceAll(/([A-Z])/g, ' $1').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function transitionLabel(value: string): string {
