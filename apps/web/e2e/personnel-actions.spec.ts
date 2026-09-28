@@ -19,7 +19,7 @@ test('opens Personnel Action preparation with the shared modal contract', async 
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/personnel-actions');
-  await expect(page.getByRole('heading', { name: 'Personnel actions', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Personnel Actions', exact: true })).toBeVisible();
 
   const trigger = page.getByRole('button', { name: 'Prepare action' });
   await trigger.click();
@@ -126,7 +126,7 @@ test('prepares and reviews an Appointment-backed movement from its assumed contr
   if (!candidate) throw new Error('The assumed movement Appointment fixture is missing.');
 
   await page.goto('/personnel-actions');
-  await expect(page.getByRole('heading', { name: 'Personnel actions', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Personnel Actions', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Prepare action' }).click();
   const prepare = page.getByRole('region', { name: 'Prepare Personnel Action' });
 
