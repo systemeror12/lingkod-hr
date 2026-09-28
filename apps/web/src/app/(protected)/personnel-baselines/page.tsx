@@ -8,7 +8,7 @@ import {
 } from '../../../components/personnel-baseline-workspace';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 
-export const metadata: Metadata = { title: 'Personnel Baseline' };
+export const metadata: Metadata = { title: 'Personnel Baselines' };
 export const dynamic = 'force-dynamic';
 
 export default async function PersonnelBaselinesPage() {
