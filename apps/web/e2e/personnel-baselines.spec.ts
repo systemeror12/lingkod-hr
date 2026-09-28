@@ -14,7 +14,7 @@ test('opens the Personnel Baseline workflow with the shared modal contract', asy
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/personnel-baselines');
   await expect(
-    page.getByRole('heading', { name: 'Personnel Baseline', exact: true }),
+    page.getByRole('heading', { name: 'Personnel Baselines', exact: true }),
   ).toBeVisible();
 
   const trigger = page.getByRole('button', { name: 'Prepare baseline' });
