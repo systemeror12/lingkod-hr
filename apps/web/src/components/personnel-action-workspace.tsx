@@ -999,7 +999,7 @@ export function PersonnelActionWorkspace({
                 <FormError message={error} />
                 <section className="grid gap-4">
                   <h3 className={sectionTitleClass}>Action identity</h3>
-                  <div className="grid gap-4 min-[700px]:grid-cols-3">
+                  <div className="grid gap-4 min-[621px]:grid-cols-3">
                     <Field htmlFor="action-employee" label="Employee">
                       <select
                         className={inputClass}
@@ -1054,7 +1054,7 @@ export function PersonnelActionWorkspace({
                 </section>
                 <section className="grid gap-4">
                   <h3 className={sectionTitleClass}>Action-specific target facts</h3>
-                  <div className="grid gap-4 min-[700px]:grid-cols-2">
+                  <div className="grid gap-4 min-[621px]:grid-cols-2">
                     {CONTRACTS[actionType].fields.map((field) => (
                       <TargetField
                         appointments={appointmentCandidates}
@@ -1076,7 +1076,7 @@ export function PersonnelActionWorkspace({
                   <div className="grid gap-3">
                     {evidenceRows(actionType).map(({ type, required }) => (
                       <div
-                        className="grid gap-3 rounded-control border border-border p-3 min-[700px]:grid-cols-[170px_1fr_170px] min-[700px]:items-end"
+                        className="grid gap-3 rounded-control border border-border p-3 min-[621px]:grid-cols-[170px_1fr_170px] min-[621px]:items-end"
                         key={type}
                       >
                         <strong className="text-caption font-[650] text-ink">
@@ -1280,7 +1280,7 @@ export function PersonnelActionWorkspace({
                   </Button>
                 ) : null}
               </div>
-              <div className="grid gap-x-10 gap-y-6 min-[700px]:grid-cols-2">
+              <div className="grid gap-x-10 gap-y-6 min-[621px]:grid-cols-2">
                 <DetailGroup title="Source and effectivity">
                   <DetailRow label="Version">{selected.currentVersion.versionNo}</DetailRow>
                   <DetailRow label="Service Segment">
@@ -1707,7 +1707,7 @@ function DetailGroup({ title, children }: { title: string; children: ReactNode }
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid gap-1 min-[520px]:grid-cols-[150px_1fr]">
+    <div className="grid gap-1 min-[621px]:grid-cols-[150px_1fr]">
       <dt className="text-caption text-ink-muted">{label}</dt>
       <dd className="m-0 text-body [overflow-wrap:anywhere] text-ink">{children}</dd>
     </div>
