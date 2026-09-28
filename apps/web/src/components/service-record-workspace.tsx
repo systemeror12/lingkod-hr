@@ -96,6 +96,11 @@ function recordChain(record: ServiceRecord): RecordChain {
       : 'Original';
 }
 
+function RecordChainTag({ record }: { record: ServiceRecord }) {
+  const chain = recordChain(record);
+  return <StatusTag tone={chainTone[chain]}>{chain}</StatusTag>;
+}
+
 const sectionTitleClass = 'm-0 text-panel-title text-ink';
 
 function formatDateTime(value: string): string {
@@ -421,9 +426,7 @@ export function ServiceRecordWorkspace({
                     {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
                   </Td>
                   <Td>
-                    <StatusTag tone={chainTone[recordChain(record)]}>
-                      {recordChain(record)}
-                    </StatusTag>
+                    <RecordChainTag record={record} />
                   </Td>
                   <Td>
                     <div className="flex flex-wrap gap-2">
@@ -572,9 +575,7 @@ export function ServiceRecordWorkspace({
               <div className="grid min-w-0 gap-1.5">
                 <div className="flex flex-wrap items-center gap-3">
                   <DialogTitle>{selected.snapshot.label}</DialogTitle>
-                  <StatusTag tone={chainTone[recordChain(selected)]}>
-                    {recordChain(selected)}
-                  </StatusTag>
+                  <RecordChainTag record={selected} />
                 </div>
                 <DialogDescription id="service-record-preview-description">
                   {selected.snapshot.disclaimer}
@@ -811,9 +812,7 @@ export function ServiceRecordWorkspace({
                         {record.asOfDate}
                       </RowHeader>
                       <Td>
-                        <StatusTag tone={chainTone[recordChain(record)]}>
-                          {recordChain(record)}
-                        </StatusTag>
+                        <RecordChainTag record={record} />
                       </Td>
                       <Td className="text-ink-muted">
                         {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
