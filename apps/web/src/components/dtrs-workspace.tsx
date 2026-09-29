@@ -1,8 +1,13 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { StateSurface } from './state-surface';
 import { Button, buttonVariants } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 export interface AttendancePeriodListResponse {
   periods: AttendancePeriodOption[];
@@ -141,6 +146,20 @@ function errorMessage(value: unknown, fallback: string): string {
     return `${base} (${reasons.filter((item) => typeof item === 'string').join('; ')})`;
   }
   return base;
+}
+
+const SUBMISSION_TONE: Record<string, StatusTone> = {
+  DRAFT: 'neutral',
+  SUBMITTED: 'info',
+  RETURNED: 'warning',
+  APPROVED: 'success',
+  CANCELLED: 'neutral',
+};
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+
+function submissionTone(status: string): StatusTone {
+  return SUBMISSION_TONE[status] ?? 'neutral';
 }
 
 function eventValue(event: { currentTarget: EventTarget }): string {
@@ -362,141 +381,123 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
   const periodDtrs = dtrs.filter((dtr) => dtr.period.id === selectedPeriodId);
 
   return (
-    <section className="grid gap-5 text-sm text-ink">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="m-0 text-[10px] font-bold tracking-[.12em] text-muted uppercase">
-            Attendance
-          </p>
-          <h1 className="m-0 text-xl font-[680] text-midnight">Daily Time Records</h1>
-        </div>
-        {periods.length > 0 ? (
-          <label className="grid gap-1 text-xs font-medium text-muted">
-            Attendance Period
-            <select
-              aria-label="Attendance Period"
-              className={inputClass}
-              onChange={(event) => setSelectedPeriodId(eventValue(event))}
-              value={selectedPeriodId}
-            >
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.code} · {period.dateFrom} to {period.dateTo} · {period.status}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </header>
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Time & attendance' }]}
+        title="Daily Time Records"
+        actions={
+          periods.length > 0 ? (
+            <Field label="Attendance Period">
+              <select
+                className={inputClass + ' min-w-64'}
+                onChange={(event) => setSelectedPeriodId(eventValue(event))}
+                value={selectedPeriodId}
+              >
+                {periods.map((period) => (
+                  <option key={period.id} value={period.id}>
+                    {period.code} · {period.dateFrom} to {period.dateTo} · {period.status}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null
+        }
+      />
 
-      {error ? <FormError message={error} /> : null}
       {success ? (
         <p
-          className="m-0 rounded-[3px] border border-line bg-[#e8f3ed] px-4 py-3 text-xs text-[#316647]"
+          className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
           role="status"
         >
           {success}
         </p>
       ) : null}
+      <FormError message={error} />
 
       {props.canReadDays ? (
-        <section
-          aria-labelledby="dtr-preview-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-            <div>
-              <h2 className="m-0 text-sm font-[650] text-midnight" id="dtr-preview-heading">
-                Unfinalized Daily Time Record Preview
-              </h2>
-              <p className="m-0 mt-1 text-xs text-muted">
-                Derived from the current Attendance Day versions. This is not a Finalized Daily Time
-                Record.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {preview ? (
-                <>
-                  <a
-                    className={buttonVariants({ variant: 'secondary' })}
-                    href={printHref(
-                      '/attendance-periods/' +
-                        selectedPeriodId +
-                        '/dtr-preview/print?employeeId=' +
-                        preview.employee.id,
-                    )}
-                    rel="noopener"
-                    target="_blank"
+        <Panel
+          title="Unfinalized Daily Time Record Preview"
+          flush
+          actions={
+            preview ? (
+              <>
+                <a
+                  className={buttonVariants({ variant: 'secondary' })}
+                  href={printHref(
+                    '/attendance-periods/' +
+                      selectedPeriodId +
+                      '/dtr-preview/print?employeeId=' +
+                      preview.employee.id,
+                  )}
+                  rel="noopener"
+                  target="_blank"
+                >
+                  Print preview
+                </a>
+                {props.canCreate && !ownSubmission ? (
+                  <Button
+                    disabled={busy || !selectedPeriodId}
+                    onClick={() =>
+                      void run(
+                        '/attendance-submissions',
+                        { attendancePeriodId: selectedPeriodId },
+                        'Submission draft created.',
+                      )
+                    }
+                    type="button"
+                    variant="primary"
                   >
-                    Print preview
-                  </a>
-                  {props.canCreate && !ownSubmission ? (
-                    <Button
-                      size="default"
-                      disabled={busy || !selectedPeriodId}
-                      onClick={() =>
-                        void run(
-                          '/attendance-submissions',
-                          { attendancePeriodId: selectedPeriodId },
-                          'Submission draft created.',
-                        )
-                      }
-                      type="button"
-                      variant="primary"
-                    >
-                      Create draft submission
-                    </Button>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          </div>
-          <div className="px-5 py-4">
-            <p
-              className="m-0 mb-3 inline-block rounded-[3px] border border-[#b45309] bg-[#fef3c7] px-2 py-1 text-[10px] font-bold tracking-[.08em] text-[#7c2d12] uppercase"
-              role="note"
-            >
-              Unfinalized preview
+                    Create draft submission
+                  </Button>
+                ) : null}
+              </>
+            ) : null
+          }
+        >
+          <div className="grid justify-items-start gap-2 px-4 py-3">
+            <p className="m-0" role="note">
+              <StatusTag tone="warning">Unfinalized preview</StatusTag>
             </p>
-            {previewError ? (
-              <p className="m-0 text-xs text-muted">{previewError}</p>
-            ) : preview ? (
-              <table className="w-full border-collapse text-xs">
-                <caption className="sr-only">
-                  {preview.employee.legalName} · {preview.period.code}
-                </caption>
-                <thead>
-                  <tr>
-                    <th className="border border-line px-3 py-2 text-left" scope="col">
-                      Work date
-                    </th>
-                    <th className="border border-line px-3 py-2 text-left" scope="col">
-                      DTR presentation
-                    </th>
-                    <th className="border border-line px-3 py-2 text-right" scope="col">
-                      Expected
-                    </th>
-                    <th className="border border-line px-3 py-2 text-right" scope="col">
-                      Worked
-                    </th>
-                    <th className="border border-line px-3 py-2 text-right" scope="col">
-                      Tardiness
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.days.map((day) => (
-                    <tr key={day.attendanceDayId}>
-                      <td className="border border-line px-3 py-2 align-top">
-                        <strong>{day.workDate}</strong>
-                        <span className="block text-muted">
+            <p className="m-0 text-small text-ink-muted">
+              Derived from the current Attendance Day versions. This is not a Finalized Daily Time
+              Record.
+            </p>
+          </div>
+          {previewError ? (
+            <StateSurface compact>
+              <p className="m-0">{previewError}</p>
+            </StateSurface>
+          ) : preview ? (
+            <Table>
+              <caption className="sr-only">
+                {preview.employee.legalName} · {preview.period.code}
+              </caption>
+              <thead>
+                <tr>
+                  <Th>Work date</Th>
+                  <Th>DTR presentation</Th>
+                  <Th kind="numeric">Expected</Th>
+                  <Th kind="numeric">Worked</Th>
+                  <Th kind="numeric">Tardiness</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.days.map((day) => {
+                  const openExceptions = day.exceptions.filter(
+                    (exception) => exception.status === 'OPEN',
+                  );
+                  return (
+                    <Tr key={day.attendanceDayId}>
+                      <RowHeader>
+                        {day.workDate}
+                        <span className="block text-caption font-normal text-ink-muted">
                           {day.dayClassification.replaceAll('_', ' ')} · v{day.calculationVersion} ·{' '}
                           {day.status}
                         </span>
-                      </td>
-                      <td className="border border-line px-3 py-2 align-top">
+                      </RowHeader>
+                      <Td>
                         {day.presentation.length === 0 ? (
-                          <span className="text-muted">No recorded event presentation.</span>
+                          <span className="text-ink-muted">No recorded event presentation.</span>
                         ) : (
                           <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0">
                             {day.presentation.map((entry) => (
@@ -504,49 +505,45 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                             ))}
                           </ul>
                         )}
-                        {day.exceptions.some((exception) => exception.status === 'OPEN') ? (
-                          <span className="mt-1 block font-semibold text-[#b91c1c]">
-                            {day.exceptions
-                              .filter((exception) => exception.status === 'OPEN')
-                              .map((exception) => exception.exceptionType)
-                              .join(', ')}
+                        {openExceptions.length > 0 ? (
+                          <span className="mt-1 block font-[600] text-danger">
+                            {openExceptions.map((exception) => exception.exceptionType).join(', ')}
                           </span>
                         ) : null}
-                      </td>
-                      <td className="border border-line px-3 py-2 text-right align-top">
-                        {timeLabel(day.totals.expectedMinutes)}
-                      </td>
-                      <td className="border border-line px-3 py-2 text-right align-top">
-                        {timeLabel(day.totals.workedMinutes)}
-                      </td>
-                      <td className="border border-line px-3 py-2 text-right align-top">
-                        {timeLabel(day.totals.lateMinutes)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="m-0 text-xs text-muted">Loading the preview…</p>
-            )}
-          </div>
+                      </Td>
+                      <Td kind="numeric">{timeLabel(day.totals.expectedMinutes)}</Td>
+                      <Td kind="numeric">{timeLabel(day.totals.workedMinutes)}</Td>
+                      <Td kind="numeric">{timeLabel(day.totals.lateMinutes)}</Td>
+                    </Tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          ) : (
+            <StateSurface busy compact>
+              <p className="m-0">Loading the preview…</p>
+            </StateSurface>
+          )}
           {ownSubmission ? (
-            <div
+            <section
               aria-label="My attendance submission"
-              className="border-t border-line bg-[#f8fafc] px-5 py-4"
-              role="region"
+              className="grid gap-2 border-t border-border px-4 py-3"
             >
-              <h3 className="m-0 text-xs font-[650] text-midnight">My attendance submission</h3>
-              <p className="m-0 mt-1 text-xs text-muted">
-                Version {ownSubmission.versionNo} · {ownSubmission.status} ·{' '}
-                {ownSubmission.dayCount} bound Attendance Day version
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className={sectionTitleClass}>My attendance submission</h3>
+                <StatusTag tone={submissionTone(ownSubmission.status)}>
+                  {ownSubmission.status}
+                </StatusTag>
+              </div>
+              <p className="m-0 text-small text-ink-muted">
+                Version {ownSubmission.versionNo} · {ownSubmission.dayCount} bound Attendance Day
+                version
                 {ownSubmission.dayCount === 1 ? '' : 's'}
                 {ownSubmission.reviewReason ? ` · ${ownSubmission.reviewReason}` : ''}
               </p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {props.canSubmit && ['DRAFT', 'RETURNED'].includes(ownSubmission.status) ? (
                   <Button
-                    size="default"
                     disabled={busy}
                     onClick={() =>
                       void run(
@@ -563,7 +560,6 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                 ) : null}
                 {props.canCancel && ['DRAFT', 'SUBMITTED'].includes(ownSubmission.status) ? (
                   <Button
-                    size="default"
                     disabled={busy}
                     onClick={() =>
                       void run(
@@ -582,24 +578,16 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                   </Button>
                 ) : null}
               </div>
-            </div>
+            </section>
           ) : null}
-        </section>
+        </Panel>
       ) : null}
 
       {props.canReturn || props.canApprove || props.canCreateOnBehalf ? (
-        <section
-          aria-labelledby="dtr-review-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <div className="border-b border-line px-5 py-4">
-            <h2 className="m-0 text-sm font-[650] text-midnight" id="dtr-review-heading">
-              HR review
-            </h2>
-          </div>
+        <Panel title="HR review" flush>
           {props.canCreateOnBehalf ? (
             <form
-              className="grid gap-3 border-b border-line px-5 py-4 md:grid-cols-3"
+              className="grid gap-3 border-b border-border px-4 py-3 md:grid-cols-3"
               onSubmit={createOnBehalf}
             >
               <Field label="Employee">
@@ -645,41 +633,47 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                 />
               </Field>
               <div className="md:col-span-3">
-                <Button size="default" disabled={busy} type="submit" variant="secondary">
+                <Button disabled={busy} type="submit" variant="secondary">
                   {busy ? 'Saving…' : 'Create on-behalf draft'}
                 </Button>
               </div>
             </form>
           ) : null}
-          <div className="px-5 py-4">
-            {reviewQueue.length === 0 ? (
-              <p className="m-0 text-xs text-muted">
+          {reviewQueue.length === 0 ? (
+            <StateSurface compact>
+              <p className="m-0">
                 No submitted Employee Attendance Submission awaits review in this Attendance Period.
               </p>
-            ) : (
-              <ul className="m-0 grid list-none gap-3 p-0">
+            </StateSurface>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Employee</Th>
+                  <Th>Submission</Th>
+                  <Th>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
                 {reviewQueue.map((submission) => (
-                  <li
-                    className="grid gap-2 rounded-[3px] border border-line px-3 py-3"
-                    key={submission.id}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <strong className="text-xs text-ink">
-                          {submission.employee.legalName}
-                        </strong>
-                        <span className="block text-xs text-muted">
-                          {submission.employee.employeeNumber} · Version {submission.versionNo} ·{' '}
-                          {submission.dayCount} day{submission.dayCount === 1 ? '' : 's'}
-                          {submission.onBehalfReason
-                            ? ` · on behalf: ${submission.onBehalfReason}`
-                            : ''}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
+                  <Tr key={submission.id}>
+                    <RowHeader>
+                      {submission.employee.legalName}
+                      <span className="block text-caption font-normal text-ink-muted">
+                        {submission.employee.employeeNumber}
+                      </span>
+                    </RowHeader>
+                    <Td>
+                      Version {submission.versionNo} · {submission.dayCount} day
+                      {submission.dayCount === 1 ? '' : 's'}
+                      {submission.onBehalfReason
+                        ? ` · on behalf: ${submission.onBehalfReason}`
+                        : ''}
+                    </Td>
+                    <Td>
+                      <div className="flex flex-wrap items-center gap-2">
                         {props.canReturn ? (
                           <Button
-                            size="default"
                             disabled={busy || comments.trim() === ''}
                             onClick={() =>
                               void run(
@@ -696,7 +690,6 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                         ) : null}
                         {props.canApprove ? (
                           <Button
-                            size="default"
                             disabled={busy}
                             onClick={() =>
                               void run(
@@ -712,44 +705,34 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                           </Button>
                         ) : null}
                       </div>
-                    </div>
-                  </li>
+                    </Td>
+                  </Tr>
                 ))}
-              </ul>
-            )}
-            {props.canReturn || props.canApprove ? (
-              <label className="mt-3 grid gap-1 text-xs font-medium text-muted">
-                Decision comments
+              </tbody>
+            </Table>
+          )}
+          {props.canReturn || props.canApprove ? (
+            <div className="px-4 py-3">
+              <Field label="Decision comments">
                 <input
                   className={inputClass}
                   maxLength={2000}
                   onChange={(event) => setComments(eventValue(event))}
                   value={comments}
                 />
-              </label>
-            ) : null}
-          </div>
-        </section>
+              </Field>
+            </div>
+          ) : null}
+        </Panel>
       ) : null}
 
       {props.canReadReports ? (
-        <section
-          aria-labelledby="dtr-register-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-            <div>
-              <h2 className="m-0 text-sm font-[650] text-midnight" id="dtr-register-heading">
-                Finalized Daily Time Records
-              </h2>
-              <p className="m-0 mt-1 text-xs text-muted">
-                One retained Printable System View per covered Employee and locked Attendance Period
-                Version. Earlier artifacts stay in history.
-              </p>
-            </div>
-            {canGenerateForPeriod && latestLocked ? (
+        <Panel
+          title="Finalized Daily Time Records"
+          flush
+          actions={
+            canGenerateForPeriod && latestLocked ? (
               <Button
-                size="default"
                 disabled={busy}
                 onClick={() =>
                   void run(
@@ -763,108 +746,110 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
               >
                 Generate Finalized DTRs
               </Button>
-            ) : null}
-          </div>
-          <div className="px-5 py-4">
-            {periodDtrs.length === 0 ? (
-              <p className="m-0 text-xs text-muted">
+            ) : null
+          }
+        >
+          <p className="m-0 px-4 py-3 text-small text-ink-muted">
+            One retained Printable System View per covered Employee and locked Attendance Period
+            Version. Earlier artifacts stay in history.
+          </p>
+          {periodDtrs.length === 0 ? (
+            <StateSurface compact>
+              <p className="m-0">
                 No Finalized Daily Time Record exists for this Attendance Period yet.
               </p>
-            ) : (
-              <ul className="m-0 grid list-none gap-2 p-0">
+            </StateSurface>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Employee</Th>
+                  <Th>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
                 {periodDtrs.map((dtr) => (
-                  <li
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-[3px] border border-line px-3 py-3"
-                    key={dtr.id}
-                  >
-                    <button
-                      className="cursor-pointer text-left text-xs font-[650] text-cobalt underline-offset-2 hover:underline"
-                      onClick={() => setSelectedDtrId(dtr.id)}
-                      type="button"
-                    >
-                      {dtr.employee.legalName} ({dtr.employee.employeeNumber})
-                      <span className="block font-normal text-muted">
-                        Version {dtr.versionNo} · {dtr.classification} · {dtr.outputType} ·{' '}
-                        {dtr.isCurrent ? 'Current' : 'History'}
-                      </span>
-                    </button>
-                    <a
-                      className={buttonVariants({ variant: 'secondary' })}
-                      href={printHref('/dtrs/' + dtr.id + '/print')}
-                      rel="noopener"
-                      target="_blank"
-                    >
-                      Print
-                    </a>
-                  </li>
+                  <Tr key={dtr.id} selected={dtr.id === selectedDtrId}>
+                    <RowHeader>
+                      <button
+                        className="cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-ink underline-offset-2 hover:underline"
+                        onClick={() => setSelectedDtrId(dtr.id)}
+                        type="button"
+                      >
+                        {dtr.employee.legalName} ({dtr.employee.employeeNumber})
+                        <span className="block text-caption font-normal text-ink-muted">
+                          Version {dtr.versionNo} · {dtr.classification} · {dtr.outputType} ·{' '}
+                          {dtr.isCurrent ? 'Current' : 'History'}
+                        </span>
+                      </button>
+                    </RowHeader>
+                    <Td>
+                      <a
+                        className={buttonVariants({ variant: 'secondary' })}
+                        href={printHref('/dtrs/' + dtr.id + '/print')}
+                        rel="noopener"
+                        target="_blank"
+                      >
+                        Print
+                      </a>
+                    </Td>
+                  </Tr>
                 ))}
-              </ul>
-            )}
-            {selectedDtr ? (
-              <div
-                aria-label="Finalized Daily Time Record detail"
-                className="mt-4 rounded-[3px] border border-line bg-[#f8fafc] px-4 py-4"
-                role="region"
-              >
-                <h3 className="m-0 text-sm font-[650] text-midnight">
-                  {selectedDtr.document.employee.legalName} · {selectedDtr.document.period.code} ·
-                  Version {selectedDtr.document.versionNo}
-                </h3>
-                <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs md:grid-cols-2">
-                  <div className="flex gap-2">
-                    <dt className="min-w-40 font-semibold text-muted">Classification</dt>
-                    <dd className="m-0">{selectedDtr.document.classification}</dd>
+              </tbody>
+            </Table>
+          )}
+          {selectedDtr ? (
+            <section
+              aria-label="Finalized Daily Time Record detail"
+              className="grid gap-3 border-t border-border bg-canvas p-4"
+            >
+              <h3 className={sectionTitleClass}>
+                {selectedDtr.document.employee.legalName} · {selectedDtr.document.period.code} ·
+                Version {selectedDtr.document.versionNo}
+              </h3>
+              <dl className="m-0 grid gap-x-6 gap-y-2 text-small md:grid-cols-2">
+                {(
+                  [
+                    ['Classification', selectedDtr.document.classification],
+                    ['Output', selectedDtr.document.outputType],
+                    ['Locked at', selectedDtr.manifest.version.lockedAt ?? '—'],
+                    ['Generated at', selectedDtr.document.generatedAt],
+                    ['Current artifact', selectedDtr.document.isCurrent ? 'Yes' : 'No'],
+                    ['Corrects', selectedDtr.document.predecessorDtrDocumentId ?? 'No predecessor'],
+                  ] as const
+                ).map(([term, value]) => (
+                  <div className="flex gap-2" key={term}>
+                    <dt className="min-w-40 text-caption font-[650] text-ink-muted">{term}</dt>
+                    <dd className="m-0 break-all text-ink">{value}</dd>
                   </div>
-                  <div className="flex gap-2">
-                    <dt className="min-w-40 font-semibold text-muted">Output</dt>
-                    <dd className="m-0">{selectedDtr.document.outputType}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="min-w-40 font-semibold text-muted">Locked at</dt>
-                    <dd className="m-0">{selectedDtr.manifest.version.lockedAt ?? '—'}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="min-w-40 font-semibold text-muted">Generated at</dt>
-                    <dd className="m-0">{selectedDtr.document.generatedAt}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="min-w-40 font-semibold text-muted">Current artifact</dt>
-                    <dd className="m-0">{selectedDtr.document.isCurrent ? 'Yes' : 'No'}</dd>
-                  </div>
-                  <div className="flex gap-2">
-                    <dt className="min-w-40 font-semibold text-muted">Corrects</dt>
-                    <dd className="m-0">
-                      {selectedDtr.document.predecessorDtrDocumentId ?? 'No predecessor'}
-                    </dd>
-                  </div>
-                </dl>
-                <p className="mt-3 text-xs text-muted">
-                  Source lineage: {selectedDtr.manifest.days.length} Attendance Day version
-                  {selectedDtr.manifest.days.length === 1 ? '' : 's'} with exact presentation and
-                  segment references.
-                </p>
-                <div className="mt-3">
-                  <a
-                    className={buttonVariants({ variant: 'primary' })}
-                    href={printHref('/dtrs/' + selectedDtr.document.id + '/print')}
-                    rel="noopener"
-                    target="_blank"
-                  >
-                    Print Daily Time Record
-                  </a>
-                </div>
+                ))}
+              </dl>
+              <p className="m-0 text-caption text-ink-muted">
+                Source lineage: {selectedDtr.manifest.days.length} Attendance Day version
+                {selectedDtr.manifest.days.length === 1 ? '' : 's'} with exact presentation and
+                segment references.
+              </p>
+              <div>
+                <a
+                  className={buttonVariants({ variant: 'primary' })}
+                  href={printHref('/dtrs/' + selectedDtr.document.id + '/print')}
+                  rel="noopener"
+                  target="_blank"
+                >
+                  Print Daily Time Record
+                </a>
               </div>
-            ) : null}
-          </div>
-        </section>
+            </section>
+          ) : null}
+        </Panel>
       ) : null}
 
       {selectedPeriod ? (
-        <p className="m-0 text-xs text-muted">
+        <p className="m-0 text-caption text-ink-muted">
           Selected Attendance Period {selectedPeriod.code} · latest version{' '}
           {latestVersion ? `${latestVersion.versionNo} (${latestVersion.status})` : 'none'}.
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }
