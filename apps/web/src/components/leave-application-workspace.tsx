@@ -1,7 +1,8 @@
 'use client';
 
 import { Field, inputClass, FormError } from './ui/field';
-import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Dialog,
@@ -15,6 +16,10 @@ import {
   DialogTrigger,
 } from './ui/dialog';
 import { Button } from './ui/button';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 import { manilaToday } from '../lib/manila-date';
 
 export interface LeaveApplicationPeriod {
@@ -310,23 +315,21 @@ const WITHDRAWABLE_STATUSES = [
   'NEEDS_INFORMATION',
 ];
 
-const TONE_RESOLVED = 'bg-[#e8f3ed] text-[#316647]';
-const TONE_ATTENTION = 'bg-[#fff3d6] text-[#79531c]';
-const TONE_DANGER = 'bg-[#fbe9e7] text-[#8c2f21]';
-const TONE_NEUTRAL = 'bg-[#f0f2f5] text-muted';
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+const successClass =
+  'm-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success';
 
-function statusClass(status: string): string {
-  if (['APPROVED', 'POSTED'].includes(status)) return TONE_RESOLVED;
-  if (['REJECTED', 'CANCELLED'].includes(status)) return TONE_DANGER;
-  if (status === 'WITHDRAWN') return TONE_NEUTRAL;
-  if (status === 'DRAFT') return TONE_NEUTRAL;
-  return TONE_ATTENTION;
+function statusTone(status: string): StatusTone {
+  if (['APPROVED', 'POSTED'].includes(status)) return 'success';
+  if (['REJECTED', 'CANCELLED'].includes(status)) return 'danger';
+  if (['WITHDRAWN', 'DRAFT'].includes(status)) return 'neutral';
+  return 'warning';
 }
 
-function eligibilityClass(result: string): string {
-  if (result === 'ELIGIBLE') return TONE_RESOLVED;
-  if (result === 'INELIGIBLE') return TONE_DANGER;
-  return TONE_ATTENTION;
+function eligibilityTone(result: string): StatusTone {
+  if (result === 'ELIGIBLE') return 'success';
+  if (result === 'INELIGIBLE') return 'danger';
+  return 'warning';
 }
 
 function humanize(value: string): string {
@@ -467,6 +470,9 @@ export function LeaveApplicationWorkspace({
     if (!recordId) {
       syncedRecordId.current = null;
       setDetail(null);
+      // The register link and browser Back clear `record`; close whatever record work was open.
+      setDialog((current) => (current === 'prepare' ? current : null));
+      setSuccess('');
       return;
     }
     if (syncedRecordId.current === recordId) return;
@@ -880,1330 +886,1265 @@ export function LeaveApplicationWorkspace({
   const withdrawable = WITHDRAWABLE_STATUSES.includes(status);
   const reviewable = REVIEW_STATUSES.includes(status);
 
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Leave' }];
+  if (recordId) {
+    breadcrumbs.push(
+      { label: 'Leave Applications', href: navigation.href({ record: null }) },
+      { label: detail?.application.employeeName ?? 'Leave Application' },
+    );
+  } else if (dialog === 'prepare') {
+    // Preparing a draft leaves the URL alone, so there is no register link to follow.
+    breadcrumbs.push({ label: 'Leave Applications' }, { label: 'Prepare' });
+  } else {
+    breadcrumbs.push({ label: 'Leave Applications' });
+  }
+
   return (
     <Dialog
       presentation="form"
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div hidden={dialog !== null} className="min-w-0 space-y-5">
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[760px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Leave administration
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Leave Applications
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              Prepare the facts of a leave request, check eligibility against the active Leave
-              Policy, and submit an immutable Leave Application Version with attestation and
-              approval routing.
-            </p>
-          </div>
-          <DialogTrigger asChild>
-            <Button
-              onClick={() => {
-                resetAction();
-                void loadOptions();
-                setEmployeeId('');
-                setLeaveTypeId('');
-                setDialog('prepare');
-              }}
-              size="default"
-              type="button"
-              variant="primary"
-            >
-              Prepare Leave Application
-            </Button>
-          </DialogTrigger>
-        </header>
+      <div className="grid min-w-0 gap-5">
+        <PageHeader
+          breadcrumbs={breadcrumbs}
+          title="Leave Applications"
+          actions={
+            <DialogTrigger asChild>
+              <Button
+                // Hidden rather than unmounted, so focus can return here when the form closes.
+                hidden={dialog !== null}
+                onClick={() => {
+                  resetAction();
+                  void loadOptions();
+                  setEmployeeId('');
+                  setLeaveTypeId('');
+                  setDialog('prepare');
+                }}
+                type="button"
+                variant="primary"
+              >
+                Prepare Leave Application
+              </Button>
+            </DialogTrigger>
+          }
+        />
 
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
+        <div hidden={dialog !== null} className="grid gap-5">
+          <p className="m-0 max-w-[80ch] text-small text-ink-muted">
+            Prepare the facts of a leave request, check eligibility against the active Leave Policy,
+            and submit an immutable Leave Application Version with attestation and approval routing.
           </p>
-        ) : null}
 
-        {error && dialog === null ? <FormError message={error} /> : null}
+          {success ? (
+            <p className={successClass} role="status">
+              {success}
+            </p>
+          ) : null}
 
-        <section
-          aria-labelledby="leave-applications-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="leave-applications-heading">
-                Leave Application register
-              </h2>
-              <span className="text-xs text-muted">
+          {dialog === null ? <FormError message={error} /> : null}
+
+          <Panel
+            title="Leave Application register"
+            flush
+            actions={
+              <span className="text-caption text-ink-muted">
                 {applications.length === 1
                   ? '1 Leave Application'
                   : applications.length + ' Leave Applications'}
               </span>
-            </div>
-          </header>
-          {applications.length === 0 ? (
-            <div className="grid min-h-[200px] place-content-center gap-2 px-6 py-12">
-              <strong className="text-[15px] font-[650] text-midnight">
-                No Leave Applications yet.
-              </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                Prepare a Leave Application against an active Leave Policy Version, then submit it
-                with the required evidence.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+            }
+          >
+            {applications.length === 0 ? (
+              <StateSurface compact label="No Leave Applications">
+                <strong className="text-body font-[650] text-ink">
+                  No Leave Applications yet.
+                </strong>
+                <p className="m-0 max-w-[560px]">
+                  Prepare a Leave Application against an active Leave Policy Version, then submit it
+                  with the required evidence.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table className="min-w-[860px]">
+                <thead>
                   <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Employee
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Leave type
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Periods
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Submitted
-                    </th>
+                    <Th>Employee</Th>
+                    <Th>Leave type</Th>
+                    <Th>Status</Th>
+                    <Th>Periods</Th>
+                    <Th kind="date">Submitted</Th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody>
                   {applications.map((application) => (
-                    <tr key={application.id}>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <button
-                            className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
-                            type="button"
-                            onClick={() => navigation.navigate({ record: application.id })}
-                          >
-                            {application.employeeName}
-                          </button>
-                          <span className="text-xs text-muted">{application.employeeNumber}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <strong className="font-[650] text-midnight">
-                            {application.leaveTypeName}
-                          </strong>
-                          <span className="text-xs text-muted">{application.leaveTypeCode}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            statusClass(application.status)
-                          }
+                    <Tr key={application.id}>
+                      <RowHeader>
+                        <button
+                          className="cursor-pointer border-0 bg-transparent p-0 text-left text-small font-[600] text-primary underline-offset-2 hover:underline"
+                          type="button"
+                          onClick={() => navigation.navigate({ record: application.id })}
                         >
-                          {application.status}
+                          {application.employeeName}
+                        </button>
+                        <span className="block text-caption font-normal text-ink-muted">
+                          {application.employeeNumber}
                         </span>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        {periodsLabel(application.periods)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
+                      </RowHeader>
+                      <Td>
+                        {application.leaveTypeName}
+                        <span className="block text-caption text-ink-muted">
+                          {application.leaveTypeCode}
+                        </span>
+                      </Td>
+                      <Td>
+                        <StatusTag tone={statusTone(application.status)}>
+                          {application.status}
+                        </StatusTag>
+                      </Td>
+                      <Td>{periodsLabel(application.periods)}</Td>
+                      <Td kind="date" className="text-ink-muted">
                         {application.submittedAt ? instantLabel(application.submittedAt) : '—'}
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
-
-      {dialog === 'detail' ? (
-        <div className="mb-4">
-          <RecordReturn href={navigation.href({ record: null })}>← Leave Applications</RecordReturn>
+              </Table>
+            )}
+          </Panel>
         </div>
-      ) : null}
 
-      <DialogContent aria-describedby="leave-application-dialog-description">
-        <DialogHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="grid gap-1">
-              <DialogTitle>
-                {dialog === 'prepare'
-                  ? 'Prepare Leave Application'
-                  : dialog === 'route'
-                    ? 'Send for credit certification'
-                    : dialog === 'certify'
-                      ? 'Certify leave credits'
-                      : dialog === 'recommend'
-                        ? 'Recommend the Leave Application'
-                        : dialog === 'decision'
-                          ? 'Record the final decision'
-                          : dialog === 'return'
-                            ? 'Return for material information'
-                            : (detail?.application.employeeName ?? 'Leave Application')}
-              </DialogTitle>
-              <DialogDescription id="leave-application-dialog-description">
-                {dialog === 'prepare'
-                  ? 'Start a draft for an Employee and Leave Type. The draft can be edited until it is submitted.'
-                  : dialog === 'detail'
-                    ? 'Draft facts, eligibility, submitted versions, and audit history.'
-                    : 'The submitted version changes only when the command succeeds.'}
-              </DialogDescription>
+        <DialogContent aria-describedby="leave-application-dialog-description">
+          <DialogHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <DialogTitle>
+                  {dialog === 'prepare'
+                    ? 'Prepare Leave Application'
+                    : dialog === 'route'
+                      ? 'Send for credit certification'
+                      : dialog === 'certify'
+                        ? 'Certify leave credits'
+                        : dialog === 'recommend'
+                          ? 'Recommend the Leave Application'
+                          : dialog === 'decision'
+                            ? 'Record the final decision'
+                            : dialog === 'return'
+                              ? 'Return for material information'
+                              : (detail?.application.employeeName ?? 'Leave Application')}
+                </DialogTitle>
+                <DialogDescription id="leave-application-dialog-description">
+                  {dialog === 'prepare'
+                    ? 'Start a draft for an Employee and Leave Type. The draft can be edited until it is submitted.'
+                    : dialog === 'detail'
+                      ? 'Draft facts, eligibility, submitted versions, and audit history.'
+                      : 'The submitted version changes only when the command succeeds.'}
+                </DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <Button type="button" variant="secondary">
+                  Close
+                </Button>
+              </DialogClose>
             </div>
-            <DialogClose asChild>
-              <Button size="default" type="button" variant="secondary">
-                Close
-              </Button>
-            </DialogClose>
-          </div>
-        </DialogHeader>
+          </DialogHeader>
 
-        {error && dialog !== null ? (
-          <DialogBody className="pb-0">
-            <FormError message={error} />
-          </DialogBody>
-        ) : null}
+          {error && dialog !== null ? (
+            <DialogBody className="pb-0">
+              <FormError message={error} />
+            </DialogBody>
+          ) : null}
 
-        {dialog === 'prepare' ? (
-          <form onSubmit={(event) => void prepare(event)}>
-            <DialogBody className="grid gap-5">
-              {canRecordForOthers ? (
-                <Field htmlFor="leave-application-employee" label="Employee">
+          {dialog === 'prepare' ? (
+            <form onSubmit={(event) => void prepare(event)}>
+              <DialogBody className="grid gap-5">
+                {canRecordForOthers ? (
+                  <Field htmlFor="leave-application-employee" label="Employee">
+                    <select
+                      autoFocus
+                      className={inputClass}
+                      data-autofocus=""
+                      id="leave-application-employee"
+                      onChange={(event) => setEmployeeId(targetValue(event))}
+                      required
+                      value={employeeId}
+                    >
+                      <option value="">Select an Employee</option>
+                      {employeeOptions.map((employee) => (
+                        <option key={employee.id} value={employee.id}>
+                          {employee.employeeNumber} · {employee.legalName}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : null}
+                <Field htmlFor="leave-application-leave-type" label="Leave type">
                   <select
-                    autoFocus
+                    autoFocus={!canRecordForOthers}
                     className={inputClass}
-                    data-autofocus=""
-                    id="leave-application-employee"
-                    onChange={(event) => setEmployeeId(targetValue(event))}
+                    data-autofocus={canRecordForOthers ? undefined : ''}
+                    id="leave-application-leave-type"
+                    onChange={(event) => setLeaveTypeId(targetValue(event))}
                     required
-                    value={employeeId}
+                    value={leaveTypeId}
                   >
-                    <option value="">Select an Employee</option>
-                    {employeeOptions.map((employee) => (
-                      <option key={employee.id} value={employee.id}>
-                        {employee.employeeNumber} · {employee.legalName}
+                    <option value="">Select a Leave Type</option>
+                    {leaveTypeOptions.map((leaveType) => (
+                      <option key={leaveType.id} value={leaveType.id}>
+                        {leaveType.code} · {leaveType.name}
                       </option>
                     ))}
                   </select>
                 </Field>
-              ) : null}
-              <Field htmlFor="leave-application-leave-type" label="Leave type">
-                <select
-                  autoFocus={!canRecordForOthers}
-                  className={inputClass}
-                  data-autofocus={canRecordForOthers ? undefined : ''}
-                  id="leave-application-leave-type"
-                  onChange={(event) => setLeaveTypeId(targetValue(event))}
-                  required
-                  value={leaveTypeId}
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Preparing…' : 'Prepare Leave Application'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
+          {dialog === 'route' ? (
+            <form onSubmit={(event) => void routeApplication(event)}>
+              <DialogBody className="grid gap-4">
+                <p className="m-0 text-small text-ink-muted">
+                  Routing activates the credit certification step on the submitted version. The
+                  Employee and the submitted facts stay unchanged.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Routing…' : 'Send for certification'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
+          {dialog === 'certify' ? (
+            <form onSubmit={(event) => void certifyApplication(event)}>
+              <DialogBody className="grid gap-5">
+                <p className="m-0 text-small text-ink-muted">
+                  Certification attests the posted balances and other active commitments of every
+                  charged Leave Account, then freezes one Leave Credit Commitment per account. A
+                  later posting, version, or commitment release requires recertification.
+                </p>
+                <Field
+                  htmlFor="leave-certification-balance"
+                  label="Effective balance date (optional)"
                 >
-                  <option value="">Select a Leave Type</option>
-                  {leaveTypeOptions.map((leaveType) => (
-                    <option key={leaveType.id} value={leaveType.id}>
-                      {leaveType.code} · {leaveType.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Preparing…' : 'Prepare Leave Application'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
-
-        {dialog === 'route' ? (
-          <form onSubmit={(event) => void routeApplication(event)}>
-            <DialogBody className="grid gap-4">
-              <p className="m-0 text-xs leading-[1.6] text-muted">
-                Routing activates the credit certification step on the submitted version. The
-                Employee and the submitted facts stay unchanged.
-              </p>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Routing…' : 'Send for certification'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
-
-        {dialog === 'certify' ? (
-          <form onSubmit={(event) => void certifyApplication(event)}>
-            <DialogBody className="grid gap-5">
-              <p className="m-0 text-xs leading-[1.6] text-muted">
-                Certification attests the posted balances and other active commitments of every
-                charged Leave Account, then freezes one Leave Credit Commitment per account. A later
-                posting, version, or commitment release requires recertification.
-              </p>
-              <Field
-                htmlFor="leave-certification-balance"
-                label="Effective balance date (optional)"
-              >
-                <input
-                  autoFocus
-                  className={inputClass}
-                  data-autofocus=""
-                  id="leave-certification-balance"
-                  onChange={(event) => setBalanceAsOf(targetValue(event))}
-                  type="date"
-                  value={balanceAsOf}
-                />
-              </Field>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Certifying…' : 'Certify credits'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
-
-        {dialog === 'recommend' ? (
-          <form onSubmit={(event) => void recommendApplication(event)}>
-            <DialogBody className="grid gap-5">
-              <div className="grid gap-4 min-[621px]:grid-cols-2">
-                <Field htmlFor="leave-recommendation-outcome" label="Recommendation">
-                  <select
+                  <input
                     autoFocus
                     className={inputClass}
                     data-autofocus=""
-                    id="leave-recommendation-outcome"
-                    onChange={(event) => setRecommendationOutcome(targetValue(event))}
-                    value={recommendationOutcome}
-                  >
-                    <option value="RECOMMEND_APPROVAL">Recommend approval</option>
-                    <option value="RECOMMEND_REJECTION">Recommend rejection</option>
-                  </select>
-                </Field>
-                <Field htmlFor="leave-recommendation-comments" label="Comments (optional)">
-                  <input
-                    className={inputClass}
-                    id="leave-recommendation-comments"
-                    maxLength={1000}
-                    onChange={(event) => setRecommendationComments(targetValue(event))}
-                    value={recommendationComments}
+                    id="leave-certification-balance"
+                    onChange={(event) => setBalanceAsOf(targetValue(event))}
+                    type="date"
+                    value={balanceAsOf}
                   />
                 </Field>
-              </div>
-              <Field
-                htmlFor="leave-recommendation-reason"
-                label={
-                  recommendationOutcome === 'RECOMMEND_REJECTION' ? 'Reason' : 'Reason (optional)'
-                }
-              >
-                <input
-                  className={inputClass}
-                  id="leave-recommendation-reason"
-                  maxLength={1000}
-                  onChange={(event) => setRecommendationReason(targetValue(event))}
-                  required={recommendationOutcome === 'RECOMMEND_REJECTION'}
-                  value={recommendationReason}
-                />
-              </Field>
-              <p className="m-0 text-xs leading-[1.6] text-muted">
-                The recommendation is advisory. A negative recommendation still continues to the
-                authorized official unless the bound route says otherwise.
-              </p>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Certifying…' : 'Certify credits'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Recording…' : 'Record recommendation'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
+              </DialogFooter>
+            </form>
+          ) : null}
 
-        {dialog === 'decision' ? (
-          <form onSubmit={(event) => void decideApplication(event)}>
-            <DialogBody className="grid gap-5">
-              <Field htmlFor="leave-decision-kind" label="Decision">
-                <select
-                  className={inputClass}
-                  id="leave-decision-kind"
-                  onChange={(event) => setDecisionKind(targetValue(event))}
-                  value={decisionKind}
-                >
-                  <option value="APPROVE">Approve</option>
-                  <option value="REJECT">Reject</option>
-                </select>
-              </Field>
-              {decisionKind === 'APPROVE' ? (
-                <>
-                  <label className="flex items-center gap-2 text-xs text-ink">
+          {dialog === 'recommend' ? (
+            <form onSubmit={(event) => void recommendApplication(event)}>
+              <DialogBody className="grid gap-5">
+                <div className="grid gap-4 min-[621px]:grid-cols-2">
+                  <Field htmlFor="leave-recommendation-outcome" label="Recommendation">
+                    <select
+                      autoFocus
+                      className={inputClass}
+                      data-autofocus=""
+                      id="leave-recommendation-outcome"
+                      onChange={(event) => setRecommendationOutcome(targetValue(event))}
+                      value={recommendationOutcome}
+                    >
+                      <option value="RECOMMEND_APPROVAL">Recommend approval</option>
+                      <option value="RECOMMEND_REJECTION">Recommend rejection</option>
+                    </select>
+                  </Field>
+                  <Field htmlFor="leave-recommendation-comments" label="Comments (optional)">
                     <input
-                      checked={fullApproval}
-                      onChange={(event) => setFullApproval(targetChecked(event))}
-                      type="checkbox"
+                      className={inputClass}
+                      id="leave-recommendation-comments"
+                      maxLength={1000}
+                      onChange={(event) => setRecommendationComments(targetValue(event))}
+                      value={recommendationComments}
                     />
-                    Approve the full requested quantity
-                  </label>
-                  {!fullApproval ? (
-                    <div className="grid gap-3">
-                      <span className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                        Approved allocation
-                      </span>
-                      {(currentVersion()?.calculationSegments ?? []).map((segment) => {
-                        const row = allocationRows[segment.id];
-                        if (!row) return null;
-                        return (
-                          <div
-                            className="grid gap-3 rounded-[3px] border border-line bg-canvas px-3 py-3"
-                            key={segment.id}
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                              <strong className="font-[650] text-ink">
-                                {dateLabel(segment.dateFrom)} – {dateLabel(segment.dateTo)}
-                              </strong>
-                              <span className="text-muted">
-                                Requested {quantityLabel(segment.requestedQuantity)}{' '}
-                                {humanize(segment.requestedUnit)}
-                              </span>
-                            </div>
-                            <div className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_180px]">
-                              <p className="m-0 text-xs leading-[1.6] text-muted">
-                                {allocationKindLabel(segment)}
-                              </p>
-                              <Field
-                                htmlFor={'leave-allocation-quantity-' + segment.id}
-                                label="Approved quantity"
-                              >
-                                <input
-                                  className={inputClass}
-                                  id={'leave-allocation-quantity-' + segment.id}
-                                  inputMode="decimal"
-                                  onChange={(event) => {
-                                    const value = targetValue(event);
-                                    setAllocationRows((rows) => ({
-                                      ...rows,
-                                      [segment.id]: { ...row, quantity: value },
-                                    }));
-                                  }}
-                                  value={row.quantity}
-                                />
-                              </Field>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-              <Field
-                htmlFor="leave-decision-comments"
-                label={decisionKind === 'REJECT' ? 'Reason' : 'Comments (optional)'}
-              >
-                <textarea
-                  className={inputClass + ' min-h-[72px] py-2'}
-                  id="leave-decision-comments"
-                  maxLength={1000}
-                  onChange={(event) => setDecisionComments(targetValue(event))}
-                  required={decisionKind === 'REJECT'}
-                  value={decisionComments}
-                />
-              </Field>
-              <p className="m-0 text-xs leading-[1.6] text-muted">
-                A decision cannot add dates, increase quantity, change Leave Type, or rewrite the
-                submitted facts. Approving less than the certified request narrows the certification
-                commitment through a linked successor. The bound Leave Policy Version decides the
-                source; only the quantity the certified account cannot cover becomes leave without
-                pay.
-              </p>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy
-                  ? 'Recording…'
-                  : decisionKind === 'APPROVE'
-                    ? 'Approve application'
-                    : 'Reject application'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
-
-        {dialog === 'return' ? (
-          <form onSubmit={(event) => void returnApplication(event)}>
-            <DialogBody className="grid gap-5">
-              <p className="m-0 text-xs leading-[1.6] text-muted">
-                Returning cancels the unfinished route work and releases the certification
-                commitments. The Employee must submit a successor version with the missing facts or
-                evidence.
-              </p>
-              <Field htmlFor="leave-return-reason" label="Reason">
-                <input
-                  autoFocus
-                  className={inputClass}
-                  data-autofocus=""
-                  id="leave-return-reason"
-                  maxLength={1000}
-                  onChange={(event) => setReturnReason(targetValue(event))}
-                  required
-                  value={returnReason}
-                />
-              </Field>
-              <Field htmlFor="leave-return-comments" label="Comments (optional)">
-                <input
-                  className={inputClass}
-                  id="leave-return-comments"
-                  maxLength={1000}
-                  onChange={(event) => setReturnComments(targetValue(event))}
-                  value={returnComments}
-                />
-              </Field>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Returning…' : 'Return application'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
-
-        {dialog === 'detail' ? (
-          <DialogBody className="grid gap-6">
-            {detailLoading || !detail ? (
-              <p className="m-0 text-sm text-muted" role="status">
-                Loading the Leave Application record…
-              </p>
-            ) : (
-              <>
-                {success ? (
-                  <p
-                    className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-                    role="status"
-                  >
-                    {success}
-                  </p>
-                ) : null}
-
-                <section
-                  className="grid gap-3"
-                  aria-labelledby="leave-application-snapshot-heading"
+                  </Field>
+                </div>
+                <Field
+                  htmlFor="leave-recommendation-reason"
+                  label={
+                    recommendationOutcome === 'RECOMMEND_REJECTION' ? 'Reason' : 'Reason (optional)'
+                  }
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-application-snapshot-heading"
-                    >
-                      {detail.application.employeeName} · {detail.application.leaveTypeName}
-                    </h3>
-                    <div className="flex flex-wrap gap-2">
-                      {canRoute && status === 'SUBMITTED' ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => {
-                            resetAction();
-                            setDialog('route');
-                          }}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
-                          Send for certification
-                        </Button>
-                      ) : null}
-                      {canCertify && status === 'FOR_CERTIFICATION' ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => {
-                            resetAction();
-                            setBalanceAsOf('');
-                            setDialog('certify');
-                          }}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
-                          Certify credits
-                        </Button>
-                      ) : null}
-                      {canRecommend && status === 'FOR_RECOMMENDATION' ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => {
-                            resetAction();
-                            setRecommendationOutcome('RECOMMEND_APPROVAL');
-                            setRecommendationReason('');
-                            setRecommendationComments('');
-                            setDialog('recommend');
-                          }}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
-                          Recommend
-                        </Button>
-                      ) : null}
-                      {canApprove && status === 'FOR_APPROVAL' ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => openDecision()}
-                          size="default"
-                          type="button"
-                          variant="primary"
-                        >
-                          Approve
-                        </Button>
-                      ) : null}
-                      {canReject && status === 'FOR_APPROVAL' ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => {
-                            resetAction();
-                            setDecisionKind('REJECT');
-                            setDecisionComments('');
-                            setDialog('decision');
-                          }}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
-                          Reject
-                        </Button>
-                      ) : null}
-                      {canReturn && reviewable ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => {
-                            resetAction();
-                            setReturnReason('');
-                            setReturnComments('');
-                            setDialog('return');
-                          }}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
-                          Return for information
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                    <span>{detail.application.employeeNumber}</span>
-                    <span>{detail.application.leaveTypeCode}</span>
-                    <span
-                      className={
-                        'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                        statusClass(detail.application.status)
-                      }
-                    >
-                      {detail.application.status}
-                    </span>
-                    {detail.application.currentVersionNo !== null ? (
-                      <span>Version {detail.application.currentVersionNo}</span>
-                    ) : null}
-                    <span>Prepared {instantLabel(detail.application.createdAt)}</span>
-                    {detail.application.submittedAt ? (
-                      <span>Submitted {instantLabel(detail.application.submittedAt)}</span>
-                    ) : null}
-                  </div>
-                </section>
+                  <input
+                    className={inputClass}
+                    id="leave-recommendation-reason"
+                    maxLength={1000}
+                    onChange={(event) => setRecommendationReason(targetValue(event))}
+                    required={recommendationOutcome === 'RECOMMEND_REJECTION'}
+                    value={recommendationReason}
+                  />
+                </Field>
+                <p className="m-0 text-small text-ink-muted">
+                  The recommendation is advisory. A negative recommendation still continues to the
+                  authorized official unless the bound route says otherwise.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Recording…' : 'Record recommendation'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
 
-                {editable ? (
-                  <form className="grid gap-4" onSubmit={(event) => void saveDraft(event)}>
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-application-draft-heading"
-                    >
-                      Draft facts
-                    </h3>
-                    <Field htmlFor="leave-application-reason" label="Reason">
+          {dialog === 'decision' ? (
+            <form onSubmit={(event) => void decideApplication(event)}>
+              <DialogBody className="grid gap-5">
+                <Field htmlFor="leave-decision-kind" label="Decision">
+                  <select
+                    className={inputClass}
+                    id="leave-decision-kind"
+                    onChange={(event) => setDecisionKind(targetValue(event))}
+                    value={decisionKind}
+                  >
+                    <option value="APPROVE">Approve</option>
+                    <option value="REJECT">Reject</option>
+                  </select>
+                </Field>
+                {decisionKind === 'APPROVE' ? (
+                  <>
+                    <label className="flex items-center gap-2 text-small text-ink">
                       <input
-                        className={inputClass}
-                        id="leave-application-reason"
-                        maxLength={1000}
-                        onChange={(event) => setReason(targetValue(event))}
-                        value={reason}
+                        checked={fullApproval}
+                        onChange={(event) => setFullApproval(targetChecked(event))}
+                        type="checkbox"
                       />
-                    </Field>
-                    <div className="grid gap-4 min-[621px]:grid-cols-2">
-                      <Field htmlFor="leave-application-commutation" label="Commutation">
-                        <select
-                          className={inputClass}
-                          id="leave-application-commutation"
-                          onChange={(event) => setCommutationChoice(targetValue(event))}
-                          value={commutationChoice}
-                        >
-                          <option value="">Not stated</option>
-                          <option value="REQUESTED">Requested</option>
-                          <option value="NOT_REQUESTED">Not requested</option>
-                        </select>
-                      </Field>
-                      <Field htmlFor="leave-application-event" label="Qualifying event">
-                        <select
-                          className={inputClass}
-                          id="leave-application-event"
-                          onChange={(event) => setQualifyingEvent(targetValue(event))}
-                          value={qualifyingEvent}
-                        >
-                          <option value="">Not applicable</option>
-                          {QUALIFYING_EVENTS.map((event) => (
-                            <option key={event} value={event}>
-                              {humanize(event)}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                    </div>
-
-                    <div className="grid gap-3">
-                      <span className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                        Periods
-                      </span>
-                      {periodRows.map((period, index) => (
-                        <div
-                          className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_1fr_auto]"
-                          key={index}
-                        >
-                          <Field htmlFor={'leave-period-from-' + index} label="Period start">
-                            <input
-                              className={inputClass}
-                              id={'leave-period-from-' + index}
-                              onChange={(event) => {
-                                const value = targetValue(event);
-                                setPeriodRows((rows) =>
-                                  rows.map((row, rowIndex) =>
-                                    rowIndex === index ? { ...row, dateFrom: value } : row,
-                                  ),
-                                );
-                              }}
-                              type="date"
-                              value={period.dateFrom}
-                            />
-                          </Field>
-                          <Field htmlFor={'leave-period-to-' + index} label="Period end">
-                            <input
-                              className={inputClass}
-                              id={'leave-period-to-' + index}
-                              onChange={(event) => {
-                                const value = targetValue(event);
-                                setPeriodRows((rows) =>
-                                  rows.map((row, rowIndex) =>
-                                    rowIndex === index ? { ...row, dateTo: value } : row,
-                                  ),
-                                );
-                              }}
-                              type="date"
-                              value={period.dateTo}
-                            />
-                          </Field>
-                          <Button
-                            className="min-h-9"
-                            onClick={() =>
-                              setPeriodRows((rows) =>
-                                rows.filter((_, rowIndex) => rowIndex !== index),
-                              )
-                            }
-                            size="default"
-                            type="button"
-                            variant="secondary"
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      ))}
-                      <div>
-                        <Button
-                          className="min-h-9"
-                          onClick={() =>
-                            setPeriodRows((rows) => [
-                              ...rows,
-                              { dateFrom: manilaToday(), dateTo: manilaToday() },
-                            ])
-                          }
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
-                          Add period
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3">
-                      <span className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                        Evidence
-                      </span>
-                      {documentRows.map((document, index) => (
-                        <div
-                          className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_1fr_auto]"
-                          key={index}
-                        >
-                          <Field htmlFor={'leave-evidence-' + index} label="Evidence Document ID">
-                            <input
-                              className={inputClass}
-                              id={'leave-evidence-' + index}
-                              onChange={(event) => {
-                                const value = targetValue(event);
-                                setDocumentRows((rows) =>
-                                  rows.map((row, rowIndex) =>
-                                    rowIndex === index ? { ...row, documentId: value } : row,
-                                  ),
-                                );
-                              }}
-                              placeholder="00000000-0000-0000-0000-000000000000"
-                              value={document.documentId}
-                            />
-                          </Field>
-                          <Field
-                            htmlFor={'leave-evidence-purpose-' + index}
-                            label="Evidence purpose"
-                          >
-                            <select
-                              className={inputClass}
-                              id={'leave-evidence-purpose-' + index}
-                              onChange={(event) => {
-                                const value = targetValue(event);
-                                setDocumentRows((rows) =>
-                                  rows.map((row, rowIndex) =>
-                                    rowIndex === index ? { ...row, purposeCode: value } : row,
-                                  ),
-                                );
-                              }}
-                              value={document.purposeCode}
+                      Approve the full requested quantity
+                    </label>
+                    {!fullApproval ? (
+                      <div className="grid gap-3">
+                        <span className="text-caption font-[650] text-ink-muted">
+                          Approved allocation
+                        </span>
+                        {(currentVersion()?.calculationSegments ?? []).map((segment) => {
+                          const row = allocationRows[segment.id];
+                          if (!row) return null;
+                          return (
+                            <div
+                              className="grid gap-3 rounded-control border border-border bg-canvas px-3 py-3"
+                              key={segment.id}
                             >
-                              {EVIDENCE_KINDS.map((kind) => (
-                                <option key={kind} value={kind}>
-                                  {humanize(kind)}
-                                </option>
-                              ))}
-                            </select>
-                          </Field>
+                              <div className="flex flex-wrap items-center justify-between gap-2 text-small">
+                                <strong className="font-[650] text-ink">
+                                  {dateLabel(segment.dateFrom)} – {dateLabel(segment.dateTo)}
+                                </strong>
+                                <span className="text-ink-muted">
+                                  Requested {quantityLabel(segment.requestedQuantity)}{' '}
+                                  {humanize(segment.requestedUnit)}
+                                </span>
+                              </div>
+                              <div className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_180px]">
+                                <p className="m-0 text-small text-ink-muted">
+                                  {allocationKindLabel(segment)}
+                                </p>
+                                <Field
+                                  htmlFor={'leave-allocation-quantity-' + segment.id}
+                                  label="Approved quantity"
+                                >
+                                  <input
+                                    className={inputClass}
+                                    id={'leave-allocation-quantity-' + segment.id}
+                                    inputMode="decimal"
+                                    onChange={(event) => {
+                                      const value = targetValue(event);
+                                      setAllocationRows((rows) => ({
+                                        ...rows,
+                                        [segment.id]: { ...row, quantity: value },
+                                      }));
+                                    }}
+                                    value={row.quantity}
+                                  />
+                                </Field>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+                <Field
+                  htmlFor="leave-decision-comments"
+                  label={decisionKind === 'REJECT' ? 'Reason' : 'Comments (optional)'}
+                >
+                  <textarea
+                    className={inputClass + ' min-h-[72px] py-2'}
+                    id="leave-decision-comments"
+                    maxLength={1000}
+                    onChange={(event) => setDecisionComments(targetValue(event))}
+                    required={decisionKind === 'REJECT'}
+                    value={decisionComments}
+                  />
+                </Field>
+                <p className="m-0 text-small text-ink-muted">
+                  A decision cannot add dates, increase quantity, change Leave Type, or rewrite the
+                  submitted facts. Approving less than the certified request narrows the
+                  certification commitment through a linked successor. The bound Leave Policy
+                  Version decides the source; only the quantity the certified account cannot cover
+                  becomes leave without pay.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy
+                    ? 'Recording…'
+                    : decisionKind === 'APPROVE'
+                      ? 'Approve application'
+                      : 'Reject application'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
+          {dialog === 'return' ? (
+            <form onSubmit={(event) => void returnApplication(event)}>
+              <DialogBody className="grid gap-5">
+                <p className="m-0 text-small text-ink-muted">
+                  Returning cancels the unfinished route work and releases the certification
+                  commitments. The Employee must submit a successor version with the missing facts
+                  or evidence.
+                </p>
+                <Field htmlFor="leave-return-reason" label="Reason">
+                  <input
+                    autoFocus
+                    className={inputClass}
+                    data-autofocus=""
+                    id="leave-return-reason"
+                    maxLength={1000}
+                    onChange={(event) => setReturnReason(targetValue(event))}
+                    required
+                    value={returnReason}
+                  />
+                </Field>
+                <Field htmlFor="leave-return-comments" label="Comments (optional)">
+                  <input
+                    className={inputClass}
+                    id="leave-return-comments"
+                    maxLength={1000}
+                    onChange={(event) => setReturnComments(targetValue(event))}
+                    value={returnComments}
+                  />
+                </Field>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Returning…' : 'Return application'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
+          {dialog === 'detail' ? (
+            <DialogBody className="grid gap-6">
+              {detailLoading || !detail ? (
+                <StateSurface
+                  compact
+                  busy={detailLoading}
+                  label={
+                    detailLoading
+                      ? 'Loading the Leave Application record'
+                      : 'Leave Application record unavailable'
+                  }
+                >
+                  <p className="m-0">
+                    {detailLoading
+                      ? 'Loading the Leave Application record…'
+                      : 'The Leave Application record could not be loaded.'}
+                  </p>
+                </StateSurface>
+              ) : (
+                <>
+                  {success ? (
+                    <p className={successClass} role="status">
+                      {success}
+                    </p>
+                  ) : null}
+
+                  <section
+                    className="grid gap-3"
+                    aria-labelledby="leave-application-snapshot-heading"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className={sectionTitleClass} id="leave-application-snapshot-heading">
+                        {detail.application.employeeName} · {detail.application.leaveTypeName}
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {canRoute && status === 'SUBMITTED' ? (
                           <Button
-                            className="min-h-9"
-                            onClick={() =>
-                              setDocumentRows((rows) =>
-                                rows.filter((_, rowIndex) => rowIndex !== index),
-                              )
-                            }
-                            size="default"
+                            onClick={() => {
+                              resetAction();
+                              setDialog('route');
+                            }}
+
                             type="button"
                             variant="secondary"
                           >
-                            Remove
+                            Send for certification
+                          </Button>
+                        ) : null}
+                        {canCertify && status === 'FOR_CERTIFICATION' ? (
+                          <Button
+                            onClick={() => {
+                              resetAction();
+                              setBalanceAsOf('');
+                              setDialog('certify');
+                            }}
+
+                            type="button"
+                            variant="secondary"
+                          >
+                            Certify credits
+                          </Button>
+                        ) : null}
+                        {canRecommend && status === 'FOR_RECOMMENDATION' ? (
+                          <Button
+                            onClick={() => {
+                              resetAction();
+                              setRecommendationOutcome('RECOMMEND_APPROVAL');
+                              setRecommendationReason('');
+                              setRecommendationComments('');
+                              setDialog('recommend');
+                            }}
+
+                            type="button"
+                            variant="secondary"
+                          >
+                            Recommend
+                          </Button>
+                        ) : null}
+                        {canApprove && status === 'FOR_APPROVAL' ? (
+                          <Button
+                            onClick={() => openDecision()}
+
+                            type="button"
+                            variant="primary"
+                          >
+                            Approve
+                          </Button>
+                        ) : null}
+                        {canReject && status === 'FOR_APPROVAL' ? (
+                          <Button
+                            onClick={() => {
+                              resetAction();
+                              setDecisionKind('REJECT');
+                              setDecisionComments('');
+                              setDialog('decision');
+                            }}
+
+                            type="button"
+                            variant="secondary"
+                          >
+                            Reject
+                          </Button>
+                        ) : null}
+                        {canReturn && reviewable ? (
+                          <Button
+                            onClick={() => {
+                              resetAction();
+                              setReturnReason('');
+                              setReturnComments('');
+                              setDialog('return');
+                            }}
+
+                            type="button"
+                            variant="secondary"
+                          >
+                            Return for information
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-small text-ink-muted">
+                      <span>{detail.application.employeeNumber}</span>
+                      <span>{detail.application.leaveTypeCode}</span>
+                      <StatusTag tone={statusTone(detail.application.status)}>
+                        {detail.application.status}
+                      </StatusTag>
+                      {detail.application.currentVersionNo !== null ? (
+                        <span>Version {detail.application.currentVersionNo}</span>
+                      ) : null}
+                      <span>Prepared {instantLabel(detail.application.createdAt)}</span>
+                      {detail.application.submittedAt ? (
+                        <span>Submitted {instantLabel(detail.application.submittedAt)}</span>
+                      ) : null}
+                    </div>
+                  </section>
+
+                  {editable ? (
+                    <form className="grid gap-4" onSubmit={(event) => void saveDraft(event)}>
+                      <h3 className={sectionTitleClass} id="leave-application-draft-heading">
+                        Draft facts
+                      </h3>
+                      <Field htmlFor="leave-application-reason" label="Reason">
+                        <input
+                          className={inputClass}
+                          id="leave-application-reason"
+                          maxLength={1000}
+                          onChange={(event) => setReason(targetValue(event))}
+                          value={reason}
+                        />
+                      </Field>
+                      <div className="grid gap-4 min-[621px]:grid-cols-2">
+                        <Field htmlFor="leave-application-commutation" label="Commutation">
+                          <select
+                            className={inputClass}
+                            id="leave-application-commutation"
+                            onChange={(event) => setCommutationChoice(targetValue(event))}
+                            value={commutationChoice}
+                          >
+                            <option value="">Not stated</option>
+                            <option value="REQUESTED">Requested</option>
+                            <option value="NOT_REQUESTED">Not requested</option>
+                          </select>
+                        </Field>
+                        <Field htmlFor="leave-application-event" label="Qualifying event">
+                          <select
+                            className={inputClass}
+                            id="leave-application-event"
+                            onChange={(event) => setQualifyingEvent(targetValue(event))}
+                            value={qualifyingEvent}
+                          >
+                            <option value="">Not applicable</option>
+                            {QUALIFYING_EVENTS.map((event) => (
+                              <option key={event} value={event}>
+                                {humanize(event)}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </div>
+
+                      <div className="grid gap-3">
+                        <span className="text-caption font-[650] text-ink-muted">Periods</span>
+                        {periodRows.map((period, index) => (
+                          <div
+                            className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_1fr_auto]"
+                            key={index}
+                          >
+                            <Field htmlFor={'leave-period-from-' + index} label="Period start">
+                              <input
+                                className={inputClass}
+                                id={'leave-period-from-' + index}
+                                onChange={(event) => {
+                                  const value = targetValue(event);
+                                  setPeriodRows((rows) =>
+                                    rows.map((row, rowIndex) =>
+                                      rowIndex === index ? { ...row, dateFrom: value } : row,
+                                    ),
+                                  );
+                                }}
+                                type="date"
+                                value={period.dateFrom}
+                              />
+                            </Field>
+                            <Field htmlFor={'leave-period-to-' + index} label="Period end">
+                              <input
+                                className={inputClass}
+                                id={'leave-period-to-' + index}
+                                onChange={(event) => {
+                                  const value = targetValue(event);
+                                  setPeriodRows((rows) =>
+                                    rows.map((row, rowIndex) =>
+                                      rowIndex === index ? { ...row, dateTo: value } : row,
+                                    ),
+                                  );
+                                }}
+                                type="date"
+                                value={period.dateTo}
+                              />
+                            </Field>
+                            <Button
+                              onClick={() =>
+                                setPeriodRows((rows) =>
+                                  rows.filter((_, rowIndex) => rowIndex !== index),
+                                )
+                              }
+
+                              type="button"
+                              variant="secondary"
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ))}
+                        <div>
+                          <Button
+                            onClick={() =>
+                              setPeriodRows((rows) => [
+                                ...rows,
+                                { dateFrom: manilaToday(), dateTo: manilaToday() },
+                              ])
+                            }
+
+                            type="button"
+                            variant="secondary"
+                          >
+                            Add period
                           </Button>
                         </div>
-                      ))}
-                      <div>
+                      </div>
+
+                      <div className="grid gap-3">
+                        <span className="text-caption font-[650] text-ink-muted">Evidence</span>
+                        {documentRows.map((document, index) => (
+                          <div
+                            className="grid items-end gap-3 min-[621px]:grid-cols-[1fr_1fr_auto]"
+                            key={index}
+                          >
+                            <Field htmlFor={'leave-evidence-' + index} label="Evidence Document ID">
+                              <input
+                                className={inputClass}
+                                id={'leave-evidence-' + index}
+                                onChange={(event) => {
+                                  const value = targetValue(event);
+                                  setDocumentRows((rows) =>
+                                    rows.map((row, rowIndex) =>
+                                      rowIndex === index ? { ...row, documentId: value } : row,
+                                    ),
+                                  );
+                                }}
+                                placeholder="00000000-0000-0000-0000-000000000000"
+                                value={document.documentId}
+                              />
+                            </Field>
+                            <Field
+                              htmlFor={'leave-evidence-purpose-' + index}
+                              label="Evidence purpose"
+                            >
+                              <select
+                                className={inputClass}
+                                id={'leave-evidence-purpose-' + index}
+                                onChange={(event) => {
+                                  const value = targetValue(event);
+                                  setDocumentRows((rows) =>
+                                    rows.map((row, rowIndex) =>
+                                      rowIndex === index ? { ...row, purposeCode: value } : row,
+                                    ),
+                                  );
+                                }}
+                                value={document.purposeCode}
+                              >
+                                {EVIDENCE_KINDS.map((kind) => (
+                                  <option key={kind} value={kind}>
+                                    {humanize(kind)}
+                                  </option>
+                                ))}
+                              </select>
+                            </Field>
+                            <Button
+                              onClick={() =>
+                                setDocumentRows((rows) =>
+                                  rows.filter((_, rowIndex) => rowIndex !== index),
+                                )
+                              }
+
+                              type="button"
+                              variant="secondary"
+                            >
+                              Remove
+                            </Button>
+                          </div>
+                        ))}
+                        <div>
+                          <Button
+                            onClick={() =>
+                              setDocumentRows((rows) => [
+                                ...rows,
+                                { documentId: '', purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+                              ])
+                            }
+
+                            type="button"
+                            variant="secondary"
+                          >
+                            Add evidence
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button disabled={busy} type="submit" variant="secondary">
+                          {busy ? 'Saving…' : 'Save draft'}
+                        </Button>
                         <Button
-                          className="min-h-9"
-                          onClick={() =>
-                            setDocumentRows((rows) => [
-                              ...rows,
-                              { documentId: '', purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
-                            ])
-                          }
-                          size="default"
+                          disabled={previewLoading}
+                          onClick={() => void checkEligibility()}
+
                           type="button"
                           variant="secondary"
                         >
-                          Add evidence
+                          {previewLoading ? 'Checking…' : 'Check eligibility'}
                         </Button>
                       </div>
-                    </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      <Button disabled={busy} size="default" type="submit" variant="secondary">
-                        {busy ? 'Saving…' : 'Save draft'}
-                      </Button>
-                      <Button
-                        disabled={previewLoading}
-                        onClick={() => void checkEligibility()}
-                        size="default"
-                        type="button"
-                        variant="secondary"
-                      >
-                        {previewLoading ? 'Checking…' : 'Check eligibility'}
-                      </Button>
-                    </div>
-
-                    {preview ? (
-                      <section
-                        aria-labelledby="leave-eligibility-heading"
-                        className="grid gap-3 rounded-[3px] border border-line bg-canvas px-4 py-4"
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h4
-                            className="m-0 text-sm font-[670] text-midnight"
-                            id="leave-eligibility-heading"
-                          >
-                            Eligibility
-                          </h4>
-                          <span
-                            className={
-                              'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                              eligibilityClass(preview.result)
-                            }
-                          >
-                            {preview.result}
-                          </span>
-                          <span className="text-xs text-muted">
-                            {preview.requestedQuantity === null
-                              ? 'No quantity computed'
-                              : quantityLabel(preview.requestedQuantity) +
-                                ' ' +
-                                humanize(preview.requestedUnit)}
-                          </span>
-                        </div>
-                        {preview.missingFacts.length > 0 ? (
-                          <ul className="m-0 grid list-disc gap-1 pl-5 text-xs text-muted">
-                            {preview.missingFacts.map((fact) => (
-                              <li key={fact.fact}>
-                                <strong className="font-[650] text-ink">{fact.fact}</strong>{' '}
-                                {fact.detail}
+                      {preview ? (
+                        <section
+                          aria-labelledby="leave-eligibility-heading"
+                          className="grid gap-3 rounded-control border border-border bg-canvas px-4 py-4"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className={sectionTitleClass} id="leave-eligibility-heading">
+                              Eligibility
+                            </h4>
+                            <StatusTag tone={eligibilityTone(preview.result)}>
+                              {preview.result}
+                            </StatusTag>
+                            <span className="text-small text-ink-muted">
+                              {preview.requestedQuantity === null
+                                ? 'No quantity computed'
+                                : quantityLabel(preview.requestedQuantity) +
+                                  ' ' +
+                                  humanize(preview.requestedUnit)}
+                            </span>
+                          </div>
+                          {preview.missingFacts.length > 0 ? (
+                            <ul className="m-0 grid list-disc gap-1 pl-5 text-small text-ink-muted">
+                              {preview.missingFacts.map((fact) => (
+                                <li key={fact.fact}>
+                                  <strong className="font-[650] text-ink">{fact.fact}</strong>{' '}
+                                  {fact.detail}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          <ul className="m-0 grid list-disc gap-1 pl-5 text-small text-ink-muted">
+                            {preview.ruleResults.map((rule) => (
+                              <li key={rule.rule}>
+                                <strong className="font-[650] text-ink">{rule.rule}</strong>{' '}
+                                {rule.outcome} · {rule.detail}
                               </li>
                             ))}
                           </ul>
-                        ) : null}
-                        <ul className="m-0 grid list-disc gap-1 pl-5 text-xs text-muted">
-                          {preview.ruleResults.map((rule) => (
-                            <li key={rule.rule}>
-                              <strong className="font-[650] text-ink">{rule.rule}</strong>{' '}
-                              {rule.outcome} · {rule.detail}
-                            </li>
-                          ))}
-                        </ul>
-                        {preview.segments.length > 0 ? (
-                          <p className="m-0 text-xs text-muted">
-                            Segments:{' '}
-                            {preview.segments
-                              .map(
-                                (segment) =>
-                                  `${dateLabel(segment.dateFrom)} – ${dateLabel(segment.dateTo)} (${quantityLabel(segment.requestedQuantity)} ${humanize(segment.requestedUnit)})`,
-                              )
-                              .join('; ')}
-                          </p>
-                        ) : null}
-                      </section>
-                    ) : null}
-                  </form>
-                ) : null}
+                          {preview.segments.length > 0 ? (
+                            <p className="m-0 text-small text-ink-muted">
+                              Segments:{' '}
+                              {preview.segments
+                                .map(
+                                  (segment) =>
+                                    `${dateLabel(segment.dateFrom)} – ${dateLabel(segment.dateTo)} (${quantityLabel(segment.requestedQuantity)} ${humanize(segment.requestedUnit)})`,
+                                )
+                                .join('; ')}
+                            </p>
+                          ) : null}
+                        </section>
+                      ) : null}
+                    </form>
+                  ) : null}
 
-                {editable && canSubmit ? (
-                  <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-submission-heading"
-                    >
-                      Submit
-                    </h3>
-                    <Field htmlFor="leave-form-template" label="Form template Document Version ID">
-                      <input
-                        className={inputClass}
-                        id="leave-form-template"
-                        onChange={(event) => setFormTemplateDocumentVersionId(targetValue(event))}
-                        placeholder="00000000-0000-0000-0000-000000000000"
-                        required
-                        value={formTemplateDocumentVersionId}
-                      />
-                    </Field>
-                    <Field htmlFor="leave-attestation" label="Attestation">
-                      <select
-                        className={inputClass}
-                        id="leave-attestation"
-                        onChange={(event) => setAttestationType(targetValue(event))}
-                        value={attestationType}
+                  {editable && canSubmit ? (
+                    <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
+                      <h3 className={sectionTitleClass} id="leave-submission-heading">
+                        Submit
+                      </h3>
+                      <Field
+                        htmlFor="leave-form-template"
+                        label="Form template Document Version ID"
                       >
-                        <option value="AUTHENTICATED_SUBMISSION">Authenticated submission</option>
-                        <option value="SIGNED_DOCUMENT">Signed document</option>
-                      </select>
-                    </Field>
-                    {attestationType === 'SIGNED_DOCUMENT' ? (
-                      <div className="grid gap-4 min-[621px]:grid-cols-2">
-                        <Field htmlFor="leave-attestation-document" label="Signed document ID">
-                          <input
-                            className={inputClass}
-                            id="leave-attestation-document"
-                            onChange={(event) => setAttestationDocumentId(targetValue(event))}
-                            placeholder="00000000-0000-0000-0000-000000000000"
-                            required
-                            value={attestationDocumentId}
-                          />
-                        </Field>
-                        <Field htmlFor="leave-received-at" label="Received at">
-                          <input
-                            className={inputClass}
-                            id="leave-received-at"
-                            onChange={(event) => setReceivedAt(targetValue(event))}
-                            required
-                            type="datetime-local"
-                            value={receivedAt}
-                          />
-                        </Field>
-                      </div>
-                    ) : null}
-                    <div>
-                      <Button disabled={busy} size="default" type="submit" variant="primary">
-                        {busy ? 'Submitting…' : 'Submit application'}
-                      </Button>
-                    </div>
-                  </form>
-                ) : null}
-
-                {withdrawable && canWithdraw ? (
-                  <form className="grid gap-4" onSubmit={(event) => void withdraw(event)}>
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-withdrawal-heading"
-                    >
-                      Withdraw
-                    </h3>
-                    <Field htmlFor="leave-withdrawal-reason" label="Withdrawal reason">
-                      <input
-                        className={inputClass}
-                        id="leave-withdrawal-reason"
-                        maxLength={1000}
-                        onChange={(event) => setWithdrawalReason(targetValue(event))}
-                        required
-                        value={withdrawalReason}
-                      />
-                    </Field>
-                    <Field
-                      htmlFor="leave-withdrawal-evidence"
-                      label="Withdrawal evidence Document ID (optional)"
-                    >
-                      <input
-                        className={inputClass}
-                        id="leave-withdrawal-evidence"
-                        onChange={(event) => setWithdrawalEvidenceDocumentId(targetValue(event))}
-                        placeholder="00000000-0000-0000-0000-000000000000"
-                        value={withdrawalEvidenceDocumentId}
-                      />
-                    </Field>
-                    <div>
-                      <Button disabled={busy} size="default" type="submit" variant="secondary">
-                        {busy ? 'Withdrawing…' : 'Withdraw application'}
-                      </Button>
-                    </div>
-                  </form>
-                ) : null}
-
-                {detail.application.currentVersionId && !editable ? (
-                  <form className="grid gap-4" onSubmit={(event) => void appendDocument(event)}>
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-document-heading"
-                    >
-                      Attach document
-                    </h3>
-                    <div className="grid items-end gap-4 min-[621px]:grid-cols-2">
-                      <Field htmlFor="leave-document-id" label="Document ID">
                         <input
                           className={inputClass}
-                          id="leave-document-id"
-                          onChange={(event) => setAppendDocumentId(targetValue(event))}
+                          id="leave-form-template"
+                          onChange={(event) => setFormTemplateDocumentVersionId(targetValue(event))}
                           placeholder="00000000-0000-0000-0000-000000000000"
                           required
-                          value={appendDocumentId}
+                          value={formTemplateDocumentVersionId}
                         />
                       </Field>
-                      <Field htmlFor="leave-document-purpose" label="Purpose">
+                      <Field htmlFor="leave-attestation" label="Attestation">
                         <select
                           className={inputClass}
-                          id="leave-document-purpose"
-                          onChange={(event) => setAppendPurposeCode(targetValue(event))}
-                          value={appendPurposeCode}
+                          id="leave-attestation"
+                          onChange={(event) => setAttestationType(targetValue(event))}
+                          value={attestationType}
                         >
-                          {DOCUMENT_PURPOSES.map((purpose) => (
-                            <option key={purpose} value={purpose}>
-                              {humanize(purpose)}
-                            </option>
-                          ))}
+                          <option value="AUTHENTICATED_SUBMISSION">Authenticated submission</option>
+                          <option value="SIGNED_DOCUMENT">Signed document</option>
                         </select>
                       </Field>
-                    </div>
-                    <div>
-                      <Button disabled={busy} size="default" type="submit" variant="secondary">
-                        {busy ? 'Attaching…' : 'Attach document'}
-                      </Button>
-                    </div>
-                  </form>
-                ) : null}
+                      {attestationType === 'SIGNED_DOCUMENT' ? (
+                        <div className="grid gap-4 min-[621px]:grid-cols-2">
+                          <Field htmlFor="leave-attestation-document" label="Signed document ID">
+                            <input
+                              className={inputClass}
+                              id="leave-attestation-document"
+                              onChange={(event) => setAttestationDocumentId(targetValue(event))}
+                              placeholder="00000000-0000-0000-0000-000000000000"
+                              required
+                              value={attestationDocumentId}
+                            />
+                          </Field>
+                          <Field htmlFor="leave-received-at" label="Received at">
+                            <input
+                              className={inputClass}
+                              id="leave-received-at"
+                              onChange={(event) => setReceivedAt(targetValue(event))}
+                              required
+                              type="datetime-local"
+                              value={receivedAt}
+                            />
+                          </Field>
+                        </div>
+                      ) : null}
+                      <div>
+                        <Button disabled={busy} type="submit" variant="primary">
+                          {busy ? 'Submitting…' : 'Submit application'}
+                        </Button>
+                      </div>
+                    </form>
+                  ) : null}
 
-                <section className="grid gap-3" aria-labelledby="leave-versions-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-versions-heading">
-                    Leave Application Versions
-                  </h3>
-                  {detail.versions.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No versions submitted.</p>
-                  ) : (
-                    <div className="grid gap-3">
-                      {detail.versions.map((version) => {
-                        const assessment = version.assessments.at(-1);
-                        return (
-                          <article
-                            className="grid gap-2 rounded-[3px] border border-line bg-canvas px-4 py-3"
-                            key={version.id}
+                  {withdrawable && canWithdraw ? (
+                    <form className="grid gap-4" onSubmit={(event) => void withdraw(event)}>
+                      <h3 className={sectionTitleClass} id="leave-withdrawal-heading">
+                        Withdraw
+                      </h3>
+                      <Field htmlFor="leave-withdrawal-reason" label="Withdrawal reason">
+                        <input
+                          className={inputClass}
+                          id="leave-withdrawal-reason"
+                          maxLength={1000}
+                          onChange={(event) => setWithdrawalReason(targetValue(event))}
+                          required
+                          value={withdrawalReason}
+                        />
+                      </Field>
+                      <Field
+                        htmlFor="leave-withdrawal-evidence"
+                        label="Withdrawal evidence Document ID (optional)"
+                      >
+                        <input
+                          className={inputClass}
+                          id="leave-withdrawal-evidence"
+                          onChange={(event) => setWithdrawalEvidenceDocumentId(targetValue(event))}
+                          placeholder="00000000-0000-0000-0000-000000000000"
+                          value={withdrawalEvidenceDocumentId}
+                        />
+                      </Field>
+                      <div>
+                        <Button disabled={busy} type="submit" variant="secondary">
+                          {busy ? 'Withdrawing…' : 'Withdraw application'}
+                        </Button>
+                      </div>
+                    </form>
+                  ) : null}
+
+                  {detail.application.currentVersionId && !editable ? (
+                    <form className="grid gap-4" onSubmit={(event) => void appendDocument(event)}>
+                      <h3 className={sectionTitleClass} id="leave-document-heading">
+                        Attach document
+                      </h3>
+                      <div className="grid items-end gap-4 min-[621px]:grid-cols-2">
+                        <Field htmlFor="leave-document-id" label="Document ID">
+                          <input
+                            className={inputClass}
+                            id="leave-document-id"
+                            onChange={(event) => setAppendDocumentId(targetValue(event))}
+                            placeholder="00000000-0000-0000-0000-000000000000"
+                            required
+                            value={appendDocumentId}
+                          />
+                        </Field>
+                        <Field htmlFor="leave-document-purpose" label="Purpose">
+                          <select
+                            className={inputClass}
+                            id="leave-document-purpose"
+                            onChange={(event) => setAppendPurposeCode(targetValue(event))}
+                            value={appendPurposeCode}
                           >
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <strong className="font-[670] text-midnight">
-                                Version {version.versionNo}
-                              </strong>
-                              <span className="text-muted">{version.leaveTypeCode}</span>
-                              <span
-                                className={
-                                  'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                                  statusClass(version.approvalRequestStatus)
-                                }
-                              >
-                                {version.approvalRequestStatus}
-                              </span>
-                              <span className="text-muted">
-                                {humanize(version.attestationType)}
-                              </span>
-                              <span className="text-muted">
-                                {humanize(version.submissionMethod)}
-                              </span>
-                            </div>
-                            <p className="m-0 text-xs text-muted">
-                              {periodsLabel(version.periods)}
-                            </p>
-                            <p className="m-0 text-xs text-muted">
-                              Route {version.approvalRouteCode} · Submitted by{' '}
-                              {version.submittedByName ?? version.submittedByMembershipId} ·
-                              Received {instantLabel(version.receivedAt)}
-                            </p>
-                            {version.reason ? (
-                              <p className="m-0 text-xs text-muted">Reason: {version.reason}</p>
-                            ) : null}
-                            {version.commutationChoice ? (
-                              <p className="m-0 text-xs text-muted">
-                                Commutation: {humanize(version.commutationChoice)}
+                            {DOCUMENT_PURPOSES.map((purpose) => (
+                              <option key={purpose} value={purpose}>
+                                {humanize(purpose)}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </div>
+                      <div>
+                        <Button disabled={busy} type="submit" variant="secondary">
+                          {busy ? 'Attaching…' : 'Attach document'}
+                        </Button>
+                      </div>
+                    </form>
+                  ) : null}
+
+                  <section className="grid gap-3" aria-labelledby="leave-versions-heading">
+                    <h3 className={sectionTitleClass} id="leave-versions-heading">
+                      Leave Application Versions
+                    </h3>
+                    {detail.versions.length === 0 ? (
+                      <p className="m-0 text-small text-ink-muted">No versions submitted.</p>
+                    ) : (
+                      <div className="grid gap-3">
+                        {detail.versions.map((version) => {
+                          const assessment = version.assessments.at(-1);
+                          return (
+                            <article
+                              className="grid gap-2 rounded-control border border-border bg-canvas px-4 py-3"
+                              key={version.id}
+                            >
+                              <div className="flex flex-wrap items-center gap-2 text-small">
+                                <strong className="font-[650] text-ink">
+                                  Version {version.versionNo}
+                                </strong>
+                                <span className="text-ink-muted">{version.leaveTypeCode}</span>
+                                <StatusTag tone={statusTone(version.approvalRequestStatus)}>
+                                  {version.approvalRequestStatus}
+                                </StatusTag>
+                                <span className="text-ink-muted">
+                                  {humanize(version.attestationType)}
+                                </span>
+                                <span className="text-ink-muted">
+                                  {humanize(version.submissionMethod)}
+                                </span>
+                              </div>
+                              <p className="m-0 text-small text-ink-muted">
+                                {periodsLabel(version.periods)}
                               </p>
-                            ) : null}
-                            {version.documents.length > 0 ? (
-                              <p className="m-0 text-xs text-muted">
-                                Documents:{' '}
-                                {version.documents
-                                  .map(
-                                    (document) =>
-                                      `${humanize(document.purposeCode)} (${document.documentNo ?? document.documentType ?? document.documentVersionId.slice(0, 8)})`,
-                                  )
-                                  .join('; ')}
+                              <p className="m-0 text-small text-ink-muted">
+                                Route {version.approvalRouteCode} · Submitted by{' '}
+                                {version.submittedByName ?? version.submittedByMembershipId} ·
+                                Received {instantLabel(version.receivedAt)}
                               </p>
-                            ) : null}
-                            {assessment ? (
-                              <p className="m-0 text-xs text-muted">
-                                Eligibility {assessment.result} · assessed{' '}
-                                {instantLabel(assessment.assessedAt)}
-                              </p>
-                            ) : null}
-                            {version.calculationSegments.length > 0 ? (
-                              <p className="m-0 text-xs text-muted">
-                                Quantity:{' '}
-                                {version.calculationSegments
-                                  .map(
-                                    (segment) =>
-                                      `${quantityLabel(segment.requestedQuantity)} ${humanize(segment.requestedUnit)}`,
-                                  )
-                                  .join('; ')}
-                              </p>
-                            ) : null}
-                            {version.certification ? (
-                              <div className="grid gap-2 rounded-[3px] border border-line bg-paper px-3 py-3">
-                                <div className="flex flex-wrap items-center gap-2 text-xs">
-                                  <strong className="font-[650] text-midnight">
-                                    Certified credits
-                                  </strong>
-                                  <span className="text-muted">
-                                    Balance as of {dateLabel(version.certification.balanceAsOf)}
-                                  </span>
-                                  <span className="text-muted">
-                                    Ledger recorded through{' '}
-                                    {instantLabel(version.certification.ledgerRecordedThrough)}
-                                  </span>
-                                  <span className="text-muted">
-                                    {version.certification.certifiedByName ??
-                                      version.certification.certifiedByMembershipId}{' '}
-                                    · {instantLabel(version.certification.certifiedAt)}
-                                  </span>
-                                </div>
-                                <div className="overflow-x-auto">
-                                  <table className="w-full min-w-[640px] border-collapse text-left text-xs">
-                                    <thead className="text-[10px] tracking-[0.07em] text-muted uppercase">
+                              {version.reason ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Reason: {version.reason}
+                                </p>
+                              ) : null}
+                              {version.commutationChoice ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Commutation: {humanize(version.commutationChoice)}
+                                </p>
+                              ) : null}
+                              {version.documents.length > 0 ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Documents:{' '}
+                                  {version.documents
+                                    .map(
+                                      (document) =>
+                                        `${humanize(document.purposeCode)} (${document.documentNo ?? document.documentType ?? document.documentVersionId.slice(0, 8)})`,
+                                    )
+                                    .join('; ')}
+                                </p>
+                              ) : null}
+                              {assessment ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Eligibility {assessment.result} · assessed{' '}
+                                  {instantLabel(assessment.assessedAt)}
+                                </p>
+                              ) : null}
+                              {version.calculationSegments.length > 0 ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Quantity:{' '}
+                                  {version.calculationSegments
+                                    .map(
+                                      (segment) =>
+                                        `${quantityLabel(segment.requestedQuantity)} ${humanize(segment.requestedUnit)}`,
+                                    )
+                                    .join('; ')}
+                                </p>
+                              ) : null}
+                              {version.certification ? (
+                                <div className="grid gap-2 rounded-control border border-border bg-surface px-3 py-3">
+                                  <div className="flex flex-wrap items-center gap-2 text-small">
+                                    <strong className="font-[650] text-ink">
+                                      Certified credits
+                                    </strong>
+                                    <span className="text-ink-muted">
+                                      Balance as of {dateLabel(version.certification.balanceAsOf)}
+                                    </span>
+                                    <span className="text-ink-muted">
+                                      Ledger recorded through{' '}
+                                      {instantLabel(version.certification.ledgerRecordedThrough)}
+                                    </span>
+                                    <span className="text-ink-muted">
+                                      {version.certification.certifiedByName ??
+                                        version.certification.certifiedByMembershipId}{' '}
+                                      · {instantLabel(version.certification.certifiedAt)}
+                                    </span>
+                                  </div>
+                                  <Table className="min-w-[640px]">
+                                    <thead>
                                       <tr>
-                                        <th className="py-2 pr-4 font-bold" scope="col">
-                                          Account
-                                        </th>
-                                        <th className="py-2 pr-4 font-bold" scope="col">
-                                          Posted
-                                        </th>
-                                        <th className="py-2 pr-4 font-bold" scope="col">
-                                          Commitments
-                                        </th>
-                                        <th className="py-2 pr-4 font-bold" scope="col">
-                                          Application
-                                        </th>
-                                        <th className="py-2 font-bold" scope="col">
-                                          Available after
-                                        </th>
+                                        <Th>Account</Th>
+                                        <Th kind="numeric">Posted</Th>
+                                        <Th kind="numeric">Commitments</Th>
+                                        <Th kind="numeric">Application</Th>
+                                        <Th kind="numeric">Available after</Th>
                                       </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-line">
+                                    <tbody>
                                       {version.certification.lines.map((line) => (
-                                        <tr key={line.id}>
-                                          <td className="py-2 pr-4 align-top text-ink">
+                                        <Tr key={line.id}>
+                                          <RowHeader>
                                             {line.leaveTypeName}{' '}
-                                            <span className="text-muted">{line.leaveTypeCode}</span>
-                                          </td>
-                                          <td className="py-2 pr-4 align-top text-ink">
+                                            <span className="font-normal text-ink-muted">
+                                              {line.leaveTypeCode}
+                                            </span>
+                                          </RowHeader>
+                                          <Td kind="numeric">
                                             {quantityLabel(line.postedBalance)}
-                                          </td>
-                                          <td className="py-2 pr-4 align-top text-ink">
+                                          </Td>
+                                          <Td kind="numeric">
                                             {quantityLabel(line.activeCommitments)}
-                                          </td>
-                                          <td className="py-2 pr-4 align-top text-ink">
+                                          </Td>
+                                          <Td kind="numeric">
                                             {quantityLabel(line.applicationQuantity)}
-                                          </td>
-                                          <td
+                                          </Td>
+                                          <Td
+                                            kind="numeric"
                                             className={
-                                              'py-2 align-top ' +
-                                              (Number(line.availableAfterApplication) < 0
-                                                ? 'font-[650] text-[#8c2f21]'
-                                                : 'text-ink')
+                                              Number(line.availableAfterApplication) < 0
+                                                ? 'font-[650] text-danger'
+                                                : undefined
                                             }
                                           >
                                             {quantityLabel(line.availableAfterApplication)}
-                                          </td>
-                                        </tr>
+                                          </Td>
+                                        </Tr>
                                       ))}
                                     </tbody>
-                                  </table>
+                                  </Table>
                                 </div>
-                              </div>
-                            ) : null}
-                            {version.recommendation ? (
-                              <p className="m-0 text-xs text-muted">
-                                Recommendation{' '}
-                                <strong className="font-[650] text-ink">
-                                  {humanize(version.recommendation.outcome)}
-                                </strong>{' '}
-                                · {instantLabel(version.recommendation.recommendedAt)}
-                                {version.recommendation.reason
-                                  ? ' · ' + version.recommendation.reason
-                                  : ''}
-                              </p>
-                            ) : null}
-                            {version.approvalAllocation ? (
-                              <p className="m-0 text-xs text-muted">
-                                Approved allocation:{' '}
-                                {version.approvalAllocation.lines
-                                  .map(
-                                    (line) =>
-                                      `${dateLabel(line.dateFrom)} – ${dateLabel(line.dateTo)} · ${humanize(line.allocationKind)} ${quantityLabel(line.quantity)} ${humanize(line.unitCode)}`,
-                                  )
-                                  .join('; ')}
-                              </p>
-                            ) : null}
-                            {version.approvalSteps.length > 0 ? (
-                              <div className="grid gap-1">
-                                <span className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                                  Approval route
-                                </span>
-                                <ol className="m-0 grid list-none gap-2 p-0">
-                                  {version.approvalSteps.map((step) => (
-                                    <li className="grid gap-1 text-xs" key={step.id}>
-                                      <span className="font-[650] text-ink">
-                                        Step {step.stepNo} · {humanize(step.requiredPermission)} ·{' '}
-                                        {humanize(step.status)}
-                                        {step.assignedRoleCode
-                                          ? ' · ' + humanize(step.assignedRoleCode)
-                                          : ''}
-                                      </span>
-                                      {step.decisions.map((decision) => (
-                                        <span className="text-muted" key={decision.id}>
-                                          {humanize(decision.decision)} ·{' '}
-                                          {decision.decidedByName ?? decision.decidedByMembershipId}{' '}
-                                          · {instantLabel(decision.decidedAt)}
-                                          {decision.comments ? ' · ' + decision.comments : ''}
+                              ) : null}
+                              {version.recommendation ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Recommendation{' '}
+                                  <strong className="font-[650] text-ink">
+                                    {humanize(version.recommendation.outcome)}
+                                  </strong>{' '}
+                                  · {instantLabel(version.recommendation.recommendedAt)}
+                                  {version.recommendation.reason
+                                    ? ' · ' + version.recommendation.reason
+                                    : ''}
+                                </p>
+                              ) : null}
+                              {version.approvalAllocation ? (
+                                <p className="m-0 text-small text-ink-muted">
+                                  Approved allocation:{' '}
+                                  {version.approvalAllocation.lines
+                                    .map(
+                                      (line) =>
+                                        `${dateLabel(line.dateFrom)} – ${dateLabel(line.dateTo)} · ${humanize(line.allocationKind)} ${quantityLabel(line.quantity)} ${humanize(line.unitCode)}`,
+                                    )
+                                    .join('; ')}
+                                </p>
+                              ) : null}
+                              {version.approvalSteps.length > 0 ? (
+                                <div className="grid gap-1">
+                                  <span className="text-caption font-[650] text-ink-muted">
+                                    Approval route
+                                  </span>
+                                  <ol className="m-0 grid list-none gap-2 p-0">
+                                    {version.approvalSteps.map((step) => (
+                                      <li className="grid gap-1 text-small" key={step.id}>
+                                        <span className="font-[650] text-ink">
+                                          Step {step.stepNo} · {humanize(step.requiredPermission)} ·{' '}
+                                          {humanize(step.status)}
+                                          {step.assignedRoleCode
+                                            ? ' · ' + humanize(step.assignedRoleCode)
+                                            : ''}
                                         </span>
-                                      ))}
-                                    </li>
-                                  ))}
-                                </ol>
-                              </div>
-                            ) : null}
-                          </article>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
+                                        {step.decisions.map((decision) => (
+                                          <span className="text-ink-muted" key={decision.id}>
+                                            {humanize(decision.decision)} ·{' '}
+                                            {decision.decidedByName ??
+                                              decision.decidedByMembershipId}{' '}
+                                            · {instantLabel(decision.decidedAt)}
+                                            {decision.comments ? ' · ' + decision.comments : ''}
+                                          </span>
+                                        ))}
+                                      </li>
+                                    ))}
+                                  </ol>
+                                </div>
+                              ) : null}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
 
-                <section className="grid gap-3" aria-labelledby="leave-history-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-history-heading">
-                    History
-                  </h3>
-                  {detail.history.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No history recorded.</p>
-                  ) : (
-                    <ol className="m-0 grid list-none gap-2 p-0">
-                      {detail.history.map((entry) => (
-                        <li className="grid gap-1 text-xs" key={entry.id}>
-                          <span className="font-[650] text-ink">
-                            {humanize(entry.action)}
-                            {entry.previousStatus || entry.newStatus
-                              ? ` · ${entry.previousStatus ?? '—'} → ${entry.newStatus ?? '—'}`
-                              : ''}
-                          </span>
-                          <span className="text-muted">
-                            {instantLabel(entry.occurredAt)}
-                            {entry.reason ? ' · ' + entry.reason : ''}
-                          </span>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </section>
-              </>
-            )}
-          </DialogBody>
-        ) : null}
-      </DialogContent>
+                  <section className="grid gap-3" aria-labelledby="leave-history-heading">
+                    <h3 className={sectionTitleClass} id="leave-history-heading">
+                      History
+                    </h3>
+                    {detail.history.length === 0 ? (
+                      <p className="m-0 text-small text-ink-muted">No history recorded.</p>
+                    ) : (
+                      <ol className="m-0 grid list-none gap-2 p-0">
+                        {detail.history.map((entry) => (
+                          <li className="grid gap-1 text-small" key={entry.id}>
+                            <span className="font-[650] text-ink">
+                              {humanize(entry.action)}
+                              {entry.previousStatus || entry.newStatus
+                                ? ` · ${entry.previousStatus ?? '—'} → ${entry.newStatus ?? '—'}`
+                                : ''}
+                            </span>
+                            <span className="text-ink-muted">
+                              {instantLabel(entry.occurredAt)}
+                              {entry.reason ? ' · ' + entry.reason : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </section>
+                </>
+              )}
+            </DialogBody>
+          ) : null}
+        </DialogContent>
+      </div>
     </Dialog>
   );
 }
