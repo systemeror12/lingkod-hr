@@ -1,8 +1,8 @@
 'use client';
 
 import { Field, inputClass, FormError } from './ui/field';
-import { RecordReturn, useRecordNavigation } from './record-navigation';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRecordNavigation } from './record-navigation';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Dialog,
   DialogBody,
@@ -15,6 +15,12 @@ import {
   DialogTrigger,
 } from './ui/dialog';
 import { Button } from './ui/button';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StateSurface } from './state-surface';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
+import { cn } from '../lib/class-names';
 import { manilaToday } from '../lib/manila-date';
 
 type LeaveTypeStatus = 'ACTIVE' | 'INACTIVE';
@@ -206,18 +212,18 @@ function errorMessage(value: unknown, fallback: string): string {
   return message;
 }
 
-const TONE_RESOLVED = 'bg-[#e8f3ed] text-[#316647]';
-const TONE_ATTENTION = 'bg-[#fff3d6] text-[#79531c]';
-
-function statusClass(status: LeaveTypeStatus | VersionState): string {
-  if (status === 'ACTIVE') return TONE_RESOLVED;
-  if (status === 'DRAFT') return TONE_ATTENTION;
-  return 'bg-[#f0f2f5] text-muted';
+function statusTone(status: LeaveTypeStatus | VersionState): StatusTone {
+  if (status === 'ACTIVE') return 'success';
+  if (status === 'DRAFT') return 'warning';
+  return 'neutral';
 }
 
-function configurationClass(result: ConfigurationResult): string {
-  return result === 'RESOLVED' ? TONE_RESOLVED : TONE_ATTENTION;
+function configurationTone(result: ConfigurationResult): StatusTone {
+  return result === 'RESOLVED' ? 'success' : 'warning';
 }
+
+const recordLinkClass =
+  'w-fit cursor-pointer text-left font-[600] text-primary underline-offset-2 hover:underline';
 
 function dateLabel(value: string): string {
   const date = new Date(value.includes('T') ? value : value.slice(0, 10) + 'T00:00:00.000Z');
@@ -238,6 +244,17 @@ function optionLabel(labels: Record<string, string>, code: string): string {
   return labels[code] ?? code.replaceAll('_', ' ').toLowerCase();
 }
 
+function SuccessNotice({ children }: { children: ReactNode }) {
+  return (
+    <p
+      className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+      role="status"
+    >
+      {children}
+    </p>
+  );
+}
+
 function CheckGroup({
   legend,
   name,
@@ -255,11 +272,11 @@ function CheckGroup({
 }) {
   return (
     <fieldset className="grid gap-2">
-      <legend className="text-xs font-[650] text-ink">{legend}</legend>
+      <legend className="text-caption font-[650] text-ink">{legend}</legend>
       <div className="grid gap-2 min-[621px]:grid-cols-2">
         {options.map((option) => (
           <label
-            className="flex min-h-10 items-center gap-2 rounded-[3px] border border-line px-3 text-xs text-ink"
+            className="flex min-h-10 items-center gap-2 rounded-control border border-border px-3 text-caption text-ink"
             key={option}
           >
             <input
@@ -285,13 +302,13 @@ function CheckGroup({
 
 function ParameterList({ parameters }: { parameters: Record<string, unknown> }) {
   const entries = Object.entries(parameters).filter(([, value]) => value !== undefined);
-  if (entries.length === 0) return <span className="text-xs text-muted">None</span>;
+  if (entries.length === 0) return <span className="text-caption text-ink-muted">None</span>;
   return (
-    <dl className="m-0 grid gap-1 text-xs">
+    <dl className="m-0 grid gap-1 text-caption">
       {entries.map(([key, value]) => (
         <div className="flex gap-2" key={key}>
           <dt className="font-[650] text-ink">{key}</dt>
-          <dd className="m-0 break-words text-muted">{JSON.stringify(value)}</dd>
+          <dd className="m-0 break-words text-ink-muted">{JSON.stringify(value)}</dd>
         </div>
       ))}
     </dl>
@@ -310,13 +327,15 @@ function AuthorityList({
   onRemove: (authorityId: string) => Promise<void>;
 }) {
   if (authorities.length === 0) {
-    return <span className="text-xs text-muted">No authority Document Version linked yet.</span>;
+    return (
+      <span className="text-caption text-ink-muted">No authority Document Version linked yet.</span>
+    );
   }
   return (
     <ul className="m-0 grid list-none gap-2 p-0">
       {authorities.map((authority) => (
         <li
-          className="grid gap-1 rounded-[3px] border border-line bg-paper px-3 py-2 text-xs"
+          className="grid gap-1 rounded-control border border-border bg-surface px-3 py-2 text-caption"
           key={authority.id}
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -328,10 +347,8 @@ function AuthorityList({
             </strong>
             {canManage ? (
               <Button
-                className="px-2 py-1 text-[11px]"
                 disabled={busy}
                 onClick={() => void onRemove(authority.id)}
-                size="default"
                 type="button"
                 variant="secondary"
               >
@@ -339,16 +356,25 @@ function AuthorityList({
               </Button>
             ) : null}
           </div>
-          <span className="break-all text-muted">
+          <span className="break-all text-ink-muted">
             {authority.documentNo ?? authority.documentId}
           </span>
           <span className="break-words text-ink">{authority.citation}</span>
           {authority.validationReason ? (
-            <span className="break-words text-muted">{authority.validationReason}</span>
+            <span className="break-words text-ink-muted">{authority.validationReason}</span>
           ) : null}
         </li>
       ))}
     </ul>
+  );
+}
+
+function SummaryFact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-2">
+      <dt className="font-[650] text-ink">{label}</dt>
+      <dd className="m-0 text-ink-muted">{children}</dd>
+    </div>
   );
 }
 
@@ -360,64 +386,40 @@ function VersionSummary({
   assessment?: { result: ConfigurationResult; reasons: string[] } | undefined;
 }) {
   return (
-    <div className="grid gap-3 rounded-[3px] border border-line bg-paper px-4 py-3">
+    <div className="grid gap-3 rounded-control border border-border bg-canvas px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <strong className="text-sm text-midnight">Version {version.versionNo}</strong>
-        <span
-          className={
-            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-            statusClass(version.status)
-          }
-        >
-          {version.status}
-        </span>
+        <strong className="text-small text-ink">Version {version.versionNo}</strong>
+        <StatusTag tone={statusTone(version.status)}>{version.status}</StatusTag>
         {assessment ? (
-          <span
-            className={
-              'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-              configurationClass(assessment.result)
-            }
-          >
-            {assessment.result}
-          </span>
+          <StatusTag tone={configurationTone(assessment.result)}>{assessment.result}</StatusTag>
         ) : null}
       </div>
-      <dl className="m-0 grid gap-1 text-xs min-[621px]:grid-cols-2">
-        <div className="flex gap-2">
-          <dt className="font-[650] text-ink">Effective</dt>
-          <dd className="m-0 text-muted">
-            {dateLabel(version.effectiveFrom)} —{' '}
-            {version.effectiveTo ? dateLabel(version.effectiveTo) : 'open'}
-          </dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="font-[650] text-ink">Evaluator</dt>
-          <dd className="m-0 text-muted">{optionLabel(EVALUATOR_LABELS, version.evaluatorKind)}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="font-[650] text-ink">Entitlement</dt>
-          <dd className="m-0 text-muted">{optionLabel(VALUE_LABELS, version.entitlementBasis)}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="font-[650] text-ink">Calendar</dt>
-          <dd className="m-0 text-muted">{optionLabel(VALUE_LABELS, version.calendarBasis)}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="font-[650] text-ink">Charged leave type</dt>
-          <dd className="m-0 text-muted">{version.chargedLeaveTypeCode ?? 'None'}</dd>
-        </div>
-        <div className="flex gap-2">
-          <dt className="font-[650] text-ink">Approval route</dt>
-          <dd className="m-0 text-muted">{version.approvalRouteCode}</dd>
-        </div>
+      <dl className="m-0 grid gap-1 text-caption min-[621px]:grid-cols-2">
+        <SummaryFact label="Effective">
+          {dateLabel(version.effectiveFrom)} —{' '}
+          {version.effectiveTo ? dateLabel(version.effectiveTo) : 'open'}
+        </SummaryFact>
+        <SummaryFact label="Evaluator">
+          {optionLabel(EVALUATOR_LABELS, version.evaluatorKind)}
+        </SummaryFact>
+        <SummaryFact label="Entitlement">
+          {optionLabel(VALUE_LABELS, version.entitlementBasis)}
+        </SummaryFact>
+        <SummaryFact label="Calendar">
+          {optionLabel(VALUE_LABELS, version.calendarBasis)}
+        </SummaryFact>
+        <SummaryFact label="Charged leave type">
+          {version.chargedLeaveTypeCode ?? 'None'}
+        </SummaryFact>
+        <SummaryFact label="Approval route">{version.approvalRouteCode}</SummaryFact>
       </dl>
-      <div className="grid gap-1 text-xs">
+      <div className="grid gap-1 text-caption">
         <span className="font-[650] text-ink">National rule parameters</span>
         <ParameterList parameters={version.ruleParameters} />
       </div>
-      <div className="grid gap-1 text-xs">
+      <div className="grid gap-1 text-caption">
         <span className="font-[650] text-ink">Personnel applicability</span>
-        <span className="text-muted">
+        <span className="text-ink-muted">
           {version.applicability.profiles
             .map((code) => optionLabel(PROFILE_LABELS, code))
             .join(', ')}
@@ -429,9 +431,9 @@ function VersionSummary({
             : ''}
         </span>
       </div>
-      <div className="grid gap-1 text-xs">
+      <div className="grid gap-1 text-caption">
         <span className="font-[650] text-ink">Evidence</span>
-        <span className="text-muted">
+        <span className="text-ink-muted">
           {version.documentRequirements.required
             .map((code) => optionLabel(EVIDENCE_LABELS, code))
             .join(', ') || 'None'}
@@ -443,24 +445,35 @@ function VersionSummary({
             : ''}
         </span>
       </div>
-      <div className="grid gap-2 text-xs">
+      <div className="grid gap-2 text-caption">
         <span className="font-[650] text-ink">Authority Document Versions</span>
         <ul className="m-0 grid list-none gap-1 p-0">
           {version.authorities.map((authority) => (
-            <li className="text-muted" key={authority.id}>
+            <li className="text-ink-muted" key={authority.id}>
               {authority.authorityClass === 'NATIONAL_RULE' ? 'National' : 'Agency'} ·{' '}
               {authority.citation} · version {authority.documentVersionNo}
             </li>
           ))}
-          {version.authorities.length === 0 ? <li className="text-muted">None linked.</li> : null}
+          {version.authorities.length === 0 ? (
+            <li className="text-ink-muted">None linked.</li>
+          ) : null}
         </ul>
       </div>
       {assessment && assessment.result === 'INDETERMINATE' ? (
-        <div className="grid gap-1 rounded-[3px] border border-[#e8d8b6] bg-[#fffaf0] px-3 py-2 text-xs">
-          <strong className="text-[#79531c]">Indeterminate — assessment is blocked</strong>
-          <span className="break-words text-[#79531c]">{assessment.reasons.join(', ')}</span>
-        </div>
+        <Blocked title="Indeterminate — assessment is blocked">
+          {assessment.reasons.join(', ')}
+        </Blocked>
       ) : null}
+    </div>
+  );
+}
+
+/** Warning callout for a policy that cannot be assessed. */
+function Blocked({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="grid gap-1 rounded-control border border-warning/40 bg-warning/5 px-3 py-2 text-caption text-warning">
+      <strong>{title}</strong>
+      <span className="break-words">{children}</span>
     </div>
   );
 }
@@ -759,6 +772,16 @@ export function LeavePolicyWorkspace({
   }
 
   const createdCodes = new Set(leaveTypes.map(({ code }) => code));
+  const showingForm = dialog !== null;
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Leave administration' }];
+  // Only the record view changes the URL, so only it can link back to the register.
+  if (recordId) {
+    breadcrumbs.push({
+      label: 'Leave Policies',
+      href: navigation.href({ record: null }),
+    });
+    if (detail) breadcrumbs.push({ label: detail.leaveType.code });
+  }
 
   return (
     <Dialog
@@ -766,122 +789,79 @@ export function LeavePolicyWorkspace({
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div
-        hidden={dialog === 'detail' || dialog === 'createType' || dialog === 'editType'}
-        className="min-w-0 space-y-5"
-      >
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[760px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Leave administration
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Leave Policies
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              Admit the government leave catalogue, then activate effective-dated Leave Policy
-              Versions backed by exact national-rule and Agency-configuration Document Versions.
-            </p>
-          </div>
-        </header>
+      <div className="grid min-w-0 gap-5">
+        <PageHeader breadcrumbs={breadcrumbs} title="Leave Policies" />
 
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
+        <div hidden={showingForm} className="grid min-w-0 gap-5">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
+            Admit the government leave catalogue, then activate effective-dated Leave Policy
+            Versions backed by exact national-rule and Agency-configuration Document Versions. The
+            catalogue fixes evaluator kinds and national values; administrators cannot supply
+            formulas.
           </p>
-        ) : null}
 
-        <section
-          aria-labelledby="leave-catalogue-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="leave-catalogue-heading">
-                Government leave catalogue
-              </h2>
-              <span className="text-xs text-muted">
-                Fixed evaluator kinds and national values. Administrators cannot supply formulas.
+          {success ? <SuccessNotice>{success}</SuccessNotice> : null}
+
+          <Panel
+            title="Government leave catalogue"
+            flush
+            actions={
+              <span className="text-caption text-ink-muted">
+                {catalogue.entries.length} catalogue entries
               </span>
-            </div>
-            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-              {catalogue.entries.length} catalogue entries
-            </span>
-          </header>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] border-collapse text-left text-sm">
-              <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+            }
+          >
+            <Table aria-label="Government leave catalogue entries" className="min-w-[960px]">
+              <thead>
                 <tr>
-                  <th className="px-5 py-3 font-bold" scope="col">
-                    Leave type
-                  </th>
-                  <th className="px-5 py-3 font-bold" scope="col">
-                    Evaluator
-                  </th>
-                  <th className="px-5 py-3 font-bold" scope="col">
-                    Basis
-                  </th>
-                  <th className="px-5 py-3 font-bold" scope="col">
-                    Charged leave type
-                  </th>
-                  <th className="px-5 py-3 font-bold" scope="col">
-                    Activation
-                  </th>
-                  <th className="px-5 py-3 font-bold" scope="col">
+                  <Th>Leave type</Th>
+                  <Th>Evaluator</Th>
+                  <Th>Basis</Th>
+                  <Th>Charged leave type</Th>
+                  <Th>Activation</Th>
+                  <Th>
                     <span className="sr-only">Actions</span>
-                  </th>
+                  </Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line">
+              <tbody>
                 {catalogue.entries.map((entry) => (
-                  <tr key={entry.code}>
-                    <td className="px-5 py-4 align-top">
+                  <Tr key={entry.code}>
+                    <RowHeader>
                       <div className="grid gap-1">
-                        <strong className="font-[670] text-midnight">{entry.name}</strong>
-                        <span className="text-xs text-muted">{entry.code}</span>
-                        <span className="max-w-[320px] text-xs text-muted">
+                        <span>{entry.name}</span>
+                        <span className="text-caption font-normal text-ink-muted">
+                          {entry.code}
+                        </span>
+                        <span className="max-w-[320px] text-caption font-normal text-ink-muted">
                           {entry.authorityCitations.map(({ title }) => title).join(' · ')}
                         </span>
                       </div>
-                    </td>
-                    <td className="px-5 py-4 align-top text-xs text-ink">
-                      {optionLabel(EVALUATOR_LABELS, entry.evaluatorKind)}
-                    </td>
-                    <td className="px-5 py-4 align-top text-xs text-muted">
+                    </RowHeader>
+                    <Td>{optionLabel(EVALUATOR_LABELS, entry.evaluatorKind)}</Td>
+                    <Td className="text-ink-muted">
                       {optionLabel(VALUE_LABELS, entry.entitlementBasis)}
                       <br />
                       {optionLabel(VALUE_LABELS, entry.calendarBasis)}
-                    </td>
-                    <td className="px-5 py-4 align-top text-xs text-muted">
-                      {entry.chargedLeaveTypeCode ?? 'None'}
-                    </td>
-                    <td className="px-5 py-4 align-top">
-                      <span
-                        className={
-                          'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                          (entry.failClosed ? TONE_ATTENTION : TONE_RESOLVED)
-                        }
-                      >
+                    </Td>
+                    <Td className="text-ink-muted">{entry.chargedLeaveTypeCode ?? 'None'}</Td>
+                    <Td>
+                      <StatusTag tone={entry.failClosed ? 'warning' : 'success'}>
                         {optionLabel(ACTIVATION_LABELS, entry.activationPolicy)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 align-top">
+                      </StatusTag>
+                    </Td>
+                    <Td>
                       {createdCodes.has(entry.code) ? (
-                        <span className="text-xs text-muted">Already maintained</span>
+                        <span className="text-ink-muted">Already maintained</span>
                       ) : canManage ? (
                         <DialogTrigger asChild>
                           <Button
-                            className="min-h-9"
                             onClick={() => {
                               resetAction();
                               setCatalogueCode(entry.code);
                               dialogRef.current = 'createType';
                               setDialog('createType');
                             }}
-                            size="default"
                             type="button"
                             variant="secondary"
                           >
@@ -889,592 +869,541 @@ export function LeavePolicyWorkspace({
                           </Button>
                         </DialogTrigger>
                       ) : (
-                        <span className="text-xs text-muted">Not maintained</span>
+                        <span className="text-ink-muted">Not maintained</span>
                       )}
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 ))}
               </tbody>
-            </table>
-          </div>
-        </section>
+            </Table>
+          </Panel>
 
-        <section
-          aria-labelledby="leave-types-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="leave-types-heading">
-                Agency Leave Types
-              </h2>
-              <span className="text-xs text-muted">
-                {leaveTypes.length === 1 ? '1 Leave Type' : leaveTypes.length + ' Leave Types'}
+          <Panel
+            title="Agency Leave Types"
+            flush
+            actions={
+              <span className="text-caption text-ink-muted">
+                {leaveTypes.length === 1 ? '1 Leave Type' : leaveTypes.length + ' Leave Types'} ·
+                Agency scoped · Evidence required
               </span>
-            </div>
-            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-              Agency scoped · Evidence required
-            </span>
-          </header>
-          {leaveTypes.length === 0 ? (
-            <div className="grid min-h-[200px] place-content-center gap-2 px-6 py-12">
-              <strong className="text-[15px] font-[650] text-midnight">
-                No Agency Leave Types yet.
-              </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                Admit a catalogue entry, then create and activate an evidence-backed Leave Policy
-                Version before leave can be assessed.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+            }
+          >
+            {leaveTypes.length === 0 ? (
+              <StateSurface compact>
+                <strong className="text-body font-[650] text-ink">
+                  No Agency Leave Types yet.
+                </strong>
+                <p className="m-0 max-w-[560px]">
+                  Admit a catalogue entry, then create and activate an evidence-backed Leave Policy
+                  Version before leave can be assessed.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table aria-label="Agency Leave Types" className="min-w-[860px]">
+                <thead>
                   <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Leave type
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Active version
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Draft
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
+                    <Th>Leave type</Th>
+                    <Th>Active version</Th>
+                    <Th>Draft</Th>
+                    <Th>Status</Th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody>
                   {leaveTypes.map((leaveType) => (
-                    <tr key={leaveType.id}>
-                      <td className="px-5 py-4 align-top">
+                    <Tr key={leaveType.id}>
+                      <RowHeader>
                         <div className="grid gap-1">
                           <button
-                            className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
+                            className={recordLinkClass}
                             type="button"
                             onClick={() => navigation.navigate({ record: leaveType.id })}
                           >
                             {leaveType.code}
                           </button>
-                          <span className="text-xs text-muted">{leaveType.name}</span>
+                          <span className="text-caption font-normal text-ink-muted">
+                            {leaveType.name}
+                          </span>
                         </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
+                      </RowHeader>
+                      <Td>
                         {leaveType.currentVersion
                           ? 'Version ' +
                             leaveType.currentVersion.versionNo +
                             ' · ' +
                             dateLabel(leaveType.currentVersion.effectiveFrom)
                           : 'No active version'}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
+                      </Td>
+                      <Td className="text-ink-muted">
                         {leaveType.draft
                           ? 'Version ' +
                             leaveType.draft.versionNo +
                             ' · ' +
                             dateLabel(leaveType.draft.effectiveFrom)
                           : 'None'}
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            statusClass(leaveType.status)
-                          }
-                        >
+                      </Td>
+                      <Td>
+                        <StatusTag tone={statusTone(leaveType.status)}>
                           {leaveType.status}
-                        </span>
-                      </td>
-                    </tr>
+                        </StatusTag>
+                      </Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </div>
-
-      {dialog === 'detail' ? (
-        <div className="mb-4">
-          <RecordReturn href={navigation.href({ record: null })}>← Leave Policies</RecordReturn>
+              </Table>
+            )}
+          </Panel>
         </div>
-      ) : null}
 
-      <DialogContent aria-describedby="leave-policy-dialog-description">
-        <DialogHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="grid gap-1">
-              <DialogTitle>
-                {dialog === 'createType'
-                  ? 'Admit Leave Type'
-                  : dialog === 'editType'
-                    ? 'Leave Type settings'
-                    : (detail?.leaveType.name ?? 'Leave Type')}
-              </DialogTitle>
-              <DialogDescription id="leave-policy-dialog-description">
-                {dialog === 'createType'
-                  ? 'Create the Agency Leave Type from one admitted government catalogue entry.'
-                  : dialog === 'editType'
-                    ? 'Rename the Leave Type or suspend it. Suspension does not delete history.'
-                    : 'Policy snapshot, draft, versions, and audit history.'}
-              </DialogDescription>
+        <DialogContent aria-describedby="leave-policy-dialog-description">
+          <DialogHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="grid gap-1">
+                <DialogTitle>
+                  {dialog === 'createType'
+                    ? 'Admit Leave Type'
+                    : dialog === 'editType'
+                      ? 'Leave Type settings'
+                      : (detail?.leaveType.name ?? 'Leave Type')}
+                </DialogTitle>
+                <DialogDescription id="leave-policy-dialog-description">
+                  {dialog === 'createType'
+                    ? 'Create the Agency Leave Type from one admitted government catalogue entry.'
+                    : dialog === 'editType'
+                      ? 'Rename the Leave Type or suspend it. Suspension does not delete history.'
+                      : 'Policy snapshot, draft, versions, and audit history.'}
+                </DialogDescription>
+              </div>
+              <DialogClose asChild>
+                <Button type="button" variant="secondary">
+                  Close
+                </Button>
+              </DialogClose>
             </div>
-            <DialogClose asChild>
-              <Button size="default" type="button" variant="secondary">
-                Close
-              </Button>
-            </DialogClose>
-          </div>
-        </DialogHeader>
+          </DialogHeader>
 
-        {error ? (
-          <DialogBody className="pb-0">
-            <FormError message={error} />
-          </DialogBody>
-        ) : null}
-
-        {dialog === 'createType' ? (
-          <form onSubmit={(event) => void createLeaveType(event)}>
-            <DialogBody className="grid gap-5">
-              <Field htmlFor="leave-catalogue-code" label="Catalogue entry">
-                <select
-                  autoFocus
-                  className={inputClass}
-                  data-autofocus=""
-                  id="leave-catalogue-code"
-                  onChange={(event) => setCatalogueCode(targetValue(event))}
-                  value={catalogueCode}
-                >
-                  {catalogue.entries.map((entry) => (
-                    <option key={entry.code} value={entry.code}>
-                      {entry.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+          {error ? (
+            <DialogBody className="pb-0">
+              <FormError message={error} />
             </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+          ) : null}
+
+          {dialog === 'createType' ? (
+            <form onSubmit={(event) => void createLeaveType(event)}>
+              <DialogBody className="grid gap-5">
+                <Field htmlFor="leave-catalogue-code" label="Catalogue entry">
+                  <select
+                    autoFocus
+                    className={inputClass}
+                    data-autofocus=""
+                    id="leave-catalogue-code"
+                    onChange={(event) => setCatalogueCode(targetValue(event))}
+                    value={catalogueCode}
+                  >
+                    {catalogue.entries.map((entry) => (
+                      <option key={entry.code} value={entry.code}>
+                        {entry.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Creating…' : 'Create Leave Type'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Creating…' : 'Create Leave Type'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
+              </DialogFooter>
+            </form>
+          ) : null}
 
-        {dialog === 'editType' ? (
-          <form onSubmit={(event) => void updateLeaveType(event)}>
-            <DialogBody className="grid gap-5">
-              <Field htmlFor="leave-type-name" label="Leave Type name">
-                <input
-                  autoFocus
-                  className={inputClass}
-                  data-autofocus=""
-                  id="leave-type-name"
-                  maxLength={200}
-                  onChange={(event) => setTypeName(targetValue(event))}
-                  required
-                  value={typeName}
-                />
-              </Field>
-              <Field htmlFor="leave-type-status" label="Status">
-                <select
-                  className={inputClass}
-                  id="leave-type-status"
-                  onChange={(event) =>
-                    setTypeStatus(targetValue(event) === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE')
-                  }
-                  value={typeStatus}
-                >
-                  <option value="ACTIVE">Active</option>
-                  <option value="INACTIVE">Inactive</option>
-                </select>
-              </Field>
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+          {dialog === 'editType' ? (
+            <form onSubmit={(event) => void updateLeaveType(event)}>
+              <DialogBody className="grid gap-5">
+                <Field htmlFor="leave-type-name" label="Leave Type name">
+                  <input
+                    autoFocus
+                    className={inputClass}
+                    data-autofocus=""
+                    id="leave-type-name"
+                    maxLength={200}
+                    onChange={(event) => setTypeName(targetValue(event))}
+                    required
+                    value={typeName}
+                  />
+                </Field>
+                <Field htmlFor="leave-type-status" label="Status">
+                  <select
+                    className={inputClass}
+                    id="leave-type-status"
+                    onChange={(event) =>
+                      setTypeStatus(targetValue(event) === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE')
+                    }
+                    value={typeStatus}
+                  >
+                    <option value="ACTIVE">Active</option>
+                    <option value="INACTIVE">Inactive</option>
+                  </select>
+                </Field>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Saving…' : 'Save settings'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : 'Save settings'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
+              </DialogFooter>
+            </form>
+          ) : null}
 
-        {dialog === 'detail' ? (
-          <DialogBody className="grid gap-6">
-            {success ? (
-              <p
-                className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-                role="status"
-              >
-                {success}
-              </p>
-            ) : null}
-            {detailLoading || !detail ? (
-              <p className="m-0 text-sm text-muted" role="status">
-                Loading the Leave Type record…
-              </p>
-            ) : (
-              <>
-                <section className="grid gap-3" aria-labelledby="leave-type-snapshot-heading">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-type-snapshot-heading"
-                    >
-                      Policy snapshot
-                    </h3>
-                    {canManage ? (
-                      <Button
-                        className="min-h-9"
-                        onClick={() => {
-                          resetAction();
-                          setTypeName(detail.leaveType.name);
-                          setTypeStatus(detail.leaveType.status);
-                          setTypeRowVersion(null);
-                          dialogRef.current = 'editType';
-                          setDialog('editType');
-                        }}
-                        size="default"
-                        type="button"
-                        variant="secondary"
-                      >
-                        Leave Type settings
-                      </Button>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                    <span>{detail.leaveType.code}</span>
-                    <span
-                      className={
-                        'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                        statusClass(detail.leaveType.status)
-                      }
-                    >
-                      {detail.leaveType.status}
-                    </span>
-                    <label className="ml-auto flex items-center gap-2">
-                      As of
-                      <input
-                        className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                        onChange={(event) =>
-                          navigation.navigate({
-                            asOf: targetValue(event) === manilaToday() ? null : targetValue(event),
-                          })
-                        }
-                        type="date"
-                        value={asOf}
-                      />
-                    </label>
-                  </div>
-                  {detail.effective ? (
-                    <VersionSummary assessment={detail.configuration} version={detail.effective} />
-                  ) : (
-                    <div className="grid gap-1 rounded-[3px] border border-[#e8d8b6] bg-[#fffaf0] px-3 py-2 text-xs">
-                      <strong className="text-[#79531c]">
-                        No effective Leave Policy Version on this date
-                      </strong>
-                      <span className="text-[#79531c]">
-                        {detail.configuration.reasons.join(', ')}
-                      </span>
-                    </div>
-                  )}
-                </section>
+          {dialog === 'detail' ? (
+            <DialogBody className="grid gap-6">
+              {success ? <SuccessNotice>{success}</SuccessNotice> : null}
+              {detailLoading ? (
+                <StateSurface busy compact>
+                  <p className="m-0" role="status">
+                    Loading the Leave Type record…
+                  </p>
+                </StateSurface>
+              ) : !detail ? (
+                <StateSurface compact>
+                  <strong className="text-body font-[650] text-ink">
+                    This Leave Type record is unavailable.
+                  </strong>
+                </StateSurface>
+              ) : (
+                <>
+                  <Panel
+                    title="Policy snapshot"
+                    actions={
+                      canManage ? (
+                        <Button
+                          onClick={() => {
+                            resetAction();
+                            setTypeName(detail.leaveType.name);
+                            setTypeStatus(detail.leaveType.status);
+                            setTypeRowVersion(null);
+                            dialogRef.current = 'editType';
+                            setDialog('editType');
+                          }}
 
-                <section className="grid gap-3" aria-labelledby="leave-draft-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-draft-heading">
-                    Draft Leave Policy Version
-                  </h3>
-                  {canManage ? (
-                    <form className="grid gap-4" onSubmit={(event) => void submitDraft(event)}>
-                      <div className="grid gap-4 min-[621px]:grid-cols-2">
-                        <Field htmlFor="leave-draft-effective" label="Effective date">
-                          <input
-                            className={inputClass}
-                            id="leave-draft-effective"
-                            onChange={(event) =>
-                              setDraft({ ...draft, effectiveDate: targetValue(event) })
-                            }
-                            required
-                            type="date"
-                            value={draft.effectiveDate}
-                          />
-                        </Field>
-                        <Field htmlFor="leave-draft-route" label="Approval route code">
-                          <input
-                            className={inputClass}
-                            id="leave-draft-route"
-                            maxLength={120}
-                            onChange={(event) =>
-                              setDraft({ ...draft, approvalRouteCode: targetValue(event) })
-                            }
-                            required
-                            value={draft.approvalRouteCode}
-                          />
-                        </Field>
-                      </div>
-                      <CheckGroup
-                        labels={PROFILE_LABELS}
-                        legend="Personnel applicability"
-                        name="leave-draft-profiles"
-                        onChange={(profiles) => setDraft({ ...draft, profiles })}
-                        options={catalogue.personnelProfiles}
-                        selected={draft.profiles}
-                      />
-                      <CheckGroup
-                        labels={PROFILE_LABELS}
-                        legend="Excluded personnel profiles"
-                        name="leave-draft-excluded"
-                        onChange={(excludedProfiles) => setDraft({ ...draft, excludedProfiles })}
-                        options={catalogue.personnelProfiles}
-                        selected={draft.excludedProfiles}
-                      />
-                      <CheckGroup
-                        labels={EVIDENCE_LABELS}
-                        legend="Additional evidence requirements"
-                        name="leave-draft-evidence"
-                        onChange={(additional) => setDraft({ ...draft, additional })}
-                        options={catalogue.evidenceKinds}
-                        selected={draft.additional}
-                      />
-                      <Field htmlFor="leave-draft-reason" label="Reason">
-                        <textarea
-                          className={inputClass}
-                          id="leave-draft-reason"
-                          onChange={(event) => setDraft({ ...draft, reason: targetValue(event) })}
-                          required
-                          rows={2}
-                          value={draft.reason}
-                        />
-                      </Field>
-                      <DialogFooter className="border-t-0 px-0 pb-0">
-                        <Button disabled={busy} size="default" type="submit" variant="secondary">
-                          {busy
-                            ? 'Saving…'
-                            : detail.leaveType.draft
-                              ? 'Save draft'
-                              : 'Create draft'}
+                          type="button"
+                          variant="secondary"
+                        >
+                          Leave Type settings
                         </Button>
-                      </DialogFooter>
-                    </form>
-                  ) : detail.leaveType.draft ? (
-                    <VersionSummary version={detail.leaveType.draft} />
-                  ) : (
-                    <span className="text-xs text-muted">No draft version.</span>
-                  )}
-
-                  {detail.leaveType.draft && canManage ? (
-                    <div className="grid gap-4 rounded-[3px] border border-line bg-canvas px-4 py-4">
-                      <div className="grid gap-1">
-                        <strong className="text-xs font-[650] text-ink">
-                          Authority Document Versions
-                        </strong>
-                        <span className="text-xs text-muted">
-                          National-rule and Agency-configuration Document Versions must already be
-                          finalized in this Agency.
-                        </span>
+                      ) : null
+                    }
+                  >
+                    <div className="grid gap-3">
+                      <div className="flex flex-wrap items-center gap-2 text-caption text-ink-muted">
+                        <span>{detail.leaveType.code}</span>
+                        <StatusTag tone={statusTone(detail.leaveType.status)}>
+                          {detail.leaveType.status}
+                        </StatusTag>
+                        <label className="ml-auto flex items-center gap-2 font-[650] text-ink">
+                          As of
+                          <input
+                            className={cn(inputClass, 'w-auto font-normal')}
+                            onChange={(event) =>
+                              navigation.navigate({
+                                asOf:
+                                  targetValue(event) === manilaToday() ? null : targetValue(event),
+                              })
+                            }
+                            type="date"
+                            value={asOf}
+                          />
+                        </label>
                       </div>
-                      <AuthorityList
-                        authorities={detail.leaveType.draft.authorities}
-                        busy={busy}
-                        canManage={canManage}
-                        onRemove={unlinkAuthority}
-                      />
-                      <form className="grid gap-3" onSubmit={(event) => void linkAuthority(event)}>
-                        <div className="grid gap-3 min-[621px]:grid-cols-2">
-                          <Field htmlFor="leave-authority-class" label="Authority class">
-                            <select
+                      {detail.effective ? (
+                        <VersionSummary
+                          assessment={detail.configuration}
+                          version={detail.effective}
+                        />
+                      ) : (
+                        <Blocked title="No effective Leave Policy Version on this date">
+                          {detail.configuration.reasons.join(', ')}
+                        </Blocked>
+                      )}
+                    </div>
+                  </Panel>
+
+                  <Panel title="Draft Leave Policy Version">
+                    <div className="grid gap-3">
+                      {canManage ? (
+                        <form className="grid gap-4" onSubmit={(event) => void submitDraft(event)}>
+                          <div className="grid gap-4 min-[621px]:grid-cols-2">
+                            <Field htmlFor="leave-draft-effective" label="Effective date">
+                              <input
+                                className={inputClass}
+                                id="leave-draft-effective"
+                                onChange={(event) =>
+                                  setDraft({ ...draft, effectiveDate: targetValue(event) })
+                                }
+                                required
+                                type="date"
+                                value={draft.effectiveDate}
+                              />
+                            </Field>
+                            <Field htmlFor="leave-draft-route" label="Approval route code">
+                              <input
+                                className={inputClass}
+                                id="leave-draft-route"
+                                maxLength={120}
+                                onChange={(event) =>
+                                  setDraft({ ...draft, approvalRouteCode: targetValue(event) })
+                                }
+                                required
+                                value={draft.approvalRouteCode}
+                              />
+                            </Field>
+                          </div>
+                          <CheckGroup
+                            labels={PROFILE_LABELS}
+                            legend="Personnel applicability"
+                            name="leave-draft-profiles"
+                            onChange={(profiles) => setDraft({ ...draft, profiles })}
+                            options={catalogue.personnelProfiles}
+                            selected={draft.profiles}
+                          />
+                          <CheckGroup
+                            labels={PROFILE_LABELS}
+                            legend="Excluded personnel profiles"
+                            name="leave-draft-excluded"
+                            onChange={(excludedProfiles) =>
+                              setDraft({ ...draft, excludedProfiles })
+                            }
+                            options={catalogue.personnelProfiles}
+                            selected={draft.excludedProfiles}
+                          />
+                          <CheckGroup
+                            labels={EVIDENCE_LABELS}
+                            legend="Additional evidence requirements"
+                            name="leave-draft-evidence"
+                            onChange={(additional) => setDraft({ ...draft, additional })}
+                            options={catalogue.evidenceKinds}
+                            selected={draft.additional}
+                          />
+                          <Field htmlFor="leave-draft-reason" label="Reason">
+                            <textarea
                               className={inputClass}
-                              id="leave-authority-class"
+                              id="leave-draft-reason"
                               onChange={(event) =>
-                                setAuthorityClass(
-                                  targetValue(event) === 'AGENCY_CONFIGURATION'
-                                    ? 'AGENCY_CONFIGURATION'
-                                    : 'NATIONAL_RULE',
-                                )
+                                setDraft({ ...draft, reason: targetValue(event) })
                               }
-                              value={authorityClass}
-                            >
-                              <option value="NATIONAL_RULE">National rule</option>
-                              <option value="AGENCY_CONFIGURATION">Agency configuration</option>
-                            </select>
-                          </Field>
-                          <Field htmlFor="leave-authority-document" label="Document ID">
-                            <input
-                              className={inputClass}
-                              id="leave-authority-document"
-                              onChange={(event) => setDocumentId(targetValue(event))}
                               required
-                              value={documentId}
+                              rows={2}
+                              value={draft.reason}
                             />
                           </Field>
-                        </div>
-                        <Field htmlFor="leave-authority-citation" label="Citation">
-                          <input
-                            className={inputClass}
-                            id="leave-authority-citation"
-                            maxLength={300}
-                            onChange={(event) => setCitation(targetValue(event))}
-                            required
-                            value={citation}
-                          />
-                        </Field>
-                        <Field
-                          htmlFor="leave-authority-reason"
-                          label="Validation reason (optional)"
-                        >
-                          <input
-                            className={inputClass}
-                            id="leave-authority-reason"
-                            maxLength={500}
-                            onChange={(event) => setValidationReason(targetValue(event))}
-                            value={validationReason}
-                          />
-                        </Field>
-                        <DialogFooter className="border-t-0 px-0 pb-0">
-                          <Button disabled={busy} size="default" type="submit" variant="secondary">
-                            {busy ? 'Linking…' : 'Link authority'}
-                          </Button>
-                        </DialogFooter>
-                      </form>
-                      <form
-                        className="grid gap-3 border-t border-line pt-4"
-                        onSubmit={(event) => void activate(event)}
-                      >
-                        <p className="m-0 rounded-[3px] bg-paper px-3 py-2 text-xs leading-[1.6] text-muted">
-                          Activation requires every national rule to resolve. The version becomes
-                          immutable and any active version it replaces is superseded with an end
-                          date.
-                        </p>
-                        <Field htmlFor="leave-activation-reason" label="Activation reason">
-                          <textarea
-                            className={inputClass}
-                            id="leave-activation-reason"
-                            onChange={(event) => setActivationReason(targetValue(event))}
-                            required
-                            rows={2}
-                            value={activationReason}
-                          />
-                        </Field>
-                        <DialogFooter className="border-t-0 px-0 pb-0">
-                          <Button disabled={busy} size="default" type="submit" variant="primary">
-                            {busy ? 'Activating…' : 'Activate version'}
-                          </Button>
-                        </DialogFooter>
-                      </form>
-                    </div>
-                  ) : null}
-                </section>
+                          <DialogFooter className="border-t-0 px-0 pb-0">
+                            <Button disabled={busy} type="submit" variant="secondary">
+                              {busy
+                                ? 'Saving…'
+                                : detail.leaveType.draft
+                                  ? 'Save draft'
+                                  : 'Create draft'}
+                            </Button>
+                          </DialogFooter>
+                        </form>
+                      ) : detail.leaveType.draft ? (
+                        <VersionSummary version={detail.leaveType.draft} />
+                      ) : (
+                        <span className="text-caption text-ink-muted">No draft version.</span>
+                      )}
 
-                <section className="grid gap-2" aria-labelledby="leave-versions-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-versions-heading">
-                    Version history
-                  </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[640px] border-collapse text-left text-xs">
-                      <thead className="bg-canvas text-[10px] tracking-[0.07em] text-muted uppercase">
-                        <tr>
-                          <th className="px-4 py-2 font-bold" scope="col">
-                            Version
-                          </th>
-                          <th className="px-4 py-2 font-bold" scope="col">
-                            Status
-                          </th>
-                          <th className="px-4 py-2 font-bold" scope="col">
-                            Effective
-                          </th>
-                          <th className="px-4 py-2 font-bold" scope="col">
-                            Authorities
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-line">
-                        {detail.versions.map((version) => (
-                          <tr key={version.id}>
-                            <td className="px-4 py-2 text-ink">v{version.versionNo}</td>
-                            <td className="px-4 py-2">
-                              <span
-                                className={
-                                  'inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                                  statusClass(version.status)
-                                }
-                              >
-                                {version.status}
-                              </span>
-                            </td>
-                            <td className="px-4 py-2 text-muted">
-                              {dateLabel(version.effectiveFrom)} —{' '}
-                              {version.effectiveTo ? dateLabel(version.effectiveTo) : 'open'}
-                            </td>
-                            <td className="px-4 py-2 text-muted">
-                              {version.authorities.length === 0
-                                ? 'None'
-                                : version.authorities
-                                    .map(
-                                      (authority) =>
-                                        (authority.authorityClass === 'NATIONAL_RULE'
-                                          ? 'National'
-                                          : 'Agency') + ` v${authority.documentVersionNo}`,
+                      {detail.leaveType.draft && canManage ? (
+                        <div className="grid gap-4 rounded-control border border-border bg-canvas px-4 py-4">
+                          <div className="grid gap-1">
+                            <strong className="text-caption font-[650] text-ink">
+                              Authority Document Versions
+                            </strong>
+                            <span className="text-caption text-ink-muted">
+                              National-rule and Agency-configuration Document Versions must already
+                              be finalized in this Agency.
+                            </span>
+                          </div>
+                          <AuthorityList
+                            authorities={detail.leaveType.draft.authorities}
+                            busy={busy}
+                            canManage={canManage}
+                            onRemove={unlinkAuthority}
+                          />
+                          <form
+                            className="grid gap-3"
+                            onSubmit={(event) => void linkAuthority(event)}
+                          >
+                            <div className="grid gap-3 min-[621px]:grid-cols-2">
+                              <Field htmlFor="leave-authority-class" label="Authority class">
+                                <select
+                                  className={inputClass}
+                                  id="leave-authority-class"
+                                  onChange={(event) =>
+                                    setAuthorityClass(
+                                      targetValue(event) === 'AGENCY_CONFIGURATION'
+                                        ? 'AGENCY_CONFIGURATION'
+                                        : 'NATIONAL_RULE',
                                     )
-                                    .join(', ')}
-                            </td>
-                          </tr>
-                        ))}
-                        {detail.versions.length === 0 ? (
-                          <tr>
-                            <td className="px-4 py-3 text-muted" colSpan={4}>
-                              No versions yet.
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
+                                  }
+                                  value={authorityClass}
+                                >
+                                  <option value="NATIONAL_RULE">National rule</option>
+                                  <option value="AGENCY_CONFIGURATION">Agency configuration</option>
+                                </select>
+                              </Field>
+                              <Field htmlFor="leave-authority-document" label="Document ID">
+                                <input
+                                  className={inputClass}
+                                  id="leave-authority-document"
+                                  onChange={(event) => setDocumentId(targetValue(event))}
+                                  required
+                                  value={documentId}
+                                />
+                              </Field>
+                            </div>
+                            <Field htmlFor="leave-authority-citation" label="Citation">
+                              <input
+                                className={inputClass}
+                                id="leave-authority-citation"
+                                maxLength={300}
+                                onChange={(event) => setCitation(targetValue(event))}
+                                required
+                                value={citation}
+                              />
+                            </Field>
+                            <Field
+                              htmlFor="leave-authority-reason"
+                              label="Validation reason (optional)"
+                            >
+                              <input
+                                className={inputClass}
+                                id="leave-authority-reason"
+                                maxLength={500}
+                                onChange={(event) => setValidationReason(targetValue(event))}
+                                value={validationReason}
+                              />
+                            </Field>
+                            <DialogFooter className="border-t-0 px-0 pb-0">
+                              <Button disabled={busy} type="submit" variant="secondary">
+                                {busy ? 'Linking…' : 'Link authority'}
+                              </Button>
+                            </DialogFooter>
+                          </form>
+                          <form
+                            className="grid gap-3 border-t border-border pt-4"
+                            onSubmit={(event) => void activate(event)}
+                          >
+                            <p className="m-0 rounded-control bg-surface px-3 py-2 text-caption text-ink-muted">
+                              Activation requires every national rule to resolve. The version
+                              becomes immutable and any active version it replaces is superseded
+                              with an end date.
+                            </p>
+                            <Field htmlFor="leave-activation-reason" label="Activation reason">
+                              <textarea
+                                className={inputClass}
+                                id="leave-activation-reason"
+                                onChange={(event) => setActivationReason(targetValue(event))}
+                                required
+                                rows={2}
+                                value={activationReason}
+                              />
+                            </Field>
+                            <DialogFooter className="border-t-0 px-0 pb-0">
+                              <Button disabled={busy} type="submit" variant="primary">
+                                {busy ? 'Activating…' : 'Activate version'}
+                              </Button>
+                            </DialogFooter>
+                          </form>
+                        </div>
+                      ) : null}
+                    </div>
+                  </Panel>
 
-                <section className="grid gap-2" aria-labelledby="leave-history-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-history-heading">
-                    Audit history
-                  </h3>
-                  <ol className="m-0 grid list-none gap-2 p-0 text-xs">
-                    {detail.history.map((entry) => (
-                      <li
-                        className="grid gap-1 rounded-[3px] border border-line bg-paper px-3 py-2"
-                        key={entry.id}
-                      >
-                        <span className="font-[650] text-ink">{entry.action}</span>
-                        <span className="text-muted">
-                          {new Date(entry.occurredAt).toLocaleString('en-PH', {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                            timeZone: 'Asia/Manila',
-                          })}
-                          {entry.previousStatus || entry.newStatus
-                            ? ` · ${entry.previousStatus ?? '—'} → ${entry.newStatus ?? '—'}`
-                            : ''}
-                        </span>
-                        {entry.reason ? <span className="text-ink">{entry.reason}</span> : null}
-                      </li>
-                    ))}
+                  <Panel title="Version history" flush>
+                    {detail.versions.length === 0 ? (
+                      <StateSurface compact>No versions yet.</StateSurface>
+                    ) : (
+                      <Table aria-label="Version history" className="min-w-[640px]">
+                        <thead>
+                          <tr>
+                            <Th>Version</Th>
+                            <Th>Status</Th>
+                            <Th>Effective</Th>
+                            <Th>Authorities</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detail.versions.map((version) => (
+                            <Tr key={version.id}>
+                              <RowHeader>v{version.versionNo}</RowHeader>
+                              <Td>
+                                <StatusTag tone={statusTone(version.status)}>
+                                  {version.status}
+                                </StatusTag>
+                              </Td>
+                              <Td className="text-ink-muted">
+                                {dateLabel(version.effectiveFrom)} —{' '}
+                                {version.effectiveTo ? dateLabel(version.effectiveTo) : 'open'}
+                              </Td>
+                              <Td className="text-ink-muted">
+                                {version.authorities.length === 0
+                                  ? 'None'
+                                  : version.authorities
+                                      .map(
+                                        (authority) =>
+                                          (authority.authorityClass === 'NATIONAL_RULE'
+                                            ? 'National'
+                                            : 'Agency') + ` v${authority.documentVersionNo}`,
+                                      )
+                                      .join(', ')}
+                              </Td>
+                            </Tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    )}
+                  </Panel>
+
+                  <Panel title="Audit history">
                     {detail.history.length === 0 ? (
-                      <li className="text-muted">No audit history yet.</li>
-                    ) : null}
-                  </ol>
-                </section>
-              </>
-            )}
-          </DialogBody>
-        ) : null}
-      </DialogContent>
+                      <span className="text-small text-ink-muted">No audit history yet.</span>
+                    ) : (
+                      <ol className="m-0 grid list-none gap-2 p-0 text-caption">
+                        {detail.history.map((entry) => (
+                          <li
+                            className="grid gap-1 rounded-control border border-border bg-surface px-3 py-2"
+                            key={entry.id}
+                          >
+                            <span className="font-[650] text-ink">{entry.action}</span>
+                            <span className="text-ink-muted">
+                              {new Date(entry.occurredAt).toLocaleString('en-PH', {
+                                dateStyle: 'medium',
+                                timeStyle: 'short',
+                                timeZone: 'Asia/Manila',
+                              })}
+                              {entry.previousStatus || entry.newStatus
+                                ? ` · ${entry.previousStatus ?? '—'} → ${entry.newStatus ?? '—'}`
+                                : ''}
+                            </span>
+                            {entry.reason ? <span className="text-ink">{entry.reason}</span> : null}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </Panel>
+                </>
+              )}
+            </DialogBody>
+          ) : null}
+        </DialogContent>
+      </div>
     </Dialog>
   );
 }
