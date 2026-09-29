@@ -1,8 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 import type { AttendancePeriodListResponse, AttendancePeriodOption } from './dtrs-workspace';
 
 interface AttendancePayrollPublication {
@@ -91,6 +96,13 @@ interface AttendancePeriodsWorkspaceProps {
   initialPeriods: AttendancePeriodListResponse;
 }
 
+const VERSION_TONE: Record<string, StatusTone> = {
+  FOR_REVIEW: 'info',
+  RETURNED: 'warning',
+  APPROVED: 'success',
+  LOCKED: 'neutral',
+};
+
 function eventValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
 }
@@ -108,21 +120,12 @@ function errorMessage(value: unknown, fallback: string): string {
   return base;
 }
 
-function factLabel(fact: AttendancePayrollFact): string {
-  const holiday = fact.holidayClassification ? ` · ${fact.holidayClassification}` : '';
-  const difference =
-    fact.differenceDirection && fact.differenceMinutes !== null
-      ? ` · prior ${fact.priorMinutes ?? 0} · ${fact.differenceDirection} ${fact.differenceMinutes}`
-      : '';
-  return `${fact.workDate} · ${fact.factType}${holiday} · ${fact.correctedMinutes} minutes${difference}`;
-}
-
 export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProps) {
   const [periods] = useState(props.initialPeriods.periods);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>(
     props.initialPeriods.periods[0]?.id ?? '',
   );
-  const [versions, setVersions] = useState<AttendancePeriodVersion[]>([]);
+  const [versions, setVersions] = useState<AttendancePeriodVersion[] | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string>('');
   const [detail, setDetail] = useState<AttendancePeriodVersionDetailResponse | null>(null);
   const [publication, setPublication] = useState<AttendancePayrollPublicationDetailResponse | null>(
@@ -159,11 +162,13 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
 
   useEffect(() => {
     let cancelled = false;
+    setVersions(null);
     void (async () => {
       try {
         await loadVersions(selectedPeriodId);
       } catch (failure: unknown) {
         if (!cancelled) {
+          setVersions([]);
           setError(
             failure instanceof Error ? failure.message : 'The versions could not be loaded.',
           );
@@ -282,71 +287,57 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
     );
   }
 
-  const hasPendingVersion = versions.some(
+  const hasPendingVersion = (versions ?? []).some(
     (version) => version.status === 'FOR_REVIEW' || version.status === 'APPROVED',
   );
   const selectedPeriod = periods.find((period) => period.id === selectedPeriodId);
 
   return (
-    <section className="grid gap-5 text-sm text-ink">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="m-0 text-[10px] font-bold tracking-[.12em] text-muted uppercase">
-            Attendance
-          </p>
-          <h1 className="m-0 text-xl font-[680] text-midnight">Attendance Periods</h1>
-          <p className="m-0 mt-1 text-xs text-muted">
-            An Attendance Period stays OPEN or FINALIZED; every review snapshot is an immutable
-            version, and lock publishes stable payroll inputs.
-          </p>
-        </div>
-        {periods.length > 0 ? (
-          <label className="grid gap-1 text-xs font-medium text-muted">
-            Attendance Period
-            <select
-              aria-label="Attendance Period"
-              className={inputClass}
-              value={selectedPeriodId}
-              onChange={(event) => {
-                setSelectedPeriodId(eventValue(event));
-                setSelectedVersionId('');
-              }}
-            >
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.code} · {period.dateFrom} to {period.dateTo} · {period.status}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </header>
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Time & attendance' }]}
+        title="Attendance Periods"
+        actions={
+          periods.length > 0 ? (
+            <Field label="Attendance Period">
+              <select
+                aria-label="Attendance Period"
+                className={inputClass + ' min-w-64'}
+                value={selectedPeriodId}
+                onChange={(event) => {
+                  setSelectedPeriodId(eventValue(event));
+                  setSelectedVersionId('');
+                }}
+              >
+                {periods.map((period) => (
+                  <option key={period.id} value={period.id}>
+                    {period.code} · {period.dateFrom} to {period.dateTo} · {period.status}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null
+        }
+      />
 
-      {error ? <FormError message={error} /> : null}
       {success ? (
         <p
-          className="m-0 rounded-[3px] border border-line bg-[#e8f3ed] px-4 py-3 text-xs text-[#316647]"
+          className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
           role="status"
         >
           {success}
         </p>
       ) : null}
+      <FormError message={error} />
 
-      <section
-        aria-label="Attendance Period Versions"
-        className="overflow-hidden rounded-[5px] border border-line bg-paper"
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-          <div>
-            <h2 className="m-0 text-sm font-[650] text-midnight">Attendance Period Versions</h2>
-            <p className="m-0 mt-1 text-xs text-muted">
-              FOR_REVIEW and APPROVED snapshots stay immutable; a lock finalizes the period and
-              never reopens it.
-            </p>
-          </div>
-          {props.canSubmit ? (
+      <Panel
+        title="Attendance Period Versions"
+        flush
+        actions={
+          props.canSubmit ? (
             <Button
               type="button"
+              variant="primary"
               disabled={
                 busy || !selectedPeriodId || selectedPeriod?.status !== 'OPEN' || hasPendingVersion
               }
@@ -354,33 +345,81 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
             >
               Submit for review
             </Button>
-          ) : null}
-        </div>
-        <div className="grid gap-3 px-5 py-4">
-          {versions.length === 0 ? (
-            <p className="m-0 text-xs text-muted">
-              No Attendance Period Version exists for this period.
-            </p>
-          ) : (
-            <ul className="m-0 grid list-none gap-3 p-0">
+          ) : null
+        }
+      >
+        <p className="m-0 px-4 py-3 text-small text-ink-muted">
+          An Attendance Period stays OPEN or FINALIZED; every review snapshot is an immutable
+          version, and lock publishes stable payroll inputs. FOR_REVIEW and APPROVED snapshots stay
+          immutable; a lock finalizes the period and never reopens it.
+        </p>
+        {periods.length === 0 ? (
+          <StateSurface compact>
+            <p className="m-0">No Attendance Period exists yet.</p>
+          </StateSurface>
+        ) : versions === null ? (
+          <StateSurface busy compact>
+            <p className="m-0">Loading the versions…</p>
+          </StateSurface>
+        ) : versions.length === 0 ? (
+          <StateSurface compact>
+            <p className="m-0">No Attendance Period Version exists for this period.</p>
+          </StateSurface>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Version</Th>
+                <Th>Status</Th>
+                <Th>Coverage</Th>
+                <Th>Publication</Th>
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </tr>
+            </thead>
+            <tbody>
               {versions.map((version) => (
-                <li
-                  key={version.id}
-                  className="rounded-[3px] border border-line px-4 py-3"
-                  data-status={version.status}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+                <Tr key={version.id} selected={version.id === selectedVersionId}>
+                  <RowHeader>
                     <button
                       type="button"
-                      className="m-0 bg-transparent p-0 text-left text-sm font-[650] text-midnight underline-offset-4 hover:underline"
+                      className="m-0 cursor-pointer bg-transparent p-0 text-left font-[600] text-primary underline-offset-4 hover:underline"
+                      aria-pressed={version.id === selectedVersionId}
                       onClick={() =>
                         setSelectedVersionId(version.id === selectedVersionId ? '' : version.id)
                       }
                     >
-                      Version {version.versionNo} · {version.status}
-                      {version.predecessorVersionId ? ' · successor' : ''}
+                      Version {version.versionNo}
                     </button>
-                    <div className="flex flex-wrap items-center gap-2">
+                    {version.predecessorVersionId ? (
+                      <span className="block text-caption font-normal text-ink-muted">
+                        successor
+                      </span>
+                    ) : null}
+                  </RowHeader>
+                  <Td>
+                    <StatusTag tone={VERSION_TONE[version.status] ?? 'neutral'}>
+                      {version.status}
+                    </StatusTag>
+                  </Td>
+                  <Td>
+                    {version.coveredEmployeeCount} covered Employee(s) ·{' '}
+                    {version.coveredWorkDateCount} Work Date(s) · {version.dtrCount} Finalized Daily
+                    Time Record(s)
+                  </Td>
+                  <Td>
+                    {version.publication ? (
+                      <>
+                        {version.publication.publicationType} · {version.publication.factCount}{' '}
+                        fact(s) · {version.publication.factMinutes} minute(s)
+                      </>
+                    ) : (
+                      <span className="text-ink-muted">Not published</span>
+                    )}
+                  </Td>
+                  <Td>
+                    <div className="flex flex-wrap justify-end gap-2">
                       {props.canReturn && version.status === 'FOR_REVIEW' ? (
                         <Button
                           type="button"
@@ -394,6 +433,7 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
                       {props.canApprove && version.status === 'FOR_REVIEW' ? (
                         <Button
                           type="button"
+                          variant="primary"
                           disabled={busy}
                           onClick={() => void approveVersion(version.id)}
                         >
@@ -403,6 +443,7 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
                       {props.canLock && version.status === 'APPROVED' ? (
                         <Button
                           type="button"
+                          variant="primary"
                           disabled={busy}
                           onClick={() => void lockVersion(version.id)}
                         >
@@ -410,24 +451,14 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
                         </Button>
                       ) : null}
                     </div>
-                  </div>
-                  <p className="m-0 mt-1 text-xs text-muted">
-                    {version.coveredEmployeeCount} covered Employee(s) ·{' '}
-                    {version.coveredWorkDateCount} Work Date(s) · {version.dtrCount} Finalized Daily
-                    Time Record(s)
-                  </p>
-                  {version.publication ? (
-                    <p className="m-0 mt-1 text-xs text-muted">
-                      {version.publication.publicationType} publication ·{' '}
-                      {version.publication.factCount} fact(s) · {version.publication.factMinutes}{' '}
-                      minute(s)
-                    </p>
-                  ) : null}
-                </li>
+                  </Td>
+                </Tr>
               ))}
-            </ul>
-          )}
-          {props.canReturn || props.canApprove ? (
+            </tbody>
+          </Table>
+        )}
+        {props.canReturn || props.canApprove ? (
+          <div className="border-t border-border px-4 py-3">
             <Field label="Decision comments">
               <input
                 className={inputClass}
@@ -436,35 +467,31 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
                 placeholder="Return or approval basis"
               />
             </Field>
-          ) : null}
-        </div>
-      </section>
+          </div>
+        ) : null}
+      </Panel>
 
       {detail?.reconciliation ? (
-        <section
-          aria-label="Attendance Period Reconciliation"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <div className="border-b border-line px-5 py-4">
-            <h2 className="m-0 text-sm font-[650] text-midnight">
-              Attendance Period Reconciliation
-            </h2>
-            <p className="m-0 mt-1 text-xs text-muted">
-              {detail.reconciliation.ok ? 'Reconciled' : 'Not reconciled'} ·{' '}
+        <Panel title="Attendance Period Reconciliation">
+          <p className="m-0 flex flex-wrap items-center gap-2 text-small">
+            <StatusTag tone={detail.reconciliation.ok ? 'success' : 'danger'}>
+              {detail.reconciliation.ok ? 'Reconciled' : 'Not reconciled'}
+            </StatusTag>
+            <span>
               {detail.reconciliation.population.employeeCount} Employee(s) ·{' '}
               {detail.reconciliation.population.workDateCount} Work Date(s) ·{' '}
               {detail.reconciliation.population.membershipCount} membership row(s)
-            </p>
-            <p className="m-0 mt-1 text-xs text-muted">
-              {detail.reconciliation.payroll.factCount} payroll fact(s) ·{' '}
-              {detail.reconciliation.payroll.factMinutes} published minute(s) ·{' '}
-              {detail.reconciliation.payroll.expectedMinutes} expected minute(s) ·{' '}
-              {detail.reconciliation.payroll.excludedOutsideScheduleMinutes} outside-schedule
-              minute(s) excluded
-            </p>
-          </div>
+            </span>
+          </p>
+          <p className="m-0 mt-2 text-small text-ink-muted">
+            {detail.reconciliation.payroll.factCount} payroll fact(s) ·{' '}
+            {detail.reconciliation.payroll.factMinutes} published minute(s) ·{' '}
+            {detail.reconciliation.payroll.expectedMinutes} expected minute(s) ·{' '}
+            {detail.reconciliation.payroll.excludedOutsideScheduleMinutes} outside-schedule
+            minute(s) excluded
+          </p>
           {detail.reconciliation.failures.length > 0 ? (
-            <ul className="m-0 grid list-disc gap-1 px-9 py-4 text-xs text-[#8a2d2d]">
+            <ul className="m-0 mt-3 grid list-disc gap-1 pl-5 text-small text-danger">
               {detail.reconciliation.failures.map((failure) => (
                 <li key={failure.code}>
                   {failure.code}: {failure.message}
@@ -472,33 +499,50 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
               ))}
             </ul>
           ) : null}
-        </section>
+        </Panel>
       ) : null}
 
       {publication ? (
-        <section
-          aria-label="Attendance Payroll Publication"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <div className="border-b border-line px-5 py-4">
-            <h2 className="m-0 text-sm font-[650] text-midnight">Attendance Payroll Publication</h2>
-            <p className="m-0 mt-1 text-xs text-muted">
-              {publication.publication.publicationType} · {publication.publication.factCount}{' '}
-              fact(s) · {publication.publication.factMinutes} minute(s) · published{' '}
-              {publication.publication.publishedAt}
-            </p>
-          </div>
-          <ul className="m-0 grid list-none gap-1 px-5 py-4 text-xs">
-            {publication.facts.map((fact) => (
-              <li key={fact.id}>{factLabel(fact)}</li>
-            ))}
-          </ul>
-          <p className="m-0 border-t border-line px-5 py-3 text-xs text-muted">
+        <Panel title="Attendance Payroll Publication" flush>
+          <p className="m-0 px-4 py-3 text-small text-ink-muted">
+            {publication.publication.publicationType} · {publication.publication.factCount} fact(s)
+            · {publication.publication.factMinutes} minute(s) · published{' '}
+            {publication.publication.publishedAt}
+          </p>
+          <Table>
+            <thead>
+              <tr>
+                <Th>Work date</Th>
+                <Th>Fact type</Th>
+                <Th>Holiday</Th>
+                <Th kind="numeric">Minutes</Th>
+                <Th kind="numeric">Prior</Th>
+                <Th>Difference</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {publication.facts.map((fact) => (
+                <Tr key={fact.id}>
+                  <RowHeader>{fact.workDate}</RowHeader>
+                  <Td>{fact.factType}</Td>
+                  <Td>{fact.holidayClassification ?? '—'}</Td>
+                  <Td kind="numeric">{fact.correctedMinutes}</Td>
+                  <Td kind="numeric">{fact.priorMinutes ?? '—'}</Td>
+                  <Td>
+                    {fact.differenceDirection && fact.differenceMinutes !== null
+                      ? `${fact.differenceDirection} ${fact.differenceMinutes}`
+                      : '—'}
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+          <p className="m-0 border-t border-border px-4 py-3 text-small text-ink-muted">
             Outside-schedule and statutory night window minutes stay outside this publication and
             remain a separate candidate-hours handoff.
           </p>
-        </section>
+        </Panel>
       ) : null}
-    </section>
+    </div>
   );
 }

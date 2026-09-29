@@ -221,7 +221,7 @@ test('reviews, returns, approves, and locks an Attendance Period Version from th
     await expect(page.getByRole('status').first()).toContainText(
       'Attendance Period Version submitted for review.',
     );
-    await expect(versions.getByText('Version 1 · FOR_REVIEW')).toBeVisible();
+    await expect(versions.getByRole('row', { name: /Version 1\b.*FOR_REVIEW/ })).toBeVisible();
 
     await reviewerPage.goto('/attendance-periods');
     await expect(
@@ -238,12 +238,14 @@ test('reviews, returns, approves, and locks an Attendance Period Version from th
     await expect(reviewerPage.getByRole('status').first()).toContainText(
       'Attendance Period Version returned with a reason.',
     );
-    await expect(reviewerVersions.getByText('Version 1 · RETURNED')).toBeVisible();
+    await expect(
+      reviewerVersions.getByRole('row', { name: /Version 1\b.*RETURNED/ }),
+    ).toBeVisible();
 
     await page.goto('/attendance-periods');
     await page.getByLabel('Attendance Period', { exact: true }).selectOption(calculated.period.id);
     await versions.getByRole('button', { name: 'Submit for review' }).click();
-    await expect(versions.getByText('Version 2 · FOR_REVIEW')).toBeVisible();
+    await expect(versions.getByRole('row', { name: /Version 2\b.*FOR_REVIEW/ })).toBeVisible();
 
     await reviewerPage.goto('/attendance-periods');
     await reviewerPage
@@ -253,11 +255,13 @@ test('reviews, returns, approves, and locks an Attendance Period Version from th
     await expect(reviewerPage.getByRole('status').first()).toContainText(
       'Attendance Period Version approved.',
     );
-    await expect(reviewerVersions.getByText('Version 2 · APPROVED')).toBeVisible();
+    await expect(
+      reviewerVersions.getByRole('row', { name: /Version 2\b.*APPROVED/ }),
+    ).toBeVisible();
 
     await page.goto('/attendance-periods');
     await page.getByLabel('Attendance Period', { exact: true }).selectOption(calculated.period.id);
-    await versions.getByRole('button', { name: 'Version 2 · APPROVED' }).click();
+    await versions.getByRole('button', { name: 'Version 2', exact: true }).click();
     await expect(
       page.getByRole('region', { name: 'Attendance Period Reconciliation' }),
     ).toContainText('Reconciled');
@@ -265,7 +269,7 @@ test('reviews, returns, approves, and locks an Attendance Period Version from th
     await expect(page.getByRole('status').first()).toContainText(
       'Attendance Period Version locked with its publication.',
     );
-    await expect(versions.getByText('Version 2 · LOCKED')).toBeVisible();
+    await expect(versions.getByRole('row', { name: /Version 2\b.*LOCKED/ })).toBeVisible();
 
     const publication = page.getByRole('region', { name: 'Attendance Payroll Publication' });
     await expect(publication).toBeVisible();
