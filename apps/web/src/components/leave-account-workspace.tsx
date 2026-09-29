@@ -1,8 +1,11 @@
 'use client';
 
-import { Field, inputClass, FormError } from './ui/field';
-import { RecordReturn, useRecordNavigation } from './record-navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { cn } from '../lib/class-names';
+import { manilaToday } from '../lib/manila-date';
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
+import { Button } from './ui/button';
 import {
   Dialog,
   DialogBody,
@@ -14,8 +17,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import { Button } from './ui/button';
-import { manilaToday } from '../lib/manila-date';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 type LeaveAccountStatus = 'ACTIVE' | 'FROZEN' | 'CLOSED';
 
@@ -128,15 +134,13 @@ type DialogKind = 'detail' | 'open' | 'adjust' | 'reverse' | 'freeze' | 'unfreez
 
 const CREDIT_BEARING_BASES = ['ACCRUED_ACCOUNT', 'PERIODIC_ALLOWANCE'];
 
-const TONE_RESOLVED = 'bg-[#e8f3ed] text-[#316647]';
-const TONE_ATTENTION = 'bg-[#fff3d6] text-[#79531c]';
-const TONE_NEUTRAL = 'bg-[#f0f2f5] text-muted';
+const STATUS_TONE: Record<LeaveAccountStatus, StatusTone> = {
+  ACTIVE: 'success',
+  FROZEN: 'warning',
+  CLOSED: 'neutral',
+};
 
-function statusClass(status: LeaveAccountStatus): string {
-  if (status === 'ACTIVE') return TONE_RESOLVED;
-  if (status === 'FROZEN') return TONE_ATTENTION;
-  return TONE_NEUTRAL;
-}
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
 
 function errorMessage(value: unknown, fallback: string): string {
   if (typeof value !== 'object' || value === null) return fallback;
@@ -184,6 +188,28 @@ function targetValue(event: { currentTarget: EventTarget }): string {
 function sourceLabel(sourceType: string, sourcePostingKey: string): string {
   const type = sourceType.replace(/([a-z])([A-Z])/g, '$1 $2');
   return `${type} · ${sourcePostingKey}`;
+}
+
+function SuccessMessage({ message }: { message: string }) {
+  return message ? (
+    <p
+      className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+      role="status"
+    >
+      {message}
+    </p>
+  ) : null;
+}
+
+function Fact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="text-caption text-ink-muted">{label}</dt>
+      <dd className={cn('m-0 text-body font-[600] text-ink', mono && 'font-mono font-normal')}>
+        {value}
+      </dd>
+    </div>
+  );
 }
 
 export function LeaveAccountWorkspace({
@@ -447,173 +473,138 @@ export function LeaveAccountWorkspace({
     detail?.ledgerEntries.map(({ reversesEntryId }) => reversesEntryId).filter(Boolean) ?? [],
   );
 
+  const unit = detail?.account.unitCode.replaceAll('_', ' ').toLowerCase() ?? '';
+  const asOfInput = (
+    <label className="flex items-center gap-2 text-caption font-[650] text-ink">
+      As of
+      <input
+        className={cn(inputClass, 'w-auto')}
+        onChange={(event) =>
+          navigation.navigate({
+            asOf: targetValue(event) === manilaToday() ? null : targetValue(event),
+          })
+        }
+        type="date"
+        value={asOf}
+      />
+    </label>
+  );
+
   return (
     <Dialog
       presentation="form"
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div hidden={dialog !== null} className="min-w-0 space-y-5">
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[760px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Leave administration
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Leave Accounts
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              One Leave Account per Employee, credit-bearing Leave Type, and continuous entitlement
-              period. Posted Leave Ledger Entries never change; corrections are adjustments or
-              reversals with authority and evidence.
-            </p>
-          </div>
-          {canAdjust ? (
-            <DialogTrigger asChild>
-              <Button
-                onClick={() => {
-                  resetAction();
-                  void loadOptions();
-                  setEmployeeId(employeeOptions[0]?.id ?? '');
-                  setLeaveTypeId(leaveTypeOptions[0]?.id ?? '');
-                  setOpenEffectiveDate(manilaToday());
-                  setOpeningQuantity('0');
-                  setOpenEvidenceDocumentId('');
-                  setOpenReason('');
-                  setDialog('open');
-                }}
-                size="default"
-                type="button"
-                variant="primary"
-              >
-                Open Leave Account
-              </Button>
-            </DialogTrigger>
-          ) : null}
-        </header>
+      <div className="grid min-w-0 gap-5">
+        <PageHeader
+          breadcrumbs={[{ label: 'Leave' }]}
+          title="Leave Accounts"
+          actions={
+            canAdjust ? (
+              <DialogTrigger asChild>
+                <Button
+                  // Hidden rather than unmounted, so focus can return here when a record closes.
+                  hidden={dialog !== null}
+                  onClick={() => {
+                    resetAction();
+                    void loadOptions();
+                    setEmployeeId(employeeOptions[0]?.id ?? '');
+                    setLeaveTypeId(leaveTypeOptions[0]?.id ?? '');
+                    setOpenEffectiveDate(manilaToday());
+                    setOpeningQuantity('0');
+                    setOpenEvidenceDocumentId('');
+                    setOpenReason('');
+                    setDialog('open');
+                  }}
+                  type="button"
+                  variant="primary"
+                >
+                  Open Leave Account
+                </Button>
+              </DialogTrigger>
+            ) : null
+          }
+        />
 
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
+        <div hidden={dialog !== null} className="grid min-w-0 gap-5">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
+            One Leave Account per Employee, credit-bearing Leave Type, and continuous entitlement
+            period. Posted Leave Ledger Entries never change; corrections are adjustments or
+            reversals with authority and evidence.
           </p>
-        ) : null}
 
-        {error ? <FormError message={error} /> : null}
+          <SuccessMessage message={success} />
+          <FormError message={error} />
 
-        <section
-          aria-labelledby="leave-accounts-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="leave-accounts-heading">
-                Leave Account register
-              </h2>
-              <span className="text-xs text-muted">
-                {accounts.length === 1 ? '1 Leave Account' : accounts.length + ' Leave Accounts'}
-              </span>
-            </div>
-            <label className="flex items-center gap-2 text-xs text-muted">
-              As of
-              <input
-                className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                onChange={(event) =>
-                  navigation.navigate({
-                    asOf: targetValue(event) === manilaToday() ? null : targetValue(event),
-                  })
-                }
-                type="date"
-                value={asOf}
-              />
-            </label>
-          </header>
-          {accounts.length === 0 ? (
-            <div className="grid min-h-[200px] place-content-center gap-2 px-6 py-12">
-              <strong className="text-[15px] font-[650] text-midnight">
-                No Leave Accounts yet.
-              </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                Open an evidence-backed Leave Account against an active credit-bearing Leave Policy
-                Version before credits can be posted.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+          <Panel
+            title="Leave Account register"
+            flush
+            actions={
+              <>
+                <span className="text-caption text-ink-muted">
+                  {accounts.length === 1 ? '1 Leave Account' : accounts.length + ' Leave Accounts'}
+                </span>
+                {asOfInput}
+              </>
+            }
+          >
+            {accounts.length === 0 ? (
+              <StateSurface compact label="Leave Account register">
+                <strong className="font-[650] text-ink">No Leave Accounts yet.</strong>
+                <p className="m-0 max-w-[560px]">
+                  Open an evidence-backed Leave Account against an active credit-bearing Leave
+                  Policy Version before credits can be posted.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table aria-label="Leave Accounts" className="min-w-[860px]">
+                <thead>
                   <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Employee
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Leave type
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Posted
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Committed
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Available
-                    </th>
+                    <Th>Employee</Th>
+                    <Th>Leave type</Th>
+                    <Th>Status</Th>
+                    <Th kind="numeric">Posted</Th>
+                    <Th kind="numeric">Committed</Th>
+                    <Th kind="numeric">Available</Th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody>
                   {accounts.map((account) => (
-                    <tr key={account.id}>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <button
-                            className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
-                            type="button"
-                            onClick={() => navigation.navigate({ record: account.id })}
-                          >
-                            {account.employeeName}
-                          </button>
-                          <span className="text-xs text-muted">{account.employeeNumber}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <strong className="font-[650] text-midnight">
-                            {account.leaveTypeName}
-                          </strong>
-                          <span className="text-xs text-muted">{account.leaveTypeCode}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            statusClass(account.status)
-                          }
+                    <Tr key={account.id}>
+                      <RowHeader>
+                        <button
+                          className="cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary underline-offset-2 hover:underline"
+                          type="button"
+                          onClick={() => navigation.navigate({ record: account.id })}
                         >
-                          {account.status}
+                          {account.employeeName}
+                        </button>
+                        <span className="block font-mono text-caption font-normal text-ink-muted">
+                          {account.employeeNumber}
                         </span>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        {quantityLabel(account.balances.postedQuantity)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        {quantityLabel(account.balances.committedQuantity)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs font-[650] text-ink">
+                      </RowHeader>
+                      <Td>
+                        {account.leaveTypeName}
+                        <span className="block font-mono text-caption text-ink-muted">
+                          {account.leaveTypeCode}
+                        </span>
+                      </Td>
+                      <Td>
+                        <StatusTag tone={STATUS_TONE[account.status]}>{account.status}</StatusTag>
+                      </Td>
+                      <Td kind="numeric">{quantityLabel(account.balances.postedQuantity)}</Td>
+                      <Td kind="numeric">{quantityLabel(account.balances.committedQuantity)}</Td>
+                      <Td kind="numeric" className="font-[600]">
                         {quantityLabel(account.balances.availableQuantity)}
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+              </Table>
+            )}
+          </Panel>
+        </div>
       </div>
 
       {dialog === 'detail' ? (
@@ -624,45 +615,43 @@ export function LeaveAccountWorkspace({
 
       <DialogContent aria-describedby="leave-account-dialog-description">
         <DialogHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="grid gap-1">
-              <DialogTitle>
-                {dialog === 'open'
-                  ? 'Open Leave Account'
-                  : dialog === 'adjust'
-                    ? 'Post credit adjustment'
-                    : dialog === 'reverse'
-                      ? 'Reverse Leave Ledger Entry'
-                      : dialog === 'freeze'
-                        ? 'Freeze Leave Account'
-                        : dialog === 'unfreeze'
-                          ? 'Unfreeze Leave Account'
-                          : dialog === 'close'
-                            ? 'Close Leave Account'
-                            : (detail?.account.employeeName ?? 'Leave Account')}
-              </DialogTitle>
-              <DialogDescription id="leave-account-dialog-description">
-                {dialog === 'open'
-                  ? 'Establish one Leave Account for an Employee and credit-bearing Leave Type, backed by an exact Document Version.'
-                  : dialog === 'adjust'
-                    ? 'Post a signed adjustment with authority, evidence, and reason. Posted entries never change.'
-                    : dialog === 'reverse'
-                      ? 'Post the exact opposite quantity on the same account, keeping the original entry.'
-                      : dialog === 'freeze'
-                        ? 'Freeze disputed credits. Postings stop until the account is unfrozen.'
-                        : dialog === 'unfreeze'
-                          ? 'Resume postings on a frozen account.'
-                          : dialog === 'close'
-                            ? 'Close the account for separation. A closed account never reopens; reemployment opens a new account.'
-                            : 'Balances, source postings, commitments, and audit history.'}
-              </DialogDescription>
-            </div>
-            <DialogClose asChild>
-              <Button size="default" type="button" variant="secondary">
-                Close
-              </Button>
-            </DialogClose>
+          <div className="grid min-w-0 gap-1.5">
+            <DialogTitle>
+              {dialog === 'open'
+                ? 'Open Leave Account'
+                : dialog === 'adjust'
+                  ? 'Post credit adjustment'
+                  : dialog === 'reverse'
+                    ? 'Reverse Leave Ledger Entry'
+                    : dialog === 'freeze'
+                      ? 'Freeze Leave Account'
+                      : dialog === 'unfreeze'
+                        ? 'Unfreeze Leave Account'
+                        : dialog === 'close'
+                          ? 'Close Leave Account'
+                          : (detail?.account.employeeName ?? 'Leave Account')}
+            </DialogTitle>
+            <DialogDescription id="leave-account-dialog-description">
+              {dialog === 'open'
+                ? 'Establish one Leave Account for an Employee and credit-bearing Leave Type, backed by an exact Document Version.'
+                : dialog === 'adjust'
+                  ? 'Post a signed adjustment with authority, evidence, and reason. Posted entries never change.'
+                  : dialog === 'reverse'
+                    ? 'Post the exact opposite quantity on the same account, keeping the original entry.'
+                    : dialog === 'freeze'
+                      ? 'Freeze disputed credits. Postings stop until the account is unfrozen.'
+                      : dialog === 'unfreeze'
+                        ? 'Resume postings on a frozen account.'
+                        : dialog === 'close'
+                          ? 'Close the account for separation. A closed account never reopens; reemployment opens a new account.'
+                          : 'Balances, source postings, commitments, and audit history.'}
+            </DialogDescription>
           </div>
+          <DialogClose asChild>
+            <Button type="button" variant="secondary">
+              Close
+            </Button>
+          </DialogClose>
         </DialogHeader>
 
         {error ? (
@@ -754,11 +743,11 @@ export function LeaveAccountWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Opening…' : 'Open Leave Account'}
               </Button>
             </DialogFooter>
@@ -826,11 +815,11 @@ export function LeaveAccountWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Posting…' : 'Post adjustment'}
               </Button>
             </DialogFooter>
@@ -841,7 +830,7 @@ export function LeaveAccountWorkspace({
           <form onSubmit={(event) => void reverseLedgerEntry(event)}>
             <DialogBody className="grid gap-5">
               {reverseEntry ? (
-                <p className="m-0 text-xs text-muted">
+                <p className="m-0 text-small text-ink-muted">
                   Original entry · {quantityLabel(reverseEntry.quantity)} effective{' '}
                   {dateLabel(reverseEntry.effectiveDate)} ·{' '}
                   {sourceLabel(reverseEntry.sourceType, reverseEntry.sourcePostingKey)}
@@ -882,11 +871,11 @@ export function LeaveAccountWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Reversing…' : 'Reverse entry'}
               </Button>
             </DialogFooter>
@@ -925,11 +914,11 @@ export function LeaveAccountWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy
                   ? 'Recording…'
                   : dialog === 'freeze'
@@ -944,33 +933,35 @@ export function LeaveAccountWorkspace({
 
         {dialog === 'detail' ? (
           <DialogBody className="grid gap-6">
-            {detailLoading || !detail ? (
-              <p className="m-0 text-sm text-muted" role="status">
-                Loading the Leave Account record…
-              </p>
+            {detailLoading ? (
+              <StateSurface compact busy label="Leave Account record">
+                <p className="m-0" role="status">
+                  Loading the Leave Account record…
+                </p>
+              </StateSurface>
+            ) : !detail ? (
+              error ? (
+                <StateSurface compact label="Leave Account record">
+                  <p className="m-0">The Leave Account record could not be loaded.</p>
+                </StateSurface>
+              ) : null
             ) : (
               <>
-                {success ? (
-                  <p
-                    className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-                    role="status"
-                  >
-                    {success}
-                  </p>
-                ) : null}
+                <SuccessMessage message={success} />
                 <section className="grid gap-3" aria-labelledby="leave-account-snapshot-heading">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-account-snapshot-heading"
-                    >
-                      {detail.account.employeeName} · {detail.account.leaveTypeName}
-                    </h3>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h3 className={sectionTitleClass} id="leave-account-snapshot-heading">
+                        {detail.account.leaveTypeName}
+                      </h3>
+                      <StatusTag tone={STATUS_TONE[detail.account.status]}>
+                        {detail.account.status}
+                      </StatusTag>
+                    </div>
                     {canAdjust ? (
                       <div className="flex flex-wrap gap-2">
                         {detail.account.status === 'ACTIVE' ? (
                           <Button
-                            className="min-h-9"
                             onClick={() => {
                               resetAction();
                               setAdjustQuantity('');
@@ -980,7 +971,6 @@ export function LeaveAccountWorkspace({
                               setAdjustReason('');
                               setDialog('adjust');
                             }}
-                            size="default"
                             type="button"
                             variant="secondary"
                           >
@@ -989,13 +979,11 @@ export function LeaveAccountWorkspace({
                         ) : null}
                         {detail.account.status === 'ACTIVE' ? (
                           <Button
-                            className="min-h-9"
                             onClick={() => {
                               resetAction();
                               setActionReason('');
                               setDialog('freeze');
                             }}
-                            size="default"
                             type="button"
                             variant="secondary"
                           >
@@ -1004,13 +992,11 @@ export function LeaveAccountWorkspace({
                         ) : null}
                         {detail.account.status === 'FROZEN' ? (
                           <Button
-                            className="min-h-9"
                             onClick={() => {
                               resetAction();
                               setActionReason('');
                               setDialog('unfreeze');
                             }}
-                            size="default"
                             type="button"
                             variant="secondary"
                           >
@@ -1019,14 +1005,12 @@ export function LeaveAccountWorkspace({
                         ) : null}
                         {detail.account.status !== 'CLOSED' ? (
                           <Button
-                            className="min-h-9"
                             onClick={() => {
                               resetAction();
                               setActionReason('');
                               setClosedAt(manilaToday());
                               setDialog('close');
                             }}
-                            size="default"
                             type="button"
                             variant="secondary"
                           >
@@ -1036,292 +1020,217 @@ export function LeaveAccountWorkspace({
                       </div>
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                    <span>{detail.account.employeeNumber}</span>
-                    <span>{detail.account.leaveTypeCode}</span>
-                    <span
-                      className={
-                        'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                        statusClass(detail.account.status)
-                      }
-                    >
-                      {detail.account.status}
-                    </span>
-                    <span>Opened {dateLabel(detail.account.openedAt)}</span>
+                  <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                    <Fact label="Employee number" mono value={detail.account.employeeNumber} />
+                    <Fact label="Leave type code" mono value={detail.account.leaveTypeCode} />
+                    <Fact label="Opened" value={dateLabel(detail.account.openedAt)} />
                     {detail.account.closedAt ? (
-                      <span>Closed {dateLabel(detail.account.closedAt)}</span>
+                      <Fact label="Closed" value={dateLabel(detail.account.closedAt)} />
                     ) : null}
-                  </div>
+                  </dl>
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="leave-account-balances-heading">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="leave-account-balances-heading"
-                    >
+                    <h3 className={sectionTitleClass} id="leave-account-balances-heading">
                       Balances
                     </h3>
-                    <label className="flex items-center gap-2 text-xs text-muted">
-                      As of
-                      <input
-                        className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                        onChange={(event) =>
-                          navigation.navigate({
-                            asOf: targetValue(event) === manilaToday() ? null : targetValue(event),
-                          })
-                        }
-                        type="date"
-                        value={asOf}
-                      />
-                    </label>
+                    {asOfInput}
                   </div>
-                  <dl className="m-0 grid gap-3 min-[621px]:grid-cols-3">
-                    <div className="grid gap-1 rounded-[3px] border border-line bg-canvas px-3 py-2">
-                      <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                        Posted
-                      </dt>
-                      <dd className="m-0 text-lg font-[650] text-midnight">
-                        {quantityLabel(detail.account.balances.postedQuantity)}{' '}
-                        {detail.account.unitCode.replaceAll('_', ' ').toLowerCase()}
-                      </dd>
-                    </div>
-                    <div className="grid gap-1 rounded-[3px] border border-line bg-canvas px-3 py-2">
-                      <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                        Committed
-                      </dt>
-                      <dd className="m-0 text-lg font-[650] text-midnight">
-                        {quantityLabel(detail.account.balances.committedQuantity)}{' '}
-                        {detail.account.unitCode.replaceAll('_', ' ').toLowerCase()}
-                      </dd>
-                    </div>
-                    <div className="grid gap-1 rounded-[3px] border border-line bg-canvas px-3 py-2">
-                      <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                        Available
-                      </dt>
-                      <dd className="m-0 text-lg font-[650] text-midnight">
-                        {quantityLabel(detail.account.balances.availableQuantity)}{' '}
-                        {detail.account.unitCode.replaceAll('_', ' ').toLowerCase()}
-                      </dd>
-                    </div>
+                  <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                    <Fact
+                      label="Posted"
+                      value={`${quantityLabel(detail.account.balances.postedQuantity)} ${unit}`}
+                    />
+                    <Fact
+                      label="Committed"
+                      value={`${quantityLabel(detail.account.balances.committedQuantity)} ${unit}`}
+                    />
+                    <Fact
+                      label="Available"
+                      value={`${quantityLabel(detail.account.balances.availableQuantity)} ${unit}`}
+                    />
                   </dl>
-                  <p className="m-0 text-xs text-muted">
+                  <p className="m-0 text-caption text-ink-muted">
                     Ledger recorded through {instantLabel(detail.account.balances.recordedThrough)}.
                   </p>
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="leave-opening-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-opening-heading">
+                  <h3 className={sectionTitleClass} id="leave-opening-heading">
                     Opening
                   </h3>
                   {detail.opening ? (
-                    <dl className="m-0 grid gap-1 text-xs min-[621px]:grid-cols-2">
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Quantity</dt>
-                        <dd className="m-0 text-muted">{quantityLabel(detail.opening.quantity)}</dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Effective</dt>
-                        <dd className="m-0 text-muted">
-                          {dateLabel(detail.opening.effectiveDate)}
-                        </dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Policy version</dt>
-                        <dd className="m-0 text-muted">v{detail.opening.policyVersionNo}</dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Evidence</dt>
-                        <dd className="m-0 text-muted">
-                          {detail.opening.evidenceDocumentNo ?? detail.opening.evidenceDocumentType}{' '}
-                          · version {detail.opening.evidenceDocumentVersionNo}
-                        </dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Recorded by</dt>
-                        <dd className="m-0 text-muted">
-                          {detail.opening.openedByName ?? detail.opening.openedByMembershipId} ·{' '}
-                          {instantLabel(detail.opening.openedAt)}
-                        </dd>
-                      </div>
+                    <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                      <Fact label="Quantity" value={quantityLabel(detail.opening.quantity)} />
+                      <Fact label="Effective" value={dateLabel(detail.opening.effectiveDate)} />
+                      <Fact label="Policy version" value={`v${detail.opening.policyVersionNo}`} />
+                      <Fact
+                        label="Evidence"
+                        value={`${detail.opening.evidenceDocumentNo ?? detail.opening.evidenceDocumentType} · version ${detail.opening.evidenceDocumentVersionNo}`}
+                      />
+                      <Fact
+                        label="Recorded by"
+                        value={`${detail.opening.openedByName ?? detail.opening.openedByMembershipId} · ${instantLabel(detail.opening.openedAt)}`}
+                      />
                       {detail.opening.reason ? (
-                        <div className="flex gap-2">
-                          <dt className="font-[650] text-ink">Reason</dt>
-                          <dd className="m-0 text-muted">{detail.opening.reason}</dd>
-                        </div>
+                        <Fact label="Reason" value={detail.opening.reason} />
                       ) : null}
                     </dl>
                   ) : (
-                    <p className="m-0 text-xs text-muted">No opening posting recorded.</p>
+                    <StateSurface compact label="Opening">
+                      <p className="m-0">No opening posting recorded.</p>
+                    </StateSurface>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="leave-ledger-heading">
-                  <h3 className="m-0 text-sm font-[670] text-midnight" id="leave-ledger-heading">
+                  <h3 className={sectionTitleClass} id="leave-ledger-heading">
                     Leave Ledger Entries
                   </h3>
                   {detail.ledgerEntries.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No Leave Ledger Entries posted.</p>
+                    <StateSurface compact label="Leave Ledger Entries">
+                      <p className="m-0">No Leave Ledger Entries posted.</p>
+                    </StateSurface>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                        <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                          <tr>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Effective
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Quantity
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Source
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Policy
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Recorded
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              <span className="sr-only">Actions</span>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-line">
-                          {detail.ledgerEntries.map((entry) => (
-                            <tr key={entry.id}>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                {dateLabel(entry.effectiveDate)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs font-[650] text-ink">
-                                {quantityLabel(entry.quantity)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                {sourceLabel(entry.sourceType, entry.sourcePostingKey)}
-                                {entry.reversesEntryId ? (
-                                  <span className="block text-[11px]">
-                                    Reverses {entry.reversesEntryId.slice(0, 8)}
-                                  </span>
-                                ) : null}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                v{entry.policyVersionNo}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                {entry.postedByName ?? entry.postedByMembershipId ?? 'System'} ·{' '}
-                                {instantLabel(entry.postedAt)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {entry.reversesEntryId || reversedEntryIds.has(entry.id) ? (
-                                  <span className="text-xs text-muted">
-                                    {reversedEntryIds.has(entry.id) ? 'Reversed' : 'Reversal'}
-                                  </span>
-                                ) : canAdjust && detail.account.status === 'ACTIVE' ? (
-                                  <Button
-                                    className="min-h-9"
-                                    onClick={() => {
-                                      resetAction();
-                                      setReverseEntry(entry);
-                                      setReverseAuthorityDocumentId('');
-                                      setReverseEvidenceDocumentId('');
-                                      setReverseReason('');
-                                      setDialog('reverse');
-                                    }}
-                                    size="default"
-                                    type="button"
-                                    variant="secondary"
-                                  >
-                                    Reverse
-                                  </Button>
-                                ) : null}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <Table aria-labelledby="leave-ledger-heading" className="min-w-[720px]">
+                      <thead>
+                        <tr>
+                          <Th kind="date">Effective</Th>
+                          <Th kind="numeric">Quantity</Th>
+                          <Th>Source</Th>
+                          <Th>Policy</Th>
+                          <Th>Recorded</Th>
+                          <Th>
+                            <span className="sr-only">Actions</span>
+                          </Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.ledgerEntries.map((entry) => (
+                          <Tr key={entry.id}>
+                            <Td kind="date">{dateLabel(entry.effectiveDate)}</Td>
+                            <Td kind="numeric" className="font-[600]">
+                              {quantityLabel(entry.quantity)}
+                            </Td>
+                            <Td className="text-ink-muted">
+                              {sourceLabel(entry.sourceType, entry.sourcePostingKey)}
+                              {entry.reversesEntryId ? (
+                                <span className="block text-caption">
+                                  Reverses {entry.reversesEntryId.slice(0, 8)}
+                                </span>
+                              ) : null}
+                            </Td>
+                            <Td className="text-ink-muted">v{entry.policyVersionNo}</Td>
+                            <Td className="text-ink-muted">
+                              {entry.postedByName ?? entry.postedByMembershipId ?? 'System'} ·{' '}
+                              {instantLabel(entry.postedAt)}
+                            </Td>
+                            <Td>
+                              {entry.reversesEntryId || reversedEntryIds.has(entry.id) ? (
+                                <StatusTag tone="neutral">
+                                  {reversedEntryIds.has(entry.id) ? 'Reversed' : 'Reversal'}
+                                </StatusTag>
+                              ) : canAdjust && detail.account.status === 'ACTIVE' ? (
+                                <Button
+                                  onClick={() => {
+                                    resetAction();
+                                    setReverseEntry(entry);
+                                    setReverseAuthorityDocumentId('');
+                                    setReverseEvidenceDocumentId('');
+                                    setReverseReason('');
+                                    setDialog('reverse');
+                                  }}
+                                  type="button"
+                                  variant="secondary"
+                                >
+                                  Reverse
+                                </Button>
+                              ) : null}
+                            </Td>
+                          </Tr>
+                        ))}
+                      </tbody>
+                    </Table>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="leave-commitments-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="leave-commitments-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="leave-commitments-heading">
                     Leave Credit Commitments
                   </h3>
                   {detail.commitments.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No Leave Credit Commitments recorded.</p>
+                    <StateSurface compact label="Leave Credit Commitments">
+                      <p className="m-0">No Leave Credit Commitments recorded.</p>
+                    </StateSurface>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                        <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                          <tr>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Quantity
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Source
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Status
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Effective from
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Ended
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-line">
-                          {detail.commitments.map((commitment) => (
-                            <tr key={commitment.id}>
-                              <td className="px-3 py-3 align-top text-xs font-[650] text-ink">
-                                {quantityLabel(commitment.quantity)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                {commitment.sourceType} · {commitment.sourceCommitmentKey}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                {commitment.status}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                {dateLabel(commitment.effectiveFrom)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-muted">
-                                {commitment.endedAt ? instantLabel(commitment.endedAt) : 'Open'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <Table aria-labelledby="leave-commitments-heading" className="min-w-[640px]">
+                      <thead>
+                        <tr>
+                          <Th kind="numeric">Quantity</Th>
+                          <Th>Source</Th>
+                          <Th>Status</Th>
+                          <Th kind="date">Effective from</Th>
+                          <Th>Ended</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.commitments.map((commitment) => (
+                          <Tr key={commitment.id}>
+                            <Td kind="numeric" className="font-[600]">
+                              {quantityLabel(commitment.quantity)}
+                            </Td>
+                            <Td className="text-ink-muted">
+                              {commitment.sourceType} · {commitment.sourceCommitmentKey}
+                            </Td>
+                            <Td className="text-ink-muted">{commitment.status}</Td>
+                            <Td kind="date">{dateLabel(commitment.effectiveFrom)}</Td>
+                            <Td className="text-ink-muted">
+                              {commitment.endedAt ? instantLabel(commitment.endedAt) : 'Open'}
+                            </Td>
+                          </Tr>
+                        ))}
+                      </tbody>
+                    </Table>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="leave-account-history-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="leave-account-history-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="leave-account-history-heading">
                     Audit history
                   </h3>
                   {detail.history.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No Audit Events recorded.</p>
+                    <StateSurface compact label="Audit history">
+                      <p className="m-0">No Audit Events recorded.</p>
+                    </StateSurface>
                   ) : (
-                    <ul className="m-0 grid list-none gap-2 p-0 text-xs">
-                      {detail.history.map((entry) => (
-                        <li className="text-muted" key={entry.id}>
-                          <span className="font-[650] text-ink">{entry.action}</span>
-                          {entry.previousStatus || entry.newStatus
-                            ? ` · ${entry.previousStatus ?? '—'} → ${entry.newStatus ?? '—'}`
-                            : ''}
-                          {entry.reason ? ` · ${entry.reason}` : ''} ·{' '}
-                          {instantLabel(entry.occurredAt)}
-                        </li>
-                      ))}
-                    </ul>
+                    <Table
+                      aria-labelledby="leave-account-history-heading"
+                      className="min-w-[640px]"
+                    >
+                      <thead>
+                        <tr>
+                          <Th>Action</Th>
+                          <Th>Status change</Th>
+                          <Th>Reason</Th>
+                          <Th>Occurred</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.history.map((entry) => (
+                          <Tr key={entry.id}>
+                            <Td className="font-[600]">{entry.action}</Td>
+                            <Td className="text-ink-muted">
+                              {entry.previousStatus || entry.newStatus
+                                ? `${entry.previousStatus ?? '—'} → ${entry.newStatus ?? '—'}`
+                                : '—'}
+                            </Td>
+                            <Td className="text-ink-muted">{entry.reason ?? '—'}</Td>
+                            <Td className="text-ink-muted">{instantLabel(entry.occurredAt)}</Td>
+                          </Tr>
+                        ))}
+                      </tbody>
+                    </Table>
                   )}
                 </section>
               </>
