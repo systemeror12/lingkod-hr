@@ -1,7 +1,7 @@
 'use client';
 
-import { Field, inputClass, FormError } from './ui/field';
-import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { Field, inputClass, labelClass, FormError } from './ui/field';
+import { useRecordNavigation } from './record-navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Dialog,
@@ -15,6 +15,12 @@ import {
   DialogTrigger,
 } from './ui/dialog';
 import { Button } from './ui/button';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { SectionTabList, SectionTabPanel, SectionTabs } from './ui/section-tabs';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 import { manilaToday } from '../lib/manila-date';
 
 type VersionState = 'DRAFT' | 'ACTIVE' | 'SUPERSEDED';
@@ -751,12 +757,6 @@ function describeRequestError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-function statusClass(status: VersionState): string {
-  if (status === 'ACTIVE') return 'bg-[#e8f3ed] text-[#316647]';
-  if (status === 'SUPERSEDED') return 'bg-[#f0f2f5] text-muted';
-  return 'bg-[#fff3d6] text-[#79531c]';
-}
-
 function ruleWindow(rule: WorkScheduleDayRule): string {
   if (rule.ruleType === 'REST') return 'No duty';
   if (rule.ruleType === 'FIXED') {
@@ -839,81 +839,124 @@ function validForm(event: FormEvent<HTMLFormElement>): boolean {
   return (event.currentTarget as unknown as { reportValidity(): boolean }).reportValidity();
 }
 
+const VERSION_TONES: Record<VersionState, StatusTone> = {
+  DRAFT: 'warning',
+  ACTIVE: 'success',
+  SUPERSEDED: 'neutral',
+};
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+const noteClass = 'm-0 border-l-2 border-primary bg-canvas px-3 py-2.5 text-small text-ink-muted';
+const rowBoxClass = 'rounded-control border border-border bg-canvas p-3';
+const recordLinkClass =
+  'w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline';
+
+function countLabel(count: number, noun: string): string {
+  return count === 1 ? '1 ' + noun : count + ' ' + noun + 's';
+}
+
 function StatusBadge({ status }: { status: VersionState }) {
-  return (
-    <span
-      className={
-        'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-        statusClass(status)
-      }
-    >
-      {status}
-    </span>
-  );
+  return <StatusTag tone={VERSION_TONES[status]}>{label(status)}</StatusTag>;
 }
 
 function VersionMeta({ children, label: name }: { children: ReactNode; label: string }) {
   return (
     <div>
-      <dt className="text-xs text-muted">{name}</dt>
+      <dt className="text-caption text-ink-muted">{name}</dt>
       <dd className="m-0 text-ink">{children}</dd>
     </div>
   );
 }
 
-function ScheduleDayRuleTable({ rules }: { rules: WorkScheduleDayRule[] }) {
+function VersionCard({
+  children,
+  meta,
+  state,
+  versionNo,
+}: {
+  children?: ReactNode;
+  meta: ReactNode;
+  state: VersionState;
+  versionNo: number;
+}) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-left text-xs">
-        <thead className="bg-canvas text-[10px] tracking-[0.07em] text-muted uppercase">
-          <tr>
-            <th className="px-3 py-2 font-bold" scope="col">
-              Day
-            </th>
-            <th className="px-3 py-2 font-bold" scope="col">
-              Rule
-            </th>
-            <th className="px-3 py-2 font-bold" scope="col">
-              Window
-            </th>
-            <th className="px-3 py-2 font-bold" scope="col">
-              Required
-            </th>
-            <th className="px-3 py-2 font-bold" scope="col">
-              Unpaid breaks
-            </th>
-            <th className="px-3 py-2 font-bold" scope="col">
-              Collection window
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {rules.map((rule) => (
-            <tr key={rule.id}>
-              <td className="px-3 py-2 font-[650] text-ink">{weekdayLabels[rule.weekday]}</td>
-              <td className="px-3 py-2 text-ink">{label(rule.ruleType)}</td>
-              <td className="px-3 py-2 text-ink">{ruleWindow(rule)}</td>
-              <td className="px-3 py-2 text-ink">
-                {rule.requiredMinutes} min
-                {rule.ruleType === 'FLEXIBLE' && rule.coreStartTime && rule.coreEndTime
-                  ? ' · core ' + rule.coreStartTime + '–' + rule.coreEndTime
-                  : ''}
-              </td>
-              <td className="px-3 py-2 text-ink">{breaksLabel(rule)}</td>
-              <td className="px-3 py-2 text-ink">
-                {rule.collectionBeforeMinutes || rule.collectionAfterMinutes
-                  ? '+' +
-                    rule.collectionBeforeMinutes +
-                    ' before · +' +
-                    rule.collectionAfterMinutes +
-                    ' after'
-                  : '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <article className="grid gap-3 rounded-control border border-border p-4 text-small">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <strong className="text-ink">Version {versionNo}</strong>
+        <StatusBadge status={state} />
+      </div>
+      <dl className="m-0 grid gap-2 min-[621px]:grid-cols-2">{meta}</dl>
+      {children}
+    </article>
+  );
+}
+
+function VersionEffectivity({ from, to }: { from: string; to: string | null }) {
+  return (
+    <VersionMeta label="Effectivity">
+      {dateLabel(from)}
+      {to ? ' – ' + dateLabel(to) : ' – open-ended'}
+    </VersionMeta>
+  );
+}
+
+function DetailFooter() {
+  return (
+    <DialogFooter>
+      <DialogClose asChild>
+        <Button type="button" variant="secondary">
+          Close
+        </Button>
+      </DialogClose>
+    </DialogFooter>
+  );
+}
+
+function ScheduleDayRuleTable({
+  caption,
+  rules,
+}: {
+  caption: string;
+  rules: WorkScheduleDayRule[];
+}) {
+  return (
+    <Table aria-label={caption} className="min-w-[640px]">
+      <thead>
+        <tr>
+          <Th>Day</Th>
+          <Th>Rule</Th>
+          <Th>Window</Th>
+          <Th>Required</Th>
+          <Th>Unpaid breaks</Th>
+          <Th>Collection window</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rules.map((rule) => (
+          <Tr key={rule.id}>
+            <RowHeader>{weekdayLabels[rule.weekday]}</RowHeader>
+            <Td>{label(rule.ruleType)}</Td>
+            <Td>{ruleWindow(rule)}</Td>
+            <Td>
+              {rule.requiredMinutes} min
+              {rule.ruleType === 'FLEXIBLE' && rule.coreStartTime && rule.coreEndTime
+                ? ' · core ' + rule.coreStartTime + '–' + rule.coreEndTime
+                : ''}
+            </Td>
+            <Td>{breaksLabel(rule)}</Td>
+            <Td>
+              {rule.collectionBeforeMinutes || rule.collectionAfterMinutes
+                ? '+' +
+                  rule.collectionBeforeMinutes +
+                  ' before · +' +
+                  rule.collectionAfterMinutes +
+                  ' after'
+                : '—'}
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }
 
@@ -926,11 +969,11 @@ function TransitionHistory({
 }) {
   return (
     <section className="grid gap-3" aria-labelledby={id}>
-      <h3 className="m-0 text-sm font-[670] text-midnight" id={id}>
+      <h3 className={sectionTitleClass} id={id}>
         Transition history
       </h3>
       {history.length ? (
-        <ol className="m-0 grid gap-2 pl-5 text-xs text-muted">
+        <ol className="m-0 grid gap-2 pl-5 text-small text-ink-muted">
           {history.map((entry) => (
             <li key={entry.id}>
               {entry.action} · {entry.reason ?? 'No reason recorded'} ·{' '}
@@ -939,9 +982,17 @@ function TransitionHistory({
           ))}
         </ol>
       ) : (
-        <p className="m-0 text-xs text-muted">No transitions recorded.</p>
+        <p className="m-0 text-small text-ink-muted">No transitions recorded.</p>
       )}
     </section>
+  );
+}
+
+function DetailLoading({ children, name }: { children: string; name: string }) {
+  return (
+    <StateSurface compact busy label={name}>
+      <p className="m-0">{children}</p>
+    </StateSurface>
   );
 }
 
@@ -955,74 +1006,64 @@ function ScheduleDetailBody({
   error: string;
 }) {
   return (
-    <DialogBody>
-      {detailLoading ? <p className="m-0 text-sm text-muted">Loading schedule history…</p> : null}
-      {error ? <FormError message={error} /> : null}
-      {detail ? (
-        <div className="grid gap-7">
-          <dl className="grid gap-4 text-sm min-[621px]:grid-cols-2">
-            <VersionMeta label="Code">{detail.schedule.code}</VersionMeta>
-            <VersionMeta label="Name">{detail.schedule.name}</VersionMeta>
-            <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
-            <VersionMeta label="Effective version">
-              {detail.effective
-                ? 'v' +
-                  detail.effective.versionNo +
-                  ' · ' +
-                  label(detail.effective.scheduleType) +
-                  ' · ' +
-                  detail.effective.timezone
-                : 'No effective version'}
-            </VersionMeta>
-          </dl>
-          <section className="grid gap-3" aria-labelledby="work-schedule-version-history-title">
-            <h3
-              className="m-0 text-sm font-[670] text-midnight"
-              id="work-schedule-version-history-title"
-            >
-              Version history
-            </h3>
-            <div className="grid gap-3">
+    <>
+      <DialogBody className="grid gap-6">
+        {detailLoading ? (
+          <DetailLoading name="Work Schedule history">Loading schedule history…</DetailLoading>
+        ) : null}
+        <FormError message={error} />
+        {detail ? (
+          <>
+            <dl className="m-0 grid gap-4 text-small min-[621px]:grid-cols-2">
+              <VersionMeta label="Code">{detail.schedule.code}</VersionMeta>
+              <VersionMeta label="Name">{detail.schedule.name}</VersionMeta>
+              <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
+              <VersionMeta label="Effective version">
+                {detail.effective
+                  ? 'v' +
+                    detail.effective.versionNo +
+                    ' · ' +
+                    label(detail.effective.scheduleType) +
+                    ' · ' +
+                    detail.effective.timezone
+                  : 'No effective version'}
+              </VersionMeta>
+            </dl>
+            <section className="grid gap-3" aria-labelledby="work-schedule-version-history-title">
+              <h3 className={sectionTitleClass} id="work-schedule-version-history-title">
+                Version history
+              </h3>
               {detail.versions.map((version) => (
-                <article
-                  className="grid gap-3 rounded-[3px] border border-line bg-canvas px-4 py-3 text-sm"
+                <VersionCard
                   key={version.id}
+                  meta={
+                    <>
+                      <VersionEffectivity from={version.effectiveFrom} to={version.effectiveTo} />
+                      <VersionMeta label="Schedule type">{label(version.scheduleType)}</VersionMeta>
+                      <VersionMeta label="Approving authority">
+                        {version.approvingAuthority ?? 'Not recorded'}
+                      </VersionMeta>
+                      <VersionMeta label="Activated">
+                        {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
+                      </VersionMeta>
+                    </>
+                  }
+                  state={version.versionState}
+                  versionNo={version.versionNo}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-ink">Version {version.versionNo}</strong>
-                    <StatusBadge status={version.versionState} />
-                  </div>
-                  <dl className="grid gap-2 text-xs min-[621px]:grid-cols-2">
-                    <VersionMeta label="Effectivity">
-                      {dateLabel(version.effectiveFrom)}
-                      {version.effectiveTo
-                        ? ' – ' + dateLabel(version.effectiveTo)
-                        : ' – open-ended'}
-                    </VersionMeta>
-                    <VersionMeta label="Schedule type">{label(version.scheduleType)}</VersionMeta>
-                    <VersionMeta label="Approving authority">
-                      {version.approvingAuthority ?? 'Not recorded'}
-                    </VersionMeta>
-                    <VersionMeta label="Activated">
-                      {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
-                    </VersionMeta>
-                  </dl>
-                  <ScheduleDayRuleTable rules={version.dayRules} />
-                </article>
+                  <ScheduleDayRuleTable
+                    caption={'Version ' + version.versionNo + ' day rules'}
+                    rules={version.dayRules}
+                  />
+                </VersionCard>
               ))}
-            </div>
-          </section>
-          <TransitionHistory history={detail.history} id="work-schedule-audit-history-title" />
-        </div>
-      ) : null}
-      <DialogFooter className="-mx-6 mt-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
-        <DialogClose asChild>
-          <Button size="default" type="button" variant="secondary">
-            Close
-          </Button>
-        </DialogClose>
-      </DialogFooter>
-    </DialogBody>
+            </section>
+            <TransitionHistory history={detail.history} id="work-schedule-audit-history-title" />
+          </>
+        ) : null}
+      </DialogBody>
+      <DetailFooter />
+    </>
   );
 }
 
@@ -1042,78 +1083,70 @@ function ArrangementDetailBody({
     return calendar ? calendar.code + ' · ' + calendar.name : id;
   }
   return (
-    <DialogBody>
-      {detailLoading ? (
-        <p className="m-0 text-sm text-muted">Loading arrangement history…</p>
-      ) : null}
-      {error ? <FormError message={error} /> : null}
-      {detail ? (
-        <div className="grid gap-7">
-          <dl className="grid gap-4 text-sm min-[621px]:grid-cols-2">
-            <VersionMeta label="Code">{detail.arrangement.code}</VersionMeta>
-            <VersionMeta label="Name">{detail.arrangement.name}</VersionMeta>
-            <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
-            <VersionMeta label="Effective version">
-              {detail.effective
-                ? 'v' + detail.effective.versionNo + ' · ' + label(detail.effective.arrangementType)
-                : 'No effective version'}
-            </VersionMeta>
-          </dl>
-          <section className="grid gap-3" aria-labelledby="work-arrangement-version-history-title">
-            <h3
-              className="m-0 text-sm font-[670] text-midnight"
-              id="work-arrangement-version-history-title"
+    <>
+      <DialogBody className="grid gap-6">
+        {detailLoading ? (
+          <DetailLoading name="Work Arrangement history">
+            Loading arrangement history…
+          </DetailLoading>
+        ) : null}
+        <FormError message={error} />
+        {detail ? (
+          <>
+            <dl className="m-0 grid gap-4 text-small min-[621px]:grid-cols-2">
+              <VersionMeta label="Code">{detail.arrangement.code}</VersionMeta>
+              <VersionMeta label="Name">{detail.arrangement.name}</VersionMeta>
+              <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
+              <VersionMeta label="Effective version">
+                {detail.effective
+                  ? 'v' +
+                    detail.effective.versionNo +
+                    ' · ' +
+                    label(detail.effective.arrangementType)
+                  : 'No effective version'}
+              </VersionMeta>
+            </dl>
+            <section
+              className="grid gap-3"
+              aria-labelledby="work-arrangement-version-history-title"
             >
-              Version history
-            </h3>
-            <div className="grid gap-3">
+              <h3 className={sectionTitleClass} id="work-arrangement-version-history-title">
+                Version history
+              </h3>
               {detail.versions.map((version) => (
-                <article
-                  className="grid gap-3 rounded-[3px] border border-line bg-canvas px-4 py-3 text-sm"
+                <VersionCard
                   key={version.id}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-ink">Version {version.versionNo}</strong>
-                    <StatusBadge status={version.versionState} />
-                  </div>
-                  <dl className="grid gap-2 text-xs min-[621px]:grid-cols-2">
-                    <VersionMeta label="Effectivity">
-                      {dateLabel(version.effectiveFrom)}
-                      {version.effectiveTo
-                        ? ' – ' + dateLabel(version.effectiveTo)
-                        : ' – open-ended'}
-                    </VersionMeta>
-                    <VersionMeta label="Arrangement type">
-                      {label(version.arrangementType)}
-                    </VersionMeta>
-                    <VersionMeta label="Permitted schedule types">
-                      {version.permittedScheduleTypes.map((entry) => label(entry)).join(', ')}
-                    </VersionMeta>
-                    <VersionMeta label="Holiday Calendar">
-                      {calendarName(version.holidayCalendarId)}
-                    </VersionMeta>
-                    <VersionMeta label="Approving authority">
-                      {version.approvingAuthority ?? 'Not recorded'}
-                    </VersionMeta>
-                    <VersionMeta label="Activated">
-                      {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
-                    </VersionMeta>
-                  </dl>
-                </article>
+                  meta={
+                    <>
+                      <VersionEffectivity from={version.effectiveFrom} to={version.effectiveTo} />
+                      <VersionMeta label="Arrangement type">
+                        {label(version.arrangementType)}
+                      </VersionMeta>
+                      <VersionMeta label="Permitted schedule types">
+                        {version.permittedScheduleTypes.map((entry) => label(entry)).join(', ')}
+                      </VersionMeta>
+                      <VersionMeta label="Holiday Calendar">
+                        {calendarName(version.holidayCalendarId)}
+                      </VersionMeta>
+                      <VersionMeta label="Approving authority">
+                        {version.approvingAuthority ?? 'Not recorded'}
+                      </VersionMeta>
+                      <VersionMeta label="Activated">
+                        {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
+                      </VersionMeta>
+                    </>
+                  }
+                  state={version.versionState}
+                  versionNo={version.versionNo}
+                />
               ))}
-            </div>
-          </section>
-          <TransitionHistory history={detail.history} id="work-arrangement-audit-history-title" />
-        </div>
-      ) : null}
-      <DialogFooter className="-mx-6 mt-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
-        <DialogClose asChild>
-          <Button size="default" type="button" variant="secondary">
-            Close
-          </Button>
-        </DialogClose>
-      </DialogFooter>
-    </DialogBody>
+            </section>
+            <TransitionHistory history={detail.history} id="work-arrangement-audit-history-title" />
+          </>
+        ) : null}
+      </DialogBody>
+      <DetailFooter />
+    </>
   );
 }
 
@@ -1127,111 +1160,96 @@ function HolidayCalendarDetailBody({
   error: string;
 }) {
   return (
-    <DialogBody>
-      {detailLoading ? (
-        <p className="m-0 text-sm text-muted">Loading Holiday Calendar history…</p>
-      ) : null}
-      {error ? <FormError message={error} /> : null}
-      {detail ? (
-        <div className="grid gap-7">
-          <dl className="grid gap-4 text-sm min-[621px]:grid-cols-2">
-            <VersionMeta label="Code">{detail.calendar.code}</VersionMeta>
-            <VersionMeta label="Name">{detail.calendar.name}</VersionMeta>
-            <VersionMeta label="Scope">
-              {label(detail.calendar.scopeType)} · {detail.calendar.scopeReference}
-            </VersionMeta>
-            <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
-            <VersionMeta label="Effective version">
-              {detail.effective
-                ? 'v' +
-                  detail.effective.versionNo +
-                  ' · ' +
-                  detail.effective.entries.length +
-                  (detail.effective.entries.length === 1 ? ' entry' : ' entries')
-                : 'No effective version'}
-            </VersionMeta>
-          </dl>
-          <section className="grid gap-3" aria-labelledby="holiday-calendar-version-history-title">
-            <h3
-              className="m-0 text-sm font-[670] text-midnight"
-              id="holiday-calendar-version-history-title"
+    <>
+      <DialogBody className="grid gap-6">
+        {detailLoading ? (
+          <DetailLoading name="Holiday Calendar history">
+            Loading Holiday Calendar history…
+          </DetailLoading>
+        ) : null}
+        <FormError message={error} />
+        {detail ? (
+          <>
+            <dl className="m-0 grid gap-4 text-small min-[621px]:grid-cols-2">
+              <VersionMeta label="Code">{detail.calendar.code}</VersionMeta>
+              <VersionMeta label="Name">{detail.calendar.name}</VersionMeta>
+              <VersionMeta label="Scope">
+                {label(detail.calendar.scopeType)} · {detail.calendar.scopeReference}
+              </VersionMeta>
+              <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
+              <VersionMeta label="Effective version">
+                {detail.effective
+                  ? 'v' +
+                    detail.effective.versionNo +
+                    ' · ' +
+                    detail.effective.entries.length +
+                    (detail.effective.entries.length === 1 ? ' entry' : ' entries')
+                  : 'No effective version'}
+              </VersionMeta>
+            </dl>
+            <section
+              className="grid gap-3"
+              aria-labelledby="holiday-calendar-version-history-title"
             >
-              Version history
-            </h3>
-            <div className="grid gap-3">
+              <h3 className={sectionTitleClass} id="holiday-calendar-version-history-title">
+                Version history
+              </h3>
               {detail.versions.map((version) => (
-                <article
-                  className="grid gap-3 rounded-[3px] border border-line bg-canvas px-4 py-3 text-sm"
+                <VersionCard
                   key={version.id}
+                  meta={
+                    <>
+                      <VersionEffectivity from={version.effectiveFrom} to={version.effectiveTo} />
+                      <VersionMeta label="Approving authority">
+                        {version.approvingAuthority ?? 'Not recorded'}
+                      </VersionMeta>
+                      <VersionMeta label="Activated">
+                        {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
+                      </VersionMeta>
+                      <VersionMeta label="Entries">{version.entries.length.toString()}</VersionMeta>
+                    </>
+                  }
+                  state={version.versionState}
+                  versionNo={version.versionNo}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <strong className="text-ink">Version {version.versionNo}</strong>
-                    <StatusBadge status={version.versionState} />
-                  </div>
-                  <dl className="grid gap-2 text-xs min-[621px]:grid-cols-2">
-                    <VersionMeta label="Effectivity">
-                      {dateLabel(version.effectiveFrom)}
-                      {version.effectiveTo
-                        ? ' – ' + dateLabel(version.effectiveTo)
-                        : ' – open-ended'}
-                    </VersionMeta>
-                    <VersionMeta label="Approving authority">
-                      {version.approvingAuthority ?? 'Not recorded'}
-                    </VersionMeta>
-                    <VersionMeta label="Activated">
-                      {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
-                    </VersionMeta>
-                    <VersionMeta label="Entries">{version.entries.length.toString()}</VersionMeta>
-                  </dl>
                   {version.entries.length ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[560px] border-collapse text-left text-xs">
-                        <thead className="bg-paper text-[10px] tracking-[0.07em] text-muted uppercase">
-                          <tr>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Date
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Holiday
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Day type
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Source
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-line">
-                          {version.entries.map((entry) => (
-                            <tr key={entry.id}>
-                              <td className="px-3 py-2 text-ink">{dateLabel(entry.holidayDate)}</td>
-                              <td className="px-3 py-2 text-ink">{entry.name}</td>
-                              <td className="px-3 py-2 text-ink">{label(entry.dayType)}</td>
-                              <td className="px-3 py-2 text-muted">{entry.sourceReference}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <Table
+                      aria-label={'Version ' + version.versionNo + ' holiday entries'}
+                      className="min-w-[560px]"
+                    >
+                      <thead>
+                        <tr>
+                          <Th kind="date">Date</Th>
+                          <Th>Holiday</Th>
+                          <Th>Day type</Th>
+                          <Th>Source</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {version.entries.map((entry) => (
+                          <Tr key={entry.id}>
+                            <Td kind="date">{dateLabel(entry.holidayDate)}</Td>
+                            <RowHeader>{entry.name}</RowHeader>
+                            <Td>{label(entry.dayType)}</Td>
+                            <Td className="text-ink-muted">{entry.sourceReference}</Td>
+                          </Tr>
+                        ))}
+                      </tbody>
+                    </Table>
                   ) : (
-                    <p className="m-0 text-xs text-muted">No holiday entries in this version.</p>
+                    <p className="m-0 text-small text-ink-muted">
+                      No holiday entries in this version.
+                    </p>
                   )}
-                </article>
+                </VersionCard>
               ))}
-            </div>
-          </section>
-          <TransitionHistory history={detail.history} id="holiday-calendar-audit-history-title" />
-        </div>
-      ) : null}
-      <DialogFooter className="-mx-6 mt-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
-        <DialogClose asChild>
-          <Button size="default" type="button" variant="secondary">
-            Close
-          </Button>
-        </DialogClose>
-      </DialogFooter>
-    </DialogBody>
+            </section>
+            <TransitionHistory history={detail.history} id="holiday-calendar-audit-history-title" />
+          </>
+        ) : null}
+      </DialogBody>
+      <DetailFooter />
+    </>
   );
 }
 
@@ -1259,7 +1277,7 @@ function HolidayCalendarDefinitionFields({
   return (
     <>
       <fieldset className="grid gap-4">
-        <legend className="mb-1 text-sm font-[670] text-midnight">Calendar definition</legend>
+        <legend className="mb-1 text-panel-title text-ink">Calendar definition</legend>
         {creating ? (
           <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
             <Field htmlFor="holiday-calendar-code" label="Holiday Calendar code">
@@ -1328,54 +1346,53 @@ function HolidayCalendarDefinitionFields({
         </div>
       </fieldset>
       <section className="grid gap-4" aria-labelledby="holiday-calendar-entries-title">
-        <div className="border-b-2 border-midnight pb-3">
-          <p className="m-0 text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
+        <div className="grid gap-1">
+          <h3 className={sectionTitleClass} id="holiday-calendar-entries-title">
             Holiday entries
-          </p>
-          <h3
-            className="m-0 mt-1 text-base font-[700] text-midnight"
-            id="holiday-calendar-entries-title"
-          >
-            One row per holiday date and day type
           </h3>
+          <p className="m-0 text-small text-ink-muted">One row per holiday date and day type</p>
         </div>
         {values.entries.length === 0 ? (
-          <p className="m-0 text-xs text-muted">
+          <p className="m-0 text-small text-ink-muted">
             A version needs at least one entry before it can be activated.
           </p>
         ) : null}
         {values.entries.map((entry, index) => (
           <div
-            className="grid items-end gap-3 rounded-[3px] border border-line bg-canvas px-4 py-3 min-[900px]:grid-cols-[150px_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
+            className={
+              'grid items-end gap-3 ' +
+              rowBoxClass +
+              ' min-[900px]:grid-cols-[150px_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]'
+            }
             key={index}
           >
-            <label className="grid gap-1 text-xs font-[650] text-ink">
+            <label className={labelClass}>
               <span>Holiday date</span>
               <input
                 aria-label={'Holiday date ' + (index + 1)}
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 onChange={(event) => setEntry(index, { holidayDate: targetValue(event) })}
                 required
                 type="date"
                 value={entry.holidayDate}
               />
             </label>
-            <label className="grid gap-1 text-xs font-[650] text-ink">
+            <label className={labelClass}>
               <span>Holiday</span>
               <input
                 aria-label={'Holiday name ' + (index + 1)}
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 maxLength={200}
                 onChange={(event) => setEntry(index, { name: targetValue(event) })}
                 required
                 value={entry.name}
               />
             </label>
-            <label className="grid gap-1 text-xs font-[650] text-ink">
+            <label className={labelClass}>
               <span>Day type</span>
               <select
                 aria-label={'Holiday day type ' + (index + 1)}
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 onChange={(event) =>
                   setEntry(index, { dayType: targetValue(event) as HolidayDayType })
                 }
@@ -1388,11 +1405,11 @@ function HolidayCalendarDefinitionFields({
                 ))}
               </select>
             </label>
-            <label className="grid gap-1 text-xs font-[650] text-ink">
+            <label className={labelClass}>
               <span>Source</span>
               <input
                 aria-label={'Holiday source ' + (index + 1)}
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 maxLength={300}
                 onChange={(event) => setEntry(index, { sourceReference: targetValue(event) })}
                 required
@@ -1400,14 +1417,12 @@ function HolidayCalendarDefinitionFields({
               />
             </label>
             <Button
-              className="min-h-9 px-3 text-xs"
               onClick={() =>
                 setValue(
                   'entries',
                   values.entries.filter((_, position) => position !== index),
                 )
               }
-              size="default"
               type="button"
               variant="secondary"
             >
@@ -1416,7 +1431,7 @@ function HolidayCalendarDefinitionFields({
           </div>
         ))}
         <Button
-          className="min-h-9 w-fit px-3 text-xs"
+          className="w-fit"
           disabled={values.entries.length >= 400}
           onClick={() =>
             setValue('entries', [
@@ -1429,7 +1444,6 @@ function HolidayCalendarDefinitionFields({
               },
             ])
           }
-          size="default"
           type="button"
           variant="secondary"
         >
@@ -1466,7 +1480,7 @@ function AssignmentDefinitionFields({
   const arrangementOptions = arrangementVersionOptions(arrangements);
   return (
     <fieldset className="grid gap-4">
-      <legend className="mb-1 text-sm font-[670] text-midnight">Assignment definition</legend>
+      <legend className="mb-1 text-panel-title text-ink">Assignment definition</legend>
       <Field htmlFor="assignment-employee" label="Employee">
         <select
           autoFocus
@@ -1586,9 +1600,9 @@ function AssignmentEndFields({
   const floor = minimum > manilaToday() ? minimum : manilaToday();
   return (
     <fieldset className="grid gap-4">
-      <legend className="mb-1 text-sm font-[670] text-midnight">End Assignment</legend>
+      <legend className="mb-1 text-panel-title text-ink">End Assignment</legend>
       {assignment ? (
-        <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm leading-[1.6] text-muted">
+        <p className={noteClass}>
           {assignment.employee.employeeNumber +
             ' · ' +
             assignment.employee.legalName +
@@ -1637,7 +1651,7 @@ function ResolutionResult({ resolution }: { resolution: AttendanceResolution }) 
   const day = resolution.dayRule;
   return (
     <dl
-      className="grid gap-4 rounded-[3px] border border-line bg-canvas px-4 py-4 text-sm min-[621px]:grid-cols-2"
+      className="grid gap-4 rounded-control border border-border bg-canvas p-3 text-small min-[621px]:grid-cols-2"
       aria-label="Resolved configuration"
     >
       <VersionMeta label="Employee">
@@ -1696,19 +1710,16 @@ function DayRuleEditor({
     });
   }
   return (
-    <section
-      aria-labelledby={id + '-title'}
-      className="grid gap-4 rounded-[3px] border border-line bg-canvas px-4 py-4"
-    >
+    <section aria-labelledby={id + '-title'} className={'grid gap-4 ' + rowBoxClass}>
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <h4 className="m-0 text-sm font-[690] text-midnight" id={id + '-title'}>
+        <h4 className={sectionTitleClass} id={id + '-title'}>
           {weekdayLabels[rule.weekday]}
         </h4>
         <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1 text-xs font-[650] text-ink">
+          <label className={labelClass}>
             <span>Day rule</span>
             <select
-              className={inputClass + ' min-h-9 w-auto'}
+              className={inputClass + ' w-auto'}
               id={id + '-type'}
               onChange={(event) =>
                 onChange(defaultDayRule(rule.weekday, targetValue(event) as DayRuleType))
@@ -1723,10 +1734,10 @@ function DayRuleEditor({
             </select>
           </label>
           {rule.ruleType !== 'REST' ? (
-            <label className="grid gap-1 text-xs font-[650] text-ink">
+            <label className={labelClass}>
               <span>Required minutes</span>
               <input
-                className={inputClass + ' min-h-9 w-[130px]'}
+                className={inputClass + ' w-[130px]'}
                 min="1"
                 onChange={(event) => update({ requiredMinutes: targetValue(event) })}
                 required
@@ -1741,7 +1752,7 @@ function DayRuleEditor({
         <div className="grid gap-3 min-[700px]:grid-cols-3">
           <Field htmlFor={id + '-duty-start'} label="Duty start">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-duty-start'}
               onChange={(event) => update({ dutyStartTime: targetValue(event) })}
               required
@@ -1751,7 +1762,7 @@ function DayRuleEditor({
           </Field>
           <Field htmlFor={id + '-duty-end'} label="Duty end">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-duty-end'}
               onChange={(event) => update({ dutyEndTime: targetValue(event) })}
               required
@@ -1759,7 +1770,7 @@ function DayRuleEditor({
               value={rule.dutyEndTime}
             />
           </Field>
-          <label className="flex min-h-9 items-center gap-2 self-end text-xs font-[650] text-ink">
+          <label className="flex min-h-9 items-center gap-2 self-end text-caption font-[650] text-ink">
             <input
               checked={rule.endNextCalendarDay}
               onChange={(event) => update({ endNextCalendarDay: targetChecked(event) })}
@@ -1773,7 +1784,7 @@ function DayRuleEditor({
         <div className="grid gap-3 min-[700px]:grid-cols-3">
           <Field htmlFor={id + '-earliest-start'} label="Earliest start">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-earliest-start'}
               onChange={(event) => update({ earliestStartTime: targetValue(event) })}
               required
@@ -1783,7 +1794,7 @@ function DayRuleEditor({
           </Field>
           <Field htmlFor={id + '-latest-start'} label="Latest start">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-latest-start'}
               onChange={(event) => update({ latestStartTime: targetValue(event) })}
               required
@@ -1793,7 +1804,7 @@ function DayRuleEditor({
           </Field>
           <Field htmlFor={id + '-duty-end'} label="Duty end">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-duty-end'}
               onChange={(event) => update({ dutyEndTime: targetValue(event) })}
               required
@@ -1803,7 +1814,7 @@ function DayRuleEditor({
           </Field>
           <Field htmlFor={id + '-core-start'} label="Core start (optional)">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-core-start'}
               onChange={(event) => update({ coreStartTime: targetValue(event) })}
               type="time"
@@ -1812,14 +1823,14 @@ function DayRuleEditor({
           </Field>
           <Field htmlFor={id + '-core-end'} label="Core end (optional)">
             <input
-              className={inputClass + ' min-h-9'}
+              className={inputClass}
               id={id + '-core-end'}
               onChange={(event) => update({ coreEndTime: targetValue(event) })}
               type="time"
               value={rule.coreEndTime}
             />
           </Field>
-          <label className="flex min-h-9 items-center gap-2 self-end text-xs font-[650] text-ink">
+          <label className="flex min-h-9 items-center gap-2 self-end text-caption font-[650] text-ink">
             <input
               checked={rule.endNextCalendarDay}
               onChange={(event) => update({ endNextCalendarDay: targetChecked(event) })}
@@ -1834,7 +1845,7 @@ function DayRuleEditor({
           <div className="grid gap-3 min-[700px]:grid-cols-3">
             <Field htmlFor={id + '-event-pattern'} label="Break events">
               <select
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 id={id + '-event-pattern'}
                 onChange={(event) => update({ eventPattern: targetValue(event) as EventPattern })}
                 value={rule.eventPattern}
@@ -1848,7 +1859,7 @@ function DayRuleEditor({
             </Field>
             <Field htmlFor={id + '-collection-before'} label="Collection opens before (minutes)">
               <input
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 id={id + '-collection-before'}
                 min="0"
                 onChange={(event) => update({ collectionBeforeMinutes: targetValue(event) })}
@@ -1858,7 +1869,7 @@ function DayRuleEditor({
             </Field>
             <Field htmlFor={id + '-collection-after'} label="Collection closes after (minutes)">
               <input
-                className={inputClass + ' min-h-9'}
+                className={inputClass}
                 id={id + '-collection-after'}
                 min="0"
                 onChange={(event) => update({ collectionAfterMinutes: targetValue(event) })}
@@ -1868,35 +1879,35 @@ function DayRuleEditor({
             </Field>
           </div>
           <div className="grid gap-2">
-            <span className="text-xs font-[650] text-ink">Unpaid break intervals</span>
+            <span className="text-caption font-[650] text-ink">Unpaid break intervals</span>
             {rule.breaks.length === 0 ? (
-              <span className="text-xs text-muted">No unpaid breaks.</span>
+              <span className="text-small text-ink-muted">No unpaid breaks.</span>
             ) : null}
             {rule.breaks.map((entry, index) => (
               <div className="flex flex-wrap items-end gap-3" key={index}>
-                <label className="grid gap-1 text-xs text-muted">
+                <label className={labelClass}>
                   <span>Break start</span>
                   <input
                     aria-label={weekdayLabels[rule.weekday] + ' break start ' + (index + 1)}
-                    className={inputClass + ' min-h-9 w-auto'}
+                    className={inputClass + ' w-auto'}
                     onChange={(event) => setBreak(index, { breakStartTime: targetValue(event) })}
                     required
                     type="time"
                     value={entry.breakStartTime}
                   />
                 </label>
-                <label className="grid gap-1 text-xs text-muted">
+                <label className={labelClass}>
                   <span>Break end</span>
                   <input
                     aria-label={weekdayLabels[rule.weekday] + ' break end ' + (index + 1)}
-                    className={inputClass + ' min-h-9 w-auto'}
+                    className={inputClass + ' w-auto'}
                     onChange={(event) => setBreak(index, { breakEndTime: targetValue(event) })}
                     required
                     type="time"
                     value={entry.breakEndTime}
                   />
                 </label>
-                <label className="flex min-h-9 items-center gap-2 text-xs text-ink">
+                <label className="flex min-h-9 items-center gap-2 text-caption text-ink">
                   <input
                     checked={entry.endNextCalendarDay}
                     onChange={(event) =>
@@ -1907,11 +1918,9 @@ function DayRuleEditor({
                   Ends next calendar day
                 </label>
                 <Button
-                  className="min-h-9 px-3 text-xs"
                   onClick={() =>
                     update({ breaks: rule.breaks.filter((_, position) => position !== index) })
                   }
-                  size="default"
                   type="button"
                   variant="secondary"
                 >
@@ -1920,7 +1929,7 @@ function DayRuleEditor({
               </div>
             ))}
             <Button
-              className="min-h-9 w-fit px-3 text-xs"
+              className="w-fit"
               disabled={rule.breaks.length >= 12}
               onClick={() =>
                 update({
@@ -1930,7 +1939,6 @@ function DayRuleEditor({
                   ],
                 })
               }
-              size="default"
               type="button"
               variant="secondary"
             >
@@ -1956,17 +1964,9 @@ function ScheduleDefinitionFields({
   return (
     <>
       <section className="grid gap-4" aria-labelledby="work-schedule-definition-title">
-        <div className="border-b-2 border-midnight pb-3">
-          <p className="m-0 text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
-            Work Schedule record
-          </p>
-          <h3
-            className="m-0 mt-1 text-base font-[700] text-midnight"
-            id="work-schedule-definition-title"
-          >
-            Schedule definition
-          </h3>
-        </div>
+        <h3 className={sectionTitleClass} id="work-schedule-definition-title">
+          Schedule definition
+        </h3>
         {creating ? (
           <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
             <Field htmlFor="work-schedule-code" label="Work Schedule code">
@@ -2031,16 +2031,11 @@ function ScheduleDefinitionFields({
         </div>
       </section>
       <section className="grid gap-4" aria-labelledby="work-schedule-rules-title">
-        <div className="border-b-2 border-midnight pb-3">
-          <p className="m-0 text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
+        <div className="grid gap-1">
+          <h3 className={sectionTitleClass} id="work-schedule-rules-title">
             Seven-day rule matrix
-          </p>
-          <h3
-            className="m-0 mt-1 text-base font-[700] text-midnight"
-            id="work-schedule-rules-title"
-          >
-            One rule per weekday
           </h3>
+          <p className="m-0 text-small text-ink-muted">One rule per weekday</p>
         </div>
         {values.dayRules.map((rule) => (
           <DayRuleEditor
@@ -2076,7 +2071,7 @@ function ArrangementDefinitionFields({
   const creating = dialog === 'arrangement-create';
   return (
     <fieldset className="grid gap-4">
-      <legend className="mb-1 text-sm font-[670] text-midnight">Arrangement definition</legend>
+      <legend className="mb-1 text-panel-title text-ink">Arrangement definition</legend>
       {creating ? (
         <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
           <Field htmlFor="work-arrangement-code" label="Work Arrangement code">
@@ -2146,11 +2141,11 @@ function ArrangementDefinitionFields({
         </Field>
       </div>
       <fieldset className="grid gap-2">
-        <legend className="text-xs font-[650] text-ink">Permitted schedule types</legend>
+        <legend className="text-caption font-[650] text-ink">Permitted schedule types</legend>
         <div className="flex flex-wrap gap-3">
           {scheduleTypes.map((entry) => (
             <label
-              className="flex min-h-11 items-center gap-2 rounded-[3px] border border-line px-3 text-sm text-ink"
+              className="flex min-h-11 items-center gap-2 rounded-control border border-border px-3 text-small text-ink"
               key={entry}
             >
               <input
@@ -2192,7 +2187,7 @@ function ActivationForm({
   return (
     <form onSubmit={(event) => void onSubmit(event)}>
       <DialogBody className="grid gap-5">
-        {error ? <FormError message={error} /> : null}
+        <FormError message={error} />
         <Field htmlFor="attendance-activation-evidence" label="Authority Document Version">
           <select
             className={inputClass}
@@ -2245,11 +2240,11 @@ function ActivationForm({
       </DialogBody>
       <DialogFooter>
         <DialogClose asChild>
-          <Button disabled={false} size="default" type="button" variant="secondary">
+          <Button type="button" variant="secondary">
             Cancel
           </Button>
         </DialogClose>
-        <Button disabled={evidenceLoading} size="default" type="submit" variant="primary">
+        <Button disabled={evidenceLoading} type="submit" variant="primary">
           Activate Version
         </Button>
       </DialogFooter>
@@ -2859,7 +2854,6 @@ export function AttendanceConfigurationWorkspace({
     return (
       <div className="flex flex-wrap justify-end gap-2">
         <Button
-          size="default"
           type="button"
           variant="secondary"
           onClick={(event) =>
@@ -2874,7 +2868,6 @@ export function AttendanceConfigurationWorkspace({
         </Button>
         {schedule.draft && canManage ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) => {
@@ -2893,8 +2886,6 @@ export function AttendanceConfigurationWorkspace({
         ) : null}
         {schedule.draft && canActivate ? (
           <Button
-            className="min-h-9 px-3 text-xs"
-            size="default"
             type="button"
             variant="primary"
             onClick={(event) =>
@@ -2910,7 +2901,6 @@ export function AttendanceConfigurationWorkspace({
         ) : null}
         {schedule.currentVersion && !schedule.draft && canManage ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) =>
@@ -2932,7 +2922,6 @@ export function AttendanceConfigurationWorkspace({
     return (
       <div className="flex flex-wrap justify-end gap-2">
         <Button
-          size="default"
           type="button"
           variant="secondary"
           onClick={(event) =>
@@ -2947,7 +2936,6 @@ export function AttendanceConfigurationWorkspace({
         </Button>
         {arrangement.draft && canManage ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) => {
@@ -2966,8 +2954,6 @@ export function AttendanceConfigurationWorkspace({
         ) : null}
         {arrangement.draft && canActivate ? (
           <Button
-            className="min-h-9 px-3 text-xs"
-            size="default"
             type="button"
             variant="primary"
             onClick={(event) =>
@@ -2983,7 +2969,6 @@ export function AttendanceConfigurationWorkspace({
         ) : null}
         {arrangement.currentVersion && !arrangement.draft && canManage ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) =>
@@ -3005,7 +2990,6 @@ export function AttendanceConfigurationWorkspace({
     return (
       <div className="flex flex-wrap justify-end gap-2">
         <Button
-          size="default"
           type="button"
           variant="secondary"
           onClick={(event) =>
@@ -3016,7 +3000,6 @@ export function AttendanceConfigurationWorkspace({
         </Button>
         {calendar.draft && canManage ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) => {
@@ -3035,8 +3018,6 @@ export function AttendanceConfigurationWorkspace({
         ) : null}
         {calendar.draft && canActivate ? (
           <Button
-            className="min-h-9 px-3 text-xs"
-            size="default"
             type="button"
             variant="primary"
             onClick={(event) =>
@@ -3052,7 +3033,6 @@ export function AttendanceConfigurationWorkspace({
         ) : null}
         {calendar.currentVersion && !calendar.draft && canManage ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) =>
@@ -3075,7 +3055,6 @@ export function AttendanceConfigurationWorkspace({
       <div className="flex flex-wrap justify-end gap-2">
         {!assignment.effectiveTo && canAssign ? (
           <Button
-            size="default"
             type="button"
             variant="secondary"
             onClick={(event) => {
@@ -3120,206 +3099,150 @@ export function AttendanceConfigurationWorkspace({
             : 'Attendance Configuration';
   const dialogDescriptionId = 'attendance-configuration-dialog-description';
 
+  const recordCode =
+    recordKind === 'work-arrangement' ? selectedArrangement?.code : selectedSchedule?.code;
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Time & attendance' }];
+  // Only record views change the URL, so only they can link back to the register.
+  if (recordId) {
+    breadcrumbs.push({
+      label: 'Attendance Configuration',
+      href: navigation.href({ record: null, view: null, kind: null }),
+    });
+    if (recordCode) breadcrumbs.push({ label: recordCode });
+  }
+  const creator: { kind: DialogKind; name: string; prepare: () => void } | null =
+    tab === 'schedules' && canManage
+      ? {
+          kind: 'schedule-create',
+          name: 'Create Work Schedule',
+          prepare: () => setScheduleValues(emptyScheduleValues()),
+        }
+      : tab === 'arrangements' && canManage
+        ? {
+            kind: 'arrangement-create',
+            name: 'Create Work Arrangement',
+            prepare: () => setArrangementValues(emptyArrangementValues(calendars[0]?.id ?? '')),
+          }
+        : tab === 'calendars' && canManage
+          ? {
+              kind: 'calendar-create',
+              name: 'Create Holiday Calendar',
+              prepare: () => setCalendarValues(emptyHolidayCalendarValues()),
+            }
+          : tab === 'assignments' && canAssign
+            ? {
+                kind: 'assignment-create',
+                name: 'Create Schedule Assignment',
+                prepare: () => setAssignmentValues(emptyAssignmentValues()),
+              }
+            : null;
+
   return (
     <Dialog
       presentation={showingForm ? 'form' : 'dialog'}
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div hidden={showingForm} className="min-w-0 space-y-5">
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[760px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Attendance configuration
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Attendance Configuration
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              Maintain effective-dated Work Schedule and Work Arrangement Versions, the Holiday
-              Calendars that bind their scope, and the Schedule Assignments that resolve personnel
-              to a duty roster on any Work date. Published versions are immutable.
-            </p>
-          </div>
-          {tab === 'schedules' && canManage ? (
-            <DialogTrigger asChild>
-              <Button
-                size="default"
-                type="button"
-                variant="primary"
-                onClick={(event) => {
-                  resetAction();
-                  setScheduleValues(emptyScheduleValues());
-                  openDialog(
-                    'schedule-create',
-                    event.currentTarget as unknown as { focus(): void },
-                    null,
-                  );
-                }}
-              >
-                Create Work Schedule
-              </Button>
-            </DialogTrigger>
-          ) : null}
-          {tab === 'arrangements' && canManage ? (
-            <DialogTrigger asChild>
-              <Button
-                size="default"
-                type="button"
-                variant="primary"
-                onClick={(event) => {
-                  resetAction();
-                  setArrangementValues(emptyArrangementValues(calendars[0]?.id ?? ''));
-                  openDialog(
-                    'arrangement-create',
-                    event.currentTarget as unknown as { focus(): void },
-                    null,
-                  );
-                }}
-              >
-                Create Work Arrangement
-              </Button>
-            </DialogTrigger>
-          ) : null}
-          {tab === 'calendars' && canManage ? (
-            <DialogTrigger asChild>
-              <Button
-                size="default"
-                type="button"
-                variant="primary"
-                onClick={(event) => {
-                  resetAction();
-                  setCalendarValues(emptyHolidayCalendarValues());
-                  openDialog(
-                    'calendar-create',
-                    event.currentTarget as unknown as { focus(): void },
-                    null,
-                  );
-                }}
-              >
-                Create Holiday Calendar
-              </Button>
-            </DialogTrigger>
-          ) : null}
-          {tab === 'assignments' && canAssign ? (
-            <DialogTrigger asChild>
-              <Button
-                size="default"
-                type="button"
-                variant="primary"
-                onClick={(event) => {
-                  resetAction();
-                  setAssignmentValues(emptyAssignmentValues());
-                  openDialog(
-                    'assignment-create',
-                    event.currentTarget as unknown as { focus(): void },
-                    null,
-                  );
-                }}
-              >
-                Create Schedule Assignment
-              </Button>
-            </DialogTrigger>
-          ) : null}
-        </header>
-
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
-          </p>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Attendance configuration">
-          {(
-            [
-              ['schedules', 'Work Schedules'],
-              ['arrangements', 'Work Arrangements'],
-              ['calendars', 'Holiday Calendars'],
-              ['assignments', 'Schedule Assignments'],
-            ] as const
-          ).map(([value, name]) => (
-            <Button
-              aria-selected={tab === value}
-              className={
-                'min-h-9 border px-3 ' +
-                (tab === value
-                  ? 'border-cobalt bg-[#edf2f9] text-cobalt'
-                  : 'border-line bg-paper text-muted')
-              }
-              key={value}
-              onClick={() => setTab(value)}
-              role="tab"
-              size="default"
-              type="button"
-            >
-              {name}
-            </Button>
-          ))}
-        </div>
-
-        {tab === 'schedules' ? (
-          <section
-            aria-labelledby="work-schedule-register-heading"
-            className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          >
-            <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="work-schedule-register-heading"
+      <SectionTabs
+        className="grid min-w-0 gap-5"
+        onValueChange={(value) => setTab(value as typeof tab)}
+        value={tab}
+      >
+        <PageHeader
+          actions={
+            creator ? (
+              <DialogTrigger asChild>
+                <Button
+                  // Hidden rather than unmounted, so focus can return here when the form closes.
+                  hidden={showingForm}
+                  onClick={(event) => {
+                    resetAction();
+                    creator.prepare();
+                    openDialog(
+                      creator.kind,
+                      event.currentTarget as unknown as { focus(): void },
+                      null,
+                    );
+                  }}
+                  type="button"
+                  variant="primary"
                 >
-                  Work Schedule register
-                </h2>
-                <span className="text-xs text-muted">
-                  {schedules.length === 1 ? '1 schedule' : schedules.length + ' schedules'}
+                  {creator.name}
+                </Button>
+              </DialogTrigger>
+            ) : null
+          }
+          breadcrumbs={breadcrumbs}
+          tabs={
+            <div hidden={showingForm}>
+              <SectionTabList
+                label="Attendance configuration sections"
+                tabs={[
+                  { value: 'schedules', label: 'Work Schedules' },
+                  { value: 'arrangements', label: 'Work Arrangements' },
+                  { value: 'calendars', label: 'Holiday Calendars' },
+                  { value: 'assignments', label: 'Schedule Assignments' },
+                ]}
+              />
+            </div>
+          }
+          title="Attendance Configuration"
+        />
+
+        <div hidden={showingForm} className="grid min-w-0 gap-5">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
+            Maintain effective-dated Work Schedule and Work Arrangement Versions, the Holiday
+            Calendars that bind their scope, and the Schedule Assignments that resolve personnel to
+            a duty roster on any Work date. Published versions are immutable.
+          </p>
+
+          {success ? (
+            <p
+              className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+              role="status"
+            >
+              {success}
+            </p>
+          ) : null}
+
+          <SectionTabPanel value="schedules">
+            <Panel
+              title="Work Schedule register"
+              flush
+              actions={
+                <span className="text-caption text-ink-muted">
+                  {countLabel(schedules.length, 'schedule')} · Agency scoped · Evidence required
                 </span>
-              </div>
-              <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-                Agency scoped · Evidence required
-              </span>
-            </header>
-            {schedules.length === 0 ? (
-              <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12">
-                <strong className="text-[15px] font-[650] text-midnight">
-                  No Work Schedules yet.
-                </strong>
-                <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                  Create a Draft with one rule per weekday, then pin the authority Document Version
-                  and activate it. Activation retires the superseded version in history.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                  <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+              }
+            >
+              {schedules.length === 0 ? (
+                <StateSurface compact label="Work Schedules">
+                  <strong className="text-body font-[650] text-ink">No Work Schedules yet.</strong>
+                  <p className="m-0 max-w-[560px]">
+                    Create a Draft with one rule per weekday, then pin the authority Document
+                    Version and activate it. Activation retires the superseded version in history.
+                  </p>
+                </StateSurface>
+              ) : (
+                <Table aria-label="Work Schedules" className="min-w-[860px]">
+                  <thead>
                     <tr>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Schedule
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Current version
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Draft
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Time zone
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
+                      <Th>Schedule</Th>
+                      <Th>Current version</Th>
+                      <Th>Draft</Th>
+                      <Th>Time zone</Th>
+                      <Th>
                         <span className="sr-only">Actions</span>
-                      </th>
+                      </Th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody>
                     {schedules.map((schedule) => (
-                      <tr key={schedule.id}>
-                        <td className="px-5 py-4 align-top">
+                      <Tr key={schedule.id}>
+                        <RowHeader>
                           <div className="grid gap-1">
                             <button
-                              className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
+                              className={recordLinkClass}
                               onClick={(event) =>
                                 openDetail(
                                   'work-schedule',
@@ -3331,10 +3254,12 @@ export function AttendanceConfigurationWorkspace({
                             >
                               {schedule.code}
                             </button>
-                            <span className="text-xs text-muted">{schedule.name}</span>
+                            <span className="text-caption font-normal text-ink-muted">
+                              {schedule.name}
+                            </span>
                           </div>
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-ink">
+                        </RowHeader>
+                        <Td>
                           {schedule.currentVersion
                             ? 'v' +
                               schedule.currentVersion.versionNo +
@@ -3343,88 +3268,68 @@ export function AttendanceConfigurationWorkspace({
                               ' · ' +
                               dateLabel(schedule.currentVersion.effectiveFrom)
                             : 'No active version'}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
+                        </Td>
+                        <Td className="text-ink-muted">
                           {schedule.draft
                             ? 'v' +
                               schedule.draft.versionNo +
                               ' · ' +
                               dateLabel(schedule.draft.effectiveFrom)
                             : 'None'}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
+                        </Td>
+                        <Td className="text-ink-muted">
                           {(schedule.currentVersion ?? schedule.draft)?.timezone ?? '—'}
-                        </td>
-                        <td className="px-5 py-4 align-top">{scheduleActions(schedule)}</td>
-                      </tr>
+                        </Td>
+                        <Td>{scheduleActions(schedule)}</Td>
+                      </Tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        ) : tab === 'arrangements' ? (
-          <section
-            aria-labelledby="work-arrangement-register-heading"
-            className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          >
-            <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="work-arrangement-register-heading"
-                >
-                  Work Arrangement register
-                </h2>
-                <span className="text-xs text-muted">
-                  {arrangements.length === 1
-                    ? '1 arrangement'
-                    : arrangements.length + ' arrangements'}
+                </Table>
+              )}
+            </Panel>
+          </SectionTabPanel>
+
+          <SectionTabPanel value="arrangements">
+            <Panel
+              title="Work Arrangement register"
+              flush
+              actions={
+                <span className="text-caption text-ink-muted">
+                  {countLabel(arrangements.length, 'arrangement')} · Agency scoped · Holiday
+                  Calendar pinned
                 </span>
-              </div>
-              <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-                Agency scoped · Holiday Calendar pinned
-              </span>
-            </header>
-            {arrangements.length === 0 ? (
-              <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12">
-                <strong className="text-[15px] font-[650] text-midnight">
-                  No Work Arrangements yet.
-                </strong>
-                <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                  Each Work Arrangement Version pins one Holiday Calendar scope and the schedule
-                  types it permits for an operating mode.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                  <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+              }
+            >
+              {arrangements.length === 0 ? (
+                <StateSurface compact label="Work Arrangements">
+                  <strong className="text-body font-[650] text-ink">
+                    No Work Arrangements yet.
+                  </strong>
+                  <p className="m-0 max-w-[560px]">
+                    Each Work Arrangement Version pins one Holiday Calendar scope and the schedule
+                    types it permits for an operating mode.
+                  </p>
+                </StateSurface>
+              ) : (
+                <Table aria-label="Work Arrangements" className="min-w-[860px]">
+                  <thead>
                     <tr>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Arrangement
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Current version
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Permitted schedule types
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Draft
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
+                      <Th>Arrangement</Th>
+                      <Th>Current version</Th>
+                      <Th>Permitted schedule types</Th>
+                      <Th>Draft</Th>
+                      <Th>
                         <span className="sr-only">Actions</span>
-                      </th>
+                      </Th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody>
                     {arrangements.map((arrangement) => (
-                      <tr key={arrangement.id}>
-                        <td className="px-5 py-4 align-top">
+                      <Tr key={arrangement.id}>
+                        <RowHeader>
                           <div className="grid gap-1">
                             <button
-                              className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
+                              className={recordLinkClass}
                               onClick={(event) =>
                                 openDetail(
                                   'work-arrangement',
@@ -3436,10 +3341,12 @@ export function AttendanceConfigurationWorkspace({
                             >
                               {arrangement.code}
                             </button>
-                            <span className="text-xs text-muted">{arrangement.name}</span>
+                            <span className="text-caption font-normal text-ink-muted">
+                              {arrangement.name}
+                            </span>
                           </div>
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-ink">
+                        </RowHeader>
+                        <Td>
                           {arrangement.currentVersion
                             ? 'v' +
                               arrangement.currentVersion.versionNo +
@@ -3448,90 +3355,71 @@ export function AttendanceConfigurationWorkspace({
                               ' · ' +
                               dateLabel(arrangement.currentVersion.effectiveFrom)
                             : 'No active version'}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
+                        </Td>
+                        <Td className="text-ink-muted">
                           {arrangement.currentVersion
                             ? arrangement.currentVersion.permittedScheduleTypes
                                 .map((entry) => label(entry))
                                 .join(', ')
                             : '—'}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
+                        </Td>
+                        <Td className="text-ink-muted">
                           {arrangement.draft
                             ? 'v' +
                               arrangement.draft.versionNo +
                               ' · ' +
                               dateLabel(arrangement.draft.effectiveFrom)
                             : 'None'}
-                        </td>
-                        <td className="px-5 py-4 align-top">{arrangementActions(arrangement)}</td>
-                      </tr>
+                        </Td>
+                        <Td>{arrangementActions(arrangement)}</Td>
+                      </Tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        ) : tab === 'calendars' ? (
-          <section
-            aria-labelledby="holiday-calendar-register-heading"
-            className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          >
-            <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="holiday-calendar-register-heading"
-                >
-                  Holiday Calendar register
-                </h2>
-                <span className="text-xs text-muted">
-                  {calendars.length === 1 ? '1 calendar' : calendars.length + ' calendars'}
+                </Table>
+              )}
+            </Panel>
+          </SectionTabPanel>
+
+          <SectionTabPanel value="calendars">
+            <Panel
+              title="Holiday Calendar register"
+              flush
+              actions={
+                <span className="text-caption text-ink-muted">
+                  {countLabel(calendars.length, 'calendar')} · Agency scoped · Published per version
                 </span>
-              </div>
-              <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-                Agency scoped · Published per version
-              </span>
-            </header>
-            {calendars.length === 0 ? (
-              <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12">
-                <strong className="text-[15px] font-[650] text-midnight">
-                  No Holiday Calendars yet.
-                </strong>
-                <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                  A Holiday Calendar fixes the day types that Work Arrangement Versions pin for
-                  their scope. Each activated version is immutable and superseded in turn.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                  <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+              }
+            >
+              {calendars.length === 0 ? (
+                <StateSurface compact label="Holiday Calendars">
+                  <strong className="text-body font-[650] text-ink">
+                    No Holiday Calendars yet.
+                  </strong>
+                  <p className="m-0 max-w-[560px]">
+                    A Holiday Calendar fixes the day types that Work Arrangement Versions pin for
+                    their scope. Each activated version is immutable and superseded in turn.
+                  </p>
+                </StateSurface>
+              ) : (
+                <Table aria-label="Holiday Calendars" className="min-w-[860px]">
+                  <thead>
                     <tr>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Holiday Calendar
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Scope
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Current version
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Draft
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
+                      <Th>Holiday Calendar</Th>
+                      <Th>Scope</Th>
+                      <Th>Current version</Th>
+                      <Th>Draft</Th>
+                      <Th>
                         <span className="sr-only">Actions</span>
-                      </th>
+                      </Th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody>
                     {calendars.map((calendar) => (
-                      <tr key={calendar.id}>
-                        <td className="px-5 py-4 align-top">
+                      <Tr key={calendar.id}>
+                        <RowHeader>
                           <div className="grid gap-1">
                             <button
-                              className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
+                              className={recordLinkClass}
                               onClick={(event) =>
                                 openCalendarDetail(
                                   calendar,
@@ -3542,13 +3430,15 @@ export function AttendanceConfigurationWorkspace({
                             >
                               {calendar.code}
                             </button>
-                            <span className="text-xs text-muted">{calendar.name}</span>
+                            <span className="text-caption font-normal text-ink-muted">
+                              {calendar.name}
+                            </span>
                           </div>
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
+                        </RowHeader>
+                        <Td className="text-ink-muted">
                           {label(calendar.scopeType) + ' · ' + calendar.scopeReference}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-ink">
+                        </Td>
+                        <Td>
                           {calendar.currentVersion
                             ? 'v' +
                               calendar.currentVersion.versionNo +
@@ -3559,162 +3449,122 @@ export function AttendanceConfigurationWorkspace({
                                 : ' entries · ') +
                               dateLabel(calendar.currentVersion.effectiveFrom)
                             : 'No active version'}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
+                        </Td>
+                        <Td className="text-ink-muted">
                           {calendar.draft
                             ? 'v' +
                               calendar.draft.versionNo +
                               ' · ' +
                               dateLabel(calendar.draft.effectiveFrom)
                             : 'None'}
-                        </td>
-                        <td className="px-5 py-4 align-top">{calendarActions(calendar)}</td>
-                      </tr>
+                        </Td>
+                        <Td>{calendarActions(calendar)}</Td>
+                      </Tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-        ) : (
-          <div className="grid gap-5">
-            <section
-              aria-labelledby="schedule-assignment-register-heading"
-              className="overflow-hidden rounded-[5px] border border-line bg-paper"
-            >
-              <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-                <div className="grid gap-1">
-                  <h2
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="schedule-assignment-register-heading"
-                  >
-                    Schedule Assignment register
-                  </h2>
-                  <span className="text-xs text-muted">
-                    {assignments
-                      ? assignments.length === 1
-                        ? '1 assignment'
-                        : assignments.length + ' assignments'
-                      : assignmentsLoading
-                        ? 'Loading assignments…'
-                        : 'Assignments unavailable'}
-                  </span>
-                </div>
-                <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-                  One open Assignment per Employee
+                </Table>
+              )}
+            </Panel>
+          </SectionTabPanel>
+
+          <SectionTabPanel className="grid gap-5" value="assignments">
+            <Panel
+              title="Schedule Assignment register"
+              flush
+              actions={
+                <span className="text-caption text-ink-muted">
+                  {assignments ? countLabel(assignments.length, 'assignment') + ' · ' : ''}One open
+                  Assignment per Employee
                 </span>
-              </header>
+              }
+            >
               {assignmentsError ? (
-                <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+                <div className="flex flex-wrap items-center gap-3 px-4 py-3">
                   <FormError message={assignmentsError} />
-                  <Button
-                    size="default"
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setAssignmentsError('')}
-                  >
+                  <Button type="button" variant="secondary" onClick={() => setAssignmentsError('')}>
                     Retry
                   </Button>
                 </div>
               ) : null}
+              {!assignments && assignmentsLoading ? (
+                <StateSurface compact busy label="Schedule Assignments">
+                  <p className="m-0">Loading assignments…</p>
+                </StateSurface>
+              ) : null}
               {assignments && assignments.length === 0 ? (
-                <div className="grid min-h-[220px] place-content-center gap-2 px-6 py-12">
-                  <strong className="text-[15px] font-[650] text-midnight">
+                <StateSurface compact label="Schedule Assignments">
+                  <strong className="text-body font-[650] text-ink">
                     No Schedule Assignments yet.
                   </strong>
-                  <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
+                  <p className="m-0 max-w-[560px]">
                     An Assignment binds one Employee to one active Work Schedule Version and Work
                     Arrangement Version for a date range. Gaps fail closed as Attendance Exceptions.
                   </p>
-                </div>
+                </StateSurface>
               ) : null}
               {assignments && assignments.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[960px] border-collapse text-left text-sm">
-                    <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                      <tr>
-                        <th className="px-5 py-3 font-bold" scope="col">
-                          Employee
-                        </th>
-                        <th className="px-5 py-3 font-bold" scope="col">
-                          Work Schedule
-                        </th>
-                        <th className="px-5 py-3 font-bold" scope="col">
-                          Work Arrangement
-                        </th>
-                        <th className="px-5 py-3 font-bold" scope="col">
-                          Effectivity
-                        </th>
-                        <th className="px-5 py-3 font-bold" scope="col">
-                          <span className="sr-only">Actions</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line">
-                      {assignments.map((assignment) => (
-                        <tr key={assignment.id}>
-                          <td className="px-5 py-4 align-top">
-                            <div className="grid gap-1">
-                              <span className="font-[670] text-ink">
-                                {assignment.employee.employeeNumber}
-                              </span>
-                              <span className="text-xs text-muted">
-                                {assignment.employee.legalName}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-5 py-4 align-top text-xs text-ink">
-                            {assignment.workScheduleCode +
-                              ' v' +
-                              assignment.workScheduleVersionNo +
-                              ' · ' +
-                              label(assignment.scheduleType)}
-                          </td>
-                          <td className="px-5 py-4 align-top text-xs text-ink">
-                            {assignment.workArrangementCode +
-                              ' v' +
-                              assignment.workArrangementVersionNo +
-                              ' · ' +
-                              label(assignment.arrangementType)}
-                          </td>
-                          <td className="px-5 py-4 align-top text-xs text-muted">
-                            {dateLabel(assignment.effectiveFrom) +
-                              (assignment.effectiveTo
-                                ? ' – ' + dateLabel(assignment.effectiveTo)
-                                : ' – open-ended')}
-                          </td>
-                          <td className="px-5 py-4 align-top">{assignmentActions(assignment)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <Table aria-label="Schedule Assignments" className="min-w-[960px]">
+                  <thead>
+                    <tr>
+                      <Th>Employee</Th>
+                      <Th>Work Schedule</Th>
+                      <Th>Work Arrangement</Th>
+                      <Th>Effectivity</Th>
+                      <Th>
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {assignments.map((assignment) => (
+                      <Tr key={assignment.id}>
+                        <RowHeader>
+                          <div className="grid gap-1">
+                            <span>{assignment.employee.employeeNumber}</span>
+                            <span className="text-caption font-normal text-ink-muted">
+                              {assignment.employee.legalName}
+                            </span>
+                          </div>
+                        </RowHeader>
+                        <Td>
+                          {assignment.workScheduleCode +
+                            ' v' +
+                            assignment.workScheduleVersionNo +
+                            ' · ' +
+                            label(assignment.scheduleType)}
+                        </Td>
+                        <Td>
+                          {assignment.workArrangementCode +
+                            ' v' +
+                            assignment.workArrangementVersionNo +
+                            ' · ' +
+                            label(assignment.arrangementType)}
+                        </Td>
+                        <Td className="text-ink-muted">
+                          {dateLabel(assignment.effectiveFrom) +
+                            (assignment.effectiveTo
+                              ? ' – ' + dateLabel(assignment.effectiveTo)
+                              : ' – open-ended')}
+                        </Td>
+                        <Td>{assignmentActions(assignment)}</Td>
+                      </Tr>
+                    ))}
+                  </tbody>
+                </Table>
               ) : null}
-            </section>
+            </Panel>
 
-            <section
-              aria-labelledby="work-date-resolution-heading"
-              className="overflow-hidden rounded-[5px] border border-line bg-paper"
+            <Panel
+              title="Work date resolution"
+              actions={
+                <span className="text-caption text-ink-muted">
+                  Resolve the duty roster for one Employee and Work date
+                </span>
+              }
             >
-              <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-                <div className="grid gap-1">
-                  <h2
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="work-date-resolution-heading"
-                  >
-                    Work date resolution
-                  </h2>
-                  <span className="text-xs text-muted">
-                    Resolve the duty roster for one Employee and Work date
-                  </span>
-                </div>
-              </header>
-              <form
-                className="grid gap-4 px-5 py-5"
-                onSubmit={(event) => void submitResolution(event)}
-              >
-                {employeesError ? <FormError message={employeesError} /> : null}
-                {resolutionError ? <FormError message={resolutionError} /> : null}
+              <form className="grid gap-4" onSubmit={(event) => void submitResolution(event)}>
+                <FormError message={employeesError} />
+                <FormError message={resolutionError} />
                 <div className="grid items-end gap-4 min-[621px]:grid-cols-3">
                   <Field htmlFor="resolution-employee" label="Employee">
                     <select
@@ -3747,300 +3597,298 @@ export function AttendanceConfigurationWorkspace({
                       value={resolutionDate}
                     />
                   </Field>
-                  <Button disabled={resolutionBusy} size="default" type="submit" variant="primary">
+                  <Button disabled={resolutionBusy} type="submit" variant="primary">
                     {resolutionBusy ? 'Resolving…' : 'Resolve Work date'}
                   </Button>
                 </div>
                 {resolution ? <ResolutionResult resolution={resolution} /> : null}
               </form>
-            </section>
-          </div>
-        )}
-      </div>
-
-      {dialog === 'schedule-detail' || dialog === 'arrangement-detail' ? (
-        <div className="mb-4">
-          <RecordReturn href={navigation.href({ record: null, view: null, kind: null })}>
-            ← Attendance Configuration
-          </RecordReturn>
+            </Panel>
+          </SectionTabPanel>
         </div>
-      ) : null}
-      <DialogContent
-        aria-describedby={dialogDescriptionId}
-        className={
-          editingSchedule || editingArrangement || editingCalendar ? 'max-w-[980px]' : undefined
-        }
-      >
-        <DialogHeader>
-          <div className="grid min-w-0 gap-1.5">
-            <p className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase">
-              Attendance configuration
-            </p>
-            <DialogTitle>
-              {dialog === 'schedule-create'
-                ? 'Create Work Schedule'
-                : dialog === 'schedule-edit'
-                  ? 'Edit Draft Work Schedule'
-                  : dialog === 'schedule-successor'
-                    ? 'Create Successor · ' + selectedLabel
-                    : dialog === 'schedule-activate'
-                      ? 'Activate ' + selectedLabel
-                      : dialog === 'schedule-detail'
-                        ? 'Work Schedule · ' + selectedLabel
-                        : dialog === 'arrangement-create'
-                          ? 'Create Work Arrangement'
-                          : dialog === 'arrangement-edit'
-                            ? 'Edit Draft Work Arrangement'
-                            : dialog === 'arrangement-successor'
-                              ? 'Create Successor · ' + selectedLabel
-                              : dialog === 'arrangement-activate'
-                                ? 'Activate ' + selectedLabel
-                                : dialog === 'arrangement-detail'
-                                  ? 'Work Arrangement · ' + selectedLabel
-                                  : dialog === 'calendar-create'
-                                    ? 'Create Holiday Calendar'
-                                    : dialog === 'calendar-edit'
-                                      ? 'Edit Draft Holiday Calendar'
-                                      : dialog === 'calendar-successor'
-                                        ? 'Create Successor · ' + selectedLabel
-                                        : dialog === 'calendar-activate'
-                                          ? 'Activate ' + selectedLabel
-                                          : dialog === 'calendar-detail'
-                                            ? 'Holiday Calendar · ' + selectedLabel
-                                            : dialog === 'assignment-create'
-                                              ? 'Create Schedule Assignment'
-                                              : 'End Schedule Assignment · ' + selectedLabel}
-            </DialogTitle>
-            <DialogDescription id={dialogDescriptionId}>
-              {dialog === 'schedule-create' || dialog === 'schedule-edit'
-                ? 'Declare the schedule type, time zone, effective date, and exactly one Day Rule per weekday. Required minutes exclude unpaid breaks.'
-                : dialog === 'schedule-activate' ||
-                    dialog === 'arrangement-activate' ||
-                    dialog === 'calendar-activate'
-                  ? 'Activation pins the authority Document Version, validates the Draft, and retires any predecessor by supersession.'
-                  : dialog === 'schedule-successor' ||
-                      dialog === 'arrangement-successor' ||
-                      dialog === 'calendar-successor'
-                    ? 'The successor copies the current published definition and receives a later effective date. It remains Draft until reviewed.'
-                    : dialog === 'schedule-detail'
-                      ? 'Inspect effective-dated versions, the seven-day rule matrix, and the immutable transition history.'
-                      : dialog === 'arrangement-create' || dialog === 'arrangement-edit'
-                        ? 'Declare the operating mode, its permitted schedule types, the pinned Holiday Calendar, and the effective date.'
-                        : dialog === 'arrangement-detail'
-                          ? 'Inspect effective-dated versions, the pinned Holiday Calendar, and the immutable transition history.'
-                          : dialog === 'calendar-create' || dialog === 'calendar-edit'
-                            ? 'Declare the calendar scope, effective date, and one row per holiday date and day type.'
-                            : dialog === 'calendar-detail'
-                              ? 'Inspect effective-dated versions, their holiday entries, and the immutable transition history.'
-                              : dialog === 'assignment-create'
-                                ? 'Bind one Employee to an active Work Schedule Version and Work Arrangement Version for a non-overlapping period, with the authority Document Version.'
-                                : 'Ending records the last covered date and the reason. The Assignment then remains immutable.'}
-            </DialogDescription>
-          </div>
-          <DialogClose asChild>
-            <Button
-              aria-label="Close Attendance Configuration dialog"
-              className="border border-line bg-paper text-muted hover:bg-canvas"
-              disabled={busy}
-              type="button"
-            >
-              <span aria-hidden="true" className="text-xl leading-none">
-                ×
-              </span>
-            </Button>
-          </DialogClose>
-        </DialogHeader>
 
-        {dialog === 'schedule-detail' ? (
-          <ScheduleDetailBody detail={scheduleDetail} detailLoading={detailLoading} error={error} />
-        ) : dialog === 'arrangement-detail' ? (
-          <ArrangementDetailBody
-            calendars={calendars}
-            detail={arrangementDetail}
-            detailLoading={detailLoading}
-            error={error}
-          />
-        ) : dialog === 'calendar-detail' ? (
-          <HolidayCalendarDetailBody
-            detail={calendarDetail}
-            detailLoading={detailLoading}
-            error={error}
-          />
-        ) : dialog === 'schedule-activate' ||
-          dialog === 'arrangement-activate' ||
-          dialog === 'calendar-activate' ? (
-          <ActivationForm
-            activation={activation}
-            error={error}
-            evidenceLoading={evidenceLoading}
-            evidenceOptions={evidenceOptions}
-            onSubmit={submitActivation}
-            setActivation={setActivation}
-          />
-        ) : dialog === 'schedule-successor' ||
-          dialog === 'arrangement-successor' ||
-          dialog === 'calendar-successor' ? (
-          <DialogBody className="grid gap-5">
-            {error ? <FormError message={error} /> : null}
-            <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm leading-[1.6] text-muted">
-              The successor copies the current published definition and receives a later effective
-              date. It remains Draft until reviewed and activated.
-            </p>
-            <DialogFooter className="-mx-6 border-t-0 px-0 pb-0 min-[621px]:-mx-8 min-[621px]:px-0">
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
-                </Button>
-              </DialogClose>
+        <DialogContent
+          aria-describedby={dialogDescriptionId}
+          className={
+            editingSchedule || editingArrangement || editingCalendar ? 'max-w-[980px]' : undefined
+          }
+        >
+          <DialogHeader>
+            <div className="grid min-w-0 gap-1.5">
+              <DialogTitle>
+                {dialog === 'schedule-create'
+                  ? 'Create Work Schedule'
+                  : dialog === 'schedule-edit'
+                    ? 'Edit Draft Work Schedule'
+                    : dialog === 'schedule-successor'
+                      ? 'Create Successor · ' + selectedLabel
+                      : dialog === 'schedule-activate'
+                        ? 'Activate ' + selectedLabel
+                        : dialog === 'schedule-detail'
+                          ? 'Work Schedule · ' + selectedLabel
+                          : dialog === 'arrangement-create'
+                            ? 'Create Work Arrangement'
+                            : dialog === 'arrangement-edit'
+                              ? 'Edit Draft Work Arrangement'
+                              : dialog === 'arrangement-successor'
+                                ? 'Create Successor · ' + selectedLabel
+                                : dialog === 'arrangement-activate'
+                                  ? 'Activate ' + selectedLabel
+                                  : dialog === 'arrangement-detail'
+                                    ? 'Work Arrangement · ' + selectedLabel
+                                    : dialog === 'calendar-create'
+                                      ? 'Create Holiday Calendar'
+                                      : dialog === 'calendar-edit'
+                                        ? 'Edit Draft Holiday Calendar'
+                                        : dialog === 'calendar-successor'
+                                          ? 'Create Successor · ' + selectedLabel
+                                          : dialog === 'calendar-activate'
+                                            ? 'Activate ' + selectedLabel
+                                            : dialog === 'calendar-detail'
+                                              ? 'Holiday Calendar · ' + selectedLabel
+                                              : dialog === 'assignment-create'
+                                                ? 'Create Schedule Assignment'
+                                                : 'End Schedule Assignment · ' + selectedLabel}
+              </DialogTitle>
+              <DialogDescription id={dialogDescriptionId}>
+                {dialog === 'schedule-create' || dialog === 'schedule-edit'
+                  ? 'Declare the schedule type, time zone, effective date, and exactly one Day Rule per weekday. Required minutes exclude unpaid breaks.'
+                  : dialog === 'schedule-activate' ||
+                      dialog === 'arrangement-activate' ||
+                      dialog === 'calendar-activate'
+                    ? 'Activation pins the authority Document Version, validates the Draft, and retires any predecessor by supersession.'
+                    : dialog === 'schedule-successor' ||
+                        dialog === 'arrangement-successor' ||
+                        dialog === 'calendar-successor'
+                      ? 'The successor copies the current published definition and receives a later effective date. It remains Draft until reviewed.'
+                      : dialog === 'schedule-detail'
+                        ? 'Inspect effective-dated versions, the seven-day rule matrix, and the immutable transition history.'
+                        : dialog === 'arrangement-create' || dialog === 'arrangement-edit'
+                          ? 'Declare the operating mode, its permitted schedule types, the pinned Holiday Calendar, and the effective date.'
+                          : dialog === 'arrangement-detail'
+                            ? 'Inspect effective-dated versions, the pinned Holiday Calendar, and the immutable transition history.'
+                            : dialog === 'calendar-create' || dialog === 'calendar-edit'
+                              ? 'Declare the calendar scope, effective date, and one row per holiday date and day type.'
+                              : dialog === 'calendar-detail'
+                                ? 'Inspect effective-dated versions, their holiday entries, and the immutable transition history.'
+                                : dialog === 'assignment-create'
+                                  ? 'Bind one Employee to an active Work Schedule Version and Work Arrangement Version for a non-overlapping period, with the authority Document Version.'
+                                  : 'Ending records the last covered date and the reason. The Assignment then remains immutable.'}
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
               <Button
+                aria-label="Close Attendance Configuration dialog"
                 disabled={busy}
-                onClick={() => void submitSuccessor()}
-                size="default"
                 type="button"
-                variant="primary"
               >
-                {busy ? 'Creating…' : 'Create Successor'}
+                <span aria-hidden="true" className="text-xl leading-none">
+                  ×
+                </span>
               </Button>
-            </DialogFooter>
-          </DialogBody>
-        ) : dialog === 'schedule-create' || dialog === 'schedule-edit' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onSubmit={(event) => void submitSchedule(event)}
-          >
-            <DialogBody className="grid auto-rows-max content-start gap-6">
-              {error ? <FormError message={error} /> : null}
-              <ScheduleDefinitionFields
-                dialog={dialog}
-                setValue={(field, value) =>
-                  setScheduleValues((current) => ({ ...current, [field]: value }))
-                }
-                values={scheduleValues}
-              />
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+            </DialogClose>
+          </DialogHeader>
+
+          {dialog === 'schedule-detail' ? (
+            <ScheduleDetailBody
+              detail={scheduleDetail}
+              detailLoading={detailLoading}
+              error={error}
+            />
+          ) : dialog === 'arrangement-detail' ? (
+            <ArrangementDetailBody
+              calendars={calendars}
+              detail={arrangementDetail}
+              detailLoading={detailLoading}
+              error={error}
+            />
+          ) : dialog === 'calendar-detail' ? (
+            <HolidayCalendarDetailBody
+              detail={calendarDetail}
+              detailLoading={detailLoading}
+              error={error}
+            />
+          ) : dialog === 'schedule-activate' ||
+            dialog === 'arrangement-activate' ||
+            dialog === 'calendar-activate' ? (
+            <ActivationForm
+              activation={activation}
+              error={error}
+              evidenceLoading={evidenceLoading}
+              evidenceOptions={evidenceOptions}
+              onSubmit={submitActivation}
+              setActivation={setActivation}
+            />
+          ) : dialog === 'schedule-successor' ||
+            dialog === 'arrangement-successor' ||
+            dialog === 'calendar-successor' ? (
+            <>
+              <DialogBody className="grid gap-5">
+                <FormError message={error} />
+                <p className={noteClass}>
+                  The successor copies the current published definition and receives a later
+                  effective date. It remains Draft until reviewed and activated.
+                </p>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  disabled={busy}
+                  onClick={() => void submitSuccessor()}
+                  type="button"
+                  variant="primary"
+                >
+                  {busy ? 'Creating…' : 'Create Successor'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : dialog === 'schedule-create' ? 'Create Draft' : 'Save Draft'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'calendar-create' || dialog === 'calendar-edit' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onSubmit={(event) => void submitHolidayCalendar(event)}
-          >
-            <DialogBody className="grid auto-rows-max content-start gap-6">
-              {error ? <FormError message={error} /> : null}
-              <HolidayCalendarDefinitionFields
-                dialog={dialog}
-                setValue={(field, value) =>
-                  setCalendarValues((current) => ({ ...current, [field]: value }))
-                }
-                values={calendarValues}
-              />
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </>
+          ) : dialog === 'schedule-create' || dialog === 'schedule-edit' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              onSubmit={(event) => void submitSchedule(event)}
+            >
+              <DialogBody className="grid auto-rows-max content-start gap-6">
+                <FormError message={error} />
+                <ScheduleDefinitionFields
+                  dialog={dialog}
+                  setValue={(field, value) =>
+                    setScheduleValues((current) => ({ ...current, [field]: value }))
+                  }
+                  values={scheduleValues}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Saving…' : dialog === 'schedule-create' ? 'Create Draft' : 'Save Draft'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : dialog === 'calendar-create' ? 'Create Draft' : 'Save Draft'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'assignment-create' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onSubmit={(event) => void submitAssignment(event)}
-          >
-            <DialogBody className="grid auto-rows-max content-start gap-6">
-              {error ? <FormError message={error} /> : null}
-              <AssignmentDefinitionFields
-                arrangements={arrangements}
-                employees={employees}
-                employeesError={employeesError}
-                evidenceLoading={evidenceLoading}
-                evidenceOptions={evidenceOptions}
-                schedules={schedules}
-                setValue={(field, value) =>
-                  setAssignmentValues((current) => ({ ...current, [field]: value }))
-                }
-                values={assignmentValues}
-              />
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : dialog === 'calendar-create' || dialog === 'calendar-edit' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              onSubmit={(event) => void submitHolidayCalendar(event)}
+            >
+              <DialogBody className="grid auto-rows-max content-start gap-6">
+                <FormError message={error} />
+                <HolidayCalendarDefinitionFields
+                  dialog={dialog}
+                  setValue={(field, value) =>
+                    setCalendarValues((current) => ({ ...current, [field]: value }))
+                  }
+                  values={calendarValues}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Saving…' : dialog === 'calendar-create' ? 'Create Draft' : 'Save Draft'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : 'Create Assignment'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'assignment-end' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onSubmit={(event) => void submitAssignmentEnd(event)}
-          >
-            <DialogBody className="grid auto-rows-max content-start gap-6">
-              {error ? <FormError message={error} /> : null}
-              <AssignmentEndFields
-                assignment={selectedAssignment}
-                setValue={(field, value) =>
-                  setAssignmentEndValues((current) => ({ ...current, [field]: value }))
-                }
-                values={assignmentEndValues}
-              />
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : dialog === 'assignment-create' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              onSubmit={(event) => void submitAssignment(event)}
+            >
+              <DialogBody className="grid auto-rows-max content-start gap-6">
+                <FormError message={error} />
+                <AssignmentDefinitionFields
+                  arrangements={arrangements}
+                  employees={employees}
+                  employeesError={employeesError}
+                  evidenceLoading={evidenceLoading}
+                  evidenceOptions={evidenceOptions}
+                  schedules={schedules}
+                  setValue={(field, value) =>
+                    setAssignmentValues((current) => ({ ...current, [field]: value }))
+                  }
+                  values={assignmentValues}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Saving…' : 'Create Assignment'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Ending…' : 'End Assignment'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : dialog === 'arrangement-create' || dialog === 'arrangement-edit' ? (
-          <form
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-            onSubmit={(event) => void submitArrangement(event)}
-          >
-            <DialogBody className="grid auto-rows-max content-start gap-6">
-              {error ? <FormError message={error} /> : null}
-              <ArrangementDefinitionFields
-                calendars={calendars}
-                dialog={dialog}
-                setValue={(field, value) =>
-                  setArrangementValues((current) => ({ ...current, [field]: value }))
-                }
-                values={arrangementValues}
-              />
-            </DialogBody>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
-                  Cancel
+              </DialogFooter>
+            </form>
+          ) : dialog === 'assignment-end' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              onSubmit={(event) => void submitAssignmentEnd(event)}
+            >
+              <DialogBody className="grid auto-rows-max content-start gap-6">
+                <FormError message={error} />
+                <AssignmentEndFields
+                  assignment={selectedAssignment}
+                  setValue={(field, value) =>
+                    setAssignmentEndValues((current) => ({ ...current, [field]: value }))
+                  }
+                  values={assignmentEndValues}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Ending…' : 'End Assignment'}
                 </Button>
-              </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
-                {busy ? 'Saving…' : dialog === 'arrangement-create' ? 'Create Draft' : 'Save Draft'}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : null}
-      </DialogContent>
+              </DialogFooter>
+            </form>
+          ) : dialog === 'arrangement-create' || dialog === 'arrangement-edit' ? (
+            <form
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              onSubmit={(event) => void submitArrangement(event)}
+            >
+              <DialogBody className="grid auto-rows-max content-start gap-6">
+                <FormError message={error} />
+                <ArrangementDefinitionFields
+                  calendars={calendars}
+                  dialog={dialog}
+                  setValue={(field, value) =>
+                    setArrangementValues((current) => ({ ...current, [field]: value }))
+                  }
+                  values={arrangementValues}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy
+                    ? 'Saving…'
+                    : dialog === 'arrangement-create'
+                      ? 'Create Draft'
+                      : 'Save Draft'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+        </DialogContent>
+      </SectionTabs>
     </Dialog>
   );
 }

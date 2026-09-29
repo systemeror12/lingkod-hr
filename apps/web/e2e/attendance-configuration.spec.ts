@@ -147,7 +147,7 @@ test('maintains a Work Arrangement pinned to a Holiday Calendar', async ({ page 
   await page.getByLabel('Work Arrangement code').fill(code);
   await page.getByLabel('Work Arrangement name').fill('E2E Hybrid Work Arrangement');
   await page.getByLabel('Arrangement type').selectOption('HYBRID');
-  await page.getByLabel('Holiday Calendar').selectOption({
+  await dialog.getByLabel('Holiday Calendar').selectOption({
     label: 'PH-NATIONAL · Philippine National Holidays',
   });
   await page.getByLabel('Flexible', { exact: true }).check();
