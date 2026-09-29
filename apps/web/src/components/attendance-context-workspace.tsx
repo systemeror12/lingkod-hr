@@ -1,9 +1,14 @@
 'use client';
 
-import { Field, inputClass, FormError } from './ui/field';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useRecordNavigation } from './record-navigation';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 export type AttendanceContextType =
   'OFFICIAL_BUSINESS' | 'OFFICIAL_TRAVEL' | 'TRAINING' | 'APPROVED_ABSENCE';
@@ -59,15 +64,18 @@ const CONTEXT_TYPE_LABELS: Record<AttendanceContextType, string> = {
   APPROVED_ABSENCE: 'Approved absence',
 };
 
-const TONE_RESOLVED = 'bg-[#e8f3ed] text-[#316647]';
-const TONE_ATTENTION = 'bg-[#fff3d6] text-[#79531c]';
-const TONE_NEUTRAL = 'bg-[#f0f2f5] text-muted';
+const CONTEXT_TYPE_TONES: Record<AttendanceContextType, StatusTone> = {
+  OFFICIAL_BUSINESS: 'success',
+  OFFICIAL_TRAVEL: 'neutral',
+  TRAINING: 'success',
+  APPROVED_ABSENCE: 'warning',
+};
 
-function typeClass(type: AttendanceContextType): string {
-  if (type === 'APPROVED_ABSENCE') return TONE_ATTENTION;
-  if (type === 'OFFICIAL_TRAVEL') return TONE_NEUTRAL;
-  return TONE_RESOLVED;
-}
+const VIEWS: readonly [View, string][] = [
+  ['tree', 'Tree'],
+  ['form', 'Form'],
+  ['kanban', 'Kanban'],
+];
 
 function errorMessage(value: unknown, fallback: string): string {
   if (typeof value !== 'object' || value === null) return fallback;
@@ -119,6 +127,15 @@ function basisLabel(record: AttendanceContextItem): string {
     return `${record.evidence.documentNo ?? record.evidence.documentType} · v${record.evidence.versionNo}`;
   }
   return '—';
+}
+
+function Detail({ label, wide, children }: { label: string; wide?: boolean; children: ReactNode }) {
+  return (
+    <div className={wide ? 'grid gap-1 min-[721px]:col-span-2' : 'grid gap-1'}>
+      <dt className="text-caption text-ink-muted">{label}</dt>
+      <dd className="m-0 text-body text-ink">{children}</dd>
+    </div>
+  );
 }
 
 function eventValue(event: { currentTarget: EventTarget }): string {
@@ -295,259 +312,203 @@ export function AttendanceContextWorkspace({
   const selected = recordId ? (records.find(({ id }) => id === recordId) ?? null) : null;
 
   return (
-    <div className="grid gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="grid gap-1">
-          <h1 className="m-0 text-[22px] font-[680] text-midnight">Attendance Contexts</h1>
-          <p className="m-0 max-w-[720px] text-sm leading-[1.6] text-muted">
-            Official business, official travel, training, and approved absence coverage recorded
-            against one Employee. Records are append-only factual inputs; calculation and
-            corrections stay in their own workflows.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div
-            aria-label="Record view"
-            className="flex items-center gap-1 rounded-[3px] border border-line bg-paper p-1"
-          >
-            <button
-              aria-pressed={view === 'tree'}
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'tree' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              onClick={() => navigation.navigate({ view: 'tree', new: null })}
-              type="button"
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Time & attendance' }]}
+        title="Attendance Contexts"
+        actions={
+          <>
+            <div
+              aria-label="Record view"
+              className="flex items-center gap-0.5 rounded-control border border-border bg-surface p-0.5"
+              role="group"
             >
-              Tree
-            </button>
-            <button
-              aria-pressed={view === 'form'}
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'form' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              onClick={() =>
-                navigation.navigate({ view: 'form', new: creating ? 'context' : null })
-              }
-              type="button"
-            >
-              Form
-            </button>
-            <button
-              aria-pressed={view === 'kanban'}
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'kanban' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              onClick={() => navigation.navigate({ view: 'kanban', new: null })}
-              type="button"
-            >
-              Kanban
-            </button>
-          </div>
-          {canCreate ? (
-            <Button
-              className="min-h-10 whitespace-nowrap"
-              onClick={openCreate}
-              size="default"
-              type="button"
-              variant="primary"
-            >
-              Record attendance context
-            </Button>
-          ) : null}
-        </div>
-      </header>
+              {VIEWS.map(([value, label]) => (
+                <button
+                  aria-pressed={view === value}
+                  className="cursor-pointer rounded-control border-0 bg-transparent px-3 py-1.5 text-caption font-[650] text-ink-muted hover:text-ink aria-pressed:bg-canvas aria-pressed:text-ink"
+                  key={value}
+                  onClick={() =>
+                    // Form keeps an open draft; Tree and Kanban leave it.
+                    navigation.navigate(
+                      value === 'form'
+                        ? { view: value, new: creating ? 'context' : null }
+                        : { view: value, new: null },
+                    )
+                  }
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {canCreate ? (
+              <Button onClick={openCreate} type="button" variant="primary">
+                Record attendance context
+              </Button>
+            ) : null}
+          </>
+        }
+      />
+      <p className="m-0 max-w-[760px] text-small text-ink-muted">
+        Official business, official travel, training, and approved absence coverage recorded against
+        one Employee. Records are append-only factual inputs; calculation and corrections stay in
+        their own workflows.
+      </p>
 
-      {error ? <FormError message={error} /> : null}
+      <FormError message={error} />
 
       {view === 'tree' ? (
-        <section
-          aria-labelledby="attendance-context-register-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
+        <Panel
+          title="Attendance Context register"
+          flush
+          actions={
+            <span className="text-caption text-ink-muted">
+              {filtered.length === 1 ? '1 context' : filtered.length + ' contexts'} · Agency scoped
+            </span>
+          }
         >
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-            <div className="grid gap-1">
-              <h2
-                className="m-0 text-sm font-[670] text-midnight"
-                id="attendance-context-register-heading"
+          <div className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3">
+            <Field htmlFor="attendance-context-search" label="Search">
+              <input
+                className={inputClass}
+                id="attendance-context-search"
+                onChange={(event) => setQuery(eventValue(event))}
+                placeholder="Employee or reason"
+                type="search"
+                value={query}
+              />
+            </Field>
+            <Field htmlFor="attendance-context-filter" label="Context">
+              <select
+                className={inputClass}
+                id="attendance-context-filter"
+                onChange={(event) =>
+                  setTypeFilter(eventValue(event) as 'ALL' | AttendanceContextType)
+                }
+                value={typeFilter}
               >
-                Attendance Context register
-              </h2>
-              <span className="text-xs text-muted">
-                {filtered.length === 1 ? '1 context' : filtered.length + ' contexts'} · Agency
-                scoped
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-muted">
-                Search
-                <input
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) => setQuery(eventValue(event))}
-                  placeholder="Employee or reason"
-                  type="search"
-                  value={query}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                Context
-                <select
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) =>
-                    setTypeFilter(eventValue(event) as 'ALL' | AttendanceContextType)
-                  }
-                  value={typeFilter}
-                >
-                  <option value="ALL">All types</option>
-                  {CONTEXT_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {CONTEXT_TYPE_LABELS[type]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </header>
+                <option value="ALL">All types</option>
+                {CONTEXT_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {CONTEXT_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
           {filtered.length === 0 ? (
-            <div className="grid min-h-[220px] place-content-center gap-2 px-6 py-12 text-center">
-              <strong className="text-[15px] font-[650] text-midnight">
+            <StateSurface compact label="Attendance Contexts">
+              <strong className="font-[650] text-ink">
                 {records.length === 0 ? 'No Attendance Contexts yet.' : 'No contexts match.'}
               </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
+              <p className="m-0">
                 {records.length === 0
                   ? 'Record approved official business, travel, training, or absence coverage against an Employee.'
                   : 'Clear the search or choose another context type.'}
               </p>
-            </div>
+            </StateSurface>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                  <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Coverage
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Employee
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Context
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Reason and basis
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Recorded
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {filtered.map((record) => (
-                    <tr key={record.id}>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        <div className="grid gap-1">
-                          <button
-                            className="w-fit cursor-pointer text-left font-[650] text-cobalt underline-offset-2 hover:underline"
-                            onClick={() => openRecord(record.id)}
-                            type="button"
-                          >
-                            {coverageLabel(record)}
-                          </button>
-                          <span className="text-muted">
-                            {record.coverageMode === 'WHOLE_WORK_DATE'
-                              ? 'Whole work date'
-                              : 'Exact time range'}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        <div className="grid gap-1">
-                          <span className="font-[650]">{record.employee.legalName}</span>
-                          <span className="text-muted">{record.employee.employeeNumber}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            typeClass(record.contextType)
-                          }
-                        >
-                          {CONTEXT_TYPE_LABELS[record.contextType]}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        <div className="grid max-w-[320px] gap-1">
-                          <span>{record.reason}</span>
-                          <span className="text-muted">{basisLabel(record)}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
-                        <div className="grid gap-1">
-                          <span>{instantLabel(record.recordedAt)}</span>
-                          <span>{record.recordedBy.legalName ?? 'Records custodian'}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table aria-label="Attendance Contexts" className="min-w-[900px]">
+              <thead>
+                <tr>
+                  <Th>Coverage</Th>
+                  <Th>Employee</Th>
+                  <Th>Context</Th>
+                  <Th>Reason and basis</Th>
+                  <Th>Recorded</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((record) => (
+                  <Tr key={record.id} selected={record.id === recordId}>
+                    <RowHeader>
+                      <button
+                        className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[650] text-primary underline-offset-2 hover:underline"
+                        onClick={() => openRecord(record.id)}
+                        type="button"
+                      >
+                        {coverageLabel(record)}
+                      </button>
+                      <span className="block font-normal text-ink-muted">
+                        {record.coverageMode === 'WHOLE_WORK_DATE'
+                          ? 'Whole work date'
+                          : 'Exact time range'}
+                      </span>
+                    </RowHeader>
+                    <Td>
+                      {record.employee.legalName}
+                      <span className="block font-mono text-caption text-ink-muted">
+                        {record.employee.employeeNumber}
+                      </span>
+                    </Td>
+                    <Td>
+                      <StatusTag tone={CONTEXT_TYPE_TONES[record.contextType]}>
+                        {CONTEXT_TYPE_LABELS[record.contextType]}
+                      </StatusTag>
+                    </Td>
+                    <Td className="max-w-[320px]">
+                      {record.reason}
+                      <span className="block text-ink-muted">{basisLabel(record)}</span>
+                    </Td>
+                    <Td className="text-ink-muted">
+                      {instantLabel(record.recordedAt)}
+                      <span className="block">
+                        {record.recordedBy.legalName ?? 'Records custodian'}
+                      </span>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
           )}
-        </section>
+        </Panel>
       ) : null}
 
       {view === 'form' ? (
-        <section
-          aria-labelledby="attendance-context-form-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-            <div className="grid gap-1">
-              <h2
-                className="m-0 text-sm font-[670] text-midnight"
-                id="attendance-context-form-heading"
-              >
-                {creating ? 'Record Attendance Context' : 'Attendance Context record'}
-              </h2>
-              <span className="text-xs text-muted">
-                {creating
-                  ? 'One immutable fact with its reason, basis, recorder, and recorded time.'
-                  : 'Append-only history; correct coverage by recording a new context.'}
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
+        <Panel
+          title={creating ? 'Record Attendance Context' : 'Attendance Context record'}
+          flush
+          actions={
+            <>
               {!creating && selected && canCreate ? (
-                <Button
-                  className="min-h-9 whitespace-nowrap"
-                  onClick={openCreate}
-                  size="default"
-                  type="button"
-                  variant="secondary"
-                >
+                <Button onClick={openCreate} type="button" variant="secondary">
                   Record another context
                 </Button>
               ) : null}
               <Button
-                className="min-h-9 whitespace-nowrap"
                 onClick={() => navigation.navigate({ view: 'tree', record: null, new: null })}
-                size="default"
                 type="button"
                 variant="secondary"
               >
                 Back to register
               </Button>
-            </div>
-          </header>
+            </>
+          }
+        >
+          <p className="m-0 px-4 pt-3 text-small text-ink-muted">
+            {creating
+              ? 'One immutable fact with its reason, basis, recorder, and recorded time.'
+              : 'Append-only history; correct coverage by recording a new context.'}
+          </p>
           {success ? (
             <p
-              className="m-0 border-b border-[#b9d8c3] bg-[#f2faf4] px-5 py-3 text-sm text-[#316647]"
+              className="mx-4 mt-3 mb-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
               role="status"
             >
               {success}
             </p>
           ) : null}
           {!creating && recordId && !selected ? (
-            <p className="m-0 px-5 py-6 text-sm text-muted">
-              That Attendance Context is not in the current register. Return to the register and
-              choose another record.
-            </p>
+            <StateSurface compact label="Attendance Context record">
+              <p className="m-0">
+                That Attendance Context is not in the current register. Return to the register and
+                choose another record.
+              </p>
+            </StateSurface>
           ) : creating || !selected ? (
             canCreate ? (
-              <form className="grid gap-5 px-5 py-6" onSubmit={recordContext}>
+              <form className="grid gap-5 p-4" onSubmit={recordContext}>
                 <div className="grid gap-4 min-[721px]:grid-cols-2">
                   <Field htmlFor="attendance-context-employee" label="Employee">
                     <select
@@ -582,12 +543,13 @@ export function AttendanceContextWorkspace({
                     </select>
                   </Field>
                 </div>
-                <fieldset className="grid gap-3 border-0 p-0">
-                  <legend className="p-0 text-xs font-[650] text-ink">Coverage</legend>
-                  <div className="flex flex-wrap gap-4 text-sm text-ink">
+                <fieldset className="m-0 grid gap-3 border-0 p-0">
+                  <legend className="p-0 text-caption font-[650] text-ink">Coverage</legend>
+                  <div className="flex flex-wrap gap-4 text-body text-ink">
                     <label className="flex items-center gap-2">
                       <input
                         checked={coverageMode === 'WHOLE_WORK_DATE'}
+                        className="accent-primary"
                         name="attendance-context-coverage"
                         onChange={() => setCoverageMode('WHOLE_WORK_DATE')}
                         type="radio"
@@ -598,6 +560,7 @@ export function AttendanceContextWorkspace({
                     <label className="flex items-center gap-2">
                       <input
                         checked={coverageMode === 'TIMED'}
+                        className="accent-primary"
                         name="attendance-context-coverage"
                         onChange={() => setCoverageMode('TIMED')}
                         type="radio"
@@ -687,103 +650,78 @@ export function AttendanceContextWorkspace({
                   />
                 </Field>
                 <div className="flex justify-end">
-                  <Button
-                    className="min-h-10 whitespace-nowrap"
-                    disabled={busy}
-                    size="default"
-                    type="submit"
-                    variant="primary"
-                  >
+                  <Button disabled={busy} type="submit" variant="primary">
                     {busy ? 'Recording…' : 'Record Attendance Context'}
                   </Button>
                 </div>
               </form>
             ) : (
-              <p className="m-0 px-5 py-6 text-sm text-muted">
-                Your active Agency Membership does not permit recording Attendance Contexts.
-              </p>
+              <StateSurface compact label="Attendance Context access">
+                <p className="m-0">
+                  Your active Agency Membership does not permit recording Attendance Contexts.
+                </p>
+              </StateSurface>
             )
           ) : (
-            <dl className="m-0 grid gap-4 px-5 py-6 text-sm min-[721px]:grid-cols-2">
-              <div className="grid gap-1">
-                <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                  Employee
-                </dt>
-                <dd className="m-0 text-ink">
-                  {selected.employee.legalName} · {selected.employee.employeeNumber}
-                </dd>
-              </div>
-              <div className="grid gap-1">
-                <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                  Context type
-                </dt>
-                <dd className="m-0 text-ink">{CONTEXT_TYPE_LABELS[selected.contextType]}</dd>
-              </div>
-              <div className="grid gap-1">
-                <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                  Coverage
-                </dt>
-                <dd className="m-0 text-ink">{coverageLabel(selected)}</dd>
-              </div>
-              <div className="grid gap-1">
-                <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                  Recorded
-                </dt>
-                <dd className="m-0 text-ink">
-                  {instantLabel(selected.recordedAt)} ·{' '}
-                  {selected.recordedBy.legalName ?? 'Records custodian'}
-                </dd>
-              </div>
-              <div className="grid gap-1 min-[721px]:col-span-2">
-                <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                  Reason
-                </dt>
-                <dd className="m-0 text-ink">{selected.reason}</dd>
-              </div>
-              <div className="grid gap-1 min-[721px]:col-span-2">
-                <dt className="text-[11px] font-bold tracking-[0.07em] text-muted uppercase">
-                  Linked source or evidence
-                </dt>
-                <dd className="m-0 text-ink">{basisLabel(selected)}</dd>
-              </div>
+            <dl className="m-0 grid gap-4 p-4 min-[721px]:grid-cols-2">
+              <Detail label="Employee">
+                {selected.employee.legalName} · {selected.employee.employeeNumber}
+              </Detail>
+              <Detail label="Context type">
+                <StatusTag tone={CONTEXT_TYPE_TONES[selected.contextType]}>
+                  {CONTEXT_TYPE_LABELS[selected.contextType]}
+                </StatusTag>
+              </Detail>
+              <Detail label="Coverage">{coverageLabel(selected)}</Detail>
+              <Detail label="Recorded">
+                {instantLabel(selected.recordedAt)} ·{' '}
+                {selected.recordedBy.legalName ?? 'Records custodian'}
+              </Detail>
+              <Detail label="Reason" wide>
+                {selected.reason}
+              </Detail>
+              <Detail label="Linked source or evidence" wide>
+                {basisLabel(selected)}
+              </Detail>
             </dl>
           )}
-        </section>
+        </Panel>
       ) : null}
 
       {view === 'kanban' ? (
-        <section aria-label="Attendance Context Kanban" className="grid gap-4">
-          <div className="grid gap-4 min-[921px]:grid-cols-4">
+        <Panel title="Attendance Context board" flush>
+          <div className="grid gap-3 p-4 min-[921px]:grid-cols-4">
             {CONTEXT_TYPES.map((type) => {
               const column = filtered.filter((record) => record.contextType === type);
               return (
                 <section
-                  className="grid content-start gap-3 rounded-[5px] border border-line bg-paper p-3"
+                  aria-labelledby={`attendance-context-kanban-${type}`}
+                  className="grid content-start gap-2 rounded-panel border border-border bg-canvas p-3"
                   key={type}
                 >
-                  <header className="flex items-center justify-between gap-2 px-1">
-                    <h3 className="m-0 text-xs font-[670] tracking-[0.05em] text-midnight uppercase">
-                      {CONTEXT_TYPE_LABELS[type]}
-                    </h3>
-                    <span className="rounded-full bg-canvas px-2 py-0.5 text-[11px] font-[650] text-muted">
-                      {column.length}
-                    </span>
-                  </header>
+                  <h3
+                    className="m-0 flex items-center justify-between gap-2 text-caption font-[650] text-ink"
+                    id={`attendance-context-kanban-${type}`}
+                  >
+                    {CONTEXT_TYPE_LABELS[type]}
+                    <span className="text-ink-muted">{column.length}</span>
+                  </h3>
                   {column.length === 0 ? (
-                    <p className="m-0 px-1 py-4 text-xs text-muted">No records.</p>
+                    <p className="m-0 px-1 py-3 text-caption text-ink-muted">No records.</p>
                   ) : (
                     column.map((record) => (
                       <button
-                        className="grid cursor-pointer gap-2 rounded-[4px] border border-line bg-canvas px-3 py-3 text-left hover:border-cobalt"
+                        aria-current={record.id === recordId ? 'true' : undefined}
+                        className="grid cursor-pointer gap-1 rounded-control border border-border bg-surface px-3 py-2.5 text-left hover:border-primary aria-[current=true]:border-primary aria-[current=true]:shadow-[inset_3px_0_0_var(--color-primary)]"
                         key={record.id}
                         onClick={() => openRecord(record.id)}
                         type="button"
                       >
-                        <span className="text-xs font-[650] text-midnight">
+                        <strong className="text-small font-[650] text-ink">
                           {record.employee.legalName}
-                        </span>
-                        <span className="text-[11px] text-muted">{coverageLabel(record)}</span>
-                        <span className="text-[11px] leading-[1.5] text-ink">{record.reason}</span>
+                        </strong>
+                        <span className="text-caption text-ink-muted">{coverageLabel(record)}</span>
+                        <span className="text-caption text-ink">{record.reason}</span>
                       </button>
                     ))
                   )}
@@ -791,7 +729,7 @@ export function AttendanceContextWorkspace({
               );
             })}
           </div>
-        </section>
+        </Panel>
       ) : null}
     </div>
   );
