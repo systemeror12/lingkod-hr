@@ -175,15 +175,17 @@ const NEXT_ACTION_LABELS: Record<AttendanceEventType, string> = {
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const MATCH_TONES: Record<AttendanceCaptureResult['match']['status'], StatusTone> = {
-  MATCHED: 'success',
-  AMBIGUOUS: 'warning',
-  UNMATCHED: 'neutral',
+type StatusDisplay = { label: string; tone: StatusTone };
+
+const MATCH_STATUS: Record<AttendanceCaptureResult['match']['status'], StatusDisplay> = {
+  MATCHED: { label: 'Matched', tone: 'success' },
+  AMBIGUOUS: { label: 'Ambiguous', tone: 'warning' },
+  UNMATCHED: { label: 'Unmatched', tone: 'neutral' },
 };
 
-const VERSION_STATUS: Record<AttendanceWebClockVersion['status'], [string, StatusTone]> = {
-  ACTIVE: ['Active', 'success'],
-  SUPERSEDED: ['Superseded', 'neutral'],
+const VERSION_STATUS: Record<AttendanceWebClockVersion['status'], StatusDisplay> = {
+  ACTIVE: { label: 'Active', tone: 'success' },
+  SUPERSEDED: { label: 'Superseded', tone: 'neutral' },
 };
 
 function errorMessage(value: unknown, fallback: string): string {
@@ -242,12 +244,6 @@ function dayRuleLabel(association: AttendanceAssociation): string {
 
 function associationLabel(association: AttendanceAssociation): string {
   return `${association.workScheduleCode} v${association.workScheduleVersionNo} · ${association.workArrangementCode} v${association.workArrangementVersionNo}`;
-}
-
-function matchStatusLabel(status: AttendanceCaptureResult['match']['status']): string {
-  if (status === 'MATCHED') return 'Matched';
-  if (status === 'AMBIGUOUS') return 'Ambiguous';
-  return 'Unmatched';
 }
 
 function eventTimeValue(dateValue: string, timeOfDay: string): string {
@@ -320,7 +316,9 @@ function CaptureSummary({ result }: { result: AttendanceCaptureResult }) {
   return (
     <div className="grid gap-2 border-t border-border bg-canvas px-4 py-3">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small text-ink-muted">
-        <StatusTag tone={MATCH_TONES[match.status]}>{matchStatusLabel(match.status)}</StatusTag>
+        <StatusTag tone={MATCH_STATUS[match.status].tone}>
+          {MATCH_STATUS[match.status].label}
+        </StatusTag>
         <span className="font-[600] text-ink">
           {eventTypeLabelOf(event.eventType)} · {instantLabel(event.eventTime)}
         </span>
@@ -430,6 +428,12 @@ export function AttendanceWorkspace({
 
   const headVersion = webClock?.history.find(({ status }) => status === 'ACTIVE') ?? null;
   const headEnabled = headVersion?.enabled ?? false;
+  // Today's setting; the action follows the latest version, which may be future-dated.
+  const webClockSetting: StatusDisplay = !webClock?.history.length
+    ? { label: 'Disabled by default', tone: 'neutral' }
+    : webClock.enabled
+      ? { label: 'Enabled', tone: 'success' }
+      : { label: 'Disabled', tone: 'neutral' };
   const earliestChange = headVersion
     ? laterDate(manilaToday(), addDays(headVersion.effectiveFrom, 1))
     : manilaToday();
@@ -680,15 +684,7 @@ export function AttendanceWorkspace({
                   {dateLabel(webClock.version.effectiveFrom)}
                 </span>
               ) : null}
-              <StatusTag
-                tone={webClock?.history.length && webClock.enabled ? 'success' : 'neutral'}
-              >
-                {webClock?.history.length
-                  ? webClock.enabled
-                    ? 'Enabled'
-                    : 'Disabled'
-                  : 'Disabled by default'}
-              </StatusTag>
+              <StatusTag tone={webClockSetting.tone}>{webClockSetting.label}</StatusTag>
               <Button
                 onClick={() => openWebClockDialog(headEnabled ? 'disable' : 'enable')}
                 type="button"
@@ -725,13 +721,13 @@ export function AttendanceWorkspace({
                 </thead>
                 <tbody>
                   {webClock.history.map((version) => {
-                    const [statusLabel, statusTone] = VERSION_STATUS[version.status];
+                    const status = VERSION_STATUS[version.status];
                     return (
                       <Tr key={version.id}>
                         <RowHeader>v{version.versionNo}</RowHeader>
                         <Td>{version.enabled ? 'Enabled' : 'Disabled'}</Td>
                         <Td>
-                          <StatusTag tone={statusTone}>{statusLabel}</StatusTag>
+                          <StatusTag tone={status.tone}>{status.label}</StatusTag>
                         </Td>
                         <Td className="text-ink-muted">
                           {dateLabel(version.effectiveFrom)} to{' '}
