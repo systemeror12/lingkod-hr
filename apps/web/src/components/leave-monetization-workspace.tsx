@@ -1,8 +1,10 @@
 'use client';
 
-import { Field, inputClass, FormError } from './ui/field';
-import { RecordReturn, useRecordNavigation } from './record-navigation';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { cn } from '../lib/class-names';
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
+import { Button } from './ui/button';
 import {
   Dialog,
   DialogBody,
@@ -14,7 +16,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import { Button } from './ui/button';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 export type MonetizationStatus =
   | 'DRAFT'
@@ -224,34 +230,33 @@ const MONETIZATION_STATUSES: readonly MonetizationStatus[] = [
 const REGULAR_LEAVE_TYPES = ['VACATION_LEAVE'];
 const SPECIAL_LEAVE_TYPES = ['VACATION_LEAVE', 'SICK_LEAVE'];
 
-const TONE_RESOLVED = 'bg-[#e8f3ed] text-[#316647]';
-const TONE_ATTENTION = 'bg-[#fff3d6] text-[#79531c]';
-const TONE_STOPPED = 'bg-[#fff4f4] text-[#9a3030]';
-const TONE_NEUTRAL = 'bg-[#f0f2f5] text-muted';
-
-function statusClass(status: MonetizationStatus): string {
-  if (status === 'POSTED' || status === 'APPROVED') return TONE_RESOLVED;
-  if (status === 'REJECTED' || status === 'CANCELLED') return TONE_STOPPED;
+function statusTone(status: MonetizationStatus): StatusTone {
+  if (status === 'POSTED' || status === 'APPROVED') return 'success';
+  if (status === 'REJECTED' || status === 'CANCELLED') return 'danger';
   if (status === 'FOR_APPROVAL' || status === 'CREDIT_CERTIFIED' || status === 'SUBMITTED') {
-    return TONE_ATTENTION;
+    return 'warning';
   }
-  return TONE_NEUTRAL;
+  return 'neutral';
 }
 
-function adjustmentStatusClass(status: string): string {
-  if (status === 'APPLIED') return TONE_RESOLVED;
-  if (status === 'REJECTED' || status === 'BLOCKED') return TONE_STOPPED;
+function adjustmentStatusTone(status: string): StatusTone {
+  if (status === 'APPLIED') return 'success';
+  if (status === 'REJECTED' || status === 'BLOCKED') return 'danger';
   if (status === 'APPROVED' || status === 'RETRYABLE' || status === 'FOR_APPROVAL') {
-    return TONE_ATTENTION;
+    return 'warning';
   }
-  return TONE_NEUTRAL;
+  return 'neutral';
 }
 
-function resultTone(result: string): string {
-  if (result === 'ELIGIBLE' || result === 'SUPPORTED' || result === 'PASS') return TONE_RESOLVED;
-  if (result === 'INELIGIBLE' || result === 'UNSUPPORTED' || result === 'FAIL') return TONE_STOPPED;
-  return TONE_ATTENTION;
+function resultTone(result: string): StatusTone {
+  if (result === 'ELIGIBLE' || result === 'SUPPORTED' || result === 'PASS') return 'success';
+  if (result === 'INELIGIBLE' || result === 'UNSUPPORTED' || result === 'FAIL') return 'danger';
+  return 'warning';
 }
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+const preClass =
+  'm-0 overflow-x-auto rounded-control bg-canvas px-3 py-2 font-mono text-caption text-ink-muted';
 
 function errorMessage(value: unknown, fallback: string): string {
   if (typeof value !== 'object' || value === null) return fallback;
@@ -333,6 +338,26 @@ function ruleResultsOf(value: unknown): MonetizationRuleResult[] | null {
 
 function jsonLabel(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function SuccessMessage({ message }: { message: string }) {
+  return message ? (
+    <p
+      className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+      role="status"
+    >
+      {message}
+    </p>
+  ) : null;
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-caption text-ink-muted">{label}</dt>
+      <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
+    </div>
+  );
 }
 
 export function LeaveMonetizationWorkspace({
@@ -898,184 +923,149 @@ export function LeaveMonetizationWorkspace({
       open={dialog !== null}
       onOpenChange={(open) => !open && closeDialog()}
     >
-      <div hidden={dialog !== null} className="min-w-0 space-y-5">
-        <header className="flex flex-wrap items-end justify-between gap-5">
-          <div className="grid max-w-[760px] gap-2">
-            <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-              Leave administration
-            </p>
-            <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-              Leave Monetization
-            </h1>
-            <p className="m-0 text-sm leading-[1.65] text-muted">
-              One stable request with immutable submitted versions, per-account allocations, an
-              explainable eligibility assessment, HR certification, a separate funding
-              determination, and an approval that creates no ledger or Payroll effect. Posting is
-              one atomic and idempotent Leave command.
-            </p>
-          </div>
-          {permissions.createScope ? (
-            <DialogTrigger asChild>
-              <Button
-                onClick={() => {
-                  resetAction();
-                  void loadEmployees();
-                  setCreateEmployeeId('');
-                  setDialog('create');
-                }}
-                size="default"
-                type="button"
-                variant="primary"
-              >
-                New request
-              </Button>
-            </DialogTrigger>
-          ) : null}
-        </header>
+      <div className="grid min-w-0 gap-5">
+        <PageHeader
+          breadcrumbs={[{ label: 'Leave' }]}
+          title="Leave Monetization"
+          actions={
+            permissions.createScope ? (
+              <DialogTrigger asChild>
+                <Button
+                  // Hidden rather than unmounted, so focus can return here when a record closes.
+                  hidden={dialog !== null}
+                  onClick={() => {
+                    resetAction();
+                    void loadEmployees();
+                    setCreateEmployeeId('');
+                    setDialog('create');
+                  }}
+                  type="button"
+                  variant="primary"
+                >
+                  New request
+                </Button>
+              </DialogTrigger>
+            ) : null
+          }
+        />
 
-        {success ? (
-          <p
-            className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-            role="status"
-          >
-            {success}
+        <div hidden={dialog !== null} className="grid min-w-0 gap-5">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
+            One stable request with immutable submitted versions, per-account allocations, an
+            explainable eligibility assessment, HR certification, a separate funding determination,
+            and an approval that creates no ledger or Payroll effect. Posting is one atomic and
+            idempotent Leave command.
           </p>
-        ) : null}
 
-        {error ? <FormError message={error} /> : null}
+          <SuccessMessage message={success} />
+          <FormError message={error} />
 
-        <section
-          aria-labelledby="leave-monetization-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="leave-monetization-heading">
-                Leave Monetization register
-              </h2>
-              <span className="text-xs text-muted">
-                {items.length === 1 ? '1 Request' : items.length + ' Requests'}
-                {hasMore ? ' · more available' : ''}
-              </span>
-            </div>
-            <label className="flex items-center gap-2 text-xs text-muted">
-              Status
-              <select
-                className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                onChange={(event) => setStatusFilter(targetValue(event))}
-                value={statusFilter}
-              >
-                <option value="">All statuses</option>
-                {MONETIZATION_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {status.replaceAll('_', ' ')}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </header>
-          {items.length === 0 ? (
-            <div className="grid min-h-[200px] place-content-center gap-2 px-6 py-12">
-              <strong className="text-[15px] font-[650] text-midnight">
-                No Leave Monetization Requests yet.
-              </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                Draft a request for an Employee with posted, credit-bearing Leave Accounts. Ordinary
-                monetization uses vacation leave only; special monetization needs a valid and
-                justifiable reason.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[960px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+          <Panel
+            title="Leave Monetization register"
+            flush
+            actions={
+              <>
+                <span className="text-caption text-ink-muted">
+                  {items.length === 1 ? '1 Request' : items.length + ' Requests'}
+                  {hasMore ? ' · more available' : ''}
+                </span>
+                <label className="flex items-center gap-2 text-caption text-ink-muted">
+                  Status
+                  <select
+                    className={cn(inputClass, 'w-auto')}
+                    onChange={(event) => setStatusFilter(targetValue(event))}
+                    value={statusFilter}
+                  >
+                    <option value="">All statuses</option>
+                    {MONETIZATION_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {status.replaceAll('_', ' ')}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            }
+          >
+            {items.length === 0 ? (
+              <StateSurface compact label="Leave Monetization register">
+                <strong className="font-[650] text-ink">No Leave Monetization Requests yet.</strong>
+                <p className="m-0 max-w-[560px]">
+                  Draft a request for an Employee with posted, credit-bearing Leave Accounts.
+                  Ordinary monetization uses vacation leave only; special monetization needs a valid
+                  and justifiable reason.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table aria-label="Leave Monetization Requests" className="min-w-[860px]">
+                <thead>
                   <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Employee
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Kind
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Requested
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Certified
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Approved
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Submitted
-                    </th>
+                    <Th>Employee</Th>
+                    <Th>Kind</Th>
+                    <Th kind="numeric">Requested</Th>
+                    <Th kind="numeric">Certified</Th>
+                    <Th kind="numeric">Approved</Th>
+                    <Th>Status</Th>
+                    <Th>Submitted</Th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody>
                   {items.map((item) => (
-                    <tr key={item.id}>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <button
-                            className="w-fit cursor-pointer text-left font-[670] text-cobalt underline-offset-2 hover:underline"
-                            type="button"
-                            onClick={() => navigation.navigate({ record: item.id })}
-                          >
-                            {item.employeeName}
-                          </button>
-                          <span className="text-xs text-muted">{item.employeeNumber}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
+                    <Tr key={item.id}>
+                      <RowHeader>
+                        <button
+                          className="cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary underline-offset-2 hover:underline"
+                          type="button"
+                          onClick={() => navigation.navigate({ record: item.id })}
+                        >
+                          {item.employeeName}
+                        </button>
+                        <span className="block font-mono text-caption font-normal text-ink-muted">
+                          {item.employeeNumber}
+                        </span>
+                      </RowHeader>
+                      <Td>
                         {item.kind ?? '—'}
                         {item.versionNo ? (
-                          <span className="block text-[11px] text-muted">v{item.versionNo}</span>
+                          <span className="block text-caption text-ink-muted">
+                            v{item.versionNo}
+                          </span>
                         ) : null}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        {quantityLabel(item.requestedQuantity)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
+                      </Td>
+                      <Td kind="numeric">{quantityLabel(item.requestedQuantity)}</Td>
+                      <Td kind="numeric">
                         {item.certifiedQuantity ? quantityLabel(item.certifiedQuantity) : '—'}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs font-[650] text-ink">
+                      </Td>
+                      <Td kind="numeric" className="font-[600]">
                         {item.approvedQuantity ? quantityLabel(item.approvedQuantity) : '—'}
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            statusClass(item.status)
-                          }
-                        >
+                      </Td>
+                      <Td>
+                        <StatusTag tone={statusTone(item.status)}>
                           {item.status.replaceAll('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
+                        </StatusTag>
+                      </Td>
+                      <Td kind="date" className="text-ink-muted">
                         {item.submittedAt ? instantLabel(item.submittedAt) : '—'}
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   ))}
                 </tbody>
-              </table>
-            </div>
-          )}
-          {hasMore ? (
-            <div className="border-t border-line px-5 py-3">
-              <Button
-                disabled={busy}
-                onClick={() => void loadMore()}
-                size="default"
-                type="button"
-                variant="secondary"
-              >
-                {busy ? 'Loading…' : 'Load more'}
-              </Button>
-            </div>
-          ) : null}
-        </section>
+              </Table>
+            )}
+            {hasMore ? (
+              <div className="border-t border-border px-4 py-3">
+                <Button
+                  disabled={busy}
+                  onClick={() => void loadMore()}
+                  type="button"
+                  variant="secondary"
+                >
+                  {busy ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            ) : null}
+          </Panel>
+        </div>
       </div>
 
       {dialog === 'detail' ? (
@@ -1086,77 +1076,75 @@ export function LeaveMonetizationWorkspace({
 
       <DialogContent aria-describedby="leave-monetization-dialog-description">
         <DialogHeader>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="grid gap-1">
-              <DialogTitle>
-                {dialog === 'create'
-                  ? 'New Leave Monetization Request'
-                  : dialog === 'submit'
-                    ? 'Submit Monetization Version'
-                    : dialog === 'assess'
-                      ? 'Record eligibility assessment'
-                      : dialog === 'certify'
-                        ? 'Certify monetization credits'
-                        : dialog === 'return'
-                          ? 'Return Leave Monetization Request'
-                          : dialog === 'withdraw'
-                            ? 'Withdraw Leave Monetization Request'
-                            : dialog === 'cancel'
-                              ? 'Cancel Leave Monetization Request'
-                              : dialog === 'funding'
-                                ? 'Record funding determination'
-                                : dialog === 'approve'
-                                  ? 'Approve allocations'
-                                  : dialog === 'reject'
-                                    ? 'Reject request'
-                                    : dialog === 'post'
-                                      ? 'Post to Payroll'
-                                      : dialog === 'adjust'
-                                        ? 'Draft Monetization Adjustment'
-                                        : dialog === 'adjustment-approve'
-                                          ? 'Approve Monetization Adjustment'
-                                          : dialog === 'adjustment-reject'
-                                            ? 'Reject Monetization Adjustment'
-                                            : (detail?.request.employeeName ??
-                                              'Leave Monetization Request')}
-              </DialogTitle>
-              <DialogDescription id="leave-monetization-dialog-description">
-                {dialog === 'create'
-                  ? 'Draft one stable request for an Employee. Submitted versions become immutable.'
-                  : dialog === 'submit'
-                    ? 'Bind the exact form template, attestation, authority snapshot, and per-account allocations to a new immutable version.'
-                    : dialog === 'assess'
-                      ? 'Lock the accounts, recheck balances and commitments, and record one explainable eligibility result.'
-                      : dialog === 'certify'
-                        ? 'One Leave Credit Commitment per allocation is created atomically. Certified quantities may only narrow the request.'
-                        : dialog === 'return'
-                          ? 'Return the request for information and release the current commitments.'
-                          : dialog === 'withdraw'
-                            ? 'Withdraw the request, cancel its Approval Request, and release every commitment.'
-                            : dialog === 'cancel'
-                              ? 'Cancel a draft or approved request and release every commitment.'
-                              : dialog === 'funding'
-                                ? 'Record the separate immutable funding determination with its exact fiscal authority and evidence.'
-                                : dialog === 'approve'
-                                  ? 'Approval binds the exact version and creates no ledger or Payroll effect. Narrow allocations only against the same accounts.'
-                                  : dialog === 'reject'
-                                    ? 'Rejection requires a reviewer reason and creates no ledger or Payroll effect.'
-                                    : dialog === 'post'
-                                      ? 'Posting is one atomic and idempotent Leave command. Payroll owns salary resolution, calculation, and rounding.'
-                                      : dialog === 'adjust'
-                                        ? 'Reverse posting ledger entries and replace only the retained credits. Payroll accepts the correction before credits are restored.'
-                                        : dialog === 'adjustment-approve' ||
-                                            dialog === 'adjustment-reject'
-                                          ? 'The adjustment decision uses the bound Approval Route. Approval attempts the Payroll correction immediately.'
-                                          : 'Versions, allocations, assessment, certification, funding, posting, and adjustments.'}
-              </DialogDescription>
-            </div>
-            <DialogClose asChild>
-              <Button size="default" type="button" variant="secondary">
-                Close
-              </Button>
-            </DialogClose>
+          <div className="grid min-w-0 gap-1.5">
+            <DialogTitle>
+              {dialog === 'create'
+                ? 'New Leave Monetization Request'
+                : dialog === 'submit'
+                  ? 'Submit Monetization Version'
+                  : dialog === 'assess'
+                    ? 'Record eligibility assessment'
+                    : dialog === 'certify'
+                      ? 'Certify monetization credits'
+                      : dialog === 'return'
+                        ? 'Return Leave Monetization Request'
+                        : dialog === 'withdraw'
+                          ? 'Withdraw Leave Monetization Request'
+                          : dialog === 'cancel'
+                            ? 'Cancel Leave Monetization Request'
+                            : dialog === 'funding'
+                              ? 'Record funding determination'
+                              : dialog === 'approve'
+                                ? 'Approve allocations'
+                                : dialog === 'reject'
+                                  ? 'Reject request'
+                                  : dialog === 'post'
+                                    ? 'Post to Payroll'
+                                    : dialog === 'adjust'
+                                      ? 'Draft Monetization Adjustment'
+                                      : dialog === 'adjustment-approve'
+                                        ? 'Approve Monetization Adjustment'
+                                        : dialog === 'adjustment-reject'
+                                          ? 'Reject Monetization Adjustment'
+                                          : (detail?.request.employeeName ??
+                                            'Leave Monetization Request')}
+            </DialogTitle>
+            <DialogDescription id="leave-monetization-dialog-description">
+              {dialog === 'create'
+                ? 'Draft one stable request for an Employee. Submitted versions become immutable.'
+                : dialog === 'submit'
+                  ? 'Bind the exact form template, attestation, authority snapshot, and per-account allocations to a new immutable version.'
+                  : dialog === 'assess'
+                    ? 'Lock the accounts, recheck balances and commitments, and record one explainable eligibility result.'
+                    : dialog === 'certify'
+                      ? 'One Leave Credit Commitment per allocation is created atomically. Certified quantities may only narrow the request.'
+                      : dialog === 'return'
+                        ? 'Return the request for information and release the current commitments.'
+                        : dialog === 'withdraw'
+                          ? 'Withdraw the request, cancel its Approval Request, and release every commitment.'
+                          : dialog === 'cancel'
+                            ? 'Cancel a draft or approved request and release every commitment.'
+                            : dialog === 'funding'
+                              ? 'Record the separate immutable funding determination with its exact fiscal authority and evidence.'
+                              : dialog === 'approve'
+                                ? 'Approval binds the exact version and creates no ledger or Payroll effect. Narrow allocations only against the same accounts.'
+                                : dialog === 'reject'
+                                  ? 'Rejection requires a reviewer reason and creates no ledger or Payroll effect.'
+                                  : dialog === 'post'
+                                    ? 'Posting is one atomic and idempotent Leave command. Payroll owns salary resolution, calculation, and rounding.'
+                                    : dialog === 'adjust'
+                                      ? 'Reverse posting ledger entries and replace only the retained credits. Payroll accepts the correction before credits are restored.'
+                                      : dialog === 'adjustment-approve' ||
+                                          dialog === 'adjustment-reject'
+                                        ? 'The adjustment decision uses the bound Approval Route. Approval attempts the Payroll correction immediately.'
+                                        : 'Versions, allocations, assessment, certification, funding, posting, and adjustments.'}
+            </DialogDescription>
           </div>
+          <DialogClose asChild>
+            <Button type="button" variant="secondary">
+              Close
+            </Button>
+          </DialogClose>
         </DialogHeader>
 
         {error ? (
@@ -1188,18 +1176,18 @@ export function LeaveMonetizationWorkspace({
                   </select>
                 </Field>
               ) : (
-                <p className="m-0 text-xs leading-[1.6] text-muted">
+                <p className="m-0 text-caption text-ink-muted">
                   The request is created for your linked Employee record.
                 </p>
               )}
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Drafting…' : 'Draft request'}
               </Button>
             </DialogFooter>
@@ -1286,8 +1274,10 @@ export function LeaveMonetizationWorkspace({
                   </Field>
                 ) : null}
               </div>
-              <fieldset className="grid gap-4 rounded-[3px] border border-line p-4">
-                <legend className="px-1 text-xs font-[650] text-ink">Authority snapshot</legend>
+              <fieldset className="m-0 grid gap-4 rounded-control border border-border p-4">
+                <legend className="px-1 text-caption font-[650] text-ink">
+                  Authority snapshot
+                </legend>
                 <Field htmlFor="monetization-citations" label="Citations (one per line)">
                   <textarea
                     className={inputClass + ' min-h-[72px] py-2'}
@@ -1349,14 +1339,14 @@ export function LeaveMonetizationWorkspace({
                   </Field>
                 </div>
               </fieldset>
-              <fieldset className="grid gap-4 rounded-[3px] border border-line p-4">
-                <legend className="px-1 text-xs font-[650] text-ink">Allocations</legend>
+              <fieldset className="m-0 grid gap-4 rounded-control border border-border p-4">
+                <legend className="px-1 text-caption font-[650] text-ink">Allocations</legend>
                 {accountOptions.filter((account) =>
                   (kind === 'REGULAR' ? REGULAR_LEAVE_TYPES : SPECIAL_LEAVE_TYPES).includes(
                     account.leaveTypeCode,
                   ),
                 ).length === 0 ? (
-                  <p className="m-0 text-xs text-muted">
+                  <p className="m-0 text-caption text-ink-muted">
                     No ACTIVE Leave Account matches this kind for the Employee.
                   </p>
                 ) : null}
@@ -1425,7 +1415,6 @@ export function LeaveMonetizationWorkspace({
                         { leaveAccountId: '', requestedQuantity: '' },
                       ])
                     }
-                    size="default"
                     type="button"
                     variant="secondary"
                   >
@@ -1436,11 +1425,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Submitting…' : 'Submit version'}
               </Button>
             </DialogFooter>
@@ -1464,11 +1453,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Recording…' : 'Record assessment'}
               </Button>
             </DialogFooter>
@@ -1509,11 +1498,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Certifying…' : 'Certify credits'}
               </Button>
             </DialogFooter>
@@ -1546,11 +1535,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy
                   ? 'Recording…'
                   : dialog === 'return'
@@ -1602,7 +1591,7 @@ export function LeaveMonetizationWorkspace({
               </div>
               <Field htmlFor="monetization-funding-source" label="Funding source snapshot (JSON)">
                 <textarea
-                  className={inputClass + ' min-h-[92px] py-2 font-mono text-xs'}
+                  className={inputClass + ' min-h-[92px] py-2 font-mono text-caption'}
                   id="monetization-funding-source"
                   onChange={(event) => setFundingSourceSnapshot(targetValue(event))}
                   required
@@ -1611,7 +1600,7 @@ export function LeaveMonetizationWorkspace({
               </Field>
               <Field htmlFor="monetization-evidence-snapshot" label="Evidence snapshot (JSON)">
                 <textarea
-                  className={inputClass + ' min-h-[92px] py-2 font-mono text-xs'}
+                  className={inputClass + ' min-h-[92px] py-2 font-mono text-caption'}
                   id="monetization-evidence-snapshot"
                   onChange={(event) => setEvidenceSnapshot(targetValue(event))}
                   required
@@ -1621,11 +1610,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Recording…' : 'Record determination'}
               </Button>
             </DialogFooter>
@@ -1675,11 +1664,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Approving…' : 'Approve request'}
               </Button>
             </DialogFooter>
@@ -1704,11 +1693,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Rejecting…' : 'Reject request'}
               </Button>
             </DialogFooter>
@@ -1718,7 +1707,7 @@ export function LeaveMonetizationWorkspace({
         {dialog === 'post' ? (
           <form onSubmit={(event) => void postRequest(event)}>
             <DialogBody className="grid gap-4">
-              <p className="m-0 text-xs leading-[1.6] text-muted">
+              <p className="m-0 text-caption text-ink-muted">
                 Posting hands the authority-bound allocations to Payroll and, only with an accepted
                 result, commits the ledger deductions and commitment consumption. Duplicate attempts
                 create no additional effect.
@@ -1726,11 +1715,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy ? 'Posting…' : 'Post to Payroll'}
               </Button>
             </DialogFooter>
@@ -1768,33 +1757,26 @@ export function LeaveMonetizationWorkspace({
                 </Field>
               </div>
               {originalEntries.length === 0 ? (
-                <p className="m-0 text-xs text-muted">
+                <p className="m-0 text-caption text-ink-muted">
                   Every posting ledger entry already has a Monetization Adjustment.
                 </p>
               ) : (
-                <table className="w-full border-collapse text-left text-sm">
-                  <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+                <Table aria-label="Posting ledger entries" className="min-w-[480px]">
+                  <thead>
                     <tr>
-                      <th className="px-3 py-2 font-bold" scope="col">
-                        Entry
-                      </th>
-                      <th className="px-3 py-2 font-bold" scope="col">
-                        Deducted
-                      </th>
-                      {adjustmentScope === 'PARTIAL' ? (
-                        <th className="px-3 py-2 font-bold" scope="col">
-                          Retained
-                        </th>
-                      ) : null}
+                      <Th>Entry</Th>
+                      <Th kind="numeric">Deducted</Th>
+                      {adjustmentScope === 'PARTIAL' ? <Th>Retained</Th> : null}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody>
                     {originalEntries.map((entry) => (
-                      <tr key={entry.id}>
-                        <td className="px-3 py-3 align-top">
-                          <label className="flex items-center gap-2 text-xs text-ink">
+                      <Tr key={entry.id}>
+                        <Td>
+                          <label className="flex items-center gap-2 text-small text-ink">
                             <input
                               checked={selectedOriginals[entry.id] ?? false}
+                              className="size-3.5 accent-primary"
                               onChange={(event) => {
                                 const selected = targetChecked(event);
                                 setSelectedOriginals((current) => ({
@@ -1806,14 +1788,15 @@ export function LeaveMonetizationWorkspace({
                             />
                             {entry.leaveTypeName} · {entry.id.slice(0, 8)}
                           </label>
-                        </td>
-                        <td className="px-3 py-3 align-top text-xs font-[650] text-ink">
+                        </Td>
+                        <Td kind="numeric" className="font-[600]">
                           {quantityLabel(entry.quantity)}
-                        </td>
+                        </Td>
                         {adjustmentScope === 'PARTIAL' ? (
-                          <td className="px-3 py-3 align-top">
+                          <Td>
                             <input
-                              className={inputClass + ' min-h-9'}
+                              aria-label={`Retained quantity for ${entry.leaveTypeName} · ${entry.id.slice(0, 8)}`}
+                              className={inputClass}
                               disabled={!(selectedOriginals[entry.id] ?? false)}
                               min={0}
                               onChange={(event) => {
@@ -1827,23 +1810,22 @@ export function LeaveMonetizationWorkspace({
                               type="number"
                               value={retainedQuantities[entry.id] ?? '0'}
                             />
-                          </td>
+                          </Td>
                         ) : null}
-                      </tr>
+                      </Tr>
                     ))}
                   </tbody>
-                </table>
+                </Table>
               )}
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
               <Button
                 disabled={busy || originalEntries.length === 0}
-                size="default"
                 type="submit"
                 variant="primary"
               >
@@ -1867,7 +1849,7 @@ export function LeaveMonetizationWorkspace({
           >
             <DialogBody className="grid gap-5">
               {dialog === 'adjustment-approve' ? (
-                <p className="m-0 text-xs leading-[1.6] text-muted">
+                <p className="m-0 text-caption text-ink-muted">
                   Approval attempts the Payroll correction immediately. If Payroll does not accept,
                   the adjustment stays retryable and no credits move.
                 </p>
@@ -1888,11 +1870,11 @@ export function LeaveMonetizationWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {busy
                   ? 'Recording…'
                   : dialog === 'adjustment-approve'
@@ -1905,39 +1887,31 @@ export function LeaveMonetizationWorkspace({
 
         {dialog === 'detail' ? (
           <DialogBody className="grid gap-6">
-            {detailLoading || !detail ? (
-              <p className="m-0 text-sm text-muted" role="status">
-                Loading the Leave Monetization record…
-              </p>
+            {detailLoading ? (
+              <StateSurface compact busy label="Leave Monetization record">
+                <p className="m-0" role="status">
+                  Loading the Leave Monetization record…
+                </p>
+              </StateSurface>
+            ) : !detail ? (
+              error ? (
+                <StateSurface compact label="Leave Monetization record">
+                  <p className="m-0">The Leave Monetization record could not be loaded.</p>
+                </StateSurface>
+              ) : null
             ) : (
               <>
-                {success ? (
-                  <p
-                    className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
-                    role="status"
-                  >
-                    {success}
-                  </p>
-                ) : null}
+                <SuccessMessage message={success} />
                 <section className="grid gap-3" aria-labelledby="monetization-snapshot-heading">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3
-                      className="m-0 text-sm font-[670] text-midnight"
-                      id="monetization-snapshot-heading"
-                    >
+                    <h3 className={sectionTitleClass} id="monetization-snapshot-heading">
                       {detail.request.employeeName} · {detailKind ?? 'No version yet'}
                     </h3>
                     <div className="flex flex-wrap gap-2">
                       {permissions.submit &&
                       (detail.request.status === 'DRAFT' ||
                         detail.request.status === 'NEEDS_INFORMATION') ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={openSubmit}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
+                        <Button onClick={openSubmit} type="button" variant="secondary">
                           {detail.request.status === 'DRAFT'
                             ? 'Submit version'
                             : 'Resubmit version'}
@@ -1945,13 +1919,11 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                       {permissions.certify && detail.request.status === 'SUBMITTED' ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setBalanceEffectiveDate('');
                             setDialog('assess');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -1960,13 +1932,11 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                       {permissions.certify && detail.request.status === 'SUBMITTED' ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setCertifiedQuantities({});
                             setDialog('certify');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -1975,7 +1945,6 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                       {permissions.reviewFunding && detail.request.status === 'CREDIT_CERTIFIED' ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setFundingResult('SUPPORTED');
@@ -1984,7 +1953,6 @@ export function LeaveMonetizationWorkspace({
                             setEvidenceSnapshot('{}');
                             setDialog('funding');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -1993,14 +1961,12 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                       {permissions.approve && detail.request.status === 'FOR_APPROVAL' ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setApprovalNarrowing({});
                             setComments('');
                             setDialog('approve');
                           }}
-                          size="default"
                           type="button"
                           variant="primary"
                         >
@@ -2009,13 +1975,11 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                       {permissions.reject && detail.request.status === 'FOR_APPROVAL' ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setComments('');
                             setDialog('reject');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -2024,12 +1988,10 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                       {permissions.post && detail.request.status === 'APPROVED' ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setDialog('post');
                           }}
-                          size="default"
                           type="button"
                           variant="primary"
                         >
@@ -2037,13 +1999,7 @@ export function LeaveMonetizationWorkspace({
                         </Button>
                       ) : null}
                       {permissions.adjust && detail.request.status === 'POSTED' ? (
-                        <Button
-                          className="min-h-9"
-                          onClick={() => void openAdjust()}
-                          size="default"
-                          type="button"
-                          variant="secondary"
-                        >
+                        <Button onClick={() => void openAdjust()} type="button" variant="secondary">
                           Record adjustment
                         </Button>
                       ) : null}
@@ -2051,13 +2007,11 @@ export function LeaveMonetizationWorkspace({
                       (detail.request.status === 'SUBMITTED' ||
                         detail.request.status === 'CREDIT_CERTIFIED') ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setReason('');
                             setDialog('return');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -2070,13 +2024,11 @@ export function LeaveMonetizationWorkspace({
                         detail.request.status === 'NEEDS_INFORMATION' ||
                         detail.request.status === 'FOR_APPROVAL') ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setReason('');
                             setDialog('withdraw');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -2087,13 +2039,11 @@ export function LeaveMonetizationWorkspace({
                       (detail.request.status === 'DRAFT' ||
                         detail.request.status === 'APPROVED') ? (
                         <Button
-                          className="min-h-9"
                           onClick={() => {
                             resetAction();
                             setReason('');
                             setDialog('cancel');
                           }}
-                          size="default"
                           type="button"
                           variant="secondary"
                         >
@@ -2102,137 +2052,123 @@ export function LeaveMonetizationWorkspace({
                       ) : null}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                    <span>{detail.request.employeeNumber}</span>
-                    <span
-                      className={
-                        'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                        statusClass(detail.request.status)
-                      }
-                    >
-                      {detail.request.status.replaceAll('_', ' ')}
-                    </span>
+                  <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                    <Fact label="Employee number" value={detail.request.employeeNumber} />
+                    <div>
+                      <dt className="text-caption text-ink-muted">Status</dt>
+                      <dd className="m-0 pt-0.5">
+                        <StatusTag tone={statusTone(detail.request.status)}>
+                          {detail.request.status.replaceAll('_', ' ')}
+                        </StatusTag>
+                      </dd>
+                    </div>
                     {detail.request.versionNo ? (
-                      <span>Version {detail.request.versionNo}</span>
+                      <Fact label="Version" value={String(detail.request.versionNo)} />
                     ) : null}
-                    <span>Created {instantLabel(detail.request.createdAt)}</span>
+                    <Fact label="Created" value={instantLabel(detail.request.createdAt)} />
                     {detail.request.submittedAt ? (
-                      <span>Submitted {instantLabel(detail.request.submittedAt)}</span>
+                      <Fact label="Submitted" value={instantLabel(detail.request.submittedAt)} />
                     ) : null}
-                  </div>
+                  </dl>
                   {detail.request.reason ? (
-                    <p className="m-0 text-xs leading-[1.6] text-muted">{detail.request.reason}</p>
+                    <p className="m-0 text-small text-ink-muted">{detail.request.reason}</p>
                   ) : null}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="monetization-allocations-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="monetization-allocations-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="monetization-allocations-heading">
                     Allocations
                   </h3>
                   {detail.allocations.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No submitted allocations.</p>
+                    <StateSurface compact label="Allocations">
+                      <p className="m-0">No submitted allocations.</p>
+                    </StateSurface>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                        <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                          <tr>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Leave type
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Requested
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Certified
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Approved
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-line">
-                          {detail.allocations.map((allocation) => (
-                            <tr key={allocation.id}>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                <strong className="font-[650]">{allocation.leaveTypeName}</strong>
-                                <span className="block text-[11px] text-muted">
-                                  {allocation.leaveTypeCode}
-                                </span>
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                {quantityLabel(allocation.requestedQuantity)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                {allocation.certifiedQuantity
-                                  ? quantityLabel(allocation.certifiedQuantity)
-                                  : '—'}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                {allocation.approvedQuantity
-                                  ? quantityLabel(allocation.approvedQuantity)
-                                  : '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <Table
+                      aria-labelledby="monetization-allocations-heading"
+                      className="min-w-[560px]"
+                    >
+                      <thead>
+                        <tr>
+                          <Th>Leave type</Th>
+                          <Th kind="numeric">Requested</Th>
+                          <Th kind="numeric">Certified</Th>
+                          <Th kind="numeric">Approved</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.allocations.map((allocation) => (
+                          <Tr key={allocation.id}>
+                            <RowHeader>
+                              {allocation.leaveTypeName}
+                              <span className="block font-mono text-caption font-normal text-ink-muted">
+                                {allocation.leaveTypeCode}
+                              </span>
+                            </RowHeader>
+                            <Td kind="numeric">{quantityLabel(allocation.requestedQuantity)}</Td>
+                            <Td kind="numeric">
+                              {allocation.certifiedQuantity
+                                ? quantityLabel(allocation.certifiedQuantity)
+                                : '—'}
+                            </Td>
+                            <Td kind="numeric">
+                              {allocation.approvedQuantity
+                                ? quantityLabel(allocation.approvedQuantity)
+                                : '—'}
+                            </Td>
+                          </Tr>
+                        ))}
+                      </tbody>
+                    </Table>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="monetization-assessment-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="monetization-assessment-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="monetization-assessment-heading">
                     Eligibility assessment
                   </h3>
                   {!detail.assessment ? (
-                    <p className="m-0 text-xs text-muted">No assessment recorded.</p>
+                    <StateSurface compact label="Eligibility assessment">
+                      <p className="m-0">No assessment recorded.</p>
+                    </StateSurface>
                   ) : (
                     <>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            resultTone(detail.assessment.result)
-                          }
-                        >
-                          {detail.assessment.result}
-                        </span>
-                        <span>
-                          Balance effective {dateLabel(detail.assessment.balanceEffectiveDate)}
-                        </span>
-                        <span>Ledger cutoff {instantLabel(detail.assessment.ledgerCutoff)}</span>
-                        <span>Assessed {instantLabel(detail.assessment.assessedAt)}</span>
-                      </div>
+                      <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                        <div>
+                          <dt className="text-caption text-ink-muted">Result</dt>
+                          <dd className="m-0 pt-0.5">
+                            <StatusTag tone={resultTone(detail.assessment.result)}>
+                              {detail.assessment.result}
+                            </StatusTag>
+                          </dd>
+                        </div>
+                        <Fact
+                          label="Balance effective"
+                          value={dateLabel(detail.assessment.balanceEffectiveDate)}
+                        />
+                        <Fact
+                          label="Ledger cutoff"
+                          value={instantLabel(detail.assessment.ledgerCutoff)}
+                        />
+                        <Fact label="Assessed" value={instantLabel(detail.assessment.assessedAt)} />
+                      </dl>
                       {rules ? (
-                        <ul className="m-0 grid list-none gap-2 p-0 text-xs">
+                        <ul className="m-0 grid list-none gap-3 p-0 text-small">
                           {rules.map((rule, index) => (
-                            <li className="grid gap-1 text-muted" key={rule.rule + ':' + index}>
-                              <span className="font-[650] text-ink">
-                                {rule.rule} ·{' '}
-                                <span
-                                  className={
-                                    'inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                                    resultTone(rule.outcome)
-                                  }
-                                >
+                            <li className="grid gap-1 text-ink-muted" key={rule.rule + ':' + index}>
+                              <span className="flex flex-wrap items-center gap-2 font-[650] text-ink">
+                                {rule.rule}
+                                <StatusTag tone={resultTone(rule.outcome)}>
                                   {rule.outcome}
-                                </span>
+                                </StatusTag>
                               </span>
                               <span>{rule.message}</span>
-                              <span className="text-[11px]">{rule.citation}</span>
+                              <span className="text-caption">{rule.citation}</span>
                             </li>
                           ))}
                         </ul>
                       ) : (
-                        <pre className="m-0 overflow-x-auto rounded-[3px] bg-canvas px-3 py-2 text-[11px] text-muted">
-                          {jsonLabel(detail.assessment.ruleResults)}
-                        </pre>
+                        <pre className={preClass}>{jsonLabel(detail.assessment.ruleResults)}</pre>
                       )}
                     </>
                   )}
@@ -2242,90 +2178,79 @@ export function LeaveMonetizationWorkspace({
                   className="grid gap-3"
                   aria-labelledby="monetization-certification-heading"
                 >
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="monetization-certification-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="monetization-certification-heading">
                     HR credit certification
                   </h3>
                   {!detail.certification ? (
-                    <p className="m-0 text-xs text-muted">No certification recorded.</p>
+                    <StateSurface compact label="HR credit certification">
+                      <p className="m-0">No certification recorded.</p>
+                    </StateSurface>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <p className="m-0 text-xs text-muted">
+                    <>
+                      <p className="m-0 text-caption text-ink-muted">
                         Certified {instantLabel(detail.certification.certifiedAt)}
                       </p>
-                      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                        <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+                      <Table
+                        aria-labelledby="monetization-certification-heading"
+                        className="min-w-[560px]"
+                      >
+                        <thead>
                           <tr>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Posted balance
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Other commitments
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Certified
-                            </th>
-                            <th className="px-3 py-2 font-bold" scope="col">
-                              Resulting available
-                            </th>
+                            <Th kind="numeric">Posted balance</Th>
+                            <Th kind="numeric">Other commitments</Th>
+                            <Th kind="numeric">Certified</Th>
+                            <Th kind="numeric">Resulting available</Th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-line">
+                        <tbody>
                           {detail.certification.lines.map((line) => (
-                            <tr key={line.id}>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                {quantityLabel(line.postedBalance)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
-                                {quantityLabel(line.otherActiveCommitments)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs font-[650] text-ink">
+                            <Tr key={line.id}>
+                              <Td kind="numeric">{quantityLabel(line.postedBalance)}</Td>
+                              <Td kind="numeric">{quantityLabel(line.otherActiveCommitments)}</Td>
+                              <Td kind="numeric" className="font-[600]">
                                 {quantityLabel(line.certifiedQuantity)}
-                              </td>
-                              <td className="px-3 py-3 align-top text-xs text-ink">
+                              </Td>
+                              <Td kind="numeric">
                                 {quantityLabel(line.resultingAvailableQuantity)}
-                              </td>
-                            </tr>
+                              </Td>
+                            </Tr>
                           ))}
                         </tbody>
-                      </table>
-                    </div>
+                      </Table>
+                    </>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="monetization-funding-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="monetization-funding-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="monetization-funding-heading">
                     Funding determination
                   </h3>
                   {!detail.funding ? (
-                    <p className="m-0 text-xs text-muted">No funding determination recorded.</p>
+                    <StateSurface compact label="Funding determination">
+                      <p className="m-0">No funding determination recorded.</p>
+                    </StateSurface>
                   ) : (
-                    <div className="grid gap-2 text-xs text-muted">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={
-                            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                            resultTone(detail.funding.result)
-                          }
-                        >
-                          {detail.funding.result}
-                        </span>
-                        <span>Reviewed {instantLabel(detail.funding.reviewedAt)}</span>
-                      </div>
-                      <span>
-                        Fiscal authority Document Version{' '}
-                        {detail.funding.fiscalAuthorityDocumentVersionId}
-                      </span>
+                    <div className="grid gap-3 text-small">
+                      <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                        <div>
+                          <dt className="text-caption text-ink-muted">Result</dt>
+                          <dd className="m-0 pt-0.5">
+                            <StatusTag tone={resultTone(detail.funding.result)}>
+                              {detail.funding.result}
+                            </StatusTag>
+                          </dd>
+                        </div>
+                        <Fact label="Reviewed" value={instantLabel(detail.funding.reviewedAt)} />
+                        <Fact
+                          label="Fiscal authority Document Version"
+                          value={detail.funding.fiscalAuthorityDocumentVersionId}
+                        />
+                      </dl>
                       <details>
                         <summary className="cursor-pointer font-[650] text-ink">
                           Funding source snapshot
                         </summary>
-                        <pre className="m-0 overflow-x-auto rounded-[3px] bg-canvas px-3 py-2 text-[11px]">
+                        <pre className={preClass}>
                           {jsonLabel(detail.funding.fundingSourceSnapshot)}
                         </pre>
                       </details>
@@ -2333,82 +2258,56 @@ export function LeaveMonetizationWorkspace({
                         <summary className="cursor-pointer font-[650] text-ink">
                           Evidence snapshot
                         </summary>
-                        <pre className="m-0 overflow-x-auto rounded-[3px] bg-canvas px-3 py-2 text-[11px]">
-                          {jsonLabel(detail.funding.evidenceSnapshot)}
-                        </pre>
+                        <pre className={preClass}>{jsonLabel(detail.funding.evidenceSnapshot)}</pre>
                       </details>
                     </div>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="monetization-posting-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="monetization-posting-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="monetization-posting-heading">
                     Payroll posting
                   </h3>
                   {!detail.posting ? (
-                    <p className="m-0 text-xs text-muted">
-                      None — not posted. Approval alone creates no ledger or Payroll effect.
-                    </p>
+                    <StateSurface compact label="Payroll posting">
+                      <p className="m-0">
+                        None — not posted. Approval alone creates no ledger or Payroll effect.
+                      </p>
+                    </StateSurface>
                   ) : (
-                    <dl className="m-0 grid gap-1 text-xs min-[621px]:grid-cols-2">
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Posting key</dt>
-                        <dd className="m-0 text-muted">{detail.posting.postingKey}</dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Valuation date</dt>
-                        <dd className="m-0 text-muted">
-                          {dateLabel(detail.posting.valuationDate)}
-                        </dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Calculator</dt>
-                        <dd className="m-0 text-muted">{detail.posting.calculatorKind}</dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Factor</dt>
-                        <dd className="m-0 text-muted">{detail.posting.factor}</dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Payroll input</dt>
-                        <dd className="m-0 text-muted">{detail.posting.payrollInputId}</dd>
-                      </div>
-                      <div className="flex gap-2">
-                        <dt className="font-[650] text-ink">Posted</dt>
-                        <dd className="m-0 text-muted">{instantLabel(detail.posting.postedAt)}</dd>
-                      </div>
+                    <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
+                      <Fact label="Posting key" value={detail.posting.postingKey} />
+                      <Fact
+                        label="Valuation date"
+                        value={dateLabel(detail.posting.valuationDate)}
+                      />
+                      <Fact label="Calculator" value={detail.posting.calculatorKind} />
+                      <Fact label="Factor" value={detail.posting.factor} />
+                      <Fact label="Payroll input" value={detail.posting.payrollInputId} />
+                      <Fact label="Posted" value={instantLabel(detail.posting.postedAt)} />
                     </dl>
                   )}
                 </section>
 
                 <section className="grid gap-3" aria-labelledby="monetization-adjustments-heading">
-                  <h3
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="monetization-adjustments-heading"
-                  >
+                  <h3 className={sectionTitleClass} id="monetization-adjustments-heading">
                     Monetization Adjustments
                   </h3>
                   {detail.adjustments.length === 0 ? (
-                    <p className="m-0 text-xs text-muted">No Monetization Adjustments recorded.</p>
+                    <StateSurface compact label="Monetization Adjustments">
+                      <p className="m-0">No Monetization Adjustments recorded.</p>
+                    </StateSurface>
                   ) : (
                     detail.adjustments.map((adjustment) => (
                       <div
-                        className="grid gap-2 rounded-[3px] border border-line px-3 py-3"
+                        className="grid gap-3 rounded-panel border border-border p-4"
                         key={adjustment.id}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                            <span
-                              className={
-                                'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-                                adjustmentStatusClass(adjustment.status)
-                              }
-                            >
+                          <div className="flex flex-wrap items-center gap-3 text-small text-ink-muted">
+                            <StatusTag tone={adjustmentStatusTone(adjustment.status)}>
                               {adjustment.status}
-                            </span>
+                            </StatusTag>
                             <span>{adjustment.scope}</span>
                             <span>{adjustment.reason}</span>
                             {adjustment.appliedAt ? (
@@ -2418,9 +2317,7 @@ export function LeaveMonetizationWorkspace({
                           <div className="flex flex-wrap gap-2">
                             {permissions.adjust && adjustment.status === 'DRAFT' ? (
                               <Button
-                                className="min-h-9"
                                 onClick={() => void submitAdjustment(adjustment.id)}
-                                size="default"
                                 type="button"
                                 variant="secondary"
                               >
@@ -2429,14 +2326,12 @@ export function LeaveMonetizationWorkspace({
                             ) : null}
                             {permissions.approve && adjustment.status === 'FOR_APPROVAL' ? (
                               <Button
-                                className="min-h-9"
                                 onClick={() => {
                                   resetAction();
                                   setDecisionAdjustmentId(adjustment.id);
                                   setDecisionComments('');
                                   setDialog('adjustment-approve');
                                 }}
-                                size="default"
                                 type="button"
                                 variant="primary"
                               >
@@ -2445,14 +2340,12 @@ export function LeaveMonetizationWorkspace({
                             ) : null}
                             {permissions.reject && adjustment.status === 'FOR_APPROVAL' ? (
                               <Button
-                                className="min-h-9"
                                 onClick={() => {
                                   resetAction();
                                   setDecisionAdjustmentId(adjustment.id);
                                   setDecisionComments('');
                                   setDialog('adjustment-reject');
                                 }}
-                                size="default"
                                 type="button"
                                 variant="secondary"
                               >
@@ -2463,9 +2356,7 @@ export function LeaveMonetizationWorkspace({
                             (adjustment.status === 'APPROVED' ||
                               adjustment.status === 'RETRYABLE') ? (
                               <Button
-                                className="min-h-9"
                                 onClick={() => void applyAdjustment(adjustment.id)}
-                                size="default"
                                 type="button"
                                 variant="secondary"
                               >
@@ -2474,54 +2365,42 @@ export function LeaveMonetizationWorkspace({
                             ) : null}
                           </div>
                         </div>
-                        <table className="w-full border-collapse text-left text-sm">
-                          <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
+                        <Table aria-label="Adjustment lines" className="min-w-[480px]">
+                          <thead>
                             <tr>
-                              <th className="px-3 py-2 font-bold" scope="col">
-                                Original entry
-                              </th>
-                              <th className="px-3 py-2 font-bold" scope="col">
-                                Retained
-                              </th>
-                              <th className="px-3 py-2 font-bold" scope="col">
-                                Reversal
-                              </th>
-                              <th className="px-3 py-2 font-bold" scope="col">
-                                Replacement
-                              </th>
+                              <Th>Original entry</Th>
+                              <Th kind="numeric">Retained</Th>
+                              <Th>Reversal</Th>
+                              <Th>Replacement</Th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-line">
+                          <tbody>
                             {adjustment.lines.map((line) => (
-                              <tr key={line.id}>
-                                <td className="px-3 py-3 align-top font-mono text-[11px] text-muted">
+                              <Tr key={line.id}>
+                                <Td className="font-mono text-caption text-ink-muted">
                                   {line.originalLedgerEntryId.slice(0, 8)}
-                                </td>
-                                <td className="px-3 py-3 align-top text-xs text-ink">
-                                  {quantityLabel(line.retainedQuantity)}
-                                </td>
-                                <td className="px-3 py-3 align-top font-mono text-[11px] text-muted">
+                                </Td>
+                                <Td kind="numeric">{quantityLabel(line.retainedQuantity)}</Td>
+                                <Td className="font-mono text-caption text-ink-muted">
                                   {line.reversalLedgerEntryId
                                     ? line.reversalLedgerEntryId.slice(0, 8)
                                     : '—'}
-                                </td>
-                                <td className="px-3 py-3 align-top font-mono text-[11px] text-muted">
+                                </Td>
+                                <Td className="font-mono text-caption text-ink-muted">
                                   {line.replacementLedgerEntryId
                                     ? line.replacementLedgerEntryId.slice(0, 8)
                                     : '—'}
-                                </td>
-                              </tr>
+                                </Td>
+                              </Tr>
                             ))}
                           </tbody>
-                        </table>
+                        </Table>
                         {adjustment.ownerResult ? (
                           <details>
-                            <summary className="cursor-pointer text-xs font-[650] text-ink">
+                            <summary className="cursor-pointer text-small font-[650] text-ink">
                               Payroll owner result
                             </summary>
-                            <pre className="m-0 overflow-x-auto rounded-[3px] bg-canvas px-3 py-2 text-[11px] text-muted">
-                              {jsonLabel(adjustment.ownerResult)}
-                            </pre>
+                            <pre className={preClass}>{jsonLabel(adjustment.ownerResult)}</pre>
                           </details>
                         ) : null}
                       </div>
