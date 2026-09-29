@@ -17,7 +17,7 @@ import {
 import { Field, FormError, inputClass } from './ui/field';
 import { PageHeader } from './ui/page-header';
 import { Panel } from './ui/panel';
-import { StatusTag, type StatusTone } from './ui/status-tag';
+import { StatusTag, type StatusDisplay } from './ui/status-tag';
 import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 export type AttendanceEventType = 'TIME_IN' | 'BREAK_OUT' | 'BREAK_IN' | 'TIME_OUT';
@@ -174,8 +174,6 @@ const NEXT_ACTION_LABELS: Record<AttendanceEventType, string> = {
 };
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-type StatusDisplay = { label: string; tone: StatusTone };
 
 const MATCH_STATUS: Record<AttendanceCaptureResult['match']['status'], StatusDisplay> = {
   MATCHED: { label: 'Matched', tone: 'success' },
