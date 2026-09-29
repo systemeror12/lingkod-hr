@@ -88,7 +88,7 @@ test('creates, submits, and guards an Attendance Correction through the protecte
   await page.getByRole('button', { name: 'Submit', exact: true }).click();
   await expect(page.getByText('SUBMITTED', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Tree', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tree', exact: true }).click();
   const row = page.getByRole('row').filter({ hasText: 'Alex Rivera' });
   await expect(row).toContainText('SUBMITTED');
   await expect(row).toContainText('Add');

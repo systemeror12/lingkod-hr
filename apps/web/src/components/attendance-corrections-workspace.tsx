@@ -2,8 +2,14 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { SectionTabList, SectionTabPanel, SectionTabs } from './ui/section-tabs';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, TableFooter, Tr } from './ui/table';
 
 export type AttendanceCorrectionAction = 'ADD' | 'REPLACE' | 'VOID';
 export type AttendanceCorrectionTargetType = 'ATTENDANCE_EVENT' | 'ATTENDANCE_CONTEXT';
@@ -112,14 +118,33 @@ function errorMessage(value: unknown, fallback: string): string {
   return typeof error?.message === 'string' ? error.message : fallback;
 }
 
-function statusClass(status: AttendanceCorrectionStatus): string {
-  if (status === 'APPLIED') return 'bg-emerald-50 text-emerald-800';
-  if (status === 'REJECTED') return 'bg-rose-50 text-rose-800';
-  if (status === 'FOR_AUTHORIZATION') return 'bg-amber-50 text-amber-900';
-  if (status === 'SUBMITTED') return 'bg-sky-50 text-sky-800';
-  if (status === 'NEEDS_INFORMATION') return 'bg-amber-50 text-amber-900';
-  if (status === 'CANCELLED') return 'bg-slate-100 text-slate-700';
-  return 'bg-slate-100 text-slate-800';
+const STATUS_TONE: Record<AttendanceCorrectionStatus, StatusTone> = {
+  DRAFT: 'neutral',
+  SUBMITTED: 'info',
+  NEEDS_INFORMATION: 'warning',
+  APPROVED: 'info',
+  FOR_AUTHORIZATION: 'warning',
+  REJECTED: 'danger',
+  CANCELLED: 'neutral',
+  APPLIED: 'success',
+};
+
+const FILTER_STATUSES = [
+  'DRAFT',
+  'SUBMITTED',
+  'NEEDS_INFORMATION',
+  'FOR_AUTHORIZATION',
+  'APPLIED',
+  'REJECTED',
+  'CANCELLED',
+] as const;
+
+const BOARD_STATUSES = ['DRAFT', 'SUBMITTED', 'FOR_AUTHORIZATION', 'APPLIED'] as const;
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+
+function statusLabel(status: AttendanceCorrectionStatus): string {
+  return status.replaceAll('_', ' ');
 }
 
 function valueOf(event: { currentTarget: EventTarget }): string {
@@ -379,71 +404,51 @@ export function AttendanceCorrectionsWorkspace({
     );
   });
 
-  function correctionRow(correction: AttendanceCorrection) {
-    return (
-      <tr key={correction.id} className="border-t border-line/70">
-        <td className="px-3 py-2">
-          <button
-            type="button"
-            className="text-left font-medium text-ink underline-offset-2 hover:underline"
-            onClick={() => openRecord(correction.id)}
-          >
-            {correction.employee.legalName}
-          </button>
-          <p className="text-xs text-muted">{correction.employee.employeeNumber}</p>
-        </td>
-        <td className="px-3 py-2 text-xs">
-          {correction.targetType === 'ATTENDANCE_EVENT' ? 'Event' : 'Context'}
-        </td>
-        <td className="px-3 py-2 text-xs">{actionLabel(correction.requestedAction)}</td>
-        <td className="px-3 py-2 text-xs">{correction.reason}</td>
-        <td className="px-3 py-2">
-          <span className={'rounded-full px-2 py-0.5 text-xs ' + statusClass(correction.status)}>
-            {correction.status.replaceAll('_', ' ')}
-          </span>
-        </td>
-      </tr>
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-ink">Attendance Corrections</h1>
-          <p className="text-sm text-muted">
-            Evidence-backed add, replace, or void requests that never rewrite source or finalized
-            history.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <nav aria-label="Correction views" className="flex items-center gap-1">
-            {(['tree', 'form', 'kanban'] as const).map((candidate) => (
-              <Button
-                key={candidate}
-                variant={view === candidate ? 'primary' : 'secondary'}
-                size="default"
-                onClick={() => navigation.navigate({ view: candidate })}
-              >
-                {candidate === 'tree' ? 'Tree' : candidate === 'form' ? 'Form' : 'Kanban'}
-              </Button>
-            ))}
-          </nav>
-          {canCreate ? (
-            <Button size="default" onClick={openCreate}>
+    <SectionTabs
+      className="grid min-w-0 gap-5"
+      value={view}
+      onValueChange={(next) => navigation.navigate({ view: next })}
+    >
+      <PageHeader
+        breadcrumbs={[{ label: 'Time & attendance' }]}
+        title="Attendance Corrections"
+        actions={
+          canCreate ? (
+            <Button variant="primary" onClick={openCreate}>
               New correction
             </Button>
-          ) : null}
-        </div>
-      </header>
+          ) : null
+        }
+        tabs={
+          <SectionTabList
+            label="Correction views"
+            tabs={[
+              { value: 'tree', label: 'Tree' },
+              { value: 'form', label: 'Form' },
+              { value: 'kanban', label: 'Kanban' },
+            ]}
+          />
+        }
+      />
+      <p className="m-0 max-w-[760px] text-small text-ink-muted">
+        Evidence-backed add, replace, or void requests that never rewrite source or finalized
+        history.
+      </p>
 
-      {error ? <FormError message={error} /> : null}
-      {success ? <p className="text-sm text-emerald-700">{success}</p> : null}
+      {success ? (
+        <p
+          className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
+          role="status"
+        >
+          {success}
+        </p>
+      ) : null}
+      <FormError message={error} />
 
       {creating ? (
-        <section className="rounded-[5px] border border-line bg-paper p-5">
-          <h2 className="text-sm font-semibold text-ink">New Attendance Correction</h2>
-          <form className="mt-3 grid gap-3 md:grid-cols-2" onSubmit={createCorrection}>
+        <Panel title="New Attendance Correction">
+          <form className="grid gap-3 md:grid-cols-2" onSubmit={createCorrection}>
             <Field label="Employee (leave blank for your own record)">
               <select
                 className={inputClass}
@@ -635,7 +640,7 @@ export function AttendanceCorrectionsWorkspace({
               </>
             ) : null}
             <div className="flex items-end gap-2 md:col-span-2">
-              <Button type="submit" disabled={busy}>
+              <Button type="submit" variant="primary" disabled={busy}>
                 {busy ? 'Saving…' : 'Save draft'}
               </Button>
               <Button type="button" variant="secondary" onClick={() => setCreating(false)}>
@@ -643,108 +648,136 @@ export function AttendanceCorrectionsWorkspace({
               </Button>
             </div>
           </form>
-        </section>
+        </Panel>
       ) : null}
 
-      {view === 'tree' ? (
-        <section className="rounded-[5px] border border-line bg-paper">
-          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-            <input
-              className={inputClass + ' max-w-xs'}
-              placeholder="Search employee or reason"
-              value={query}
-              onChange={(event) => setQuery(valueOf(event))}
-            />
-            <select
-              className={inputClass + ' max-w-xs'}
-              value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(valueOf(event) as 'ALL' | AttendanceCorrectionStatus)
-              }
-            >
-              <option value="ALL">All statuses</option>
-              {(
-                [
-                  'DRAFT',
-                  'SUBMITTED',
-                  'NEEDS_INFORMATION',
-                  'FOR_AUTHORIZATION',
-                  'APPLIED',
-                  'REJECTED',
-                  'CANCELLED',
-                ] as const
-              ).map((status) => (
-                <option key={status} value={status}>
-                  {status.replaceAll('_', ' ')}
-                </option>
-              ))}
-            </select>
-          </div>
+      <SectionTabPanel value="tree">
+        <Panel
+          title="Correction register"
+          flush
+          actions={
+            <>
+              <input
+                aria-label="Search employee or reason"
+                className={inputClass + ' max-w-xs'}
+                placeholder="Search employee or reason"
+                value={query}
+                onChange={(event) => setQuery(valueOf(event))}
+              />
+              <select
+                aria-label="Status"
+                className={inputClass + ' max-w-xs'}
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(valueOf(event) as 'ALL' | AttendanceCorrectionStatus)
+                }
+              >
+                <option value="ALL">All statuses</option>
+                {FILTER_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {statusLabel(status)}
+                  </option>
+                ))}
+              </select>
+            </>
+          }
+        >
           {visible.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-muted">No Attendance Corrections match.</p>
+            <StateSurface compact label="Attendance Corrections">
+              <p className="m-0">No Attendance Corrections match.</p>
+            </StateSurface>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <>
+              <Table className="min-w-[720px]">
                 <thead>
-                  <tr className="text-xs uppercase tracking-wide text-muted">
-                    <th className="px-3 py-2">Employee</th>
-                    <th className="px-3 py-2">Target</th>
-                    <th className="px-3 py-2">Action</th>
-                    <th className="px-3 py-2">Reason</th>
-                    <th className="px-3 py-2">Status</th>
+                  <tr>
+                    <Th>Employee</Th>
+                    <Th>Target</Th>
+                    <Th>Action</Th>
+                    <Th>Reason</Th>
+                    <Th>Status</Th>
                   </tr>
                 </thead>
-                <tbody>{visible.map(correctionRow)}</tbody>
-              </table>
-            </div>
+                <tbody>
+                  {visible.map((correction) => (
+                    <Tr key={correction.id} selected={correction.id === recordId}>
+                      <RowHeader>
+                        <button
+                          type="button"
+                          className="cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-ink underline-offset-2 hover:underline"
+                          onClick={() => openRecord(correction.id)}
+                        >
+                          {correction.employee.legalName}
+                        </button>
+                        <p className="m-0 text-caption font-normal text-ink-muted">
+                          {correction.employee.employeeNumber}
+                        </p>
+                      </RowHeader>
+                      <Td>{correction.targetType === 'ATTENDANCE_EVENT' ? 'Event' : 'Context'}</Td>
+                      <Td>{actionLabel(correction.requestedAction)}</Td>
+                      <Td>{correction.reason}</Td>
+                      <Td>
+                        <StatusTag tone={STATUS_TONE[correction.status]}>
+                          {statusLabel(correction.status)}
+                        </StatusTag>
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+              <TableFooter shown={visible.length} total={corrections.length} />
+            </>
           )}
-        </section>
-      ) : null}
+        </Panel>
+      </SectionTabPanel>
 
-      {view === 'kanban' ? (
-        <section
+      <SectionTabPanel value="kanban">
+        <div
+          role="group"
           aria-label="Attendance Correction status board"
-          className="grid gap-3 md:grid-cols-4"
+          className="grid gap-4 md:grid-cols-4"
         >
-          {(['DRAFT', 'SUBMITTED', 'FOR_AUTHORIZATION', 'APPLIED'] as const).map((status) => {
+          {BOARD_STATUSES.map((status) => {
             const cards = visible.filter((correction) => correction.status === status);
             return (
-              <div key={status} className="rounded-[5px] border border-line bg-paper p-3">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  {status.replaceAll('_', ' ')} ({cards.length})
-                </h2>
-                <div className="mt-2 space-y-2">
+              <Panel key={status} title={`${statusLabel(status)} (${cards.length})`}>
+                <div className="grid gap-2">
                   {cards.map((correction) => (
                     <button
                       key={correction.id}
                       type="button"
-                      className="w-full rounded-[4px] border border-line p-2 text-left text-sm"
+                      className="w-full cursor-pointer rounded-control border border-border bg-surface p-2 text-left text-small hover:bg-canvas"
                       onClick={() => openRecord(correction.id)}
                     >
-                      <span className="font-medium text-ink">{correction.employee.legalName}</span>
-                      <span className="block text-xs text-muted">
+                      <span className="font-[600] text-ink">{correction.employee.legalName}</span>
+                      <span className="block text-caption text-ink-muted">
                         {actionLabel(correction.requestedAction)} · {correction.reason}
                       </span>
                     </button>
                   ))}
-                  {cards.length === 0 ? <p className="text-xs text-muted">Empty.</p> : null}
+                  {cards.length === 0 ? (
+                    <p className="m-0 text-caption text-ink-muted">Empty.</p>
+                  ) : null}
                 </div>
-              </div>
+              </Panel>
             );
           })}
-        </section>
-      ) : null}
+        </div>
+      </SectionTabPanel>
 
-      {view === 'form' ? (
-        <section
-          aria-label="Attendance Correction record"
-          className="rounded-[5px] border border-line bg-paper p-5"
-        >
-          {detailLoading ? <p className="text-sm text-muted">Loading…</p> : null}
+      <SectionTabPanel value="form">
+        <Panel title="Attendance Correction record">
+          {detailLoading ? (
+            <StateSurface busy compact>
+              <p className="m-0" role="status">
+                Loading…
+              </p>
+            </StateSurface>
+          ) : null}
           {!detailLoading && !detail ? (
-            <p className="text-sm text-muted">
-              Select an Attendance Correction from the Tree view.
-            </p>
+            <StateSurface compact>
+              <p className="m-0">Select an Attendance Correction from the Tree view.</p>
+            </StateSurface>
           ) : null}
           {detail ? (
             <CorrectionDetail
@@ -761,9 +794,9 @@ export function AttendanceCorrectionsWorkspace({
               runAction={runAction}
             />
           ) : null}
-        </section>
-      ) : null}
-    </div>
+        </Panel>
+      </SectionTabPanel>
+    </SectionTabs>
   );
 }
 
@@ -804,72 +837,85 @@ function CorrectionDetail({
   const showAuthorize = canAuthorizeLocked && correction.status === 'FOR_AUTHORIZATION';
   const showCancel = canCancel && ['DRAFT', 'SUBMITTED'].includes(correction.status);
   return (
-    <div className="space-y-4">
+    <div className="grid gap-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-ink">
+          <h2 className="m-0 text-panel-title text-ink">
             {actionLabel(correction.requestedAction)}{' '}
             {correction.targetType === 'ATTENDANCE_EVENT'
               ? 'attendance event'
               : 'attendance context'}
           </h2>
-          <p className="text-sm text-muted">
+          <p className="m-0 text-small text-ink-muted">
             {correction.employee.legalName} ({correction.employee.employeeNumber})
           </p>
         </div>
-        <span
-          className={'rounded-full px-3 py-1 text-xs font-medium ' + statusClass(correction.status)}
-        >
-          {correction.status.replaceAll('_', ' ')}
-        </span>
+        <StatusTag tone={STATUS_TONE[correction.status]}>
+          {statusLabel(correction.status)}
+        </StatusTag>
       </header>
 
-      <dl className="grid gap-3 text-sm md:grid-cols-3">
+      <dl className="m-0 grid gap-3 text-small md:grid-cols-3">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted">Reason</dt>
-          <dd className="text-ink">{correction.reason}</dd>
+          <dt className="text-caption text-ink-muted">Reason</dt>
+          <dd className="m-0 text-ink">{correction.reason}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted">Exact target</dt>
-          <dd className="break-all text-ink">{correction.targetId ?? 'Proposed new fact'}</dd>
+          <dt className="text-caption text-ink-muted">Exact target</dt>
+          <dd className="m-0 break-all text-ink">{correction.targetId ?? 'Proposed new fact'}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted">Approval Route Version</dt>
-          <dd className="break-all text-ink">{correction.approvalRouteVersionId}</dd>
+          <dt className="text-caption text-ink-muted">Approval Route Version</dt>
+          <dd className="m-0 break-all text-ink">{correction.approvalRouteVersionId}</dd>
         </div>
       </dl>
 
-      <section>
-        <h3 className="text-sm font-semibold text-ink">Impact Preview</h3>
-        <p className="text-xs text-muted">
+      <section className="grid gap-2">
+        <h3 className={sectionTitleClass}>Impact Preview</h3>
+        <p className="m-0 text-caption text-ink-muted">
           Fingerprint {impactPreview.fingerprint.slice(0, 12)} · {impactPreview.days.length}{' '}
           affected Work Date(s)
           {impactPreview.lockedPeriodVersionIds.length > 0 ? ' · locked period impact' : ''}
         </p>
         {impactPreview.days.length === 0 ? (
-          <p className="mt-1 text-sm text-muted">No calculable Work Date is affected.</p>
+          <p className="m-0 text-small text-ink-muted">No calculable Work Date is affected.</p>
         ) : (
-          <ul className="mt-2 space-y-1 text-sm">
-            {impactPreview.days.map((day) => (
-              <li key={day.workDate} className="rounded-[4px] border border-line px-3 py-2">
-                <span className="font-medium text-ink">{day.workDate}</span> · {day.periodCode} (
-                {day.periodStatus}) ·{' '}
-                {day.attendanceDayId
-                  ? `current version ${day.calculationVersion} (${day.status})`
-                  : 'no current Attendance Day'}
-                {day.lockedPeriodVersionId ? ' · locked predecessor present' : ''}
-              </li>
-            ))}
-          </ul>
+          <div className="rounded-panel border border-border">
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Work Date</Th>
+                  <Th>Attendance Period</Th>
+                  <Th>Attendance Day</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {impactPreview.days.map((day) => (
+                  <Tr key={day.workDate}>
+                    <RowHeader>{day.workDate}</RowHeader>
+                    <Td>
+                      {day.periodCode} ({day.periodStatus})
+                    </Td>
+                    <Td>
+                      {day.attendanceDayId
+                        ? `current version ${day.calculationVersion} (${day.status})`
+                        : 'no current Attendance Day'}
+                      {day.lockedPeriodVersionId ? ' · locked predecessor present' : ''}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
         )}
       </section>
 
-      <section>
-        <h3 className="text-sm font-semibold text-ink">Evidence</h3>
+      <section className="grid gap-2">
+        <h3 className={sectionTitleClass}>Evidence</h3>
         {detail.evidence.length === 0 ? (
-          <p className="text-sm text-muted">No evidence recorded yet.</p>
+          <p className="m-0 text-small text-ink-muted">No evidence recorded yet.</p>
         ) : (
-          <ul className="mt-1 space-y-1 text-sm">
+          <ul className="m-0 grid list-none gap-1 p-0 text-small">
             {detail.evidence.map((item) => (
               <li key={item.id} className="break-all text-ink">
                 {item.documentVersionId
@@ -882,9 +928,9 @@ function CorrectionDetail({
       </section>
 
       {detail.effect ? (
-        <section>
-          <h3 className="text-sm font-semibold text-ink">Applied Effect</h3>
-          <p className="text-sm text-ink">
+        <section className="grid gap-2">
+          <h3 className={sectionTitleClass}>Applied Effect</h3>
+          <p className="m-0 text-small text-ink">
             {actionLabel(detail.effect.effectAction)} effect {detail.effect.id} applied{' '}
             {new Date(detail.effect.appliedAt).toLocaleString()}.
           </p>
@@ -892,9 +938,9 @@ function CorrectionDetail({
       ) : null}
 
       {detail.lockedAdjustment ? (
-        <section>
-          <h3 className="text-sm font-semibold text-ink">Locked Attendance Adjustment</h3>
-          <ul className="mt-1 space-y-1 text-sm">
+        <section className="grid gap-2">
+          <h3 className={sectionTitleClass}>Locked Attendance Adjustment</h3>
+          <ul className="m-0 grid list-none gap-1 p-0 text-small">
             {detail.lockedAdjustment.periods.map((period) => (
               <li key={period.predecessorPeriodVersionId} className="break-all text-ink">
                 {period.predecessorPeriodVersionId} → {period.successorPeriodVersionId}
@@ -907,7 +953,7 @@ function CorrectionDetail({
       <section className="flex flex-wrap items-end gap-3">
         <Field label="Decision comments">
           <textarea
-            className={inputClass}
+            className={inputClass + ' py-2'}
             rows={2}
             value={comments}
             onChange={(event) => setComments(valueOf(event))}
@@ -916,6 +962,7 @@ function CorrectionDetail({
         <div className="flex flex-wrap gap-2">
           {showSubmit ? (
             <Button
+              variant="primary"
               disabled={busy}
               onClick={() =>
                 void runAction('/submit', undefined, 'Correction submitted for HR review.')
@@ -926,6 +973,7 @@ function CorrectionDetail({
           ) : null}
           {showDecide ? (
             <Button
+              variant="primary"
               disabled={busy}
               onClick={() =>
                 void runAction(
@@ -958,6 +1006,7 @@ function CorrectionDetail({
           ) : null}
           {showAuthorize ? (
             <Button
+              variant="primary"
               disabled={busy}
               onClick={() =>
                 void runAction(
@@ -985,7 +1034,7 @@ function CorrectionDetail({
       </section>
 
       {detail.approval ? (
-        <p className="text-xs text-muted">
+        <p className="m-0 text-caption text-ink-muted">
           Approval Request {detail.approval.approvalRequestId} · {detail.approval.status} · step{' '}
           {detail.approval.currentStepNo ?? '—'}
         </p>
