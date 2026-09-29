@@ -1,10 +1,16 @@
 'use client';
 
-import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { useRecordNavigation } from './record-navigation';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { manilaToday } from '../lib/manila-date';
+import { StateCode, StateSurface } from './state-surface';
 import { Button } from './ui/button';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 import {
   Dialog,
   DialogBody,
@@ -74,8 +80,28 @@ interface DocumentOption {
 
 type DialogKind = 'generate' | 'preview' | 'replace' | 'history' | null;
 
-const inputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/20';
+type RecordChain = 'Original' | 'Replacement' | 'Superseded';
+
+const chainTone: Record<RecordChain, StatusTone> = {
+  Original: 'success',
+  Replacement: 'info',
+  Superseded: 'neutral',
+};
+
+function recordChain(record: ServiceRecord): RecordChain {
+  return record.supersedesSnapshotId
+    ? 'Replacement'
+    : record.replacementSnapshotId
+      ? 'Superseded'
+      : 'Original';
+}
+
+function RecordChainTag({ record }: { record: ServiceRecord }) {
+  const chain = recordChain(record);
+  return <StatusTag tone={chainTone[chain]}>{chain}</StatusTag>;
+}
+
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat('en-PH', {
@@ -299,30 +325,26 @@ export function ServiceRecordWorkspace({
         .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt) || b.id.localeCompare(a.id))
     : [];
 
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Personnel' }];
+  // Only record views change the URL, so only they can link back to the register.
+  if (recordId) {
+    breadcrumbs.push({
+      label: 'Service Records',
+      href: navigation.href({ record: null, view: null, section: null }),
+    });
+    if (selected) breadcrumbs.push({ label: selected.employee.legalName });
+  }
+
   return (
-    <>
-      {recordId ? (
-        <RecordReturn href={navigation.href({ record: null, view: null, section: null })}>
-          ← Service Records
-        </RecordReturn>
-      ) : null}
-      {recordId && !selected ? <p role="status">{error || 'Loading Service Record…'}</p> : null}
-      <div hidden={Boolean(recordId)} className="space-y-5">
-        <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-          <div>
-            <p className="m-0 mb-2 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase">
-              Personnel records
-            </p>
-            <h1 className="m-0 text-[30px] font-[720] tracking-[-.035em] text-midnight">
-              Service records
-            </h1>
-            <p className="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted">
-              Reproduce effective-dated service history as immutable Printable System Views.
-            </p>
-          </div>
-          {canGenerate ? (
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={breadcrumbs}
+        title="Service Records"
+        actions={
+          canGenerate ? (
             <Button
-              size="default"
+              // Hidden rather than unmounted, so focus can return here when a dialog closes.
+              hidden={Boolean(recordId)}
               type="button"
               variant="primary"
               onClick={(event) => {
@@ -332,111 +354,129 @@ export function ServiceRecordWorkspace({
             >
               Generate record
             </Button>
-          ) : null}
-        </header>
+          ) : null
+        }
+      />
 
-        <section className="mb-5 grid gap-4 border-l-[3px] border-cobalt bg-[#edf3fb] px-5 py-4 min-[700px]:grid-cols-[1fr_auto] min-[700px]:items-center">
-          <p className="m-0 text-sm leading-6 text-ink">
-            Generated records are retained snapshots. Later source corrections do not rewrite them.
-          </p>
-          <strong className="font-mono text-2xl text-midnight">{records.length}</strong>
-        </section>
-
-        <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-          {records.length === 0 ? (
-            <p className="m-0 px-5 py-8 text-sm text-muted">
-              No Service Records are available in your permitted record scope.
+      {recordId && !selected ? (
+        error ? (
+          <StateSurface labelledBy="service-record-state-title">
+            <StateCode>Unavailable</StateCode>
+            <h2 className="m-0 text-page-title text-ink" id="service-record-state-title">
+              This Service Record could not be opened
+            </h2>
+            <p className="m-0 max-w-[500px] text-body text-ink-muted" role="alert">
+              {error}
             </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[820px] border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
-                    <th className="px-5 py-3 font-bold">Employee</th>
-                    <th className="px-5 py-3 font-bold">As of</th>
-                    <th className="px-5 py-3 font-bold">Generated</th>
-                    <th className="px-5 py-3 font-bold">Record chain</th>
-                    <th className="px-5 py-3 font-bold">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((record) => (
-                    <tr key={record.id} className="border-b border-line last:border-0">
-                      <td className="px-5 py-4">
-                        <strong className="block text-sm font-[650] text-ink">
-                          {record.employee.legalName}
-                        </strong>
-                        <span className="font-mono text-xs text-muted">
-                          {record.employee.employeeNumber}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 font-mono text-xs text-ink">{record.asOfDate}</td>
-                      <td className="px-5 py-4 text-xs text-muted">
-                        {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
-                      </td>
-                      <td className="px-5 py-4 text-xs text-muted">
-                        {record.supersedesSnapshotId
-                          ? 'Replacement'
-                          : record.replacementSnapshotId
-                            ? 'Superseded'
-                            : 'Original'}
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="default"
-                            variant="secondary"
-                            onClick={(event) => {
-                              rememberTrigger(event);
-                              open('preview', record);
-                            }}
-                          >
-                            Preview
-                          </Button>
-                          <Button
-                            size="default"
-                            variant="secondary"
-                            onClick={(event) => {
-                              rememberTrigger(event);
-                              open('history', record);
-                            }}
-                          >
-                            History
-                          </Button>
-                          {canReplace && !record.replacementSnapshotId ? (
-                            <Button
-                              size="default"
-                              variant="secondary"
-                              onClick={(event) => {
-                                rememberTrigger(event);
-                                open('replace', record);
-                              }}
-                            >
-                              Replace
-                            </Button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-        {listError ? (
-          <p className="mt-4 text-center text-sm text-[#a73333]" role="alert">
-            {listError}
+          </StateSurface>
+        ) : (
+          <StateSurface busy label="Service Record">
+            <StateCode>Loading</StateCode>
+            <p className="m-0 text-body text-ink-muted" role="status">
+              Loading Service Record…
+            </p>
+          </StateSurface>
+        )
+      ) : null}
+
+      <Panel
+        title="Snapshot register"
+        flush
+        hidden={Boolean(recordId)}
+        actions={
+          <dl className="m-0 flex gap-1.5 text-caption text-ink-muted">
+            <dt>Loaded</dt>
+            <dd className="m-0 font-[650] text-ink">{records.length}</dd>
+          </dl>
+        }
+      >
+        <div className="grid gap-3 px-4 pt-3">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
+            Reproduce effective-dated service history as immutable Printable System Views. Generated
+            records are retained snapshots. Later source corrections do not rewrite them.
           </p>
-        ) : null}
+          <FormError message={listError} />
+        </div>
+        {records.length === 0 ? (
+          <StateSurface compact label="Service Record register">
+            <p className="m-0">No Service Records are available in your permitted record scope.</p>
+          </StateSurface>
+        ) : (
+          <Table aria-label="Service Records" className="mt-3 min-w-[820px]">
+            <thead>
+              <tr>
+                <Th>Employee</Th>
+                <Th kind="date">As of</Th>
+                <Th>Generated</Th>
+                <Th>Record chain</Th>
+                <Th>Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((record) => (
+                <Tr key={record.id}>
+                  <RowHeader>
+                    {record.employee.legalName}
+                    <span className="block font-mono text-caption font-normal text-ink-muted">
+                      {record.employee.employeeNumber}
+                    </span>
+                  </RowHeader>
+                  <Td kind="date">{record.asOfDate}</Td>
+                  <Td className="text-ink-muted">
+                    {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
+                  </Td>
+                  <Td>
+                    <RecordChainTag record={record} />
+                  </Td>
+                  <Td>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={(event) => {
+                          rememberTrigger(event);
+                          open('preview', record);
+                        }}
+                      >
+                        Preview
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={(event) => {
+                          rememberTrigger(event);
+                          open('history', record);
+                        }}
+                      >
+                        History
+                      </Button>
+                      {canReplace && !record.replacementSnapshotId ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={(event) => {
+                            rememberTrigger(event);
+                            open('replace', record);
+                          }}
+                        >
+                          Replace
+                        </Button>
+                      ) : null}
+                    </div>
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
         {nextCursor ? (
-          <div className="mt-4 flex justify-center">
-            <Button disabled={busy} size="default" variant="secondary" onClick={loadMore}>
+          <div className="flex justify-center px-4 py-3">
+            <Button disabled={busy} type="button" variant="secondary" onClick={loadMore}>
               {busy ? 'Loading…' : 'Load more'}
             </Button>
           </div>
         ) : null}
-      </div>
+      </Panel>
 
       <Dialog
         presentation={dialog === 'preview' || dialog === 'history' ? 'form' : 'dialog'}
@@ -458,7 +498,7 @@ export function ServiceRecordWorkspace({
             }}
           >
             <DialogHeader>
-              <div>
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Generate Service Record</DialogTitle>
                 <DialogDescription id="service-record-generate-description">
                   Select an Employee and explicit as-of date. Service facts come from authoritative
@@ -466,21 +506,21 @@ export function ServiceRecordWorkspace({
                 </DialogDescription>
               </div>
               <DialogClose asChild>
-                <Button aria-label="Close Service Record dialog">×</Button>
+                <Button aria-label="Close Service Record dialog" type="button">
+                  <span aria-hidden="true" className="text-xl leading-none">
+                    ×
+                  </span>
+                </Button>
               </DialogClose>
             </DialogHeader>
-            <form onSubmit={generate}>
+            <form className="flex min-h-0 flex-1 flex-col" onSubmit={generate}>
               <DialogBody className="grid gap-5">
-                {error ? (
-                  <p className="m-0 text-sm text-[#a73333]" role="alert">
-                    {error}
-                  </p>
-                ) : null}
-                <label className="grid gap-2 text-sm font-[650] text-ink">
-                  Employee
+                <FormError message={error} />
+                <Field htmlFor="service-record-employee" label="Employee">
                   <select
                     ref={employeeRef}
                     className={inputClass}
+                    id="service-record-employee"
                     required
                     value={employeeId}
                     onChange={(event) => setEmployeeId(targetValue(event))}
@@ -492,35 +532,32 @@ export function ServiceRecordWorkspace({
                       </option>
                     ))}
                   </select>
-                </label>
-                <label className="grid gap-2 text-sm font-[650] text-ink">
-                  As-of date
+                </Field>
+                <Field htmlFor="service-record-as-of" label="As-of date">
                   <input
                     className={inputClass}
+                    id="service-record-as-of"
                     required
                     type="date"
                     value={asOfDate}
                     onChange={(event) => setAsOfDate(targetValue(event))}
                   />
-                </label>
+                </Field>
                 {loadingOptions ? (
-                  <p className="m-0 text-sm text-muted" role="status">
-                    Loading Employees…
-                  </p>
+                  <StateSurface compact busy label="Employee choices">
+                    <p className="m-0" role="status">
+                      Loading Employees…
+                    </p>
+                  </StateSurface>
                 ) : null}
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button disabled={busy} size="default" variant="secondary">
+                  <Button disabled={busy} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button
-                  disabled={busy || loadingOptions}
-                  size="default"
-                  type="submit"
-                  variant="primary"
-                >
+                <Button disabled={busy || loadingOptions} type="submit" variant="primary">
                   {busy ? 'Generating…' : 'Generate record'}
                 </Button>
               </DialogFooter>
@@ -535,80 +572,114 @@ export function ServiceRecordWorkspace({
             onCloseAutoFocus={restoreFocus}
           >
             <DialogHeader>
-              <div>
-                <DialogTitle>{selected.snapshot.label}</DialogTitle>
+              <div className="grid min-w-0 gap-1.5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <DialogTitle>{selected.snapshot.label}</DialogTitle>
+                  <RecordChainTag record={selected} />
+                </div>
                 <DialogDescription id="service-record-preview-description">
                   {selected.snapshot.disclaimer}
                 </DialogDescription>
               </div>
               <DialogClose asChild>
-                <Button aria-label="Close Service Record preview">×</Button>
+                <Button aria-label="Close Service Record preview" type="button">
+                  <span aria-hidden="true" className="text-xl leading-none">
+                    ×
+                  </span>
+                </Button>
               </DialogClose>
             </DialogHeader>
             <DialogBody className="grid gap-6 print:overflow-visible">
-              <div className="flex flex-wrap justify-between gap-4 border-b border-line pb-4">
+              <dl className="m-0 flex flex-wrap gap-x-10 gap-y-3">
                 <div>
-                  <strong className="block text-lg text-midnight">
+                  <dt className="text-caption text-ink-muted">Employee</dt>
+                  <dd className="m-0 text-body font-[600] text-ink">
                     {selected.employee.legalName}
-                  </strong>
-                  <span className="font-mono text-xs text-muted">
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-caption text-ink-muted">Employee number</dt>
+                  <dd className="m-0 font-mono text-body text-ink">
                     {selected.employee.employeeNumber}
-                  </span>
+                  </dd>
                 </div>
-                <div className="text-right">
-                  <span className="block text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                    As of
-                  </span>
-                  <strong className="font-mono text-sm text-ink">{selected.asOfDate}</strong>
+                <div>
+                  <dt className="text-caption text-ink-muted">As of</dt>
+                  <dd className="m-0 font-mono text-body text-ink">{selected.asOfDate}</dd>
                 </div>
-              </div>
-              <ol className="m-0 grid list-none gap-0 border-l-2 border-cobalt pl-6">
-                {selected.snapshot.serviceSegments.map((segment) => (
-                  <li
-                    key={segment.id}
-                    className="relative border-b border-line py-4 last:border-0 before:absolute before:top-6 before:-left-[31px] before:size-3 before:rounded-full before:border-2 before:border-cobalt before:bg-paper"
-                  >
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <strong className="text-sm text-ink">
-                        {segment.position?.title ?? segment.appointmentStatus}
-                      </strong>
-                      <span className="font-mono text-xs text-muted">
-                        {segment.effectiveFrom} to {segment.effectiveTo ?? 'present'}
-                      </span>
-                    </div>
-                    <p className="m-0 mt-1 text-xs text-muted">
-                      {segment.organizationUnit.name ?? segment.organizationUnit.code}
-                      {segment.position ? ` · Item ${segment.position.itemNumber}` : ''}
-                      {segment.salaryGrade
-                        ? ` · SG ${segment.salaryGrade}-${segment.salaryStep}`
-                        : ''}
-                    </p>
-                  </li>
-                ))}
-              </ol>
-              {selected.snapshot.personnelActions.length > 0 ? (
-                <section>
-                  <h2 className="m-0 mb-3 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase">
-                    Supported Personnel Actions
-                  </h2>
-                  <ul className="m-0 grid gap-2 pl-5 text-sm text-ink">
-                    {selected.snapshot.personnelActions.map((action) => (
-                      <li key={action.id}>
-                        {action.proposedEffectivity} · {action.actionType.replaceAll('_', ' ')}
-                      </li>
+              </dl>
+              <section className="grid gap-3" aria-labelledby="service-record-segments">
+                <h3 className={sectionTitleClass} id="service-record-segments">
+                  Service history
+                </h3>
+                <Table aria-labelledby="service-record-segments" className="min-w-[720px]">
+                  <thead>
+                    <tr>
+                      <Th>Position</Th>
+                      <Th>Appointment status</Th>
+                      <Th>Organization Unit</Th>
+                      <Th>Salary</Th>
+                      <Th kind="date">From</Th>
+                      <Th kind="date">To</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selected.snapshot.serviceSegments.map((segment) => (
+                      <Tr key={segment.id}>
+                        <RowHeader>
+                          {segment.position?.title ?? '—'}
+                          {segment.position ? (
+                            <span className="block font-mono text-caption font-normal text-ink-muted">
+                              Item {segment.position.itemNumber}
+                            </span>
+                          ) : null}
+                        </RowHeader>
+                        <Td>{segment.appointmentStatus}</Td>
+                        <Td>{segment.organizationUnit.name ?? segment.organizationUnit.code}</Td>
+                        <Td className="whitespace-nowrap">
+                          {segment.salaryGrade
+                            ? `SG ${segment.salaryGrade}-${segment.salaryStep}`
+                            : '—'}
+                        </Td>
+                        <Td kind="date">{segment.effectiveFrom}</Td>
+                        <Td kind="date">{segment.effectiveTo ?? 'present'}</Td>
+                      </Tr>
                     ))}
-                  </ul>
+                  </tbody>
+                </Table>
+              </section>
+              {selected.snapshot.personnelActions.length > 0 ? (
+                <section className="grid gap-3" aria-labelledby="service-record-actions">
+                  <h3 className={sectionTitleClass} id="service-record-actions">
+                    Supported Personnel Actions
+                  </h3>
+                  <Table aria-labelledby="service-record-actions">
+                    <thead>
+                      <tr>
+                        <Th kind="date">Effectivity</Th>
+                        <Th>Action</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selected.snapshot.personnelActions.map((action) => (
+                        <Tr key={action.id}>
+                          <Td kind="date">{action.proposedEffectivity}</Td>
+                          <Td>{action.actionType.replaceAll('_', ' ')}</Td>
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </Table>
                 </section>
               ) : null}
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button size="default" variant="secondary">
+                <Button type="button" variant="secondary">
                   Close
                 </Button>
               </DialogClose>
               <Button
-                size="default"
+                type="button"
                 variant="primary"
                 onClick={() => (globalThis as unknown as { print(): void }).print()}
               >
@@ -629,37 +700,37 @@ export function ServiceRecordWorkspace({
             }}
           >
             <DialogHeader>
-              <div>
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Confirm Service Record replacement</DialogTitle>
                 <DialogDescription id="service-record-replace-description">
                   The original snapshot remains unchanged and linked to the replacement.
                 </DialogDescription>
               </div>
               <DialogClose asChild>
-                <Button aria-label="Close replacement dialog">×</Button>
+                <Button aria-label="Close replacement dialog" type="button">
+                  <span aria-hidden="true" className="text-xl leading-none">
+                    ×
+                  </span>
+                </Button>
               </DialogClose>
             </DialogHeader>
-            <form onSubmit={replace}>
+            <form className="flex min-h-0 flex-1 flex-col" onSubmit={replace}>
               <DialogBody className="grid gap-5">
-                {error ? (
-                  <p className="m-0 text-sm text-[#a73333]" role="alert">
-                    {error}
-                  </p>
-                ) : null}
-                <label className="grid gap-2 text-sm font-[650] text-ink">
-                  Reason
+                <FormError message={error} />
+                <Field htmlFor="service-record-reason" label="Reason">
                   <textarea
                     ref={reasonRef}
-                    className={`${inputClass} min-h-24 py-3`}
+                    className={`${inputClass} min-h-24 resize-y py-3`}
+                    id="service-record-reason"
                     required
                     value={reason}
                     onChange={(event) => setReason(targetValue(event))}
                   />
-                </label>
-                <label className="grid gap-2 text-sm font-[650] text-ink">
-                  Correction evidence
+                </Field>
+                <Field htmlFor="service-record-evidence" label="Correction evidence">
                   <select
                     className={inputClass}
+                    id="service-record-evidence"
                     required
                     value={evidenceDocumentId}
                     onChange={(event) => {
@@ -677,25 +748,22 @@ export function ServiceRecordWorkspace({
                       </option>
                     ))}
                   </select>
-                </label>
+                </Field>
                 {loadingOptions ? (
-                  <p className="m-0 text-sm text-muted" role="status">
-                    Loading evidence…
-                  </p>
+                  <StateSurface compact busy label="Evidence choices">
+                    <p className="m-0" role="status">
+                      Loading evidence…
+                    </p>
+                  </StateSurface>
                 ) : null}
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button disabled={busy} size="default" variant="secondary">
+                  <Button disabled={busy} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button
-                  disabled={busy || loadingOptions}
-                  size="default"
-                  type="submit"
-                  variant="primary"
-                >
+                <Button disabled={busy || loadingOptions} type="submit" variant="primary">
                   {busy ? 'Replacing…' : 'Create replacement'}
                 </Button>
               </DialogFooter>
@@ -710,7 +778,7 @@ export function ServiceRecordWorkspace({
             onCloseAutoFocus={restoreFocus}
           >
             <DialogHeader>
-              <div>
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Service Record history</DialogTitle>
                 <DialogDescription id="service-record-history-description">
                   Loaded issued snapshots for {selected.employee.legalName} in your permitted scope.{' '}
@@ -720,33 +788,41 @@ export function ServiceRecordWorkspace({
                 </DialogDescription>
               </div>
               <DialogClose asChild>
-                <Button aria-label="Close Service Record history">×</Button>
+                <Button aria-label="Close Service Record history" type="button">
+                  <span aria-hidden="true" className="text-xl leading-none">
+                    ×
+                  </span>
+                </Button>
               </DialogClose>
             </DialogHeader>
-            <DialogBody>
-              <ol className="m-0 grid list-none gap-3 p-0">
-                {employeeHistory.map((record) => (
-                  <li key={record.id} className="rounded-[3px] border border-line px-4 py-3">
-                    <strong className="block text-sm text-ink">
-                      {record.asOfDate} ·{' '}
-                      {record.supersedesSnapshotId
-                        ? 'Replacement'
-                        : record.replacementSnapshotId
-                          ? 'Superseded'
-                          : 'Original'}
-                    </strong>
-                    <span className="text-xs text-muted">
-                      Generated {formatDateTime(record.generatedAt)} by{' '}
-                      {record.generatedBy.displayName}
-                    </span>
-                    {record.correctionReason ? (
-                      <p className="m-0 mt-2 text-xs leading-5 text-muted">
-                        {record.correctionReason}
-                      </p>
-                    ) : null}
-                  </li>
-                ))}
-              </ol>
+            <DialogBody className="grid gap-3 p-0">
+              <Table aria-label="Service Record history" className="min-w-[560px]">
+                <thead>
+                  <tr>
+                    <Th kind="date">As of</Th>
+                    <Th>Record chain</Th>
+                    <Th>Generated</Th>
+                    <Th>Correction reason</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {employeeHistory.map((record) => (
+                    <Tr key={record.id}>
+                      <RowHeader className="font-mono whitespace-nowrap">
+                        {record.asOfDate}
+                      </RowHeader>
+                      <Td>
+                        <RecordChainTag record={record} />
+                      </Td>
+                      <Td className="text-ink-muted">
+                        {formatDateTime(record.generatedAt)} by {record.generatedBy.displayName}
+                      </Td>
+                      <Td className="text-ink-muted">{record.correctionReason ?? '—'}</Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+              <FormError className="mx-4 mb-4" message={listError} />
             </DialogBody>
             <DialogFooter>
               {nextCursor ? (
@@ -759,10 +835,8 @@ export function ServiceRecordWorkspace({
                   {busy ? 'Loading…' : 'Load more history'}
                 </Button>
               ) : null}
-              {listError ? <p role="alert">{listError}</p> : null}
-
               <DialogClose asChild>
-                <Button size="default" variant="secondary">
+                <Button type="button" variant="secondary">
                   Close
                 </Button>
               </DialogClose>
@@ -770,6 +844,6 @@ export function ServiceRecordWorkspace({
           </DialogContent>
         ) : null}
       </Dialog>
-    </>
+    </div>
   );
 }
