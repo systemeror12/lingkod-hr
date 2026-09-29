@@ -3,9 +3,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { manilaToday } from '../lib/manila-date';
 import { useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
-
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 export type AttendanceDayStatus = 'PENDING' | 'CALCULATED' | 'EXCEPTION' | 'APPROVED';
 export type AttendanceDayClassification = 'SCHEDULED' | 'UNSCHEDULED_SERVICE';
 export type AttendanceExceptionStatus = 'OPEN' | 'RESOLVED' | 'WAIVED';
@@ -131,21 +135,26 @@ interface EmployeeOption {
 
 type View = 'tree' | 'form' | 'kanban';
 
-const STATUS_LABELS: Record<AttendanceDayStatus, string> = {
-  PENDING: 'Pending',
-  CALCULATED: 'Calculated',
-  EXCEPTION: 'Exception',
-  APPROVED: 'Approved',
+type StatusDisplay = { label: string; tone: StatusTone };
+
+const STATUS: Record<AttendanceDayStatus, StatusDisplay> = {
+  PENDING: { label: 'Pending', tone: 'neutral' },
+  CALCULATED: { label: 'Calculated', tone: 'success' },
+  EXCEPTION: { label: 'Exception', tone: 'warning' },
+  APPROVED: { label: 'Approved', tone: 'info' },
 };
 
-const STATUS_TONES: Record<AttendanceDayStatus, string> = {
-  PENDING: 'bg-[#f0f2f5] text-muted',
-  CALCULATED: 'bg-[#e8f3ed] text-[#316647]',
-  EXCEPTION: 'bg-[#fff3d6] text-[#79531c]',
-  APPROVED: 'bg-[#e7eefb] text-[#2d4f8f]',
+const EXCEPTION_STATUS: Record<AttendanceExceptionStatus, StatusDisplay> = {
+  OPEN: { label: 'Open', tone: 'warning' },
+  RESOLVED: { label: 'Resolved', tone: 'success' },
+  WAIVED: { label: 'Waived', tone: 'neutral' },
 };
 
-const STATUSES: readonly AttendanceDayStatus[] = ['PENDING', 'CALCULATED', 'EXCEPTION', 'APPROVED'];
+const STATUSES = Object.keys(STATUS) as AttendanceDayStatus[];
+
+function words(value: string): string {
+  return value.replaceAll('_', ' ').toLowerCase();
+}
 
 function errorMessage(value: unknown, fallback: string): string {
   if (typeof value !== 'object' || value === null) return fallback;
@@ -201,13 +210,6 @@ function minutesLabel(minutes: number): string {
 
 function eventValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
-}
-
-function statusClass(status: AttendanceDayStatus): string {
-  return (
-    'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-    STATUS_TONES[status]
-  );
 }
 
 export function AttendanceDaysWorkspace({
@@ -395,66 +397,65 @@ export function AttendanceDaysWorkspace({
     );
   });
 
-  return (
-    <div className="grid gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="grid gap-1">
-          <h1 className="m-0 text-[22px] font-[680] text-midnight">Attendance Days</h1>
-          <p className="m-0 max-w-[720px] text-sm leading-[1.6] text-muted">
-            Reproducible daily attendance with its rule snapshot, segments, and explainable
-            exceptions. Every recalculation keeps the previous version for audit.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div
-            aria-label="Record view"
-            className="flex items-center gap-1 rounded-[3px] border border-line bg-paper p-1"
-          >
-            <button
-              aria-pressed={view === 'tree'}
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'tree' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              onClick={() => navigation.navigate({ view: 'tree', new: null })}
-              type="button"
-            >
-              Tree
-            </button>
-            <button
-              aria-pressed={view === 'form'}
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'form' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              onClick={() =>
-                navigation.navigate({ view: 'form', new: calculating ? 'calculate' : null })
-              }
-              type="button"
-            >
-              Form
-            </button>
-            <button
-              aria-pressed={view === 'kanban'}
-              className={`rounded-[2px] px-3 py-1.5 text-xs font-[650] ${view === 'kanban' ? 'bg-canvas text-ink' : 'text-muted'}`}
-              onClick={() => navigation.navigate({ view: 'kanban', new: null })}
-              type="button"
-            >
-              Kanban
-            </button>
-          </div>
-          {canCalculate ? (
-            <Button
-              className="min-h-10 whitespace-nowrap"
-              onClick={openCalculate}
-              size="default"
-              type="button"
-              variant="primary"
-            >
-              Calculate attendance days
-            </Button>
-          ) : null}
-        </div>
-      </header>
+  const views: [View, string][] = [
+    ['tree', 'Tree'],
+    ['form', 'Form'],
+    ['kanban', 'Kanban'],
+  ];
+  const dayCount = filtered.length === 1 ? '1 day' : filtered.length + ' days';
+  const formTitle = calculating
+    ? 'Calculate Attendance Days'
+    : detail
+      ? 'Attendance Day record'
+      : 'Attendance Day';
 
-      {error ? <FormError message={error} /> : null}
+  return (
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Time & attendance' }]}
+        title="Attendance Days"
+        actions={
+          <>
+            <div
+              className="flex items-center gap-0.5 rounded-control border border-border bg-surface p-0.5"
+              role="group"
+              aria-label="Record view"
+            >
+              {views.map(([value, label]) => (
+                <button
+                  aria-pressed={view === value}
+                  className="cursor-pointer rounded-control border-0 bg-transparent px-3 py-1.5 text-caption font-[650] text-ink-muted hover:text-ink aria-pressed:bg-canvas aria-pressed:text-ink"
+                  key={value}
+                  onClick={() =>
+                    navigation.navigate(
+                      value === 'form'
+                        ? { view: value, new: calculating ? 'calculate' : null }
+                        : { view: value, new: null },
+                    )
+                  }
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {canCalculate ? (
+              <Button onClick={openCalculate} type="button" variant="primary">
+                Calculate attendance days
+              </Button>
+            ) : null}
+          </>
+        }
+      />
+      <p className="m-0 max-w-[760px] text-small text-ink-muted">
+        Reproducible daily attendance with its rule snapshot, segments, and explainable exceptions.
+        Every recalculation keeps the previous version for audit.
+      </p>
+
+      <FormError message={error} />
       {success ? (
         <p
-          className="m-0 rounded-[3px] border border-line bg-[#e8f3ed] px-4 py-3 text-xs text-[#316647]"
+          className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
           role="status"
         >
           {success}
@@ -462,279 +463,232 @@ export function AttendanceDaysWorkspace({
       ) : null}
 
       {!canRead ? (
-        <section className="overflow-hidden rounded-[5px] border border-line bg-paper px-5 py-8 text-sm text-muted">
-          Your permission allows calculating Attendance Days but not reading the register.
-        </section>
+        <StateSurface label="Attendance Day register">
+          <strong className="font-[650] text-ink">The register is not available to you.</strong>
+          <p className="m-0">
+            Your permission allows calculating Attendance Days but not reading the register.
+          </p>
+        </StateSurface>
       ) : null}
 
       {canRead && view === 'tree' ? (
-        <section
-          aria-labelledby="attendance-day-register-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
+        <Panel
+          title="Attendance Day register"
+          flush
+          actions={
+            <span className="text-caption text-ink-muted">{dayCount} · Current versions only</span>
+          }
         >
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-            <div className="grid gap-1">
-              <h2
-                className="m-0 text-sm font-[670] text-midnight"
-                id="attendance-day-register-heading"
+          <div className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3">
+            <Field label="Search">
+              <input
+                className={inputClass}
+                onChange={(event) => setQuery(eventValue(event))}
+                placeholder="Employee"
+                type="search"
+                value={query}
+              />
+            </Field>
+            <Field label="Period">
+              <select
+                className={inputClass}
+                onChange={(event) => setPeriodFilter(eventValue(event))}
+                value={periodFilter}
               >
-                Attendance Day register
-              </h2>
-              <span className="text-xs text-muted">
-                {filtered.length === 1 ? '1 day' : filtered.length + ' days'} · Current versions
-                only
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 text-xs text-muted">
-                Search
-                <input
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) => setQuery(eventValue(event))}
-                  placeholder="Employee"
-                  type="search"
-                  value={query}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                Period
-                <select
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) => setPeriodFilter(eventValue(event))}
-                  value={periodFilter}
-                >
-                  <option value="">All periods</option>
-                  {periods.map((period) => (
-                    <option key={period.id} value={period.id}>
-                      {period.code} · {dateLabel(period.dateFrom)} – {dateLabel(period.dateTo)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                Status
-                <select
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) =>
-                    setStatusFilter(eventValue(event) as 'ALL' | AttendanceDayStatus)
-                  }
-                  value={statusFilter}
-                >
-                  <option value="ALL">All statuses</option>
-                  {STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {STATUS_LABELS[status]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                From
-                <input
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) => setFromFilter(eventValue(event))}
-                  type="date"
-                  value={fromFilter}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-xs text-muted">
-                To
-                <input
-                  className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
-                  onChange={(event) => setToFilter(eventValue(event))}
-                  type="date"
-                  value={toFilter}
-                />
-              </label>
-            </div>
-          </header>
+                <option value="">All periods</option>
+                {periods.map((period) => (
+                  <option key={period.id} value={period.id}>
+                    {period.code} · {dateLabel(period.dateFrom)} – {dateLabel(period.dateTo)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Status">
+              <select
+                className={inputClass}
+                onChange={(event) =>
+                  setStatusFilter(eventValue(event) as 'ALL' | AttendanceDayStatus)
+                }
+                value={statusFilter}
+              >
+                <option value="ALL">All statuses</option>
+                {STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {STATUS[status].label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="From">
+              <input
+                className={inputClass}
+                onChange={(event) => setFromFilter(eventValue(event))}
+                type="date"
+                value={fromFilter}
+              />
+            </Field>
+            <Field label="To">
+              <input
+                className={inputClass}
+                onChange={(event) => setToFilter(eventValue(event))}
+                type="date"
+                value={toFilter}
+              />
+            </Field>
+          </div>
           {filtered.length === 0 ? (
-            <div className="grid min-h-[220px] place-content-center gap-2 px-6 py-12 text-center">
-              <strong className="text-[15px] font-[650] text-midnight">
+            <StateSurface compact label="Attendance Days">
+              <strong className="font-[650] text-ink">
                 {days.length === 0 ? 'No Attendance Days yet.' : 'No days match.'}
               </strong>
-              <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
+              <p className="m-0">
                 {days.length === 0
                   ? 'Calculate a period to derive Attendance Days from recorded events, schedules, and coverage.'
                   : 'Clear the search or choose another period, status, or date range.'}
               </p>
-            </div>
+            </StateSurface>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
-                <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                  <tr>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Work date
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Employee
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Status
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Expected
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Worked
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Late
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Undertime
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Absence
-                    </th>
-                    <th className="px-5 py-3 font-bold" scope="col">
-                      Version
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {filtered.map((day) => (
-                    <tr key={day.id}>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        <button
-                          className="w-fit cursor-pointer text-left font-[650] text-cobalt underline-offset-2 hover:underline"
-                          onClick={() => openRecord(day.id)}
-                          type="button"
-                        >
-                          {dateLabel(day.workDate)}
-                        </button>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        <div className="grid gap-1">
-                          <span className="font-[650]">{day.employee.legalName}</span>
-                          <span className="text-muted">{day.employee.employeeNumber}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top">
-                        <div className="grid gap-1">
-                          <span className={statusClass(day.status)}>
-                            {STATUS_LABELS[day.status]}
+            <Table aria-label="Attendance Days" className="min-w-[1040px]">
+              <thead>
+                <tr>
+                  <Th kind="date">Work date</Th>
+                  <Th>Employee</Th>
+                  <Th>Status</Th>
+                  <Th kind="numeric">Expected</Th>
+                  <Th kind="numeric">Worked</Th>
+                  <Th kind="numeric">Late</Th>
+                  <Th kind="numeric">Undertime</Th>
+                  <Th kind="numeric">Absence</Th>
+                  <Th kind="numeric">Version</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((day) => (
+                  <Tr key={day.id} selected={day.id === recordId}>
+                    <RowHeader className="whitespace-nowrap">
+                      <button
+                        className="cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
+                        onClick={() => openRecord(day.id)}
+                        type="button"
+                      >
+                        {dateLabel(day.workDate)}
+                      </button>
+                    </RowHeader>
+                    <Td>
+                      {day.employee.legalName}
+                      <span className="block font-mono text-caption text-ink-muted">
+                        {day.employee.employeeNumber}
+                      </span>
+                    </Td>
+                    <Td>
+                      <div className="grid justify-items-start gap-1">
+                        <StatusTag tone={STATUS[day.status].tone}>
+                          {STATUS[day.status].label}
+                        </StatusTag>
+                        {day.dayClassification === 'UNSCHEDULED_SERVICE' ? (
+                          <span className="text-caption text-ink-muted">Unscheduled service</span>
+                        ) : null}
+                        {day.openExceptionCount > 0 ? (
+                          <span className="text-caption text-warning">
+                            {day.openExceptionCount === 1
+                              ? '1 open exception'
+                              : day.openExceptionCount + ' open exceptions'}
                           </span>
-                          {day.dayClassification === 'UNSCHEDULED_SERVICE' ? (
-                            <span className="text-[10px] tracking-[0.07em] text-muted uppercase">
-                              Unscheduled service
-                            </span>
-                          ) : null}
-                          {day.openExceptionCount > 0 ? (
-                            <span className="text-[11px] text-[#79531c]">
-                              {day.openExceptionCount === 1
-                                ? '1 open exception'
-                                : day.openExceptionCount + ' open exceptions'}
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
-                        {minutesLabel(day.totals.expectedMinutes)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-ink">
-                        {minutesLabel(day.totals.workedMinutes)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
-                        {minutesLabel(day.totals.lateMinutes)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
-                        {minutesLabel(day.totals.undertimeMinutes)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
-                        {minutesLabel(day.totals.absenceMinutes)}
-                      </td>
-                      <td className="px-5 py-4 align-top text-xs text-muted">
-                        v{day.calculationVersion}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        ) : null}
+                      </div>
+                    </Td>
+                    <Td kind="numeric" className="text-ink-muted">
+                      {minutesLabel(day.totals.expectedMinutes)}
+                    </Td>
+                    <Td kind="numeric">{minutesLabel(day.totals.workedMinutes)}</Td>
+                    <Td kind="numeric" className="text-ink-muted">
+                      {minutesLabel(day.totals.lateMinutes)}
+                    </Td>
+                    <Td kind="numeric" className="text-ink-muted">
+                      {minutesLabel(day.totals.undertimeMinutes)}
+                    </Td>
+                    <Td kind="numeric" className="text-ink-muted">
+                      {minutesLabel(day.totals.absenceMinutes)}
+                    </Td>
+                    <Td kind="numeric" className="text-ink-muted">
+                      v{day.calculationVersion}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
           )}
-        </section>
+        </Panel>
       ) : null}
 
       {canRead && view === 'kanban' ? (
-        <section aria-label="Attendance Day status board" className="grid gap-3 md:grid-cols-4">
-          {STATUSES.map((status) => {
-            const column = filtered.filter((day) => day.status === status);
-            return (
-              <div
-                className="overflow-hidden rounded-[5px] border border-line bg-paper"
-                key={status}
-              >
-                <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
-                  <span className={statusClass(status)}>{STATUS_LABELS[status]}</span>
-                  <span className="text-xs text-muted">{column.length}</span>
-                </header>
-                <div className="grid gap-2 p-3">
+        <Panel title="Attendance Day status board" flush>
+          <div className="flex gap-3 overflow-x-auto p-4">
+            {STATUSES.map((status) => {
+              const column = filtered.filter((day) => day.status === status);
+              return (
+                <section
+                  aria-labelledby={`attendance-day-column-${status}`}
+                  className="grid min-w-[230px] flex-1 content-start gap-2 rounded-panel border border-border bg-canvas p-3"
+                  key={status}
+                >
+                  <h3
+                    className="m-0 flex items-center justify-between gap-2 text-caption font-[650] text-ink"
+                    id={`attendance-day-column-${status}`}
+                  >
+                    <StatusTag tone={STATUS[status].tone}>{STATUS[status].label}</StatusTag>
+                    <span className="text-ink-muted">{column.length}</span>
+                  </h3>
                   {column.length === 0 ? (
-                    <p className="m-0 px-1 py-4 text-center text-xs text-muted">No days</p>
+                    <p className="m-0 px-1 py-3 text-caption text-ink-muted">No days</p>
                   ) : (
                     column.map((day) => (
                       <button
-                        className="grid cursor-pointer gap-1 rounded-[4px] border border-line bg-canvas px-3 py-2 text-left hover:border-cobalt"
+                        aria-current={day.id === recordId ? 'true' : undefined}
+                        className="grid cursor-pointer gap-1 rounded-control border border-border bg-surface px-3 py-2.5 text-left hover:border-primary aria-[current=true]:border-primary aria-[current=true]:shadow-[inset_3px_0_0_var(--color-primary)]"
                         key={day.id}
                         onClick={() => openRecord(day.id)}
                         type="button"
                       >
-                        <span className="text-xs font-[650] text-ink">
+                        <span className="text-caption font-[650] text-primary">
                           {dateLabel(day.workDate)}
                         </span>
-                        <span className="text-xs text-muted">{day.employee.legalName}</span>
-                        <span className="text-[11px] text-muted">
+                        <strong className="text-small font-[650] text-ink">
+                          {day.employee.legalName}
+                        </strong>
+                        <span className="text-caption text-ink-muted">
                           Worked {minutesLabel(day.totals.workedMinutes)} · Absence{' '}
                           {minutesLabel(day.totals.absenceMinutes)}
                         </span>
                       </button>
                     ))
                   )}
-                </div>
-              </div>
-            );
-          })}
-        </section>
+                </section>
+              );
+            })}
+          </div>
+        </Panel>
       ) : null}
 
       {view === 'form' ? (
-        <section
-          aria-labelledby="attendance-day-form-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="attendance-day-form-heading">
-                {calculating
-                  ? 'Calculate Attendance Days'
-                  : detail
-                    ? 'Attendance Day record'
-                    : 'Attendance Day'}
-              </h2>
-              <span className="text-xs text-muted">
-                {calculating
-                  ? 'One period, one date range, and the employees to derive. Recalculation is idempotent and versioned.'
-                  : 'Read-only facts. Corrections belong to the flagged-day workflow.'}
-              </span>
-            </div>
-            {!calculating && detail && canCalculate ? (
-              <Button
-                className="min-h-9 whitespace-nowrap"
-                onClick={openCalculate}
-                size="default"
-                type="button"
-                variant="secondary"
-              >
+        <Panel
+          title={formTitle}
+          flush
+          actions={
+            !calculating && detail && canCalculate ? (
+              <Button onClick={openCalculate} type="button" variant="secondary">
                 Calculate another period
               </Button>
-            ) : null}
-          </header>
-
+            ) : null
+          }
+        >
           {calculating ? (
-            <form className="grid gap-4 px-5 py-5" onSubmit={calculate}>
-              <div className="grid gap-4 md:grid-cols-3">
+            <form className="grid gap-4 p-4" onSubmit={calculate}>
+              <p className="m-0 text-small text-ink-muted">
+                One period, one date range, and the employees to derive. Recalculation is idempotent
+                and versioned.
+              </p>
+              <div className="grid gap-4 min-[621px]:grid-cols-3">
                 <Field label="Period code">
                   <input
                     className={inputClass}
@@ -765,11 +719,11 @@ export function AttendanceDaysWorkspace({
                 </Field>
               </div>
               <div className="grid gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-[650] text-ink">Employees</span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-caption font-[650] text-ink">Employees</span>
                   <input
                     aria-label="Filter employees"
-                    className="min-h-9 rounded-[3px] border border-line bg-paper px-2 text-xs text-ink"
+                    className={inputClass + ' !w-auto'}
                     onChange={(event) => setEmployeeQuery(eventValue(event))}
                     placeholder="Filter employees"
                     type="search"
@@ -778,7 +732,7 @@ export function AttendanceDaysWorkspace({
                 </div>
                 <select
                   aria-label="Employees"
-                  className="min-h-[180px] rounded-[3px] border border-line bg-paper px-2 py-1 text-xs text-ink"
+                  className={inputClass + ' min-h-[180px] py-1'}
                   multiple
                   onChange={(event) => {
                     const target = event.currentTarget as unknown as {
@@ -796,7 +750,7 @@ export function AttendanceDaysWorkspace({
                     </option>
                   ))}
                 </select>
-                <span className="text-xs text-muted">
+                <span className="text-caption text-ink-muted">
                   {selectedEmployeeIds.length === 0
                     ? 'Select at least one employee.'
                     : selectedEmployeeIds.length === 1
@@ -804,36 +758,32 @@ export function AttendanceDaysWorkspace({
                       : selectedEmployeeIds.length + ' employees selected'}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
                 <Button
-                  className="min-h-10"
-                  disabled={busy || selectedEmployeeIds.length === 0}
-                  size="default"
-                  type="submit"
-                  variant="primary"
-                >
-                  {busy ? 'Calculating…' : 'Calculate'}
-                </Button>
-                <Button
-                  className="min-h-10"
                   onClick={() => navigation.navigate({ view: 'tree', new: null })}
-                  size="default"
                   type="button"
                   variant="secondary"
                 >
                   Back to register
                 </Button>
+                <Button
+                  disabled={busy || selectedEmployeeIds.length === 0}
+                  type="submit"
+                  variant="primary"
+                >
+                  {busy ? 'Calculating…' : 'Calculate'}
+                </Button>
               </div>
               {calculation ? (
-                <div className="grid gap-2 rounded-[4px] border border-line bg-canvas px-4 py-3">
-                  <span className="text-xs font-[650] text-ink">
+                <div className="grid gap-2 rounded-control border border-border bg-canvas px-4 py-3">
+                  <span className="text-small font-[650] text-ink">
                     {calculation.period.code} · {dateLabel(calculation.period.dateFrom)} –{' '}
                     {dateLabel(calculation.period.dateTo)}
                   </span>
                   <div className="grid gap-1">
                     {calculation.days.map((day) => (
                       <button
-                        className="grid cursor-pointer gap-0.5 rounded-[3px] px-2 py-1 text-left text-xs hover:bg-paper"
+                        className="grid cursor-pointer gap-0.5 rounded-control border-0 bg-transparent px-2 py-1 text-left text-small hover:bg-surface"
                         key={day.employeeId + day.workDate}
                         onClick={() =>
                           day.attendanceDayId
@@ -844,11 +794,11 @@ export function AttendanceDaysWorkspace({
                       >
                         <span className="font-[650] text-ink">
                           {dateLabel(day.workDate)} · {day.outcome.toLowerCase()}
-                          {day.status ? ' · ' + STATUS_LABELS[day.status].toLowerCase() : ''}
+                          {day.status ? ' · ' + STATUS[day.status].label.toLowerCase() : ''}
                         </span>
                         {day.exceptionTypes.length > 0 ? (
-                          <span className="text-[#79531c]">
-                            {day.exceptionTypes.join(', ').replaceAll('_', ' ').toLowerCase()}
+                          <span className="text-warning">
+                            {words(day.exceptionTypes.join(', '))}
                           </span>
                         ) : null}
                       </button>
@@ -858,48 +808,50 @@ export function AttendanceDaysWorkspace({
               ) : null}
             </form>
           ) : detailLoading ? (
-            <p className="m-0 px-5 py-8 text-sm text-muted">Loading the Attendance Day…</p>
+            <StateSurface busy compact label="Attendance Day record">
+              <p className="m-0">Loading the Attendance Day…</p>
+            </StateSurface>
           ) : detail === null ? (
-            <div className="grid min-h-[180px] place-content-center gap-2 px-6 py-10 text-center">
-              <strong className="text-[15px] font-[650] text-midnight">
-                Select an Attendance Day
-              </strong>
-              <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
+            <StateSurface compact label="Attendance Day">
+              <strong className="font-[650] text-ink">Select an Attendance Day</strong>
+              <p className="m-0">
                 Choose a day from the register to inspect its totals, segments, exceptions, and rule
                 snapshot.
               </p>
-            </div>
+            </StateSurface>
           ) : (
             <AttendanceDayRecord detail={detail} />
           )}
-        </section>
+        </Panel>
       ) : null}
     </div>
   );
 }
 
+const SUBHEADING = 'm-0 text-caption font-[650] text-ink';
+
 function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
   const { day } = detail;
   const totals = day.totals;
   return (
-    <div className="grid gap-5 px-5 py-5">
+    <div className="grid gap-5 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
-          <span className="text-[15px] font-[650] text-midnight">{day.employee.legalName}</span>
-          <span className="text-xs text-muted">
+          <span className="text-body font-[650] text-ink">{day.employee.legalName}</span>
+          <span className="text-small text-ink-muted">
             {day.employee.employeeNumber} · {dateLabel(day.workDate)}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className={statusClass(day.status)}>{STATUS_LABELS[day.status]}</span>
-          <span className="text-xs text-muted">
+          <StatusTag tone={STATUS[day.status].tone}>{STATUS[day.status].label}</StatusTag>
+          <span className="text-small text-ink-muted">
             v{day.calculationVersion} · {day.isCurrent ? 'current' : 'superseded'} ·{' '}
             {day.dayClassification === 'UNSCHEDULED_SERVICE' ? 'unscheduled service' : 'scheduled'}
           </span>
         </div>
       </div>
 
-      <dl className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <dl className="m-0 grid gap-3 min-[621px]:grid-cols-3 min-[1025px]:grid-cols-4">
         {(
           [
             ['Expected', totals.expectedMinutes],
@@ -917,104 +869,84 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
             ['Night window', totals.statutoryNightWindowMinutes],
           ] as const
         ).map(([label, minutes]) => (
-          <div className="rounded-[4px] border border-line bg-canvas px-3 py-2" key={label}>
-            <dt className="text-[10px] tracking-[0.07em] text-muted uppercase">{label}</dt>
-            <dd className="m-0 text-sm font-[650] text-ink">{minutesLabel(minutes)}</dd>
+          <div className="rounded-control border border-border bg-canvas px-3 py-2" key={label}>
+            <dt className="text-caption text-ink-muted">{label}</dt>
+            <dd className="m-0 text-body font-[600] text-ink">{minutesLabel(minutes)}</dd>
           </div>
         ))}
       </dl>
 
       <div className="grid gap-2">
-        <h3 className="m-0 text-xs font-[670] tracking-[0.07em] text-midnight uppercase">
-          Segments
-        </h3>
+        <h3 className={SUBHEADING}>Segments</h3>
         {detail.segments.length === 0 ? (
-          <p className="m-0 text-xs text-muted">No segments were derived for this day.</p>
+          <p className="m-0 text-small text-ink-muted">No segments were derived for this day.</p>
         ) : (
-          <div className="overflow-x-auto rounded-[4px] border border-line">
-            <table className="w-full min-w-[760px] border-collapse text-left text-xs">
-              <thead className="bg-canvas text-[10px] tracking-[0.07em] text-muted uppercase">
+          <div className="rounded-control border border-border">
+            <Table aria-label="Segments" className="min-w-[760px]">
+              <thead>
                 <tr>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    #
-                  </th>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    Time
-                  </th>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    Duty relation
-                  </th>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    Coverage
-                  </th>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    Deficit
-                  </th>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    Holiday
-                  </th>
-                  <th className="px-3 py-2 font-bold" scope="col">
-                    Sources
-                  </th>
+                  <Th kind="numeric">#</Th>
+                  <Th>Time</Th>
+                  <Th>Duty relation</Th>
+                  <Th>Coverage</Th>
+                  <Th>Deficit</Th>
+                  <Th>Holiday</Th>
+                  <Th>Sources</Th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-line">
+              <tbody>
                 {detail.segments.map((segment) => (
-                  <tr key={segment.id}>
-                    <td className="px-3 py-2 align-top text-muted">{segment.sequenceNo}</td>
-                    <td className="px-3 py-2 align-top text-ink">
+                  <Tr key={segment.id}>
+                    <Td kind="numeric" className="text-ink-muted">
+                      {segment.sequenceNo}
+                    </Td>
+                    <Td kind="date">
                       {clockLabel(segment.startsAt)} – {clockLabel(segment.endsAt)}
-                    </td>
-                    <td className="px-3 py-2 align-top text-muted">
-                      {segment.dutyRelation.replaceAll('_', ' ').toLowerCase()}
-                    </td>
-                    <td className="px-3 py-2 align-top text-muted">
-                      {segment.coverageType.replaceAll('_', ' ').toLowerCase()}
-                    </td>
-                    <td className="px-3 py-2 align-top text-muted">
-                      {segment.deficitType
-                        ? segment.deficitType.replaceAll('_', ' ').toLowerCase()
-                        : '—'}
-                    </td>
-                    <td className="px-3 py-2 align-top text-muted">
-                      {segment.holidayClassification
-                        ? segment.holidayClassification.replaceAll('_', ' ').toLowerCase()
-                        : '—'}
-                    </td>
-                    <td className="px-3 py-2 align-top text-muted">
+                    </Td>
+                    <Td className="text-ink-muted">{words(segment.dutyRelation)}</Td>
+                    <Td className="text-ink-muted">{words(segment.coverageType)}</Td>
+                    <Td className="text-ink-muted">
+                      {segment.deficitType ? words(segment.deficitType) : '—'}
+                    </Td>
+                    <Td className="text-ink-muted">
+                      {segment.holidayClassification ? words(segment.holidayClassification) : '—'}
+                    </Td>
+                    <Td className="text-ink-muted">
                       {segment.sourceReferences.length === 0
                         ? '—'
                         : segment.sourceReferences
-                            .map(({ sourceType }) => sourceType.replaceAll('_', ' ').toLowerCase())
+                            .map(({ sourceType }) => words(sourceType))
                             .join(', ')}
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>
 
       <div className="grid gap-2">
-        <h3 className="m-0 text-xs font-[670] tracking-[0.07em] text-midnight uppercase">
-          Exceptions
-        </h3>
+        <h3 className={SUBHEADING}>Exceptions</h3>
         {detail.exceptions.length === 0 ? (
-          <p className="m-0 text-xs text-muted">No exceptions were recorded for this version.</p>
+          <p className="m-0 text-small text-ink-muted">
+            No exceptions were recorded for this version.
+          </p>
         ) : (
           <ul className="m-0 grid list-none gap-2 p-0">
             {detail.exceptions.map((exception) => (
               <li
-                className="grid gap-1 rounded-[4px] border border-line bg-canvas px-3 py-2"
+                className="grid gap-1 rounded-control border border-border bg-canvas px-3 py-2"
                 key={exception.id}
               >
-                <span className="text-xs font-[650] text-ink">
-                  {exception.exceptionType.replaceAll('_', ' ').toLowerCase()} ·{' '}
-                  {exception.status.toLowerCase()}
+                <span className="flex flex-wrap items-center gap-2 text-small font-[650] text-ink">
+                  {words(exception.exceptionType)}
+                  <StatusTag tone={EXCEPTION_STATUS[exception.status].tone}>
+                    {EXCEPTION_STATUS[exception.status].label}
+                  </StatusTag>
                 </span>
                 {exception.message ? (
-                  <span className="text-xs text-muted">{exception.message}</span>
+                  <span className="text-small text-ink-muted">{exception.message}</span>
                 ) : null}
               </li>
             ))}
@@ -1023,49 +955,51 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
       </div>
 
       <div className="grid gap-2">
-        <h3 className="m-0 text-xs font-[670] tracking-[0.07em] text-midnight uppercase">
-          Rule snapshot
-        </h3>
-        <dl className="grid gap-2 text-xs sm:grid-cols-2">
+        <h3 className={SUBHEADING}>Rule snapshot</h3>
+        <dl className="m-0 grid gap-3 text-small min-[621px]:grid-cols-2">
           <div className="grid gap-0.5">
-            <dt className="text-muted">Timezone</dt>
+            <dt className="text-ink-muted">Timezone</dt>
             <dd className="m-0 text-ink">{day.ruleSnapshot.timezone}</dd>
           </div>
           <div className="grid gap-0.5">
-            <dt className="text-muted">Captured</dt>
+            <dt className="text-ink-muted">Captured</dt>
             <dd className="m-0 text-ink">{instantLabel(day.ruleSnapshot.capturedAt)}</dd>
           </div>
-          <div className="grid gap-0.5 sm:col-span-2">
-            <dt className="text-muted">Fingerprint</dt>
-            <dd className="m-0 break-all text-ink">{day.ruleSnapshot.fingerprint}</dd>
+          <div className="grid gap-0.5 min-[621px]:col-span-2">
+            <dt className="text-ink-muted">Fingerprint</dt>
+            <dd className="m-0 font-mono text-caption break-all text-ink">
+              {day.ruleSnapshot.fingerprint}
+            </dd>
           </div>
           {day.ruleSnapshot.workScheduleVersionId ? (
             <div className="grid gap-0.5">
-              <dt className="text-muted">Work schedule version</dt>
-              <dd className="m-0 break-all text-ink">{day.ruleSnapshot.workScheduleVersionId}</dd>
+              <dt className="text-ink-muted">Work schedule version</dt>
+              <dd className="m-0 font-mono text-caption break-all text-ink">
+                {day.ruleSnapshot.workScheduleVersionId}
+              </dd>
             </div>
           ) : null}
           {day.ruleSnapshot.workArrangementVersionId ? (
             <div className="grid gap-0.5">
-              <dt className="text-muted">Work arrangement version</dt>
-              <dd className="m-0 break-all text-ink">
+              <dt className="text-ink-muted">Work arrangement version</dt>
+              <dd className="m-0 font-mono text-caption break-all text-ink">
                 {day.ruleSnapshot.workArrangementVersionId}
               </dd>
             </div>
           ) : null}
           {day.ruleSnapshot.holidayCalendarVersionId ? (
             <div className="grid gap-0.5">
-              <dt className="text-muted">Holiday calendar version</dt>
-              <dd className="m-0 break-all text-ink">
+              <dt className="text-ink-muted">Holiday calendar version</dt>
+              <dd className="m-0 font-mono text-caption break-all text-ink">
                 {day.ruleSnapshot.holidayCalendarVersionId}
               </dd>
             </div>
           ) : null}
           {day.ruleSnapshot.resolutionException ? (
-            <div className="grid gap-0.5 sm:col-span-2">
-              <dt className="text-muted">Resolution exception</dt>
+            <div className="grid gap-0.5 min-[621px]:col-span-2">
+              <dt className="text-ink-muted">Resolution exception</dt>
               <dd className="m-0 text-ink">
-                {day.ruleSnapshot.resolutionException.type.replaceAll('_', ' ').toLowerCase()} ·{' '}
+                {words(day.ruleSnapshot.resolutionException.type)} ·{' '}
                 {day.ruleSnapshot.resolutionException.message}
               </dd>
             </div>
@@ -1073,7 +1007,7 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
         </dl>
       </div>
 
-      <div className="grid gap-1 text-xs text-muted">
+      <div className="grid gap-1 text-small text-ink-muted">
         <span>
           {day.calculatedAt ? 'Calculated ' + instantLabel(day.calculatedAt) : 'Not yet calculated'}
         </span>
