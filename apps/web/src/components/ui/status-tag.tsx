@@ -3,6 +3,9 @@ import { cn } from '../../lib/class-names';
 
 export type StatusTone = 'success' | 'warning' | 'danger' | 'neutral' | 'info';
 
+/** Readable label and tone for one domain state; callers keep a `Record<State, StatusDisplay>`. */
+export type StatusDisplay = { label: string; tone: StatusTone };
+
 const toneClass: Record<StatusTone, string> = {
   success: 'border-success text-success',
   warning: 'border-warning text-warning',

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { cn } from '../lib/class-names';
 import { manilaToday } from '../lib/manila-date';
 import { useRecordNavigation } from './record-navigation';
 import { StateSurface } from './state-surface';
@@ -8,7 +9,7 @@ import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 import { PageHeader } from './ui/page-header';
 import { Panel } from './ui/panel';
-import { StatusTag, type StatusTone } from './ui/status-tag';
+import { StatusTag, type StatusDisplay } from './ui/status-tag';
 import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 export type AttendanceDayStatus = 'PENDING' | 'CALCULATED' | 'EXCEPTION' | 'APPROVED';
 export type AttendanceDayClassification = 'SCHEDULED' | 'UNSCHEDULED_SERVICE';
@@ -134,8 +135,6 @@ interface EmployeeOption {
 }
 
 type View = 'tree' | 'form' | 'kanban';
-
-type StatusDisplay = { label: string; tone: StatusTone };
 
 const STATUS: Record<AttendanceDayStatus, StatusDisplay> = {
   PENDING: { label: 'Pending', tone: 'neutral' },
@@ -670,7 +669,7 @@ export function AttendanceDaysWorkspace({
         </Panel>
       ) : null}
 
-      {view === 'form' ? (
+      {view === 'form' && (canRead || calculating) ? (
         <Panel
           title={formTitle}
           flush
@@ -723,7 +722,7 @@ export function AttendanceDaysWorkspace({
                   <span className="text-caption font-[650] text-ink">Employees</span>
                   <input
                     aria-label="Filter employees"
-                    className={inputClass + ' !w-auto'}
+                    className={cn(inputClass, 'w-auto')}
                     onChange={(event) => setEmployeeQuery(eventValue(event))}
                     placeholder="Filter employees"
                     type="search"
@@ -732,7 +731,7 @@ export function AttendanceDaysWorkspace({
                 </div>
                 <select
                   aria-label="Employees"
-                  className={inputClass + ' min-h-[180px] py-1'}
+                  className={cn(inputClass, 'min-h-[180px] py-1')}
                   multiple
                   onChange={(event) => {
                     const target = event.currentTarget as unknown as {
@@ -758,20 +757,20 @@ export function AttendanceDaysWorkspace({
                       : selectedEmployeeIds.length + ' employees selected'}
                 </span>
               </div>
-              <div className="flex flex-wrap justify-end gap-2">
-                <Button
-                  onClick={() => navigation.navigate({ view: 'tree', new: null })}
-                  type="button"
-                  variant="secondary"
-                >
-                  Back to register
-                </Button>
+              <div className="flex flex-row-reverse flex-wrap justify-start gap-2">
                 <Button
                   disabled={busy || selectedEmployeeIds.length === 0}
                   type="submit"
                   variant="primary"
                 >
                   {busy ? 'Calculating…' : 'Calculate'}
+                </Button>
+                <Button
+                  onClick={() => navigation.navigate({ view: 'tree', new: null })}
+                  type="button"
+                  variant="secondary"
+                >
+                  Back to register
                 </Button>
               </div>
               {calculation ? (
@@ -835,6 +834,9 @@ function AttendanceDayRecord({ detail }: { detail: AttendanceDayDetail }) {
   const totals = day.totals;
   return (
     <div className="grid gap-5 p-4">
+      <p className="m-0 text-small text-ink-muted">
+        Read-only facts. Corrections belong to the flagged-day workflow.
+      </p>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
           <span className="text-body font-[650] text-ink">{day.employee.legalName}</span>
