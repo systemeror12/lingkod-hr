@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import { manilaToday } from '../lib/manila-date';
+import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -14,6 +15,10 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 
 export type AttendanceEventType = 'TIME_IN' | 'BREAK_OUT' | 'BREAK_IN' | 'TIME_OUT';
 export type AttendanceEventSource = 'WEB_CLOCK' | 'MANUAL';
@@ -170,9 +175,16 @@ const NEXT_ACTION_LABELS: Record<AttendanceEventType, string> = {
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const TONE_RESOLVED = 'bg-[#e8f3ed] text-[#316647]';
-const TONE_ATTENTION = 'bg-[#fff3d6] text-[#79531c]';
-const TONE_NEUTRAL = 'bg-[#f0f2f5] text-muted';
+const MATCH_TONES: Record<AttendanceCaptureResult['match']['status'], StatusTone> = {
+  MATCHED: 'success',
+  AMBIGUOUS: 'warning',
+  UNMATCHED: 'neutral',
+};
+
+const VERSION_STATUS: Record<AttendanceWebClockVersion['status'], [string, StatusTone]> = {
+  ACTIVE: ['Active', 'success'],
+  SUPERSEDED: ['Superseded', 'neutral'],
+};
 
 function errorMessage(value: unknown, fallback: string): string {
   if (typeof value !== 'object' || value === null) return fallback;
@@ -230,12 +242,6 @@ function dayRuleLabel(association: AttendanceAssociation): string {
 
 function associationLabel(association: AttendanceAssociation): string {
   return `${association.workScheduleCode} v${association.workScheduleVersionNo} · ${association.workArrangementCode} v${association.workArrangementVersionNo}`;
-}
-
-function matchClass(status: AttendanceCaptureResult['match']['status']): string {
-  if (status === 'MATCHED') return TONE_RESOLVED;
-  if (status === 'AMBIGUOUS') return TONE_ATTENTION;
-  return TONE_NEUTRAL;
 }
 
 function matchStatusLabel(status: AttendanceCaptureResult['match']['status']): string {
@@ -297,46 +303,43 @@ function EmployeeSelect({
   );
 }
 
+function ExceptionList({ exceptions }: { exceptions: AttendanceCaptureException[] }) {
+  return exceptions.length > 0 ? (
+    <ul className="m-0 grid list-none gap-1 p-0 text-small text-warning">
+      {exceptions.map((exception) => (
+        <li key={exception.type + exception.message}>{exception.message}</li>
+      ))}
+    </ul>
+  ) : (
+    <p className="m-0 text-small text-success">No blocking Attendance Exceptions.</p>
+  );
+}
+
 function CaptureSummary({ result }: { result: AttendanceCaptureResult }) {
   const { event, match, presentation, exceptions } = result;
   return (
-    <div className="grid gap-3 border-t border-line bg-canvas px-5 py-4">
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        <span
-          className={
-            'inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] uppercase ' +
-            matchClass(match.status)
-          }
-        >
-          {matchStatusLabel(match.status)}
-        </span>
-        <span className="font-[650] text-ink">
+    <div className="grid gap-2 border-t border-border bg-canvas px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-small text-ink-muted">
+        <StatusTag tone={MATCH_TONES[match.status]}>{matchStatusLabel(match.status)}</StatusTag>
+        <span className="font-[600] text-ink">
           {eventTypeLabelOf(event.eventType)} · {instantLabel(event.eventTime)}
         </span>
-        <span>{event.employee.employeeNumber}</span>
+        <span className="font-mono text-caption">{event.employee.employeeNumber}</span>
         {match.workDate ? <span>Work date {dateLabel(match.workDate)}</span> : null}
         {match.unscheduled ? <span>Unscheduled service</span> : null}
         {presentation ? <span>{presentation.label}</span> : null}
       </div>
       {match.association ? (
-        <p className="m-0 text-xs text-muted">
+        <p className="m-0 text-small text-ink-muted">
           {associationLabel(match.association)} · {dayRuleLabel(match.association)}
           {match.association.holidayEntries.map((entry) => ` · ${entry.name}`).join('')}
         </p>
       ) : match.matches.length > 0 ? (
-        <p className="m-0 text-xs text-muted">
+        <p className="m-0 text-small text-ink-muted">
           Candidate Work Dates: {match.matches.map(({ workDate }) => workDate).join(', ')}
         </p>
       ) : null}
-      {exceptions.length > 0 ? (
-        <ul className="m-0 grid list-none gap-1 p-0 text-xs text-[#79531c]">
-          {exceptions.map((exception) => (
-            <li key={exception.type + exception.message}>{exception.message}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="m-0 text-xs text-[#316647]">No blocking Attendance Exceptions.</p>
-      )}
+      <ExceptionList exceptions={exceptions} />
     </div>
   );
 }
@@ -345,43 +348,35 @@ function eventTypeLabelOf(eventType: AttendanceEventType): string {
   return EVENT_TYPE_LABELS[eventType];
 }
 
-function EventRows({ events }: { events: AttendanceEvent[] }) {
+function EventRows({ label, events }: { label: string; events: AttendanceEvent[] }) {
   if (events.length === 0) {
-    return <p className="m-0 px-5 py-4 text-xs text-muted">No Attendance Events recorded.</p>;
+    return (
+      <StateSurface compact label={label}>
+        <p className="m-0">No Attendance Events recorded.</p>
+      </StateSurface>
+    );
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-        <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-          <tr>
-            <th className="px-5 py-2 font-bold" scope="col">
-              Time
-            </th>
-            <th className="px-5 py-2 font-bold" scope="col">
-              Event
-            </th>
-            <th className="px-5 py-2 font-bold" scope="col">
-              DTR slot
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {events.map((event) => (
-            <tr key={event.id}>
-              <td className="px-5 py-3 align-top text-xs text-ink">
-                {instantLabel(event.eventTime)}
-              </td>
-              <td className="px-5 py-3 align-top text-xs text-muted">
-                {eventTypeLabelOf(event.eventType)}
-              </td>
-              <td className="px-5 py-3 align-top text-xs text-muted">
-                {event.presentation ? event.presentation.label : 'Not presented'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <Table aria-label={label} className="min-w-[640px]">
+      <thead>
+        <tr>
+          <Th kind="date">Time</Th>
+          <Th>Event</Th>
+          <Th>DTR slot</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {events.map((event) => (
+          <Tr key={event.id}>
+            <Td kind="date">{instantLabel(event.eventTime)}</Td>
+            <Td>{eventTypeLabelOf(event.eventType)}</Td>
+            <Td className="text-ink-muted">
+              {event.presentation ? event.presentation.label : 'Not presented'}
+            </Td>
+          </Tr>
+        ))}
+      </tbody>
+    </Table>
   );
 }
 
@@ -655,205 +650,174 @@ export function AttendanceWorkspace({
   }
 
   return (
-    <div className="min-w-0 space-y-5">
-      <header className="grid max-w-[820px] gap-2">
-        <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-          Time and attendance
-        </p>
-        <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-          Attendance
-        </h1>
-        <p className="m-0 text-sm leading-[1.65] text-muted">
-          Web clocking and authorized manual capture store immutable Attendance Events. Matching,
-          DTR presentation slots, and blocking Attendance Exceptions are derived, never stored on
-          the raw event.
-        </p>
-      </header>
+    <div className="grid min-w-0 gap-5">
+      <PageHeader breadcrumbs={[{ label: 'Time & attendance' }]} title="Attendance" />
+      <p className="m-0 max-w-[760px] text-small text-ink-muted">
+        Web clocking and authorized manual capture store immutable Attendance Events. Matching, DTR
+        presentation slots, and blocking Attendance Exceptions are derived, never stored on the raw
+        event.
+      </p>
 
       {success ? (
         <p
-          className="m-0 rounded-[3px] border border-[#b9d8c3] bg-[#f2faf4] px-4 py-3 text-sm text-[#316647]"
+          className="m-0 rounded-control border border-success/40 bg-success/5 px-3 py-2.5 text-small text-success"
           role="status"
         >
           {success}
         </p>
       ) : null}
-      {error ? <FormError message={error} /> : null}
+      <FormError message={error} />
 
       {canConfigure ? (
-        <section
-          aria-labelledby="web-clock-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="web-clock-heading">
-                Web clock enablement
-              </h2>
-              <span className="text-xs text-muted">
+        <Panel
+          title="Web clock enablement"
+          flush
+          actions={
+            <>
+              {webClock?.version ? (
+                <span className="text-caption text-ink-muted">
+                  Version {webClock.version.versionNo} effective{' '}
+                  {dateLabel(webClock.version.effectiveFrom)}
+                </span>
+              ) : null}
+              <StatusTag
+                tone={webClock?.history.length && webClock.enabled ? 'success' : 'neutral'}
+              >
                 {webClock?.history.length
                   ? webClock.enabled
                     ? 'Enabled'
                     : 'Disabled'
                   : 'Disabled by default'}
-                {webClock?.version
-                  ? ` · version ${webClock.version.versionNo} effective ${dateLabel(webClock.version.effectiveFrom)}`
-                  : ''}
-              </span>
-            </div>
-            <Button
-              onClick={() => openWebClockDialog(headEnabled ? 'disable' : 'enable')}
-              size="default"
-              type="button"
-              variant="secondary"
-            >
-              {headEnabled ? 'Disable Web clock' : 'Enable Web clock'}
-            </Button>
-          </header>
+              </StatusTag>
+              <Button
+                onClick={() => openWebClockDialog(headEnabled ? 'disable' : 'enable')}
+                type="button"
+                variant="secondary"
+              >
+                {headEnabled ? 'Disable Web clock' : 'Enable Web clock'}
+              </Button>
+            </>
+          }
+        >
           {webClockLoading ? (
-            <p className="m-0 px-5 py-4 text-xs text-muted">Loading the Web clock…</p>
+            <StateSurface busy compact label="Web clock versions">
+              <p className="m-0" role="status">
+                Loading the Web clock…
+              </p>
+            </StateSurface>
           ) : webClock ? (
-            <div className="grid gap-3 px-5 py-4">
-              {webClock.history.length === 0 ? (
-                <p className="m-0 text-xs text-muted">
+            webClock.history.length === 0 ? (
+              <StateSurface compact label="Web clock versions">
+                <p className="m-0">
                   No Web clock version exists, so every clock attempt fails closed.
                 </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                    <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                      <tr>
-                        <th className="px-3 py-2 font-bold" scope="col">
-                          Version
-                        </th>
-                        <th className="px-3 py-2 font-bold" scope="col">
-                          Setting
-                        </th>
-                        <th className="px-3 py-2 font-bold" scope="col">
-                          Status
-                        </th>
-                        <th className="px-3 py-2 font-bold" scope="col">
-                          Effective
-                        </th>
-                        <th className="px-3 py-2 font-bold" scope="col">
-                          Reason
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line">
-                      {webClock.history.map((version) => (
-                        <tr key={version.id}>
-                          <td className="px-3 py-3 align-top text-xs font-[650] text-ink">
-                            v{version.versionNo}
-                          </td>
-                          <td className="px-3 py-3 align-top text-xs text-ink">
-                            {version.enabled ? 'Enabled' : 'Disabled'}
-                          </td>
-                          <td className="px-3 py-3 align-top text-xs text-muted">
-                            {version.status}
-                          </td>
-                          <td className="px-3 py-3 align-top text-xs text-muted">
-                            {dateLabel(version.effectiveFrom)} to{' '}
-                            {version.effectiveTo ? dateLabel(version.effectiveTo) : 'open-ended'}
-                          </td>
-                          <td className="px-3 py-3 align-top text-xs text-muted">
-                            {version.reason}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+              </StateSurface>
+            ) : (
+              <Table aria-label="Web clock versions" className="min-w-[720px]">
+                <thead>
+                  <tr>
+                    <Th>Version</Th>
+                    <Th>Setting</Th>
+                    <Th>Status</Th>
+                    <Th>Effective</Th>
+                    <Th>Reason</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {webClock.history.map((version) => {
+                    const [statusLabel, statusTone] = VERSION_STATUS[version.status];
+                    return (
+                      <Tr key={version.id}>
+                        <RowHeader>v{version.versionNo}</RowHeader>
+                        <Td>{version.enabled ? 'Enabled' : 'Disabled'}</Td>
+                        <Td>
+                          <StatusTag tone={statusTone}>{statusLabel}</StatusTag>
+                        </Td>
+                        <Td className="text-ink-muted">
+                          {dateLabel(version.effectiveFrom)} to{' '}
+                          {version.effectiveTo ? dateLabel(version.effectiveTo) : 'open-ended'}
+                        </Td>
+                        <Td className="text-ink-muted">{version.reason}</Td>
+                      </Tr>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            )
           ) : null}
-        </section>
+        </Panel>
       ) : null}
 
       {canClock ? (
-        <section
-          aria-labelledby="clock-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="clock-heading">
-                My Web clock
-              </h2>
-              <span className="text-xs text-muted">
-                {clock?.association
-                  ? associationLabel(clock.association) + ' · ' + dayRuleLabel(clock.association)
-                  : 'Server timestamped against the governing Work Date'}
-              </span>
-            </div>
-            {clock?.enabled && clock.nextEventType ? (
+        <Panel
+          title="My Web clock"
+          flush
+          actions={
+            clock?.enabled && clock.nextEventType ? (
               <Button
                 disabled={busy}
                 onClick={() => void submitClock()}
-                size="default"
                 type="button"
                 variant="primary"
               >
                 {NEXT_ACTION_LABELS[clock.nextEventType]}
               </Button>
-            ) : null}
-          </header>
+            ) : null
+          }
+        >
+          <p className="m-0 px-4 pt-3 text-small text-ink-muted">
+            {clock?.association
+              ? associationLabel(clock.association) + ' · ' + dayRuleLabel(clock.association)
+              : 'Server timestamped against the governing Work Date'}
+          </p>
           {clockLoading ? (
-            <p className="m-0 px-5 py-4 text-xs text-muted">Loading the Web clock…</p>
+            <StateSurface busy compact label="My Web clock status">
+              <p className="m-0" role="status">
+                Loading the Web clock…
+              </p>
+            </StateSurface>
           ) : clockError ? (
-            <div className="px-5 py-4">
+            <div className="p-4">
               <FormError message={clockError} />
             </div>
           ) : clock ? (
-            <div className="grid gap-3">
-              {!clock.enabled ? (
-                <p className="m-0 px-5 py-4 text-xs text-muted">
-                  Web clock is disabled by the Agency.
-                </p>
-              ) : clock.nextEventType === null ? (
-                <div className="grid gap-2 px-5 py-4">
-                  <p className="m-0 text-xs text-muted">
-                    {clock.association
-                      ? 'The current Work Date already holds a complete Attendance Event sequence.'
-                      : 'No Work Date is effective for the Web clock right now.'}
-                  </p>
-                  {clock.exceptions.map((exception) => (
-                    <p className="m-0 text-xs text-[#79531c]" key={exception.type}>
-                      {exception.message}
+            <>
+              <div className="grid gap-1 px-4 py-3 text-small text-ink-muted">
+                {!clock.enabled ? (
+                  <p className="m-0">Web clock is disabled by the Agency.</p>
+                ) : clock.nextEventType === null ? (
+                  <>
+                    <p className="m-0">
+                      {clock.association
+                        ? 'The current Work Date already holds a complete Attendance Event sequence.'
+                        : 'No Work Date is effective for the Web clock right now.'}
                     </p>
-                  ))}
-                </div>
-              ) : (
-                <p className="m-0 px-5 pt-4 text-xs text-muted">
-                  Next expected event: {eventTypeLabelOf(clock.nextEventType)}
-                </p>
-              )}
-              <div className="border-t border-line">
-                <EventRows events={clock.events} />
+                    {clock.exceptions.map((exception) => (
+                      <p className="m-0 text-warning" key={exception.type}>
+                        {exception.message}
+                      </p>
+                    ))}
+                  </>
+                ) : (
+                  <p className="m-0">
+                    Next expected event: {eventTypeLabelOf(clock.nextEventType)}
+                  </p>
+                )}
               </div>
-            </div>
+              <EventRows events={clock.events} label="My Attendance Events" />
+            </>
           ) : null}
           {clockResult ? <CaptureSummary result={clockResult} /> : null}
-        </section>
+        </Panel>
       ) : null}
 
       {canCreateManual ? (
-        <section
-          aria-labelledby="manual-heading"
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-        >
-          <header className="flex min-h-[60px] items-center border-b border-line px-5 py-3">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="manual-heading">
-                Record manual Attendance Event
-              </h2>
-              <span className="text-xs text-muted">
-                Every manual entry keeps its actor, timestamp, and required reason.
-              </span>
-            </div>
-          </header>
-          <form className="grid gap-4 px-5 py-4" onSubmit={(event) => void submitManual(event)}>
-            {employeeError ? <FormError message={employeeError} /> : null}
+        <Panel title="Record manual Attendance Event" flush>
+          <form className="grid gap-4 p-4" onSubmit={(event) => void submitManual(event)}>
+            <p className="m-0 text-small text-ink-muted">
+              Every manual entry keeps its actor, timestamp, and required reason.
+            </p>
+            <FormError message={employeeError} />
             <div className="grid gap-4 min-[621px]:grid-cols-2">
               <EmployeeSelect
                 employees={employees}
@@ -912,196 +876,148 @@ export function AttendanceWorkspace({
                 value={manualReason}
               />
             </Field>
-            {manualError ? <FormError message={manualError} /> : null}
+            <FormError message={manualError} />
             <div className="flex justify-end">
-              <Button
-                disabled={busy || employees.length === 0}
-                size="default"
-                type="submit"
-                variant="primary"
-              >
+              <Button disabled={busy || employees.length === 0} type="submit" variant="primary">
                 Record Event
               </Button>
             </div>
           </form>
           {manualResult ? <CaptureSummary result={manualResult} /> : null}
-        </section>
+        </Panel>
       ) : null}
 
       {canReadEvents ? (
         <>
-          <section
-            aria-labelledby="events-heading"
-            className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          >
-            <header className="grid gap-3 border-b border-line px-5 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="grid gap-1">
-                  <h2 className="m-0 text-sm font-[670] text-midnight" id="events-heading">
-                    Attendance Event register
-                  </h2>
-                  <span className="text-xs text-muted">
-                    {events.length === 1
-                      ? '1 Attendance Event · newest first'
-                      : events.length + ' Attendance Events · newest first'}
-                  </span>
-                </div>
-              </div>
-              <form
-                className="flex flex-wrap items-end gap-3"
-                onSubmit={(event) => void applyFilters(event)}
-              >
-                {employeeError ? (
-                  <p className="m-0 text-xs text-muted">{employeeError}</p>
-                ) : (
-                  <EmployeeSelect
-                    employees={employees}
-                    id="filter-employee"
-                    label="Employee"
-                    onChange={setFilterEmployeeId}
-                    value={filterEmployeeId}
-                  />
-                )}
-                <Field htmlFor="filter-from" label="From">
-                  <input
-                    className={inputClass}
-                    id="filter-from"
-                    onChange={(event) => setFilterFrom(targetValue(event))}
-                    type="date"
-                    value={filterFrom}
-                  />
-                </Field>
-                <Field htmlFor="filter-to" label="To">
-                  <input
-                    className={inputClass}
-                    id="filter-to"
-                    onChange={(event) => setFilterTo(targetValue(event))}
-                    type="date"
-                    value={filterTo}
-                  />
-                </Field>
-                <Button disabled={busy} size="default" type="submit" variant="secondary">
-                  Apply filters
-                </Button>
-              </form>
-            </header>
-            {events.length === 0 ? (
-              <div className="grid min-h-[160px] place-content-center gap-2 px-6 py-10">
-                <strong className="text-[15px] font-[650] text-midnight">
-                  No Attendance Events yet.
-                </strong>
-                <p className="m-0 max-w-[560px] text-[13px] leading-[1.6] text-muted">
-                  Manual entries and Web clock captures land here as immutable raw events.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-                  <thead className="bg-canvas text-[11px] tracking-[0.07em] text-muted uppercase">
-                    <tr>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Employee
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Event time
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Event
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Source
-                      </th>
-                      <th className="px-5 py-3 font-bold" scope="col">
-                        Reason
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {events.map((event) => (
-                      <tr key={event.id}>
-                        <td className="px-5 py-4 align-top">
-                          <div className="grid gap-1">
-                            <strong className="font-[650] text-midnight">
-                              {event.employee.legalName}
-                            </strong>
-                            <span className="text-xs text-muted">
-                              {event.employee.employeeNumber}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-ink">
-                          {instantLabel(event.eventTime)}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-ink">
-                          {eventTypeLabelOf(event.eventType)}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
-                          {event.source === 'WEB_CLOCK' ? 'Web clock' : 'Manual'}
-                        </td>
-                        <td className="px-5 py-4 align-top text-xs text-muted">
-                          {event.reason ?? '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          <section
-            aria-labelledby="work-date-heading"
-            className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          >
-            <header className="grid gap-1 border-b border-line px-5 py-3">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="work-date-heading">
-                Work date context
-              </h2>
-              <span className="text-xs text-muted">
-                Inspect one Employee and Work Date for its governing Schedule Assignment, DTR
-                presentation slots, and Attendance Exceptions.
+          <Panel
+            title="Attendance Event register"
+            flush
+            actions={
+              <span className="text-caption text-ink-muted">
+                {events.length === 1
+                  ? '1 Attendance Event · newest first'
+                  : events.length + ' Attendance Events · newest first'}
               </span>
-            </header>
-            {employeeError ? (
-              <div className="px-5 py-4">
-                <FormError message={employeeError} />
-              </div>
-            ) : (
-              <form
-                className="flex flex-wrap items-end gap-3 px-5 py-4"
-                onSubmit={(event) => void inspectWorkDate(event)}
-              >
+            }
+          >
+            <form
+              className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3"
+              onSubmit={(event) => void applyFilters(event)}
+            >
+              {employeeError ? (
+                <p className="m-0 text-small text-ink-muted">{employeeError}</p>
+              ) : (
                 <EmployeeSelect
                   employees={employees}
-                  id="context-employee"
+                  id="filter-employee"
                   label="Employee"
-                  onChange={setContextEmployeeId}
-                  required
-                  value={contextEmployeeId}
+                  onChange={setFilterEmployeeId}
+                  value={filterEmployeeId}
                 />
-                <Field htmlFor="context-date" label="Work date">
-                  <input
-                    className={inputClass}
-                    id="context-date"
-                    onChange={(event) => setContextDate(targetValue(event))}
-                    required
-                    type="date"
-                    value={contextDate}
-                  />
-                </Field>
-                <Button disabled={contextBusy} size="default" type="submit" variant="secondary">
-                  Inspect Work Date
-                </Button>
-              </form>
+              )}
+              <Field htmlFor="filter-from" label="From">
+                <input
+                  className={inputClass}
+                  id="filter-from"
+                  onChange={(event) => setFilterFrom(targetValue(event))}
+                  type="date"
+                  value={filterFrom}
+                />
+              </Field>
+              <Field htmlFor="filter-to" label="To">
+                <input
+                  className={inputClass}
+                  id="filter-to"
+                  onChange={(event) => setFilterTo(targetValue(event))}
+                  type="date"
+                  value={filterTo}
+                />
+              </Field>
+              <Button disabled={busy} type="submit" variant="secondary">
+                Apply filters
+              </Button>
+            </form>
+            {events.length === 0 ? (
+              <StateSurface compact label="Attendance Events">
+                <strong className="font-[650] text-ink">No Attendance Events yet.</strong>
+                <p className="m-0">
+                  Manual entries and Web clock captures land here as immutable raw events.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table aria-label="Attendance Events" className="min-w-[860px]">
+                <thead>
+                  <tr>
+                    <Th>Employee</Th>
+                    <Th kind="date">Event time</Th>
+                    <Th>Event</Th>
+                    <Th>Source</Th>
+                    <Th>Reason</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map((event) => (
+                    <Tr key={event.id}>
+                      <RowHeader>
+                        {event.employee.legalName}
+                        <span className="block font-mono text-caption font-normal text-ink-muted">
+                          {event.employee.employeeNumber}
+                        </span>
+                      </RowHeader>
+                      <Td kind="date">{instantLabel(event.eventTime)}</Td>
+                      <Td>{eventTypeLabelOf(event.eventType)}</Td>
+                      <Td className="text-ink-muted">
+                        {event.source === 'WEB_CLOCK' ? 'Web clock' : 'Manual'}
+                      </Td>
+                      <Td className="text-ink-muted">{event.reason ?? '—'}</Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
             )}
-            {contextError ? (
-              <div className="px-5 pb-4">
-                <FormError message={contextError} />
-              </div>
-            ) : null}
+          </Panel>
+
+          <Panel title="Work date context" flush>
+            <div className="grid gap-4 p-4">
+              <p className="m-0 max-w-[760px] text-small text-ink-muted">
+                Inspect one Employee and Work Date for its governing Schedule Assignment, DTR
+                presentation slots, and Attendance Exceptions.
+              </p>
+              {employeeError ? (
+                <FormError message={employeeError} />
+              ) : (
+                <form
+                  className="flex flex-wrap items-end gap-3"
+                  onSubmit={(event) => void inspectWorkDate(event)}
+                >
+                  <EmployeeSelect
+                    employees={employees}
+                    id="context-employee"
+                    label="Employee"
+                    onChange={setContextEmployeeId}
+                    required
+                    value={contextEmployeeId}
+                  />
+                  <Field htmlFor="context-date" label="Work date">
+                    <input
+                      className={inputClass}
+                      id="context-date"
+                      onChange={(event) => setContextDate(targetValue(event))}
+                      required
+                      type="date"
+                      value={contextDate}
+                    />
+                  </Field>
+                  <Button disabled={contextBusy} type="submit" variant="secondary">
+                    Inspect Work Date
+                  </Button>
+                </form>
+              )}
+              <FormError message={contextError} />
+            </div>
             {context ? (
-              <div className="grid gap-3 border-t border-line px-5 py-4">
-                <p className="m-0 text-xs text-muted">
+              <div className="grid gap-3 border-t border-border py-3">
+                <p className="m-0 px-4 text-small text-ink-muted">
                   {context.association
                     ? associationLabel(context.association) +
                       ' · ' +
@@ -1109,22 +1025,15 @@ export function AttendanceWorkspace({
                       context.association.holidayEntries.map((entry) => ' · ' + entry.name).join('')
                     : 'No Schedule Assignment is effective on the Work Date.'}
                 </p>
-                <EventRows events={context.events} />
-                {context.exceptions.length > 0 ? (
-                  <ul className="m-0 grid list-none gap-1 p-0 text-xs text-[#79531c]">
-                    {context.exceptions.map((exception) => (
-                      <li key={exception.type + exception.message}>{exception.message}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="m-0 text-xs text-[#316647]">No blocking Attendance Exceptions.</p>
-                )}
+                <EventRows events={context.events} label="Work Date Attendance Events" />
+                <div className="px-4">
+                  <ExceptionList exceptions={context.exceptions} />
+                </div>
               </div>
             ) : null}
-          </section>
+          </Panel>
         </>
       ) : null}
-
       <Dialog
         onOpenChange={(open) => {
           if (!open) setDialog(null);
@@ -1173,11 +1082,11 @@ export function AttendanceWorkspace({
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
-              <Button disabled={busy} size="default" type="submit" variant="primary">
+              <Button disabled={busy} type="submit" variant="primary">
                 {dialog === 'enable' ? 'Enable Web Clock' : 'Disable Web Clock'}
               </Button>
             </DialogFooter>
