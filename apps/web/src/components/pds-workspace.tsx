@@ -211,7 +211,7 @@ function focusDeficiency(field: string): void {
   const browser = globalThis as unknown as {
     document: { querySelectorAll(selector: string): ArrayLike<FocusableControl> };
   };
-  const marked = Array.from(browser.document.querySelectorAll('.record-form [data-pds-field]'));
+  const marked = Array.from(browser.document.querySelectorAll('[data-pds-form] [data-pds-field]'));
   const exact = marked.find((element) => element.getAttribute('data-pds-field') === field);
   if (exact) {
     exact.focus();
@@ -221,9 +221,7 @@ function focusDeficiency(field: string): void {
   const label = deficiencyLabel(field);
   if (!label) return;
   const controls = Array.from(
-    browser.document.querySelectorAll(
-      '.record-form input, .record-form select, .record-form textarea',
-    ),
+    browser.document.querySelectorAll('[data-pds-form] :is(input, select, textarea)'),
   );
   const control = controls.find((element) =>
     Array.from(element.labels ?? []).some((item) => item.textContent?.trim() === label),
@@ -1336,6 +1334,7 @@ export function PdsWorkspace({
         </PageHeader>
         {showForm && (
           <DialogContent
+            data-pds-form
             aria-describedby="pds-dialog-description"
             onOpenAutoFocus={(event) => {
               if (!deficiencyField) return;
