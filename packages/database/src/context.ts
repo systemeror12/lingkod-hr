@@ -26,6 +26,7 @@ export type DatabaseCapability =
   | 'holiday-calendar-transition'
   | 'schedule-assignment-transition'
   | 'leave-policy-transition'
+  | 'leave-posting-transition'
   | 'attendance-transition';
 
 export interface DatabaseContext {
@@ -180,6 +181,7 @@ export async function setDatabaseContext(
         ${hasCapability(context, 'leave-policy-transition') ? 'on' : ''},
         true
       ),
+      set_config('app.leave_posting_transition', ${hasCapability(context, 'leave-posting-transition') ? 'on' : ''}, true),
       set_config(
         'app.attendance_transition',
         ${hasCapability(context, 'attendance-transition') ? 'on' : ''},

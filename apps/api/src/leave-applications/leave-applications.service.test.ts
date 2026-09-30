@@ -1,3 +1,4 @@
+import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import { expect, it } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { ApprovalCompletionRegistry } from '../approvals/approval.service';
@@ -40,6 +41,7 @@ function service() {
     workSchedules,
     workArrangements,
     holidayCalendars,
+    new AttendancePostedLeaveInputsService(),
   );
 }
 
@@ -208,6 +210,13 @@ it('requires the permission that matches the cancellation decision', async () =>
     service().decideCancellation(context([]), applicationId, { decision: 'APPROVE' }),
   ).rejects.toMatchObject({
     code: 'LEAVE_APPLICATION_CANCELLATION_APPROVED_FORBIDDEN',
+    statusCode: 403,
+  });
+});
+
+it('requires leave.applications.post before posting approved leave', async () => {
+  await expect(service().post(context([]), applicationId, 'post-1')).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_POST_FORBIDDEN',
     statusCode: 403,
   });
 });

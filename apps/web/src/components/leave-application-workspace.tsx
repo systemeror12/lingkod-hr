@@ -186,6 +186,11 @@ export interface LeaveApplicationVersion {
   certification: LeaveCreditCertification | null;
   recommendation: LeaveRecommendation | null;
   approvalAllocation: LeaveApprovalAllocation | null;
+  posting: {
+    id: string;
+    postedAt: string;
+    effects: { effectKind: string; effectKey: string; ownerRecordId: string }[];
+  } | null;
   approvalSteps: LeaveApprovalStep[];
 }
 
@@ -228,6 +233,7 @@ export interface LeaveApplicationHistoryEntry {
 }
 
 export interface LeaveApplicationDetail {
+  canPost: boolean;
   application: LeaveApplication;
   draftPeriods: LeaveApplicationPeriod[];
   draftDocuments: LeaveApplicationDocument[];
@@ -482,6 +488,7 @@ export function LeaveApplicationWorkspace({
   canCancel: boolean;
   canRejectCancel: boolean;
 }) {
+  const postingKeys = useRef<Record<string, string>>({});
   const [applications, setApplications] = useState(initial.applications);
   const navigation = useRecordNavigation();
   const recordId = navigation.search.get('record');
@@ -653,7 +660,11 @@ export function LeaveApplicationWorkspace({
     return request(path, {
       method: 'POST',
       body: JSON.stringify(body),
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: {
+        'Idempotency-Key': path.endsWith('/posting')
+          ? (postingKeys.current[path] ??= crypto.randomUUID())
+          : crypto.randomUUID(),
+      },
     });
   }
 
@@ -892,6 +903,7 @@ export function LeaveApplicationWorkspace({
 
   async function review(
     command:
+      | 'posting'
       | 'routing'
       | 'certification'
       | 'recommendation'
@@ -1812,6 +1824,23 @@ export function LeaveApplicationWorkspace({
                             Reject
                           </Button>
                         ) : null}
+                        {detail.canPost && status === 'APPROVED' ? (
+                          <Button
+                            disabled={busy}
+                            onClick={() =>
+                              void review(
+                                'posting',
+                                {},
+                                'The Leave Application was posted to Leave and Attendance.',
+                                'The Leave Application could not be posted.',
+                              )
+                            }
+                            type="button"
+                            variant="primary"
+                          >
+                            {busy ? 'Posting…' : 'Post leave'}
+                          </Button>
+                        ) : null}
                         {canRequestCancel && cancellable ? (
                           <Button
                             onClick={() => openCancelRequest()}
@@ -1872,6 +1901,22 @@ export function LeaveApplicationWorkspace({
                     </div>
                   </section>
 
+                  {currentVersion()?.posting ? (
+                    <section className="grid gap-3" aria-label="Posting effects">
+                      <h3 className={sectionTitleClass}>Posting effects</h3>
+                      <p className="m-0 text-small text-ink-muted">
+                        Posted {instantLabel(currentVersion()!.posting!.postedAt)}
+                      </p>
+                      {currentVersion()!.posting!.effects.map((effect) => (
+                        <p className="m-0 text-small" key={effect.effectKey}>
+                          {effect.effectKind === 'LEDGER_ENTRY'
+                            ? 'Leave Ledger Entry'
+                            : 'Attendance input'}{' '}
+                          · {effect.ownerRecordId}
+                        </p>
+                      ))}
+                    </section>
+                  ) : null}
                   {detail.cancellations.length > 0 ? (
                     <section className="grid gap-3" aria-labelledby="leave-cancellations-heading">
                       <h3 className={sectionTitleClass} id="leave-cancellations-heading">

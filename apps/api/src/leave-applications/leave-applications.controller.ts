@@ -142,6 +142,50 @@ export class LeaveApplicationsController {
     }
   }
 
+  @Post(':agencyId/leave-applications/:applicationId/posting')
+  @RequirePermission('leave.applications.post')
+  async post(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    if (!parsedId.success) throw this.notFound(context);
+    if (
+      typeof body !== 'object' ||
+      body === null ||
+      Array.isArray(body) ||
+      Object.keys(body).length > 0
+    ) {
+      throw new BadRequestException({
+        error: {
+          code: 'INVALID_INPUT',
+          message: 'Leave Posting accepts an empty command body.',
+          requestId: context.requestId,
+        },
+      });
+    }
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    if (!parsedKey)
+      throw new BadRequestException({
+        error: {
+          code: 'LEAVE_POSTING_KEY_REQUIRED',
+          message: 'An Idempotency-Key is required to post leave.',
+          requestId: context.requestId,
+        },
+      });
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.post(context, parsedId.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   @Post(':agencyId/leave-applications')
   @RequirePermission('leave.applications.create')
   async create(

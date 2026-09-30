@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { PrismaClient } from '@prisma/client';
+import { getConfig } from '@lingkod-hr/config';
 import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
@@ -42,23 +43,20 @@ async function readMailpitMessage(recipient: string, subject: string): Promise<s
 // Invitation role grants take effect at the activation instant, while Approval
 // Route assignment resolution evaluates roles at 12:00 UTC of the submission
 // date. Backdate the fixture grants so a same-day review flow resolves.
-function backdateReviewerRoleGrants(membershipId: string): void {
-  const adminUrl =
-    process.env.DATABASE_E2E_ADMIN_URL ??
-    process.env.DATABASE_MIGRATION_OWNER_URL ??
-    'postgresql://hris_local:local_only@localhost:55432/hris';
-  execFileSync(
-    'psql',
-    [
-      adminUrl,
-      '-XAt',
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-c',
-      `UPDATE membership_roles SET effective_from = '2026-01-01T00:00:00+08:00' WHERE membership_id = '${membershipId}' AND effective_to IS NULL;`,
-    ],
-    { encoding: 'utf8' },
-  );
+async function backdateReviewerRoleGrants(membershipId: string): Promise<void> {
+  getConfig();
+  const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
+  if (!adminUrl)
+    throw new Error('A worktree database owner URL is required for the reviewer fixture.');
+  const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+  try {
+    await admin.membershipRole.updateMany({
+      where: { membershipId, effectiveTo: null },
+      data: { effectiveFrom: new Date('2026-01-01T00:00:00+08:00') },
+    });
+  } finally {
+    await admin.$disconnect();
+  }
 }
 
 async function inviteReviewer(
@@ -92,7 +90,7 @@ async function inviteReviewer(
       headers: { origin: new URL(reviewerPage.url()).origin },
     }),
   );
-  backdateReviewerRoleGrants(session.membershipId);
+  await backdateReviewerRoleGrants(session.membershipId);
   return { page: reviewerPage, membershipId: session.membershipId };
 }
 
@@ -414,6 +412,29 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
   await expect(deciderDetail).toContainText('Approved allocation');
   await expect(deciderDetail).toContainText('leave account 2 working day');
 
+  await expect(deciderDetail.getByRole('region', { name: 'Posting effects' })).toHaveCount(0);
+  const approverPosting = await decider.page.request.post(
+    `${agencyBase}/leave-applications/${reviewApplicationId}/posting`,
+    {
+      headers: {
+        origin: new URL(decider.page.url()).origin,
+        'Idempotency-Key': 'posting-separation',
+      },
+      data: {},
+    },
+  );
+  expect(approverPosting.status()).toBe(403);
+  await certifier.page.goto(`/leave-applications?record=${reviewApplicationId}`);
+  await certifierDetail.getByRole('button', { name: 'Post leave' }).click();
+  await expect(certifierDetail).toContainText(
+    'The Leave Application was posted to Leave and Attendance.',
+  );
+  await expect(certifierDetail).toContainText('POSTED');
+  const effects = certifierDetail.getByRole('region', { name: 'Posting effects' });
+  await expect(effects).toContainText('Leave Ledger Entry');
+  await expect(effects).toContainText('Attendance input');
+  await expect(certifierDetail.getByRole('button', { name: 'Post leave' })).toHaveCount(0);
+
   // Request and decide a Leave Cancellation over the approved allocation.
   const cancellationRoute = await apiBody<{ id: string }>(
     await page.request.post(`${agencyBase}/approval-routes`, {
@@ -482,7 +503,7 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
   await rejectCancellation.getByRole('button', { name: 'Reject cancellation' }).click();
   await expect(cancelDeciderDetail).toContainText('The cancellation was rejected.');
   const snapshot = cancelDeciderDetail.getByRole('region', { name: /^Alex Rivera · / });
-  await expect(snapshot.getByText('APPROVED', { exact: true })).toBeVisible();
+  await expect(snapshot.getByText('POSTED', { exact: true })).toBeVisible();
   await expect(
     cancelDeciderDetail.getByRole('article', { name: /Cancellation requested/ }),
   ).toContainText('Decision rejected');

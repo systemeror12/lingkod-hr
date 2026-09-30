@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AttendancePostedLeaveInputsModule } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.module';
 import { ApprovalModule } from '../approvals/approval.module';
 import { AttendanceConfigurationModule } from '../attendance-configuration/attendance-configuration.module';
 import { AuthModule } from '../auth/auth.module';
@@ -11,7 +12,13 @@ import {
 } from './leave-applications.service';
 
 @Module({
-  imports: [AuthModule, DocumentsModule, ApprovalModule, AttendanceConfigurationModule],
+  imports: [
+    AuthModule,
+    DocumentsModule,
+    ApprovalModule,
+    AttendanceConfigurationModule,
+    AttendancePostedLeaveInputsModule,
+  ],
   controllers: [LeaveApplicationsController],
   providers: [
     LeaveApplicationsService,

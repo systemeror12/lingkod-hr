@@ -86,6 +86,8 @@ model Agency {
   separationEffects             SeparationEffect[]
   serviceRecordSnapshots        ServiceRecordSnapshot[]
   outboxEvents                  OutboxEvent[]
+  leavePostings                 LeavePosting[]
+  leavePostingEffects           LeavePostingEffect[]
   approvalRouteVersions         ApprovalRouteVersion[]
   approvalRequests              ApprovalRequest[]
   approvalSteps                 ApprovalStep[]
@@ -460,6 +462,8 @@ model AgencyMembership {
   createdPayrollMonetizationInputs        PayrollMonetizationEarningInput[]    @relation("PayrollMonetizationEarningInputCreator")
   recordedPayrollMonetizationOutcomes     PayrollMonetizationAdjustmentOutcome[] @relation("PayrollMonetizationAdjustmentOutcomeRecorder")
   assessedTerminalLeaveInputs            TerminalLeaveInputAssessment[]       @relation("TerminalLeaveInputAssessmentAssessor")
+
+  leavePostings LeavePosting[] @relation("LeavePostingPoster")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -4686,6 +4690,7 @@ model LeaveApplicationVersion {
   recommendation       LeaveRecommendation?         @relation("LeaveRecommendationVersion")
   approvalAllocation   LeaveApprovalAllocation?     @relation("LeaveApprovalAllocationVersion")
   cancellations        LeaveCancellation[]
+  posting              LeavePosting?
 
   @@unique([leaveApplicationId, versionNo])
   @@unique([approvalRequestId])
@@ -4848,6 +4853,7 @@ model LeaveApprovalAllocation {
   leaveApplicationVersion LeaveApplicationVersion @relation("LeaveApprovalAllocationVersion", fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
   approvalDecision       ApprovalDecision         @relation("LeaveApprovalAllocationDecision", fields: [agencyId, approvalDecisionId], references: [agencyId, id], onDelete: Restrict)
   lines                  LeaveApprovalAllocationLine[]
+  postings               LeavePosting[]
 
   @@unique([leaveApplicationVersionId])
   @@unique([agencyId, leaveApplicationVersionId])
@@ -4943,4 +4949,42 @@ model LeaveCancellationScope {
   @@unique([leaveCancellationId, approvalAllocationLineId])
   @@unique([agencyId, id])
   @@map("leave_cancellation_scopes")
+}
+
+model LeavePosting {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                  String   @map("agency_id") @db.Uuid
+  leaveApplicationVersionId String   @unique @map("leave_application_version_id") @db.Uuid
+  leaveApprovalAllocationId String   @map("leave_approval_allocation_id") @db.Uuid
+  idempotencyKey            String   @map("idempotency_key") @db.Citext
+  postedByMembershipId      String?  @map("posted_by_membership_id") @db.Uuid
+  postedAt                  DateTime @default(now()) @map("posted_at") @db.Timestamptz(6)
+
+  agency     Agency                  @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  version    LeaveApplicationVersion @relation(fields: [agencyId, leaveApplicationVersionId], references: [agencyId, id], onDelete: Restrict)
+  allocation LeaveApprovalAllocation @relation(fields: [agencyId, leaveApprovalAllocationId], references: [agencyId, id], onDelete: Restrict)
+  postedBy   AgencyMembership?       @relation("LeavePostingPoster", fields: [agencyId, postedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  effects    LeavePostingEffect[]
+
+  @@unique([agencyId, idempotencyKey])
+  @@unique([agencyId, leaveApplicationVersionId])
+  @@unique([agencyId, id])
+  @@map("leave_postings")
+}
+
+model LeavePostingEffect {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId       String @map("agency_id") @db.Uuid
+  leavePostingId String @map("leave_posting_id") @db.Uuid
+  effectKind     String @map("effect_kind")
+  effectKey      String @map("effect_key") @db.Citext
+  ownerRecordId  String @map("owner_record_id") @db.Uuid
+
+  agency  Agency       @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  posting LeavePosting @relation(fields: [agencyId, leavePostingId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leavePostingId, effectKey])
+  @@unique([agencyId, effectKind, ownerRecordId])
+  @@unique([agencyId, id])
+  @@map("leave_posting_effects")
 }
