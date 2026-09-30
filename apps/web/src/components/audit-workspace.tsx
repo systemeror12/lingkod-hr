@@ -2,7 +2,7 @@
 
 import { RecordReturn, useRecordNavigation } from './record-navigation';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   isAuditEventDetail,
   isAuditEventListResponse,
@@ -20,6 +20,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
+import { Button } from './ui/button';
+import { FormError } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 
 function dateLabel(value: string): string {
   const date = new Date(value);
@@ -50,18 +57,15 @@ function errorMessage(value: unknown, fallback: string): string {
 function DataBlock({ label, value }: { label: string; value: unknown }) {
   return (
     <section className="grid gap-2" aria-labelledby={`${label.toLowerCase()}-data-title`}>
-      <h3
-        className="m-0 text-[11px] font-bold tracking-[0.08em] text-cobalt uppercase"
-        id={`${label.toLowerCase()}-data-title`}
-      >
+      <h3 className="m-0 text-panel-title text-ink" id={`${label.toLowerCase()}-data-title`}>
         {label}
       </h3>
       {value === null ? (
-        <p className="m-0 rounded-[3px] border border-line bg-canvas px-3 py-3 text-sm text-muted">
+        <p className="m-0 rounded-control border border-border bg-canvas px-3 py-3 text-small text-ink-muted">
           None recorded
         </p>
       ) : (
-        <pre className="m-0 max-h-64 overflow-auto rounded-[3px] border border-line bg-canvas p-3 font-mono text-xs leading-[1.6] whitespace-pre-wrap text-ink">
+        <pre className="m-0 max-h-64 overflow-auto rounded-control border border-border bg-canvas p-3 font-mono text-caption leading-[1.6] whitespace-pre-wrap text-ink">
           {JSON.stringify(value, null, 2)}
         </pre>
       )}
@@ -185,235 +189,211 @@ export function AuditWorkspace({
 
   return (
     <Dialog presentation="form" open={Boolean(selectedId)} onOpenChange={handleDialogOpenChange}>
-      <div hidden={Boolean(selectedId)} className="space-y-5">
-        <header className="grid max-w-[720px] gap-2">
-          <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-            Evidence
-          </p>
-          <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-            Audit Log
-          </h1>
-          <p className="m-0 text-sm leading-[1.65] text-muted">
+      <div className="grid gap-5">
+        <PageHeader breadcrumbs={[{ label: 'Oversight' }]} title="Audit Log" />
+
+        <div hidden={Boolean(selectedId)} className="grid min-w-0 gap-5">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
             Read-only business evidence from the active Agency Context.
           </p>
-        </header>
 
-        <section
-          className="overflow-hidden rounded-[5px] border border-line bg-paper"
-          aria-labelledby="audit-events-heading"
-        >
-          <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
-            <div className="grid gap-1">
-              <h2 className="m-0 text-sm font-[670] text-midnight" id="audit-events-heading">
-                Agency events
-              </h2>
-              <span className="text-xs text-muted">
-                {events.length === 1 ? '1 event' : `${events.length} events`}
-              </span>
-            </div>
-            <span className="rounded-full bg-pale-blue px-2.5 py-1 text-xs font-[650] text-cobalt">
-              Agency scoped · Read only
-            </span>
-          </header>
-
-          {events.length === 0 ? (
-            <div className="grid min-h-[260px] place-content-center gap-2 px-6 py-12 text-left">
-              <strong className="text-[15px] font-[650] text-midnight">
-                No Agency audit events yet.
-              </strong>
-              <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
-                Persisted business transitions will appear here after a controlled action is
-                recorded in this Agency.
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-line">
-              {events.map((event) => (
-                <button
-                  className="grid w-full gap-4 bg-paper px-5 py-5 text-left hover:bg-canvas min-[621px]:grid-cols-[minmax(0,1fr)_auto] min-[621px]:items-start"
-                  key={event.id}
-                  type="button"
-                  aria-expanded={selectedId === event.id}
-                  onClick={(clickEvent) => {
-                    returnFocusRef.current = clickEvent.currentTarget as unknown as {
-                      focus(): void;
-                    };
-                    openDetail(event);
-                  }}
-                >
-                  <span className="grid min-w-0 gap-2">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <strong className="font-mono text-xs font-[700] tracking-[0.02em] text-midnight">
-                        {event.action}
-                      </strong>
-                      <span className="rounded-full bg-pale-blue px-2 py-1 text-[10px] font-[700] tracking-[0.04em] text-cobalt uppercase">
-                        {statusLabel(event.previousStatus)} → {statusLabel(event.newStatus)}
-                      </span>
-                    </span>
-                    <span className="grid gap-1 text-[13px] text-muted min-[621px]:grid-cols-3 min-[621px]:gap-4">
-                      <span>
-                        <span className="font-[650] text-ink">Actor:</span> {event.actor}
-                      </span>
-                      <span>
-                        <span className="font-[650] text-ink">Entity:</span> {event.entityType}
-                      </span>
-                      <span className="break-all font-mono text-[11px]">{event.entityId}</span>
-                    </span>
-                  </span>
-                  <time
-                    className="text-xs text-muted min-[621px]:text-right"
-                    dateTime={event.occurredAt}
+          <Panel
+            title="Agency events"
+            flush
+            actions={
+              <>
+                <span className="text-caption text-ink-muted">
+                  {events.length === 1 ? '1 event' : `${events.length} events`}
+                  {hasMore ? ' · more available' : ''}
+                </span>
+                <StatusTag tone="info">Agency scoped · Read only</StatusTag>
+              </>
+            }
+          >
+            {events.length === 0 ? (
+              <StateSurface compact label="Agency events">
+                <strong className="text-body font-[650] text-ink">
+                  No Agency audit events yet.
+                </strong>
+                <p className="m-0 max-w-[560px]">
+                  Persisted business transitions will appear here after a controlled action is
+                  recorded in this Agency.
+                </p>
+              </StateSurface>
+            ) : (
+              <Table aria-label="Agency audit events" className="min-w-[860px]">
+                <thead>
+                  <tr>
+                    <Th>Action</Th>
+                    <Th>Status transition</Th>
+                    <Th>Actor</Th>
+                    <Th>Entity</Th>
+                    <Th kind="date">Occurred</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map((event) => (
+                    <Tr key={event.id}>
+                      <RowHeader>
+                        <button
+                          className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-caption font-[600] text-primary hover:underline"
+                          type="button"
+                          aria-expanded={selectedId === event.id}
+                          onClick={(clickEvent) => {
+                            returnFocusRef.current = clickEvent.currentTarget as unknown as {
+                              focus(): void;
+                            };
+                            openDetail(event);
+                          }}
+                        >
+                          {event.action}
+                        </button>
+                      </RowHeader>
+                      <Td>
+                        <StatusTag tone="neutral">
+                          {statusLabel(event.previousStatus)} → {statusLabel(event.newStatus)}
+                        </StatusTag>
+                      </Td>
+                      <Td>{event.actor}</Td>
+                      <Td>
+                        {event.entityType}
+                        <span className="block font-mono text-caption break-all text-ink-muted">
+                          {event.entityId}
+                        </span>
+                      </Td>
+                      <Td kind="date">
+                        <time dateTime={event.occurredAt}>{dateLabel(event.occurredAt)}</time>
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
+            )}
+            {listError || hasMore ? (
+              <div className="grid justify-items-start gap-3 border-t border-border p-4">
+                <FormError message={listError} className="self-stretch" />
+                {hasMore ? (
+                  <Button
+                    disabled={loadingMore}
+                    onClick={() => void loadMore()}
+                    type="button"
+                    variant="secondary"
                   >
-                    {dateLabel(event.occurredAt)}
-                  </time>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {listError ? (
-          <p
-            className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-            role="alert"
-          >
-            {listError}
-          </p>
-        ) : null}
-        {hasMore ? (
-          <button
-            className="min-h-11 justify-self-start rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:opacity-60"
-            type="button"
-            disabled={loadingMore}
-            onClick={() => void loadMore()}
-          >
-            {loadingMore ? 'Loading…' : 'Load more events'}
-          </button>
-        ) : null}
-      </div>
-
-      {selectedId ? (
-        <div className="mb-4">
-          <RecordReturn href={navigation.href({ record: null, view: null })}>
-            ← Audit Log
-          </RecordReturn>
-        </div>
-      ) : null}
-      <DialogContent
-        aria-busy={detailLoading}
-        aria-describedby="audit-event-detail-description"
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          closeRef.current?.focus();
-        }}
-        onCloseAutoFocus={(event) => {
-          event.preventDefault();
-          returnFocusRef.current?.focus();
-        }}
-      >
-        <DialogHeader>
-          <div className="grid min-w-0 gap-1.5">
-            <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
-              Audit evidence / Read only
-            </p>
-            <DialogTitle>Audit Event detail</DialogTitle>
-            <DialogDescription id="audit-event-detail-description">
-              Inspect persisted evidence from the active Agency Context.
-            </DialogDescription>
-          </div>
-          <DialogClose asChild>
-            <button
-              className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3]"
-              type="button"
-              ref={closeRef}
-              aria-label="Close audit event detail"
-            >
-              ×
-            </button>
-          </DialogClose>
-        </DialogHeader>
-
-        <DialogBody>
-          <div className="grid gap-6">
-            {detailLoading ? (
-              <p className="m-0 text-sm text-muted" role="status">
-                Loading Audit Event…
-              </p>
-            ) : null}
-            {detailError ? (
-              <p
-                className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-                role="alert"
-              >
-                {detailError}
-              </p>
-            ) : null}
-            {detail ? (
-              <div className="grid gap-6">
-                <div className="grid gap-4 rounded-[4px] border border-line bg-canvas px-4 py-4">
-                  <div className="grid gap-1">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Action
-                    </span>
-                    <strong className="font-mono text-xs text-midnight">{detail.action}</strong>
-                  </div>
-                  <div className="grid gap-1">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Status transition
-                    </span>
-                    <strong className="text-sm text-ink">
-                      {statusLabel(detail.previousStatus)} → {statusLabel(detail.newStatus)}
-                    </strong>
-                  </div>
-                  <div className="grid gap-1">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Occurred in Philippine time
-                    </span>
-                    <time className="text-sm text-ink" dateTime={detail.occurredAt}>
-                      {dateLabel(detail.occurredAt)}
-                    </time>
-                  </div>
-                  <div className="grid gap-1">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Actor
-                    </span>
-                    <span className="text-sm text-ink">{detail.actor}</span>
-                  </div>
-                  <div className="grid gap-1">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Entity
-                    </span>
-                    <span className="break-all font-mono text-xs text-ink">
-                      {detail.entityType} · {detail.entityId}
-                    </span>
-                  </div>
-                  <div className="grid gap-1">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Request ID
-                    </span>
-                    <span className="break-all font-mono text-xs text-ink">
-                      {detail.requestId ?? 'Not recorded'}
-                    </span>
-                  </div>
-                </div>
-                <DataBlock label="Before" value={detail.before} />
-                <DataBlock label="After" value={detail.after} />
+                    {loadingMore ? 'Loading…' : 'Load more events'}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
-          </div>
-        </DialogBody>
+          </Panel>
+        </div>
 
-        <DialogFooter>
-          <DialogClose asChild>
-            <button
-              className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3]"
-              type="button"
-            >
-              Close
-            </button>
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
+        {selectedId ? (
+          <div>
+            <RecordReturn href={navigation.href({ record: null, view: null })}>
+              ← Audit Log
+            </RecordReturn>
+          </div>
+        ) : null}
+
+        <DialogContent
+          aria-busy={detailLoading}
+          aria-describedby="audit-event-detail-description"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            closeRef.current?.focus();
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            returnFocusRef.current?.focus();
+          }}
+        >
+          <DialogHeader>
+            <div className="grid min-w-0 gap-1.5">
+              <DialogTitle>Audit Event detail</DialogTitle>
+              <DialogDescription id="audit-event-detail-description">
+                Inspect persisted evidence from the active Agency Context.
+              </DialogDescription>
+            </div>
+            <DialogClose asChild>
+              <Button
+                aria-label="Close audit event detail"
+                className="shrink-0 px-3 text-lg"
+                ref={closeRef}
+                type="button"
+              >
+                ×
+              </Button>
+            </DialogClose>
+          </DialogHeader>
+
+          <DialogBody>
+            <div className="grid gap-6">
+              {detailLoading ? (
+                <StateSurface compact busy label="Audit Event">
+                  <p className="m-0" role="status">
+                    Loading Audit Event…
+                  </p>
+                </StateSurface>
+              ) : null}
+              <FormError message={detailError} />
+              {detail ? (
+                <div className="grid gap-6">
+                  <dl className="m-0 grid gap-x-10 gap-y-4 min-[621px]:grid-cols-2 min-[900px]:grid-cols-3">
+                    {(
+                      [
+                        [
+                          'Action',
+                          <span key="action" className="font-mono text-small">
+                            {detail.action}
+                          </span>,
+                        ],
+                        [
+                          'Status transition',
+                          `${statusLabel(detail.previousStatus)} → ${statusLabel(detail.newStatus)}`,
+                        ],
+                        [
+                          'Occurred in Philippine time',
+                          <time key="occurred" dateTime={detail.occurredAt}>
+                            {dateLabel(detail.occurredAt)}
+                          </time>,
+                        ],
+                        ['Actor', detail.actor],
+                        [
+                          'Entity',
+                          <span key="entity" className="font-mono text-small break-all">
+                            {detail.entityType} · {detail.entityId}
+                          </span>,
+                        ],
+                        [
+                          'Request ID',
+                          <span key="request" className="font-mono text-small break-all">
+                            {detail.requestId ?? 'Not recorded'}
+                          </span>,
+                        ],
+                      ] satisfies [string, ReactNode][]
+                    ).map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="text-caption text-ink-muted">{label}</dt>
+                        <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <DataBlock label="Before" value={detail.before} />
+                  <DataBlock label="After" value={detail.after} />
+                </div>
+              ) : null}
+            </div>
+          </DialogBody>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary">
+                Close
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </div>
     </Dialog>
   );
 }

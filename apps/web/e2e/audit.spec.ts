@@ -32,8 +32,9 @@ test('reads persisted Agency evidence in a keyboard-safe detail dialog', async (
 
   await page.goto('/audit');
   await expect(page.getByRole('heading', { name: 'Audit Log' })).toBeVisible();
-  const event = page.getByRole('button').filter({ hasText: 'ORGANIZATION_UNIT_CREATED' }).first();
-  await expect(event).toContainText('None → DRAFT');
+  const row = page.getByRole('row').filter({ hasText: 'ORGANIZATION_UNIT_CREATED' }).first();
+  await expect(row).toContainText('None → DRAFT');
+  const event = row.getByRole('button', { name: 'ORGANIZATION_UNIT_CREATED' });
   await page.screenshot({ path: testInfo.outputPath('list.png'), fullPage: true });
 
   await event.click();
