@@ -12,8 +12,10 @@ describe('posting period Manila day boundaries', () => {
     expect(manilaDayEnd(day).toISOString()).toBe('2026-09-08T16:00:00.000Z');
   });
 
-  it('accepts an instant at 00:30 Manila as belonging to the opening day', () => {
-    const instant = new Date('2026-09-07T16:30:00.000Z');
-    expect(instant >= manilaDayStart(day) && instant < manilaDayEnd(day)).toBe(true);
+  it('treats 00:30 Manila on the opening day as inside and the next midnight as outside', () => {
+    const inside = new Date('2026-09-07T16:30:00.000Z');
+    const nextMidnight = new Date('2026-09-08T16:00:00.000Z');
+    expect(inside >= manilaDayStart(day) && inside < manilaDayEnd(day)).toBe(true);
+    expect(nextMidnight < manilaDayEnd(day)).toBe(false);
   });
 });

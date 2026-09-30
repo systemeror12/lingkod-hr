@@ -2607,9 +2607,9 @@ export class RecruitmentService {
         409,
         'RECRUITMENT_FORM_NO_9_INVALID',
       );
+    const openingStart = manilaDayStart(opening);
+    const closingExclusive = manilaDayEnd(closing);
     for (const item of evidence) {
-      const openingStart = manilaDayStart(opening);
-      const closingExclusive = manilaDayEnd(closing);
       if (item.publishedAt < openingStart || item.publishedAt >= closingExclusive) {
         throw new RecruitmentServiceError(
           'Every publication evidence timestamp must fall within the declared posting period.',
