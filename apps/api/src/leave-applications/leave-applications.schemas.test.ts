@@ -11,6 +11,8 @@ import {
   leaveApplicationReturnSchema,
   leaveApplicationSubmitSchema,
   leaveApplicationWithdrawSchema,
+  leaveCancellationDecisionSchema,
+  leaveCancellationRequestSchema,
 } from './leave-applications.schemas';
 
 const documentId = '00000000-0000-4000-8000-000000000001';
@@ -186,4 +188,62 @@ it('requires a return reason', () => {
   ).toBe(true);
   expect(leaveApplicationReturnSchema.safeParse({}).success).toBe(false);
   expect(leaveApplicationReturnSchema.safeParse({ reason: '   ' }).success).toBe(false);
+});
+
+it('validates Leave Cancellation requests by scope type', () => {
+  const allocationLineId = '00000000-0000-4000-8000-000000000003';
+  expect(
+    leaveCancellationRequestSchema.safeParse({ scopeType: 'WHOLE', reason: 'Plans changed.' })
+      .success,
+  ).toBe(true);
+  expect(
+    leaveCancellationRequestSchema.safeParse({
+      scopeType: 'WHOLE',
+      reason: 'Plans changed.',
+      scopes: [],
+    }).success,
+  ).toBe(false);
+  expect(
+    leaveCancellationRequestSchema.safeParse({
+      scopeType: 'PARTIAL',
+      reason: 'Return early.',
+      evidenceDocumentId: documentId,
+      scopes: [{ allocationLineId, dateFrom: '2026-06-02', dateTo: '2026-06-03', quantity: '2' }],
+    }).success,
+  ).toBe(true);
+  expect(
+    leaveCancellationRequestSchema.safeParse({ scopeType: 'PARTIAL', reason: 'Return early.' })
+      .success,
+  ).toBe(false);
+  expect(
+    leaveCancellationRequestSchema.safeParse({
+      scopeType: 'PARTIAL',
+      reason: 'Return early.',
+      scopes: [{ allocationLineId, dateFrom: '2026-06-03', dateTo: '2026-06-02', quantity: '1' }],
+    }).success,
+  ).toBe(false);
+  expect(
+    leaveCancellationRequestSchema.safeParse({
+      scopeType: 'PARTIAL',
+      reason: 'Return early.',
+      scopes: [
+        {
+          allocationLineId,
+          dateFrom: '2026-06-02',
+          dateTo: '2026-06-02',
+          quantity: '1',
+          leaveTypeId,
+        },
+      ],
+    }).success,
+  ).toBe(false);
+});
+
+it('requires a reason when rejecting a Leave Cancellation', () => {
+  expect(leaveCancellationDecisionSchema.safeParse({ decision: 'APPROVE' }).success).toBe(true);
+  expect(leaveCancellationDecisionSchema.safeParse({ decision: 'REJECT' }).success).toBe(false);
+  expect(
+    leaveCancellationDecisionSchema.safeParse({ decision: 'REJECT', comments: 'Still needed.' })
+      .success,
+  ).toBe(true);
 });

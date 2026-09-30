@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
@@ -30,6 +31,7 @@ import {
   type LeaveEligibilityDateFact,
   type LeaveEligibilityOutcome,
 } from './leave-eligibility';
+import { LeaveCancellationScopeError, planCancellationScopes } from './leave-cancellation-scope';
 import {
   LEAVE_APPLICATION_SUBMISSION_METHODS,
   type LeaveApplicationCertificationInput,
@@ -41,6 +43,8 @@ import {
   type LeaveApplicationSubmitInput,
   type LeaveApplicationWithdrawInput,
   type LeaveApprovalAllocationKind,
+  type LeaveCancellationDecisionInput,
+  type LeaveCancellationRequestInput,
 } from './leave-applications.schemas';
 
 export interface LeaveApplicationPeriodSummary {
@@ -159,6 +163,11 @@ export interface LeaveApprovalStepSummary {
 
 const LEAVE_APPROVAL_EFFECT_KIND = 'LEAVE_APPLICATION';
 
+/** Fixed route code and subject type for Leave Cancellation approval. */
+export const LEAVE_CANCELLATION_ROUTE_CODE = 'LEAVE_CANCELLATION';
+const LEAVE_CANCELLATION_SUBJECT_TYPE = 'LEAVE_CANCELLATION';
+const CANCELLATION_EVIDENCE_PURPOSE = 'CANCELLATION_EVIDENCE';
+
 const LEAVE_REVIEW_PERMISSIONS = [
   'leave.credits.certify',
   'leave.applications.recommend',
@@ -259,6 +268,37 @@ export interface LeaveApplicationVersionSummary {
   approvalSteps: LeaveApprovalStepSummary[];
 }
 
+export interface LeaveCancellationScopeSummary {
+  id: string;
+  allocationLineId: string;
+  allocationKind: string;
+  unitCode: string;
+  dateFrom: string;
+  dateTo: string;
+  quantity: string;
+}
+
+export interface LeaveCancellationSummary {
+  id: string;
+  leaveApplicationVersionId: string;
+  priorStatus: string;
+  scopeType: string;
+  reason: string;
+  approvalRouteVersionId: string;
+  approvalRouteCode: string;
+  approvalRequestId: string;
+  approvalRequestStatus: string;
+  decisionStatus: string;
+  effectStatus: string;
+  lastEffectFailureCode: string | null;
+  requestedByMembershipId: string;
+  requestedByName: string | null;
+  requestedAt: string;
+  documents: LeaveApplicationDocumentSummary[];
+  scopes: LeaveCancellationScopeSummary[];
+  approvalSteps: LeaveApprovalStepSummary[];
+}
+
 export interface LeaveApplicationHistoryEntry {
   id: string;
   action: string;
@@ -293,6 +333,7 @@ export interface LeaveApplicationDetail {
   draftPeriods: LeaveApplicationPeriodSummary[];
   draftDocuments: LeaveApplicationDocumentSummary[];
   versions: LeaveApplicationVersionSummary[];
+  cancellations: LeaveCancellationSummary[];
   history: LeaveApplicationHistoryEntry[];
 }
 
@@ -460,6 +501,28 @@ const approvalDecisionSelect = {
   decidedBy: { select: { employee: { select: { legalName: true } } } },
 } satisfies Prisma.ApprovalDecisionSelect;
 
+const approvalRequestSelect = {
+  status: true,
+  steps: {
+    orderBy: { stepNo: 'asc' as const },
+    select: {
+      id: true,
+      stepNo: true,
+      status: true,
+      requiredPermission: true,
+      approvePermission: true,
+      returnPermission: true,
+      rejectPermission: true,
+      assignedRoleCode: true,
+      assignedMembershipId: true,
+      requiresSeparateReview: true,
+      activatedAt: true,
+      completedAt: true,
+      decisions: { orderBy: { decidedAt: 'asc' as const }, select: approvalDecisionSelect },
+    },
+  },
+} satisfies Prisma.ApprovalRequestSelect;
+
 const versionSelect = {
   id: true,
   versionNo: true,
@@ -480,29 +543,7 @@ const versionSelect = {
   submittedAt: true,
   leaveType: { select: { code: true, name: true } },
   approvalRouteVersion: { select: { routeCode: true } },
-  approvalRequest: {
-    select: {
-      status: true,
-      steps: {
-        orderBy: { stepNo: 'asc' as const },
-        select: {
-          id: true,
-          stepNo: true,
-          status: true,
-          requiredPermission: true,
-          approvePermission: true,
-          returnPermission: true,
-          rejectPermission: true,
-          assignedRoleCode: true,
-          assignedMembershipId: true,
-          requiresSeparateReview: true,
-          activatedAt: true,
-          completedAt: true,
-          decisions: { orderBy: { decidedAt: 'asc' as const }, select: approvalDecisionSelect },
-        },
-      },
-    },
-  },
+  approvalRequest: { select: approvalRequestSelect },
   submittedBy: { select: { employee: { select: { legalName: true } } } },
   periods: { orderBy: { sequenceNo: 'asc' as const }, select: draftPeriodSelect },
   documents: {
@@ -899,28 +940,110 @@ function versionSummary(record: VersionRecord): LeaveApplicationVersionSummary {
           lines: record.approvalAllocation.lines.map(allocationLineSummary),
         }
       : null,
-    approvalSteps: record.approvalRequest.steps.map((step) => ({
-      id: step.id,
-      stepNo: step.stepNo,
-      status: step.status,
-      requiredPermission: step.requiredPermission,
-      approvePermission: step.approvePermission,
-      returnPermission: step.returnPermission,
-      rejectPermission: step.rejectPermission,
-      assignedRoleCode: step.assignedRoleCode,
-      assignedMembershipId: step.assignedMembershipId,
-      requiresSeparateReview: step.requiresSeparateReview,
-      activatedAt: step.activatedAt ? formatDateTime(step.activatedAt) : null,
-      completedAt: step.completedAt ? formatDateTime(step.completedAt) : null,
-      decisions: step.decisions.map((decision) => ({
-        id: decision.id,
-        decidedByMembershipId: decision.decidedByMembershipId,
-        decidedByName: decision.decidedBy.employee?.legalName ?? null,
-        decision: decision.decision,
-        comments: decision.comments,
-        decidedAt: formatDateTime(decision.decidedAt),
-      })),
+    approvalSteps: record.approvalRequest.steps.map(approvalStepSummary),
+  };
+}
+
+function approvalStepSummary(
+  step: Prisma.ApprovalRequestGetPayload<{ select: typeof approvalRequestSelect }>['steps'][number],
+): LeaveApprovalStepSummary {
+  return {
+    id: step.id,
+    stepNo: step.stepNo,
+    status: step.status,
+    requiredPermission: step.requiredPermission,
+    approvePermission: step.approvePermission,
+    returnPermission: step.returnPermission,
+    rejectPermission: step.rejectPermission,
+    assignedRoleCode: step.assignedRoleCode,
+    assignedMembershipId: step.assignedMembershipId,
+    requiresSeparateReview: step.requiresSeparateReview,
+    activatedAt: step.activatedAt ? formatDateTime(step.activatedAt) : null,
+    completedAt: step.completedAt ? formatDateTime(step.completedAt) : null,
+    decisions: step.decisions.map((decision) => ({
+      id: decision.id,
+      decidedByMembershipId: decision.decidedByMembershipId,
+      decidedByName: decision.decidedBy.employee?.legalName ?? null,
+      decision: decision.decision,
+      comments: decision.comments,
+      decidedAt: formatDateTime(decision.decidedAt),
     })),
+  };
+}
+
+const cancellationSelect = {
+  id: true,
+  leaveApplicationVersionId: true,
+  priorStatus: true,
+  scopeType: true,
+  reason: true,
+  approvalRouteVersionId: true,
+  approvalRequestId: true,
+  decisionStatus: true,
+  effectStatus: true,
+  lastEffectFailureCode: true,
+  requestedByMembershipId: true,
+  requestedAt: true,
+  approvalRouteVersion: { select: { routeCode: true } },
+  approvalRequest: { select: approvalRequestSelect },
+  requestedBy: { select: { employee: { select: { legalName: true } } } },
+  documents: {
+    orderBy: [{ purposeCode: 'asc' as const }, { id: 'asc' as const }],
+    select: {
+      id: true,
+      documentVersionId: true,
+      purposeCode: true,
+      documentVersion: {
+        select: {
+          versionNo: true,
+          document: { select: { documentNo: true, documentType: true } },
+        },
+      },
+    },
+  },
+  scopes: {
+    orderBy: [{ dateFrom: 'asc' as const }, { id: 'asc' as const }],
+    select: {
+      id: true,
+      approvalAllocationLineId: true,
+      dateFrom: true,
+      dateTo: true,
+      quantity: true,
+      approvalAllocationLine: { select: { allocationKind: true, unitCode: true } },
+    },
+  },
+} satisfies Prisma.LeaveCancellationSelect;
+
+function cancellationSummary(
+  record: Prisma.LeaveCancellationGetPayload<{ select: typeof cancellationSelect }>,
+): LeaveCancellationSummary {
+  return {
+    id: record.id,
+    leaveApplicationVersionId: record.leaveApplicationVersionId,
+    priorStatus: record.priorStatus,
+    scopeType: record.scopeType,
+    reason: record.reason,
+    approvalRouteVersionId: record.approvalRouteVersionId,
+    approvalRouteCode: record.approvalRouteVersion.routeCode,
+    approvalRequestId: record.approvalRequestId,
+    approvalRequestStatus: record.approvalRequest.status,
+    decisionStatus: record.decisionStatus,
+    effectStatus: record.effectStatus,
+    lastEffectFailureCode: record.lastEffectFailureCode,
+    requestedByMembershipId: record.requestedByMembershipId,
+    requestedByName: record.requestedBy.employee?.legalName ?? null,
+    requestedAt: formatDateTime(record.requestedAt),
+    documents: record.documents.map(documentSummary),
+    scopes: record.scopes.map((scope) => ({
+      id: scope.id,
+      allocationLineId: scope.approvalAllocationLineId,
+      allocationKind: scope.approvalAllocationLine.allocationKind,
+      unitCode: scope.approvalAllocationLine.unitCode,
+      dateFrom: formatDate(scope.dateFrom),
+      dateTo: formatDate(scope.dateTo),
+      quantity: formatQuantity(scope.quantity),
+    })),
+    approvalSteps: record.approvalRequest.steps.map(approvalStepSummary),
   };
 }
 
@@ -1045,6 +1168,18 @@ export class LeaveApplicationsService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    this.completionRegistry.register(
+      LEAVE_CANCELLATION_SUBJECT_TYPE,
+      (transaction, _context, request) => this.assertCancellationEffect(transaction, request),
+    );
+    this.completionRegistry.registerDecision(
+      LEAVE_CANCELLATION_SUBJECT_TYPE,
+      (transaction, _context, request, outcome) => {
+        // A cancellation has no return path: the Approver approves or rejects.
+        if (outcome === 'RETURNED') throw routeInvalid();
+        return this.assertCancellationEffect(transaction, request);
+      },
+    );
     this.completionRegistry.register('LEAVE_APPLICATION', (transaction, _context, request) =>
       this.assertApprovalEffect(transaction, request, ['FOR_APPROVAL']),
     );
@@ -1759,6 +1894,331 @@ export class LeaveApplicationsService implements OnModuleInit {
   }
 
   /**
+   * Requests cancellation of approved or posted leave. The cancellation is its
+   * own record with an exact scope over the approved allocation lines; the
+   * application projects CANCEL_REQUESTED while the bound cancellation route
+   * decides. Requesting never touches the ledger, commitments, or Attendance.
+   */
+  async requestCancellation(
+    context: RequestContext,
+    applicationId: string,
+    input: LeaveCancellationRequestInput,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(
+      context,
+      'leave.applications.request_cancel',
+      'LEAVE_APPLICATION_REQUEST_CANCEL_FORBIDDEN',
+    );
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({
+      command: 'LEAVE_APPLICATION_CANCELLATION_REQUESTED',
+      applicationId,
+      ...input,
+    });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_CANCELLATION_REQUESTED',
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      this.assertAccess(context, application, 'leave.applications.request_cancel');
+      if (application.status !== 'APPROVED' && application.status !== 'POSTED') {
+        throw workflowError('request cancellation', application.status);
+      }
+      const version = await this.requireVersion(transaction, context.agencyId, application);
+      const isEmployee = application.employee.memberships.some(
+        (membership) => membership.id === context.membershipId,
+      );
+      let evidenceVersionId: string | null = null;
+      if (input.evidenceDocumentId) {
+        evidenceVersionId = (
+          await this.resolveEvidenceVersion(transaction, context, input.evidenceDocumentId)
+        ).versionId;
+      } else if (!isEmployee) {
+        throw deficiency(
+          'LEAVE_CANCELLATION_EVIDENCE_REQUIRED',
+          'An Agency recorder must attach the exact cancellation request evidence.',
+        );
+      }
+      const approvedLines = version.approvalAllocation?.lines ?? [];
+      if (approvedLines.length === 0) {
+        throw deficiency(
+          'LEAVE_CANCELLATION_ALLOCATION_REQUIRED',
+          'The Leave Application has no approved allocation to cancel.',
+        );
+      }
+      let scopes: ReturnType<typeof planCancellationScopes>;
+      try {
+        scopes = planCancellationScopes(
+          input.scopeType,
+          approvedLines.map((line) => ({
+            id: line.id,
+            dateFrom: formatDate(line.dateFrom),
+            dateTo: formatDate(line.dateTo),
+            quantity: formatQuantity(line.quantity),
+            unitCode: line.unitCode,
+          })),
+          input.scopeType === 'PARTIAL' ? input.scopes : [],
+        );
+      } catch (error: unknown) {
+        if (error instanceof LeaveCancellationScopeError) {
+          throw new LeaveApplicationServiceError(
+            error.message,
+            400,
+            'LEAVE_CANCELLATION_SCOPE_INVALID',
+          );
+        }
+        throw error;
+      }
+
+      const effectiveDate = manilaToday();
+      const route = await this.approvalsService.resolveActiveRouteInTransaction(
+        transaction,
+        context,
+        LEAVE_CANCELLATION_ROUTE_CODE,
+        effectiveDate,
+      );
+      const steps = route.stepDefinition.steps;
+      if (steps.length !== 1 || steps[0]!.requiredPermission !== 'leave.applications.cancel') {
+        throw routeInvalid();
+      }
+      const cancellationId = randomUUID();
+      const request = await this.approvalsService.createRequestInTransaction(
+        transaction,
+        context,
+        {
+          routeCode: LEAVE_CANCELLATION_ROUTE_CODE,
+          subjectType: LEAVE_CANCELLATION_SUBJECT_TYPE,
+          subjectId: cancellationId,
+          effectiveDate,
+        },
+        idempotencyKey ? `${idempotencyKey}:approval-create` : undefined,
+        route.id,
+      );
+      await this.approvalsService.submitInTransaction(
+        transaction,
+        context,
+        request.id,
+        idempotencyKey ? `${idempotencyKey}:approval-submit` : undefined,
+        { requireDrafter: false },
+      );
+      await transaction.leaveCancellation.create({
+        data: {
+          id: cancellationId,
+          agencyId: context.agencyId,
+          leaveApplicationId: applicationId,
+          leaveApplicationVersionId: version.id,
+          priorStatus: application.status,
+          scopeType: input.scopeType,
+          reason: input.reason,
+          approvalRouteVersionId: route.id,
+          approvalRequestId: request.id,
+          decisionStatus: 'REQUESTED',
+          effectStatus: 'NOT_READY',
+          requestedByMembershipId: context.membershipId,
+        },
+      });
+      await transaction.leaveCancellationScope.createMany({
+        data: scopes.map((scope) => ({
+          agencyId: context.agencyId,
+          leaveCancellationId: cancellationId,
+          approvalAllocationLineId: scope.allocationLineId,
+          dateFrom: toDatabaseDate(scope.dateFrom),
+          dateTo: toDatabaseDate(scope.dateTo),
+          quantity: new Prisma.Decimal(scope.quantity),
+        })),
+      });
+      if (evidenceVersionId) {
+        await transaction.leaveCancellationDocument.create({
+          data: {
+            agencyId: context.agencyId,
+            leaveCancellationId: cancellationId,
+            documentVersionId: evidenceVersionId,
+            purposeCode: CANCELLATION_EVIDENCE_PURPOSE,
+          },
+        });
+      }
+      await transaction.leaveApplication.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+        data: { status: 'CANCEL_REQUESTED' },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'LEAVE_APPLICATION_CANCELLATION_REQUESTED',
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: 'CANCEL_REQUESTED',
+        reason: input.reason,
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          versionId: version.id,
+          cancellationId,
+          scopeType: input.scopeType,
+          approvalRequestId: request.id,
+          approvalRouteVersionId: route.id,
+          evidenceDocumentVersionId: evidenceVersionId,
+          scopes: scopes.map((scope) => ({ ...scope })),
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  /**
+   * Records the Approver's decision on the open Leave Cancellation. Approval
+   * marks the decision approved with effects pending and leaves the application
+   * CANCEL_REQUESTED; rejection returns it to its exact prior state. Neither
+   * touches the ledger, commitments, or Attendance.
+   */
+  async decideCancellation(
+    context: RequestContext,
+    applicationId: string,
+    input: LeaveCancellationDecisionInput,
+    rawIdempotencyKey?: string,
+  ): Promise<LeaveApplicationDetail> {
+    const action = input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    this.assertPermission(
+      context,
+      input.decision === 'APPROVE'
+        ? 'leave.applications.cancel'
+        : 'leave.applications.reject_cancel',
+      `LEAVE_APPLICATION_CANCELLATION_${action}_FORBIDDEN`,
+    );
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const fingerprint = canonicalJson({
+      command: `LEAVE_APPLICATION_CANCELLATION_${action}`,
+      applicationId,
+      ...input,
+    });
+    return withDatabaseContext(databaseContext(context, true), async (transaction) => {
+      if (idempotencyKey) {
+        const completed = await this.completedWrite(transaction, context, {
+          action: `LEAVE_APPLICATION_CANCELLATION_${action}`,
+          entityId: applicationId,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          const detail = await this.detailInTransaction(transaction, context, applicationId);
+          if (!detail) throw idempotencyConflict();
+          return detail;
+        }
+      }
+      const application = await this.lockApplication(transaction, context.agencyId, applicationId);
+      if (!application) throw applicationNotFound();
+      const cancellation =
+        application.status === 'CANCEL_REQUESTED'
+          ? await transaction.leaveCancellation.findFirst({
+              where: {
+                agencyId: context.agencyId,
+                leaveApplicationId: applicationId,
+                decisionStatus: 'REQUESTED',
+              },
+              select: {
+                id: true,
+                priorStatus: true,
+                approvalRequestId: true,
+                requestedByMembershipId: true,
+              },
+            })
+          : null;
+      if (!cancellation) {
+        throw workflowError(
+          input.decision === 'APPROVE' ? 'approve a cancellation' : 'reject a cancellation',
+          application.status,
+        );
+      }
+      if (
+        application.employee.memberships.some(({ id }) => id === context.membershipId) ||
+        cancellation.requestedByMembershipId === context.membershipId
+      ) {
+        throw new LeaveApplicationServiceError(
+          'A person may not decide a cancellation they requested or that concerns their own leave; route it to another authorized approver.',
+          403,
+          'LEAVE_APPLICATION_SEPARATION_REQUIRED',
+        );
+      }
+      const step = await this.requireActiveStep(
+        transaction,
+        context.agencyId,
+        cancellation.approvalRequestId,
+        ['leave.applications.cancel'],
+      );
+      const summary = await this.approvalsService.decideInTransaction(
+        transaction,
+        context,
+        cancellation.approvalRequestId,
+        input.decision,
+        input.comments,
+        idempotencyKey ? `${idempotencyKey}:approval-decide` : undefined,
+        { kind: LEAVE_CANCELLATION_SUBJECT_TYPE, payload: { command: input.decision } },
+      );
+      if (summary.status !== (input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED')) {
+        throw routeInvalid();
+      }
+      const decisionId =
+        input.decision === 'APPROVE'
+          ? stepApprovalDecisionId(summary, step.stepNo, context.membershipId)
+          : null;
+      const nextStatus =
+        input.decision === 'APPROVE' ? 'CANCEL_REQUESTED' : cancellation.priorStatus;
+      await transaction.leaveCancellation.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: cancellation.id } },
+        data:
+          input.decision === 'APPROVE'
+            ? { decisionStatus: 'APPROVED', effectStatus: 'PENDING' }
+            : { decisionStatus: 'REJECTED' },
+      });
+      if (nextStatus !== application.status) {
+        await transaction.leaveApplication.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+          data: { status: nextStatus },
+        });
+      }
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: `LEAVE_APPLICATION_CANCELLATION_${action}`,
+        entityType: 'LeaveApplication',
+        entityId: applicationId,
+        previousStatus: application.status,
+        newStatus: nextStatus,
+        reason: input.comments ?? null,
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: {
+          fingerprint,
+          applicationId,
+          cancellationId: cancellation.id,
+          decisionId,
+          priorStatus: cancellation.priorStatus,
+        },
+      });
+      return (await this.detailInTransaction(transaction, context, applicationId))!;
+    });
+  }
+
+  /**
    * The Employee submits the case; the Agency routes it into credit
    * certification by activating the first bound Approval Step. Routing is a
    * separate command so a successful submission never depends on route
@@ -2367,7 +2827,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     ) {
       return null;
     }
-    const [draftPeriods, draftDocuments, versions, events] = await Promise.all([
+    const [draftPeriods, draftDocuments, versions, cancellations, events] = await Promise.all([
       transaction.leaveApplicationDraftPeriod.findMany({
         where: { agencyId: context.agencyId, leaveApplicationId: applicationId },
         orderBy: { sequenceNo: 'asc' },
@@ -2382,6 +2842,11 @@ export class LeaveApplicationsService implements OnModuleInit {
         where: { agencyId: context.agencyId, leaveApplicationId: applicationId },
         orderBy: { versionNo: 'asc' },
         select: versionSelect,
+      }),
+      transaction.leaveCancellation.findMany({
+        where: { agencyId: context.agencyId, leaveApplicationId: applicationId },
+        orderBy: { requestedAt: 'asc' },
+        select: cancellationSelect,
       }),
       transaction.auditEvent.findMany({
         where: {
@@ -2408,6 +2873,7 @@ export class LeaveApplicationsService implements OnModuleInit {
       draftPeriods: draftPeriods.map(periodSummary),
       draftDocuments: draftDocuments.map(documentSummary),
       versions: versions.map(versionSummary),
+      cancellations: cancellations.map(cancellationSummary),
       history: events.map((event) => ({
         id: event.id,
         action: event.action,
@@ -2899,6 +3365,34 @@ export class LeaveApplicationsService implements OnModuleInit {
     ) {
       throw routeInvalid();
     }
+  }
+
+  /**
+   * Cancellation decisions run only through the Leave Application authority,
+   * against the one open cancellation of an application awaiting decision.
+   */
+  private async assertCancellationEffect(
+    transaction: Prisma.TransactionClient,
+    request: ApprovalCompletionRequest,
+  ): Promise<void> {
+    if (request.effectContext?.kind !== LEAVE_CANCELLATION_SUBJECT_TYPE) {
+      throw new LeaveApplicationServiceError(
+        'Leave Cancellation decisions must be recorded through the Leave Application authority.',
+        409,
+        'LEAVE_APPLICATION_APPROVAL_EFFECT_REQUIRED',
+      );
+    }
+    const cancellation = await transaction.leaveCancellation.findFirst({
+      where: {
+        agencyId: request.agencyId,
+        id: request.subjectId,
+        approvalRequestId: request.approvalRequestId,
+        decisionStatus: 'REQUESTED',
+        leaveApplication: { status: 'CANCEL_REQUESTED' },
+      },
+      select: { id: true },
+    });
+    if (!cancellation) throw routeInvalid();
   }
 
   private async requireVersion(

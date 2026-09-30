@@ -178,6 +178,52 @@ export const leaveApplicationReturnSchema = z
   })
   .strict();
 
+export const leaveCancellationScopeSchema = z
+  .object({
+    allocationLineId: leaveApplicationIdSchema,
+    dateFrom: leaveApplicationDateSchema,
+    dateTo: leaveApplicationDateSchema,
+    quantity: leaveApplicationQuantitySchema,
+  })
+  .strict()
+  .refine(({ dateFrom, dateTo }) => dateTo >= dateFrom, {
+    message: 'The cancelled end date cannot precede its start date.',
+    path: ['dateTo'],
+  });
+
+/**
+ * A whole cancellation derives its scope from every approved allocation line.
+ * A partial cancellation names each cancelled line, dates, and quantity.
+ */
+export const leaveCancellationRequestSchema = z.discriminatedUnion('scopeType', [
+  z
+    .object({
+      scopeType: z.literal('WHOLE'),
+      reason: leaveApplicationReasonSchema,
+      evidenceDocumentId: leaveApplicationIdSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      scopeType: z.literal('PARTIAL'),
+      reason: leaveApplicationReasonSchema,
+      evidenceDocumentId: leaveApplicationIdSchema.optional(),
+      scopes: z.array(leaveCancellationScopeSchema).min(1).max(80),
+    })
+    .strict(),
+]);
+
+export const leaveCancellationDecisionSchema = z
+  .object({
+    decision: z.enum(['APPROVE', 'REJECT']),
+    comments: leaveApplicationReasonSchema.optional(),
+  })
+  .strict()
+  .refine(({ decision, comments }) => decision !== 'REJECT' || comments !== undefined, {
+    message: 'A rejection requires a reason.',
+    path: ['comments'],
+  });
+
 export const leaveApplicationListSchema = z
   .object({
     employeeId: leaveApplicationIdSchema.optional(),
@@ -199,3 +245,5 @@ export type LeaveApplicationRecommendationInput = z.infer<
 >;
 export type LeaveApplicationDecisionInput = z.infer<typeof leaveApplicationDecisionSchema>;
 export type LeaveApplicationReturnInput = z.infer<typeof leaveApplicationReturnSchema>;
+export type LeaveCancellationRequestInput = z.infer<typeof leaveCancellationRequestSchema>;
+export type LeaveCancellationDecisionInput = z.infer<typeof leaveCancellationDecisionSchema>;

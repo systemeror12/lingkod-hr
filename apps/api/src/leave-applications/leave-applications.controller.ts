@@ -35,6 +35,8 @@ import {
   leaveApplicationReturnSchema,
   leaveApplicationSubmitSchema,
   leaveApplicationWithdrawSchema,
+  leaveCancellationDecisionSchema,
+  leaveCancellationRequestSchema,
 } from './leave-applications.schemas';
 import {
   LeaveApplicationServiceError,
@@ -225,6 +227,55 @@ export class LeaveApplicationsController {
     try {
       return new LeaveApplicationDetailDto(
         await this.service.withdraw(context, parsedId.data, parsed.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/cancellation-requests')
+  @RequirePermission('leave.applications.request_cancel')
+  async requestCancellation(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsed = leaveCancellationRequestSchema.safeParse(body);
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.requestCancellation(context, parsedId.data, parsed.data, parsedKey),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/leave-applications/:applicationId/cancellation-decisions')
+  // The service enforces the permission that matches the decision: `cancel` to
+  // approve and `reject_cancel` to reject.
+  async decideCancellation(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsed = leaveCancellationDecisionSchema.safeParse(body);
+    if (!parsedId.success) throw this.notFound(context);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.decideCancellation(context, parsedId.data, parsed.data, parsedKey),
       );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);

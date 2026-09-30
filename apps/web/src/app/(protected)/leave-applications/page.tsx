@@ -66,6 +66,9 @@ export default async function LeaveApplicationsPage() {
       canApprove={hasPermission(session, 'leave.applications.approve')}
       canReject={hasPermission(session, 'leave.applications.reject')}
       canReturn={hasPermission(session, 'leave.applications.return')}
+      canRequestCancel={hasPermission(session, 'leave.applications.request_cancel')}
+      canCancel={hasPermission(session, 'leave.applications.cancel')}
+      canRejectCancel={hasPermission(session, 'leave.applications.reject_cancel')}
       initial={list as LeaveApplicationListResponse}
     />
   );
