@@ -188,8 +188,10 @@ export function AttendanceContextWorkspace({
   const [busy, setBusy] = useState(false);
   const optionsRequested = useRef(false);
 
+  const showsRecordForm = canCreate && view === 'form' && (creating || !recordId);
+
   useEffect(() => {
-    if (!canCreate || view !== 'form' || optionsRequested.current) return;
+    if (!showsRecordForm || optionsRequested.current) return;
     optionsRequested.current = true;
     void request('/employees')
       .then((value) => {
@@ -199,7 +201,7 @@ export function AttendanceContextWorkspace({
         optionsRequested.current = false;
         setError(failure instanceof Error ? failure.message : 'Loading employees failed.');
       });
-  }, [canCreate, view]);
+  }, [showsRecordForm]);
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch('/api/v1/agencies/' + agencyId + path, {

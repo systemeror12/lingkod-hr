@@ -82,3 +82,15 @@ test('reports a saved record when the list refresh fails', async ({ page }) => {
   await expect(page.getByLabel('Reason')).toHaveValue('');
   expect(posts).toHaveLength(1);
 });
+
+test('Kanban shows the filters that shape it', async ({ page }) => {
+  await openRegister(page, '?view=kanban');
+  const cards = page.getByRole('button', { name: /Alex Rivera/ });
+  await expect(cards.first()).toBeVisible();
+
+  await page.getByLabel('Search').fill('no such record');
+  await expect(cards).toHaveCount(0);
+
+  await page.getByLabel('Search').fill('');
+  await expect(cards.first()).toBeVisible();
+});
