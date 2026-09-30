@@ -1,5 +1,12 @@
 import type { Metadata } from 'next';
 import { getConfig } from '@lingkod-hr/config';
+import {
+  InvitationKicker,
+  InvitationLayout,
+  InvitationTitle,
+} from '../../../components/invitation-layout';
+import { buttonVariants } from '../../../components/ui/button';
+import { cn } from '../../../lib/class-names';
 
 export const metadata: Metadata = { title: 'Invitation handoff' };
 
@@ -17,65 +24,42 @@ export default async function InvitationTransitionPage({
   apiLoginUrl.searchParams.set('invitation', token);
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-canvas px-5 py-10 text-ink">
-      <section
-        className="grid w-full max-w-[540px] gap-5 rounded-[5px] border border-line bg-paper p-7 shadow-[0_18px_55px_rgb(23_32_51/8%)] min-[621px]:p-10"
-        aria-labelledby="invitation-title"
-      >
-        <div className="grid size-9 place-items-center rounded-[3px] bg-midnight text-sm font-bold text-paper">
-          L
-        </div>
-        <div className="grid gap-2">
-          <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-            LingkodHR invitation
-          </p>
-          <h1
-            className="m-0 text-[clamp(25px,4vw,34px)] leading-[1.12] font-[680] tracking-[-0.03em] text-midnight"
-            id="invitation-title"
-          >
-            You’re about to continue to secure sign-in
-          </h1>
-          <p className="m-0 text-sm leading-[1.65] text-muted">
-            LingkodHR will now hand you to the approved identity provider. Use the verified email
-            address that received this invitation. Your Agency access takes effect only after the
-            invitation is accepted.
-          </p>
-        </div>
-        <a
-          className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white no-underline hover:bg-[#365f96]"
-          href={apiLoginUrl.toString()}
-        >
-          Continue to secure sign-in
-        </a>
-        <p className="m-0 text-xs leading-[1.55] text-muted">
-          This page does not collect credentials. The identity provider handles authentication and
-          verification.
+    <InvitationLayout labelledBy="invitation-title" showMark>
+      <div className="grid gap-2">
+        <InvitationKicker>LingkodHR invitation</InvitationKicker>
+        <InvitationTitle id="invitation-title">
+          You’re about to continue to secure sign-in
+        </InvitationTitle>
+        <p className="m-0 text-body text-ink-muted">
+          LingkodHR will now hand you to the approved identity provider. Use the verified email
+          address that received this invitation. Your Agency access takes effect only after the
+          invitation is accepted.
         </p>
-      </section>
-    </main>
+      </div>
+      <a
+        className={cn(buttonVariants({ variant: 'primary' }), 'min-h-11')}
+        href={apiLoginUrl.toString()}
+      >
+        Continue to secure sign-in
+      </a>
+      <p className="m-0 text-caption text-ink-muted">
+        This page does not collect credentials. The identity provider handles authentication and
+        verification.
+      </p>
+    </InvitationLayout>
   );
 }
 
 function RecoverySurface() {
   return (
-    <main className="grid min-h-dvh place-items-center bg-canvas px-5 py-10 text-ink">
-      <section
-        className="grid w-full max-w-[540px] gap-4 rounded-[5px] border border-line bg-paper p-7 min-[621px]:p-10"
-        aria-labelledby="invitation-recovery-title"
-      >
-        <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-          Invitation
-        </p>
-        <h1
-          className="m-0 text-2xl font-[680] tracking-[-0.025em] text-midnight"
-          id="invitation-recovery-title"
-        >
-          This invitation could not be opened
-        </h1>
-        <p className="m-0 text-sm leading-[1.65] text-muted">
-          Request a new invitation from your Agency Administrator. No access was granted.
-        </p>
-      </section>
-    </main>
+    <InvitationLayout labelledBy="invitation-recovery-title">
+      <InvitationKicker>Invitation</InvitationKicker>
+      <InvitationTitle id="invitation-recovery-title">
+        This invitation could not be opened
+      </InvitationTitle>
+      <p className="m-0 text-body text-ink-muted">
+        Request a new invitation from your Agency Administrator. No access was granted.
+      </p>
+    </InvitationLayout>
   );
 }
