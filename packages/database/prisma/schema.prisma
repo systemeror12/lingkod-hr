@@ -138,6 +138,7 @@ model Agency {
   leaveRecommendations          LeaveRecommendation[]
   leaveApprovalAllocations      LeaveApprovalAllocation[]
   leaveApprovalAllocationLines  LeaveApprovalAllocationLine[]
+  leaveCancellationEffects      LeaveCancellationEffect[]
   leaveCancellations            LeaveCancellation[]
   leaveCancellationDocuments    LeaveCancellationDocument[]
   leaveCancellationScopes       LeaveCancellationScope[]
@@ -4895,6 +4896,7 @@ model LeaveCancellation {
   requestedByMembershipId    String    @map("requested_by_membership_id") @db.Uuid
   requestedAt                DateTime  @default(now()) @map("requested_at") @db.Timestamptz(6)
   lastEffectFailureCode      String?   @map("last_effect_failure_code") @db.Citext
+  lastEffectFailureKind      String?   @map("last_effect_failure_kind")
 
   agency                 Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   leaveApplication       LeaveApplication          @relation(fields: [agencyId, leaveApplicationId], references: [agencyId, id], onDelete: Restrict)
@@ -4903,6 +4905,7 @@ model LeaveCancellation {
   approvalRequest        ApprovalRequest           @relation("LeaveCancellationApprovalRequest", fields: [agencyId, approvalRequestId], references: [agencyId, id], onDelete: Restrict)
   requestedBy            AgencyMembership          @relation("LeaveCancellationRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   documents              LeaveCancellationDocument[]
+  effects                LeaveCancellationEffect[]
   scopes                 LeaveCancellationScope[]
 
   @@unique([approvalRequestId])
@@ -4943,4 +4946,22 @@ model LeaveCancellationScope {
   @@unique([leaveCancellationId, approvalAllocationLineId])
   @@unique([agencyId, id])
   @@map("leave_cancellation_scopes")
+}
+
+model LeaveCancellationEffect {
+  id                  String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId            String @map("agency_id") @db.Uuid
+  leaveCancellationId String @map("leave_cancellation_id") @db.Uuid
+  effectKind          String @map("effect_kind")
+  effectKey           String @map("effect_key") @db.Citext
+  ownerRecordId       String @map("owner_record_id") @db.Uuid
+  ownerStatus         String @map("owner_status") @db.Citext
+
+  agency            Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveCancellation LeaveCancellation @relation(fields: [agencyId, leaveCancellationId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveCancellationId, effectKey])
+  @@unique([agencyId, effectKind, ownerRecordId])
+  @@unique([agencyId, id])
+  @@map("leave_cancellation_effects")
 }

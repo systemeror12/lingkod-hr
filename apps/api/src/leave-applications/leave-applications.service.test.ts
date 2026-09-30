@@ -211,3 +211,12 @@ it('requires the permission that matches the cancellation decision', async () =>
     statusCode: 403,
   });
 });
+
+it('requires leave.applications.apply_cancellation before applying effects', async () => {
+  await expect(
+    service().applyCancellation(context([]), applicationId, documentId, 'apply-cancellation'),
+  ).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_APPLY_CANCELLATION_FORBIDDEN',
+    statusCode: 403,
+  });
+});

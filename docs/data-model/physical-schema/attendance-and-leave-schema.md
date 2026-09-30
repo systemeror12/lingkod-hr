@@ -1346,6 +1346,7 @@ CREATE TABLE leave_cancellations (
   requested_by_membership_id uuid NOT NULL,
   requested_at timestamptz NOT NULL DEFAULT now(),
   last_effect_failure_code citext,
+  last_effect_failure_kind text CHECK (last_effect_failure_kind IN ('RETRYABLE','BLOCKING')),
   FOREIGN KEY (agency_id, leave_application_id)
     REFERENCES leave_applications (agency_id, id),
   FOREIGN KEY (
@@ -1484,8 +1485,25 @@ requires `leave.applications.cancel`, and projects the application
 `CANCEL_REQUESTED`. Only one cancellation per application may await decision.
 Approval sets `decision_status = APPROVED` and `effect_status = PENDING` and
 leaves the application `CANCEL_REQUESTED`; it creates no ledger, commitment,
-Attendance, or Payroll effect. `leave_posting_id` and the effects table are
-added with Leave Posting and cancellation application.
+Attendance, or Payroll effect. Applying unposted cancellation uses
+`leave_cancellation_effects`; `leave_posting_id` is added with Leave Posting.
+
+For approved, unposted leave, the apply command requires
+`leave.applications.apply_cancellation` and an Idempotency-Key bound to the exact
+cancellation. It locks the application and accounts in stable order, validates
+active commitments against the approved allocation, releases affected
+commitments, and creates only a linked smaller successor for retained account
+quantities. A savepoint isolates effect writes; rolling back to it preserves key
+and application locks until the failure is recorded. It records immutable
+`COMMITMENT_RELEASE` effects with stable keys
+and the original commitment identifier, projects `APPLIED` and `CANCELLED`, and
+appends Audit Events and an outbox record in the same transaction. Whole
+cancellation releases all active commitments; non-credit cancellation needs no
+commitment effects. A failed attempt rolls back every effect before recording
+`FAILED`, `last_effect_failure_code`, and `last_effect_failure_kind`
+(`RETRYABLE` or `BLOCKING`) separately. A successful retry clears both failure
+fields. Applied cancellation records and effect links are immutable. This
+command fails closed for posted leave until its owner handoffs are implemented.
 
 A cancellation scope names the exact cancelled dates within one approval
 allocation line. A scope covering the whole line cancels its full quantity. A
