@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 import { expect, test, type APIResponse, type Browser, type Locator } from '@playwright/test';
 
 const foreignAgencyId = '11111111-1111-4111-8111-111111111111';
@@ -8,6 +10,14 @@ const foreignIdentifierId = '66666666-6666-4666-8666-666666666666';
 const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
 const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
 const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
+const rootEnvPath = resolve(__dirname, '../../../.env');
+// The API reads the root .env, so direct database checks must target the same database.
+const runtimeUrl =
+  process.env.DATABASE_URL ??
+  (existsSync(rootEnvPath)
+    ? parseEnv(readFileSync(rootEnvPath, 'utf8')).DATABASE_URL
+    : undefined) ??
+  'postgresql://hris_app:local_app@localhost:55432/hris';
 
 test.use({ trace: 'off' });
 
@@ -208,8 +218,6 @@ test('gates the representative protected personnel journey', async ({
     await page.request.get('/api/v1/auth/me', { headers: origin() }),
   );
   const agencyId = adminSession.agencyId;
-  const runtimeUrl =
-    process.env.DATABASE_URL ?? 'postgresql://hris_app:local_app@localhost:55432/hris';
   let employeeId = '';
   let baselineId = '';
   let pdsVersionId = '';

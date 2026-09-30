@@ -290,12 +290,12 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
 
   await page.goto('/audit');
   await expect(page.getByRole('heading', { name: 'Audit Log' })).toBeVisible();
-  const auditEvent = page
-    .getByRole('button')
+  const auditRow = page
+    .getByRole('row')
     .filter({ hasText: 'PLANTILLA_POSITION_ABOLISHED' })
     .first();
-  await expect(auditEvent).toContainText('VACANT → ABOLISHED');
-  await auditEvent.click();
+  await expect(auditRow).toContainText('VACANT → ABOLISHED');
+  await auditRow.getByRole('button', { name: 'PLANTILLA_POSITION_ABOLISHED' }).click();
   const auditDialog = page.getByRole('region', { name: 'Audit Event detail' });
   await expect(auditDialog).toContainText('PLANTILLA_POSITION_ABOLISHED');
   await expect(auditDialog).toContainText('ABOLISHED');
