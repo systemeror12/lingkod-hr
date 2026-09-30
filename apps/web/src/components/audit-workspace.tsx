@@ -233,7 +233,7 @@ export function AuditWorkspace({
                 </thead>
                 <tbody>
                   {events.map((event) => (
-                    <Tr key={event.id} selected={selectedId === event.id}>
+                    <Tr key={event.id}>
                       <RowHeader>
                         <button
                           className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-caption font-[600] text-primary hover:underline"
