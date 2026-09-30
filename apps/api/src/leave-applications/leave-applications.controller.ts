@@ -326,6 +326,43 @@ export class LeaveApplicationsController {
     }
   }
 
+  @Post(':agencyId/leave-applications/:applicationId/cancellations/:cancellationId/apply')
+  @RequirePermission('leave.applications.apply_cancellation')
+  async applyCancellation(
+    @Param('agencyId') agencyId: string,
+    @Param('applicationId') applicationId: string,
+    @Param('cancellationId') cancellationId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<LeaveApplicationDetailDto> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = leaveApplicationIdSchema.safeParse(applicationId);
+    const parsedCancellationId = leaveApplicationIdSchema.safeParse(cancellationId);
+    if (!parsedId.success || !parsedCancellationId.success) throw this.notFound(context);
+    const parsedKey = this.parseIdempotencyKey(idempotencyKey, context.requestId);
+    if (!parsedKey) {
+      throw new BadRequestException({
+        error: {
+          code: 'LEAVE_CANCELLATION_APPLY_KEY_REQUIRED',
+          message: 'An Idempotency-Key is required to apply a cancellation.',
+          requestId: context.requestId,
+        },
+      });
+    }
+    try {
+      return new LeaveApplicationDetailDto(
+        await this.service.applyCancellation(
+          context,
+          parsedId.data,
+          parsedCancellationId.data,
+          parsedKey,
+        ),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   @Post(':agencyId/leave-applications/:applicationId/routing')
   @RequirePermission('leave.applications.route')
   async route(

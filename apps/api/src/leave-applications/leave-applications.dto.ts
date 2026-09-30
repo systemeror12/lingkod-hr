@@ -11,6 +11,7 @@ import type {
   LeaveApprovalDecisionSummary,
   LeaveApprovalStepSummary,
   LeaveCalculationSegmentSummary,
+  LeaveCancellationEffectSummary,
   LeaveCancellationScopeSummary,
   LeaveCancellationSummary,
   LeaveCreditCertificationLineSummary,
@@ -268,6 +269,22 @@ export class LeaveCancellationScopeDto {
   }
 }
 
+export class LeaveCancellationEffectDto {
+  readonly id: string;
+  readonly effectKind: string;
+  readonly effectKey: string;
+  readonly ownerRecordId: string;
+  readonly ownerStatus: string;
+
+  constructor(effect: LeaveCancellationEffectSummary) {
+    this.id = effect.id;
+    this.effectKind = effect.effectKind;
+    this.effectKey = effect.effectKey;
+    this.ownerRecordId = effect.ownerRecordId;
+    this.ownerStatus = effect.ownerStatus;
+  }
+}
+
 export class LeaveCancellationDto {
   readonly id: string;
   readonly leaveApplicationVersionId: string;
@@ -281,6 +298,8 @@ export class LeaveCancellationDto {
   readonly decisionStatus: string;
   readonly effectStatus: string;
   readonly lastEffectFailureCode: string | null;
+  readonly lastEffectFailureKind: string | null;
+  readonly effects: LeaveCancellationEffectDto[];
   readonly requestedByMembershipId: string;
   readonly requestedByName: string | null;
   readonly requestedAt: string;
@@ -301,6 +320,8 @@ export class LeaveCancellationDto {
     this.decisionStatus = cancellation.decisionStatus;
     this.effectStatus = cancellation.effectStatus;
     this.lastEffectFailureCode = cancellation.lastEffectFailureCode;
+    this.lastEffectFailureKind = cancellation.lastEffectFailureKind;
+    this.effects = cancellation.effects.map((effect) => new LeaveCancellationEffectDto(effect));
     this.requestedByMembershipId = cancellation.requestedByMembershipId;
     this.requestedByName = cancellation.requestedByName;
     this.requestedAt = cancellation.requestedAt;

@@ -281,6 +281,14 @@ export interface LeaveCancellationScopeSummary {
   quantity: string;
 }
 
+export interface LeaveCancellationEffectSummary {
+  id: string;
+  effectKind: string;
+  effectKey: string;
+  ownerRecordId: string;
+  ownerStatus: string;
+}
+
 export interface LeaveCancellationSummary {
   id: string;
   leaveApplicationVersionId: string;
@@ -294,10 +302,12 @@ export interface LeaveCancellationSummary {
   decisionStatus: string;
   effectStatus: string;
   lastEffectFailureCode: string | null;
+  lastEffectFailureKind: string | null;
   requestedByMembershipId: string;
   requestedByName: string | null;
   requestedAt: string;
   documents: LeaveApplicationDocumentSummary[];
+  effects: LeaveCancellationEffectSummary[];
   scopes: LeaveCancellationScopeSummary[];
   approvalSteps: LeaveApprovalStepSummary[];
 }
@@ -1009,6 +1019,7 @@ const cancellationSelect = {
   decisionStatus: true,
   effectStatus: true,
   lastEffectFailureCode: true,
+  lastEffectFailureKind: true,
   requestedByMembershipId: true,
   requestedAt: true,
   approvalRouteVersion: { select: { routeCode: true } },
@@ -1027,6 +1038,10 @@ const cancellationSelect = {
         },
       },
     },
+  },
+  effects: {
+    orderBy: { effectKey: 'asc' as const },
+    select: { id: true, effectKind: true, effectKey: true, ownerRecordId: true, ownerStatus: true },
   },
   scopes: {
     orderBy: [{ dateFrom: 'asc' as const }, { id: 'asc' as const }],
@@ -1057,10 +1072,12 @@ function cancellationSummary(
     decisionStatus: record.decisionStatus,
     effectStatus: record.effectStatus,
     lastEffectFailureCode: record.lastEffectFailureCode,
+    lastEffectFailureKind: record.lastEffectFailureKind,
     requestedByMembershipId: record.requestedByMembershipId,
     requestedByName: record.requestedBy.employee?.legalName ?? null,
     requestedAt: formatDateTime(record.requestedAt),
     documents: record.documents.map(documentSummary),
+    effects: record.effects,
     scopes: record.scopes.map((scope) => ({
       id: scope.id,
       allocationLineId: scope.approvalAllocationLineId,
@@ -1117,6 +1134,24 @@ function dateInvalid(): LeaveApplicationServiceError {
     400,
     'LEAVE_APPLICATION_DATE_INVALID',
   );
+}
+
+function cancellationApplyFailure(error: unknown): LeaveApplicationServiceError {
+  const blockingStorageFailure =
+    error instanceof Prisma.PrismaClientUnknownRequestError ||
+    (error instanceof Prisma.PrismaClientKnownRequestError &&
+      !['P1001', 'P1002', 'P1017', 'P2024', 'P2028', 'P2034'].includes(error.code));
+  return error instanceof LeaveApplicationServiceError
+    ? error
+    : new LeaveApplicationServiceError(
+        blockingStorageFailure
+          ? 'The cancellation is blocked by a storage integrity failure. Resolve it before retrying.'
+          : 'The cancellation could not be applied. Its effects were rolled back; retry the same command.',
+        blockingStorageFailure ? 409 : 503,
+        blockingStorageFailure
+          ? 'LEAVE_CANCELLATION_APPLY_BLOCKED'
+          : 'LEAVE_CANCELLATION_APPLY_RETRYABLE',
+      );
 }
 
 function idempotencyConflict(): LeaveApplicationServiceError {
@@ -2245,6 +2280,321 @@ export class LeaveApplicationsService implements OnModuleInit {
       });
       return (await this.detailInTransaction(transaction, context, applicationId))!;
     });
+  }
+
+  /** Applies the exact approved cancellation of leave that was never posted. */
+  async applyCancellation(
+    context: RequestContext,
+    applicationId: string,
+    cancellationId: string,
+    rawIdempotencyKey: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(
+      context,
+      'leave.applications.apply_cancellation',
+      'LEAVE_APPLICATION_APPLY_CANCELLATION_FORBIDDEN',
+    );
+    const idempotencyKey = rawIdempotencyKey.trim();
+    if (!idempotencyKey || idempotencyKey.length > 200) {
+      throw new LeaveApplicationServiceError(
+        'A bounded Idempotency-Key is required to apply a cancellation.',
+        400,
+        'LEAVE_CANCELLATION_APPLY_KEY_REQUIRED',
+      );
+    }
+    const action = 'LEAVE_APPLICATION_CANCELLATION_APPLIED';
+    const fingerprint = canonicalJson({ command: action, applicationId, cancellationId });
+    let eligibleAttempt = false;
+    const result = await withDatabaseContext(
+      requestDatabaseContext(context, 'leave-transition'),
+      async (transaction) => {
+        // Serialize key ownership across applications, then lock the exact application.
+        await this.lockCancellationApplyKey(transaction, context.agencyId, idempotencyKey);
+        const application = await this.lockApplication(
+          transaction,
+          context.agencyId,
+          applicationId,
+        );
+        if (!application) throw applicationNotFound();
+        this.assertAccess(context, application, 'leave.applications.apply_cancellation');
+        const completed = await this.completedWrite(transaction, context, {
+          action,
+          idempotencyKey,
+          fingerprint,
+        });
+        if (completed) {
+          return { detail: (await this.detailInTransaction(transaction, context, applicationId))! };
+        }
+        await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_FAILED',
+          idempotencyKey,
+          fingerprint,
+        });
+        const replayed = await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_REPLAYED',
+          idempotencyKey,
+          fingerprint,
+        });
+        if (replayed)
+          return { detail: (await this.detailInTransaction(transaction, context, applicationId))! };
+        const cancellation = await transaction.leaveCancellation.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            id: cancellationId,
+            leaveApplicationId: applicationId,
+          },
+          include: { scopes: true, approvalRequest: true },
+        });
+        if (!cancellation) throw applicationNotFound();
+        if (cancellation.effectStatus === 'APPLIED') {
+          await this.recordCancellationApplyReplay(
+            transaction,
+            context,
+            application,
+            cancellationId,
+            idempotencyKey,
+            fingerprint,
+          );
+          return { detail: (await this.detailInTransaction(transaction, context, applicationId))! };
+        }
+        if (
+          application.status !== 'CANCEL_REQUESTED' ||
+          cancellation.decisionStatus !== 'APPROVED' ||
+          cancellation.approvalRequest.status !== 'APPROVED'
+        ) {
+          throw workflowError('apply a cancellation', application.status);
+        }
+        eligibleAttempt = true;
+        // Keep key and application locks while rolling back authoritative effects,
+        // so another command cannot claim this key before the failure is recorded.
+        await transaction.$executeRaw`SAVEPOINT leave_cancellation_effects`;
+        try {
+          if (cancellation.priorStatus !== 'APPROVED') {
+            throw deficiency(
+              'LEAVE_CANCELLATION_POSTED_EFFECTS_REQUIRED',
+              'Posted leave requires ledger reversals and Attendance and Payroll handoffs.',
+            );
+          }
+          const version = await this.requireVersion(transaction, context.agencyId, application);
+          if (
+            version.id !== cancellation.leaveApplicationVersionId ||
+            !version.approvalAllocation
+          ) {
+            throw deficiency(
+              'LEAVE_CANCELLATION_SOURCE_INVALID',
+              'The exact approved version is required.',
+            );
+          }
+          const approved = new Map<string, Prisma.Decimal>();
+          const cancelled = new Map<string, Prisma.Decimal>();
+          for (const line of version.approvalAllocation.lines) {
+            if (line.allocationKind !== 'LEAVE_ACCOUNT' || !line.leaveAccountId) continue;
+            approved.set(
+              line.leaveAccountId,
+              (approved.get(line.leaveAccountId) ?? ZERO).plus(line.quantity),
+            );
+            const scope = cancellation.scopes.find(
+              ({ approvalAllocationLineId }) => approvalAllocationLineId === line.id,
+            );
+            if (scope)
+              cancelled.set(
+                line.leaveAccountId,
+                (cancelled.get(line.leaveAccountId) ?? ZERO).plus(scope.quantity),
+              );
+          }
+          const activeWhere = {
+            agencyId: context.agencyId,
+            sourceType: COMMITMENT_SOURCE_TYPE,
+            sourceId: version.id,
+            status: 'ACTIVE',
+          };
+          const initial = await transaction.leaveCreditCommitment.findMany({ where: activeWhere });
+          const accountIds = [
+            ...new Set([
+              ...approved.keys(),
+              ...initial.map(({ leaveAccountId }) => leaveAccountId),
+            ]),
+          ].sort();
+          for (const accountId of accountIds)
+            await this.lockAccount(transaction, context.agencyId, accountId);
+          const commitments = await transaction.leaveCreditCommitment.findMany({
+            where: activeWhere,
+          });
+          for (const accountId of accountIds) {
+            const accountCommitments = commitments.filter(
+              ({ leaveAccountId }) => leaveAccountId === accountId,
+            );
+            if (
+              accountCommitments.length !== 1 ||
+              !accountCommitments[0]!.quantity.equals(approved.get(accountId) ?? ZERO)
+            ) {
+              throw deficiency(
+                'LEAVE_CANCELLATION_COMMITMENT_INVALID',
+                'Active commitments must match the exact approved account quantities.',
+              );
+            }
+          }
+          const now = new Date();
+          for (const commitment of commitments) {
+            const released = cancelled.get(commitment.leaveAccountId) ?? ZERO;
+            if (released.equals(0)) continue;
+            const retained = commitment.quantity.minus(released);
+            if (retained.lessThan(0)) {
+              throw deficiency(
+                'LEAVE_CANCELLATION_COMMITMENT_INVALID',
+                'Cancellation exceeds the active commitment.',
+              );
+            }
+            await transaction.leaveCreditCommitment.update({
+              where: { agencyId_id: { agencyId: context.agencyId, id: commitment.id } },
+              data: { status: 'RELEASED', endedAt: now },
+            });
+            if (retained.greaterThan(0)) {
+              await transaction.leaveCreditCommitment.create({
+                data: {
+                  agencyId: context.agencyId,
+                  leaveAccountId: commitment.leaveAccountId,
+                  quantity: retained,
+                  sourceType: COMMITMENT_SOURCE_TYPE,
+                  sourceId: version.id,
+                  sourceCommitmentKey: `CANCELLATION:${cancellationId}`,
+                  succeedsCommitmentId: commitment.id,
+                  status: 'ACTIVE',
+                  effectiveFrom: now,
+                },
+              });
+            }
+            await transaction.leaveCancellationEffect.create({
+              data: {
+                agencyId: context.agencyId,
+                leaveCancellationId: cancellationId,
+                effectKind: 'COMMITMENT_RELEASE',
+                effectKey: `COMMITMENT_RELEASE:${commitment.id}`,
+                ownerRecordId: commitment.id,
+                ownerStatus: 'RELEASED',
+              },
+            });
+          }
+          await transaction.leaveCancellation.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: cancellationId } },
+            data: {
+              effectStatus: 'APPLIED',
+              lastEffectFailureCode: null,
+              lastEffectFailureKind: null,
+            },
+          });
+          await transaction.leaveApplication.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+            data: { status: 'CANCELLED' },
+          });
+          await this.auditWriter.write(transaction, {
+            agencyId: context.agencyId,
+            actorUserId: context.userId,
+            actorMembershipId: context.membershipId,
+            actorType: 'USER',
+            action,
+            entityType: 'LeaveApplication',
+            entityId: applicationId,
+            previousStatus: application.status,
+            newStatus: 'CANCELLED',
+            requestId: context.requestId,
+            idempotencyKey,
+            metadata: { fingerprint, cancellationId, versionId: version.id },
+          });
+          await transaction.outboxEvent.create({
+            data: {
+              agencyId: context.agencyId,
+              eventType: 'LEAVE_CANCELLATION_APPLIED',
+              aggregateType: 'LeaveCancellation',
+              aggregateId: cancellationId,
+              idempotencyKey: `CANCELLATION:${cancellationId}`,
+              payload: { applicationId, cancellationId, versionId: version.id },
+            },
+          });
+          return { detail: (await this.detailInTransaction(transaction, context, applicationId))! };
+        } catch (error: unknown) {
+          await transaction.$executeRaw`ROLLBACK TO SAVEPOINT leave_cancellation_effects`;
+          const failure = cancellationApplyFailure(error);
+          await this.recordCancellationApplyFailure(
+            transaction,
+            context,
+            application,
+            cancellationId,
+            idempotencyKey,
+            fingerprint,
+            failure,
+          );
+          return { failure };
+        }
+      },
+    ).catch(async (error: unknown) => {
+      if (!eligibleAttempt) throw error;
+      // An expired transaction or failed commit can no longer use its savepoint.
+      return withDatabaseContext(databaseContext(context), async (transaction) => {
+        await this.lockCancellationApplyKey(transaction, context.agencyId, idempotencyKey);
+        const application = await this.lockApplication(
+          transaction,
+          context.agencyId,
+          applicationId,
+        );
+        if (!application) throw applicationNotFound();
+        this.assertAccess(context, application, 'leave.applications.apply_cancellation');
+        const cancellation = await transaction.leaveCancellation.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            id: cancellationId,
+            leaveApplicationId: applicationId,
+          },
+        });
+        const binding = await transaction.auditEvent.findFirst({
+          where: {
+            agencyId: context.agencyId,
+            idempotencyKey,
+            action: {
+              in: [
+                action,
+                'LEAVE_APPLICATION_CANCELLATION_APPLY_FAILED',
+                'LEAVE_APPLICATION_CANCELLATION_APPLY_REPLAYED',
+              ],
+            },
+          },
+          select: { metadata: true },
+        });
+        const bindKey = !binding || metadataString(binding.metadata, 'fingerprint') === fingerprint;
+        if (cancellation?.effectStatus === 'APPLIED') {
+          if (!bindKey) throw idempotencyConflict();
+          if (!binding)
+            await this.recordCancellationApplyReplay(
+              transaction,
+              context,
+              application,
+              cancellationId,
+              idempotencyKey,
+              fingerprint,
+            );
+          return { detail: (await this.detailInTransaction(transaction, context, applicationId))! };
+        }
+        if (
+          cancellation?.decisionStatus !== 'APPROVED' ||
+          application.status !== 'CANCEL_REQUESTED'
+        )
+          throw error;
+        const failure = bindKey ? cancellationApplyFailure(error) : idempotencyConflict();
+        await this.recordCancellationApplyFailure(
+          transaction,
+          context,
+          application,
+          cancellationId,
+          idempotencyKey,
+          fingerprint,
+          failure,
+          bindKey,
+        );
+        return { failure };
+      });
+    });
+    if ('failure' in result) throw result.failure;
+    return result.detail;
   }
 
   /**
@@ -4306,6 +4656,89 @@ export class LeaveApplicationsService implements OnModuleInit {
       posted: ledger._sum.quantity ?? ZERO,
       committed: commitments._sum.quantity ?? ZERO,
     };
+  }
+
+  private async recordCancellationApplyReplay(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    application: ApplicationRecord,
+    cancellationId: string,
+    idempotencyKey: string,
+    fingerprint: string,
+  ): Promise<void> {
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_REPLAYED',
+      entityType: 'LeaveApplication',
+      entityId: application.id,
+      previousStatus: application.status,
+      newStatus: application.status,
+      requestId: context.requestId,
+      idempotencyKey,
+      metadata: { fingerprint, cancellationId },
+    });
+  }
+
+  private async recordCancellationApplyFailure(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    application: ApplicationRecord,
+    cancellationId: string,
+    idempotencyKey: string,
+    fingerprint: string,
+    failure: LeaveApplicationServiceError,
+    bindKey = true,
+  ): Promise<void> {
+    const failureKind = failure.statusCode === 503 ? 'RETRYABLE' : 'BLOCKING';
+    await transaction.leaveCancellation.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: cancellationId } },
+      data: {
+        effectStatus: 'FAILED',
+        lastEffectFailureCode: failure.code,
+        lastEffectFailureKind: failureKind,
+      },
+    });
+    const recorded = bindKey
+      ? await this.completedWrite(transaction, context, {
+          action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_FAILED',
+          idempotencyKey,
+          fingerprint,
+        })
+      : null;
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_FAILED',
+      entityType: 'LeaveApplication',
+      entityId: application.id,
+      previousStatus: application.status,
+      newStatus: application.status,
+      requestId: context.requestId,
+      ...(bindKey && !recorded ? { idempotencyKey } : {}),
+      metadata: {
+        fingerprint,
+        idempotencyKey,
+        cancellationId,
+        failureCode: failure.code,
+        failureKind,
+      },
+    });
+  }
+
+  private async lockCancellationApplyKey(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    idempotencyKey: string,
+  ): Promise<void> {
+    const key = `LEAVE_CANCELLATION_APPLY:${agencyId}:${idempotencyKey}`;
+    await transaction.$queryRaw(Prisma.sql`
+      SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))::text
+    `);
   }
 
   private async lockApplication(
