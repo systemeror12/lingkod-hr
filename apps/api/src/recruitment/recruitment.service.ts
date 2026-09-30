@@ -25,6 +25,7 @@ import {
   type requestToFillListSchema,
   type vacancyPublicationListSchema,
 } from './recruitment.schemas';
+import { manilaDayEnd, manilaDayStart } from './posting-period';
 
 export const REQUEST_TO_FILL_ROUTE_CODE = 'RECRUITMENT_REQUEST_REVIEW';
 export const VACANCY_PUBLICATION_ROUTE_CODE = 'RECRUITMENT_VACANCY_PUBLICATION';
@@ -2607,9 +2608,9 @@ export class RecruitmentService {
         'RECRUITMENT_FORM_NO_9_INVALID',
       );
     for (const item of evidence) {
-      const closingExclusive = new Date(closing);
-      closingExclusive.setUTCDate(closingExclusive.getUTCDate() + 1);
-      if (item.publishedAt < opening || item.publishedAt >= closingExclusive) {
+      const openingStart = manilaDayStart(opening);
+      const closingExclusive = manilaDayEnd(closing);
+      if (item.publishedAt < openingStart || item.publishedAt >= closingExclusive) {
         throw new RecruitmentServiceError(
           'Every publication evidence timestamp must fall within the declared posting period.',
           409,
