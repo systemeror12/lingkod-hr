@@ -23,6 +23,7 @@ import {
   LeavePoliciesService,
 } from '../leave-policies/leave-policies.service';
 import {
+  LEAVE_CANCELLATION_ROUTE_CODE,
   leaveApplicationAuditWriter,
   LeaveApplicationsService,
 } from './leave-applications.service';
@@ -47,9 +48,9 @@ function addDays(value: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function nextWeekday(offsetDays: number): string {
+function nextMonday(offsetDays: number): string {
   let value = manilaDate(offsetDays);
-  while ([0, 6].includes(new Date(`${value}T00:00:00.000Z`).getUTCDay())) {
+  while (new Date(`${value}T00:00:00.000Z`).getUTCDay() !== 1) {
     value = addDays(value, 1);
   }
   return value;
@@ -582,7 +583,7 @@ it.skipIf(!enabled)(
       );
       expect(account.balances.availableQuantity).toBe('10.0000');
 
-      const monday = nextWeekday(1);
+      const monday = nextMonday(1);
       const wednesday = addDays(monday, 2);
       const periodInput = [{ dateFrom: monday, dateTo: wednesday }];
 
@@ -1089,7 +1090,7 @@ it.skipIf(!enabled)(
       // A later certification counts the commitment the earlier same-day
       // approval left active, so only the excess over certified availability
       // becomes leave without pay.
-      const excessMonday = nextWeekday(8);
+      const excessMonday = nextMonday(8);
       const excessFriday = addDays(excessMonday, 4);
       const excessApplication = await applications.create(
         agencyContext,
@@ -1203,7 +1204,7 @@ it.skipIf(!enabled)(
         withoutPayVersion.id,
         'Activate leave without pay.',
       );
-      const unpaidMonday = nextWeekday(15);
+      const unpaidMonday = nextMonday(15);
       const unpaidFriday = addDays(unpaidMonday, 4);
       const unpaidApplication = await applications.create(
         agencyContext,
@@ -1266,11 +1267,422 @@ it.skipIf(!enabled)(
         }),
       ).resolves.toBe(0);
 
+      // Leave Cancellation: request and decide only. The cancellation is its
+      // own record over exact scopes; no ledger or commitment effect occurs.
+      const cancellationRoute = await approvals.createRoute(agencyContext, {
+        routeCode: LEAVE_CANCELLATION_ROUTE_CODE,
+        domain: 'LEAVE',
+        versionNo: 1,
+        effectiveFrom,
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'leave.applications.cancel',
+              approvePermission: 'leave.applications.cancel',
+              rejectPermission: 'leave.applications.reject_cancel',
+              assignment: { kind: 'MEMBERSHIP', membershipId: approverMembership.id },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      });
+      await approvals.activateRoute(
+        agencyContext,
+        cancellationRoute.id,
+        'Activate the Leave Cancellation route.',
+      );
+      const requestCancelEmployee = {
+        ...employeeContext,
+        permissions: [
+          ...employeeContext.permissions,
+          { code: 'leave.applications.request_cancel', scopePolicy: 'OWN' as const },
+        ],
+      };
+      const requestCancelRecorder = {
+        ...recorderContext,
+        permissions: [
+          ...recorderContext.permissions,
+          { code: 'leave.applications.request_cancel', scopePolicy: 'AGENCY' as const },
+          { code: 'leave.applications.cancel', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+      const cancelApprover = context(agency.id, approverUser.id, approverMembership.id, [
+        { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+        { code: 'leave.applications.cancel', scopePolicy: 'AGENCY' },
+        { code: 'leave.applications.reject_cancel', scopePolicy: 'AGENCY' },
+      ]);
+      const unpaidLine = unpaidDecided.versions.at(-1)!.approvalAllocation!.lines[0]!;
+      const excessLines = excessDecided.versions.at(-1)!.approvalAllocation!.lines;
+      const ledgerBefore = await admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } });
+      const commitmentsBefore = await admin.leaveCreditCommitment.findMany({
+        where: { agencyId: agency.id },
+        orderBy: { id: 'asc' },
+        select: { id: true, status: true, quantity: true },
+      });
+      const thursday = addDays(unpaidMonday, 3);
+
+      await expect(
+        applications.requestCancellation(agencyContext, unpaidApplicationId, {
+          scopeType: 'WHOLE',
+          reason: 'No cancellation permission.',
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_REQUEST_CANCEL_FORBIDDEN' });
+      await expect(
+        applications.requestCancellation(
+          { ...requestCancelEmployee, agencyId: foreignAgency.id },
+          unpaidApplicationId,
+          { scopeType: 'WHOLE', reason: 'Cross-Agency attempt.' },
+        ),
+      ).rejects.toBeDefined();
+      await expect(
+        applications.requestCancellation(
+          context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
+            { code: 'leave.applications.request_cancel', scopePolicy: 'AGENCY' },
+            { code: 'approvals.routes.read', scopePolicy: 'AGENCY' },
+            { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
+          ]),
+          unpaidApplicationId,
+          { scopeType: 'WHOLE', reason: 'Foreign Agency attempt.' },
+          `foreign-cancel-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_NOT_FOUND' });
+      await expect(
+        applications.requestCancellation(requestCancelRecorder, unpaidApplicationId, {
+          scopeType: 'WHOLE',
+          reason: 'Recorder without evidence.',
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_EVIDENCE_REQUIRED' });
+      for (const scopes of [
+        [{ dateFrom: unpaidMonday, dateTo: unpaidFriday, quantity: '6' }],
+        [{ dateFrom: addDays(unpaidMonday, -1), dateTo: thursday, quantity: '1' }],
+        [{ dateFrom: addDays(unpaidMonday, 1), dateTo: thursday, quantity: '2' }],
+        [{ dateFrom: thursday, dateTo: unpaidFriday, quantity: '3' }],
+      ]) {
+        await expect(
+          applications.requestCancellation(requestCancelEmployee, unpaidApplicationId, {
+            scopeType: 'PARTIAL',
+            reason: 'Invalid scope.',
+            scopes: scopes.map((scope) => ({ allocationLineId: unpaidLine.id, ...scope })),
+          }),
+        ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_SCOPE_INVALID' });
+      }
+      await expect(
+        applications.requestCancellation(requestCancelEmployee, unpaidApplicationId, {
+          scopeType: 'PARTIAL',
+          reason: 'A line of another application.',
+          scopes: [
+            {
+              allocationLineId: excessLines[0]!.id,
+              dateFrom: unpaidMonday,
+              dateTo: thursday,
+              quantity: '1',
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_SCOPE_INVALID' });
+      await expect(admin.leaveCancellation.count({ where: { agencyId: agency.id } })).resolves.toBe(
+        0,
+      );
+
+      // An Employee requests a partial cancellation; the application projects
+      // CANCEL_REQUESTED and the exact scope is cancelRecorded.
+      const cancelRequested = await applications.requestCancellation(
+        requestCancelEmployee,
+        unpaidApplicationId,
+        {
+          scopeType: 'PARTIAL',
+          reason: 'Return to duty early.',
+          scopes: [
+            {
+              allocationLineId: unpaidLine.id,
+              dateFrom: thursday,
+              dateTo: unpaidFriday,
+              quantity: '2',
+            },
+          ],
+        },
+        `cancel-request-${suffix}`,
+      );
+      expect(cancelRequested.application.status).toBe('CANCEL_REQUESTED');
+      expect(cancelRequested.cancellations).toHaveLength(1);
+      const partialCancellation = cancelRequested.cancellations[0]!;
+      expect(partialCancellation).toMatchObject({
+        priorStatus: 'APPROVED',
+        scopeType: 'PARTIAL',
+        reason: 'Return to duty early.',
+        decisionStatus: 'REQUESTED',
+        effectStatus: 'NOT_READY',
+        approvalRouteCode: LEAVE_CANCELLATION_ROUTE_CODE,
+        approvalRouteVersionId: cancellationRoute.id,
+        approvalRequestStatus: 'IN_PROGRESS',
+        documents: [],
+      });
+      expect(partialCancellation.scopes).toMatchObject([
+        {
+          allocationLineId: unpaidLine.id,
+          allocationKind: 'LEAVE_WITHOUT_PAY',
+          dateFrom: thursday,
+          dateTo: unpaidFriday,
+          quantity: '2.0000',
+        },
+      ]);
+      expect(partialCancellation.approvalSteps).toMatchObject([
+        { stepNo: 1, status: 'ACTIVE', requiredPermission: 'leave.applications.cancel' },
+      ]);
+      const replayed = await applications.requestCancellation(
+        requestCancelEmployee,
+        unpaidApplicationId,
+        {
+          scopeType: 'PARTIAL',
+          reason: 'Return to duty early.',
+          scopes: [
+            {
+              allocationLineId: unpaidLine.id,
+              dateFrom: thursday,
+              dateTo: unpaidFriday,
+              quantity: '2',
+            },
+          ],
+        },
+        `cancel-request-${suffix}`,
+      );
+      expect(replayed.cancellations).toHaveLength(1);
+      await expect(
+        applications.requestCancellation(
+          requestCancelEmployee,
+          unpaidApplicationId,
+          { scopeType: 'WHOLE', reason: 'Different request, same key.' },
+          `cancel-request-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_IDEMPOTENCY_CONFLICT' });
+      await expect(
+        applications.requestCancellation(requestCancelEmployee, unpaidApplicationId, {
+          scopeType: 'WHOLE',
+          reason: 'Already requested.',
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_WORKFLOW_INVALID' });
+
+      // Self-approval prevention: neither the subject Employee nor the
+      // requester decides, even when they hold the permission.
+      await expect(
+        applications.decideCancellation(
+          {
+            ...employeeContext,
+            permissions: [{ code: 'leave.applications.cancel', scopePolicy: 'AGENCY' }],
+          },
+          unpaidApplicationId,
+          { decision: 'APPROVE' },
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_SEPARATION_REQUIRED' });
+      await expect(
+        applications.decideCancellation(
+          {
+            ...cancelApprover,
+            permissions: [{ code: 'leave.applications.reject_cancel', scopePolicy: 'AGENCY' }],
+          },
+          unpaidApplicationId,
+          { decision: 'APPROVE' },
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_CANCELLATION_APPROVED_FORBIDDEN' });
+
+      // Rejection needs a reason, then restores the exact prior state.
+      const cancelRejected = await applications.decideCancellation(
+        cancelApprover,
+        unpaidApplicationId,
+        { decision: 'REJECT', comments: 'The leave remains needed for coverage.' },
+        `cancel-reject-${suffix}`,
+      );
+      expect(cancelRejected.application.status).toBe('APPROVED');
+      expect(cancelRejected.cancellations[0]).toMatchObject({
+        decisionStatus: 'REJECTED',
+        effectStatus: 'NOT_READY',
+        approvalRequestStatus: 'REJECTED',
+      });
+      expect(cancelRejected.cancellations[0]!.approvalSteps[0]!.decisions).toMatchObject([
+        { decision: 'REJECT', comments: 'The leave remains needed for coverage.' },
+      ]);
+      expect(cancelRejected.versions.at(-1)!.approvalAllocation!.lines).toEqual(
+        unpaidDecided.versions.at(-1)!.approvalAllocation!.lines,
+      );
+      await expect(
+        applications.decideCancellation(cancelApprover, unpaidApplicationId, {
+          decision: 'REJECT',
+          comments: 'Second decision.',
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_WORKFLOW_INVALID' });
+
+      // A new request after rejection is allowed; whole cancellation derives its
+      // scope from every approved line. Approval records the decision with
+      // effects pending and leaves the application CANCEL_REQUESTED.
+      const wholeRequested = await applications.requestCancellation(
+        requestCancelEmployee,
+        unpaidApplicationId,
+        { scopeType: 'WHOLE', reason: 'Leave no longer required.' },
+        `cancel-whole-${suffix}`,
+      );
+      const wholeCancellation = wholeRequested.cancellations.at(-1)!;
+      expect(wholeRequested.cancellations).toHaveLength(2);
+      expect(wholeCancellation.scopes).toMatchObject([
+        {
+          allocationLineId: unpaidLine.id,
+          dateFrom: unpaidMonday,
+          dateTo: unpaidFriday,
+          quantity: '5.0000',
+        },
+      ]);
+      const cancelApproved = await applications.decideCancellation(
+        cancelApprover,
+        unpaidApplicationId,
+        { decision: 'APPROVE', comments: 'Cancellation authorized.' },
+        `cancel-approve-${suffix}`,
+      );
+      expect(cancelApproved.application.status).toBe('CANCEL_REQUESTED');
+      expect(cancelApproved.cancellations.at(-1)).toMatchObject({
+        decisionStatus: 'APPROVED',
+        effectStatus: 'PENDING',
+        approvalRequestStatus: 'APPROVED',
+      });
+      expect(cancelApproved.cancellations.at(-1)!.approvalSteps[0]!.decisions).toMatchObject([
+        { decision: 'APPROVE', comments: 'Cancellation authorized.' },
+      ]);
+      await expect(
+        applications.decideCancellation(cancelApprover, unpaidApplicationId, {
+          decision: 'APPROVE',
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_WORKFLOW_INVALID' });
+      await expect(
+        applications.requestCancellation(requestCancelEmployee, unpaidApplicationId, {
+          scopeType: 'WHOLE',
+          reason: 'Cancellation already approved.',
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_WORKFLOW_INVALID' });
+
+      // A recorder attaches exact evidence; a POSTED application returns to
+      // POSTED when the cancellation is cancelRejected.
+      await admin.leaveApplication.update({
+        where: { agencyId_id: { agencyId: agency.id, id: excessApplicationId } },
+        data: { status: 'POSTED' },
+      });
+      const cancelRecorded = await applications.requestCancellation(
+        requestCancelRecorder,
+        excessApplicationId,
+        {
+          scopeType: 'PARTIAL',
+          reason: 'Recorded from a signed request.',
+          evidenceDocumentId: signedEvidence.documentId,
+          scopes: [
+            {
+              allocationLineId: excessLines.find(
+                ({ allocationKind }) => allocationKind === 'LEAVE_WITHOUT_PAY',
+              )!.id,
+              dateFrom: addDays(excessMonday, 3),
+              dateTo: addDays(excessMonday, 4),
+              quantity: '1',
+            },
+          ],
+        },
+      );
+      expect(cancelRecorded.cancellations[0]).toMatchObject({ priorStatus: 'POSTED' });
+      expect(cancelRecorded.cancellations[0]!.documents).toMatchObject([
+        { documentVersionId: signedEvidence.versionId, purposeCode: 'CANCELLATION_EVIDENCE' },
+      ]);
+      const postedRejected = await applications.decideCancellation(
+        cancelApprover,
+        excessApplicationId,
+        {
+          decision: 'REJECT',
+          comments: 'Posted leave stands.',
+        },
+      );
+      expect(postedRejected.application.status).toBe('POSTED');
+
+      // No ledger or commitment effect occurred in any scenario.
+      await expect(admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } })).resolves.toBe(
+        ledgerBefore,
+      );
+      await expect(
+        admin.leaveCreditCommitment.findMany({
+          where: { agencyId: agency.id },
+          orderBy: { id: 'asc' },
+          select: { id: true, status: true, quantity: true },
+        }),
+      ).resolves.toEqual(commitmentsBefore);
+
+      // Immutability and forced RLS hold at the database.
+      await expect(
+        admin.leaveCancellation.update({
+          where: { agencyId_id: { agencyId: agency.id, id: wholeCancellation.id } },
+          data: { reason: 'Rewritten reason.' },
+        }),
+      ).rejects.toThrow(/immutable/);
+      await expect(
+        admin.leaveCancellation.update({
+          where: { agencyId_id: { agencyId: agency.id, id: wholeCancellation.id } },
+          data: { decisionStatus: 'REJECTED', effectStatus: 'NOT_READY' },
+        }),
+      ).rejects.toThrow(/immutable/);
+      await expect(
+        admin.leaveCancellation.delete({
+          where: { agencyId_id: { agencyId: agency.id, id: wholeCancellation.id } },
+        }),
+      ).rejects.toThrow(/retained/);
+      await expect(
+        admin.leaveCancellationScope.create({
+          data: {
+            agencyId: agency.id,
+            leaveCancellationId: wholeCancellation.id,
+            approvalAllocationLineId: excessLines[0]!.id,
+            dateFrom: new Date(`${excessMonday}T00:00:00.000Z`),
+            dateTo: new Date(`${excessFriday}T00:00:00.000Z`),
+            quantity: 1,
+          },
+        }),
+      ).rejects.toThrow(/approved allocation line/);
+      await expect(
+        admin.leaveCancellationScope.create({
+          data: {
+            agencyId: agency.id,
+            leaveCancellationId: wholeCancellation.id,
+            approvalAllocationLineId: unpaidLine.id,
+            dateFrom: new Date(`${unpaidMonday}T00:00:00.000Z`),
+            dateTo: new Date(`${unpaidFriday}T00:00:00.000Z`),
+            quantity: 6,
+          },
+        }),
+      ).rejects.toThrow();
+      const foreignView = await withDatabaseContext(
+        { agencyId: foreignAgency.id, userId: foreignUser.id, membershipId: foreignMembership.id },
+        async (transaction) => ({
+          cancellations: await transaction.leaveCancellation.count(),
+          scopes: await transaction.leaveCancellationScope.count(),
+        }),
+      );
+      expect(foreignView).toEqual({ cancellations: 0, scopes: 0 });
+      await expect(
+        applications.decideCancellation(
+          context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
+            { code: 'leave.applications.cancel', scopePolicy: 'AGENCY' },
+            { code: 'leave.applications.reject_cancel', scopePolicy: 'AGENCY' },
+          ]),
+          unpaidApplicationId,
+          { decision: 'REJECT', comments: 'Foreign Agency attempt.' },
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_NOT_FOUND' });
+
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.auditEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.leaveCancellationScope.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveCancellationDocument.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leaveCancellation.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leaveApplicationVersionDocument.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });

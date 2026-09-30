@@ -189,6 +189,35 @@ export interface LeaveApplicationVersion {
   approvalSteps: LeaveApprovalStep[];
 }
 
+export interface LeaveCancellationScope {
+  id: string;
+  allocationLineId: string;
+  allocationKind: string;
+  unitCode: string;
+  dateFrom: string;
+  dateTo: string;
+  quantity: string;
+}
+
+export interface LeaveCancellation {
+  id: string;
+  leaveApplicationVersionId: string;
+  priorStatus: string;
+  scopeType: string;
+  reason: string;
+  approvalRouteCode: string;
+  approvalRequestStatus: string;
+  decisionStatus: string;
+  effectStatus: string;
+  lastEffectFailureCode: string | null;
+  requestedByMembershipId: string;
+  requestedByName: string | null;
+  requestedAt: string;
+  documents: LeaveApplicationDocument[];
+  scopes: LeaveCancellationScope[];
+  approvalSteps: LeaveApprovalStep[];
+}
+
 export interface LeaveApplicationHistoryEntry {
   id: string;
   action: string;
@@ -203,6 +232,7 @@ export interface LeaveApplicationDetail {
   draftPeriods: LeaveApplicationPeriod[];
   draftDocuments: LeaveApplicationDocument[];
   versions: LeaveApplicationVersion[];
+  cancellations: LeaveCancellation[];
   history: LeaveApplicationHistoryEntry[];
 }
 
@@ -270,8 +300,24 @@ interface AllocationRow {
   quantity: string;
 }
 
+interface CancellationScopeRow {
+  selected: boolean;
+  dateFrom: string;
+  dateTo: string;
+  quantity: string;
+}
+
 type DialogKind =
-  'detail' | 'prepare' | 'route' | 'certify' | 'recommend' | 'decision' | 'return' | null;
+  | 'detail'
+  | 'prepare'
+  | 'route'
+  | 'certify'
+  | 'recommend'
+  | 'decision'
+  | 'return'
+  | 'cancelRequest'
+  | 'cancelDecision'
+  | null;
 
 const EVIDENCE_KINDS = [
   'SIGNED_LEAVE_APPLICATION_FORM',
@@ -323,6 +369,12 @@ function statusTone(status: string): StatusTone {
   if (['APPROVED', 'POSTED'].includes(status)) return 'success';
   if (['REJECTED', 'CANCELLED'].includes(status)) return 'danger';
   if (['WITHDRAWN', 'DRAFT'].includes(status)) return 'neutral';
+  return 'warning';
+}
+
+function decisionTone(status: string): StatusTone {
+  if (status === 'APPROVED') return 'success';
+  if (status === 'REJECTED') return 'danger';
   return 'warning';
 }
 
@@ -411,6 +463,9 @@ export function LeaveApplicationWorkspace({
   canApprove,
   canReject,
   canReturn,
+  canRequestCancel,
+  canCancel,
+  canRejectCancel,
 }: {
   agencyId: string;
   initial: LeaveApplicationListResponse;
@@ -423,6 +478,9 @@ export function LeaveApplicationWorkspace({
   canApprove: boolean;
   canReject: boolean;
   canReturn: boolean;
+  canRequestCancel: boolean;
+  canCancel: boolean;
+  canRejectCancel: boolean;
 }) {
   const [applications, setApplications] = useState(initial.applications);
   const navigation = useRecordNavigation();
@@ -457,6 +515,12 @@ export function LeaveApplicationWorkspace({
   const [decisionComments, setDecisionComments] = useState('');
   const [fullApproval, setFullApproval] = useState(true);
   const [allocationRows, setAllocationRows] = useState<Record<string, AllocationRow>>({});
+  const [cancelScopeType, setCancelScopeType] = useState('WHOLE');
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelEvidenceDocumentId, setCancelEvidenceDocumentId] = useState('');
+  const [cancelScopeRows, setCancelScopeRows] = useState<Record<string, CancellationScopeRow>>({});
+  const [cancelDecisionKind, setCancelDecisionKind] = useState('APPROVE');
+  const [cancelDecisionComments, setCancelDecisionComments] = useState('');
   const [returnReason, setReturnReason] = useState('');
   const [returnComments, setReturnComments] = useState('');
   const [error, setError] = useState('');
@@ -768,6 +832,42 @@ export function LeaveApplicationWorkspace({
     setDialog('decision');
   }
 
+  function openCancelRequest(): void {
+    const rows: Record<string, CancellationScopeRow> = {};
+    for (const line of currentVersion()?.approvalAllocation?.lines ?? []) {
+      rows[line.id] = {
+        selected: false,
+        dateFrom: line.dateFrom,
+        dateTo: line.dateTo,
+        quantity: line.quantity,
+      };
+    }
+    resetAction();
+    setCancelScopeType('WHOLE');
+    setCancelReason('');
+    setCancelEvidenceDocumentId('');
+    setCancelScopeRows(rows);
+    setDialog('cancelRequest');
+  }
+
+  function cancellationScopesPayload(): Array<Record<string, unknown>> {
+    return Object.entries(cancelScopeRows)
+      .filter(([, row]) => row.selected)
+      .map(([allocationLineId, row]) => ({
+        allocationLineId,
+        dateFrom: row.dateFrom,
+        dateTo: row.dateTo,
+        quantity: row.quantity.trim(),
+      }));
+  }
+
+  function openCancelDecision(kind: 'APPROVE' | 'REJECT'): void {
+    resetAction();
+    setCancelDecisionKind(kind);
+    setCancelDecisionComments('');
+    setDialog('cancelDecision');
+  }
+
   function allocationPayload(): Array<Record<string, unknown>> {
     const version = currentVersion();
     const payload: Array<Record<string, unknown>> = [];
@@ -791,7 +891,14 @@ export function LeaveApplicationWorkspace({
   }
 
   async function review(
-    command: 'routing' | 'certification' | 'recommendation' | 'decision' | 'return',
+    command:
+      | 'routing'
+      | 'certification'
+      | 'recommendation'
+      | 'decision'
+      | 'return'
+      | 'cancellation-requests'
+      | 'cancellation-decisions',
     body: Record<string, unknown>,
     message: string,
     failure: string,
@@ -868,6 +975,38 @@ export function LeaveApplicationWorkspace({
     );
   }
 
+  async function requestCancellation(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    await review(
+      'cancellation-requests',
+      {
+        scopeType: cancelScopeType,
+        reason: cancelReason.trim(),
+        ...(cancelEvidenceDocumentId.trim()
+          ? { evidenceDocumentId: cancelEvidenceDocumentId.trim() }
+          : {}),
+        ...(cancelScopeType === 'PARTIAL' ? { scopes: cancellationScopesPayload() } : {}),
+      },
+      'The cancellation was requested.',
+      'The cancellation could not be requested.',
+    );
+  }
+
+  async function decideCancellation(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    await review(
+      'cancellation-decisions',
+      {
+        decision: cancelDecisionKind,
+        ...(cancelDecisionComments.trim() ? { comments: cancelDecisionComments.trim() } : {}),
+      },
+      cancelDecisionKind === 'APPROVE'
+        ? 'The cancellation was approved; its effects are pending.'
+        : 'The cancellation was rejected.',
+      'The cancellation decision could not be recorded.',
+    );
+  }
+
   async function returnApplication(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     await review(
@@ -885,6 +1024,11 @@ export function LeaveApplicationWorkspace({
   const editable = EDITABLE_STATUSES.includes(status);
   const withdrawable = WITHDRAWABLE_STATUSES.includes(status);
   const reviewable = REVIEW_STATUSES.includes(status);
+  const cancellable = status === 'APPROVED' || status === 'POSTED';
+  const openCancellation =
+    status === 'CANCEL_REQUESTED'
+      ? (detail?.cancellations.find(({ decisionStatus }) => decisionStatus === 'REQUESTED') ?? null)
+      : null;
 
   const breadcrumbs: Breadcrumb[] = [{ label: 'Leave' }];
   if (recordId) {
@@ -1031,7 +1175,11 @@ export function LeaveApplicationWorkspace({
                             ? 'Record the final decision'
                             : dialog === 'return'
                               ? 'Return for material information'
-                              : (detail?.application.employeeName ?? 'Leave Application')}
+                              : dialog === 'cancelRequest'
+                                ? 'Request cancellation'
+                                : dialog === 'cancelDecision'
+                                  ? 'Decide the cancellation'
+                                  : (detail?.application.employeeName ?? 'Leave Application')}
                 </DialogTitle>
                 <DialogDescription id="leave-application-dialog-description">
                   {dialog === 'prepare'
@@ -1384,6 +1532,183 @@ export function LeaveApplicationWorkspace({
             </form>
           ) : null}
 
+          {dialog === 'cancelRequest' ? (
+            <form onSubmit={(event) => void requestCancellation(event)}>
+              <DialogBody className="grid gap-5">
+                <p className="m-0 text-small text-ink-muted">
+                  A cancellation is its own request, separate from a withdrawal. It cannot add
+                  dates, exceed the approved quantity, or change the Leave Type. Approval records
+                  the decision only; ledger, commitment, and Attendance effects are applied later.
+                </p>
+                <Field htmlFor="leave-cancellation-scope" label="Cancellation scope">
+                  <select
+                    className={inputClass}
+                    id="leave-cancellation-scope"
+                    onChange={(event) => setCancelScopeType(targetValue(event))}
+                    value={cancelScopeType}
+                  >
+                    <option value="WHOLE">Whole application</option>
+                    <option value="PARTIAL">Part of the approved leave</option>
+                  </select>
+                </Field>
+                {cancelScopeType === 'PARTIAL' ? (
+                  <div className="grid gap-3">
+                    <span className="text-caption font-[650] text-ink-muted">
+                      Approved allocation lines
+                    </span>
+                    {(currentVersion()?.approvalAllocation?.lines ?? []).map((line) => {
+                      const row = cancelScopeRows[line.id];
+                      if (!row) return null;
+                      const update = (change: Partial<CancellationScopeRow>) =>
+                        setCancelScopeRows((rows) => ({
+                          ...rows,
+                          [line.id]: { ...row, ...change },
+                        }));
+                      return (
+                        <div
+                          className="grid gap-3 rounded-control border border-border bg-canvas px-3 py-3"
+                          key={line.id}
+                        >
+                          <label className="flex items-center gap-2 text-small text-ink">
+                            <input
+                              checked={row.selected}
+                              onChange={(event) => update({ selected: targetChecked(event) })}
+                              type="checkbox"
+                            />
+                            {`Cancel ${dateLabel(line.dateFrom)} – ${dateLabel(line.dateTo)} · ${humanize(line.allocationKind)} ${quantityLabel(line.quantity)} ${humanize(line.unitCode)}`}
+                          </label>
+                          {row.selected ? (
+                            <div className="grid gap-3 min-[621px]:grid-cols-3">
+                              <Field
+                                htmlFor={'leave-cancel-from-' + line.id}
+                                label="Cancelled from"
+                              >
+                                <input
+                                  className={inputClass}
+                                  id={'leave-cancel-from-' + line.id}
+                                  onChange={(event) => update({ dateFrom: targetValue(event) })}
+                                  type="date"
+                                  value={row.dateFrom}
+                                />
+                              </Field>
+                              <Field htmlFor={'leave-cancel-to-' + line.id} label="Cancelled to">
+                                <input
+                                  className={inputClass}
+                                  id={'leave-cancel-to-' + line.id}
+                                  onChange={(event) => update({ dateTo: targetValue(event) })}
+                                  type="date"
+                                  value={row.dateTo}
+                                />
+                              </Field>
+                              <Field
+                                htmlFor={'leave-cancel-quantity-' + line.id}
+                                label="Cancelled quantity"
+                              >
+                                <input
+                                  className={inputClass}
+                                  id={'leave-cancel-quantity-' + line.id}
+                                  inputMode="decimal"
+                                  onChange={(event) => update({ quantity: targetValue(event) })}
+                                  value={row.quantity}
+                                />
+                              </Field>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    <p className="m-0 text-small text-ink-muted">
+                      A partial scope keeps the retained period contiguous: it must include the
+                      first or last date of its allocation line.
+                    </p>
+                  </div>
+                ) : null}
+                <Field htmlFor="leave-cancellation-reason" label="Cancellation reason">
+                  <textarea
+                    className={inputClass + ' min-h-[72px] py-2'}
+                    id="leave-cancellation-reason"
+                    maxLength={1000}
+                    onChange={(event) => setCancelReason(targetValue(event))}
+                    required
+                    value={cancelReason}
+                  />
+                </Field>
+                <Field
+                  htmlFor="leave-cancellation-evidence"
+                  label="Cancellation evidence Document ID (optional)"
+                >
+                  <input
+                    className={inputClass}
+                    id="leave-cancellation-evidence"
+                    onChange={(event) => setCancelEvidenceDocumentId(targetValue(event))}
+                    placeholder="00000000-0000-0000-0000-000000000000"
+                    value={cancelEvidenceDocumentId}
+                  />
+                </Field>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy ? 'Requesting…' : 'Submit cancellation request'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
+          {dialog === 'cancelDecision' ? (
+            <form onSubmit={(event) => void decideCancellation(event)}>
+              <DialogBody className="grid gap-5">
+                <p className="m-0 text-small text-ink-muted">
+                  Approving records the decision with effects pending; the application stays in
+                  cancel requested and no ledger, commitment, or Attendance change occurs. Rejecting
+                  returns it to its prior state.
+                </p>
+                <Field htmlFor="leave-cancellation-decision" label="Decision">
+                  <select
+                    className={inputClass}
+                    id="leave-cancellation-decision"
+                    onChange={(event) => setCancelDecisionKind(targetValue(event))}
+                    value={cancelDecisionKind}
+                  >
+                    {canCancel ? <option value="APPROVE">Approve</option> : null}
+                    {canRejectCancel ? <option value="REJECT">Reject</option> : null}
+                  </select>
+                </Field>
+                <Field
+                  htmlFor="leave-cancellation-comments"
+                  label={cancelDecisionKind === 'REJECT' ? 'Reason' : 'Comments (optional)'}
+                >
+                  <textarea
+                    className={inputClass + ' min-h-[72px] py-2'}
+                    id="leave-cancellation-comments"
+                    maxLength={1000}
+                    onChange={(event) => setCancelDecisionComments(targetValue(event))}
+                    required={cancelDecisionKind === 'REJECT'}
+                    value={cancelDecisionComments}
+                  />
+                </Field>
+              </DialogBody>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button disabled={busy} type="button" variant="secondary">
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button disabled={busy} type="submit" variant="primary">
+                  {busy
+                    ? 'Recording…'
+                    : cancelDecisionKind === 'APPROVE'
+                      ? 'Approve cancellation'
+                      : 'Reject cancellation'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
           {dialog === 'detail' ? (
             <DialogBody className="grid gap-6">
               {detailLoading || !detail ? (
@@ -1487,6 +1812,33 @@ export function LeaveApplicationWorkspace({
                             Reject
                           </Button>
                         ) : null}
+                        {canRequestCancel && cancellable ? (
+                          <Button
+                            onClick={() => openCancelRequest()}
+                            type="button"
+                            variant="secondary"
+                          >
+                            Request cancellation
+                          </Button>
+                        ) : null}
+                        {canCancel && openCancellation ? (
+                          <Button
+                            onClick={() => openCancelDecision('APPROVE')}
+                            type="button"
+                            variant="primary"
+                          >
+                            Approve cancellation
+                          </Button>
+                        ) : null}
+                        {canRejectCancel && openCancellation ? (
+                          <Button
+                            onClick={() => openCancelDecision('REJECT')}
+                            type="button"
+                            variant="secondary"
+                          >
+                            Reject cancellation
+                          </Button>
+                        ) : null}
                         {canReturn && reviewable ? (
                           <Button
                             onClick={() => {
@@ -1519,6 +1871,81 @@ export function LeaveApplicationWorkspace({
                       ) : null}
                     </div>
                   </section>
+
+                  {detail.cancellations.length > 0 ? (
+                    <section className="grid gap-3" aria-labelledby="leave-cancellations-heading">
+                      <h3 className={sectionTitleClass} id="leave-cancellations-heading">
+                        Cancellation requests
+                      </h3>
+                      {detail.cancellations.map((cancellation) => (
+                        <article
+                          aria-label={`Cancellation requested ${instantLabel(cancellation.requestedAt)}`}
+                          className="grid gap-2 rounded-control border border-border bg-canvas px-3 py-3 text-small"
+                          key={cancellation.id}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <strong className="font-[650] text-ink">
+                              {humanize(cancellation.scopeType)} cancellation
+                            </strong>
+                            <StatusTag tone={decisionTone(cancellation.decisionStatus)}>
+                              Decision {humanize(cancellation.decisionStatus)}
+                            </StatusTag>
+                            <StatusTag
+                              tone={cancellation.effectStatus === 'FAILED' ? 'danger' : 'neutral'}
+                            >
+                              Effect {humanize(cancellation.effectStatus)}
+                            </StatusTag>
+                          </div>
+                          <p className="m-0 text-ink-muted">
+                            Requested by {cancellation.requestedByName ?? 'an Agency recorder'} ·{' '}
+                            {instantLabel(cancellation.requestedAt)} · {cancellation.reason}
+                          </p>
+                          <ul className="m-0 grid list-none gap-1 p-0 text-ink-muted">
+                            {cancellation.scopes.map((scope) => (
+                              <li key={scope.id}>
+                                {dateLabel(scope.dateFrom)} – {dateLabel(scope.dateTo)} ·{' '}
+                                {humanize(scope.allocationKind)} {quantityLabel(scope.quantity)}{' '}
+                                {humanize(scope.unitCode)}
+                              </li>
+                            ))}
+                          </ul>
+                          {cancellation.documents.length > 0 ? (
+                            <p className="m-0 text-ink-muted">
+                              Evidence:{' '}
+                              {cancellation.documents
+                                .map(
+                                  ({ documentNo, documentType, versionNo }) =>
+                                    `${documentNo ?? documentType ?? 'Document'} v${versionNo ?? '—'}`,
+                                )
+                                .join('; ')}
+                            </p>
+                          ) : null}
+                          {cancellation.approvalSteps.map((step) => (
+                            <div className="grid gap-1" key={step.id}>
+                              <span className="font-[650] text-ink">
+                                Step {step.stepNo} · {humanize(step.requiredPermission)} ·{' '}
+                                {humanize(step.status)}
+                              </span>
+                              {step.decisions.map((decision) => (
+                                <span className="text-ink-muted" key={decision.id}>
+                                  {humanize(decision.decision)} ·{' '}
+                                  {decision.decidedByName ?? decision.decidedByMembershipId} ·{' '}
+                                  {instantLabel(decision.decidedAt)}
+                                  {decision.comments ? ' · ' + decision.comments : ''}
+                                </span>
+                              ))}
+                            </div>
+                          ))}
+                          {cancellation.decisionStatus === 'APPROVED' ? (
+                            <p className="m-0 text-ink-muted">
+                              Effects are {humanize(cancellation.effectStatus)}; no ledger,
+                              commitment, or Attendance change has been applied.
+                            </p>
+                          ) : null}
+                        </article>
+                      ))}
+                    </section>
+                  ) : null}
 
                   {editable ? (
                     <form className="grid gap-4" onSubmit={(event) => void saveDraft(event)}>

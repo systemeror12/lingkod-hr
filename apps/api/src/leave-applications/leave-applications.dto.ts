@@ -11,6 +11,8 @@ import type {
   LeaveApprovalDecisionSummary,
   LeaveApprovalStepSummary,
   LeaveCalculationSegmentSummary,
+  LeaveCancellationScopeSummary,
+  LeaveCancellationSummary,
   LeaveCreditCertificationLineSummary,
   LeaveCreditCertificationSummary,
   LeaveRecommendationSummary,
@@ -245,6 +247,70 @@ export class LeaveApprovalStepDto {
   }
 }
 
+export class LeaveCancellationScopeDto {
+  readonly id: string;
+  readonly allocationLineId: string;
+  readonly allocationKind: string;
+  readonly unitCode: string;
+  readonly dateFrom: string;
+  readonly dateTo: string;
+  readonly quantity: string;
+
+  constructor(scope: LeaveCancellationScopeSummary) {
+    this.id = scope.id;
+    this.allocationLineId = scope.allocationLineId;
+    this.allocationKind = scope.allocationKind;
+    this.unitCode = scope.unitCode;
+    this.dateFrom = scope.dateFrom;
+    this.dateTo = scope.dateTo;
+    this.quantity = scope.quantity;
+  }
+}
+
+export class LeaveCancellationDto {
+  readonly id: string;
+  readonly leaveApplicationVersionId: string;
+  readonly priorStatus: string;
+  readonly scopeType: string;
+  readonly reason: string;
+  readonly approvalRouteVersionId: string;
+  readonly approvalRouteCode: string;
+  readonly approvalRequestId: string;
+  readonly approvalRequestStatus: string;
+  readonly decisionStatus: string;
+  readonly effectStatus: string;
+  readonly lastEffectFailureCode: string | null;
+  readonly requestedByMembershipId: string;
+  readonly requestedByName: string | null;
+  readonly requestedAt: string;
+  readonly documents: LeaveApplicationDocumentDto[];
+  readonly scopes: LeaveCancellationScopeDto[];
+  readonly approvalSteps: LeaveApprovalStepDto[];
+
+  constructor(cancellation: LeaveCancellationSummary) {
+    this.id = cancellation.id;
+    this.leaveApplicationVersionId = cancellation.leaveApplicationVersionId;
+    this.priorStatus = cancellation.priorStatus;
+    this.scopeType = cancellation.scopeType;
+    this.reason = cancellation.reason;
+    this.approvalRouteVersionId = cancellation.approvalRouteVersionId;
+    this.approvalRouteCode = cancellation.approvalRouteCode;
+    this.approvalRequestId = cancellation.approvalRequestId;
+    this.approvalRequestStatus = cancellation.approvalRequestStatus;
+    this.decisionStatus = cancellation.decisionStatus;
+    this.effectStatus = cancellation.effectStatus;
+    this.lastEffectFailureCode = cancellation.lastEffectFailureCode;
+    this.requestedByMembershipId = cancellation.requestedByMembershipId;
+    this.requestedByName = cancellation.requestedByName;
+    this.requestedAt = cancellation.requestedAt;
+    this.documents = cancellation.documents.map(
+      (document) => new LeaveApplicationDocumentDto(document),
+    );
+    this.scopes = cancellation.scopes.map((scope) => new LeaveCancellationScopeDto(scope));
+    this.approvalSteps = cancellation.approvalSteps.map((step) => new LeaveApprovalStepDto(step));
+  }
+}
+
 export class LeaveApplicationVersionDto {
   readonly id: string;
   readonly versionNo: number;
@@ -384,6 +450,7 @@ export class LeaveApplicationDetailDto {
   readonly draftPeriods: LeaveApplicationPeriodDto[];
   readonly draftDocuments: LeaveApplicationDocumentDto[];
   readonly versions: LeaveApplicationVersionDto[];
+  readonly cancellations: LeaveCancellationDto[];
   readonly history: LeaveApplicationHistoryDto[];
 
   constructor(detail: LeaveApplicationDetail) {
@@ -393,6 +460,9 @@ export class LeaveApplicationDetailDto {
       (document) => new LeaveApplicationDocumentDto(document),
     );
     this.versions = detail.versions.map((version) => new LeaveApplicationVersionDto(version));
+    this.cancellations = detail.cancellations.map(
+      (cancellation) => new LeaveCancellationDto(cancellation),
+    );
     this.history = detail.history.map((entry) => new LeaveApplicationHistoryDto(entry));
   }
 }

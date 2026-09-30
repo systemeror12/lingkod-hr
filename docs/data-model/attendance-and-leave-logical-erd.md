@@ -957,26 +957,27 @@ Owner-issued result of one Leave Posting
 
 Authorized whole or partial cancellation of approved or posted leave
 
-| Column                       | Logical type | Null? | Key / rule                    | Description                         |
-| ---------------------------- | ------------ | ----- | ----------------------------- | ----------------------------------- |
-| id                           | uuid         | No    | PK                            | Cancellation                        |
-| agency_id                    | uuid         | No    | FK agencies                   | Tenant                              |
-| leave_application_id         | uuid         | No    | FK leave_applications         | Stable case                         |
-| leave_application_version_id | uuid         | No    | FK leave_application_versions | Approved version                    |
-| leave_posting_id             | uuid         | Yes   | FK leave_postings             | Posted effect, if any               |
-| scope_type                   | enum         | No    |                               | WHOLE, PARTIAL                      |
-| reason                       | string       | No    |                               | Requested basis                     |
-| evidence_document_version_id | uuid         | Yes   | FK document_versions          | Exact evidence                      |
-| approval_route_version_id    | uuid         | No    | FK approval_route_versions    | Bound cancellation route            |
-| approval_request_id          | uuid         | No    | FK approval_requests          | Route instance                      |
-| decision_status              | enum         | No    |                               | REQUESTED, APPROVED, REJECTED       |
-| effect_status                | enum         | No    |                               | NOT_READY, PENDING, APPLIED, FAILED |
-| requested_by_membership_id   | uuid         | No    | FK agency_memberships         | Employee or recorder                |
-| requested_at                 | datetime     | No    |                               | Request time                        |
+| Column                       | Logical type | Null? | Key / rule                    | Description                             |
+| ---------------------------- | ------------ | ----- | ----------------------------- | --------------------------------------- |
+| id                           | uuid         | No    | PK                            | Cancellation                            |
+| agency_id                    | uuid         | No    | FK agencies                   | Tenant                                  |
+| leave_application_id         | uuid         | No    | FK leave_applications         | Stable case                             |
+| leave_application_version_id | uuid         | No    | FK leave_application_versions | Approved version                        |
+| leave_posting_id             | uuid         | Yes   | FK leave_postings             | Posted effect, if any                   |
+| prior_status                 | enum         | No    |                               | APPROVED, POSTED; restored on rejection |
+| scope_type                   | enum         | No    |                               | WHOLE, PARTIAL                          |
+| reason                       | string       | No    |                               | Requested basis                         |
+| approval_route_version_id    | uuid         | No    | FK approval_route_versions    | Bound cancellation route                |
+| approval_request_id          | uuid         | No    | FK approval_requests          | Route instance                          |
+| decision_status              | enum         | No    |                               | REQUESTED, APPROVED, REJECTED           |
+| effect_status                | enum         | No    |                               | NOT_READY, PENDING, APPLIED, FAILED     |
+| requested_by_membership_id   | uuid         | No    | FK agency_memberships         | Employee or recorder                    |
+| requested_at                 | datetime     | No    |                               | Request time                            |
 
 **Constraints and indexes**
 
 - Approval and effect application remain separate facts.
+- Exact evidence Document Versions are linked through `leave_cancellation_documents`.
 - `APPLIED` requires every required cancellation effect. `FAILED` retains the
   approval while the original posting remains effective.
 

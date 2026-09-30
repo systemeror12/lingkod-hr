@@ -138,6 +138,9 @@ model Agency {
   leaveRecommendations          LeaveRecommendation[]
   leaveApprovalAllocations      LeaveApprovalAllocation[]
   leaveApprovalAllocationLines  LeaveApprovalAllocationLine[]
+  leaveCancellations            LeaveCancellation[]
+  leaveCancellationDocuments    LeaveCancellationDocument[]
+  leaveCancellationScopes       LeaveCancellationScope[]
   leaveMonetizationRequests     LeaveMonetizationRequest[]
   leaveMonetizationVersions     LeaveMonetizationRequestVersion[]
   monetizationAllocations       LeaveMonetizationAllocation[]
@@ -446,6 +449,7 @@ model AgencyMembership {
   recordedLeaveLedgerAdjustments         LeaveLedgerAdjustment[]              @relation("LeaveLedgerAdjustmentRecorder")
   createdLeaveApplications               LeaveApplication[]                   @relation("LeaveApplicationCreator")
   submittedLeaveApplicationVersions      LeaveApplicationVersion[]            @relation("LeaveApplicationVersionSubmitter")
+  requestedLeaveCancellations            LeaveCancellation[]                  @relation("LeaveCancellationRequester")
   enteredAttendanceContexts              AttendanceContext[]                  @relation("AttendanceContextRecorder")
   createdLeaveMonetizationRequests        LeaveMonetizationRequest[]           @relation("LeaveMonetizationRequestCreator")
   submittedLeaveMonetizationVersions      LeaveMonetizationRequestVersion[]    @relation("LeaveMonetizationVersionSubmitter")
@@ -664,6 +668,7 @@ model ApprovalRouteVersion {
   requestApprovalRouteBindings RequestApprovalRouteBinding[]
   vacancyPublications          VacancyPublication[]
   leaveApplicationVersions     LeaveApplicationVersion[]     @relation("LeaveApplicationVersionApprovalRouteVersion")
+  leaveCancellations           LeaveCancellation[]           @relation("LeaveCancellationApprovalRoute")
   monetizationVersions         LeaveMonetizationRequestVersion[] @relation("MonetizationVersionApprovalRoute")
   monetizationAdjustments      MonetizationAdjustment[]          @relation("MonetizationAdjustmentApprovalRoute")
   attendanceCorrections        AttendanceCorrection[]            @relation("AttendanceCorrectionApprovalRoute")
@@ -692,6 +697,7 @@ model ApprovalRequest {
   requestedBy  AgencyMembership     @relation("ApprovalRequestRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   steps        ApprovalStep[]
   leaveApplicationVersions LeaveApplicationVersion[] @relation("LeaveApplicationVersionApprovalRequest")
+  leaveCancellations      LeaveCancellation[]      @relation("LeaveCancellationApprovalRequest")
   monetizationVersions    LeaveMonetizationRequestVersion[] @relation("MonetizationVersionApprovalRequest")
   monetizationAdjustments MonetizationAdjustment[]          @relation("MonetizationAdjustmentApprovalRequest")
 
@@ -1667,6 +1673,7 @@ model DocumentVersion {
   leaveLedgerAdjustmentEvidenceVersions            LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentEvidenceVersion")
   leaveApplicationDraftDocumentVersions            LeaveApplicationDraftDocument[]       @relation("LeaveApplicationDraftDocumentVersion")
   leaveApplicationVersionDocuments                 LeaveApplicationVersionDocument[]     @relation("LeaveApplicationVersionDocumentVersion")
+  leaveCancellationDocuments                       LeaveCancellationDocument[]           @relation("LeaveCancellationDocumentVersion")
   leaveApplicationFormTemplateVersions             LeaveApplicationVersion[]             @relation("LeaveApplicationVersionFormTemplate")
   leaveApplicationAttestationVersions              LeaveApplicationVersion[]             @relation("LeaveApplicationVersionAttestation")
   attendanceContextEvidenceVersions                AttendanceContext[]                   @relation("AttendanceContextEvidenceVersion")
@@ -4601,6 +4608,7 @@ model LeaveApplication {
   versions       LeaveApplicationVersion[]   @relation("LeaveApplicationVersions")
   draftPeriods   LeaveApplicationDraftPeriod[]
   draftDocuments LeaveApplicationDraftDocument[]
+  cancellations  LeaveCancellation[]
 
   @@unique([agencyId, id])
   @@index([agencyId, status, employeeId])
@@ -4677,6 +4685,7 @@ model LeaveApplicationVersion {
   creditCertification  LeaveCreditCertification?    @relation("LeaveCreditCertificationVersion")
   recommendation       LeaveRecommendation?         @relation("LeaveRecommendationVersion")
   approvalAllocation   LeaveApprovalAllocation?     @relation("LeaveApprovalAllocationVersion")
+  cancellations        LeaveCancellation[]
 
   @@unique([leaveApplicationId, versionNo])
   @@unique([approvalRequestId])
@@ -4863,9 +4872,75 @@ model LeaveApprovalAllocationLine {
   leaveApprovalAllocation LeaveApprovalAllocation @relation(fields: [agencyId, leaveApprovalAllocationId], references: [agencyId, id], onDelete: Restrict)
   policyVersion          LeavePolicyVersion       @relation("LeaveApprovalAllocationLinePolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
   leaveAccount            LeaveAccount?            @relation("LeaveApprovalAllocationLineAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  cancellationScopes      LeaveCancellationScope[]
 
   @@unique([leaveApprovalAllocationId, sequenceNo])
   @@unique([agencyId, id])
   @@index([agencyId, policyVersionId])
   @@map("leave_approval_allocation_lines")
+}
+
+model LeaveCancellation {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                   String    @map("agency_id") @db.Uuid
+  leaveApplicationId         String    @map("leave_application_id") @db.Uuid
+  leaveApplicationVersionId  String    @map("leave_application_version_id") @db.Uuid
+  priorStatus                String    @map("prior_status")
+  scopeType                  String    @map("scope_type")
+  reason                     String
+  approvalRouteVersionId     String    @map("approval_route_version_id") @db.Uuid
+  approvalRequestId          String    @map("approval_request_id") @db.Uuid
+  decisionStatus             String    @map("decision_status")
+  effectStatus               String    @map("effect_status")
+  requestedByMembershipId    String    @map("requested_by_membership_id") @db.Uuid
+  requestedAt                DateTime  @default(now()) @map("requested_at") @db.Timestamptz(6)
+  lastEffectFailureCode      String?   @map("last_effect_failure_code") @db.Citext
+
+  agency                 Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveApplication       LeaveApplication          @relation(fields: [agencyId, leaveApplicationId], references: [agencyId, id], onDelete: Restrict)
+  leaveApplicationVersion LeaveApplicationVersion  @relation(fields: [agencyId, leaveApplicationId, leaveApplicationVersionId], references: [agencyId, leaveApplicationId, id], onDelete: Restrict)
+  approvalRouteVersion   ApprovalRouteVersion      @relation("LeaveCancellationApprovalRoute", fields: [agencyId, approvalRouteVersionId], references: [agencyId, id], onDelete: Restrict)
+  approvalRequest        ApprovalRequest           @relation("LeaveCancellationApprovalRequest", fields: [agencyId, approvalRequestId], references: [agencyId, id], onDelete: Restrict)
+  requestedBy            AgencyMembership          @relation("LeaveCancellationRequester", fields: [agencyId, requestedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  documents              LeaveCancellationDocument[]
+  scopes                 LeaveCancellationScope[]
+
+  @@unique([approvalRequestId])
+  @@unique([agencyId, id])
+  @@index([agencyId, leaveApplicationId])
+  @@map("leave_cancellations")
+}
+
+model LeaveCancellationDocument {
+  id                  String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId            String @map("agency_id") @db.Uuid
+  leaveCancellationId String @map("leave_cancellation_id") @db.Uuid
+  documentVersionId   String @map("document_version_id") @db.Uuid
+  purposeCode         String @map("purpose_code") @db.Citext
+
+  agency            Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveCancellation LeaveCancellation @relation(fields: [agencyId, leaveCancellationId], references: [agencyId, id], onDelete: Restrict)
+  documentVersion   DocumentVersion   @relation("LeaveCancellationDocumentVersion", fields: [agencyId, documentVersionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveCancellationId, documentVersionId, purposeCode])
+  @@unique([agencyId, id])
+  @@map("leave_cancellation_documents")
+}
+
+model LeaveCancellationScope {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                 String   @map("agency_id") @db.Uuid
+  leaveCancellationId      String   @map("leave_cancellation_id") @db.Uuid
+  approvalAllocationLineId String   @map("approval_allocation_line_id") @db.Uuid
+  dateFrom                 DateTime @map("date_from") @db.Date
+  dateTo                   DateTime @map("date_to") @db.Date
+  quantity                 Decimal  @db.Decimal(12, 4)
+
+  agency               Agency                      @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  leaveCancellation    LeaveCancellation           @relation(fields: [agencyId, leaveCancellationId], references: [agencyId, id], onDelete: Restrict)
+  approvalAllocationLine LeaveApprovalAllocationLine @relation(fields: [agencyId, approvalAllocationLineId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([leaveCancellationId, approvalAllocationLineId])
+  @@unique([agencyId, id])
+  @@map("leave_cancellation_scopes")
 }

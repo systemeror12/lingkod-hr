@@ -1334,6 +1334,7 @@ CREATE TABLE leave_cancellations (
   leave_application_id uuid NOT NULL,
   leave_application_version_id uuid NOT NULL,
   leave_posting_id uuid,
+  prior_status text NOT NULL CHECK (prior_status IN ('APPROVED','POSTED')),
   scope_type text NOT NULL CHECK (scope_type IN ('WHOLE','PARTIAL')),
   reason text NOT NULL CHECK (btrim(reason) <> ''),
   approval_route_version_id uuid NOT NULL,
@@ -1474,6 +1475,17 @@ transaction. It creates all required effects, consumes commitments, updates the
 application projection, and appends Audit Events and outbox records, or rolls
 back all authoritative changes. Stable effect keys make retries return existing
 results.
+
+A Leave Cancellation is requested while the application is `APPROVED` or
+`POSTED`; `prior_status` records which, so a rejection returns the application
+to that exact state and preserves every original record. Requesting creates an
+Approval Request on the fixed `LEAVE_CANCELLATION` route, a single step that
+requires `leave.applications.cancel`, and projects the application
+`CANCEL_REQUESTED`. Only one cancellation per application may await decision.
+Approval sets `decision_status = APPROVED` and `effect_status = PENDING` and
+leaves the application `CANCEL_REQUESTED`; it creates no ledger, commitment,
+Attendance, or Payroll effect. `leave_posting_id` and the effects table are
+added with Leave Posting and cancellation application.
 
 A cancellation scope names the exact cancelled dates within one approval
 allocation line. A scope covering the whole line cancels its full quantity. A

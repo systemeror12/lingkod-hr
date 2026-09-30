@@ -180,3 +180,34 @@ it('falls back to the catalogue when a stored policy is unreadable', () => {
     }),
   ).toEqual(['LEAVE_WITHOUT_PAY']);
 });
+
+it('requires leave.applications.request_cancel before requesting a cancellation', async () => {
+  await expect(
+    service().requestCancellation(context([]), applicationId, {
+      scopeType: 'WHOLE',
+      reason: 'Plans changed.',
+    }),
+  ).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_REQUEST_CANCEL_FORBIDDEN',
+    statusCode: 403,
+  });
+});
+
+it('requires the permission that matches the cancellation decision', async () => {
+  const approver = context([{ code: 'leave.applications.cancel', scopePolicy: 'AGENCY' }]);
+  await expect(
+    service().decideCancellation(approver, applicationId, {
+      decision: 'REJECT',
+      comments: 'Still needed.',
+    }),
+  ).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_CANCELLATION_REJECTED_FORBIDDEN',
+    statusCode: 403,
+  });
+  await expect(
+    service().decideCancellation(context([]), applicationId, { decision: 'APPROVE' }),
+  ).rejects.toMatchObject({
+    code: 'LEAVE_APPLICATION_CANCELLATION_APPROVED_FORBIDDEN',
+    statusCode: 403,
+  });
+});

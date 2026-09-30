@@ -413,4 +413,103 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
   await expect(deciderDetail).toContainText('APPROVED');
   await expect(deciderDetail).toContainText('Approved allocation');
   await expect(deciderDetail).toContainText('leave account 2 working day');
+
+  // Request and decide a Leave Cancellation over the approved allocation.
+  const cancellationRoute = await apiBody<{ id: string }>(
+    await page.request.post(`${agencyBase}/approval-routes`, {
+      headers,
+      data: {
+        routeCode: 'LEAVE_CANCELLATION',
+        domain: 'leave',
+        versionNo: 1,
+        effectiveFrom: '2026-01-01',
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'leave.applications.cancel',
+              approvePermission: 'leave.applications.cancel',
+              rejectPermission: 'leave.applications.reject_cancel',
+              assignment: { kind: 'MEMBERSHIP', membershipId: decider.membershipId },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await apiBody(
+    await page.request.post(`${agencyBase}/approval-routes/${cancellationRoute.id}/activate`, {
+      headers,
+      data: { reason: 'Leave Cancellation route verified for Leave Application coverage.' },
+    }),
+  );
+
+  await page.goto(`/leave-applications?record=${reviewApplicationId}`);
+  const requesterDetail = page.getByRole('region', { name: 'Alex Rivera', exact: true });
+  await requesterDetail.getByRole('button', { name: 'Request cancellation' }).click();
+  const cancelRequest = page.getByRole('region', { name: 'Request cancellation', exact: true });
+  await cancelRequest.getByLabel('Cancellation scope').selectOption('PARTIAL');
+  await cancelRequest.getByRole('checkbox', { name: /Cancel .* leave account/ }).check();
+  await cancelRequest.getByLabel('Cancelled from').fill('2026-06-03');
+  await cancelRequest.getByLabel('Cancelled to').fill('2026-06-03');
+  await cancelRequest.getByLabel('Cancelled quantity').fill('1');
+  await cancelRequest.getByLabel('Cancellation reason').fill('Return to duty on the last day.');
+  await cancelRequest
+    .getByLabel('Cancellation evidence Document ID (optional)')
+    .fill(nationalRuleDocumentId);
+  await cancelRequest.getByRole('button', { name: 'Submit cancellation request' }).click();
+  await expect(requesterDetail).toContainText('The cancellation was requested.');
+  await expect(requesterDetail).toContainText('CANCEL_REQUESTED');
+  const requestedCancellation = requesterDetail.getByRole('article', {
+    name: /Cancellation requested/,
+  });
+  await expect(requestedCancellation).toContainText('partial cancellation');
+  await expect(requestedCancellation).toContainText('Decision requested');
+  await expect(requestedCancellation).toContainText('Effect not ready');
+  await expect(requestedCancellation).toContainText('leave account 1 working day');
+  await expect(requestedCancellation).toContainText('Return to duty on the last day.');
+
+  await decider.page.goto(`/leave-applications?record=${reviewApplicationId}`);
+  const cancelDeciderDetail = decider.page.getByRole('region', {
+    name: 'Alex Rivera',
+    exact: true,
+  });
+  await cancelDeciderDetail.getByRole('button', { name: 'Reject cancellation' }).click();
+  const rejectCancellation = decider.page.getByRole('region', { name: 'Decide the cancellation' });
+  await rejectCancellation.getByLabel('Reason').fill('The leave remains needed for coverage.');
+  await rejectCancellation.getByRole('button', { name: 'Reject cancellation' }).click();
+  await expect(cancelDeciderDetail).toContainText('The cancellation was rejected.');
+  const snapshot = cancelDeciderDetail.getByRole('region', { name: /^Alex Rivera · / });
+  await expect(snapshot.getByText('APPROVED', { exact: true })).toBeVisible();
+  await expect(
+    cancelDeciderDetail.getByRole('article', { name: /Cancellation requested/ }),
+  ).toContainText('Decision rejected');
+
+  await page.goto(`/leave-applications?record=${reviewApplicationId}`);
+  await requesterDetail.getByRole('button', { name: 'Request cancellation' }).click();
+  const wholeRequest = page.getByRole('region', { name: 'Request cancellation', exact: true });
+  await wholeRequest.getByLabel('Cancellation reason').fill('Leave no longer required.');
+  await wholeRequest
+    .getByLabel('Cancellation evidence Document ID (optional)')
+    .fill(nationalRuleDocumentId);
+  await wholeRequest.getByRole('button', { name: 'Submit cancellation request' }).click();
+  await expect(requesterDetail).toContainText('The cancellation was requested.');
+
+  await decider.page.goto(`/leave-applications?record=${reviewApplicationId}`);
+  await cancelDeciderDetail.getByRole('button', { name: 'Approve cancellation' }).click();
+  const approveCancellation = decider.page.getByRole('region', { name: 'Decide the cancellation' });
+  await approveCancellation.getByRole('button', { name: 'Approve cancellation' }).click();
+  await expect(cancelDeciderDetail).toContainText(
+    'The cancellation was approved; its effects are pending.',
+  );
+  await expect(snapshot.getByText('CANCEL_REQUESTED', { exact: true })).toBeVisible();
+  const approvedCancellation = cancelDeciderDetail
+    .getByRole('article', { name: /Cancellation requested/ })
+    .last();
+  await expect(approvedCancellation).toContainText('whole cancellation');
+  await expect(approvedCancellation).toContainText('Decision approved');
+  await expect(approvedCancellation).toContainText('Effect pending');
+  await expect(approvedCancellation).toContainText('no ledger, commitment, or Attendance change');
 });
