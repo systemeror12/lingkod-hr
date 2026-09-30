@@ -23,7 +23,7 @@ import {
   zonedTimeToInstant,
   type AttendanceWorkDateEvent,
 } from '../attendance/attendance.types';
-import { LeaveAccountsService } from '../leave-accounts/leave-accounts.service';
+import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import {
   applyEventCorrectionOverlays,
   parseAppliedCorrectionOverlays,
@@ -294,7 +294,7 @@ function resolutionFingerprint(
 
 /**
  * Attendance Day calculation turns the resolved schedule configuration,
- * immutable Attendance Events, Attendance Context, and Leave-owned posted
+ * immutable Attendance Events, Attendance Context, and Attendance-owned posted-leave
  * coverage of one Work Date into an immutable calculation version with exact
  * whole-minute segments and blocking Attendance Exceptions. Recalculation is
  * idempotent through the stored input fingerprint and creates a successor
@@ -308,7 +308,8 @@ export class AttendanceDaysService {
     private readonly assignments: ScheduleAssignmentsService,
     @Inject(AttendanceService) private readonly attendance: AttendanceService,
     @Inject(AttendanceContextsService) private readonly contexts: AttendanceContextsService,
-    @Inject(LeaveAccountsService) private readonly leaveAccounts: LeaveAccountsService,
+    @Inject(AttendancePostedLeaveInputsService)
+    private readonly postedLeaveInputs: AttendancePostedLeaveInputsService,
   ) {}
 
   async calculate(
@@ -864,7 +865,7 @@ export class AttendanceDaysService {
         endsAt: new Date(interval.endsAt),
       });
     }
-    const postedLeave = await this.leaveAccounts.postedLeaveCoverageInTransaction(
+    const postedLeave = await this.postedLeaveInputs.coverageInTransaction(
       transaction,
       context.agencyId,
       resolution.employeeId,
@@ -877,8 +878,9 @@ export class AttendanceDaysService {
           type: 'AMBIGUOUS_LEAVE_QUANTITY',
           message: entry.ambiguousReason,
           details: {
-            ledgerEntryId: entry.ledgerEntryId,
-            leaveApplicationId: entry.leaveApplicationId,
+            postedLeaveInputId: entry.inputId,
+            leaveSourceType: entry.sourceType,
+            leaveSourceId: entry.sourceId,
             quantity: entry.quantity,
           },
         });
@@ -888,7 +890,7 @@ export class AttendanceDaysService {
       for (const whole of wholeIntervals) {
         coverage.push({
           sourceType: 'POSTED_LEAVE',
-          sourceId: entry.ledgerEntryId,
+          sourceId: entry.inputId,
           coverageType: 'POSTED_LEAVE',
           startsAt: whole.startsAt,
           endsAt: whole.endsAt,

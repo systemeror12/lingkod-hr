@@ -23,10 +23,7 @@ import { AttendancePeriodsService } from '../attendance-periods/attendance-perio
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { dtrAuditWriter } from '../dtrs/dtrs.audit';
 import { DtrsService } from '../dtrs/dtrs.service';
-import {
-  leaveAccountAuditWriter,
-  LeaveAccountsService,
-} from '../leave-accounts/leave-accounts.service';
+import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import { attendanceCorrectionAuditWriter } from './attendance-corrections.audit';
 import { AttendanceCorrectionsService } from './attendance-corrections.service';
 import {
@@ -367,13 +364,13 @@ function services() {
   );
   const attendance = new AttendanceService(attendanceAuditWriter, assignments);
   const contexts = new AttendanceContextsService(attendanceContextAuditWriter, documentsService);
-  const leaveAccounts = new LeaveAccountsService(leaveAccountAuditWriter, documentsService);
+  const postedLeaveInputs = new AttendancePostedLeaveInputsService();
   const days = new AttendanceDaysService(
     attendanceDayAuditWriter,
     assignments,
     attendance,
     contexts,
-    leaveAccounts,
+    postedLeaveInputs,
   );
   const registry = new ApprovalCompletionRegistry();
   const approvals = new ApprovalsService(approvalAuditWriter, registry);

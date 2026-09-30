@@ -513,6 +513,39 @@ CREATE TABLE attendance_period_version_days (
 );
 ```
 
+```sql
+CREATE TABLE attendance_posted_leave_inputs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  source_key text NOT NULL CHECK (btrim(source_key) <> ''),
+  source_type text NOT NULL CHECK (btrim(source_type) <> ''),
+  source_id uuid NOT NULL,
+  date_from date NOT NULL,
+  date_to date NOT NULL CHECK (date_to >= date_from),
+  unit_code text NOT NULL
+    CHECK (unit_code IN (
+      'WORKING_DAY','CALENDAR_DAY','SCHEDULED_MINUTE','SOURCE_DEFINED'
+    )),
+  quantity numeric(12,4) NOT NULL CHECK (quantity > 0),
+  allocation_kind text NOT NULL
+    CHECK (allocation_kind IN (
+      'LEAVE_ACCOUNT','LEAVE_WITHOUT_PAY','NON_CREDIT'
+    )),
+  predecessor_input_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, employee_id) REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id, predecessor_input_id)
+    REFERENCES attendance_posted_leave_inputs (agency_id, employee_id, id),
+  UNIQUE (agency_id, id),
+  UNIQUE (agency_id, employee_id, id),
+  UNIQUE (agency_id, source_key),
+  UNIQUE (agency_id, predecessor_input_id)
+);
+```
+
+`attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, or a source-defined unit, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval.
+
 Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, and posted-leave intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
 
 An overnight calculation remains one Attendance Day under the beginning-local-date Work Date, while each segment keeps the holiday classification of its actual local calendar date. Complete events on a rest day create `UNSCHEDULED_SERVICE` with no deficit minutes. Outside-schedule and statutory-night-window totals remain factual candidates, not compensation decisions.

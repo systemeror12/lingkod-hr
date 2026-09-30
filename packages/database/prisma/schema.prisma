@@ -1942,6 +1942,7 @@ model Employee {
   leaveAccounts          LeaveAccount[]          @relation("LeaveAccountEmployee")
   leaveApplications      LeaveApplication[]      @relation("LeaveApplicationEmployee")
   attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
+  attendancePostedLeaveInputs AttendancePostedLeaveInput[] @relation("AttendancePostedLeaveInputEmployee")
   attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
   attendanceDays         AttendanceDay[]         @relation("AttendanceDayEmployee")
   attendanceSubmissions  EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionEmployee")
@@ -3451,6 +3452,33 @@ model AttendanceContext {
   @@index([agencyId, employeeId, workDate])
   @@index([agencyId, employeeId, startsAt])
   @@map("attendance_contexts")
+}
+
+model AttendancePostedLeaveInput {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String   @map("agency_id") @db.Uuid
+  employeeId         String   @map("employee_id") @db.Uuid
+  sourceKey          String   @map("source_key")
+  sourceType         String   @map("source_type")
+  sourceId           String   @map("source_id") @db.Uuid
+  dateFrom           DateTime @map("date_from") @db.Date
+  dateTo             DateTime @map("date_to") @db.Date
+  unitCode           String   @map("unit_code")
+  quantity           Decimal  @db.Decimal(12, 4)
+  allocationKind     String   @map("allocation_kind")
+  predecessorInputId String?  @map("predecessor_input_id") @db.Uuid
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee    Employee                     @relation("AttendancePostedLeaveInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  predecessor AttendancePostedLeaveInput?  @relation("AttendancePostedLeaveInputSuccession", fields: [agencyId, employeeId, predecessorInputId], references: [agencyId, employeeId, id], onDelete: Restrict, map: "attendance_posted_leave_inputs_predecessor_fkey")
+  successors  AttendancePostedLeaveInput[] @relation("AttendancePostedLeaveInputSuccession")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeId, id], map: "attendance_posted_leave_inputs_employee_id_key")
+  @@unique([agencyId, sourceKey])
+  @@unique([agencyId, predecessorInputId])
+  @@index([agencyId, employeeId, dateFrom, dateTo], map: "attendance_posted_leave_inputs_employee_range_idx")
+  @@map("attendance_posted_leave_inputs")
 }
 
 model AttendanceWebClockVersion {
