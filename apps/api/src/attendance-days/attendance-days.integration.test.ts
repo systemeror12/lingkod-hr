@@ -12,10 +12,7 @@ import { AttendanceContextsService } from '../attendance-contexts/attendance-con
 import { attendanceAuditWriter } from '../attendance/attendance.audit';
 import { AttendanceService } from '../attendance/attendance.service';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
-import {
-  leaveAccountAuditWriter,
-  LeaveAccountsService,
-} from '../leave-accounts/leave-accounts.service';
+import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import { attendanceDayAuditWriter } from './attendance-days.audit';
 import { AttendanceDaysService } from './attendance-days.service';
 
@@ -258,15 +255,24 @@ function configurationServices() {
   );
   const attendance = new AttendanceService(attendanceAuditWriter, assignments);
   const contexts = new AttendanceContextsService(attendanceContextAuditWriter, documentsService);
-  const leaveAccounts = new LeaveAccountsService(leaveAccountAuditWriter, documentsService);
+  const postedLeaveInputs = new AttendancePostedLeaveInputsService();
   const days = new AttendanceDaysService(
     attendanceDayAuditWriter,
     assignments,
     attendance,
     contexts,
-    leaveAccounts,
+    postedLeaveInputs,
   );
-  return { schedules, arrangements, calendars, assignments, attendance, contexts, days };
+  return {
+    schedules,
+    arrangements,
+    calendars,
+    assignments,
+    attendance,
+    contexts,
+    postedLeaveInputs,
+    days,
+  };
 }
 
 async function setupSchedule(
@@ -374,6 +380,7 @@ async function cleanupAgency(admin: PrismaClient, agencyId: string, suffix: stri
     await transaction.attendanceDay.deleteMany({ where: { agencyId } });
     await transaction.attendancePeriod.deleteMany({ where: { agencyId } });
     await transaction.attendanceContext.deleteMany({ where: { agencyId } });
+    await transaction.attendancePostedLeaveInput.deleteMany({ where: { agencyId } });
     await transaction.attendanceEvent.deleteMany({ where: { agencyId } });
     await transaction.attendanceWebClockVersion.deleteMany({ where: { agencyId } });
     await transaction.scheduleAssignment.deleteMany({ where: { agencyId } });
@@ -553,6 +560,119 @@ it.skipIf(!enabled)(
       });
       expect(audit?.entityId).toBe(dayId);
       expect(audit?.newStatus).toBe('CALCULATED');
+    } finally {
+      await cleanupAgency(admin, agency.id, suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'places current posted-leave inputs, blocks on unplaceable quantity, and ignores superseded inputs',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-attendance-day-leave`;
+    const { agency, membership, unit, context } = await createAgency(admin, suffix);
+    const coveredDate = pastWeekday(1);
+    const ambiguousDate = pastWeekday(2);
+    const effectiveFrom = manilaDate(-30);
+
+    try {
+      const setup = await setupSchedule(admin, {
+        context,
+        membershipId: membership.id,
+        suffix,
+        effectiveFrom,
+      });
+      const employee = await createEmployee(admin, {
+        agencyId: agency.id,
+        membershipId: membership.id,
+        unitId: unit.id,
+        suffix,
+        withSegment: true,
+      });
+      await setup.assignments.create(context, {
+        employeeId: employee.id,
+        workScheduleVersionId: setup.scheduleVersionId,
+        workArrangementVersionId: setup.arrangementVersionId,
+        authorityDocumentVersionId: setup.assignmentEvidence.id,
+        effectiveFrom,
+      });
+      const createInput = (
+        input: Parameters<typeof setup.postedLeaveInputs.createInTransaction>[2],
+      ) =>
+        withDatabaseContext({ agencyId: agency.id, membershipId: membership.id }, (transaction) =>
+          setup.postedLeaveInputs.createInTransaction(transaction, agency.id, input),
+        );
+      const calculate = (workDate: string) =>
+        setup.days.calculate(context, {
+          periodCode: `LEAVE-${workDate}`,
+          dateFrom: workDate,
+          dateTo: workDate,
+          employeeIds: [employee.id],
+        });
+      const sourceId = employee.id;
+
+      // Leave without pay never touches the ledger; its input alone covers the day.
+      const first = await createInput({
+        sourceKey: `${suffix}-lwop`,
+        employeeId: employee.id,
+        sourceType: 'LeaveApprovalAllocationLine',
+        sourceId,
+        dateFrom: coveredDate,
+        dateTo: coveredDate,
+        unitCode: 'WORKING_DAY',
+        quantity: 1,
+        allocationKind: 'LEAVE_WITHOUT_PAY',
+      });
+      const covered = await calculate(coveredDate);
+      expect(covered.days[0]?.status).toBe('CALCULATED');
+      const coveredDetail = await setup.days.findById(context, covered.days[0]!.attendanceDayId!);
+      expect(coveredDetail.day.totals).toMatchObject({
+        expectedMinutes: 480,
+        postedLeaveMinutes: 480,
+        absenceMinutes: 0,
+      });
+
+      // A successor supersedes the input; only it contributes coverage now.
+      await createInput({
+        sourceKey: `${suffix}-lwop-successor`,
+        employeeId: employee.id,
+        sourceType: 'LeaveApprovalAllocationLine',
+        sourceId,
+        dateFrom: manilaDate(1),
+        dateTo: manilaDate(1),
+        unitCode: 'CALENDAR_DAY',
+        quantity: 1,
+        allocationKind: 'NON_CREDIT',
+        predecessorInputId: first.id,
+      });
+      const superseded = await calculate(coveredDate);
+      expect(superseded.days[0]?.status).toBe('CALCULATED');
+      const supersededDetail = await setup.days.findById(
+        context,
+        superseded.days[0]!.attendanceDayId!,
+      );
+      expect(supersededDetail.day.totals).toMatchObject({
+        postedLeaveMinutes: 0,
+        absenceMinutes: 480,
+      });
+
+      // A half-day quantity has no clock placement, so the day blocks.
+      await createInput({
+        sourceKey: `${suffix}-half-day`,
+        employeeId: employee.id,
+        sourceType: 'LeaveApprovalAllocationLine',
+        sourceId,
+        dateFrom: ambiguousDate,
+        dateTo: ambiguousDate,
+        unitCode: 'WORKING_DAY',
+        quantity: 0.5,
+        allocationKind: 'LEAVE_ACCOUNT',
+      });
+      const ambiguous = await calculate(ambiguousDate);
+      expect(ambiguous.days[0]?.status).toBe('EXCEPTION');
+      expect(ambiguous.days[0]?.exceptionTypes).toContain('AMBIGUOUS_LEAVE_QUANTITY');
     } finally {
       await cleanupAgency(admin, agency.id, suffix);
       await admin.$disconnect();

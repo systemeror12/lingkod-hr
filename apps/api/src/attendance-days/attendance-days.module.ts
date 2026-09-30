@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AttendanceConfigurationModule } from '../attendance-configuration/attendance-configuration.module';
 import { AttendanceContextsModule } from '../attendance-contexts/attendance-contexts.module';
+import { AttendancePostedLeaveInputsModule } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.module';
 import { AttendanceModule } from '../attendance/attendance.module';
 import { AuthModule } from '../auth/auth.module';
-import { LeaveAccountsModule } from '../leave-accounts/leave-accounts.module';
 import { ATTENDANCE_DAY_AUDIT_WRITER, attendanceDayAuditWriter } from './attendance-days.audit';
 import { AttendanceDaysController } from './attendance-days.controller';
 import { AttendanceDaysService } from './attendance-days.service';
@@ -14,7 +14,7 @@ import { AttendanceDaysService } from './attendance-days.service';
     AttendanceConfigurationModule,
     AttendanceModule,
     AttendanceContextsModule,
-    LeaveAccountsModule,
+    AttendancePostedLeaveInputsModule,
   ],
   controllers: [AttendanceDaysController],
   providers: [
