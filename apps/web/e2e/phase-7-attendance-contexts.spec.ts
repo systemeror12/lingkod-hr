@@ -41,8 +41,8 @@ test('records an Attendance Context and reads it across Tree, Form, and Kanban',
   await page.getByLabel('Employee').selectOption({ label: 'E2E-0001 · Alex Rivera' });
   await page.getByLabel('Context type').selectOption('OFFICIAL_TRAVEL');
   await page.getByRole('radio', { name: 'Exact time range' }).check();
-  await page.getByLabel('Starts (local time)').fill('2026-09-09T09:00');
-  await page.getByLabel('Ends (local time)').fill('2026-09-09T11:30');
+  await page.getByLabel('Starts (Manila time)').fill('2026-09-09T09:00');
+  await page.getByLabel('Ends (Manila time)').fill('2026-09-09T11:30');
   await page.getByLabel('Reason').fill(timedReason);
   await page.getByLabel('Source type (link one authoritative record)').fill('TravelOrder');
   await page.getByLabel('Source identifier').fill('22222222-2222-4222-8222-222222222222');

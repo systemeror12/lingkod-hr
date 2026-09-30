@@ -142,8 +142,11 @@ function eventValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
 }
 
-function toInstant(value: string): string {
-  const date = new Date(value);
+/** Reads a datetime-local entry as Asia/Manila, the zone every label displays. */
+export function manilaInstant(value: string): string {
+  const date = new Date(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value) ? value + '+08:00' : NaN,
+  );
   if (Number.isNaN(date.getTime())) {
     throw new Error('Enter a valid exact start and end time.');
   }
@@ -185,23 +188,20 @@ export function AttendanceContextWorkspace({
   const [busy, setBusy] = useState(false);
   const optionsRequested = useRef(false);
 
+  const showsRecordForm = canCreate && view === 'form' && (creating || !recordId);
+
   useEffect(() => {
-    let active = true;
-    setError('');
-    void request('/attendance-contexts')
+    if (!showsRecordForm || optionsRequested.current) return;
+    optionsRequested.current = true;
+    void request('/employees')
       .then((value) => {
-        if (active) setRecords((value as AttendanceContextListResponse).contexts);
+        setEmployeeOptions((value as { employees: EmployeeOption[] }).employees);
       })
       .catch((failure: unknown) => {
-        if (active)
-          setError(
-            failure instanceof Error ? failure.message : 'The Attendance Context register failed.',
-          );
+        optionsRequested.current = false;
+        setError(failure instanceof Error ? failure.message : 'Loading employees failed.');
       });
-    return () => {
-      active = false;
-    };
-  }, []);
+  }, [showsRecordForm]);
 
   async function request(path: string, init: RequestInit = {}): Promise<unknown> {
     const response = await fetch('/api/v1/agencies/' + agencyId + path, {
@@ -225,16 +225,6 @@ export function AttendanceContextWorkspace({
     setError('');
     setSuccess('');
     navigation.navigate({ view: 'form', record: null, new: 'context' });
-    if (optionsRequested.current) return;
-    optionsRequested.current = true;
-    void request('/employees')
-      .then((value) => {
-        setEmployeeOptions((value as { employees: EmployeeOption[] }).employees);
-      })
-      .catch((failure: unknown) => {
-        optionsRequested.current = false;
-        setError(failure instanceof Error ? failure.message : 'Loading employees failed.');
-      });
   }
 
   function openRecord(id: string): void {
@@ -267,8 +257,8 @@ export function AttendanceContextWorkspace({
               employeeId,
               contextType,
               coverageMode,
-              startsAt: toInstant(startsAt),
-              endsAt: toInstant(endsAt),
+              startsAt: manilaInstant(startsAt),
+              endsAt: manilaInstant(endsAt),
               reason: reason.trim(),
               ...(sourceType.trim() ? { sourceType: sourceType.trim() } : {}),
               ...(sourceId.trim() ? { sourceId: sourceId.trim() } : {}),
@@ -281,8 +271,6 @@ export function AttendanceContextWorkspace({
         body: JSON.stringify(body),
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })) as AttendanceContextItem;
-      await refresh();
-      setSuccess('Attendance Context recorded. History keeps the original record.');
       setEmployeeId('');
       setWorkDate('');
       setStartsAt('');
@@ -291,6 +279,16 @@ export function AttendanceContextWorkspace({
       setSourceType('');
       setSourceId('');
       setEvidenceDocumentVersionId('');
+      try {
+        await refresh();
+      } catch {
+        // The record exists; a resubmit would append a duplicate.
+        setError(
+          'Attendance Context recorded, but the register could not refresh. Reload the page to see it; do not record it again.',
+        );
+        return;
+      }
+      setSuccess('Attendance Context recorded. History keeps the original record.');
       navigation.navigate({ view: 'form', record: created.id, new: null });
     } catch (failure: unknown) {
       setError(failure instanceof Error ? failure.message : 'Recording the context failed.');
@@ -309,6 +307,35 @@ export function AttendanceContextWorkspace({
       record.reason.toLowerCase().includes(normalizedQuery)
     );
   });
+  const filterBar = (
+    <div className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3">
+      <Field htmlFor="attendance-context-search" label="Search">
+        <input
+          className={inputClass}
+          id="attendance-context-search"
+          onChange={(event) => setQuery(eventValue(event))}
+          placeholder="Employee or reason"
+          type="search"
+          value={query}
+        />
+      </Field>
+      <Field htmlFor="attendance-context-filter" label="Context">
+        <select
+          className={inputClass}
+          id="attendance-context-filter"
+          onChange={(event) => setTypeFilter(eventValue(event) as 'ALL' | AttendanceContextType)}
+          value={typeFilter}
+        >
+          <option value="ALL">All types</option>
+          {CONTEXT_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {CONTEXT_TYPE_LABELS[type]}
+            </option>
+          ))}
+        </select>
+      </Field>
+    </div>
+  );
   const selected = recordId ? (records.find(({ id }) => id === recordId) ?? null) : null;
 
   return (
@@ -368,35 +395,7 @@ export function AttendanceContextWorkspace({
             </span>
           }
         >
-          <div className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3">
-            <Field htmlFor="attendance-context-search" label="Search">
-              <input
-                className={inputClass}
-                id="attendance-context-search"
-                onChange={(event) => setQuery(eventValue(event))}
-                placeholder="Employee or reason"
-                type="search"
-                value={query}
-              />
-            </Field>
-            <Field htmlFor="attendance-context-filter" label="Context">
-              <select
-                className={inputClass}
-                id="attendance-context-filter"
-                onChange={(event) =>
-                  setTypeFilter(eventValue(event) as 'ALL' | AttendanceContextType)
-                }
-                value={typeFilter}
-              >
-                <option value="ALL">All types</option>
-                {CONTEXT_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {CONTEXT_TYPE_LABELS[type]}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
+          {filterBar}
           {filtered.length === 0 ? (
             <StateSurface compact label="Attendance Contexts">
               <strong className="font-[650] text-ink">
@@ -582,7 +581,7 @@ export function AttendanceContextWorkspace({
                     </Field>
                   ) : (
                     <div className="grid gap-4 min-[721px]:grid-cols-2">
-                      <Field htmlFor="attendance-context-starts-at" label="Starts (local time)">
+                      <Field htmlFor="attendance-context-starts-at" label="Starts (Manila time)">
                         <input
                           className={inputClass}
                           id="attendance-context-starts-at"
@@ -592,7 +591,7 @@ export function AttendanceContextWorkspace({
                           value={startsAt}
                         />
                       </Field>
-                      <Field htmlFor="attendance-context-ends-at" label="Ends (local time)">
+                      <Field htmlFor="attendance-context-ends-at" label="Ends (Manila time)">
                         <input
                           className={inputClass}
                           id="attendance-context-ends-at"
@@ -655,11 +654,15 @@ export function AttendanceContextWorkspace({
                   </Button>
                 </div>
               </form>
-            ) : (
+            ) : creating ? (
               <StateSurface compact label="Attendance Context access">
                 <p className="m-0">
                   Your active Agency Membership does not permit recording Attendance Contexts.
                 </p>
+              </StateSurface>
+            ) : (
+              <StateSurface compact label="Attendance Context record">
+                <p className="m-0">Choose a record from the register to read it.</p>
               </StateSurface>
             )
           ) : (
@@ -690,6 +693,7 @@ export function AttendanceContextWorkspace({
 
       {view === 'kanban' ? (
         <Panel title="Attendance Context board" flush>
+          {filterBar}
           <div className="grid gap-3 p-4 min-[921px]:grid-cols-4">
             {CONTEXT_TYPES.map((type) => {
               const column = filtered.filter((record) => record.contextType === type);
