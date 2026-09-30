@@ -349,7 +349,7 @@ export function ApplicationShell({
       <main
         ref={mainRef}
         tabIndex={-1}
-        className="workspace w-full min-w-0 px-(--workspace-gutter) py-6 [--workspace-gutter:--spacing(4)] min-[621px]:[--workspace-gutter:--spacing(6)] min-[980px]:[--workspace-gutter:--spacing(8)]"
+        className="w-full min-w-0 px-(--workspace-gutter) py-6 [--workspace-gutter:--spacing(4)] min-[621px]:[--workspace-gutter:--spacing(6)] min-[980px]:[--workspace-gutter:--spacing(8)]"
       >
         {children}
       </main>

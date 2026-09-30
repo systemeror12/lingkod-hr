@@ -1,9 +1,9 @@
 @import 'tailwindcss';
 
 /*
- * Enterprise workbench tokens (#231, variant B). Rebuilt screens use only these.
+ * Enterprise workbench tokens (#231, variant B). Screens use only these.
  * Contrast pairs are checked for WCAG 2.2 AA against canvas and surface; nav
- * text and nav-focus are checked against nav and the legacy midnight nav.
+ * text and nav-focus are checked against nav.
  */
 @theme static {
   --color-nav: #0f2240;
@@ -43,14 +43,6 @@
   --text-small--line-height: 1.45;
   --text-caption: 0.75rem;
   --text-caption--line-height: 1.4;
-
-  /* Legacy names, kept until every screen moves. Names with a workbench role alias it. */
-  --color-midnight: #172033;
-  --color-cobalt: #416da9;
-  --color-pale-blue: #e6edf8;
-  --color-line: var(--color-border);
-  --color-paper: var(--color-surface);
-  --color-muted: var(--color-ink-muted);
 }
 
 * {
@@ -96,30 +88,6 @@ body {
 }
 
 ::selection {
-  background: var(--color-pale-blue);
-  color: var(--color-midnight);
-}
-
-/* Shared workspace density. Domain forms retain their own layout and validation.
-   Unlayered, so it beats utilities; workbench titles opt out until legacy styles go. */
-.workspace h1:not(.text-page-title) {
-  font-size: clamp(1.5rem, 2vw, 1.875rem);
-  line-height: 1.2;
-}
-
-.workspace :where(th, td) {
-  padding-block: 0.625rem;
-}
-
-.workspace :where(input, select, textarea):not([type='checkbox']):not([type='radio']) {
-  font-size: 0.875rem;
-}
-
-.workspace :where(input, select, textarea)[aria-invalid='true'] {
-  border-color: var(--color-danger);
-}
-
-.record-form {
-  width: 100%;
-  max-width: none;
+  background: var(--color-primary);
+  color: var(--color-surface);
 }

@@ -162,6 +162,12 @@ test('creates an Employee and links an Agency Membership', async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText(employeeNumber, { exact: true })).toBeVisible();
   await expect(page.getByText('LINKED', { exact: true })).toBeVisible();
+
+  // The first linkable membership can be the shared session; later specs expect it unlinked.
+  await page.getByRole('link', { name: legalName }).click();
+  await page.getByRole('button', { name: 'Unlink membership' }).click();
+  await expect(page.getByRole('status')).toContainText('Agency Membership unlinked');
+  await expect(page.getByText('UNLINKED', { exact: true })).toBeVisible();
 });
 
 test('keeps Employee creation values after a network failure and permits retry', async ({

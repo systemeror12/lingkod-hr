@@ -308,9 +308,10 @@ test.describe('Phase 3 acceptance gate', () => {
       expect(JSON.stringify(detailBody)).not.toMatch(/password|secret|session|token/i);
 
       await hrmoPage.goto('/audit');
-      const event = hrmoPage.getByRole('button').filter({ hasText: unitId });
-      await expect(event).toContainText('ORGANIZATION_UNIT_CREATED');
-      await expect(event).toContainText('None → DRAFT');
+      const eventRow = hrmoPage.getByRole('row').filter({ hasText: unitId });
+      await expect(eventRow).toContainText('ORGANIZATION_UNIT_CREATED');
+      await expect(eventRow).toContainText('None → DRAFT');
+      const event = eventRow.getByRole('button', { name: 'ORGANIZATION_UNIT_CREATED' });
       await event.click();
       const auditDialog = hrmoPage.getByRole('region', { name: 'Audit Event detail' });
       await expect(auditDialog).toBeVisible();

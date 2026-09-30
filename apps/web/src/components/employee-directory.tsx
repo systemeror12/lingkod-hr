@@ -39,21 +39,3 @@ export function EmployeeStatus({ linked }: { linked: boolean }) {
     <StatusTag tone={linked ? 'success' : 'warning'}>{linked ? 'LINKED' : 'UNLINKED'}</StatusTag>
   );
 }
-
-export function EmployeePageTitle({
-  eyebrow,
-  title,
-  description,
-}: {
-  eyebrow: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-[10px] font-bold tracking-[.12em] text-cobalt uppercase">{eyebrow}</p>
-      <h1 className="m-0 text-[30px] font-[700] tracking-[-.035em] text-midnight">{title}</h1>
-      <p className="mt-2 max-w-[620px] text-sm leading-6 text-muted">{description}</p>
-    </div>
-  );
-}

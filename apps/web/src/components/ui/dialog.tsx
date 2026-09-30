@@ -196,7 +196,7 @@ function InlineRecord({
       aria-busy={busy}
       aria-describedby={descriptionId}
       className={cn(
-        'record-form flex min-w-0 flex-col rounded-panel border border-border bg-surface outline-none',
+        'flex w-full min-w-0 flex-col rounded-panel border border-border bg-surface outline-none',
         className,
       )}
     >
