@@ -22,6 +22,7 @@ import {
   leavePolicyAuditWriter,
   LeavePoliciesService,
 } from '../leave-policies/leave-policies.service';
+import { LeaveApplicationsController } from './leave-applications.controller';
 import {
   LEAVE_CANCELLATION_ROUTE_CODE,
   leaveApplicationAuditWriter,
@@ -1671,11 +1672,449 @@ it.skipIf(!enabled)(
         ),
       ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_NOT_FOUND' });
 
+      const applyContext = {
+        ...recorderContext,
+        permissions: [
+          ...recorderContext.permissions,
+          { code: 'leave.applications.apply_cancellation', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+      const approvedLine = allocation.lines[0]!;
+      const partialRequest = await applications.requestCancellation(
+        requestCancelEmployee,
+        reviewApplicationId,
+        {
+          scopeType: 'PARTIAL',
+          reason: 'Return one day early.',
+          scopes: [
+            {
+              allocationLineId: approvedLine.id,
+              dateFrom: approvedLine.dateTo,
+              dateTo: approvedLine.dateTo,
+              quantity: '1',
+            },
+          ],
+        },
+      );
+      const appliedCancellationId = partialRequest.cancellations[0]!.id;
+      await applications.decideCancellation(cancelApprover, reviewApplicationId, {
+        decision: 'APPROVE',
+      });
+      const failingApplications = new LeaveApplicationsService(
+        {
+          async write(transaction, event) {
+            if (event.action === 'LEAVE_APPLICATION_CANCELLATION_APPLIED') {
+              throw new Error('Injected audit storage outage.');
+            }
+            await leaveApplicationAuditWriter.write(transaction, event);
+          },
+        },
+        documents,
+        approvals,
+        completionRegistry,
+        schedules,
+        arrangements,
+        calendars,
+      );
+      await expect(
+        failingApplications.applyCancellation(
+          applyContext,
+          reviewApplicationId,
+          appliedCancellationId,
+          `apply-partial-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_APPLY_RETRYABLE', statusCode: 503 });
+      const failed = await applications.findById(recorderContext, reviewApplicationId);
+      expect(failed!.application.status).toBe('CANCEL_REQUESTED');
+      expect(failed!.cancellations[0]).toMatchObject({
+        decisionStatus: 'APPROVED',
+        effectStatus: 'FAILED',
+        lastEffectFailureKind: 'RETRYABLE',
+        lastEffectFailureCode: 'LEAVE_CANCELLATION_APPLY_RETRYABLE',
+        effects: [],
+      });
+      const afterRollback = await admin.leaveCreditCommitment.findMany({
+        where: { agencyId: agency.id, sourceId: reviewVersion.id, status: 'ACTIVE' },
+      });
+      expect(
+        afterRollback.map(({ id, quantity }) => ({ id, quantity: quantity.toFixed(4) })),
+      ).toEqual([{ id: commitments[1]!.id, quantity: '2.0000' }]);
+      await expect(
+        admin.outboxEvent.count({
+          where: { agencyId: agency.id, aggregateId: appliedCancellationId },
+        }),
+      ).resolves.toBe(0);
+      const blockingApplications = new LeaveApplicationsService(
+        {
+          async write(transaction, event) {
+            if (event.action === 'LEAVE_APPLICATION_CANCELLATION_APPLIED') {
+              // A real SQL failure aborts the effect subtransaction in PostgreSQL.
+              await transaction.$executeRaw`SELECT 1 / 0`;
+            }
+            await leaveApplicationAuditWriter.write(transaction, event);
+          },
+        },
+        documents,
+        approvals,
+        completionRegistry,
+        schedules,
+        arrangements,
+        calendars,
+      );
+      await expect(
+        blockingApplications.applyCancellation(
+          applyContext,
+          reviewApplicationId,
+          appliedCancellationId,
+          `apply-partial-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_APPLY_BLOCKED', statusCode: 409 });
+      expect(
+        (await applications.findById(recorderContext, reviewApplicationId))!.cancellations[0],
+      ).toMatchObject({ effectStatus: 'FAILED', lastEffectFailureKind: 'BLOCKING', effects: [] });
+      await expect(
+        admin.auditEvent.count({
+          where: {
+            agencyId: agency.id,
+            entityId: reviewApplicationId,
+            action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_FAILED',
+          },
+        }),
+      ).resolves.toBe(2);
+      await expect(
+        applications.applyCancellation(
+          applyContext,
+          unpaidApplicationId,
+          wholeCancellation.id,
+          `apply-partial-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_IDEMPOTENCY_CONFLICT' });
+      const expiringApplications = new LeaveApplicationsService(
+        {
+          async write(transaction, event) {
+            if (event.action === 'LEAVE_APPLICATION_CANCELLATION_APPLIED') {
+              // Prisma's default interactive transaction expires after five seconds.
+              await new Promise((resolve) => setTimeout(resolve, 5_100));
+            }
+            await leaveApplicationAuditWriter.write(transaction, event);
+          },
+        },
+        documents,
+        approvals,
+        completionRegistry,
+        schedules,
+        arrangements,
+        calendars,
+      );
+      await expect(
+        expiringApplications.applyCancellation(
+          applyContext,
+          reviewApplicationId,
+          appliedCancellationId,
+          `apply-partial-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_APPLY_RETRYABLE', statusCode: 503 });
+      const expired = await applications.findById(recorderContext, reviewApplicationId);
+      expect(expired!.application.status).toBe('CANCEL_REQUESTED');
+      expect(expired!.cancellations[0]).toMatchObject({
+        effectStatus: 'FAILED',
+        lastEffectFailureKind: 'RETRYABLE',
+        effects: [],
+      });
+      await expect(
+        admin.auditEvent.count({
+          where: {
+            agencyId: agency.id,
+            entityId: reviewApplicationId,
+            action: 'LEAVE_APPLICATION_CANCELLATION_APPLY_FAILED',
+          },
+        }),
+      ).resolves.toBe(3);
+      const competingKeys = await Promise.allSettled([
+        applications.applyCancellation(
+          applyContext,
+          reviewApplicationId,
+          appliedCancellationId,
+          `shared-key-${suffix}`,
+        ),
+        applications.applyCancellation(
+          applyContext,
+          unpaidApplicationId,
+          wholeCancellation.id,
+          `shared-key-${suffix}`,
+        ),
+      ]);
+      expect(competingKeys.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      expect(competingKeys.filter(({ status }) => status === 'rejected')).toMatchObject([
+        { reason: { code: 'LEAVE_APPLICATION_IDEMPOTENCY_CONFLICT' } },
+      ]);
+      const [applied, concurrentRetry] = await Promise.all([
+        applications.applyCancellation(
+          applyContext,
+          reviewApplicationId,
+          appliedCancellationId,
+          `apply-partial-${suffix}`,
+        ),
+        applications.applyCancellation(
+          applyContext,
+          reviewApplicationId,
+          appliedCancellationId,
+          `apply-partial-${suffix}`,
+        ),
+      ]);
+      expect(concurrentRetry.cancellations).toEqual(applied.cancellations);
+      expect(applied.application.status).toBe('CANCELLED');
+      expect(applied.cancellations[0]).toMatchObject({
+        decisionStatus: 'APPROVED',
+        effectStatus: 'APPLIED',
+        lastEffectFailureCode: null,
+        effects: [
+          {
+            effectKind: 'COMMITMENT_RELEASE',
+            ownerRecordId: commitments[1]!.id,
+            ownerStatus: 'RELEASED',
+          },
+        ],
+      });
+      const retained = await admin.leaveCreditCommitment.findMany({
+        where: { agencyId: agency.id, sourceId: reviewVersion.id, status: 'ACTIVE' },
+      });
+      expect(retained).toHaveLength(1);
+      expect(retained[0]).toMatchObject({
+        leaveAccountId: commitments[1]!.leaveAccountId,
+        succeedsCommitmentId: commitments[1]!.id,
+      });
+      expect(retained[0]!.quantity.toFixed(4)).toBe('1.0000');
+      expect(applied.versions.at(-1)!.approvalAllocation).toEqual(allocation);
+      expect(
+        (
+          await applications.applyCancellation(
+            applyContext,
+            reviewApplicationId,
+            appliedCancellationId,
+            `apply-partial-${suffix}`,
+          )
+        ).cancellations,
+      ).toEqual(applied.cancellations);
+      // Whole unposted cancellation also applies when no account was charged.
+      const noCreditApplied = await applications.applyCancellation(
+        applyContext,
+        unpaidApplicationId,
+        wholeCancellation.id,
+        `apply-unpaid-${suffix}`,
+      );
+      expect(noCreditApplied.application.status).toBe('CANCELLED');
+      expect(noCreditApplied.cancellations.at(-1)).toMatchObject({
+        effectStatus: 'APPLIED',
+        effects: [],
+      });
+
+      // A fresh one-day approval exercises whole cancellation of a credit commitment.
+      const wholeCredit = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: specialLeave.id,
+      });
+      const wholeCreditId = wholeCredit.application.id;
+      await applications.update(agencyContext, wholeCreditId, {
+        reason: 'One day of special privilege leave.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: approvedLine.dateFrom, dateTo: approvedLine.dateFrom }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await applications.submit(employeeContext, wholeCreditId, submitInput);
+      await applications.route(recorderContext, wholeCreditId);
+      await applications.certify(recorderContext, wholeCreditId, {});
+      await applications.recommend(supervisorContext, wholeCreditId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      const wholeCreditApproved = await applications.decide(approverContext, wholeCreditId, {
+        decision: 'APPROVE',
+      });
+      const wholeCreditVersionId = wholeCreditApproved.application.currentVersionId!;
+      const wholeCreditRequest = await applications.requestCancellation(
+        requestCancelEmployee,
+        wholeCreditId,
+        {
+          scopeType: 'WHOLE',
+          reason: 'Duty requires attendance.',
+        },
+      );
+      await applications.decideCancellation(cancelApprover, wholeCreditId, { decision: 'APPROVE' });
+      await applications.applyCancellation(
+        applyContext,
+        reviewApplicationId,
+        appliedCancellationId,
+        `new-replay-key-${suffix}`,
+      );
+      await expect(
+        applications.applyCancellation(
+          applyContext,
+          wholeCreditId,
+          wholeCreditRequest.cancellations[0]!.id,
+          `new-replay-key-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_IDEMPOTENCY_CONFLICT' });
+      const wholeApplied = await applications.applyCancellation(
+        applyContext,
+        wholeCreditId,
+        wholeCreditRequest.cancellations[0]!.id,
+        `apply-whole-credit-${suffix}`,
+      );
+      expect(wholeApplied.application.status).toBe('CANCELLED');
+      expect(wholeApplied.cancellations[0]!.effects).toHaveLength(1);
+      const wholeCreditCommitments = await admin.leaveCreditCommitment.findMany({
+        where: { agencyId: agency.id, sourceId: wholeCreditVersionId },
+      });
+      expect(wholeCreditCommitments).toHaveLength(1);
+      expect(wholeCreditCommitments[0]!.status).toBe('RELEASED');
+
+      // Applying posted leave through the unposted command fails closed and records a blocking cause.
+      const postedRequest = await applications.requestCancellation(
+        requestCancelRecorder,
+        excessApplicationId,
+        {
+          scopeType: 'WHOLE',
+          reason: 'Recorded cancellation of posted leave.',
+          evidenceDocumentId: signedEvidence.documentId,
+        },
+      );
+      await applications.decideCancellation(cancelApprover, excessApplicationId, {
+        decision: 'APPROVE',
+      });
+      await expect(
+        applications.applyCancellation(
+          applyContext,
+          excessApplicationId,
+          postedRequest.cancellations.at(-1)!.id,
+          `apply-posted-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_POSTED_EFFECTS_REQUIRED' });
+      const blocked = await applications.findById(recorderContext, excessApplicationId);
+      expect(blocked!.application.status).toBe('CANCEL_REQUESTED');
+      expect(blocked!.cancellations.at(-1)).toMatchObject({
+        decisionStatus: 'APPROVED',
+        effectStatus: 'FAILED',
+        lastEffectFailureKind: 'BLOCKING',
+        lastEffectFailureCode: 'LEAVE_CANCELLATION_POSTED_EFFECTS_REQUIRED',
+        effects: [],
+      });
+
+      const controller = new LeaveApplicationsController(applications);
+      const apiReplay = await controller.applyCancellation(
+        agency.id,
+        reviewApplicationId,
+        appliedCancellationId,
+        `apply-partial-${suffix}`,
+        applyContext,
+      );
+      expect(apiReplay.application.status).toBe('CANCELLED');
+      expect(apiReplay.cancellations[0]!.effects).toEqual(applied.cancellations[0]!.effects);
+      await expect(
+        controller.applyCancellation(
+          foreignAgency.id,
+          reviewApplicationId,
+          appliedCancellationId,
+          `apply-partial-${suffix}`,
+          applyContext,
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      await expect(
+        controller.applyCancellation(
+          agency.id,
+          reviewApplicationId,
+          'malformed',
+          `apply-partial-${suffix}`,
+          applyContext,
+        ),
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        controller.applyCancellation(
+          agency.id,
+          reviewApplicationId,
+          appliedCancellationId,
+          undefined,
+          applyContext,
+        ),
+      ).rejects.toMatchObject({ status: 400 });
+      await expect(
+        controller.applyCancellation(
+          agency.id,
+          reviewApplicationId,
+          appliedCancellationId,
+          'no-permission',
+          employeeContext,
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+      await expect(
+        applications.applyCancellation(
+          {
+            ...applyContext,
+            agencyId: foreignAgency.id,
+            membershipId: foreignMembership.id,
+            userId: foreignUser.id,
+          },
+          reviewApplicationId,
+          appliedCancellationId,
+          `foreign-apply-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_NOT_FOUND' });
+      await expect(
+        admin.leaveCancellationEffect.update({
+          where: { id: applied.cancellations[0]!.effects[0]!.id },
+          data: { ownerStatus: 'ACTIVE' },
+        }),
+      ).rejects.toThrow(/immutable/);
+      await expect(
+        admin.leaveCancellationEffect.delete({
+          where: { id: applied.cancellations[0]!.effects[0]!.id },
+        }),
+      ).rejects.toThrow(/retained/);
+      await expect(
+        admin.leaveCancellation.update({
+          where: { id: appliedCancellationId },
+          data: { lastEffectFailureCode: 'REWRITTEN' },
+        }),
+      ).rejects.toThrow(/immutable/);
+      const foreignEffects = await withDatabaseContext(
+        { agencyId: foreignAgency.id, userId: foreignUser.id, membershipId: foreignMembership.id },
+        (transaction) => transaction.leaveCancellationEffect.count(),
+      );
+      expect(foreignEffects).toBe(0);
+      const security = await admin.$queryRaw<
+        Array<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>
+      >`
+        SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'leave_cancellation_effects'
+      `;
+      expect(security).toEqual([{ relrowsecurity: true, relforcerowsecurity: true }]);
+      await expect(
+        admin.outboxEvent.count({
+          where: { agencyId: agency.id, aggregateId: appliedCancellationId },
+        }),
+      ).resolves.toBe(1);
+      await expect(
+        admin.auditEvent.count({
+          where: {
+            agencyId: agency.id,
+            entityId: reviewApplicationId,
+            action: 'LEAVE_APPLICATION_CANCELLATION_APPLIED',
+          },
+        }),
+      ).resolves.toBe(1);
+      await expect(admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } })).resolves.toBe(
+        ledgerBefore,
+      );
+
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.auditEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.outboxEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.leaveCancellationEffect.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
         await transaction.leaveCancellationScope.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });

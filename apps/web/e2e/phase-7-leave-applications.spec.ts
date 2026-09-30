@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { getConfig } from '@lingkod-hr/config';
 import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
@@ -46,18 +48,28 @@ function backdateReviewerRoleGrants(membershipId: string): void {
   const adminUrl =
     process.env.DATABASE_E2E_ADMIN_URL ??
     process.env.DATABASE_MIGRATION_OWNER_URL ??
-    'postgresql://hris_local:local_only@localhost:55432/hris';
+    getConfig().DATABASE_DIRECT_URL;
+  const databaseUrl = new URL(adminUrl);
+  databaseUrl.hostname = '127.0.0.1';
+  databaseUrl.port = '5432';
   execFileSync(
-    'psql',
+    'docker',
     [
-      adminUrl,
+      'compose',
+      '-f',
+      'infrastructure/compose.yaml',
+      'exec',
+      '-T',
+      'postgres',
+      'psql',
+      databaseUrl.toString(),
       '-XAt',
       '-v',
       'ON_ERROR_STOP=1',
       '-c',
       `UPDATE membership_roles SET effective_from = '2026-01-01T00:00:00+08:00' WHERE membership_id = '${membershipId}' AND effective_to IS NULL;`,
     ],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', cwd: resolve(__dirname, '../../..') },
   );
 }
 
@@ -96,7 +108,7 @@ async function inviteReviewer(
   return { page: reviewerPage, membershipId: session.membershipId };
 }
 
-test('prepares, checks eligibility, submits, and withdraws a Leave Application from the protected register', async ({
+test('submits, reviews, withdraws, and applies whole and partial cancellation from the protected Leave register', async ({
   page,
   browser,
 }) => {
@@ -512,4 +524,128 @@ test('prepares, checks eligibility, submits, and withdraws a Leave Application f
   await expect(approvedCancellation).toContainText('Decision approved');
   await expect(approvedCancellation).toContainText('Effect pending');
   await expect(approvedCancellation).toContainText('no ledger, commitment, or Attendance change');
+  await page.goto(`/leave-applications?record=${reviewApplicationId}`);
+  const applyDetail = page.getByRole('region', { name: 'Alex Rivera', exact: true });
+  await applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }).click();
+  await expect(applyDetail).toContainText('The cancellation was applied.');
+  await expect(applyDetail.getByText('CANCELLED', { exact: true })).toBeVisible();
+  const appliedCancellation = applyDetail
+    .getByRole('article', { name: /Cancellation requested/ })
+    .last();
+  await expect(appliedCancellation).toContainText('Effect applied');
+  await expect(appliedCancellation).toContainText('Commitment released');
+  await expect(appliedCancellation).not.toContainText(
+    'no ledger, commitment, or Attendance change',
+  );
+  await page.reload();
+  await expect(appliedCancellation).toContainText('Effect applied');
+  await expect(
+    applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }),
+  ).toHaveCount(0);
+
+  const partialApplication = await apiBody<{ application: { id: string } }>(
+    await page.request.post(`${agencyBase}/leave-applications`, {
+      headers,
+      data: { employeeId: employee.id, leaveTypeId: leaveType.id },
+    }),
+  );
+  const partialBase = `${agencyBase}/leave-applications/${partialApplication.application.id}`;
+  await apiBody(
+    await page.request.patch(partialBase, {
+      headers,
+      data: {
+        reason: 'Two days of special privilege leave.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: '2026-06-08', dateTo: '2026-06-09' }],
+        documents: [
+          { documentId: nationalRuleDocumentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      },
+    }),
+  );
+  await apiBody(
+    await page.request.post(`${partialBase}/submission`, {
+      headers,
+      data: {
+        formTemplateDocumentVersionId: formTemplate.version.id,
+        attestation: {
+          type: 'SIGNED_DOCUMENT',
+          documentId: nationalRuleDocumentId,
+          receivedAt: '2026-06-01T09:00:00.000+08:00',
+        },
+      },
+    }),
+  );
+  await apiBody(await page.request.post(`${partialBase}/routing`, { headers }));
+  await apiBody(
+    await certifier.page.request.post(`${partialBase}/certification`, { headers, data: {} }),
+  );
+  await apiBody(
+    await decider.page.request.post(`${partialBase}/recommendation`, {
+      headers,
+      data: { outcome: 'RECOMMEND_APPROVAL' },
+    }),
+  );
+  const partialApproved = await apiBody<{
+    versions: Array<{ approvalAllocation: { lines: Array<{ id: string }> } }>;
+  }>(
+    await decider.page.request.post(`${partialBase}/decision`, {
+      headers,
+      data: { decision: 'APPROVE' },
+    }),
+  );
+  const partialRequested = await apiBody<{ cancellations: Array<{ id: string }> }>(
+    await page.request.post(`${partialBase}/cancellation-requests`, {
+      headers,
+      data: {
+        scopeType: 'PARTIAL',
+        reason: 'Return to duty early.',
+        evidenceDocumentId: nationalRuleDocumentId,
+        scopes: [
+          {
+            allocationLineId: partialApproved.versions.at(-1)!.approvalAllocation.lines[0]!.id,
+            dateFrom: '2026-06-09',
+            dateTo: '2026-06-09',
+            quantity: '1',
+          },
+        ],
+      },
+    }),
+  );
+  await apiBody(
+    await decider.page.request.post(`${partialBase}/cancellation-decisions`, {
+      headers,
+      data: { decision: 'APPROVE' },
+    }),
+  );
+  await page.goto(`/leave-applications?record=${partialApplication.application.id}`);
+  const partialArticle = applyDetail.getByRole('article', { name: /Cancellation requested/ });
+  await expect(partialArticle).toContainText('partial cancellation');
+  const attemptKeys: Array<string | null> = [];
+  const applyUrl = `**/leave-applications/${partialApplication.application.id}/cancellations/${partialRequested.cancellations[0]!.id}/apply`;
+  await page.route(applyUrl, async (route) => {
+    attemptKeys.push(route.request().headers()['idempotency-key'] ?? null);
+    if (attemptKeys.length === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { message: 'Temporary connection failure. Retry the cancellation.' },
+        }),
+      });
+    } else await route.continue();
+  });
+  await applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }).click();
+  await expect(applyDetail).toContainText('Temporary connection failure. Retry the cancellation.');
+  await expect(partialArticle).toContainText('Effect pending');
+  await expect(applyDetail.getByText('CANCEL_REQUESTED', { exact: true })).toBeVisible();
+  await applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }).click();
+  await expect(partialArticle).toContainText('Effect applied');
+  await expect(partialArticle).toContainText('Commitment released');
+  await expect(applyDetail.getByText('CANCELLED', { exact: true })).toBeVisible();
+  expect(attemptKeys).toEqual([
+    `LEAVE_CANCELLATION_APPLY:${partialRequested.cancellations[0]!.id}`,
+    `LEAVE_CANCELLATION_APPLY:${partialRequested.cancellations[0]!.id}`,
+  ]);
+  await page.unroute(applyUrl);
 });

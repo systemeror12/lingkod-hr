@@ -199,6 +199,14 @@ export interface LeaveCancellationScope {
   quantity: string;
 }
 
+export interface LeaveCancellationEffect {
+  id: string;
+  effectKind: string;
+  effectKey: string;
+  ownerRecordId: string;
+  ownerStatus: string;
+}
+
 export interface LeaveCancellation {
   id: string;
   leaveApplicationVersionId: string;
@@ -210,6 +218,8 @@ export interface LeaveCancellation {
   decisionStatus: string;
   effectStatus: string;
   lastEffectFailureCode: string | null;
+  lastEffectFailureKind: string | null;
+  effects: LeaveCancellationEffect[];
   requestedByMembershipId: string;
   requestedByName: string | null;
   requestedAt: string;
@@ -466,6 +476,7 @@ export function LeaveApplicationWorkspace({
   canRequestCancel,
   canCancel,
   canRejectCancel,
+  canApplyCancellation,
 }: {
   agencyId: string;
   initial: LeaveApplicationListResponse;
@@ -481,6 +492,7 @@ export function LeaveApplicationWorkspace({
   canRequestCancel: boolean;
   canCancel: boolean;
   canRejectCancel: boolean;
+  canApplyCancellation: boolean;
 }) {
   const [applications, setApplications] = useState(initial.applications);
   const navigation = useRecordNavigation();
@@ -1005,6 +1017,39 @@ export function LeaveApplicationWorkspace({
         : 'The cancellation was rejected.',
       'The cancellation decision could not be recorded.',
     );
+  }
+
+  async function applyCancellation(cancellation: LeaveCancellation): Promise<void> {
+    if (!detail || busy) return;
+    setBusy(true);
+    resetAction();
+    try {
+      const value = (await request(
+        '/leave-applications/' +
+          detail.application.id +
+          '/cancellations/' +
+          cancellation.id +
+          '/apply',
+        {
+          method: 'POST',
+          headers: { 'Idempotency-Key': 'LEAVE_CANCELLATION_APPLY:' + cancellation.id },
+        },
+      )) as LeaveApplicationDetail;
+      setDetail(value);
+      syncDraft(value);
+      setSuccess('The cancellation was applied.');
+      await refresh().catch(() => {
+        setError(
+          'The cancellation was applied, but the register could not be refreshed. Reload this page.',
+        );
+      });
+    } catch (reason: unknown) {
+      // Reload the recorded failure after the authoritative transaction rolled back.
+      await refresh().catch(() => undefined);
+      setError(reason instanceof Error ? reason.message : 'The cancellation could not be applied.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function returnApplication(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -1891,7 +1936,13 @@ export function LeaveApplicationWorkspace({
                               Decision {humanize(cancellation.decisionStatus)}
                             </StatusTag>
                             <StatusTag
-                              tone={cancellation.effectStatus === 'FAILED' ? 'danger' : 'neutral'}
+                              tone={
+                                cancellation.effectStatus === 'FAILED'
+                                  ? 'danger'
+                                  : cancellation.effectStatus === 'APPLIED'
+                                    ? 'success'
+                                    : 'neutral'
+                              }
                             >
                               Effect {humanize(cancellation.effectStatus)}
                             </StatusTag>
@@ -1936,11 +1987,58 @@ export function LeaveApplicationWorkspace({
                               ))}
                             </div>
                           ))}
-                          {cancellation.decisionStatus === 'APPROVED' ? (
+                          {cancellation.effects.length > 0 ? (
+                            <ul
+                              className="m-0 grid list-none gap-1 p-0 text-ink-muted"
+                              aria-label="Applied cancellation effects"
+                            >
+                              {cancellation.effects.map((effect) => (
+                                <li key={effect.id}>
+                                  {effect.effectKind === 'COMMITMENT_RELEASE'
+                                    ? 'Commitment released'
+                                    : humanize(effect.effectKind) +
+                                      ' · ' +
+                                      humanize(effect.ownerStatus)}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          {cancellation.effectStatus === 'APPLIED' ? (
+                            <p className="m-0 text-ink-muted">
+                              The cancellation was applied and the application is cancelled.
+                            </p>
+                          ) : cancellation.decisionStatus === 'APPROVED' ? (
                             <p className="m-0 text-ink-muted">
                               Effects are {humanize(cancellation.effectStatus)}; no ledger,
                               commitment, or Attendance change has been applied.
                             </p>
+                          ) : null}
+                          {cancellation.lastEffectFailureCode ? (
+                            <p className="m-0 text-danger" role="status">
+                              {cancellation.lastEffectFailureKind === 'RETRYABLE'
+                                ? 'The apply attempt failed. Retry the cancellation.'
+                                : 'The apply attempt is blocked. Resolve the recorded failure before retrying.'}{' '}
+                              {humanize(cancellation.lastEffectFailureCode)}
+                            </p>
+                          ) : null}
+                          {canApplyCancellation &&
+                          status === 'CANCEL_REQUESTED' &&
+                          cancellation.priorStatus === 'APPROVED' &&
+                          cancellation.decisionStatus === 'APPROVED' &&
+                          ['PENDING', 'FAILED'].includes(cancellation.effectStatus) ? (
+                            <div>
+                              <Button
+                                disabled={busy}
+                                onClick={() => void applyCancellation(cancellation)}
+                                type="button"
+                              >
+                                {busy
+                                  ? 'Applying cancellation…'
+                                  : cancellation.effectStatus === 'FAILED'
+                                    ? 'Retry cancellation'
+                                    : 'Apply cancellation'}
+                              </Button>
+                            </div>
                           ) : null}
                         </article>
                       ))}
