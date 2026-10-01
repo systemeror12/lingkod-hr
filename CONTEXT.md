@@ -232,6 +232,10 @@ _Avoid_: Attendance Administrator, HR Certifying Officer
 A role assignment requested for a prospective Agency Membership that becomes effective only when the invitation is accepted.
 _Avoid_: Post-activation role assignment, active invited role
 
+**Invitation Activation**:
+The single step in which an invited person, proving control of the invited email by holding the invitation link, sets or proves their credentials and gains the Agency Membership; nothing persists until every step completes.
+_Avoid_: Sign-up, registration, account creation
+
 **Agency Membership**:
 A User's access to one Agency, carrying that Agency's roles and status; one User may hold several, and credentials belong to the User, never to a membership.
 _Avoid_: Account, tenant user, admin
