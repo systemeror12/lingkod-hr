@@ -248,10 +248,6 @@ _Avoid_: Client-supplied agency ID, tenant selector value
 The enforced boundary that prevents one Agency Context from reading, changing, or relating records owned by another Agency.
 _Avoid_: UI filtering, Agency preference
 
-**External Identity Link**:
-The durable association between an HRIS User and an identity-provider subject, identified by the exact issuer-and-subject pair. Email addresses and other mutable profile attributes cannot establish or silently replace this link.
-_Avoid_: External user ID, email identity, automatic email match
-
 **Agency Membership Suspension**:
 An agency-scoped denial of access through one Agency Membership that leaves the User's identity and other Agency Memberships unchanged.
 _Avoid_: User lock, global account suspension
@@ -285,7 +281,7 @@ The five minutes after a User last proved their sign-in factors during which a s
 _Avoid_: Step-up session, sudo mode
 
 **Security Event**:
-An append-only HRIS record of identity or access activity observed by the application or imported from the identity provider, retaining source correlation without credentials or tokens.
+An append-only HRIS record of identity or access activity, including every sign-in attempt, that never stores passwords, codes, tokens, or a raw submitted email.
 _Avoid_: Provider log copy, editable security status
 
 ## Merit Selection

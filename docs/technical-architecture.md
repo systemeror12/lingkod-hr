@@ -1557,6 +1557,8 @@ AI features additionally require:
 
 ## ADR-006 — Managed Authentication
 
+**Status:** Superseded by [ADR 0004: LingkodHR owns login](adr/0004-lingkodhr-owned-login.md).
+
 **Decision:** Delegate authentication to an OIDC-compatible provider.
 
 **Reason:** Initial effort should focus on HRIS rather than identity infrastructure.
