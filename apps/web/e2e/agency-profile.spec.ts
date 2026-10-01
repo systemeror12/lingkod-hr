@@ -1,8 +1,17 @@
 import { expect, test } from '@playwright/test';
 
+// Activation is prospective: the form accepts only dates after today in Manila.
+function prospectiveDate(offsetDays = 30): string {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+  const date = new Date(`${today}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+  return date.toISOString().slice(0, 10);
+}
+
 test('administers an effective-dated Agency Profile through the Version Rail', async ({
   page,
 }, testInfo) => {
+  const effectiveDate = prospectiveDate();
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization?workspace=agency');
@@ -51,7 +60,7 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
   await page.getByLabel('Appointing-authority title').fill('Secretary');
   await page.getByLabel('Default timezone').selectOption('Asia/Manila');
   await page.getByLabel('Default currency').selectOption('PHP');
-  await page.getByLabel('Proposed effective date').fill('2026-10-01');
+  await page.getByLabel('Proposed effective date').fill(effectiveDate);
   let patchRequests = 0;
   await page.route('**/api/v1/agencies/*/agency-profile/draft/*', async (route) => {
     if (route.request().method() === 'PATCH') {
@@ -72,7 +81,7 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
   const activationDialog = page.getByRole('dialog', { name: 'Review activation' });
   await expect(activationDialog).toBeVisible();
   await expect(page.getByLabel('Effective date')).toBeFocused();
-  await page.getByLabel('Effective date').fill('2026-10-01');
+  await page.getByLabel('Effective date').fill(effectiveDate);
   await page.getByLabel('Reason for change').fill('Approved prospective Agency identity change.');
   await page.getByRole('button', { name: 'Activate successor' }).click();
   await expect(page.getByRole('status')).toContainText('Version 2 is activated for');
