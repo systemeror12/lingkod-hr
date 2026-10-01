@@ -22,6 +22,10 @@ function manilaDate(offsetDays = 0): string {
   return date.toISOString().slice(0, 10);
 }
 
+// Activation is prospective, so the identity change takes effect after today.
+const activationDate = manilaDate(30);
+const supersededThrough = manilaDate(29);
+
 const draftInput: AgencyProfileDraftInput = {
   officialName: 'Department of Public Service and Digital Innovation',
   acronym: 'DPSDI',
@@ -31,7 +35,7 @@ const draftInput: AgencyProfileDraftInput = {
   appointingAuthorityTitle: 'Secretary',
   defaultTimezone: 'Asia/Manila',
   defaultCurrency: 'PHP',
-  effectiveFrom: '2026-10-01',
+  effectiveFrom: activationDate,
 };
 
 function context(
@@ -209,7 +213,7 @@ it.skipIf(!enabled)(
         admin.agencyProfileVersion.findUniqueOrThrow({ where: { id: initial.id } }),
       ).resolves.toMatchObject({
         status: 'SUPERSEDED',
-        effectiveTo: new Date('2026-09-30T00:00:00.000Z'),
+        effectiveTo: new Date(`${supersededThrough}T00:00:00.000Z`),
       });
       await expect(
         admin.agency.findUniqueOrThrow({ where: { id: agency.id } }),
@@ -219,11 +223,11 @@ it.skipIf(!enabled)(
         defaultCurrency: draftInput.defaultCurrency,
       });
 
-      await expect(service.list(requestContext, '2026-09-30')).resolves.toMatchObject({
+      await expect(service.list(requestContext, supersededThrough)).resolves.toMatchObject({
         current: { id: initial.id, versionState: 'SUPERSEDED' },
         draft: null,
       });
-      await expect(service.list(requestContext, '2026-10-01')).resolves.toMatchObject({
+      await expect(service.list(requestContext, activationDate)).resolves.toMatchObject({
         current: { id: draft.id, versionState: 'ACTIVE' },
       });
 
@@ -350,7 +354,7 @@ it.skipIf(!enabled)('voids and replaces a superseded historical version', async 
       versionNo: 3,
       versionState: 'SUPERSEDED',
       effectiveFrom: '2024-01-01',
-      effectiveTo: '2026-09-30',
+      effectiveTo: supersededThrough,
     });
     await expect(
       admin.agencyProfileVersion.findUniqueOrThrow({ where: { id: initial.id } }),
