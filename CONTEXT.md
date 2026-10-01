@@ -232,6 +232,14 @@ _Avoid_: Attendance Administrator, HR Certifying Officer
 A role assignment requested for a prospective Agency Membership that becomes effective only when the invitation is accepted.
 _Avoid_: Post-activation role assignment, active invited role
 
+**Invitation Activation**:
+The single step in which an invited person, proving control of the invited email by holding the invitation link, sets or proves their credentials and gains the Agency Membership; nothing persists until every step completes.
+_Avoid_: Sign-up, registration, account creation
+
+**Agency Membership**:
+A User's access to one Agency, carrying that Agency's roles and status; one User may hold several, and credentials belong to the User, never to a membership.
+_Avoid_: Account, tenant user, admin
+
 **Agency Context**:
 The trusted Agency Membership boundary under which a user's permissions and record access are evaluated for a session or request.
 _Avoid_: Client-supplied agency ID, tenant selector value
@@ -240,24 +248,40 @@ _Avoid_: Client-supplied agency ID, tenant selector value
 The enforced boundary that prevents one Agency Context from reading, changing, or relating records owned by another Agency.
 _Avoid_: UI filtering, Agency preference
 
-**External Identity Link**:
-The durable association between an HRIS User and an identity-provider subject, identified by the exact issuer-and-subject pair. Email addresses and other mutable profile attributes cannot establish or silently replace this link.
-_Avoid_: External user ID, email identity, automatic email match
-
 **Agency Membership Suspension**:
 An agency-scoped denial of access through one Agency Membership that leaves the User's identity and other Agency Memberships unchanged.
 _Avoid_: User lock, global account suspension
 
 **Global User Lock**:
-An identity-wide security restriction that denies every Agency Membership and invalidates all application sessions for the User.
-_Avoid_: Agency suspension, role removal
+An identity-wide security restriction, placed and lifted only by a Security Administrator, that denies every Agency Membership and invalidates all application sessions for the User.
+_Avoid_: Agency suspension, role removal, automatic lockout
+
+**Sign-in Cool-down**:
+A temporary, self-expiring refusal of sign-in attempts for one submitted email after repeated failures, growing longer with each repeat; it never changes account status and behaves the same whether or not the email belongs to a User.
+_Avoid_: Lockout, lockdown, account lock
 
 **MFA-Required User**:
 A user whose effective access through any agency membership meets a mandatory MFA risk trigger or a stricter agency policy; MFA applies to the user's whole identity.
 _Avoid_: Privileged user, MFA role
 
+**Recovery Code**:
+A single-use code, issued in a set at TOTP enrollment, that substitutes for the User's TOTP code when the authenticator device is unavailable.
+_Avoid_: Backup code, bypass code
+
+**Factor Reset**:
+A Security Administrator's audited removal of a User's TOTP factor and Recovery Codes after identity verification, after which the User enrolls again.
+_Avoid_: MFA bypass, admin password reset
+
+**Password Reset**:
+A User's self-service replacement of a forgotten password, proven by possession of their email address plus their TOTP factor or a Recovery Code when they have one; it revokes every session and never changes account or membership status.
+_Avoid_: Password recovery, admin password reset, account unlock
+
+**Reauthentication Window**:
+The five minutes after a User last proved their sign-in factors during which a session may perform sensitive actions without being asked to prove them again.
+_Avoid_: Step-up session, sudo mode
+
 **Security Event**:
-An append-only HRIS record of identity or access activity observed by the application or imported from the identity provider, retaining source correlation without credentials or tokens.
+An append-only HRIS record of identity or access activity, including every sign-in attempt, that never stores passwords, codes, tokens, or a raw submitted email.
 _Avoid_: Provider log copy, editable security status
 
 ## Merit Selection
