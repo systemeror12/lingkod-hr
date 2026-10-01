@@ -400,6 +400,19 @@ function eligibilityTone(result: string): StatusTone {
   return 'warning';
 }
 
+function cancellationEffectLabel(effectKind: string): string {
+  switch (effectKind) {
+    case 'LEDGER_REVERSAL':
+      return 'Leave Ledger reversal';
+    case 'LEDGER_REPLACEMENT':
+      return 'Leave Ledger replacement';
+    case 'ATTENDANCE_CORRECTION':
+      return 'Attendance successor input';
+    default:
+      return humanize(effectKind);
+  }
+}
+
 function humanize(value: string): string {
   return value.replaceAll('_', ' ').toLowerCase();
 }
@@ -2041,9 +2054,7 @@ export function LeaveApplicationWorkspace({
                                 <li key={effect.id}>
                                   {effect.effectKind === 'COMMITMENT_RELEASE'
                                     ? 'Commitment released'
-                                    : humanize(effect.effectKind) +
-                                      ' · ' +
-                                      humanize(effect.ownerStatus)}
+                                    : `${cancellationEffectLabel(effect.effectKind)} · ${humanize(effect.ownerStatus)} · ${effect.ownerRecordId}`}
                                 </li>
                               ))}
                             </ul>
@@ -2068,7 +2079,6 @@ export function LeaveApplicationWorkspace({
                           ) : null}
                           {canApplyCancellation &&
                           status === 'CANCEL_REQUESTED' &&
-                          cancellation.priorStatus === 'APPROVED' &&
                           cancellation.decisionStatus === 'APPROVED' &&
                           ['PENDING', 'FAILED'].includes(cancellation.effectStatus) ? (
                             <div>

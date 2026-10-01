@@ -646,8 +646,8 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
     `LEAVE_CANCELLATION_APPLY:${partialRequested.cancellations[0]!.id}`,
   ]);
   await page.unroute(applyUrl);
-  const { application: postingApplication } = await approveApplication([
-    { dateFrom: '2026-06-10', dateTo: '2026-06-10' },
+  const { application: postingApplication, approved: postingApproved } = await approveApplication([
+    { dateFrom: '2026-06-10', dateTo: '2026-06-11' },
   ]);
   const postingApplicationId = postingApplication.id;
   await decider.page.goto(`/leave-applications?record=${postingApplicationId}`);
@@ -673,4 +673,48 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
   await expect(effects).toContainText('Leave Ledger Entry');
   await expect(effects).toContainText('Attendance input');
   await expect(certifierDetail.getByRole('button', { name: 'Post leave' })).toHaveCount(0);
+
+  // Partial cancellation of posted leave reverses the entry, replaces the retained
+  // day, and hands Attendance a successor input while the period is unlocked.
+  const postingBase = `${agencyBase}/leave-applications/${postingApplicationId}`;
+  await apiBody(
+    await page.request.post(`${postingBase}/cancellation-requests`, {
+      headers,
+      data: {
+        scopeType: 'PARTIAL',
+        reason: 'Recalled to duty on the second posted day.',
+        evidenceDocumentId: nationalRuleDocumentId,
+        scopes: [
+          {
+            allocationLineId: postingApproved.versions.at(-1)!.approvalAllocation.lines[0]!.id,
+            dateFrom: '2026-06-11',
+            dateTo: '2026-06-11',
+            quantity: '1',
+          },
+        ],
+      },
+    }),
+  );
+  await apiBody(
+    await decider.page.request.post(`${postingBase}/cancellation-decisions`, {
+      headers,
+      data: { decision: 'APPROVE' },
+    }),
+  );
+  await page.goto(`/leave-applications?record=${postingApplicationId}`);
+  const postedCancellation = applyDetail.getByRole('article', { name: /Cancellation requested/ });
+  await expect(postedCancellation).toContainText('Effect pending');
+  await applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }).click();
+  await expect(applyDetail).toContainText('The cancellation was applied.');
+  await expect(applyDetail.getByText('CANCELLED', { exact: true })).toBeVisible();
+  await expect(postedCancellation).toContainText('Effect applied');
+  const postedEffects = postedCancellation.getByRole('list', {
+    name: 'Applied cancellation effects',
+  });
+  await expect(postedEffects).toContainText('Leave Ledger reversal · posted');
+  await expect(postedEffects).toContainText('Leave Ledger replacement · posted');
+  await expect(postedEffects).toContainText('Attendance successor input · recalculated');
+  await expect(applyDetail.getByRole('region', { name: 'Posting effects' })).toContainText(
+    'Leave Ledger Entry',
+  );
 });

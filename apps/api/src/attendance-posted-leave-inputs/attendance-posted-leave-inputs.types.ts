@@ -26,7 +26,10 @@ export interface CreatePostedLeaveInput {
   unitCode: PostedLeaveUnitCode;
   quantity: number;
   allocationKind: PostedLeaveAllocationKind;
-  /** The current input this one supersedes, when it corrects earlier posted leave. */
+  /**
+   * The current input this one supersedes, when it corrects earlier posted
+   * leave. A successor with zero quantity withdraws the predecessor's coverage.
+   */
   predecessorInputId?: string | undefined;
 }
 

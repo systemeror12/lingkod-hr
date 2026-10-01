@@ -3,6 +3,12 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
+import { attendanceContextAuditWriter } from '../attendance-contexts/attendance-contexts.audit';
+import { AttendanceContextsService } from '../attendance-contexts/attendance-contexts.service';
+import { attendanceDayAuditWriter } from '../attendance-days/attendance-days.audit';
+import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
+import { attendanceAuditWriter } from '../attendance/attendance.audit';
+import { AttendanceService } from '../attendance/attendance.service';
 import { expect, it } from 'vitest';
 import {
   approvalAuditWriter,
@@ -325,6 +331,14 @@ it.skipIf(!enabled)(
     const approvals = new ApprovalsService(approvalAuditWriter, completionRegistry);
     const policies = new LeavePoliciesService(leavePolicyAuditWriter, documents);
     const accounts = new LeaveAccountsService(leaveAccountAuditWriter, documents);
+    const postedLeaveInputs = new AttendancePostedLeaveInputsService();
+    const attendanceDays = new AttendanceDaysService(
+      attendanceDayAuditWriter,
+      assignments,
+      new AttendanceService(attendanceAuditWriter, assignments),
+      new AttendanceContextsService(attendanceContextAuditWriter, documents),
+      postedLeaveInputs,
+    );
     const applications = new LeaveApplicationsService(
       leaveApplicationAuditWriter,
       documents,
@@ -333,7 +347,8 @@ it.skipIf(!enabled)(
       schedules,
       arrangements,
       calendars,
-      new AttendancePostedLeaveInputsService(),
+      postedLeaveInputs,
+      attendanceDays,
     );
     applications.onModuleInit();
     const applicationApi = new LeaveApplicationsController(applications);
@@ -1732,7 +1747,8 @@ it.skipIf(!enabled)(
         schedules,
         arrangements,
         calendars,
-        new AttendancePostedLeaveInputsService(),
+        postedLeaveInputs,
+        attendanceDays,
       );
       await expect(
         failingApplications.applyCancellation(
@@ -1778,7 +1794,8 @@ it.skipIf(!enabled)(
         schedules,
         arrangements,
         calendars,
-        new AttendancePostedLeaveInputsService(),
+        postedLeaveInputs,
+        attendanceDays,
       );
       await expect(
         blockingApplications.applyCancellation(
@@ -1824,7 +1841,8 @@ it.skipIf(!enabled)(
         schedules,
         arrangements,
         calendars,
-        new AttendancePostedLeaveInputsService(),
+        postedLeaveInputs,
+        attendanceDays,
       );
       await expect(
         expiringApplications.applyCancellation(
@@ -1990,7 +2008,7 @@ it.skipIf(!enabled)(
       expect(wholeCreditCommitments).toHaveLength(1);
       expect(wholeCreditCommitments[0]!.status).toBe('RELEASED');
 
-      // Applying posted leave through the unposted command fails closed and records a blocking cause.
+      // A POSTED projection without its exact Leave Posting fails closed and records a blocking cause.
       const postedRequest = await applications.requestCancellation(
         requestCancelRecorder,
         excessApplicationId,
@@ -2010,14 +2028,14 @@ it.skipIf(!enabled)(
           postedRequest.cancellations.at(-1)!.id,
           `apply-posted-${suffix}`,
         ),
-      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_POSTED_EFFECTS_REQUIRED' });
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_POSTING_REQUIRED' });
       const blocked = await applications.findById(recorderContext, excessApplicationId);
       expect(blocked!.application.status).toBe('CANCEL_REQUESTED');
       expect(blocked!.cancellations.at(-1)).toMatchObject({
         decisionStatus: 'APPROVED',
         effectStatus: 'FAILED',
         lastEffectFailureKind: 'BLOCKING',
-        lastEffectFailureCode: 'LEAVE_CANCELLATION_POSTED_EFFECTS_REQUIRED',
+        lastEffectFailureCode: 'LEAVE_CANCELLATION_POSTING_REQUIRED',
         effects: [],
       });
 
@@ -2635,11 +2653,342 @@ it.skipIf(!enabled)(
         expect(result.versions.at(-1)!.posting!.effects).toHaveLength(2);
       }
 
+      // Cancellation of posted leave while Attendance is unlocked.
+      const attendanceContext = {
+        ...agencyContext,
+        permissions: [
+          ...agencyContext.permissions,
+          { code: 'attendance.days.calculate', scopePolicy: 'AGENCY' as const },
+          { code: 'attendance.days.read', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+      const postedDayTotals = async (workDate: string) => {
+        const [day] = await attendanceDays.list(attendanceContext, {
+          employeeId: employee.id,
+          workDateFrom: workDate,
+          workDateTo: workDate,
+        });
+        return (await attendanceDays.findById(attendanceContext, day!.id)).day.totals;
+      };
+      const specialBalance = async (asOf: string, recordedThrough?: Date) => {
+        const [summary] = await accounts.list(agencyContext, {
+          employeeId: employee.id,
+          leaveTypeId: specialLeave.id,
+          asOf,
+          ...(recordedThrough ? { recordedThrough: recordedThrough.toISOString() } : {}),
+        });
+        return summary!.balances.postedQuantity;
+      };
+      async function postSpecialLeave(date: string): Promise<string> {
+        const id = await approveConcurrentApplication(date);
+        await applications.post(postingContext, id, `post-${id}`);
+        return id;
+      }
+      async function requestApprovedCancellation(
+        id: string,
+        input: Parameters<typeof applications.requestCancellation>[2],
+      ): Promise<string> {
+        const requested = await applications.requestCancellation(requestCancelRecorder, id, input);
+        await applications.decideCancellation(cancelApprover, id, { decision: 'APPROVE' });
+        return requested.cancellations.at(-1)!.id;
+      }
+
+      // Whole cancellation: a one-day posting whose Work Date has no other leave.
+      const wholeTargetId = competingIds[0]!;
+      const wholePosting = settledCompetitors[0]!.versions.at(-1)!.posting!;
+      const postedDate = nextMonday(35);
+      await attendanceDays.calculate(attendanceContext, {
+        periodCode: `LEAVE-CANCEL-${suffix}`,
+        dateFrom: postedDate,
+        dateTo: postedDate,
+        employeeIds: [employee.id],
+      });
+      expect(await postedDayTotals(postedDate)).toMatchObject({ postedLeaveMinutes: 480 });
+      const balanceBefore = await specialBalance(postedDate);
+      const wholePostedId = await requestApprovedCancellation(wholeTargetId, {
+        scopeType: 'WHOLE',
+        reason: 'Recalled to duty before the posted leave.',
+        evidenceDocumentId: signedEvidence.documentId,
+      });
+      const postedLedgerEntry = await admin.leaveLedgerEntry.findUniqueOrThrow({
+        where: {
+          id: wholePosting.effects.find(({ effectKind }) => effectKind === 'LEDGER_ENTRY')!
+            .ownerRecordId,
+        },
+      });
+      // A late PostgreSQL rejection rolls back every reversal and owner handoff.
+      const cancellationFailure = `fail_cancel_${randomUUID().replaceAll('-', '')}`;
+      await admin.$executeRawUnsafe(
+        `CREATE FUNCTION ${cancellationFailure}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'intentional cancellation outbox failure'; END; $$`,
+      );
+      await admin.$executeRawUnsafe(
+        `CREATE TRIGGER ${cancellationFailure} BEFORE INSERT ON outbox_events FOR EACH ROW WHEN (NEW.aggregate_id = '${wholePostedId}'::uuid) EXECUTE FUNCTION ${cancellationFailure}()`,
+      );
+      try {
+        await expect(
+          applications.applyCancellation(
+            applyContext,
+            wholeTargetId,
+            wholePostedId,
+            `apply-posted-whole-${suffix}`,
+          ),
+        ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_APPLY_BLOCKED' });
+      } finally {
+        await admin.$executeRawUnsafe(`DROP TRIGGER ${cancellationFailure} ON outbox_events`);
+        await admin.$executeRawUnsafe(`DROP FUNCTION ${cancellationFailure}()`);
+      }
+      const rolledBack = (await applications.findById(agencyContext, wholeTargetId))!;
+      expect(rolledBack.application.status).toBe('CANCEL_REQUESTED');
+      expect(rolledBack.versions.at(-1)!.posting).toEqual(wholePosting);
+      expect(rolledBack.cancellations.at(-1)).toMatchObject({
+        decisionStatus: 'APPROVED',
+        effectStatus: 'FAILED',
+        lastEffectFailureKind: 'BLOCKING',
+        effects: [],
+      });
+      expect(
+        await admin.leaveLedgerEntry.count({
+          where: { agencyId: agency.id, sourceId: wholePostedId },
+        }),
+      ).toBe(0);
+      expect(
+        await admin.attendancePostedLeaveInput.count({
+          where: { agencyId: agency.id, sourceId: wholePostedId },
+        }),
+      ).toBe(0);
+      expect(await postedDayTotals(postedDate)).toMatchObject({ postedLeaveMinutes: 480 });
+
+      // The same key retries the command and applies every effect once.
+      const beforeApply = new Date();
+      const wholePosted = await applications.applyCancellation(
+        applyContext,
+        wholeTargetId,
+        wholePostedId,
+        `apply-posted-whole-${suffix}`,
+      );
+      expect(wholePosted.application.status).toBe('CANCELLED');
+      const wholeEffects = wholePosted.cancellations.at(-1)!;
+      expect(wholeEffects).toMatchObject({
+        effectStatus: 'APPLIED',
+        lastEffectFailureCode: null,
+        lastEffectFailureKind: null,
+      });
+      expect(wholeEffects.effects.map(({ effectKind }) => effectKind).sort()).toEqual([
+        'ATTENDANCE_CORRECTION',
+        'LEDGER_REVERSAL',
+      ]);
+      const reversal = await admin.leaveLedgerEntry.findUniqueOrThrow({
+        where: {
+          id: wholeEffects.effects.find(({ effectKind }) => effectKind === 'LEDGER_REVERSAL')!
+            .ownerRecordId,
+        },
+      });
+      expect(reversal).toMatchObject({
+        leaveAccountId: postedLedgerEntry.leaveAccountId,
+        reversesEntryId: postedLedgerEntry.id,
+        effectiveDate: postedLedgerEntry.effectiveDate,
+        policyVersionId: postedLedgerEntry.policyVersionId,
+        sourceType: 'LeaveCancellation',
+        sourceId: wholePostedId,
+      });
+      expect(reversal.quantity.toFixed(4)).toBe(postedLedgerEntry.quantity.negated().toFixed(4));
+      const withdrawnInput = await admin.attendancePostedLeaveInput.findUniqueOrThrow({
+        where: {
+          id: wholeEffects.effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_CORRECTION')!
+            .ownerRecordId,
+        },
+      });
+      expect(withdrawnInput.predecessorInputId).toBe(
+        wholePosting.effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_INPUT')!
+          .ownerRecordId,
+      );
+      expect(withdrawnInput.quantity.toFixed(4)).toBe('0.0000');
+      expect(await postedDayTotals(postedDate)).toMatchObject({
+        postedLeaveMinutes: 0,
+        absenceMinutes: 480,
+      });
+      // The posted balance is restored now; history known before the apply is unchanged.
+      expect(Number(await specialBalance(postedDate))).toBe(Number(balanceBefore) + 1);
+      expect(await specialBalance(postedDate, beforeApply)).toBe(balanceBefore);
+      const replayedWhole = await applications.applyCancellation(
+        applyContext,
+        wholeTargetId,
+        wholePostedId,
+        `apply-posted-whole-${suffix}`,
+      );
+      expect(replayedWhole.cancellations).toEqual(wholePosted.cancellations);
+      expect(
+        await admin.leaveLedgerEntry.count({
+          where: { agencyId: agency.id, sourceId: wholePostedId },
+        }),
+      ).toBe(1);
+
+      // Partial cancellation: reverse the three-day entry and replace the retained two days.
+      await admin.leaveLedgerEntry.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: specialAccount.id,
+          quantity: 5,
+          effectiveDate: new Date(`${manilaDate(-5)}T00:00:00.000Z`),
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'partial-cancellation-credits',
+          policyVersionId: reviewPolicyVersion.id,
+        },
+      });
+      const partialMonday = nextMonday(45);
+      const partialWednesday = addDays(partialMonday, 2);
+      const partialDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: specialLeave.id,
+      });
+      const partialPostedId = partialDraft.application.id;
+      await applications.update(agencyContext, partialPostedId, {
+        reason: 'Three days of special privilege leave.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: partialMonday, dateTo: partialWednesday }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await applications.submit(employeeContext, partialPostedId, submitInput);
+      await applications.route(recorderContext, partialPostedId);
+      await applications.certify(recorderContext, partialPostedId, {});
+      await applications.recommend(supervisorContext, partialPostedId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      await applications.decide(approverContext, partialPostedId, { decision: 'APPROVE' });
+      const partialPosting = await applications.post(
+        postingContext,
+        partialPostedId,
+        `post-partial-${suffix}`,
+      );
+      const partialLine = partialPosting.versions.at(-1)!.approvalAllocation!.lines[0]!;
+      await attendanceDays.calculate(attendanceContext, {
+        periodCode: `LEAVE-PARTIAL-${suffix}`,
+        dateFrom: partialMonday,
+        dateTo: partialWednesday,
+        employeeIds: [employee.id],
+      });
+      expect(await postedDayTotals(partialWednesday)).toMatchObject({ postedLeaveMinutes: 480 });
+      const partialCancellationId = await requestApprovedCancellation(partialPostedId, {
+        scopeType: 'PARTIAL',
+        reason: 'Returning to duty on the last day.',
+        evidenceDocumentId: signedEvidence.documentId,
+        scopes: [
+          {
+            allocationLineId: partialLine.id,
+            dateFrom: partialWednesday,
+            dateTo: partialWednesday,
+            quantity: '1',
+          },
+        ],
+      });
+      const partialApplied = await applications.applyCancellation(
+        applyContext,
+        partialPostedId,
+        partialCancellationId,
+        `apply-posted-partial-${suffix}`,
+      );
+      expect(partialApplied.application.status).toBe('CANCELLED');
+      const partialEffects = partialApplied.cancellations.at(-1)!.effects;
+      expect(partialEffects.map(({ effectKind }) => effectKind).sort()).toEqual([
+        'ATTENDANCE_CORRECTION',
+        'LEDGER_REPLACEMENT',
+        'LEDGER_REVERSAL',
+      ]);
+      const partialOriginal = await admin.leaveLedgerEntry.findUniqueOrThrow({
+        where: {
+          id: partialPosting.versions
+            .at(-1)!
+            .posting!.effects.find(({ effectKind }) => effectKind === 'LEDGER_ENTRY')!
+            .ownerRecordId,
+        },
+      });
+      const ownerOf = (kind: string) =>
+        partialEffects.find(({ effectKind }) => effectKind === kind)!.ownerRecordId;
+      const partialReversal = await admin.leaveLedgerEntry.findUniqueOrThrow({
+        where: { id: ownerOf('LEDGER_REVERSAL') },
+      });
+      const replacement = await admin.leaveLedgerEntry.findUniqueOrThrow({
+        where: { id: ownerOf('LEDGER_REPLACEMENT') },
+      });
+      expect(partialReversal.reversesEntryId).toBe(partialOriginal.id);
+      expect(partialReversal.quantity.toFixed(4)).toBe('3.0000');
+      expect(replacement).toMatchObject({
+        leaveAccountId: partialOriginal.leaveAccountId,
+        effectiveDate: partialOriginal.effectiveDate,
+        policyVersionId: partialOriginal.policyVersionId,
+        reversesEntryId: null,
+      });
+      expect(replacement.quantity.toFixed(4)).toBe('-2.0000');
+      expect(replacement.postedAt.getTime()).toBeGreaterThan(partialOriginal.postedAt.getTime());
+      const retainedInput = await admin.attendancePostedLeaveInput.findUniqueOrThrow({
+        where: { id: ownerOf('ATTENDANCE_CORRECTION') },
+      });
+      expect(retainedInput).toMatchObject({
+        dateFrom: new Date(`${partialMonday}T00:00:00.000Z`),
+        dateTo: new Date(`${addDays(partialMonday, 1)}T00:00:00.000Z`),
+        allocationKind: 'LEAVE_ACCOUNT',
+      });
+      expect(retainedInput.quantity.toFixed(4)).toBe('2.0000');
+      expect(await postedDayTotals(partialMonday)).toMatchObject({ postedLeaveMinutes: 480 });
+      expect(await postedDayTotals(partialWednesday)).toMatchObject({
+        postedLeaveMinutes: 0,
+        absenceMinutes: 480,
+      });
+
+      // A Work Date in a locked Attendance Period blocks until the locked handoff exists.
+      const lockedPostedId = await postSpecialLeave(nextMonday(50));
+      await admin.attendancePeriod.create({
+        data: {
+          agencyId: agency.id,
+          code: `LOCKED-${suffix}`,
+          dateFrom: new Date(`${nextMonday(50)}T00:00:00.000Z`),
+          dateTo: new Date(`${nextMonday(50)}T00:00:00.000Z`),
+          status: 'FINALIZED',
+        },
+      });
+      const lockedCancellationId = await requestApprovedCancellation(lockedPostedId, {
+        scopeType: 'WHOLE',
+        reason: 'Recalled after the period locked.',
+        evidenceDocumentId: signedEvidence.documentId,
+      });
+      await expect(
+        applications.applyCancellation(
+          applyContext,
+          lockedPostedId,
+          lockedCancellationId,
+          `apply-locked-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_ATTENDANCE_LOCKED' });
+      const lockedDetail = (await applications.findById(agencyContext, lockedPostedId))!;
+      expect(lockedDetail.application.status).toBe('CANCEL_REQUESTED');
+      expect(lockedDetail.cancellations.at(-1)).toMatchObject({
+        effectStatus: 'FAILED',
+        lastEffectFailureKind: 'BLOCKING',
+        lastEffectFailureCode: 'LEAVE_CANCELLATION_ATTENDANCE_LOCKED',
+        effects: [],
+      });
+      expect(
+        await admin.leaveLedgerEntry.count({
+          where: { agencyId: agency.id, sourceId: lockedCancellationId },
+        }),
+      ).toBe(0);
+
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.outboxEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.attendanceException.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendanceDaySegment.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendanceDay.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.attendancePeriod.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leavePostingEffect.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.attendancePostedLeaveInput.deleteMany({
           where: { agencyId: { in: agencyIds } },

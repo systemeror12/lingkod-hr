@@ -42,6 +42,7 @@ function service() {
     workArrangements,
     holidayCalendars,
     new AttendancePostedLeaveInputsService(),
+    {} as never,
   );
 }
 

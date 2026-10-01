@@ -527,12 +527,13 @@ CREATE TABLE attendance_posted_leave_inputs (
     CHECK (unit_code IN (
       'WORKING_DAY','CALENDAR_DAY','SCHEDULED_MINUTE','SOURCE_DEFINED'
     )),
-  quantity numeric(12,4) NOT NULL CHECK (quantity > 0),
+  quantity numeric(12,4) NOT NULL,
   allocation_kind text NOT NULL
     CHECK (allocation_kind IN (
       'LEAVE_ACCOUNT','LEAVE_WITHOUT_PAY','NON_CREDIT'
     )),
   predecessor_input_id uuid,
+  CHECK (quantity > 0 OR (quantity = 0 AND predecessor_input_id IS NOT NULL)),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (agency_id, employee_id) REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, employee_id, predecessor_input_id)
@@ -544,7 +545,7 @@ CREATE TABLE attendance_posted_leave_inputs (
 );
 ```
 
-`attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, or a source-defined unit, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval.
+`attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. A zero-quantity successor withdraws its predecessor's coverage; only a successor may be zero. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, or a source-defined unit, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval.
 
 Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, and posted-leave intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
 
@@ -1333,7 +1334,6 @@ CREATE TABLE leave_cancellations (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   leave_application_id uuid NOT NULL,
   leave_application_version_id uuid NOT NULL,
-  leave_posting_id uuid,
   prior_status text NOT NULL CHECK (prior_status IN ('APPROVED','POSTED')),
   scope_type text NOT NULL CHECK (scope_type IN ('WHOLE','PARTIAL')),
   reason text NOT NULL CHECK (btrim(reason) <> ''),
@@ -1354,8 +1354,6 @@ CREATE TABLE leave_cancellations (
   ) REFERENCES leave_application_versions (
     agency_id, leave_application_id, id
   ),
-  FOREIGN KEY (agency_id, leave_posting_id)
-    REFERENCES leave_postings (agency_id, id),
   FOREIGN KEY (agency_id, approval_route_version_id)
     REFERENCES approval_route_versions (agency_id, id),
   FOREIGN KEY (agency_id, approval_request_id)
@@ -1486,7 +1484,8 @@ requires `leave.applications.cancel`, and projects the application
 Approval sets `decision_status = APPROVED` and `effect_status = PENDING` and
 leaves the application `CANCEL_REQUESTED`; it creates no ledger, commitment,
 Attendance, or Payroll effect. Applying unposted cancellation uses
-`leave_cancellation_effects`; `leave_posting_id` is added with Leave Posting.
+`leave_cancellation_effects`. A version has at most one Leave Posting, so the
+bound version identifies the posting a `POSTED` cancellation reverses.
 
 For approved, unposted leave, the apply command requires
 `leave.applications.apply_cancellation` and an Idempotency-Key bound to the exact
@@ -1502,8 +1501,22 @@ cancellation releases all active commitments; non-credit cancellation needs no
 commitment effects. A failed attempt rolls back every effect before recording
 `FAILED`, `last_effect_failure_code`, and `last_effect_failure_kind`
 (`RETRYABLE` or `BLOCKING`) separately. A successful retry clears both failure
-fields. Applied cancellation records and effect links are immutable. This
-command fails closed for posted leave until its owner handoffs are implemented.
+fields. Applied cancellation records and effect links are immutable.
+
+For posted leave, the same command locks the cancelled lines' accounts in
+stable order. For each cancelled `LEAVE_ACCOUNT` line it inserts a
+`LEDGER_REVERSAL` that exactly negates the posted entry and, when quantity is
+retained, a `LEDGER_REPLACEMENT` for that quantity with the original effective
+date and policy. For every cancelled line it asks Attendance to supersede the
+posted-leave input with the retained range and quantity, or with a
+zero-quantity successor when nothing is retained, and to recalculate the
+current Attendance Days across the original range. The `ATTENDANCE_CORRECTION`
+effect retains the successor input identifier. Ledger and Attendance effect
+rows must name records created for that cancellation. A Work Date in a
+finalized Attendance Period refuses the command with the blocking
+`LEAVE_CANCELLATION_ATTENDANCE_LOCKED` failure until the locked Attendance
+handoff exists. Payroll handoffs belong to M4; leave posted before M4 carries
+no Payroll Input.
 
 A cancellation scope names the exact cancelled dates within one approval
 allocation line. A scope covering the whole line cancels its full quantity. A
