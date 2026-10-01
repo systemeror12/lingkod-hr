@@ -276,6 +276,10 @@ _Avoid_: Backup code, bypass code
 A Security Administrator's audited removal of a User's TOTP factor and Recovery Codes after identity verification, after which the User enrolls again.
 _Avoid_: MFA bypass, admin password reset
 
+**Password Reset**:
+A User's self-service replacement of a forgotten password, proven by possession of their email address plus their TOTP factor or a Recovery Code when they have one; it revokes every session and never changes account or membership status.
+_Avoid_: Password recovery, admin password reset, account unlock
+
 **Reauthentication Window**:
 The five minutes after a User last proved their sign-in factors during which a session may perform sensitive actions without being asked to prove them again.
 _Avoid_: Step-up session, sudo mode
