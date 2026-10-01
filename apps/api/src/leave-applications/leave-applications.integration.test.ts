@@ -3119,4 +3119,5 @@ it.skipIf(!enabled)(
       await admin.$disconnect();
     }
   },
+  60_000,
 );

@@ -393,9 +393,10 @@ export class AttendanceDaysService {
 
   /**
    * Recalculate the affected Work Dates of one applied Attendance Correction
-   * inside the caller-owned transaction. An applied correction is the only
-   * authorized path that may supersede an APPROVED Attendance Day while the
-   * original version and its segments stay retained.
+   * inside the caller-owned transaction. An applied correction, or Leave's
+   * posted-leave supersession on unlocked Work Dates, are the only authorized
+   * paths that may supersede an APPROVED Attendance Day while the original
+   * version and its segments stay retained.
    */
   async recalculateCorrectedWorkDates(
     transaction: Prisma.TransactionClient,

@@ -1160,6 +1160,14 @@ function cancellationApplyFailure(error: unknown): LeaveApplicationServiceError 
       );
 }
 
+/**
+ * Stable key of one posted allocation line. Posting suffixes it with `:ledger`
+ * and `:attendance`; cancellation finds the posted effects by the same keys.
+ */
+function postingLineKey(versionId: string, lineId: string): string {
+  return `leave-posting:${versionId}:${lineId}`;
+}
+
 /** Attendance's refusal stays a deterministic, blocking cancellation failure. */
 function attendanceHandoffFailure(error: unknown): unknown {
   if (error instanceof AttendanceDayServiceError && error.code === 'ATTENDANCE_PERIOD_LOCKED') {
@@ -3217,7 +3225,7 @@ export class LeaveApplicationsService implements OnModuleInit {
             },
           });
           for (const line of allocation.lines) {
-            const sourceKey = `leave-posting:${version.id}:${line.id}`;
+            const sourceKey = postingLineKey(version.id, line.id);
             if (line.allocationKind === 'LEAVE_ACCOUNT' && line.leaveAccountId) {
               const entry = await transaction.leaveLedgerEntry.create({
                 data: {
@@ -4637,7 +4645,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     for (const accountId of accountIds)
       await this.lockAccount(transaction, context.agencyId, accountId);
     for (const { line, scope } of cancelled) {
-      const postedKey = `leave-posting:${version.id}:${line.id}`;
+      const postedKey = postingLineKey(version.id, line.id);
       const effectKey = `leave-cancellation:${cancellation.id}:${line.id}`;
       const retained = line.quantity.minus(scope.quantity);
       if (line.allocationKind === 'LEAVE_ACCOUNT') {
