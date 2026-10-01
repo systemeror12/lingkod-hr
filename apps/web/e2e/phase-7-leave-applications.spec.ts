@@ -1,5 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { PrismaClient } from '@prisma/client';
 import { getConfig } from '@lingkod-hr/config';
 import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
 
@@ -44,33 +43,20 @@ async function readMailpitMessage(recipient: string, subject: string): Promise<s
 // Invitation role grants take effect at the activation instant, while Approval
 // Route assignment resolution evaluates roles at 12:00 UTC of the submission
 // date. Backdate the fixture grants so a same-day review flow resolves.
-function backdateReviewerRoleGrants(membershipId: string): void {
-  const adminUrl =
-    process.env.DATABASE_E2E_ADMIN_URL ??
-    process.env.DATABASE_MIGRATION_OWNER_URL ??
-    getConfig().DATABASE_DIRECT_URL;
-  const databaseUrl = new URL(adminUrl);
-  databaseUrl.hostname = '127.0.0.1';
-  databaseUrl.port = '5432';
-  execFileSync(
-    'docker',
-    [
-      'compose',
-      '-f',
-      'infrastructure/compose.yaml',
-      'exec',
-      '-T',
-      'postgres',
-      'psql',
-      databaseUrl.toString(),
-      '-XAt',
-      '-v',
-      'ON_ERROR_STOP=1',
-      '-c',
-      `UPDATE membership_roles SET effective_from = '2026-01-01T00:00:00+08:00' WHERE membership_id = '${membershipId}' AND effective_to IS NULL;`,
-    ],
-    { encoding: 'utf8', cwd: resolve(__dirname, '../../..') },
-  );
+async function backdateReviewerRoleGrants(membershipId: string): Promise<void> {
+  getConfig();
+  const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
+  if (!adminUrl)
+    throw new Error('A worktree database owner URL is required for the reviewer fixture.');
+  const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+  try {
+    await admin.membershipRole.updateMany({
+      where: { membershipId, effectiveTo: null },
+      data: { effectiveFrom: new Date('2026-01-01T00:00:00+08:00') },
+    });
+  } finally {
+    await admin.$disconnect();
+  }
 }
 
 async function inviteReviewer(
@@ -104,7 +90,7 @@ async function inviteReviewer(
       headers: { origin: new URL(reviewerPage.url()).origin },
     }),
   );
-  backdateReviewerRoleGrants(session.membershipId);
+  await backdateReviewerRoleGrants(session.membershipId);
   return { page: reviewerPage, membershipId: session.membershipId };
 }
 
@@ -543,57 +529,69 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
     applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }),
   ).toHaveCount(0);
 
-  const partialApplication = await apiBody<{ application: { id: string } }>(
-    await page.request.post(`${agencyBase}/leave-applications`, {
-      headers,
-      data: { employeeId: employee.id, leaveTypeId: leaveType.id },
-    }),
-  );
-  const partialBase = `${agencyBase}/leave-applications/${partialApplication.application.id}`;
-  await apiBody(
-    await page.request.patch(partialBase, {
-      headers,
-      data: {
-        reason: 'Two days of special privilege leave.',
-        commutationChoice: 'NOT_REQUESTED',
-        periods: [{ dateFrom: '2026-06-08', dateTo: '2026-06-09' }],
-        documents: [
-          { documentId: nationalRuleDocumentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
-        ],
-      },
-    }),
-  );
-  await apiBody(
-    await page.request.post(`${partialBase}/submission`, {
-      headers,
-      data: {
-        formTemplateDocumentVersionId: formTemplate.version.id,
-        attestation: {
-          type: 'SIGNED_DOCUMENT',
-          documentId: nationalRuleDocumentId,
-          receivedAt: '2026-06-01T09:00:00.000+08:00',
+  async function approveApplication(periods: Array<{ dateFrom: string; dateTo: string }>) {
+    const partialApplication = await apiBody<{ application: { id: string } }>(
+      await page.request.post(`${agencyBase}/leave-applications`, {
+        headers,
+        data: { employeeId: employee.id, leaveTypeId: leaveType.id },
+      }),
+    );
+    const partialBase = `${agencyBase}/leave-applications/${partialApplication.application.id}`;
+    await apiBody(
+      await page.request.patch(partialBase, {
+        headers,
+        data: {
+          reason: 'Two days of special privilege leave.',
+          commutationChoice: 'NOT_REQUESTED',
+          periods,
+          documents: [
+            { documentId: nationalRuleDocumentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+          ],
         },
-      },
-    }),
-  );
-  await apiBody(await page.request.post(`${partialBase}/routing`, { headers }));
-  await apiBody(
-    await certifier.page.request.post(`${partialBase}/certification`, { headers, data: {} }),
-  );
-  await apiBody(
-    await decider.page.request.post(`${partialBase}/recommendation`, {
-      headers,
-      data: { outcome: 'RECOMMEND_APPROVAL' },
-    }),
-  );
-  const partialApproved = await apiBody<{
-    versions: Array<{ approvalAllocation: { lines: Array<{ id: string }> } }>;
-  }>(
-    await decider.page.request.post(`${partialBase}/decision`, {
-      headers,
-      data: { decision: 'APPROVE' },
-    }),
-  );
+      }),
+    );
+    await apiBody(
+      await page.request.post(`${partialBase}/submission`, {
+        headers,
+        data: {
+          formTemplateDocumentVersionId: formTemplate.version.id,
+          attestation: {
+            type: 'SIGNED_DOCUMENT',
+            documentId: nationalRuleDocumentId,
+            receivedAt: '2026-06-01T09:00:00.000+08:00',
+          },
+        },
+      }),
+    );
+    await apiBody(await page.request.post(`${partialBase}/routing`, { headers }));
+    await apiBody(
+      await certifier.page.request.post(`${partialBase}/certification`, { headers, data: {} }),
+    );
+    await apiBody(
+      await decider.page.request.post(`${partialBase}/recommendation`, {
+        headers,
+        data: { outcome: 'RECOMMEND_APPROVAL' },
+      }),
+    );
+    const partialApproved = await apiBody<{
+      versions: Array<{ approvalAllocation: { lines: Array<{ id: string }> } }>;
+    }>(
+      await decider.page.request.post(`${partialBase}/decision`, {
+        headers,
+        data: { decision: 'APPROVE' },
+      }),
+    );
+    return {
+      application: partialApplication.application,
+      base: partialBase,
+      approved: partialApproved,
+    };
+  }
+  const {
+    application: partialApplication,
+    base: partialBase,
+    approved: partialApproved,
+  } = await approveApplication([{ dateFrom: '2026-06-08', dateTo: '2026-06-09' }]);
   const partialRequested = await apiBody<{ cancellations: Array<{ id: string }> }>(
     await page.request.post(`${partialBase}/cancellation-requests`, {
       headers,
@@ -618,11 +616,11 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
       data: { decision: 'APPROVE' },
     }),
   );
-  await page.goto(`/leave-applications?record=${partialApplication.application.id}`);
+  await page.goto(`/leave-applications?record=${partialApplication.id}`);
   const partialArticle = applyDetail.getByRole('article', { name: /Cancellation requested/ });
   await expect(partialArticle).toContainText('partial cancellation');
   const attemptKeys: Array<string | null> = [];
-  const applyUrl = `**/leave-applications/${partialApplication.application.id}/cancellations/${partialRequested.cancellations[0]!.id}/apply`;
+  const applyUrl = `**/leave-applications/${partialApplication.id}/cancellations/${partialRequested.cancellations[0]!.id}/apply`;
   await page.route(applyUrl, async (route) => {
     attemptKeys.push(route.request().headers()['idempotency-key'] ?? null);
     if (attemptKeys.length === 1) {
@@ -648,4 +646,31 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
     `LEAVE_CANCELLATION_APPLY:${partialRequested.cancellations[0]!.id}`,
   ]);
   await page.unroute(applyUrl);
+  const { application: postingApplication } = await approveApplication([
+    { dateFrom: '2026-06-10', dateTo: '2026-06-10' },
+  ]);
+  const postingApplicationId = postingApplication.id;
+  await decider.page.goto(`/leave-applications?record=${postingApplicationId}`);
+  await expect(deciderDetail.getByRole('region', { name: 'Posting effects' })).toHaveCount(0);
+  const approverPosting = await decider.page.request.post(
+    `${agencyBase}/leave-applications/${postingApplicationId}/posting`,
+    {
+      headers: {
+        origin: new URL(decider.page.url()).origin,
+        'Idempotency-Key': 'posting-separation',
+      },
+      data: {},
+    },
+  );
+  expect(approverPosting.status()).toBe(403);
+  await certifier.page.goto(`/leave-applications?record=${postingApplicationId}`);
+  await certifierDetail.getByRole('button', { name: 'Post leave' }).click();
+  await expect(certifierDetail).toContainText(
+    'The Leave Application was posted to Leave and Attendance.',
+  );
+  await expect(certifierDetail).toContainText('POSTED');
+  const effects = certifierDetail.getByRole('region', { name: 'Posting effects' });
+  await expect(effects).toContainText('Leave Ledger Entry');
+  await expect(effects).toContainText('Attendance input');
+  await expect(certifierDetail.getByRole('button', { name: 'Post leave' })).toHaveCount(0);
 });

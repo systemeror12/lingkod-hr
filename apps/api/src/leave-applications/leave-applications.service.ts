@@ -12,6 +12,8 @@ import {
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
+import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
+import type { CreatePostedLeaveInput } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import { DocumentsService } from '../documents/documents.service';
 import {
   findLeaveCatalogueEntry,
@@ -265,6 +267,7 @@ export interface LeaveApplicationVersionSummary {
   certification: LeaveCreditCertificationSummary | null;
   recommendation: LeaveRecommendationSummary | null;
   approvalAllocation: LeaveApprovalAllocationSummary | null;
+  posting: LeavePostingSummary | null;
   approvalSteps: LeaveApprovalStepSummary[];
 }
 
@@ -338,7 +341,16 @@ export interface LeaveApplicationSummary {
   createdAt: string;
 }
 
+export interface LeavePostingSummary {
+  id: string;
+  leaveApprovalAllocationId: string;
+  postedAt: string;
+  postedByMembershipId: string | null;
+  effects: { effectKind: string; effectKey: string; ownerRecordId: string }[];
+}
+
 export interface LeaveApplicationDetail {
+  canPost: boolean;
   application: LeaveApplicationSummary;
   draftPeriods: LeaveApplicationPeriodSummary[];
   draftDocuments: LeaveApplicationDocumentSummary[];
@@ -574,6 +586,18 @@ const versionSelect = {
   calculationSegments: {
     orderBy: [{ dateFrom: 'asc' as const }, { id: 'asc' as const }],
     select: segmentSelect,
+  },
+  posting: {
+    select: {
+      id: true,
+      leaveApprovalAllocationId: true,
+      postedAt: true,
+      postedByMembershipId: true,
+      effects: {
+        orderBy: { effectKey: 'asc' as const },
+        select: { effectKind: true, effectKey: true, ownerRecordId: true },
+      },
+    },
   },
   creditCertification: { select: certificationSelect },
   recommendation: {
@@ -950,6 +974,9 @@ function versionSummary(record: VersionRecord): LeaveApplicationVersionSummary {
           lines: record.approvalAllocation.lines.map(allocationLineSummary),
         }
       : null,
+    posting: record.posting
+      ? { ...record.posting, postedAt: formatDateTime(record.posting.postedAt) }
+      : null,
     approvalSteps: record.approvalRequest.steps.map(approvalStepSummary),
   };
 }
@@ -1200,6 +1227,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     @Inject(WorkSchedulesService) private readonly workSchedules: WorkSchedulesService,
     @Inject(WorkArrangementsService) private readonly workArrangements: WorkArrangementsService,
     @Inject(HolidayCalendarsService) private readonly holidayCalendars: HolidayCalendarsService,
+    @Inject(AttendancePostedLeaveInputsService)
+    private readonly postedLeaveInputs: AttendancePostedLeaveInputsService,
   ) {}
 
   onModuleInit(): void {
@@ -3028,6 +3057,345 @@ export class LeaveApplicationsService implements OnModuleInit {
     });
   }
 
+  /** Posts the exact approved version and all owner effects in one transaction. */
+  async post(
+    context: RequestContext,
+    applicationId: string,
+    rawIdempotencyKey: string,
+  ): Promise<LeaveApplicationDetail> {
+    this.assertPermission(context, 'leave.applications.post', 'LEAVE_APPLICATION_POST_FORBIDDEN');
+    const idempotencyKey = rawIdempotencyKey.trim();
+    if (!idempotencyKey)
+      throw deficiency(
+        'LEAVE_POSTING_KEY_REQUIRED',
+        'An Idempotency-Key is required to post leave.',
+      );
+    try {
+      return await withDatabaseContext(
+        requestDatabaseContext(context, 'approval-transition', 'leave-posting-transition'),
+        async (transaction) => {
+          // Serialize retries for a key as well as commands against the application.
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${context.agencyId + ':leave-post:' + idempotencyKey.toLowerCase()}, 0))`,
+          );
+          const application = await this.lockApplication(
+            transaction,
+            context.agencyId,
+            applicationId,
+          );
+          if (!application) throw applicationNotFound();
+          this.assertAccess(context, application, 'leave.applications.post');
+          const previous = await transaction.leavePosting.findFirst({
+            where: { agencyId: context.agencyId, idempotencyKey },
+          });
+          if (previous) {
+            const source = await transaction.leaveApplicationVersion.findFirst({
+              where: { agencyId: context.agencyId, id: previous.leaveApplicationVersionId },
+              select: { leaveApplicationId: true },
+            });
+            if (source?.leaveApplicationId !== applicationId) throw idempotencyConflict();
+            return (await this.detailInTransaction(transaction, context, applicationId))!;
+          }
+          if (application.status === 'POSTED') {
+            throw new LeaveApplicationServiceError(
+              'This approved version already has a Leave Posting.',
+              409,
+              'LEAVE_POSTING_SOURCE_DUPLICATE',
+            );
+          }
+          if (application.status !== 'APPROVED')
+            throw workflowError('post leave', application.status);
+          const version = await this.requireVersion(transaction, context.agencyId, application);
+          if (version.posting)
+            throw new LeaveApplicationServiceError(
+              'This approved version already has a Leave Posting.',
+              409,
+              'LEAVE_POSTING_SOURCE_DUPLICATE',
+            );
+          this.assertActorSeparation(context, application, version, { prohibitSubject: true });
+          const allocation = version.approvalAllocation;
+          if (
+            !allocation ||
+            !version.creditCertification ||
+            !version.recommendation ||
+            version.approvalRequest.status !== 'APPROVED'
+          )
+            throw routeInvalid();
+          const accepted = version.assessments.find(
+            ({ id }) => id === version.acceptedAssessmentId,
+          );
+          if (!accepted || accepted.result !== 'ELIGIBLE') throw assessmentRequired();
+          const decisions = version.approvalRequest.steps.flatMap((step) =>
+            step.decisions.map((decision) => ({ step, decision })),
+          );
+          for (const [id, permission] of [
+            [version.creditCertification.approvalDecisionId, 'leave.credits.certify'],
+            [version.recommendation.approvalDecisionId, 'leave.applications.recommend'],
+            [allocation.approvalDecisionId, 'leave.applications.approve'],
+          ]) {
+            const bound = decisions.find(({ decision }) => decision.id === id);
+            if (
+              !bound ||
+              bound.decision.decision !== 'APPROVE' ||
+              bound.step.status !== 'APPROVED' ||
+              bound.step.approvePermission !== permission
+            )
+              throw routeInvalid();
+            if (
+              permission === 'leave.applications.approve' &&
+              bound.step.requiresSeparateReview &&
+              bound.decision.decidedByMembershipId === context.membershipId
+            ) {
+              throw new LeaveApplicationServiceError(
+                'The approving official must use a separate authorized posting executor.',
+                403,
+                'LEAVE_APPLICATION_SEPARATION_REQUIRED',
+              );
+            }
+          }
+          if (
+            allocation.lines.some(({ allocationKind }) => allocationKind === 'LEAVE_WITHOUT_PAY')
+          ) {
+            throw new LeaveApplicationServiceError(
+              'Leave without pay cannot be posted until the Payroll owner can accept Payroll Inputs in M4. The Leave Application remains approved.',
+              409,
+              'LEAVE_POSTING_PAYROLL_OWNER_UNAVAILABLE',
+            );
+          }
+          const accountIds = [
+            ...new Set([
+              ...version.creditCertification.lines.map(({ leaveAccountId }) => leaveAccountId),
+              ...allocation.lines.flatMap(({ leaveAccountId }) =>
+                leaveAccountId ? [leaveAccountId] : [],
+              ),
+            ]),
+          ].sort();
+          for (const accountId of accountIds)
+            await this.lockAccount(transaction, context.agencyId, accountId);
+          const certification = await this.requireCertification(
+            transaction,
+            context.agencyId,
+            version,
+            allocation,
+          );
+          const charges = await this.segmentAccountCharges(
+            transaction,
+            context,
+            application,
+            version,
+          );
+          for (const line of allocation.lines) {
+            const charge = charges.find(
+              (charge) =>
+                charge.policyVersionId === line.policyVersionId &&
+                charge.dateFrom.getTime() === line.dateFrom.getTime() &&
+                charge.dateTo.getTime() === line.dateTo.getTime(),
+            );
+            if (
+              !charge ||
+              !charge.allocationKinds.includes(
+                line.allocationKind as LeaveApprovalAllocationKind,
+              ) ||
+              line.unitCode !== charge.requestedUnit ||
+              line.quantity.lessThanOrEqualTo(0) ||
+              line.quantity.greaterThan(charge.requestedQuantity) ||
+              line.leaveAccountId !==
+                (line.allocationKind === 'LEAVE_ACCOUNT' ? charge.leaveAccountId : null)
+            )
+              throw allocationInvalid(
+                'The approved allocation no longer matches its bound calculation segment and policy.',
+              );
+          }
+          const commitments = await transaction.leaveCreditCommitment.findMany({
+            where: {
+              agencyId: context.agencyId,
+              sourceType: COMMITMENT_SOURCE_TYPE,
+              sourceId: version.id,
+              status: 'ACTIVE',
+            },
+          });
+          for (const accountId of accountIds) {
+            const lines = allocation.lines.filter(
+              ({ leaveAccountId }) => leaveAccountId === accountId,
+            );
+            const debit = lines.reduce((sum, line) => sum.plus(line.quantity), ZERO);
+            const own = commitments.filter(({ leaveAccountId }) => leaveAccountId === accountId);
+            if (
+              own.length !== (debit.greaterThan(0) ? 1 : 0) ||
+              (own[0] && !own[0].quantity.equals(debit))
+            )
+              throw recertificationRequired();
+            const certifiedLine = certification.lines.find(
+              ({ leaveAccountId }) => leaveAccountId === accountId,
+            );
+            if (!certifiedLine) throw recertificationRequired();
+            if (
+              own[0] &&
+              own[0].id !== certifiedLine.leaveCreditCommitmentId &&
+              (own[0].succeedsCommitmentId !== certifiedLine.leaveCreditCommitmentId ||
+                own[0].sourceCommitmentKey !== APPROVED_COMMITMENT_KEY ||
+                own[0].quantity.greaterThan(certifiedLine.applicationQuantity))
+            )
+              throw recertificationRequired();
+            if (debit.isZero()) continue;
+            const available = await this.postingAvailability(
+              transaction,
+              context.agencyId,
+              accountId,
+              version.creditCertification.balanceAsOf,
+              new Date(Math.min(...lines.map((line) => line.dateFrom.getTime()))),
+              new Date(),
+            );
+            if (available.lessThan(0)) {
+              throw new LeaveApplicationServiceError(
+                'Current posted credits cannot cover the approved allocation and active commitments. Recertification is required.',
+                409,
+                'LEAVE_POSTING_CREDITS_UNAVAILABLE',
+              );
+            }
+          }
+          if (commitments.some(({ leaveAccountId }) => !accountIds.includes(leaveAccountId)))
+            throw recertificationRequired();
+          const posting = await transaction.leavePosting.create({
+            data: {
+              agencyId: context.agencyId,
+              leaveApplicationVersionId: version.id,
+              leaveApprovalAllocationId: allocation.id,
+              idempotencyKey,
+              postedByMembershipId: context.membershipId,
+            },
+          });
+          for (const line of allocation.lines) {
+            const sourceKey = `leave-posting:${version.id}:${line.id}`;
+            if (line.allocationKind === 'LEAVE_ACCOUNT' && line.leaveAccountId) {
+              const entry = await transaction.leaveLedgerEntry.create({
+                data: {
+                  agencyId: context.agencyId,
+                  leaveAccountId: line.leaveAccountId,
+                  quantity: line.quantity.negated(),
+                  effectiveDate: line.dateFrom,
+                  sourceType: 'LeavePosting',
+                  sourceId: posting.id,
+                  sourcePostingKey: sourceKey,
+                  policyVersionId: line.policyVersionId,
+                  postedByMembershipId: context.membershipId,
+                },
+              });
+              await transaction.leavePostingEffect.create({
+                data: {
+                  agencyId: context.agencyId,
+                  leavePostingId: posting.id,
+                  effectKind: 'LEDGER_ENTRY',
+                  effectKey: `${sourceKey}:ledger`,
+                  ownerRecordId: entry.id,
+                },
+              });
+            }
+            const attendance = await this.postedLeaveInputs.createInTransaction(
+              transaction,
+              context.agencyId,
+              {
+                employeeId: application.employeeId,
+                sourceKey: `${sourceKey}:attendance`,
+                sourceType: 'LeavePosting',
+                sourceId: posting.id,
+                dateFrom: formatDate(line.dateFrom),
+                dateTo: formatDate(line.dateTo),
+                unitCode: line.unitCode as CreatePostedLeaveInput['unitCode'],
+                quantity: line.quantity.toNumber(),
+                allocationKind: line.allocationKind as CreatePostedLeaveInput['allocationKind'],
+              },
+            );
+            await transaction.leavePostingEffect.create({
+              data: {
+                agencyId: context.agencyId,
+                leavePostingId: posting.id,
+                effectKind: 'ATTENDANCE_INPUT',
+                effectKey: `${sourceKey}:attendance`,
+                ownerRecordId: attendance.id,
+              },
+            });
+          }
+          await transaction.leaveCreditCommitment.updateMany({
+            where: {
+              agencyId: context.agencyId,
+              id: { in: commitments.map(({ id }) => id) },
+              status: 'ACTIVE',
+            },
+            data: { status: 'CONSUMED', endedAt: posting.postedAt },
+          });
+          await transaction.leaveApplication.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
+            data: { status: 'POSTED' },
+          });
+          await this.auditWriter.write(transaction, {
+            agencyId: context.agencyId,
+            actorUserId: context.userId,
+            actorMembershipId: context.membershipId,
+            actorType: 'USER',
+            action: 'LEAVE_APPLICATION_POSTED',
+            entityType: 'LeaveApplication',
+            entityId: applicationId,
+            previousStatus: 'APPROVED',
+            newStatus: 'POSTED',
+            requestId: context.requestId,
+            idempotencyKey,
+            metadata: {
+              postingId: posting.id,
+              versionId: version.id,
+              assessmentId: accepted.id,
+              certificationId: certification.id,
+              allocationId: allocation.id,
+            },
+          });
+          await transaction.outboxEvent.create({
+            data: {
+              agencyId: context.agencyId,
+              eventType: 'LEAVE_APPLICATION_POSTED',
+              aggregateType: 'LeaveApplication',
+              aggregateId: applicationId,
+              idempotencyKey: posting.id,
+              payload: {
+                postingId: posting.id,
+                versionId: version.id,
+                employeeId: application.employeeId,
+              },
+            },
+          });
+          return (await this.detailInTransaction(transaction, context, applicationId))!;
+        },
+      );
+    } catch (error: unknown) {
+      // A failed authoritative transaction has no domain effects. Preserve a
+      // separate audit event so an approved application's retry is traceable.
+      await withDatabaseContext(databaseContext(context), async (transaction) => {
+        const application = await transaction.leaveApplication.findFirst({
+          where: { agencyId: context.agencyId, id: applicationId, status: 'APPROVED' },
+          select: { id: true },
+        });
+        if (application)
+          await this.auditWriter.write(transaction, {
+            agencyId: context.agencyId,
+            actorUserId: context.userId,
+            actorMembershipId: context.membershipId,
+            actorType: 'USER',
+            action: 'LEAVE_APPLICATION_POST_FAILED',
+            entityType: 'LeaveApplication',
+            entityId: applicationId,
+            requestId: context.requestId,
+            idempotencyKey,
+            metadata: {
+              failureCode:
+                error instanceof LeaveApplicationServiceError
+                  ? error.code
+                  : 'LEAVE_POSTING_OWNER_FAILURE',
+            },
+          });
+      });
+      throw error;
+    }
+  }
+
   async returnToApplicant(
     context: RequestContext,
     applicationId: string,
@@ -3218,7 +3586,22 @@ export class LeaveApplicationsService implements OnModuleInit {
     ]);
     const application = applicationSummary(record);
     application.periods = draftPeriods.map(periodSummary);
+    const currentVersion = versions.find(({ id }) => id === record.currentVersionId);
     return {
+      canPost:
+        record.status === 'APPROVED' &&
+        this.hasScope(context, 'leave.applications.post', 'AGENCY') &&
+        !record.employee.memberships.some(({ id }) => id === context.membershipId) &&
+        currentVersion !== undefined &&
+        !currentVersion.approvalRequest.steps.some(
+          (step) =>
+            step.requiresSeparateReview &&
+            step.decisions.some(
+              (decision) =>
+                decision.id === currentVersion.approvalAllocation?.approvalDecisionId &&
+                decision.decidedByMembershipId === context.membershipId,
+            ),
+        ),
       application,
       draftPeriods: draftPeriods.map(periodSummary),
       draftDocuments: draftDocuments.map(documentSummary),
@@ -3906,6 +4289,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     transaction: Prisma.TransactionClient,
     agencyId: string,
     version: VersionRecord,
+    approvedAllocation?: NonNullable<VersionRecord['approvalAllocation']>,
   ) {
     const certification = await transaction.leaveCreditCertification.findFirst({
       where: { agencyId, leaveApplicationVersionId: version.id },
@@ -3934,6 +4318,27 @@ export class LeaveApplicationsService implements OnModuleInit {
         select: { status: true },
       });
       if (!account || account.status !== 'ACTIVE') throw recertificationRequired();
+      if (
+        approvedAllocation &&
+        !approvedAllocation.lines.some(
+          (allocationLine) => allocationLine.leaveAccountId === line.leaveAccountId,
+        )
+      ) {
+        const released = await transaction.leaveCreditCommitment.findFirst({
+          where: {
+            agencyId,
+            id: line.leaveCreditCommitmentId,
+            leaveAccountId: line.leaveAccountId,
+            sourceType: COMMITMENT_SOURCE_TYPE,
+            sourceId: version.id,
+            status: 'RELEASED',
+          },
+          select: { id: true },
+        });
+        if (!released) throw recertificationRequired();
+        continue;
+      }
+
       let commitmentId: string | null = line.leaveCreditCommitmentId;
       let commitment: { id: string; status: string } | null = null;
       for (let hops = 0; commitmentId && hops < 20; hops += 1) {
@@ -4153,6 +4558,52 @@ export class LeaveApplicationsService implements OnModuleInit {
       },
       data: { status: 'RELEASED', endedAt: new Date() },
     });
+  }
+
+  /**
+   * Check the certified date, the first approved debit date, and every later
+   * ledger boundary in one query. A later credit cannot hide an intervening
+   * deficit, and ledger history does not add round trips under account locks.
+   */
+  private async postingAvailability(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    leaveAccountId: string,
+    balanceAsOf: Date,
+    firstDebitDate: Date,
+    recordedThrough: Date,
+  ): Promise<Prisma.Decimal> {
+    const [result] = await transaction.$queryRaw<{ available: Prisma.Decimal }[]>(Prisma.sql`
+      WITH daily_ledger AS (
+        SELECT effective_date, SUM(quantity) AS quantity
+        FROM leave_ledger_entries
+        WHERE agency_id = CAST(${agencyId} AS uuid)
+          AND leave_account_id = CAST(${leaveAccountId} AS uuid)
+          AND posted_at <= ${recordedThrough}
+        GROUP BY effective_date
+      ), starting_balances AS (
+        SELECT COALESCE(SUM(quantity) FILTER (WHERE effective_date <= CAST(${balanceAsOf} AS date)), 0) AS certified,
+               COALESCE(SUM(quantity) FILTER (WHERE effective_date <= CAST(${firstDebitDate} AS date)), 0) AS first_debit
+        FROM daily_ledger
+      ), future_balances AS (
+        SELECT first_debit + SUM(quantity) OVER (ORDER BY effective_date ROWS UNBOUNDED PRECEDING) AS balance
+        FROM daily_ledger CROSS JOIN starting_balances
+        WHERE effective_date > CAST(${firstDebitDate} AS date)
+      ), balances AS (
+        SELECT certified AS balance FROM starting_balances
+        UNION ALL SELECT first_debit AS balance FROM starting_balances
+        UNION ALL SELECT balance FROM future_balances
+      )
+      SELECT MIN(balance) - (
+        SELECT COALESCE(SUM(quantity), 0) FROM leave_credit_commitments
+        WHERE agency_id = CAST(${agencyId} AS uuid)
+          AND leave_account_id = CAST(${leaveAccountId} AS uuid)
+          AND status = 'ACTIVE' AND effective_from <= ${recordedThrough}
+          AND (ended_at IS NULL OR ended_at > ${recordedThrough})
+      ) AS available FROM balances
+    `);
+    if (!result) throw recertificationRequired();
+    return result.available;
   }
 
   private async lockAccount(

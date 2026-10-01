@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import { expect, it } from 'vitest';
 import {
   approvalAuditWriter,
@@ -142,7 +143,7 @@ async function createEvidence(
 }
 
 it.skipIf(!enabled)(
-  'prepares, submits, records, and withdraws Leave Applications under RLS',
+  'prepares, reviews, cancels, and atomically posts Leave Applications under RLS',
   async () => {
     const admin = await createAdminClient();
     const suffix = `${Date.now()}-leave-application`;
@@ -332,8 +333,10 @@ it.skipIf(!enabled)(
       schedules,
       arrangements,
       calendars,
+      new AttendancePostedLeaveInputsService(),
     );
     applications.onModuleInit();
+    const applicationApi = new LeaveApplicationsController(applications);
 
     const agencyContext = context(agency.id, user.id, membership.id, [
       { code: 'attendance.configuration.read', scopePolicy: 'AGENCY' },
@@ -1249,6 +1252,20 @@ it.skipIf(!enabled)(
         `decide-unpaid-${suffix}`,
       );
       expect(unpaidDecided.application.status).toBe('APPROVED');
+      const postingContext = {
+        ...recorderContext,
+        permissions: [
+          ...recorderContext.permissions,
+          { code: 'leave.applications.post', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+      await expect(
+        applications.post(postingContext, unpaidApplicationId, `post-unpaid-${suffix}`),
+      ).rejects.toMatchObject({ code: 'LEAVE_POSTING_PAYROLL_OWNER_UNAVAILABLE' });
+      expect(
+        (await applications.findById(agencyContext, unpaidApplicationId))!.application.status,
+      ).toBe('APPROVED');
+
       expect(unpaidDecided.versions.at(-1)!.approvalAllocation!.lines).toMatchObject([
         {
           allocationKind: 'LEAVE_WITHOUT_PAY',
@@ -1715,6 +1732,7 @@ it.skipIf(!enabled)(
         schedules,
         arrangements,
         calendars,
+        new AttendancePostedLeaveInputsService(),
       );
       await expect(
         failingApplications.applyCancellation(
@@ -1760,6 +1778,7 @@ it.skipIf(!enabled)(
         schedules,
         arrangements,
         calendars,
+        new AttendancePostedLeaveInputsService(),
       );
       await expect(
         blockingApplications.applyCancellation(
@@ -1805,6 +1824,7 @@ it.skipIf(!enabled)(
         schedules,
         arrangements,
         calendars,
+        new AttendancePostedLeaveInputsService(),
       );
       await expect(
         expiringApplications.applyCancellation(
@@ -2106,10 +2126,525 @@ it.skipIf(!enabled)(
         ledgerBefore,
       );
 
+      // Additional posted credits let this journey coexist with the earlier
+      // active commitments rather than releasing another application's claim.
+      await admin.leaveLedgerEntry.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: specialAccount.id,
+          quantity: 10,
+          effectiveDate: new Date(`${manilaDate(-5)}T00:00:00.000Z`),
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'credits',
+          policyVersionId: reviewPolicyVersion.id,
+        },
+      });
+      const postingDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: specialLeave.id,
+      });
+      const postingApplicationId = postingDraft.application.id;
+      await applications.update(agencyContext, postingApplicationId, {
+        reason: 'Atomic posting journey.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: nextMonday(20), dateTo: nextMonday(20) }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await applications.submit(employeeContext, postingApplicationId, submitInput);
+      await applications.route(recorderContext, postingApplicationId);
+      await applications.certify(recorderContext, postingApplicationId, {
+        balanceAsOf: manilaDate(0),
+      });
+      await applications.recommend(supervisorContext, postingApplicationId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      await applications.decide(approverContext, postingApplicationId, { decision: 'APPROVE' });
+      await expect(
+        applicationApi.post(
+          foreignAgency.id,
+          postingApplicationId,
+          {},
+          'cross-agency-key',
+          postingContext,
+        ),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { error: { code: 'LEAVE_APPLICATION_FORBIDDEN' } },
+      });
+      await expect(
+        applicationApi.post(agency.id, postingApplicationId, {}, undefined, postingContext),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: {
+          error: { code: 'LEAVE_POSTING_KEY_REQUIRED', requestId: postingContext.requestId },
+        },
+      });
+      await expect(
+        applicationApi.post(
+          agency.id,
+          postingApplicationId,
+          { status: 'POSTED' },
+          'invalid-body',
+          postingContext,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: { error: { code: 'INVALID_INPUT', requestId: postingContext.requestId } },
+      });
+      for (const effectiveDate of [manilaDate(-2), nextMonday(15), nextMonday(30)]) {
+        const changedBalance = await admin.leaveLedgerEntry.create({
+          data: {
+            agencyId: agency.id,
+            leaveAccountId: specialAccount.id,
+            quantity: -15,
+            effectiveDate: new Date(`${effectiveDate}T00:00:00.000Z`),
+            sourceType: 'IntegrationFixture',
+            sourceId: randomUUID(),
+            sourcePostingKey: 'changed-balance',
+            policyVersionId: reviewPolicyVersion.id,
+          },
+        });
+        await expect(
+          applications.post(
+            postingContext,
+            postingApplicationId,
+            `stale-${effectiveDate}-${suffix}`,
+          ),
+        ).rejects.toMatchObject({ code: 'LEAVE_POSTING_CREDITS_UNAVAILABLE' });
+        expect(
+          (await applications.findById(agencyContext, postingApplicationId))!.application.status,
+        ).toBe('APPROVED');
+        await admin.leaveLedgerEntry.create({
+          data: {
+            agencyId: agency.id,
+            leaveAccountId: specialAccount.id,
+            quantity: 15,
+            effectiveDate: changedBalance.effectiveDate,
+            sourceType: 'IntegrationFixture',
+            sourceId: randomUUID(),
+            sourcePostingKey: 'restore-balance',
+            policyVersionId: reviewPolicyVersion.id,
+            reversesEntryId: changedBalance.id,
+          },
+        });
+      }
+      const postingVersion = (await applications.findById(
+        agencyContext,
+        postingApplicationId,
+      ))!.versions.at(-1)!;
+      const sourceCommitment = await admin.leaveCreditCommitment.findFirstOrThrow({
+        where: { agencyId: agency.id, sourceId: postingVersion.id, status: 'ACTIVE' },
+      });
+      // A late PostgreSQL rejection occurs after both owner effects and the
+      // status projection. The complete authoritative transaction must roll back.
+      const failureFunction = `fail_posting_${randomUUID().replaceAll('-', '')}`;
+      await admin.$executeRawUnsafe(
+        `CREATE FUNCTION ${failureFunction}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'intentional posting outbox failure'; END; $$`,
+      );
+      await admin.$executeRawUnsafe(
+        `CREATE TRIGGER ${failureFunction} BEFORE INSERT ON outbox_events FOR EACH ROW WHEN (NEW.aggregate_id = '${postingApplicationId}'::uuid) EXECUTE FUNCTION ${failureFunction}()`,
+      );
+      const ledgerCount = await admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } });
+      try {
+        await expect(
+          applications.post(postingContext, postingApplicationId, `post-${suffix}`),
+        ).rejects.toThrow(/intentional posting outbox failure/);
+        const failed = (await applications.findById(agencyContext, postingApplicationId))!;
+        expect(failed.application.status).toBe('APPROVED');
+        expect(failed.versions.at(-1)!.posting).toBeNull();
+        expect(await admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } })).toBe(
+          ledgerCount,
+        );
+        expect(
+          await admin.attendancePostedLeaveInput.count({ where: { agencyId: agency.id } }),
+        ).toBe(0);
+        expect(await admin.leavePostingEffect.count({ where: { agencyId: agency.id } })).toBe(0);
+        expect(
+          await admin.outboxEvent.count({
+            where: { agencyId: agency.id, aggregateId: postingApplicationId },
+          }),
+        ).toBe(0);
+        expect(
+          await admin.leaveCreditCommitment.findUnique({ where: { id: sourceCommitment.id } }),
+        ).toMatchObject({ status: 'ACTIVE' });
+        expect(
+          await admin.auditEvent.count({
+            where: {
+              agencyId: agency.id,
+              entityId: postingApplicationId,
+              action: 'LEAVE_APPLICATION_POST_FAILED',
+            },
+          }),
+        ).toBe(4);
+      } finally {
+        await admin.$executeRawUnsafe(`DROP TRIGGER ${failureFunction} ON outbox_events`);
+        await admin.$executeRawUnsafe(`DROP FUNCTION ${failureFunction}()`);
+      }
+      const postingApprover = {
+        ...approverContext,
+        permissions: [
+          ...approverContext.permissions,
+          { code: 'leave.applications.post', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+      await expect(
+        applications.post(postingApprover, postingApplicationId, `post-approver-${suffix}`),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_SEPARATION_REQUIRED' });
+      await expect(
+        applications.post(
+          {
+            ...employeeContext,
+            permissions: [{ code: 'leave.applications.post', scopePolicy: 'AGENCY' }],
+          },
+          postingApplicationId,
+          `post-self-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_SEPARATION_REQUIRED' });
+      await expect(
+        applications.post(
+          {
+            ...foreignContext,
+            permissions: [{ code: 'leave.applications.post', scopePolicy: 'AGENCY' }],
+          },
+          postingApplicationId,
+          `post-foreign-${suffix}`,
+        ),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_NOT_FOUND' });
+      const [posted, concurrentReplay] = await Promise.all([
+        applicationApi.post(agency.id, postingApplicationId, {}, `post-${suffix}`, postingContext),
+        applications.post(postingContext, postingApplicationId, `post-${suffix}`),
+      ]);
+      expect(concurrentReplay.versions.at(-1)!.posting!.id).toBe(
+        posted.versions.at(-1)!.posting!.id,
+      );
+      expect(posted.application.status).toBe('POSTED');
+      expect(
+        posted.versions
+          .at(-1)!
+          .posting!.effects.map(({ effectKind }) => effectKind)
+          .sort(),
+      ).toEqual(['ATTENDANCE_INPUT', 'LEDGER_ENTRY']);
+      expect(
+        (
+          await applications.post(postingContext, postingApplicationId, `post-${suffix}`)
+        ).versions.at(-1)!.posting!.id,
+      ).toBe(posted.versions.at(-1)!.posting!.id);
+
+      const posting = posted.versions.at(-1)!.posting!;
+      const ledgerEffect = posting.effects.find(({ effectKind }) => effectKind === 'LEDGER_ENTRY')!;
+      expect(
+        await admin.leaveLedgerEntry.findUnique({ where: { id: ledgerEffect.ownerRecordId } }),
+      ).toMatchObject({
+        sourceType: 'LeavePosting',
+        sourceId: posting.id,
+        policyVersionId: reviewPolicyVersion.id,
+      });
+      expect(
+        (
+          await admin.leaveLedgerEntry.findUniqueOrThrow({
+            where: { id: ledgerEffect.ownerRecordId },
+          })
+        ).quantity.toFixed(4),
+      ).toBe('-1.0000');
+      expect(
+        await admin.leaveCreditCommitment.findUnique({ where: { id: sourceCommitment.id } }),
+      ).toMatchObject({ status: 'CONSUMED' });
+      expect(
+        await admin.auditEvent.count({
+          where: {
+            agencyId: agency.id,
+            entityId: postingApplicationId,
+            action: 'LEAVE_APPLICATION_POSTED',
+          },
+        }),
+      ).toBe(1);
+      expect(
+        await admin.outboxEvent.count({
+          where: { agencyId: agency.id, aggregateId: postingApplicationId, status: 'PENDING' },
+        }),
+      ).toBe(1);
+      await expect(
+        applications.post(postingContext, postingApplicationId, `another-key-${suffix}`),
+      ).rejects.toMatchObject({ code: 'LEAVE_POSTING_SOURCE_DUPLICATE' });
+      await expect(
+        applications.post(postingContext, unpaidApplicationId, `post-${suffix}`),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_IDEMPOTENCY_CONFLICT' });
+      await expect(
+        admin.leavePosting.update({
+          where: { id: posting.id },
+          data: { idempotencyKey: 'rewritten' },
+        }),
+      ).rejects.toThrow(/immutable/);
+      await expect(admin.leavePosting.delete({ where: { id: posting.id } })).rejects.toThrow(
+        /retained/,
+      );
+      const effect = await admin.leavePostingEffect.findFirstOrThrow({
+        where: { leavePostingId: posting.id },
+      });
+      await expect(
+        admin.leavePostingEffect.update({
+          where: { id: effect.id },
+          data: { effectKey: 'rewritten' },
+        }),
+      ).rejects.toThrow(/immutable/);
+      await expect(admin.leavePostingEffect.delete({ where: { id: effect.id } })).rejects.toThrow(
+        /retained/,
+      );
+      expect(
+        await withDatabaseContext({ agencyId: foreignAgency.id }, async (tx) => ({
+          postings: await tx.leavePosting.count(),
+          effects: await tx.leavePostingEffect.count(),
+        })),
+      ).toEqual({ postings: 0, effects: 0 });
+      const nonCreditType = await policies.create(agencyContext, {
+        catalogueCode: 'SPECIAL_EMERGENCY_LEAVE',
+      });
+      const nonCreditPolicy = await policies.createPolicyVersion(agencyContext, nonCreditType.id, {
+        effectiveDate: manilaDate(-10),
+        approvalRouteCode: reviewRouteCode,
+        applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
+        documentRequirements: {},
+        reason: 'Exercise the catalogue policy for paid non-credit leave.',
+      });
+      await policies.linkAuthority(agencyContext, nonCreditType.id, nonCreditPolicy.id, {
+        authorityClass: 'NATIONAL_RULE',
+        documentId: nationalEvidence.documentId,
+        citation: 'CSC MC No. 2, s. 2012',
+      });
+      await policies.linkAuthority(agencyContext, nonCreditType.id, nonCreditPolicy.id, {
+        authorityClass: 'AGENCY_CONFIGURATION',
+        documentId: nationalEvidence.documentId,
+        citation: 'Evidenced Agency calamity coverage',
+        validationReason: 'Approved local coverage for the fixture.',
+      });
+      await policies.activate(
+        agencyContext,
+        nonCreditType.id,
+        nonCreditPolicy.id,
+        'Verified non-credit policy.',
+      );
+      const nonCreditDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: nonCreditType.id,
+      });
+      const nonCreditId = nonCreditDraft.application.id;
+      await applications.update(agencyContext, nonCreditId, {
+        reason: 'Paid non-credit leave.',
+        policyDetails: { qualifyingEvent: 'DECLARED_CALAMITY' },
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: nextMonday(25), dateTo: nextMonday(25) }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'CALAMITY_DECLARATION_EVIDENCE' },
+        ],
+      });
+      await applications.submit(employeeContext, nonCreditId, submitInput);
+      await applications.route(recorderContext, nonCreditId);
+      await applications.certify(recorderContext, nonCreditId, {});
+      await applications.recommend(supervisorContext, nonCreditId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      await applications.decide(approverContext, nonCreditId, { decision: 'APPROVE' });
+      const nonCreditPosted = await applications.post(
+        postingContext,
+        nonCreditId,
+        `non-credit-${suffix}`,
+      );
+      expect(
+        nonCreditPosted.versions.at(-1)!.posting!.effects.map(({ effectKind }) => effectKind),
+      ).toEqual(['ATTENDANCE_INPUT']);
+      const attendanceEffect = nonCreditPosted.versions.at(-1)!.posting!.effects[0]!;
+      expect(
+        await admin.attendancePostedLeaveInput.findUnique({
+          where: { id: attendanceEffect.ownerRecordId },
+        }),
+      ).toMatchObject({ allocationKind: 'NON_CREDIT', employeeId: employee.id });
+
+      const changedDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: specialLeave.id,
+      });
+      const changedId = changedDraft.application.id;
+      await applications.update(agencyContext, changedId, {
+        reason: 'Commitment revalidation.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: nextMonday(30), dateTo: nextMonday(30) }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      const changedSubmitted = await applications.submit(employeeContext, changedId, submitInput);
+      const changedVersionId = changedSubmitted.versions.at(-1)!.id;
+      await applications.route(recorderContext, changedId);
+      await applications.certify(recorderContext, changedId, {});
+      await applications.recommend(supervisorContext, changedId, { outcome: 'RECOMMEND_APPROVAL' });
+      await applications.decide(approverContext, changedId, { decision: 'APPROVE' });
+      const originalCommitment = await admin.leaveCreditCommitment.findFirstOrThrow({
+        where: { agencyId: agency.id, sourceId: changedVersionId, status: 'ACTIVE' },
+      });
+      await admin.leaveCreditCommitment.update({
+        where: { id: originalCommitment.id },
+        data: { status: 'RELEASED', endedAt: new Date() },
+      });
+      await expect(
+        applications.post(postingContext, changedId, `released-${suffix}`),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_RECERTIFICATION_REQUIRED' });
+      await admin.leaveCreditCommitment.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: specialAccount.id,
+          quantity: 1,
+          sourceType: 'LeaveApplicationVersion',
+          sourceId: changedVersionId,
+          sourceCommitmentKey: 'UNSUPPORTED_REPLACEMENT',
+          succeedsCommitmentId: originalCommitment.id,
+          status: 'ACTIVE',
+          effectiveFrom: new Date(),
+        },
+      });
+      const incompatible = await Promise.allSettled([
+        applications.post(postingContext, changedId, `incompatible-a-${suffix}`),
+        applications.post(postingContext, changedId, `incompatible-b-${suffix}`),
+      ]);
+      for (const result of incompatible) {
+        expect(result.status).toBe('rejected');
+        if (result.status === 'rejected')
+          expect(result.reason).toMatchObject({
+            code: 'LEAVE_APPLICATION_RECERTIFICATION_REQUIRED',
+          });
+      }
+      expect((await applications.findById(agencyContext, changedId))!.application.status).toBe(
+        'APPROVED',
+      );
+      expect(
+        await admin.leavePosting.count({
+          where: { agencyId: agency.id, leaveApplicationVersionId: changedVersionId },
+        }),
+      ).toBe(0);
+
+      async function approveConcurrentApplication(date: string): Promise<string> {
+        const draft = await applications.create(agencyContext, {
+          employeeId: employee.id,
+          leaveTypeId: specialLeave.id,
+        });
+        const id = draft.application.id;
+        await applications.update(agencyContext, id, {
+          reason: 'Concurrent account posting.',
+          commutationChoice: 'NOT_REQUESTED',
+          periods: [{ dateFrom: date, dateTo: date }],
+          documents: [
+            { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+          ],
+        });
+        await applications.submit(employeeContext, id, submitInput);
+        await applications.route(recorderContext, id);
+        await applications.certify(recorderContext, id, {});
+        await applications.recommend(supervisorContext, id, { outcome: 'RECOMMEND_APPROVAL' });
+        await applications.decide(approverContext, id, { decision: 'APPROVE' });
+        return id;
+      }
+      const competingIds = [
+        await approveConcurrentApplication(nextMonday(35)),
+        await approveConcurrentApplication(nextMonday(40)),
+      ];
+      const unavailableCredits = await admin.leaveLedgerEntry.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: specialAccount.id,
+          quantity: -10,
+          effectiveDate: new Date(`${manilaDate(0)}T00:00:00.000Z`),
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'competing-balance',
+          policyVersionId: reviewPolicyVersion.id,
+        },
+      });
+      // Hold the shared account so both distinct applications reach PostgreSQL's
+      // account lock together. Then release it with the changed balance visible.
+      let notifyLocked = () => {};
+      let releaseAccount = () => {};
+      const locked = new Promise<void>((resolve) => {
+        notifyLocked = resolve;
+      });
+      const released = new Promise<void>((resolve) => {
+        releaseAccount = resolve;
+      });
+      const holdingAccount = admin.$transaction(
+        async (transaction) => {
+          await transaction.$queryRaw(
+            Prisma.sql`SELECT id FROM leave_accounts WHERE id = CAST(${specialAccount.id} AS uuid) FOR UPDATE`,
+          );
+          notifyLocked();
+          await released;
+        },
+        { timeout: 10_000 },
+      );
+      await locked;
+      const competitors = Promise.allSettled(
+        competingIds.map((id) => applications.post(postingContext, id, `competing-${id}`)),
+      );
+      try {
+        await expect
+          .poll(
+            async () => {
+              const waiting = await admin.$queryRaw<
+                { count: number }[]
+              >`SELECT COUNT(*)::integer AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%leave_accounts%' AND cardinality(pg_blocking_pids(pid)) > 0`;
+              return waiting[0]!.count;
+            },
+            { timeout: 2_000, interval: 20 },
+          )
+          .toBe(2);
+      } finally {
+        releaseAccount();
+      }
+      await holdingAccount;
+      const rejectedCompetitors = await competitors;
+      for (const result of rejectedCompetitors) {
+        expect(result.status).toBe('rejected');
+        if (result.status === 'rejected')
+          expect(result.reason).toMatchObject({ code: 'LEAVE_POSTING_CREDITS_UNAVAILABLE' });
+      }
+      for (const id of competingIds)
+        expect((await applications.findById(agencyContext, id))!.application.status).toBe(
+          'APPROVED',
+        );
+      await admin.leaveLedgerEntry.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: specialAccount.id,
+          quantity: 10,
+          effectiveDate: unavailableCredits.effectiveDate,
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'competing-balance-restored',
+          policyVersionId: reviewPolicyVersion.id,
+          reversesEntryId: unavailableCredits.id,
+        },
+      });
+      const settledCompetitors = await Promise.all(
+        competingIds.map((id) => applications.post(postingContext, id, `competing-${id}`)),
+      );
+      expect(
+        new Set(settledCompetitors.map((detail) => detail.versions.at(-1)!.posting!.id)).size,
+      ).toBe(2);
+      for (const result of settledCompetitors) {
+        expect(result.application.status).toBe('POSTED');
+        expect(result.versions.at(-1)!.posting!.effects).toHaveLength(2);
+      }
+
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.outboxEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.leavePostingEffect.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.attendancePostedLeaveInput.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.leavePosting.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.auditEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.outboxEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leaveCancellationEffect.deleteMany({

@@ -17,6 +17,7 @@ import type {
   LeaveCreditCertificationLineSummary,
   LeaveCreditCertificationSummary,
   LeaveRecommendationSummary,
+  LeavePostingSummary,
 } from './leave-applications.service';
 import type { LeaveEligibilityOutcome } from './leave-eligibility';
 
@@ -362,6 +363,7 @@ export class LeaveApplicationVersionDto {
   readonly certification: LeaveCreditCertificationDto | null;
   readonly recommendation: LeaveRecommendationDto | null;
   readonly approvalAllocation: LeaveApprovalAllocationDto | null;
+  readonly posting: LeavePostingSummary | null;
   readonly approvalSteps: LeaveApprovalStepDto[];
 
   constructor(version: LeaveApplicationVersionSummary) {
@@ -404,6 +406,7 @@ export class LeaveApplicationVersionDto {
     this.approvalAllocation = version.approvalAllocation
       ? new LeaveApprovalAllocationDto(version.approvalAllocation)
       : null;
+    this.posting = version.posting;
     this.approvalSteps = version.approvalSteps.map((step) => new LeaveApprovalStepDto(step));
   }
 }
@@ -467,6 +470,7 @@ export class LeaveApplicationHistoryDto {
 }
 
 export class LeaveApplicationDetailDto {
+  readonly canPost: boolean;
   readonly application: LeaveApplicationDto;
   readonly draftPeriods: LeaveApplicationPeriodDto[];
   readonly draftDocuments: LeaveApplicationDocumentDto[];
@@ -475,6 +479,7 @@ export class LeaveApplicationDetailDto {
   readonly history: LeaveApplicationHistoryDto[];
 
   constructor(detail: LeaveApplicationDetail) {
+    this.canPost = detail.canPost;
     this.application = new LeaveApplicationDto(detail.application);
     this.draftPeriods = detail.draftPeriods.map((period) => new LeaveApplicationPeriodDto(period));
     this.draftDocuments = detail.draftDocuments.map(
