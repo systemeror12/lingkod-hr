@@ -114,7 +114,8 @@ export class AttendancePostedLeaveInputsService {
   }
 
   /**
-   * Current posted leave covering one Work Date. An input whose quantity
+   * Current posted leave covering one Work Date. A zero-quantity successor
+   * withdraws coverage, so it never appears here. An input whose quantity
    * Attendance cannot place as whole-day coverage returns an ambiguity instead
    * of an assumed interval, so the calculation can fail closed.
    */
@@ -131,6 +132,7 @@ export class AttendancePostedLeaveInputsService {
         employeeId,
         dateFrom: { lte: workDate },
         dateTo: { gte: workDate },
+        quantity: { gt: 0 },
         successors: { none: {} },
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -173,7 +175,10 @@ function assertValid(input: CreatePostedLeaveInput): void {
   if (!POSTED_LEAVE_ALLOCATION_KINDS.includes(input.allocationKind)) {
     throw invalid('Enter a valid allocation kind.');
   }
-  if (!(input.quantity > 0)) throw invalid('The approved quantity must be greater than zero.');
+  // Only a successor may be zero: it withdraws its predecessor's coverage.
+  if (!(input.quantity > 0) && !(input.quantity === 0 && input.predecessorInputId)) {
+    throw invalid('The approved quantity must be greater than zero.');
+  }
   if (toDatabaseDate(input.dateTo) < toDatabaseDate(input.dateFrom)) {
     throw invalid('The date range must not end before it starts.');
   }

@@ -25,6 +25,10 @@ import {
 } from '../attendance/attendance.types';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import {
+  AttendancePostedLeaveInputError,
+  type CreatePostedLeaveInput,
+} from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
+import {
   applyEventCorrectionOverlays,
   parseAppliedCorrectionOverlays,
   type AppliedAttendanceCorrectionOverlays,
@@ -389,9 +393,10 @@ export class AttendanceDaysService {
 
   /**
    * Recalculate the affected Work Dates of one applied Attendance Correction
-   * inside the caller-owned transaction. An applied correction is the only
-   * authorized path that may supersede an APPROVED Attendance Day while the
-   * original version and its segments stay retained.
+   * inside the caller-owned transaction. An applied correction, or Leave's
+   * posted-leave supersession on unlocked Work Dates, are the only authorized
+   * paths that may supersede an APPROVED Attendance Day while the original
+   * version and its segments stay retained.
    */
   async recalculateCorrectedWorkDates(
     transaction: Prisma.TransactionClient,
@@ -419,6 +424,92 @@ export class AttendanceDaysService {
       );
     }
     return results;
+  }
+
+  /**
+   * Leave's handoff when an applied Leave Cancellation changes posted leave.
+   * Inside the caller-owned transaction it creates the successor input, which
+   * withdraws coverage when its quantity is zero, and recalculates every
+   * current Attendance Day across the predecessor's dates. A Work Date inside a
+   * finalized Attendance Period is refused, because locked attendance changes
+   * only through a Locked Attendance Adjustment. A retry with the same source
+   * key returns the same successor and leaves the recalculated days unchanged.
+   */
+  async supersedePostedLeaveInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: CreatePostedLeaveInput & { predecessorInputId: string },
+  ): Promise<{ id: string; recalculatedWorkDates: string[] }> {
+    const predecessor = await transaction.attendancePostedLeaveInput.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        employeeId: input.employeeId,
+        id: input.predecessorInputId,
+      },
+      select: { dateFrom: true, dateTo: true },
+    });
+    if (!predecessor) {
+      throw new AttendancePostedLeaveInputError(
+        'The predecessor is not a posted-leave input for this Employee.',
+        404,
+        'POSTED_LEAVE_INPUT_PREDECESSOR_NOT_FOUND',
+      );
+    }
+    const dateFrom =
+      formatDate(predecessor.dateFrom) < input.dateFrom
+        ? formatDate(predecessor.dateFrom)
+        : input.dateFrom;
+    const dateTo =
+      formatDate(predecessor.dateTo) > input.dateTo ? formatDate(predecessor.dateTo) : input.dateTo;
+    // Hold every overlapping period so a concurrent lock waits for this handoff.
+    const periods = await transaction.$queryRaw<Array<{ code: string; status: string }>>(
+      Prisma.sql`SELECT "code", "status" FROM "attendance_periods"
+        WHERE "agency_id" = CAST(${context.agencyId} AS uuid)
+          AND "date_from" <= CAST(${dateTo} AS date)
+          AND "date_to" >= CAST(${dateFrom} AS date)
+        ORDER BY "id"
+        FOR UPDATE`,
+    );
+    const locked = periods.filter(({ status }) => status === 'FINALIZED');
+    if (locked.length > 0) {
+      throw new AttendanceDayServiceError(
+        'An affected Work Date is in a locked Attendance Period. It changes only through a Locked Attendance Adjustment.',
+        409,
+        'ATTENDANCE_PERIOD_LOCKED',
+        locked.map(({ code }) => `PERIOD:${code}`),
+      );
+    }
+    const successor = await this.postedLeaveInputs.createInTransaction(
+      transaction,
+      context.agencyId,
+      input,
+    );
+    const days = await transaction.attendanceDay.findMany({
+      where: {
+        agencyId: context.agencyId,
+        employeeId: input.employeeId,
+        isCurrent: true,
+        workDate: { gte: toDatabaseDate(dateFrom), lte: toDatabaseDate(dateTo) },
+      },
+      orderBy: { workDate: 'asc' },
+      select: { workDate: true, attendancePeriod: { select: periodSelect } },
+    });
+    const now = new Date();
+    for (const day of days) {
+      await this.calculateOne(
+        transaction,
+        context,
+        day.attendancePeriod,
+        input.employeeId,
+        formatDate(day.workDate),
+        now,
+        { correctionRecalculation: true },
+      );
+    }
+    return {
+      id: successor.id,
+      recalculatedWorkDates: days.map(({ workDate }) => formatDate(workDate)),
+    };
   }
 
   private async appliedCorrectionOverlays(

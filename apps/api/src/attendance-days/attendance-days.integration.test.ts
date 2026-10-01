@@ -681,6 +681,165 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
+  'supersedes posted leave for Leave, recalculates unlocked Work Dates, and refuses locked ones',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-attendance-day-supersede`;
+    const { agency, membership, unit, context } = await createAgency(admin, suffix);
+    const shift = (value: string, days: number) =>
+      new Date(new Date(`${value}T00:00:00.000Z`).getTime() + days * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+    const monday = shift(pastWeekday(1), -7);
+    const tuesday = shift(monday, 1);
+    const thursday = shift(monday, 3);
+    const effectiveFrom = manilaDate(-30);
+
+    try {
+      const setup = await setupSchedule(admin, {
+        context,
+        membershipId: membership.id,
+        suffix,
+        effectiveFrom,
+      });
+      const employee = await createEmployee(admin, {
+        agencyId: agency.id,
+        membershipId: membership.id,
+        unitId: unit.id,
+        suffix,
+        withSegment: true,
+      });
+      await setup.assignments.create(context, {
+        employeeId: employee.id,
+        workScheduleVersionId: setup.scheduleVersionId,
+        workArrangementVersionId: setup.arrangementVersionId,
+        authorityDocumentVersionId: setup.assignmentEvidence.id,
+        effectiveFrom,
+      });
+      const inAgency = <T>(
+        run: (transaction: Parameters<Parameters<typeof withDatabaseContext>[1]>[0]) => Promise<T>,
+      ) => withDatabaseContext({ agencyId: agency.id, membershipId: membership.id }, run);
+      const base = {
+        employeeId: employee.id,
+        sourceType: 'LeaveCancellation',
+        sourceId: employee.id,
+        unitCode: 'WORKING_DAY' as const,
+        allocationKind: 'LEAVE_ACCOUNT' as const,
+      };
+      const original = await inAgency((transaction) =>
+        setup.postedLeaveInputs.createInTransaction(transaction, agency.id, {
+          ...base,
+          sourceKey: `${suffix}-original`,
+          dateFrom: monday,
+          dateTo: tuesday,
+          quantity: 2,
+        }),
+      );
+      await setup.days.calculate(context, {
+        periodCode: `SUPERSEDE-${suffix}`,
+        dateFrom: monday,
+        dateTo: tuesday,
+        employeeIds: [employee.id],
+      });
+      const totals = async (workDate: string) => {
+        const [day] = await setup.days.list(context, {
+          employeeId: employee.id,
+          workDateFrom: workDate,
+          workDateTo: workDate,
+        });
+        return (await setup.days.findById(context, day!.id)).day.totals;
+      };
+      expect(await totals(tuesday)).toMatchObject({ postedLeaveMinutes: 480, absenceMinutes: 0 });
+
+      // A retained successor keeps Monday and returns Tuesday to absence.
+      const retained = {
+        ...base,
+        sourceKey: `${suffix}-retained`,
+        dateFrom: monday,
+        dateTo: monday,
+        quantity: 1,
+        predecessorInputId: original.id,
+      };
+      const partial = await inAgency((transaction) =>
+        setup.days.supersedePostedLeaveInTransaction(transaction, context, retained),
+      );
+      expect(partial.recalculatedWorkDates).toEqual([monday, tuesday]);
+      expect(await totals(monday)).toMatchObject({ postedLeaveMinutes: 480 });
+      expect(await totals(tuesday)).toMatchObject({ postedLeaveMinutes: 0, absenceMinutes: 480 });
+      // A retry returns the same successor and changes no Attendance Day.
+      const replay = await inAgency((transaction) =>
+        setup.days.supersedePostedLeaveInTransaction(transaction, context, retained),
+      );
+      expect(replay.id).toBe(partial.id);
+
+      // A zero-quantity successor withdraws the remaining coverage.
+      await inAgency((transaction) =>
+        setup.days.supersedePostedLeaveInTransaction(transaction, context, {
+          ...base,
+          sourceKey: `${suffix}-withdrawn`,
+          dateFrom: monday,
+          dateTo: monday,
+          quantity: 0,
+          predecessorInputId: partial.id,
+        }),
+      );
+      expect(await totals(monday)).toMatchObject({ postedLeaveMinutes: 0, absenceMinutes: 480 });
+      await expect(
+        inAgency((transaction) =>
+          setup.postedLeaveInputs.createInTransaction(transaction, agency.id, {
+            ...base,
+            sourceKey: `${suffix}-zero-original`,
+            dateFrom: monday,
+            dateTo: monday,
+            quantity: 0,
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'POSTED_LEAVE_INPUT_INVALID' });
+
+      // A Work Date in a finalized period is refused and nothing is superseded.
+      const locked = await inAgency((transaction) =>
+        setup.postedLeaveInputs.createInTransaction(transaction, agency.id, {
+          ...base,
+          sourceKey: `${suffix}-locked`,
+          dateFrom: thursday,
+          dateTo: thursday,
+          quantity: 1,
+        }),
+      );
+      await admin.attendancePeriod.create({
+        data: {
+          agencyId: agency.id,
+          code: `LOCKED-${suffix}`,
+          dateFrom: new Date(`${thursday}T00:00:00.000Z`),
+          dateTo: new Date(`${thursday}T00:00:00.000Z`),
+          status: 'FINALIZED',
+        },
+      });
+      await expect(
+        inAgency((transaction) =>
+          setup.days.supersedePostedLeaveInTransaction(transaction, context, {
+            ...base,
+            sourceKey: `${suffix}-locked-withdrawn`,
+            dateFrom: thursday,
+            dateTo: thursday,
+            quantity: 0,
+            predecessorInputId: locked.id,
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_PERIOD_LOCKED' });
+      expect(
+        await admin.attendancePostedLeaveInput.count({
+          where: { agencyId: agency.id, predecessorInputId: locked.id },
+        }),
+      ).toBe(0);
+    } finally {
+      await cleanupAgency(admin, agency.id, suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'records an Attendance Exception for an unresolvable Work Date and scopes reads',
   async () => {
     const admin = await createAdminClient();

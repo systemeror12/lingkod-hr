@@ -12,8 +12,13 @@ import {
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
+import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
+import { AttendanceDayServiceError } from '../attendance-days/attendance-days.types';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
-import type { CreatePostedLeaveInput } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
+import {
+  AttendancePostedLeaveInputError,
+  type CreatePostedLeaveInput,
+} from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import { DocumentsService } from '../documents/documents.service';
 import {
   findLeaveCatalogueEntry,
@@ -639,6 +644,7 @@ const policyVersionSelect = {
 
 type ApplicationRecord = Prisma.LeaveApplicationGetPayload<{ select: typeof applicationSelect }>;
 type VersionRecord = Prisma.LeaveApplicationVersionGetPayload<{ select: typeof versionSelect }>;
+type CancellationScopeRecord = Prisma.LeaveCancellationGetPayload<{ include: { scopes: true } }>;
 type PolicyVersionRecord = Prisma.LeavePolicyVersionGetPayload<{
   select: typeof policyVersionSelect;
 }>;
@@ -1154,6 +1160,38 @@ function cancellationApplyFailure(error: unknown): LeaveApplicationServiceError 
       );
 }
 
+/**
+ * Stable key of one posted allocation line. Posting suffixes it with `:ledger`
+ * and `:attendance`; cancellation finds the posted effects by the same keys.
+ */
+function postingLineKey(versionId: string, lineId: string): string {
+  return `leave-posting:${versionId}:${lineId}`;
+}
+
+/** Attendance's refusal stays a deterministic, blocking cancellation failure. */
+function attendanceHandoffFailure(error: unknown): unknown {
+  if (error instanceof AttendanceDayServiceError && error.code === 'ATTENDANCE_PERIOD_LOCKED') {
+    return new LeaveApplicationServiceError(
+      'An affected Work Date is in a locked Attendance Period. Cancelling this posted leave waits for the locked Attendance handoff.',
+      409,
+      'LEAVE_CANCELLATION_ATTENDANCE_LOCKED',
+      error.reasons,
+    );
+  }
+  if (
+    error instanceof AttendanceDayServiceError ||
+    error instanceof AttendancePostedLeaveInputError
+  ) {
+    return new LeaveApplicationServiceError(
+      `Attendance refused the posted-leave correction. ${error.message}`,
+      409,
+      'LEAVE_CANCELLATION_ATTENDANCE_REFUSED',
+      [error.code],
+    );
+  }
+  return error;
+}
+
 function idempotencyConflict(): LeaveApplicationServiceError {
   return new LeaveApplicationServiceError(
     'That Idempotency-Key was already used for a different request.',
@@ -1229,6 +1267,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     @Inject(HolidayCalendarsService) private readonly holidayCalendars: HolidayCalendarsService,
     @Inject(AttendancePostedLeaveInputsService)
     private readonly postedLeaveInputs: AttendancePostedLeaveInputsService,
+    @Inject(AttendanceDaysService) private readonly attendanceDays: AttendanceDaysService,
   ) {}
 
   onModuleInit(): void {
@@ -2369,111 +2408,31 @@ export class LeaveApplicationsService implements OnModuleInit {
         // so another command cannot claim this key before the failure is recorded.
         await transaction.$executeRaw`SAVEPOINT leave_cancellation_effects`;
         try {
-          if (cancellation.priorStatus !== 'APPROVED') {
-            throw deficiency(
-              'LEAVE_CANCELLATION_POSTED_EFFECTS_REQUIRED',
-              'Posted leave requires ledger reversals and Attendance and Payroll handoffs.',
-            );
-          }
           const version = await this.requireVersion(transaction, context.agencyId, application);
-          if (
-            version.id !== cancellation.leaveApplicationVersionId ||
-            !version.approvalAllocation
-          ) {
+          const allocation = version.approvalAllocation;
+          if (version.id !== cancellation.leaveApplicationVersionId || !allocation) {
             throw deficiency(
               'LEAVE_CANCELLATION_SOURCE_INVALID',
               'The exact approved version is required.',
             );
           }
-          const approved = new Map<string, Prisma.Decimal>();
-          const cancelled = new Map<string, Prisma.Decimal>();
-          for (const line of version.approvalAllocation.lines) {
-            if (line.allocationKind !== 'LEAVE_ACCOUNT' || !line.leaveAccountId) continue;
-            approved.set(
-              line.leaveAccountId,
-              (approved.get(line.leaveAccountId) ?? ZERO).plus(line.quantity),
+          if (cancellation.priorStatus === 'POSTED') {
+            await this.reversePostedLeave(
+              transaction,
+              context,
+              application.employeeId,
+              version,
+              allocation,
+              cancellation,
             );
-            const scope = cancellation.scopes.find(
-              ({ approvalAllocationLineId }) => approvalAllocationLineId === line.id,
+          } else {
+            await this.releaseCancelledCommitments(
+              transaction,
+              context,
+              version.id,
+              allocation,
+              cancellation,
             );
-            if (scope)
-              cancelled.set(
-                line.leaveAccountId,
-                (cancelled.get(line.leaveAccountId) ?? ZERO).plus(scope.quantity),
-              );
-          }
-          const activeWhere = {
-            agencyId: context.agencyId,
-            sourceType: COMMITMENT_SOURCE_TYPE,
-            sourceId: version.id,
-            status: 'ACTIVE',
-          };
-          const initial = await transaction.leaveCreditCommitment.findMany({ where: activeWhere });
-          const accountIds = [
-            ...new Set([
-              ...approved.keys(),
-              ...initial.map(({ leaveAccountId }) => leaveAccountId),
-            ]),
-          ].sort();
-          for (const accountId of accountIds)
-            await this.lockAccount(transaction, context.agencyId, accountId);
-          const commitments = await transaction.leaveCreditCommitment.findMany({
-            where: activeWhere,
-          });
-          for (const accountId of accountIds) {
-            const accountCommitments = commitments.filter(
-              ({ leaveAccountId }) => leaveAccountId === accountId,
-            );
-            if (
-              accountCommitments.length !== 1 ||
-              !accountCommitments[0]!.quantity.equals(approved.get(accountId) ?? ZERO)
-            ) {
-              throw deficiency(
-                'LEAVE_CANCELLATION_COMMITMENT_INVALID',
-                'Active commitments must match the exact approved account quantities.',
-              );
-            }
-          }
-          const now = new Date();
-          for (const commitment of commitments) {
-            const released = cancelled.get(commitment.leaveAccountId) ?? ZERO;
-            if (released.equals(0)) continue;
-            const retained = commitment.quantity.minus(released);
-            if (retained.lessThan(0)) {
-              throw deficiency(
-                'LEAVE_CANCELLATION_COMMITMENT_INVALID',
-                'Cancellation exceeds the active commitment.',
-              );
-            }
-            await transaction.leaveCreditCommitment.update({
-              where: { agencyId_id: { agencyId: context.agencyId, id: commitment.id } },
-              data: { status: 'RELEASED', endedAt: now },
-            });
-            if (retained.greaterThan(0)) {
-              await transaction.leaveCreditCommitment.create({
-                data: {
-                  agencyId: context.agencyId,
-                  leaveAccountId: commitment.leaveAccountId,
-                  quantity: retained,
-                  sourceType: COMMITMENT_SOURCE_TYPE,
-                  sourceId: version.id,
-                  sourceCommitmentKey: `CANCELLATION:${cancellationId}`,
-                  succeedsCommitmentId: commitment.id,
-                  status: 'ACTIVE',
-                  effectiveFrom: now,
-                },
-              });
-            }
-            await transaction.leaveCancellationEffect.create({
-              data: {
-                agencyId: context.agencyId,
-                leaveCancellationId: cancellationId,
-                effectKind: 'COMMITMENT_RELEASE',
-                effectKey: `COMMITMENT_RELEASE:${commitment.id}`,
-                ownerRecordId: commitment.id,
-                ownerStatus: 'RELEASED',
-              },
-            });
           }
           await transaction.leaveCancellation.update({
             where: { agencyId_id: { agencyId: context.agencyId, id: cancellationId } },
@@ -3266,7 +3225,7 @@ export class LeaveApplicationsService implements OnModuleInit {
             },
           });
           for (const line of allocation.lines) {
-            const sourceKey = `leave-posting:${version.id}:${line.id}`;
+            const sourceKey = postingLineKey(version.id, line.id);
             if (line.allocationKind === 'LEAVE_ACCOUNT' && line.leaveAccountId) {
               const entry = await transaction.leaveLedgerEntry.create({
                 data: {
@@ -4541,6 +4500,242 @@ export class LeaveApplicationsService implements OnModuleInit {
           },
         });
       }
+    }
+  }
+
+  /**
+   * Release the commitments of approved, unposted leave. Whole cancellation
+   * releases every active commitment; partial cancellation creates only a
+   * linked smaller successor in the same account for the retained quantity.
+   */
+  private async releaseCancelledCommitments(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    versionId: string,
+    allocation: NonNullable<VersionRecord['approvalAllocation']>,
+    cancellation: CancellationScopeRecord,
+  ): Promise<void> {
+    const approved = new Map<string, Prisma.Decimal>();
+    const cancelled = new Map<string, Prisma.Decimal>();
+    for (const line of allocation.lines) {
+      if (line.allocationKind !== 'LEAVE_ACCOUNT' || !line.leaveAccountId) continue;
+      approved.set(
+        line.leaveAccountId,
+        (approved.get(line.leaveAccountId) ?? ZERO).plus(line.quantity),
+      );
+      const scope = cancellation.scopes.find(
+        ({ approvalAllocationLineId }) => approvalAllocationLineId === line.id,
+      );
+      if (scope)
+        cancelled.set(
+          line.leaveAccountId,
+          (cancelled.get(line.leaveAccountId) ?? ZERO).plus(scope.quantity),
+        );
+    }
+    const activeWhere = {
+      agencyId: context.agencyId,
+      sourceType: COMMITMENT_SOURCE_TYPE,
+      sourceId: versionId,
+      status: 'ACTIVE',
+    };
+    const initial = await transaction.leaveCreditCommitment.findMany({ where: activeWhere });
+    const accountIds = [
+      ...new Set([...approved.keys(), ...initial.map(({ leaveAccountId }) => leaveAccountId)]),
+    ].sort();
+    for (const accountId of accountIds)
+      await this.lockAccount(transaction, context.agencyId, accountId);
+    const commitments = await transaction.leaveCreditCommitment.findMany({
+      where: activeWhere,
+    });
+    for (const accountId of accountIds) {
+      const accountCommitments = commitments.filter(
+        ({ leaveAccountId }) => leaveAccountId === accountId,
+      );
+      if (
+        accountCommitments.length !== 1 ||
+        !accountCommitments[0]!.quantity.equals(approved.get(accountId) ?? ZERO)
+      ) {
+        throw deficiency(
+          'LEAVE_CANCELLATION_COMMITMENT_INVALID',
+          'Active commitments must match the exact approved account quantities.',
+        );
+      }
+    }
+    const now = new Date();
+    for (const commitment of commitments) {
+      const released = cancelled.get(commitment.leaveAccountId) ?? ZERO;
+      if (released.equals(0)) continue;
+      const retained = commitment.quantity.minus(released);
+      if (retained.lessThan(0)) {
+        throw deficiency(
+          'LEAVE_CANCELLATION_COMMITMENT_INVALID',
+          'Cancellation exceeds the active commitment.',
+        );
+      }
+      await transaction.leaveCreditCommitment.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: commitment.id } },
+        data: { status: 'RELEASED', endedAt: now },
+      });
+      if (retained.greaterThan(0)) {
+        await transaction.leaveCreditCommitment.create({
+          data: {
+            agencyId: context.agencyId,
+            leaveAccountId: commitment.leaveAccountId,
+            quantity: retained,
+            sourceType: COMMITMENT_SOURCE_TYPE,
+            sourceId: versionId,
+            sourceCommitmentKey: `CANCELLATION:${cancellation.id}`,
+            succeedsCommitmentId: commitment.id,
+            status: 'ACTIVE',
+            effectiveFrom: now,
+          },
+        });
+      }
+      await transaction.leaveCancellationEffect.create({
+        data: {
+          agencyId: context.agencyId,
+          leaveCancellationId: cancellation.id,
+          effectKind: 'COMMITMENT_RELEASE',
+          effectKey: `COMMITMENT_RELEASE:${commitment.id}`,
+          ownerRecordId: commitment.id,
+          ownerStatus: 'RELEASED',
+        },
+      });
+    }
+  }
+
+  /**
+   * Reverse posted leave for an approved cancellation. Each cancelled line's
+   * ledger entry is reversed exactly, and a retained quantity is posted again
+   * as a replacement with the original effective date and policy. Attendance
+   * supersedes each cancelled line's posted-leave input and recalculates the
+   * affected Work Dates. Every effect key derives from the cancellation and
+   * line, so a retry cannot duplicate an effect.
+   */
+  private async reversePostedLeave(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    version: VersionRecord,
+    allocation: NonNullable<VersionRecord['approvalAllocation']>,
+    cancellation: CancellationScopeRecord,
+  ): Promise<void> {
+    const posting = version.posting;
+    const postedRecordId = (effectKey: string) => {
+      const effect = posting?.effects.find((effect) => effect.effectKey === effectKey);
+      if (!effect || posting!.leaveApprovalAllocationId !== allocation.id) {
+        throw deficiency(
+          'LEAVE_CANCELLATION_POSTING_REQUIRED',
+          'Cancelling posted leave requires the exact Leave Posting of the approved version.',
+        );
+      }
+      return effect.ownerRecordId;
+    };
+    const cancelled = allocation.lines.flatMap((line) => {
+      const scope = cancellation.scopes.find(
+        ({ approvalAllocationLineId }) => approvalAllocationLineId === line.id,
+      );
+      return scope ? [{ line, scope }] : [];
+    });
+    const accountIds = [
+      ...new Set(
+        cancelled.flatMap(({ line }) => (line.leaveAccountId ? [line.leaveAccountId] : [])),
+      ),
+    ].sort();
+    for (const accountId of accountIds)
+      await this.lockAccount(transaction, context.agencyId, accountId);
+    for (const { line, scope } of cancelled) {
+      const postedKey = postingLineKey(version.id, line.id);
+      const effectKey = `leave-cancellation:${cancellation.id}:${line.id}`;
+      const retained = line.quantity.minus(scope.quantity);
+      if (line.allocationKind === 'LEAVE_ACCOUNT') {
+        const original = await transaction.leaveLedgerEntry.findFirst({
+          where: { agencyId: context.agencyId, id: postedRecordId(`${postedKey}:ledger`) },
+        });
+        if (!original)
+          throw deficiency(
+            'LEAVE_CANCELLATION_POSTING_REQUIRED',
+            'The posted Leave Ledger Entry is missing.',
+          );
+        const correction = {
+          agencyId: context.agencyId,
+          leaveAccountId: original.leaveAccountId,
+          effectiveDate: original.effectiveDate,
+          sourceType: 'LeaveCancellation',
+          sourceId: cancellation.id,
+          policyVersionId: original.policyVersionId,
+          postedByMembershipId: context.membershipId,
+        };
+        const reversal = await transaction.leaveLedgerEntry.create({
+          data: {
+            ...correction,
+            quantity: original.quantity.negated(),
+            sourcePostingKey: `${effectKey}:reversal`,
+            reversesEntryId: original.id,
+          },
+        });
+        await transaction.leaveCancellationEffect.create({
+          data: {
+            agencyId: context.agencyId,
+            leaveCancellationId: cancellation.id,
+            effectKind: 'LEDGER_REVERSAL',
+            effectKey: `${effectKey}:ledger-reversal`,
+            ownerRecordId: reversal.id,
+            ownerStatus: 'POSTED',
+          },
+        });
+        if (retained.greaterThan(0)) {
+          const replacement = await transaction.leaveLedgerEntry.create({
+            data: {
+              ...correction,
+              quantity: retained.negated(),
+              sourcePostingKey: `${effectKey}:replacement`,
+            },
+          });
+          await transaction.leaveCancellationEffect.create({
+            data: {
+              agencyId: context.agencyId,
+              leaveCancellationId: cancellation.id,
+              effectKind: 'LEDGER_REPLACEMENT',
+              effectKey: `${effectKey}:ledger-replacement`,
+              ownerRecordId: replacement.id,
+              ownerStatus: 'POSTED',
+            },
+          });
+        }
+      }
+      // A partial scope includes one endpoint, so the retained dates stay contiguous.
+      const retainedRange = retained.isZero()
+        ? { dateFrom: line.dateFrom, dateTo: line.dateTo }
+        : scope.dateFrom.getTime() === line.dateFrom.getTime()
+          ? { dateFrom: addDays(scope.dateTo, 1), dateTo: line.dateTo }
+          : { dateFrom: line.dateFrom, dateTo: addDays(scope.dateFrom, -1) };
+      const successor = await this.attendanceDays
+        .supersedePostedLeaveInTransaction(transaction, context, {
+          sourceKey: `${effectKey}:attendance`,
+          employeeId,
+          sourceType: 'LeaveCancellation',
+          sourceId: cancellation.id,
+          dateFrom: formatDate(retainedRange.dateFrom),
+          dateTo: formatDate(retainedRange.dateTo),
+          unitCode: line.unitCode as CreatePostedLeaveInput['unitCode'],
+          quantity: retained.toNumber(),
+          allocationKind: line.allocationKind as CreatePostedLeaveInput['allocationKind'],
+          predecessorInputId: postedRecordId(`${postedKey}:attendance`),
+        })
+        .catch((error: unknown) => {
+          throw attendanceHandoffFailure(error);
+        });
+      await transaction.leaveCancellationEffect.create({
+        data: {
+          agencyId: context.agencyId,
+          leaveCancellationId: cancellation.id,
+          effectKind: 'ATTENDANCE_CORRECTION',
+          effectKey: `${effectKey}:attendance`,
+          ownerRecordId: successor.id,
+          ownerStatus: 'RECALCULATED',
+        },
+      });
     }
   }
 
