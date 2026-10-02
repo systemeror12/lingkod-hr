@@ -6,6 +6,7 @@ import {
   activeCooldown,
   addSignInFailure,
   checkNewPassword,
+  type CountedSignInFailure,
   createSessionToken,
   hashEmail,
   hashPassword,
@@ -19,11 +20,14 @@ import {
   openTotpSecret,
   passwordNeedsRehash,
   type PermissionGrant,
+  refundSignInGuess,
   type RequestContext,
   type SessionDisplay,
   permissionsRequireMfa,
   SCOPE_POLICIES,
   sessionExpiry,
+  type SignInCooldownStart,
+  type SignInThrottleState,
   verifyPassword,
   verifyPasswordAgainstDummy,
 } from '@lingkod-hr/auth';
@@ -104,13 +108,25 @@ export interface SignInRequest {
   ipAddress: string | null;
 }
 
-/** A wrong password or code; `secondFactor` marks a wrong code on the User's pending sign-in. */
+/**
+ * A wrong password or code; `secondFactor` marks a wrong code on the User's pending sign-in, and
+ * `cooldown` is the Sign-in Cool-down that counting the guess started.
+ */
 interface GuessFailure {
   emailHash: Buffer;
   userId: string | null;
   reason: string;
+  cooldown: SignInCooldownStart | null;
   secondFactor?: { method: SecondFactorMethod; email: string };
 }
+
+/**
+ * A guess counted toward the email's Sign-in Cool-down before it is checked, or the end of the
+ * running cool-down that refuses it. `before` is the state it was counted on, for a refund.
+ */
+type GuessCount =
+  | { cooldownUntil: Date }
+  | { cooldownUntil: null; before: SignInThrottleState | null; counted: CountedSignInFailure };
 
 /** What the User needs to add a pending TOTP secret to an authenticator app. */
 export interface TotpEnrollmentStart {
@@ -243,6 +259,25 @@ export class AuthServiceError extends Error {
     this.retryAt = options.retryAt;
     this.notice = options.notice;
   }
+}
+
+/** A `sign_in_throttles` row as raw SQL answers it. */
+interface ThrottleRow {
+  failure_count: number;
+  cooldown_level: number;
+  cooldown_until: Date | null;
+  last_failure_at: Date;
+}
+
+function throttleState(row: ThrottleRow | undefined): SignInThrottleState | null {
+  return row
+    ? {
+        failureCount: row.failure_count,
+        cooldownLevel: row.cooldown_level,
+        cooldownUntil: row.cooldown_until,
+        lastFailureAt: row.last_failure_at,
+      }
+    : null;
 }
 
 function invalidCredentials(): AuthServiceError {
@@ -498,8 +533,10 @@ export class AuthService {
 
   /**
    * First sign-in step. Every failure before the password verifies looks the same, and an unknown
-   * email still costs a full Argon2id verification. During the email's Sign-in Cool-down the
-   * attempt is refused before any verification; a password disabled by the second-factor ceiling
+   * email still costs a full Argon2id verification. The guess is counted toward the email's Sign-in
+   * Cool-down before the verification and refunded when it is right, so a burst can't verify more
+   * guesses than the cool-down allows. During the cool-down the attempt is refused before any
+   * verification; a password disabled by the second-factor ceiling
    * is refused even when it is right. A User with a TOTP factor gets a 5-minute
    * pending sign-in, replacing any earlier one. An MFA-Required User without a factor gets a pending
    * sign-in that enrolls one first. Anyone else gets a session.
@@ -513,15 +550,15 @@ export class AuthService {
     const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
     await this.assertIpAllowed(request, emailHash);
     const now = new Date();
-    const { account, cooldownUntil } = await withDatabaseContext(
+    const { account, guess } = await withDatabaseContext(
       { capabilities: ['platform-security'] },
       async (transaction) => {
-        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
+        const guess = await this.countGuess(transaction, emailHash, now);
         const user = await transaction.user.findUnique({
           where: { emailNormalized: email.trim().toLowerCase() },
           select: { id: true, emailNormalized: true, globalStatus: true },
         });
-        if (!user) return { account: null, cooldownUntil };
+        if (!user) return { account: null, guess };
         await setDatabaseContext(transaction, {
           userId: user.id,
           capabilities: ['platform-security'],
@@ -530,12 +567,12 @@ export class AuthService {
           where: { userId: user.id },
           select: { passwordHash: true, resetRequiredAt: true },
         });
-        return { account: stored ? { ...user, ...stored } : null, cooldownUntil };
+        return { account: stored ? { ...user, ...stored } : null, guess };
       },
     );
-    if (cooldownUntil) {
+    if (guess.cooldownUntil) {
       await this.recordSignInFailure(request, emailHash, account?.id ?? null, 'COOLDOWN_ACTIVE');
-      throw signInCooldown(cooldownUntil, now);
+      throw signInCooldown(guess.cooldownUntil, now);
     }
     const verified = account
       ? await verifyPassword(account.passwordHash, password)
@@ -545,9 +582,11 @@ export class AuthService {
         emailHash,
         userId: account?.id ?? null,
         reason: 'INVALID_CREDENTIALS',
+        cooldown: guess.counted.cooldown,
       });
       throw invalidCredentials();
     }
+    await this.refundGuess(emailHash, guess);
     if (account.resetRequiredAt) {
       await this.recordSignInFailure(request, emailHash, account.id, 'PASSWORD_RESET_REQUIRED');
       throw passwordResetRequired();
@@ -719,10 +758,12 @@ export class AuthService {
             })
           ).count === 1;
         if (!accepted) {
+          const guess = await this.countGuess(transaction, emailHash, now);
           const ceiling = await this.writeGuessFailure(transaction, request, {
             emailHash,
             userId,
             reason: 'INVALID_CODE',
+            cooldown: guess.cooldownUntil ? null : guess.counted.cooldown,
             secondFactor: { method: 'totp', email: user.emailNormalized },
           });
           return { status: 'INVALID_CODE' as const, ceiling };
@@ -772,7 +813,8 @@ export class AuthService {
 
   /**
    * Second sign-in step with a Recovery Code in place of the TOTP code. Up to 10 Argon2id checks
-   * take too long to hold a transaction open, so the code is matched first; deleting its row then
+   * take too long to hold a transaction open, so the guess is counted toward the Sign-in Cool-down
+   * first, as for a password, and the code matched after; deleting its row then
    * decides a race, and of two submissions of one code exactly one wins. The code's row, the
    * pending sign-in, and every other session of the User go in the transaction that creates the
    * new session.
@@ -797,26 +839,26 @@ export class AuthService {
         now,
       );
       if (!pending) return null;
-      const cooldownUntil = await this.readCooldown(transaction, pending.emailHash, now);
-      if (cooldownUntil) {
+      const guess = await this.countGuess(transaction, pending.emailHash, now);
+      if (guess.cooldownUntil) {
         await this.writeSignInFailure(transaction, request, {
           userId: pending.userId,
           emailHash: pending.emailHash,
           reason: 'COOLDOWN_ACTIVE',
           method: 'recovery_code',
         });
-        return { pending, codes: [], cooldownUntil };
+        return { pending, codes: [], guess };
       }
       const codes = await transaction.userRecoveryCode.findMany({
         where: { userId: pending.userId },
         select: { id: true, codeHash: true },
       });
-      return { pending, codes, cooldownUntil };
+      return { pending, codes, guess };
     });
     if (!opened) throw signInExpired();
-    const { pending } = opened;
+    const { pending, guess } = opened;
     const { userId, emailHash } = pending;
-    if (opened.cooldownUntil) throw signInCooldown(opened.cooldownUntil, now);
+    if (guess.cooldownUntil) throw signInCooldown(guess.cooldownUntil, now);
 
     const normalized = normalizeRecoveryCode(code);
     const matches = normalized
@@ -828,10 +870,12 @@ export class AuthService {
         emailHash,
         userId,
         reason: 'INVALID_CODE',
+        cooldown: guess.counted.cooldown,
         secondFactor: { method: 'recovery_code', email: pending.user.emailNormalized },
       });
       throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
     }
+    await this.refundGuess(emailHash, guess);
     try {
       return await withDatabaseContext({ ...scope, userId }, async (transaction) => {
         const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
@@ -1387,10 +1431,12 @@ export class AuthService {
             })
           ).count === 1;
         if (!accepted) {
+          const guess = await this.countGuess(transaction, emailHash, now);
           const ceiling = await this.writeGuessFailure(transaction, request, {
             emailHash,
             userId,
             reason: 'INVALID_CODE',
+            cooldown: guess.cooldownUntil ? null : guess.counted.cooldown,
             secondFactor: { method: 'totp', email: invitation.emailNormalized },
           });
           return { status: 'INVALID_CODE' as const, ceiling };
@@ -1430,8 +1476,8 @@ export class AuthService {
       const opened = await withDatabaseContext(scope, async (transaction) => {
         const { invitation, userId } = await this.openExistingUserStep(transaction, scope, now);
         const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
-        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
-        if (cooldownUntil) {
+        const guess = await this.countGuess(transaction, emailHash, now);
+        if (guess.cooldownUntil) {
           await this.writeSignInFailure(transaction, request, {
             userId,
             emailHash,
@@ -1439,15 +1485,16 @@ export class AuthService {
             method: 'recovery_code',
           });
         }
-        const codes = cooldownUntil
+        const codes = guess.cooldownUntil
           ? []
           : await transaction.userRecoveryCode.findMany({
               where: { userId },
               select: { id: true, codeHash: true },
             });
-        return { email: invitation.emailNormalized, userId, emailHash, codes, cooldownUntil };
+        return { email: invitation.emailNormalized, userId, emailHash, codes, guess };
       });
-      if (opened.cooldownUntil) throw signInCooldown(opened.cooldownUntil, now);
+      const { guess } = opened;
+      if (guess.cooldownUntil) throw signInCooldown(guess.cooldownUntil, now);
 
       const normalized = normalizeRecoveryCode(code);
       const matches = normalized
@@ -1461,10 +1508,12 @@ export class AuthService {
           emailHash: opened.emailHash,
           userId: opened.userId,
           reason: 'INVALID_CODE',
+          cooldown: guess.counted.cooldown,
           secondFactor: { method: 'recovery_code', email: opened.email },
         });
         throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
       }
+      await this.refundGuess(opened.emailHash, guess);
       return withDatabaseContext(scope, async (transaction) => {
         const { invitation, pending, userId } = await this.openExistingUserStep(
           transaction,
@@ -2041,13 +2090,13 @@ export class AuthService {
     const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
     await this.assertIpAllowed(request, emailHash);
     const now = new Date();
-    const cooldownUntil = await withDatabaseContext(
+    const guess = await withDatabaseContext(
       { capabilities: ['platform-security'] },
-      (transaction) => this.readCooldown(transaction, emailHash, now),
+      (transaction) => this.countGuess(transaction, emailHash, now),
     );
-    if (cooldownUntil) {
+    if (guess.cooldownUntil) {
       await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
-      throw signInCooldown(cooldownUntil, now);
+      throw signInCooldown(guess.cooldownUntil, now);
     }
     const verified = account.stored
       ? await verifyPassword(account.stored.passwordHash, password)
@@ -2057,9 +2106,11 @@ export class AuthService {
         emailHash,
         userId,
         reason: 'INVALID_CREDENTIALS',
+        cooldown: guess.counted.cooldown,
       });
       throw new AuthServiceError('The password is incorrect.', 401, 'INVALID_CREDENTIALS');
     }
+    await this.refundGuess(emailHash, guess);
     if (account.stored.resetRequiredAt) {
       await this.recordSignInFailure(request, emailHash, userId, 'PASSWORD_RESET_REQUIRED');
       throw passwordResetRequired();
@@ -2583,6 +2634,57 @@ export class AuthService {
     return activeCooldown(state, now);
   }
 
+  /**
+   * Counts a guess toward the email's Sign-in Cool-down under the throttle row's lock, so
+   * concurrent guesses each count once, or answers the running cool-down that refuses it.
+   */
+  private async countGuess(
+    transaction: Prisma.TransactionClient,
+    emailHash: Buffer,
+    now: Date,
+  ): Promise<GuessCount> {
+    const key = prismaBytes(emailHash);
+    // One statement creates or locks the row, so a full sign-in deleting it can't slip between.
+    const [row] = await transaction.$queryRaw<ThrottleRow[]>`
+      INSERT INTO "sign_in_throttles" ("email_hash", "last_failure_at")
+      VALUES (${key}, ${now})
+      ON CONFLICT ("email_hash") DO UPDATE SET "email_hash" = EXCLUDED."email_hash"
+      RETURNING "failure_count", "cooldown_level", "cooldown_until", "last_failure_at"`;
+    const before = throttleState(row);
+    const cooldownUntil = activeCooldown(before, now);
+    if (cooldownUntil) return { cooldownUntil };
+    const counted = addSignInFailure(before, now);
+    await transaction.signInThrottle.update({ where: { emailHash: key }, data: counted.state });
+    return { cooldownUntil: null, before, counted };
+  }
+
+  /** Takes back a counted guess that turned out right, in a transaction of its own. */
+  private async refundGuess(
+    emailHash: Buffer,
+    { before, counted }: Extract<GuessCount, { cooldownUntil: null }>,
+  ): Promise<void> {
+    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
+      const key = prismaBytes(emailHash);
+      const state = await this.lockThrottle(transaction, key);
+      if (!state) return;
+      await transaction.signInThrottle.update({
+        where: { emailHash: key },
+        data: refundSignInGuess(state, before, counted),
+      });
+    });
+  }
+
+  /** The email's throttle row, locked for the rest of the transaction. */
+  private async lockThrottle(
+    transaction: Prisma.TransactionClient,
+    key: Uint8Array,
+  ): Promise<SignInThrottleState | null> {
+    const [row] = await transaction.$queryRaw<ThrottleRow[]>`
+      SELECT "failure_count", "cooldown_level", "cooldown_until", "last_failure_at"
+      FROM "sign_in_throttles" WHERE "email_hash" = ${key} FOR UPDATE`;
+    return throttleState(row);
+  }
+
   /** `writeGuessFailure` in a transaction of its own; throws at the second-factor ceiling. */
   private async recordGuessFailure(request: SignInRequest, failure: GuessFailure): Promise<void> {
     const ceiling = await withDatabaseContext(
@@ -2596,16 +2698,16 @@ export class AuthService {
   }
 
   /**
-   * A wrong password, TOTP code, or Recovery Code: a LOGIN_FAILURE that also counts toward the
-   * email's Sign-in Cool-down, under the throttle row's lock so concurrent failures each count once.
+   * A wrong password, TOTP code, or Recovery Code, already counted by `countGuess`: a LOGIN_FAILURE,
+   * and a SIGN_IN_COOLDOWN_STARTED for the cool-down counting it started.
    * A wrong code also counts toward the second-factor ceiling; the failure that reaches it disables
-   * the password, ends the User's pending sign-ins and activations, and answers the notice to send. The transaction
-   * needs the platform-security capability, and the User's context for a wrong code.
+   * the password, ends the User's pending sign-ins and activations, and answers the notice to send.
+   * The transaction needs the platform-security capability, and the User's context for a wrong code.
    */
   private async writeGuessFailure(
     transaction: Prisma.TransactionClient,
     request: SignInRequest,
-    { emailHash, userId, reason, secondFactor }: GuessFailure,
+    { emailHash, userId, reason, cooldown, secondFactor }: GuessFailure,
   ): Promise<MailMessage | null> {
     const now = new Date();
     await this.writeSignInFailure(transaction, request, {
@@ -2614,40 +2716,14 @@ export class AuthService {
       reason,
       method: secondFactor?.method,
     });
-    const key = prismaBytes(emailHash);
-    await transaction.$executeRaw`
-      INSERT INTO "sign_in_throttles" ("email_hash", "last_failure_at")
-      VALUES (${key}, ${now}) ON CONFLICT DO NOTHING`;
-    const [row] = await transaction.$queryRaw<
-      {
-        failure_count: number;
-        cooldown_level: number;
-        cooldown_until: Date | null;
-        last_failure_at: Date;
-      }[]
-    >`
-      SELECT "failure_count", "cooldown_level", "cooldown_until", "last_failure_at"
-      FROM "sign_in_throttles" WHERE "email_hash" = ${key} FOR UPDATE`;
-    const counted = addSignInFailure(
-      row
-        ? {
-            failureCount: row.failure_count,
-            cooldownLevel: row.cooldown_level,
-            cooldownUntil: row.cooldown_until,
-            lastFailureAt: row.last_failure_at,
-          }
-        : null,
-      now,
-    );
-    await transaction.signInThrottle.update({ where: { emailHash: key }, data: counted.state });
-    if (counted.cooldown) {
+    if (cooldown) {
       await transaction.securityEvent.create({
         data: {
           eventType: 'SIGN_IN_COOLDOWN_STARTED',
           requestId: request.requestId,
           ipAddress: request.ipAddress,
-          emailHash: key,
-          details: { level: counted.cooldown.level, minutes: counted.cooldown.minutes },
+          emailHash: prismaBytes(emailHash),
+          details: { level: cooldown.level, minutes: cooldown.minutes },
         },
       });
     }
@@ -2674,7 +2750,7 @@ export class AuthService {
         eventType: 'PASSWORD_RESET_REQUIRED',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
-        emailHash: key,
+        emailHash: prismaBytes(emailHash),
         details: { secondFactorFailures },
       },
     });

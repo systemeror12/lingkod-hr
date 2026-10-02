@@ -1859,6 +1859,175 @@ it.skipIf(!enabled)(
   },
 );
 
+/** The refusal codes of settled sign-in attempts, counted by code. */
+function refusals(results: PromiseSettledResult<unknown>[]) {
+  const counts: Record<string, number> = {};
+  for (const result of results) {
+    const code = result.status === 'rejected' ? (result.reason as AuthServiceError).code : 'OK';
+    counts[code] = (counts[code] ?? 0) + 1;
+  }
+  return counts;
+}
+
+it.skipIf(!enabled)(
+  'counts a burst of wrong passwords before Argon2id, so no more than 5 run before the cool-down',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false, mfaRequired: false });
+    const { admin, user } = fixture;
+    const unknownEmail = `nobody-${randomUUID()}@example.test`;
+    const known = throttleOf(admin, user.email);
+    const unknown = throttleOf(admin, unknownEmail);
+    try {
+      const service = new AuthService();
+      for (const [email, throttle] of [
+        [user.email, known],
+        [unknownEmail, unknown],
+      ] as const) {
+        vi.mocked(verifyPassword).mockClear();
+        vi.mocked(verifyPasswordAgainstDummy).mockClear();
+        const results = await Promise.allSettled(
+          Array.from({ length: 12 }, (_, index) =>
+            service.signInWithPassword(
+              email,
+              'a wrong passphrase',
+              null,
+              signInRequest(`password-burst-${index}`),
+            ),
+          ),
+        );
+        expect(refusals(results)).toEqual({ INVALID_CREDENTIALS: 5, SIGN_IN_COOLDOWN: 7 });
+        expect(
+          vi.mocked(verifyPassword).mock.calls.length +
+            vi.mocked(verifyPasswordAgainstDummy).mock.calls.length,
+        ).toBe(5);
+        await expect(throttle.cooldownsStarted()).resolves.toEqual([
+          { userId: null, details: { level: 1, minutes: 5 } },
+        ]);
+        const failures = await admin.securityEvent.findMany({
+          where: {
+            emailHash: databaseBytes(hashEmail(email, getConfig().BLIND_INDEX_KEY)),
+            eventType: 'LOGIN_FAILURE',
+          },
+          select: { details: true },
+        });
+        expect(
+          failures.filter(({ details }) => isReason(details, 'INVALID_CREDENTIALS')),
+        ).toHaveLength(5);
+        expect(failures.filter(({ details }) => isReason(details, 'COOLDOWN_ACTIVE'))).toHaveLength(
+          7,
+        );
+      }
+    } finally {
+      await unknown.remove();
+      await known.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+function isReason(details: unknown, reason: string) {
+  return (details as { reason?: string } | null)?.reason === reason;
+}
+
+it.skipIf(!enabled)(
+  'counts a burst of wrong Recovery Codes before Argon2id, sharing the count with TOTP failures',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 1 });
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      const pendingToken = await passwordVerified(service, fixture, 'recovery-burst');
+      const wrongTotp = totpCode(user.totpSecret ?? '') === '000000' ? '000001' : '000000';
+      for (let index = 0; index < 2; index += 1) {
+        await expect(
+          service.completeTotpSignIn(pendingToken, wrongTotp, signInRequest('recovery-burst')),
+        ).rejects.toMatchObject({ code: 'INVALID_CODE' });
+      }
+
+      vi.mocked(verifyPassword).mockClear();
+      const wrongCodes = [...generateRecoveryCodes(), ...generateRecoveryCodes()].slice(0, 12);
+      const results = await Promise.allSettled(
+        wrongCodes.map((wrongCode, index) =>
+          service.completeRecoveryCodeSignIn(
+            pendingToken,
+            wrongCode,
+            signInRequest(`recovery-burst-${index}`),
+          ),
+        ),
+      );
+      expect(refusals(results)).toEqual({ INVALID_CODE: 3, SIGN_IN_COOLDOWN: 9 });
+      // One stored Recovery Code: one Argon2id check per counted guess.
+      expect(verifyPassword).toHaveBeenCalledTimes(3);
+      await expect(
+        admin.userPassword.findUniqueOrThrow({ where: { userId: user.id } }),
+      ).resolves.toMatchObject({ secondFactorFailures: 5 });
+      await expect(throttle.cooldownsStarted()).resolves.toEqual([
+        { userId: null, details: { level: 1, minutes: 5 } },
+      ]);
+      const failures = await admin.securityEvent.findMany({
+        where: { userId: user.id, eventType: 'LOGIN_FAILURE' },
+        orderBy: { occurredAt: 'asc' },
+        select: { details: true },
+      });
+      expect(
+        failures
+          .filter(({ details }) => isReason(details, 'INVALID_CODE'))
+          .map(({ details }) => details),
+      ).toEqual([
+        { reason: 'INVALID_CODE', method: 'totp' },
+        { reason: 'INVALID_CODE', method: 'totp' },
+        { reason: 'INVALID_CODE', method: 'recovery_code' },
+        { reason: 'INVALID_CODE', method: 'recovery_code' },
+        { reason: 'INVALID_CODE', method: 'recovery_code' },
+      ]);
+      expect(failures.filter(({ details }) => isReason(details, 'COOLDOWN_ACTIVE'))).toHaveLength(
+        9,
+      );
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'does not count a right password or Recovery Code, even as the fifth guess',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 1 });
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      await wrongPasswords(service, user.email, 4);
+      const pendingToken = await passwordVerified(service, fixture, 'fifth-right');
+      await expect(throttle.row()).resolves.toMatchObject({
+        failureCount: 4,
+        cooldownLevel: 0,
+        cooldownUntil: null,
+      });
+
+      // A right Recovery Code refused after it matched still isn't a guess against the count.
+      await admin.user.update({ where: { id: user.id }, data: { globalStatus: 'LOCKED' } });
+      const [code] = user.recoveryCodes;
+      await expect(
+        service.completeRecoveryCodeSignIn(pendingToken, code ?? '', signInRequest('locked')),
+      ).rejects.toMatchObject({ code: 'USER_NOT_ACTIVE' });
+      await expect(throttle.row()).resolves.toMatchObject({ failureCount: 4, cooldownLevel: 0 });
+      await expect(throttle.cooldownsStarted()).resolves.toEqual([]);
+
+      // The next wrong guess is the fifth failure.
+      await wrongPasswords(service, user.email, 1);
+      await expect(throttle.cooldownsStarted()).resolves.toEqual([
+        { userId: null, details: { level: 1, minutes: 5 } },
+      ]);
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
 it.skipIf(!enabled)(
   'refuses a right code on a pending sign-in whose password was disabled after it began',
   async () => {

@@ -18,6 +18,12 @@ export interface SignInCooldownStart {
   until: Date;
 }
 
+/** A failure `addSignInFailure` counted: the new state and the cool-down it started, if any. */
+export interface CountedSignInFailure {
+  state: SignInThrottleState;
+  cooldown: SignInCooldownStart | null;
+}
+
 export const SIGN_IN_COOLDOWN_FAILURES = 5;
 const COOLDOWN_MINUTES = [5, 10, 20, 40, 60] as const;
 const RESET_AFTER_MS = 24 * 60 * 60 * 1000;
@@ -39,7 +45,7 @@ export function activeCooldown(state: SignInThrottleState | null, now: Date): Da
 export function addSignInFailure(
   state: SignInThrottleState | null,
   now: Date,
-): { state: SignInThrottleState; cooldown: SignInCooldownStart | null } {
+): CountedSignInFailure {
   if (state && activeCooldown(state, now)) return { state, cooldown: null };
   const base = current(state, now) ?? { failureCount: 0, cooldownLevel: 0, cooldownUntil: null };
   const failureCount = base.failureCount + 1;
@@ -53,4 +59,32 @@ export function addSignInFailure(
     state: { failureCount: 0, cooldownLevel: level, cooldownUntil: until, lastFailureAt: now },
     cooldown: { level, minutes, until },
   };
+}
+
+/**
+ * Takes back a guess counted as a failure before it was checked, once it turned out right.
+ * `before` is the state the guess was counted on and `counted` what counting it answered. A
+ * cool-down the guess started is undone while it still stands; a cool-down other guesses started
+ * since stays.
+ */
+export function refundSignInGuess(
+  state: SignInThrottleState,
+  before: SignInThrottleState | null,
+  counted: CountedSignInFailure,
+): SignInThrottleState {
+  const countedAt = counted.state.lastFailureAt;
+  if (counted.cooldown) {
+    // A cool-down is known by its end; once another starts or the row resets, this one is gone.
+    if (state.cooldownUntil?.getTime() !== counted.cooldown.until.getTime()) return state;
+    return (
+      current(before, countedAt) ?? {
+        failureCount: 0,
+        cooldownLevel: 0,
+        cooldownUntil: null,
+        lastFailureAt: countedAt,
+      }
+    );
+  }
+  if (state.cooldownLevel !== counted.state.cooldownLevel || state.failureCount === 0) return state;
+  return { ...state, failureCount: state.failureCount - 1 };
 }

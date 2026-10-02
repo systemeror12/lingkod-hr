@@ -1,5 +1,10 @@
 import { expect, it } from 'vitest';
-import { activeCooldown, addSignInFailure, type SignInThrottleState } from './sign-in-cooldown';
+import {
+  activeCooldown,
+  addSignInFailure,
+  refundSignInGuess,
+  type SignInThrottleState,
+} from './sign-in-cooldown';
 
 const start = new Date('2026-10-02T06:00:00.000Z');
 const minutes = (count: number) => count * 60 * 1000;
@@ -64,4 +69,34 @@ it('counts a row whose last failure is more than 24 hours old as reset', () => {
     state: { failureCount: 1, cooldownLevel: 0, cooldownUntil: null, lastFailureAt: later },
     cooldown: null,
   });
+});
+
+it('takes back a right guess counted before it was checked', () => {
+  const before = fail(null, 2, start).state;
+  const counted = addSignInFailure(before, at(5_000));
+  expect(refundSignInGuess(counted.state, before, counted)).toEqual({
+    ...counted.state,
+    failureCount: 2,
+  });
+
+  // A later guess counted in the meantime stays counted.
+  const later = addSignInFailure(counted.state, at(6_000)).state;
+  expect(refundSignInGuess(later, before, counted)).toEqual({ ...later, failureCount: 3 });
+
+  const first = addSignInFailure(null, start);
+  expect(refundSignInGuess(first.state, null, first)).toEqual({ ...first.state, failureCount: 0 });
+});
+
+it('takes back the cool-down a right fifth guess started', () => {
+  const before = fail(null, 4, start).state;
+  const counted = addSignInFailure(before, at(4_000));
+  expect(counted.cooldown).not.toBeNull();
+  expect(refundSignInGuess(counted.state, before, counted)).toEqual(before);
+});
+
+it('leaves a cool-down that other guesses started standing', () => {
+  const before = fail(null, 3, start).state;
+  const counted = addSignInFailure(before, at(3_000));
+  const cooled = addSignInFailure(counted.state, at(3_500)).state;
+  expect(refundSignInGuess(cooled, before, counted)).toEqual(cooled);
 });
