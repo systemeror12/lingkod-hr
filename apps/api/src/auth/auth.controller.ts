@@ -28,6 +28,7 @@ import {
   SESSION_COOKIE,
 } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
+import type { MailMessage } from '../invitations/mail';
 import {
   activationTokenSchema,
   backchannelLogoutSchema,
@@ -35,6 +36,7 @@ import {
   loginQuerySchema,
   passwordSignInSchema,
   switchAgencySchema,
+  recoveryCodeSignInSchema,
   totpSignInSchema,
 } from './auth.schemas';
 
@@ -158,6 +160,41 @@ export class AuthController {
         maxAge: 8 * 60 * 60 * 1000,
       });
       response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
+        response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
+      }
+      translateError(error);
+    }
+  }
+
+  /** A Recovery Code in place of the TOTP code. Signs out the User's other sessions. */
+  @Post('sign-in/recovery-code')
+  async signInWithRecoveryCode(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = recoveryCodeSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A Recovery Code is required.');
+    const secure = this.config.NODE_ENV === 'production';
+    const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
+    try {
+      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      const result = await this.authService.completeRecoveryCodeSignIn(
+        pendingToken ?? '',
+        parsed.data.code,
+        this.signInRequest(request),
+      );
+      response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
+      response.cookie(SESSION_COOKIE, result.session.token, {
+        ...cookieOptions(secure),
+        maxAge: 8 * 60 * 60 * 1000,
+      });
+      response
+        .status(HttpStatus.OK)
+        .json({ status: 'SIGNED_IN', recoveryCodesRemaining: result.recoveryCodesRemaining });
+      this.noticeAfterResponse(response, result.notice);
     } catch (error: unknown) {
       if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
         response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
@@ -326,6 +363,14 @@ export class AuthController {
     } catch (error: unknown) {
       translateError(error);
     }
+  }
+
+  /**
+   * Sends a credential notice once the response is out, so neither the transaction nor the
+   * User's wait depends on mail. Later credential notices reuse this path.
+   */
+  private noticeAfterResponse(response: Response, notice: MailMessage): void {
+    response.once('close', () => void this.authService.sendNotice(notice));
   }
 
   private signInRequest(request: Request) {

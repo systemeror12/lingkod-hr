@@ -1,10 +1,12 @@
 import { argon2Sync, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import {
+  generateRecoveryCodes,
   generateTotpSecret,
   hashEmail,
   hashPassword,
   hashSessionToken,
+  normalizeRecoveryCode,
   type OidcIdentity,
   type RequestContext,
   sealTotpSecret,
@@ -13,12 +15,14 @@ import {
   verifyPasswordAgainstDummy,
 } from '@lingkod-hr/auth';
 import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
-import type { ExecutionContext } from '@nestjs/common';
+import { EventEmitter } from 'node:events';
+import { type ExecutionContext, Logger } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService, AuthServiceError } from './auth.service';
+import type { MailDelivery, MailMessage } from '../invitations/mail';
 
 vi.mock('@lingkod-hr/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@lingkod-hr/auth')>();
@@ -683,16 +687,28 @@ interface OwnedLoginFixture {
   admin: PrismaClient;
   agencyIds: string[];
   membershipIds: string[];
-  user: { id: string; email: string; password: string; totpSecret: string | null };
+  user: {
+    id: string;
+    email: string;
+    password: string;
+    totpSecret: string | null;
+    recoveryCodes: string[];
+  };
   cleanup: () => Promise<void>;
 }
 
 /**
  * An Agency Administrator (an MFA-Required User) in two Agencies, with a password and, unless
- * `withTotp` is false, a TOTP factor sealed with the run's `DATA_ENCRYPTION_KEY`.
+ * `withTotp` is false, a TOTP factor sealed with the run's `DATA_ENCRYPTION_KEY`, plus
+ * `recoveryCodes` Recovery Codes stored as Argon2id hashes.
  */
 async function ownedLoginFixture(
-  options: { withTotp?: boolean; mfaRequired?: boolean; passwordHash?: string } = {},
+  options: {
+    withTotp?: boolean;
+    mfaRequired?: boolean;
+    passwordHash?: string;
+    recoveryCodes?: number;
+  } = {},
 ): Promise<OwnedLoginFixture> {
   const admin = await createAdminClient();
   const suffix = `${Date.now()}-${randomBytes(4).toString('hex')}`;
@@ -757,12 +773,18 @@ async function ownedLoginFixture(
       },
     });
   }
+  const recoveryCodes = generateRecoveryCodes().slice(0, options.recoveryCodes ?? 0);
+  for (const code of recoveryCodes) {
+    await admin.userRecoveryCode.create({
+      data: { userId: user.id, codeHash: await hashPassword(normalizeRecoveryCode(code) ?? '') },
+    });
+  }
   const agencyIds = agencies.map(({ id }) => id);
   return {
     admin,
     agencyIds,
     membershipIds: memberships.map(({ id }) => id),
-    user: { id: user.id, email, password, totpSecret },
+    user: { id: user.id, email, password, totpSecret, recoveryCodes },
     cleanup: async () => {
       const emailHash = databaseBytes(hashEmail(email, getConfig().BLIND_INDEX_KEY));
       await admin.$transaction(async (transaction) => {
@@ -1093,6 +1115,284 @@ it.skipIf(!enabled)(
         }
       }
     } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+/** Opens a pending sign-in for the fixture User and returns its token. */
+async function passwordVerified(service: AuthService, fixture: OwnedLoginFixture, label: string) {
+  const started = await service.signInWithPassword(
+    fixture.user.email,
+    fixture.user.password,
+    null,
+    signInRequest(label),
+  );
+  if (started.status !== 'TOTP_REQUIRED') throw new Error('Expected a second-factor challenge.');
+  return started.pendingToken;
+}
+
+it.skipIf(!enabled)(
+  'signs in with a Recovery Code in any case or spacing, deletes it, and reports the codes left',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 3 });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const [code] = user.recoveryCodes;
+      if (!code) throw new Error('Expected a Recovery Code.');
+      const pendingToken = await passwordVerified(service, fixture, 'recovery');
+
+      const typed = ` ${code.replace('-', ' ').toUpperCase()} `;
+      const result = await service.completeRecoveryCodeSignIn(
+        pendingToken,
+        typed,
+        signInRequest('recovery-code'),
+      );
+      expect(result.recoveryCodesRemaining).toBe(2);
+      expect(result.session.authenticationMethods).toEqual(['pwd', 'recovery_code']);
+      await expect(
+        service.authenticateSession(result.session.token, 'request-recovery-me'),
+      ).resolves.toMatchObject({ sessionId: result.session.sessionId });
+      await expect(admin.userRecoveryCode.count({ where: { userId: user.id } })).resolves.toBe(2);
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+
+      // The used code is gone: a second sign-in can't spend it again.
+      const again = await passwordVerified(service, fixture, 'recovery-again');
+      await expect(
+        service.completeRecoveryCodeSignIn(again, code, signInRequest('recovery-reuse')),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE', statusCode: 401 });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'accepts exactly one of two concurrent submissions of one Recovery Code',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 2 });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const [code] = user.recoveryCodes;
+      if (!code) throw new Error('Expected a Recovery Code.');
+      const pendingToken = await passwordVerified(service, fixture, 'recovery-race');
+
+      const results = await Promise.allSettled([
+        service.completeRecoveryCodeSignIn(pendingToken, code, signInRequest('recovery-race-1')),
+        service.completeRecoveryCodeSignIn(pendingToken, code, signInRequest('recovery-race-2')),
+      ]);
+      expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(1);
+      await expect(admin.userRecoveryCode.count({ where: { userId: user.id } })).resolves.toBe(1);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  "revokes the User's other sessions in every Agency when a Recovery Code signs them in",
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 1 });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const others = [];
+      for (const [index, membershipId] of fixture.membershipIds.entries()) {
+        const started = await service.signInWithPassword(
+          user.email,
+          user.password,
+          membershipId,
+          signInRequest(`other-${index}`),
+        );
+        if (started.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
+        // Each sign-in needs an unused time step, so the second one uses the next step's code.
+        const at = new Date(Date.now() + index * 30_000);
+        others.push(
+          await service.completeTotpSignIn(
+            started.pendingToken,
+            totpCode(user.totpSecret ?? '', at),
+            signInRequest(`other-totp-${index}`),
+          ),
+        );
+      }
+
+      const pendingToken = await passwordVerified(service, fixture, 'recovery-revoke');
+      const recoveryRequest = signInRequest('recovery-revoke-code');
+      const result = await service.completeRecoveryCodeSignIn(
+        pendingToken,
+        user.recoveryCodes[0] ?? '',
+        recoveryRequest,
+      );
+
+      for (const other of others) {
+        await expect(
+          service.authenticateSession(other.token, 'request-revoked-me'),
+        ).resolves.toBeNull();
+      }
+      await expect(
+        service.authenticateSession(result.session.token, 'request-recovery-me'),
+      ).resolves.toMatchObject({ sessionId: result.session.sessionId });
+      const revoked = await admin.userSession.findMany({
+        where: { userId: user.id, revokedAt: { not: null } },
+        select: { id: true, revocationReason: true },
+      });
+      expect(revoked.map(({ id }) => id).sort()).toEqual(
+        others.map(({ sessionId }) => sessionId).sort(),
+      );
+      expect(revoked.map(({ revocationReason }) => revocationReason)).toEqual([
+        'RECOVERY_CODE_SIGN_IN',
+        'RECOVERY_CODE_SIGN_IN',
+      ]);
+      await expect(
+        admin.securityEvent.count({
+          where: { requestId: recoveryRequest.requestId, eventType: 'SESSION_REVOKED' },
+        }),
+      ).resolves.toBe(2);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses an unknown or malformed Recovery Code and records the attempt without the code',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 1 });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const pendingToken = await passwordVerified(service, fixture, 'recovery-wrong');
+      const unknown = 'aaaaa-bbbbb';
+      const requests = ['recovery-unknown', 'recovery-malformed'].map(signInRequest);
+      for (const [index, code] of [unknown, 'not a code'].entries()) {
+        await expect(
+          service.completeRecoveryCodeSignIn(
+            pendingToken,
+            code,
+            requests[index] ?? signInRequest('x'),
+          ),
+        ).rejects.toMatchObject({ code: 'INVALID_CODE', statusCode: 401 });
+      }
+
+      const events = await admin.securityEvent.findMany({
+        where: { requestId: { in: requests.map(({ requestId }) => requestId) } },
+      });
+      expect(events).toHaveLength(2);
+      const emailHash = hashEmail(user.email, getConfig().BLIND_INDEX_KEY);
+      for (const event of events) {
+        expect(event).toMatchObject({
+          eventType: 'LOGIN_FAILURE',
+          userId: user.id,
+          details: { reason: 'INVALID_CODE', method: 'recovery_code' },
+        });
+        expect(Buffer.from(event.emailHash ?? [])).toEqual(emailHash);
+        const serialized = JSON.stringify(event).toLowerCase();
+        for (const secret of [unknown, 'aaaaabbbbb', user.recoveryCodes[0] ?? '', pendingToken]) {
+          expect(serialized).not.toContain(secret.toLowerCase());
+        }
+      }
+      // A refused code leaves the pending sign-in usable and the stored code unspent.
+      await expect(admin.userRecoveryCode.count({ where: { userId: user.id } })).resolves.toBe(1);
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        1,
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+class RecordingMailDelivery implements MailDelivery {
+  readonly messages: MailMessage[] = [];
+
+  async send(message: MailMessage): Promise<void> {
+    this.messages.push(message);
+  }
+}
+
+/** Just enough of an Express response for the sign-in endpoints; `close` fires on `finish()`. */
+function fakeResponse() {
+  const events = new EventEmitter();
+  const response = {
+    cookie: vi.fn(),
+    clearCookie: vi.fn(),
+    status: vi.fn(() => response),
+    json: vi.fn(() => response),
+    once: (event: string, listener: () => void) => {
+      events.once(event, listener);
+      return response;
+    },
+    finish: () => events.emit('close'),
+  };
+  return response;
+}
+
+function pendingRequest(pendingToken: string) {
+  return {
+    headers: { cookie: `hris_pending_auth=${pendingToken}` },
+    header: (name: string) =>
+      name === 'x-request-id' ? `owned-login-endpoint-${randomUUID()}` : undefined,
+    ip: '198.51.100.7',
+  } as unknown as Request;
+}
+
+it.skipIf(!enabled)(
+  'sends the Recovery Code notice only after the response, and a failed send changes nothing',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 2 });
+    const { user } = fixture;
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      const mail = new RecordingMailDelivery();
+      const controller = new AuthController(new AuthService(mail));
+      const pendingToken = await passwordVerified(new AuthService(mail), fixture, 'notice');
+      const response = fakeResponse();
+
+      await controller.signInWithRecoveryCode(
+        { code: user.recoveryCodes[0] },
+        pendingRequest(pendingToken),
+        response as unknown as Response,
+      );
+      expect(response.json).toHaveBeenCalledWith({
+        status: 'SIGNED_IN',
+        recoveryCodesRemaining: 1,
+      });
+      expect(mail.messages).toEqual([]);
+      response.finish();
+      await vi.waitFor(() => expect(mail.messages).toHaveLength(1));
+      const [notice] = mail.messages;
+      expect(notice).toMatchObject({ to: user.email });
+      expect(notice?.text).toContain('Agency Administrator');
+      expect(notice?.text).toContain('1 Recovery Code left');
+      for (const code of user.recoveryCodes) {
+        expect(JSON.stringify(notice).toLowerCase()).not.toContain(code);
+      }
+      expect(notice?.text).not.toMatch(/https?:/);
+
+      const failing = new AuthController(
+        new AuthService({ send: () => Promise.reject(new Error(`smtp down for ${user.email}`)) }),
+      );
+      const secondToken = await passwordVerified(new AuthService(mail), fixture, 'notice-fail');
+      const failedResponse = fakeResponse();
+      await failing.signInWithRecoveryCode(
+        { code: user.recoveryCodes[1] },
+        pendingRequest(secondToken),
+        failedResponse as unknown as Response,
+      );
+      expect(failedResponse.json).toHaveBeenCalledWith({
+        status: 'SIGNED_IN',
+        recoveryCodesRemaining: 0,
+      });
+      failedResponse.finish();
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(user.email);
+    } finally {
+      warn.mockRestore();
       await fixture.cleanup();
     }
   },

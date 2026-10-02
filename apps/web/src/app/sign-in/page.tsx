@@ -1,9 +1,4 @@
 import type { Metadata } from 'next';
-import {
-  InvitationKicker,
-  InvitationLayout,
-  InvitationTitle,
-} from '../../components/invitation-layout';
 import { SignInForm } from '../../components/sign-in-form';
 
 export const metadata: Metadata = { title: 'Sign in' };
@@ -19,13 +14,5 @@ export default async function SignInPage({
   const requestedMembershipId =
     typeof membershipId === 'string' && UUID_PATTERN.test(membershipId) ? membershipId : null;
 
-  return (
-    <InvitationLayout labelledBy="sign-in-title" showMark>
-      <div className="grid gap-2">
-        <InvitationKicker>LingkodHR</InvitationKicker>
-        <InvitationTitle id="sign-in-title">Sign in to your Agency workspace</InvitationTitle>
-      </div>
-      <SignInForm membershipId={requestedMembershipId} />
-    </InvitationLayout>
-  );
+  return <SignInForm membershipId={requestedMembershipId} />;
 }

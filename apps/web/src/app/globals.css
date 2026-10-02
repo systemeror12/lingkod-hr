@@ -91,3 +91,74 @@ body {
   background: var(--color-primary);
   color: var(--color-surface);
 }
+
+/*
+ * Civic sunrise motion for the public auth screens. Each animation answers a step change or a
+ * user action and runs once; only the busy bar repeats, and only while a request is in flight.
+ */
+@keyframes lh-step-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes lh-nudge {
+  0%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: translateX(-7px);
+  }
+  45% {
+    transform: translateX(6px);
+  }
+  70% {
+    transform: translateX(-3px);
+  }
+}
+@keyframes lh-busy {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@keyframes lh-caption {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.lh-step-in {
+  animation: lh-step-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.lh-nudge {
+  animation: lh-nudge 360ms ease-out 120ms both;
+}
+.lh-busy {
+  animation: lh-busy 900ms cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.lh-caption {
+  animation: lh-caption 700ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lh-step-in,
+  .lh-nudge,
+  .lh-busy,
+  .lh-caption {
+    animation: none !important;
+  }
+  .lh-scene * {
+    transition: none !important;
+  }
+}

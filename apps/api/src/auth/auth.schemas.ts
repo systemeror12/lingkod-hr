@@ -33,6 +33,9 @@ export const totpSignInSchema = z
   })
   .strict();
 
+/** Matched without regard to case, hyphens, or spaces; `normalizeRecoveryCode` does the rest. */
+export const recoveryCodeSignInSchema = z.object({ code: z.string().max(64) }).strict();
+
 export const activationTokenSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid invitation token.');
