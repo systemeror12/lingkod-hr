@@ -160,19 +160,27 @@ SUSPENDED
 DEACTIVATED
 ```
 
-| Current     | Action             | Next        | Primary actor                                 | Required permission         | Validations                                           | Side effects and audit                                    |
-| ----------- | ------------------ | ----------- | --------------------------------------------- | --------------------------- | ----------------------------------------------------- | --------------------------------------------------------- |
-| None        | Invite user        | INVITED     | Agency Administrator                          | `security.users.invite`     | Valid email; agency exists; role assignment permitted | Create invitation; send email; audit invitation           |
-| INVITED     | Accept invitation  | ACTIVE      | Invited user                                  | Public invitation flow      | Token valid, unused, unexpired; email verified        | Create credentials; activate membership; audit activation |
-| INVITED     | Resend invitation  | INVITED     | Agency Administrator                          | `security.users.invite`     | Existing invitation pending; resend limit             | Replace or renew token; audit resend                      |
-| INVITED     | Cancel invitation  | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Invitation not accepted                               | Invalidate token; audit cancellation                      |
-| ACTIVE      | Lock account       | LOCKED      | Security Administrator / System               | `security.users.lock`       | Security rule or authorized action                    | Revoke sessions; audit lock                               |
-| LOCKED      | Unlock account     | ACTIVE      | Security Administrator                        | `security.users.unlock`     | Identity or security review completed                 | Revoke old sessions; audit unlock                         |
-| ACTIVE      | Suspend account    | SUSPENDED   | Agency Administrator / Security Administrator | `security.users.suspend`    | Reason required                                       | Revoke sessions; deny access; audit suspension            |
-| SUSPENDED   | Reactivate account | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Reason and review required                            | Restore membership access; audit reactivation             |
-| ACTIVE      | Deactivate account | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Separation or administrative basis                    | Revoke sessions; preserve history; audit deactivation     |
-| SUSPENDED   | Deactivate account | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Reason required                                       | Revoke sessions; preserve history                         |
-| DEACTIVATED | Reactivate account | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Valid agency membership; no policy restriction        | Reissue access; audit exceptional reactivation            |
+| Current     | Action             | Next        | Primary actor                                 | Required permission         | Validations                                                                                                                                                                                     | Side effects and audit                                                                                |
+| ----------- | ------------------ | ----------- | --------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| None        | Invite user        | INVITED     | Agency Administrator                          | `security.users.invite`     | Valid email; agency exists; role assignment permitted                                                                                                                                           | Create invitation; send email; audit invitation                                                       |
+| INVITED     | Accept invitation  | ACTIVE      | Invited user                                  | Public invitation flow      | Token valid, unused, unexpired; email verified                                                                                                                                                  | Create credentials; activate membership; audit activation                                             |
+| INVITED     | Resend invitation  | INVITED     | Agency Administrator                          | `security.users.invite`     | Existing invitation pending; resend limit                                                                                                                                                       | Replace or renew token; audit resend                                                                  |
+| INVITED     | Cancel invitation  | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Invitation not accepted                                                                                                                                                                         | Invalidate token; audit cancellation                                                                  |
+| ACTIVE      | Lock account       | LOCKED      | Security Administrator                        | `security.users.lock`       | Suspected compromise or security review; User has an ACTIVE Agency Membership in the acting Agency                                                                                              | Record the locking Agency; revoke sessions; audit lock in the acting Agency                           |
+| LOCKED      | Unlock account     | ACTIVE      | Security Administrator                        | `security.users.unlock`     | Identity or security review completed; actor is in the locking Agency, or in one of the User's remaining Agencies when the User no longer has an ACTIVE Agency Membership in the locking Agency | Revoke old sessions; audit unlock in the acting Agency, recording whether the locking Agency was gone |
+| ACTIVE      | Suspend account    | SUSPENDED   | Agency Administrator / Security Administrator | `security.users.suspend`    | Reason required                                                                                                                                                                                 | Revoke sessions; deny access; audit suspension                                                        |
+| SUSPENDED   | Reactivate account | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Reason and review required                                                                                                                                                                      | Restore membership access; audit reactivation                                                         |
+| ACTIVE      | Deactivate account | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Separation or administrative basis                                                                                                                                                              | Revoke sessions; preserve history; audit deactivation                                                 |
+| SUSPENDED   | Deactivate account | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Reason required                                                                                                                                                                                 | Revoke sessions; preserve history                                                                     |
+| DEACTIVATED | Reactivate account | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Valid agency membership; no policy restriction                                                                                                                                                  | Reissue access; audit exceptional reactivation                                                        |
+
+LOCKED is the Global User Lock. It is a User status only, never an Agency Membership status. Agency Membership statuses are INVITED, ACTIVE, SUSPENDED, and DEACTIVATED.
+
+Lock controls:
+
+- Only a Security Administrator places or lifts a Global User Lock. No count of failed sign-in attempts sets LOCKED; repeated failures start a Sign-in Cool-down instead.
+- A lock has no expiry, and a Password Reset never lifts it.
+- Other Agencies see only that the User is locked by another Agency's Security Administrator, without that Agency's name, reason, or events.
 
 Invalid examples:
 
@@ -180,6 +188,8 @@ Invalid examples:
 DEACTIVATED → successful login
 INVITED → protected dashboard without activation
 SUSPENDED → password reset that silently restores access
+LOCKED → password reset that silently restores access
+failed sign-in attempts → LOCKED
 ```
 
 ---
@@ -1146,12 +1156,14 @@ Roles may be customized, but high-risk combinations must be reviewed.
 | `security.sessions.revoke`    |            A |        — |          — |        — |              A |   C |       — |
 | `security.events.read`        |            A |        — |          — |        — |              A |   A |       R |
 | `security.mfa.manage_policy`  |            A |        — |          — |        — |              A |   C |       — |
+| `security.mfa.reset_factor`   |            — |        — |          — |        — |              A |   — |       — |
 | `security.permissions.manage` |            A |        — |          — |        — |              A |   — |       — |
 
 Controls:
 
 - Agency Administrator and Security Administrator should be separate where staffing permits.
 - A user should not approve their own elevated role assignment.
+- A Security Administrator may not reset their own factor.
 - Security-event logs are read-only to auditors and DPO users.
 
 ---
