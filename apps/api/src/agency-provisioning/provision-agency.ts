@@ -340,7 +340,7 @@ export function createAgencyProvisioningCommand(
   const config = getConfig();
   return new AgencyProvisioningCommand({
     database,
-    invitationIssuer: new InvitationIssuer(mailDelivery, config.API_URL),
+    invitationIssuer: new InvitationIssuer(mailDelivery, config.APP_URL),
   });
 }
 

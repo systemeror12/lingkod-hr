@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect, test, type APIResponse, type Page } from '@playwright/test';
+import { activateInvitation } from './sign-in';
 
 const dtrMembershipId = 'd7a00000-0000-4000-8000-000000000002';
 const dtrReviewerInvitationToken = 'dtr-reviewer-invitation-token-0000000000000';
-const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
 
 function resetFixture(): void {
   execFileSync('pnpm', ['--filter', '@lingkod-hr/database', 'e2e:seed:shell'], {
@@ -193,16 +193,12 @@ test('reviews, returns, approves, and locks an Attendance Period Version from th
     ),
   );
 
-  // The reviewer is a second person. Their invitation activates the local OIDC
-  // identity so the lock can prove separation of duties in the browser.
+  // The reviewer is a second person. They activate their invitation as an existing User so the
+  // lock can prove separation of duties in the browser.
   const reviewerContext = await browser.newContext();
   const reviewerPage = await reviewerContext.newPage();
   try {
-    await reviewerPage.goto(
-      `${apiUrl}/api/v1/auth/invitations/${dtrReviewerInvitationToken}/activate`,
-    );
-    await reviewerPage.getByRole('link', { name: 'Continue to secure sign-in' }).click();
-    await expect(reviewerPage).toHaveURL(/\/dashboard$/);
+    await activateInvitation(reviewerPage, `/invite/${dtrReviewerInvitationToken}`);
     const reviewerHeaders = { origin: new URL(reviewerPage.url()).origin };
     await apiBody(
       await reviewerPage.request.post(

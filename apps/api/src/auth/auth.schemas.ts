@@ -4,7 +4,6 @@ const token = z.string().min(1).max(512);
 
 export const loginQuerySchema = z
   .object({
-    invitation: token.optional(),
     membershipId: z.string().uuid().optional(),
   })
   .strict();
@@ -41,6 +40,14 @@ export const enrollmentFinishSchema = z.object({ acknowledged: z.literal(true) }
 export const activationTokenSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid invitation token.');
+
+/** A first-time User's name and new password, or an existing User's password and no name. */
+export const activationStartSchema = z
+  .object({
+    name: z.string().max(200).optional(),
+    password: z.string().min(1).max(1024),
+  })
+  .strict();
 
 export const switchAgencySchema = z.object({ membershipId: z.string().uuid() }).strict();
 

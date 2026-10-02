@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { activateInvitation } from './sign-in';
 
 const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
 const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
@@ -48,7 +49,7 @@ async function readMailpitMessage(recipient: string, subject: string): Promise<s
   return ((await detailResponse.json()) as MailpitMessage).Text;
 }
 
-test('invites and activates an HRMO Administrator through Mailpit and local OIDC', async ({
+test('invites and activates a first-time HRMO Administrator through Mailpit', async ({
   page,
   browser,
 }, testInfo) => {
@@ -97,10 +98,7 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
     recipient,
     'LingkodHR invitation for National Archives Coordination Office',
   );
-  const activationUrl =
-    /https?:\/\/[^\s]+\/api\/v1\/auth\/invitations\/([A-Za-z0-9_-]{43})\/activate/.exec(
-      mailText,
-    )?.[0];
+  const activationUrl = new RegExp(`${appOrigin}/invite/[A-Za-z0-9_-]{43}`).exec(mailText)?.[0];
   if (!activationUrl)
     throw new Error('The HRMO invitation email did not contain an activation link.');
   expect(mailText).toContain('National Archives Coordination Office');
@@ -111,17 +109,18 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
   try {
     await hrmoPage.goto(activationUrl);
     await expect(
-      hrmoPage.getByRole('heading', { name: 'You’re about to continue to secure sign-in' }),
+      hrmoPage.getByRole('heading', { name: 'Activate your LingkodHR access' }),
     ).toBeVisible();
+    await expect(hrmoPage.getByLabel('Email')).toHaveValue(recipient);
+    await expect(hrmoPage.getByText(/^Maligayang pagdating sa /)).toBeVisible();
     await hrmoPage.screenshot({
-      path: testInfo.outputPath('invitation-transition.png'),
+      path: testInfo.outputPath('invitation-activation.png'),
       fullPage: true,
     });
-    await hrmoPage.getByRole('link', { name: 'Continue to secure sign-in' }).click();
-    await expect(hrmoPage).toHaveURL(/\/dashboard$/);
+    await activateInvitation(hrmoPage, activationUrl, { name: 'Hiraya Dela Cruz' });
     await expect(hrmoPage.getByRole('heading', { name: 'Work queue' })).toBeVisible();
     await expect(hrmoPage.getByText('HRMO Administrator', { exact: true }).first()).toBeVisible();
-    await hrmoPage.screenshot({ path: testInfo.outputPath('hrmo-handoff.png'), fullPage: true });
+    await hrmoPage.screenshot({ path: testInfo.outputPath('hrmo-activated.png'), fullPage: true });
     await expect(
       hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
         name: 'Users & Access',
