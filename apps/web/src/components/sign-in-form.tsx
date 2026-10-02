@@ -9,7 +9,14 @@ import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 
 type Step =
-  'password' | 'totp' | 'recovery' | 'recovery-used' | 'enroll-scan' | 'enroll-codes' | 'enrolled';
+  | 'password'
+  | 'totp'
+  | 'recovery'
+  | 'recovery-used'
+  | 'enroll-scan'
+  | 'enroll-codes'
+  | 'enrolled'
+  | 'reset-required';
 
 interface Enrollment {
   otpauthUri: string;
@@ -49,7 +56,14 @@ async function post(path: string, body: unknown): Promise<SignInResponse> {
   });
   const value: unknown = await response.json().catch(() => null);
   if (response.ok) return (value ?? {}) as SignInResponse;
-  const error = (value as { error?: { code?: string; message?: string } } | null)?.error;
+  const error = (value as { error?: { code?: string; message?: string; retryAt?: string } } | null)
+    ?.error;
+  if (error?.code === 'SIGN_IN_COOLDOWN' && error.retryAt) {
+    throw new SignInFailure(
+      error.code,
+      `Too many attempts for this email. You can try again after ${manilaTime(error.retryAt, { hour: 'numeric', minute: '2-digit' })}.`,
+    );
+  }
   throw new SignInFailure(
     error?.code ?? 'SIGN_IN_FAILED',
     error?.message ??
@@ -139,11 +153,19 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
     }
   }
 
-  /** A refused step; an expired sign-in starts over at email and password. */
+  /**
+   * A refused step; an expired sign-in starts over at email and password, and a disabled password
+   * ends the flow.
+   */
   function refuse(failure: SignInFailure) {
+    setBusy(false);
+    if (failure.code === 'PASSWORD_RESET_REQUIRED') {
+      setPassword('');
+      goTo('reset-required');
+      return;
+    }
     if (failure.code === 'SIGN_IN_EXPIRED') goTo('password');
     fail(failure);
-    setBusy(false);
   }
 
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
@@ -165,8 +187,7 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
       }
       router.replace('/dashboard');
     } catch (failure: unknown) {
-      fail(failureFrom(failure));
-      setBusy(false);
+      refuse(failureFrom(failure));
     }
   }
 
@@ -187,17 +208,11 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
     } catch (failure: unknown) {
       const signInFailure = failureFrom(failure);
       setCode('');
-      if (signInFailure.code === 'SIGN_IN_EXPIRED') {
-        goTo('password');
-        fail(signInFailure);
-      } else {
-        fail(
-          signInFailure.code === 'INVALID_CODE' && step === 'recovery'
-            ? new SignInFailure('INVALID_CODE', 'That Recovery Code didn’t work.')
-            : signInFailure,
-        );
-      }
-      setBusy(false);
+      refuse(
+        signInFailure.code === 'INVALID_CODE' && step === 'recovery'
+          ? new SignInFailure('INVALID_CODE', 'That Recovery Code didn’t work.')
+          : signInFailure,
+      );
     }
   }
 
@@ -243,6 +258,7 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
     'enroll-scan': 1 / 3,
     'enroll-codes': 2 / 3,
     enrolled: 1,
+    'reset-required': 0.5,
   }[step];
   const account = (
     <p className="m-0 text-small text-ink-muted">
@@ -251,7 +267,11 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
   );
 
   return (
-    <CivicSunriseLayout progress={progress} labelledBy="sign-in-title">
+    <CivicSunriseLayout
+      progress={progress}
+      gloom={step === 'reset-required'}
+      labelledBy="sign-in-title"
+    >
       <div key={step} className="lh-step-in grid gap-5">
         {step === 'password' ? (
           <>
@@ -394,6 +414,23 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
             >
               Open workspace
             </Button>
+          </>
+        ) : step === 'reset-required' ? (
+          <>
+            <div className="grid gap-2">
+              <p className="m-0 text-caption font-[650] tracking-[0.08em] text-danger uppercase">
+                Password reset required
+              </p>
+              <Title>Reset your password to sign in</Title>
+              <Lead>
+                Your password was accepted, but the code after it was wrong too many times. Your
+                password won’t work until you reset it. We emailed you about this.
+              </Lead>
+              {account}
+            </div>
+            <button type="button" className={linkClass} onClick={() => goTo('password')}>
+              Use a different account
+            </button>
           </>
         ) : step === 'recovery-used' ? (
           <>

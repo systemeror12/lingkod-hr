@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import {
+  hashEmail,
   hashPassword,
   normalizeRecoveryCode,
   permissionsRequireMfa,
@@ -2857,6 +2858,8 @@ async function seedLocalCredentials(): Promise<void> {
       create: { userId: user.id, passwordHash },
     });
     await prisma.pendingAuthentication.deleteMany({ where: { userId: user.id } });
+    const emailHash = hashEmail(user.emailNormalized, getConfig().BLIND_INDEX_KEY);
+    await prisma.signInThrottle.deleteMany({ where: { emailHash: new Uint8Array(emailHash) } });
     const assignments = await prisma.membershipRole.findMany({
       where: {
         membership: { userId: user.id, status: 'ACTIVE' },
