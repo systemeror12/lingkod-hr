@@ -447,9 +447,9 @@ export const screens: { key: ScreenKey; label: string; states: FakeState[] }[] =
 
 export const publicVariants = [
   { key: 'A', label: 'Civic sunrise' },
-  { key: 'B', label: 'Eight rays' },
-  { key: 'C', label: 'Blueprint' },
-  { key: 'D', label: 'Luneta lamps' },
+  { key: 'B', label: 'Aguinaldo Shrine' },
+  { key: 'C', label: 'Mayon from Cagsawa' },
+  { key: 'D', label: 'Calle Crisologo' },
 ];
 
 export const protectedVariants = [

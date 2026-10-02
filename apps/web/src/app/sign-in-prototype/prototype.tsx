@@ -8,10 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 import { PrototypeSwitcher } from '../../components/prototype-switcher';
 import { screens, variantsFor, type ScreenKey } from './fake-states';
 import { publicView, type Go } from './public-flows';
-import { Blueprint } from './blueprint-variant';
-import { Luneta } from './luneta-variant';
-import { Rays } from './rays-variant';
+import { Kawit } from './kawit-variant';
+import { Mayon } from './mayon-variant';
 import { Sunrise } from './sunrise-variant';
+import { Vigan } from './vigan-variant';
 import {
   AccountDialogs,
   AccountInline,
@@ -92,7 +92,7 @@ export function Prototype() {
       </ProtectedFrame>
     );
   } else {
-    const Variant = { B: Rays, C: Blueprint, D: Luneta }[variant] ?? Sunrise;
+    const Variant = { B: Kawit, C: Mayon, D: Vigan }[variant] ?? Sunrise;
     // Each scene stays mounted across steps, so progress transitions instead of jumping.
     body = (
       <Variant
