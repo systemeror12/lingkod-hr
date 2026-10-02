@@ -9,6 +9,7 @@ import { PrototypeSwitcher } from '../../components/prototype-switcher';
 import { screens, variantsFor, type ScreenKey } from './fake-states';
 import { publicView, type Go } from './public-flows';
 import { Letterhead } from './letterhead-variant';
+import { Sunrise } from './sunrise-variant';
 import { ContextStrip, SingleCard, StepRail } from './public-variants';
 import {
   AccountDialogs,
@@ -24,14 +25,19 @@ export function Prototype() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const screen = (screens.find(({ key }) => key === params.get('screen')) ?? screens[0]!).key;
+  // Invitation Activation opens by default: it is the first screen a new User ever sees.
+  const screen = (
+    screens.find(({ key }) => key === params.get('screen')) ??
+    screens.find(({ key }) => key === 'invite')!
+  ).key;
   const definition = screens.find(({ key }) => key === screen)!;
   const state =
     definition.states.find(({ key }) => key === params.get('state'))?.key ??
     definition.states[0]!.key;
   const variants = variantsFor(screen);
   const variant =
-    variants.find(({ key }) => key === params.get('variant'))?.key ?? variants[0]!.key;
+    variants.find(({ key }) => key === params.get('variant'))?.key ??
+    (variants.some(({ key }) => key === 'E') ? 'E' : 'A');
   const [busy, setBusy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -87,8 +93,18 @@ export function Prototype() {
       </ProtectedFrame>
     );
   } else {
-    const Variant = { B: StepRail, C: ContextStrip, D: Letterhead }[variant] ?? SingleCard;
-    body = <Variant key={key} view={publicView(screen, state, go)} busy={busy} submit={submit} />;
+    const Variant =
+      { B: StepRail, C: ContextStrip, D: Letterhead, E: Sunrise }[variant] ?? SingleCard;
+    // E keeps its scene mounted across steps so the sunrise transitions between them.
+    body = (
+      <Variant
+        key={variant === 'E' ? `${screen}:${variant}` : key}
+        stateKey={key}
+        view={publicView(screen, state, go)}
+        busy={busy}
+        submit={submit}
+      />
+    );
   }
 
   return (

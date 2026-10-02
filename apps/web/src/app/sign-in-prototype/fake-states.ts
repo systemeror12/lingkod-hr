@@ -450,6 +450,7 @@ export const publicVariants = [
   { key: 'B', label: 'Step rail' },
   { key: 'C', label: 'Context strip' },
   { key: 'D', label: 'Agency letterhead' },
+  { key: 'E', label: 'Civic sunrise' },
 ];
 
 export const protectedVariants = [

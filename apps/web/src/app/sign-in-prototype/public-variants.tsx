@@ -14,7 +14,13 @@ import { cn } from '../../lib/class-names';
 import { manualSecret, otpauthUri, recoveryCodes, user } from './fake-states';
 import type { FieldKey, FieldSpec, StepView } from './public-flows';
 
-export type VariantProps = { view: StepView; busy: boolean; submit(next: () => void): void };
+export type VariantProps = {
+  view: StepView;
+  busy: boolean;
+  submit(next: () => void): void;
+  /** Changes on every fake state; variants that persist across steps key their body by it. */
+  stateKey?: string;
+};
 
 export type Mode = 'code' | 'recovery';
 
