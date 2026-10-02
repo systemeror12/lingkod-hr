@@ -4,7 +4,7 @@
 // the lit windows encode progress through the flow; terminal errors overcast the sky. The scene
 // persists across steps, so changes transition instead of jumping. Throwaway; do not import.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { agency } from './fake-states';
 import { LetterheadContent } from './letterhead-variant';
 import type { VariantProps } from './public-variants';
@@ -88,7 +88,21 @@ export function LingkodMark({ className }: { className?: string }) {
   );
 }
 
-function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
+/**
+ * PROTOTYPE (#399) adds two overrides: `building` replaces the drawn building (it receives the
+ * number of lit windows), and `pedimentSeal` hangs an Agency seal on the drawn pediment.
+ */
+export function CivicScene({
+  progress,
+  gloom,
+  building,
+  pedimentSeal,
+}: {
+  progress: number;
+  gloom: boolean;
+  building?: (lit: number) => ReactNode;
+  pedimentSeal?: string | undefined;
+}) {
   const risen = useArrived();
   const sunDrop = risen ? (1 - progress) * 190 : 340;
   const lit = Math.round(progress * WINDOWS);
@@ -155,43 +169,50 @@ function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
         fill="#16305a"
       />
 
-      <g>
-        {/* Flagpole and flag above the pediment. */}
-        <rect x="318" y="372" width="3" height="70" fill={NAVY} />
-        <g transform="translate(321 374)">
-          <rect width="40" height="10" fill="#0038a8" />
-          <rect y="10" width="40" height="10" fill="#ce1126" />
-          <path d="M0 0 L17 10 L0 20 Z" fill="#fff" />
-          <circle cx="6" cy="10" r="2.4" fill="#fcd116" />
-        </g>
-        <path d="M140 500 L320 438 L500 500 Z" fill={NAVY} />
-        <path d="M188 492 L320 452 L452 492 Z" fill="#1a3566" />
-        <rect x="132" y="500" width="376" height="22" fill={NAVY} />
-        <rect x="150" y="522" width="340" height="122" fill="#12284c" />
-        {Array.from({ length: WINDOWS }, (_, index) => (
-          <rect
-            key={index}
-            x={176 + index * 62}
-            y="548"
-            width="26"
-            height="72"
-            rx="13"
-            fill={index < lit ? '#f6d27a' : '#1d3a68'}
-            style={{ transition: `fill 600ms ease ${index * 140}ms` }}
-          />
-        ))}
-        {Array.from({ length: 6 }, (_, index) => (
-          <g key={index}>
-            <rect x={151 + index * 62} y="522" width="18" height="122" fill="#d9e2ef" />
-            <rect x={148 + index * 62} y="522" width="24" height="7" fill="#e8eef7" />
-            <rect x={148 + index * 62} y="637" width="24" height="7" fill="#e8eef7" />
+      {building ? (
+        building(lit)
+      ) : (
+        <g>
+          {/* Flagpole and flag above the pediment. */}
+          <rect x="318" y="372" width="3" height="70" fill={NAVY} />
+          <g transform="translate(321 374)">
+            <rect width="40" height="10" fill="#0038a8" />
+            <rect y="10" width="40" height="10" fill="#ce1126" />
+            <path d="M0 0 L17 10 L0 20 Z" fill="#fff" />
+            <circle cx="6" cy="10" r="2.4" fill="#fcd116" />
           </g>
-        ))}
-        <rect x="128" y="644" width="384" height="18" fill="#e8eef7" />
-        <rect x="112" y="662" width="416" height="14" fill="#cfd8e6" />
-        <rect x="96" y="676" width="448" height="14" fill="#b9c5d8" />
-        <rect x="80" y="690" width="480" height="14" fill="#a3b2c9" />
-      </g>
+          <path d="M140 500 L320 438 L500 500 Z" fill={NAVY} />
+          <path d="M188 492 L320 452 L452 492 Z" fill="#1a3566" />
+          <rect x="132" y="500" width="376" height="22" fill={NAVY} />
+          <rect x="150" y="522" width="340" height="122" fill="#12284c" />
+          {Array.from({ length: WINDOWS }, (_, index) => (
+            <rect
+              key={index}
+              x={176 + index * 62}
+              y="548"
+              width="26"
+              height="72"
+              rx="13"
+              fill={index < lit ? '#f6d27a' : '#1d3a68'}
+              style={{ transition: `fill 600ms ease ${index * 140}ms` }}
+            />
+          ))}
+          {Array.from({ length: 6 }, (_, index) => (
+            <g key={index}>
+              <rect x={151 + index * 62} y="522" width="18" height="122" fill="#d9e2ef" />
+              <rect x={148 + index * 62} y="522" width="24" height="7" fill="#e8eef7" />
+              <rect x={148 + index * 62} y="637" width="24" height="7" fill="#e8eef7" />
+            </g>
+          ))}
+          <rect x="128" y="644" width="384" height="18" fill="#e8eef7" />
+          <rect x="112" y="662" width="416" height="14" fill="#cfd8e6" />
+          <rect x="96" y="676" width="448" height="14" fill="#b9c5d8" />
+          <rect x="80" y="690" width="480" height="14" fill="#a3b2c9" />
+          {pedimentSeal ? (
+            <image href={pedimentSeal} x="301" y="462" width="38" height="38" />
+          ) : null}
+        </g>
+      )}
 
       <path d="M-200 704 L840 704 L840 1000 L-200 1000 Z" fill="#0b1a33" />
       <Tree x={-70} scale={0.9} />

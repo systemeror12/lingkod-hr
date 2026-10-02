@@ -34,8 +34,37 @@ function at(minutesFromNow: number) {
   return clock.format(new Date(Date.now() + minutesFromNow * 60_000));
 }
 
+/**
+ * PROTOTYPE (#399). An Agency's uploaded seal. `src` replaces the drawn placeholder; `textOnly`
+ * drops the seal slot entirely; `fromAgency` overrides whose letterhead the flow shows.
+ */
+export type SealOverride = { src?: string; textOnly?: boolean; fromAgency?: boolean };
+
 /** Placeholder for the Agency's own seal; LingkodHR's mark when no Agency is speaking yet. */
-function Seal({ text, stamped, small }: { text: string; stamped: boolean; small?: boolean }) {
+function Seal({
+  text,
+  stamped,
+  small,
+  src,
+}: {
+  text: string;
+  stamped: boolean;
+  small?: boolean;
+  src?: string | undefined;
+}) {
+  if (src)
+    return (
+      <img
+        src={src}
+        alt=""
+        className={cn(
+          'shrink-0 rounded-full object-contain',
+          small ? 'size-12' : 'size-20',
+          stamped && 'lh-stamp ring-2 ring-offset-2',
+        )}
+        style={{ ['--tw-ring-color' as string]: SEAL_GOLD }}
+      />
+    );
   return (
     <svg
       viewBox="0 0 64 64"
@@ -80,12 +109,16 @@ const outcomeText = { danger: 'text-danger', warning: 'text-warning', success: '
  * Letterhead, step body, and step footer. `align="start"` suits a narrow column beside an image;
  * the body remounts per state, so its entrance and error nudge replay on every step.
  */
-export function LetterheadContent(props: VariantProps & { align?: 'center' | 'start' }) {
-  const { align = 'center' } = props;
+export function LetterheadContent(
+  props: VariantProps & { align?: 'center' | 'start'; seal?: SealOverride },
+) {
+  const { align = 'center', seal } = props;
   const { view, busy } = props;
   const [mode, setMode] = useFactorMode(view);
   const [ack, setAck] = useState(false);
-  const fromAgency = view.flow === 'Activate access';
+  const fromAgency = seal?.fromAgency ?? view.flow === 'Activate access';
+  const sealSrc = fromAgency ? seal?.src : undefined;
+  const showSeal = !(fromAgency && seal?.textOnly);
   const outcome = view.outcome;
   const stepIndex = view.rail.findIndex(({ status }) => status === 'current');
   const placedOnField = view.error?.field !== undefined;
@@ -119,12 +152,25 @@ export function LetterheadContent(props: VariantProps & { align?: 'center' | 'st
       <PrototypeMotion />
       {align === 'center' ? (
         <header className="grid justify-items-center gap-0.5 text-center">
-          <Seal text={fromAgency ? 'DOH' : 'L'} stamped={outcome?.tone === 'success'} />
+          {showSeal ? (
+            <Seal
+              text={fromAgency ? 'DOH' : 'L'}
+              stamped={outcome?.tone === 'success'}
+              src={sealSrc}
+            />
+          ) : null}
           <div className="mt-2 grid gap-0.5">{lines}</div>
         </header>
       ) : (
         <header className="flex items-center gap-3.5">
-          <Seal small text={fromAgency ? 'DOH' : 'L'} stamped={outcome?.tone === 'success'} />
+          {showSeal ? (
+            <Seal
+              small
+              text={fromAgency ? 'DOH' : 'L'}
+              stamped={outcome?.tone === 'success'}
+              src={sealSrc}
+            />
+          ) : null}
           <div className="grid gap-0.5">{lines}</div>
         </header>
       )}

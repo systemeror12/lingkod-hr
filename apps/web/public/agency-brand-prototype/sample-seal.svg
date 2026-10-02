@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <!-- PROTOTYPE (#399). A made-up seal standing in for an Agency upload. Not any real office's seal. -->
+  <defs>
+    <path id="top" d="M100 100 m-74 0 a74 74 0 1 1 148 0" />
+    <path id="bottom" d="M100 100 m-80 0 a80 80 0 0 0 160 0" />
+  </defs>
+  <circle cx="100" cy="100" r="98" fill="#fff" />
+  <circle cx="100" cy="100" r="96" fill="#14532d" />
+  <circle cx="100" cy="100" r="62" fill="#fff" />
+  <circle cx="100" cy="100" r="62" fill="none" stroke="#c9a227" stroke-width="3" />
+  <text font-family="Georgia, serif" font-size="13" font-weight="700" fill="#fff" letter-spacing="1.6">
+    <textPath href="#top" startOffset="50%" text-anchor="middle">CENTER FOR HEALTH DEVELOPMENT</textPath>
+  </text>
+  <text font-family="Georgia, serif" font-size="12" font-weight="700" fill="#f2d27a" letter-spacing="3">
+    <textPath href="#bottom" startOffset="50%" text-anchor="middle">SAMPLE · NCR</textPath>
+  </text>
+  <g>
+    <circle cx="100" cy="100" r="44" fill="#f7efd2" />
+  </g>
+  <g transform="translate(100 100)" fill="#c9a227">
+    <path d="M-3 -54 L0 -44 L3 -54 Z M-3 54 L0 44 L3 54 Z M-54 -3 L-44 0 L-54 3 Z M54 -3 L44 0 L54 3 Z" />
+  </g>
+  <g transform="translate(100 98)">
+    <rect x="-9" y="-28" width="18" height="56" rx="2" fill="#15803d" />
+    <rect x="-28" y="-9" width="56" height="18" rx="2" fill="#15803d" />
+    <circle r="7" fill="#fff" />
+  </g>
+</svg>
