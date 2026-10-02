@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   acceptTotpCode,
@@ -10,6 +10,7 @@ import {
   hasMfaEvidence,
   hasPermission,
   isSessionActive,
+  normalizeRecoveryCode,
   OidcClient,
   type OidcIdentity,
   openTotpSecret,
@@ -34,6 +35,7 @@ import {
   createMailDelivery,
   INVITATION_MAIL_DELIVERY,
   type MailDelivery,
+  type MailMessage,
 } from '../invitations/mail';
 import { prismaBytes, safeJson, selectInvitationRoles } from '../invitations/invitation-utils';
 
@@ -87,6 +89,31 @@ export type PasswordSignInResult =
   | { status: 'TOTP_REQUIRED'; pendingToken: string }
   | { status: 'SIGNED_IN'; session: AuthenticatedSession & { token: string } };
 
+export interface RecoveryCodeSignIn {
+  session: AuthenticatedSession & { token: string };
+  recoveryCodesRemaining: number;
+  /** The "Recovery Code used" notice, for `sendNotice` once the response is out. */
+  notice: MailMessage;
+}
+
+type SecondFactorMethod = 'totp' | 'recovery_code';
+
+/** Database context for a second-factor step: the pending sign-in it continues. */
+interface PendingScope {
+  pendingTokenHash: string;
+  capabilities: readonly ['platform-security'];
+}
+
+/** The pending sign-in a second-factor step continues, before either factor is spent. */
+interface PendingSignIn {
+  id: string;
+  userId: string;
+  requestedMembershipId: string | null;
+  verifiedMethods: string[];
+  user: { emailNormalized: string; globalStatus: string };
+  emailHash: Buffer;
+}
+
 /** What the new session records about how the User proved who they are. */
 interface SessionEvidence {
   provider: string;
@@ -136,6 +163,36 @@ function invalidCredentials(): AuthServiceError {
   return new AuthServiceError('The email or password is incorrect.', 401, 'INVALID_CREDENTIALS');
 }
 
+function signInExpired(): AuthServiceError {
+  return new AuthServiceError(
+    'The sign-in expired. Enter your email and password again.',
+    401,
+    'SIGN_IN_EXPIRED',
+  );
+}
+
+const noticeTime = new Intl.DateTimeFormat('en-PH', {
+  timeZone: 'Asia/Manila',
+  dateStyle: 'long',
+  timeStyle: 'short',
+});
+
+function recoveryCodeNotice(email: string, remaining: number, usedAt: Date): MailMessage {
+  const left =
+    remaining === 0
+      ? 'You have no Recovery Codes left.'
+      : `You have ${remaining} Recovery Code${remaining === 1 ? '' : 's'} left.`;
+  return {
+    to: email,
+    subject: 'A Recovery Code was used to sign in to LingkodHR',
+    text: [
+      `A Recovery Code was used to sign in to your LingkodHR account on ${noticeTime.format(usedAt)} (Philippine time). Your other sessions were signed out.`,
+      `${left} If you lost your authenticator, replace it or generate new Recovery Codes.`,
+      "If you didn't sign in, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
 function normalizeEmail(email: string): string {
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
@@ -154,13 +211,13 @@ export class AuthService {
     redirectUri: this.config.OIDC_REDIRECT_URI,
   });
   private readonly invitationIssuer: InvitationIssuer;
+  private readonly mailDelivery: MailDelivery;
+  private readonly logger = new Logger(AuthService.name);
   private readonly dataEncryptionKey = parseProtectedValueKey(this.config.DATA_ENCRYPTION_KEY);
 
   constructor(@Optional() @Inject(INVITATION_MAIL_DELIVERY) mailDelivery?: MailDelivery) {
-    this.invitationIssuer = new InvitationIssuer(
-      mailDelivery ?? createMailDelivery(this.config),
-      this.config.API_URL,
-    );
+    this.mailDelivery = mailDelivery ?? createMailDelivery(this.config);
+    this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.API_URL);
   }
 
   async beginLogin(
@@ -469,25 +526,16 @@ export class AuthService {
     try {
       const outcome = await withDatabaseContext(scope, async (transaction) => {
         const now = new Date();
-        const pending = await transaction.pendingAuthentication.findUnique({
-          where: { tokenHash: prismaBytes(hashSessionToken(pendingToken)) },
-        });
-        if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== 'TOTP') {
-          await this.writeSignInFailure(transaction, request, {
-            userId: null,
-            emailHash: null,
-            reason: 'SIGN_IN_EXPIRED',
-            method: 'totp',
-          });
-          return { status: 'SIGN_IN_EXPIRED' as const, user: null };
-        }
-        const userId = pending.userId;
-        await setDatabaseContext(transaction, { ...scope, userId });
-        const user = await transaction.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: { emailNormalized: true, globalStatus: true },
-        });
-        const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
+        const pending = await this.openPendingSignIn(
+          transaction,
+          scope,
+          pendingToken,
+          request,
+          'totp',
+          now,
+        );
+        if (!pending) return { status: 'SIGN_IN_EXPIRED' as const, user: null };
+        const { userId, user, emailHash } = pending;
         const failure = async (reason: 'SIGN_IN_EXPIRED' | 'INVALID_CODE') => {
           await this.writeSignInFailure(transaction, request, {
             userId,
@@ -498,7 +546,7 @@ export class AuthService {
           return { status: reason, user: null };
         };
         const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
-        if (pending.expiresAt <= now || !factor) {
+        if (!factor) {
           await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
           return failure('SIGN_IN_EXPIRED');
         }
@@ -539,22 +587,145 @@ export class AuthService {
           ),
         };
       });
-      if (outcome.status !== 'SIGNED_IN') {
-        throw new AuthServiceError(
-          outcome.status === 'INVALID_CODE'
-            ? 'The code is incorrect.'
-            : 'The sign-in expired. Enter your email and password again.',
-          401,
-          outcome.status,
-        );
+      if (outcome.status === 'SIGNED_IN') return outcome.user;
+      if (outcome.status === 'INVALID_CODE') {
+        throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
       }
-      return outcome.user;
+      throw signInExpired();
     } catch (error: unknown) {
       // A refusal after both factors verified rolls the transaction back; record it separately.
       if (error instanceof AuthServiceError && verified.userId && verified.emailHash) {
         await this.recordSignInFailure(request, verified.emailHash, verified.userId, error.code);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Second sign-in step with a Recovery Code in place of the TOTP code. Up to 10 Argon2id checks
+   * take too long to hold a transaction open, so the code is matched first; deleting its row then
+   * decides a race, and of two submissions of one code exactly one wins. The code's row, the
+   * pending sign-in, and every other session of the User go in the transaction that creates the
+   * new session.
+   */
+  async completeRecoveryCodeSignIn(
+    pendingToken: string,
+    code: string,
+    request: SignInRequest,
+  ): Promise<RecoveryCodeSignIn> {
+    const scope = {
+      pendingTokenHash: hashSessionToken(pendingToken).toString('hex'),
+      capabilities: ['platform-security'] as const,
+    };
+    const opened = await withDatabaseContext(scope, async (transaction) => {
+      const pending = await this.openPendingSignIn(
+        transaction,
+        scope,
+        pendingToken,
+        request,
+        'recovery_code',
+        new Date(),
+      );
+      if (!pending) return null;
+      const codes = await transaction.userRecoveryCode.findMany({
+        where: { userId: pending.userId },
+        select: { id: true, codeHash: true },
+      });
+      return { pending, codes };
+    });
+    if (!opened) throw signInExpired();
+    const { pending } = opened;
+    const { userId, emailHash } = pending;
+
+    const normalized = normalizeRecoveryCode(code);
+    const matches = normalized
+      ? await Promise.all(opened.codes.map(({ codeHash }) => verifyPassword(codeHash, normalized)))
+      : [];
+    const used = opened.codes.find((_, index) => matches[index]);
+    try {
+      if (!used) {
+        throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
+      }
+      return await withDatabaseContext({ ...scope, userId }, async (transaction) => {
+        const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
+        if (spent.count !== 1) {
+          throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
+        }
+        const now = new Date();
+        const consumed = await transaction.pendingAuthentication.deleteMany({
+          where: { id: pending.id, expiresAt: { gt: now } },
+        });
+        if (consumed.count !== 1) throw signInExpired();
+        // Read again: a Global User Lock may have landed while the codes were being checked.
+        const { globalStatus } = await transaction.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { globalStatus: true },
+        });
+        if (globalStatus !== 'ACTIVE') {
+          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+        }
+
+        const revoked = await transaction.userSession.updateManyAndReturn({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: now, revocationReason: 'RECOVERY_CODE_SIGN_IN' },
+          select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
+        });
+        for (const session of revoked) {
+          await this.recordSystemSessionRevocation(
+            transaction,
+            session,
+            'RECOVERY_CODE_SIGN_IN',
+            request.requestId,
+          );
+        }
+        // Each revocation is recorded in its session's Agency; return to the sign-in's context.
+        if (revoked.length > 0) await setDatabaseContext(transaction, { ...scope, userId });
+        const session = await this.openOwnedSession(
+          transaction,
+          userId,
+          pending.requestedMembershipId,
+          [...pending.verifiedMethods, 'recovery_code'],
+          request,
+          emailHash,
+        );
+        const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
+        await transaction.securityEvent.create({
+          data: {
+            agencyId: session.context.agencyId,
+            userId,
+            membershipId: session.context.membershipId,
+            eventType: 'RECOVERY_CODE_USED',
+            requestId: request.requestId,
+            ipAddress: request.ipAddress,
+            emailHash: prismaBytes(emailHash),
+            details: { remaining, revokedSessions: revoked.length },
+          },
+        });
+        return {
+          session,
+          recoveryCodesRemaining: remaining,
+          notice: recoveryCodeNotice(pending.user.emailNormalized, remaining, now),
+        };
+      });
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError) {
+        await this.recordSignInFailure(request, emailHash, userId, error.code, 'recovery_code');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Sends a credential notice. Callers run it after the transaction commits and the response is
+   * sent; a delivery failure is logged without the recipient or content and never thrown.
+   */
+  async sendNotice(message: MailMessage): Promise<void> {
+    try {
+      await this.mailDelivery.send(message);
+    } catch (error: unknown) {
+      this.logger.warn(
+        `Credential notice "${message.subject}" was not delivered (${error instanceof Error ? error.name : 'unknown error'}).`,
+      );
     }
   }
 
@@ -1375,15 +1546,68 @@ export class AuthService {
     );
   }
 
+  /**
+   * The pending sign-in a second-factor step continues, with its User in the transaction's
+   * context. A missing one, or an expired one (which is deleted), is recorded as a
+   * `SIGN_IN_EXPIRED` failure and gives null.
+   */
+  private async openPendingSignIn(
+    transaction: Prisma.TransactionClient,
+    scope: PendingScope,
+    pendingToken: string,
+    request: SignInRequest,
+    method: SecondFactorMethod,
+    now: Date,
+  ): Promise<PendingSignIn | null> {
+    const pending = await transaction.pendingAuthentication.findUnique({
+      where: { tokenHash: prismaBytes(hashSessionToken(pendingToken)) },
+    });
+    if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== 'TOTP') {
+      await this.writeSignInFailure(transaction, request, {
+        userId: null,
+        emailHash: null,
+        reason: 'SIGN_IN_EXPIRED',
+        method,
+      });
+      return null;
+    }
+    const userId = pending.userId;
+    await setDatabaseContext(transaction, { ...scope, userId });
+    const user = await transaction.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { emailNormalized: true, globalStatus: true },
+    });
+    const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
+    if (pending.expiresAt <= now) {
+      await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
+      await this.writeSignInFailure(transaction, request, {
+        userId,
+        emailHash,
+        reason: 'SIGN_IN_EXPIRED',
+        method,
+      });
+      return null;
+    }
+    return {
+      id: pending.id,
+      userId,
+      requestedMembershipId: pending.requestedMembershipId,
+      verifiedMethods: pending.verifiedMethods,
+      user,
+      emailHash,
+    };
+  }
+
   /** A failed sign-in step, recorded outside the attempt's transaction. */
   private async recordSignInFailure(
     request: SignInRequest,
     emailHash: Buffer,
     userId: string | null,
     reason: string,
+    method?: SecondFactorMethod,
   ): Promise<void> {
     await withDatabaseContext({ capabilities: ['platform-security'] }, (transaction) =>
-      this.writeSignInFailure(transaction, request, { userId, emailHash, reason }),
+      this.writeSignInFailure(transaction, request, { userId, emailHash, reason, method }),
     );
   }
 
@@ -1391,7 +1615,12 @@ export class AuthService {
   private async writeSignInFailure(
     transaction: Prisma.TransactionClient,
     request: SignInRequest,
-    failure: { userId: string | null; emailHash: Buffer | null; reason: string; method?: 'totp' },
+    failure: {
+      userId: string | null;
+      emailHash: Buffer | null;
+      reason: string;
+      method?: SecondFactorMethod | undefined;
+    },
   ): Promise<void> {
     await transaction.securityEvent.create({
       data: {

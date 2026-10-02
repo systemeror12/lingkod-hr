@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
-import { hashPassword, permissionsRequireMfa, sealTotpSecret } from '@lingkod-hr/auth';
+import {
+  hashPassword,
+  normalizeRecoveryCode,
+  permissionsRequireMfa,
+  sealTotpSecret,
+} from '@lingkod-hr/auth';
 import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 
 if (process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production') {
@@ -29,11 +34,23 @@ const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
 
 /**
  * Local-only sign-in credentials, documented in the README. Every seeded User gets the passphrase;
- * seeded MFA-Required Users also get a TOTP factor with this secret. The Playwright fixture in
- * `apps/web/e2e/sign-in.ts` repeats both values.
+ * seeded MFA-Required Users also get a TOTP factor with this secret and these Recovery Codes. The
+ * Playwright fixture in `apps/web/e2e/sign-in.ts` repeats these values.
  */
 const LOCAL_SEED_PASSPHRASE = 'local-only seed passphrase';
 const LOCAL_SEED_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+const LOCAL_SEED_RECOVERY_CODES = [
+  'seedc-ode22',
+  'seedc-ode23',
+  'seedc-ode24',
+  'seedc-ode25',
+  'seedc-ode26',
+  'seedc-ode27',
+  'seedc-ode32',
+  'seedc-ode33',
+  'seedc-ode34',
+  'seedc-ode35',
+];
 const seededUserEmails = [
   'marisol.santos@example.test',
   'personnel.preparer@example.test',
@@ -2771,12 +2788,16 @@ async function seed(): Promise<void> {
 
 /**
  * Gives each seeded User the local passphrase and, when their current roles make them an
- * MFA-Required User, a TOTP factor sealed with this run's `DATA_ENCRYPTION_KEY`. A factor that
- * already exists keeps its id and replay guard.
+ * MFA-Required User, a TOTP factor sealed with this run's `DATA_ENCRYPTION_KEY` and a full set of
+ * the local Recovery Codes. A factor that already exists keeps its id and replay guard; used
+ * Recovery Codes come back on every run.
  */
 async function seedLocalCredentials(): Promise<void> {
   const dataEncryptionKey = parseProtectedValueKey(getConfig().DATA_ENCRYPTION_KEY);
   const passwordHash = await hashPassword(LOCAL_SEED_PASSPHRASE);
+  const recoveryCodeHashes = await Promise.all(
+    LOCAL_SEED_RECOVERY_CODES.map((code) => hashPassword(normalizeRecoveryCode(code) ?? '')),
+  );
   const now = new Date();
   const users = await prisma.user.findMany({
     where: { emailNormalized: { in: seededUserEmails } },
@@ -2806,10 +2827,14 @@ async function seedLocalCredentials(): Promise<void> {
         })),
       ),
     );
+    await prisma.userRecoveryCode.deleteMany({ where: { userId: user.id } });
     if (!mfaRequired) {
       await prisma.userTotpFactor.deleteMany({ where: { userId: user.id } });
       continue;
     }
+    await prisma.userRecoveryCode.createMany({
+      data: recoveryCodeHashes.map((codeHash) => ({ userId: user.id, codeHash })),
+    });
     const existing = await prisma.userTotpFactor.findUnique({ where: { userId: user.id } });
     const factorId = existing?.id ?? randomUUID();
     const secretEnvelope = sealTotpSecret(LOCAL_SEED_TOTP_SECRET, dataEncryptionKey, {
