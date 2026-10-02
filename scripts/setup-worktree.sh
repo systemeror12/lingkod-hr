@@ -32,13 +32,23 @@ fi
 
 # Give each worktree its own E2E ports so a parallel Playwright run never
 # reuses another worktree's servers. playwright.config.ts reads these from .env.
-port_base=$((20000 + $(printf '%s' "$slug" | cksum | cut -d' ' -f1) % 1000 * 10))
+# Start from a slot derived from the slug and skip slots other worktrees claim.
+claimed=$(git worktree list --porcelain | sed -n 's/^worktree //p' | grep -vxF "$worktree" |
+  while read -r other; do sed -n 's/^PLAYWRIGHT_APP_PORT=//p' "$other/.env" 2>/dev/null || true; done)
+slot=$(($(printf '%s' "$slug" | cksum | cut -d' ' -f1) % 1000))
+for _ in {1..1000}; do
+  app_port=$((20000 + slot * 10))
+  grep -qxF "$app_port" <<<"$claimed" || break
+  slot=$(((slot + 1) % 1000))
+done
+api_port=$((app_port + 1))
+oidc_port=$((app_port + 2))
 set_env() {
   if grep -q "^$1=" .env; then sed -i -E "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >>.env; fi
 }
-set_env PLAYWRIGHT_APP_PORT "$port_base"
-set_env PLAYWRIGHT_API_PORT "$((port_base + 1))"
-set_env PLAYWRIGHT_OIDC_PORT "$((port_base + 2))"
+set_env PLAYWRIGHT_APP_PORT "$app_port"
+set_env PLAYWRIGHT_API_PORT "$api_port"
+set_env PLAYWRIGHT_OIDC_PORT "$oidc_port"
 
 # Use the main checkout's compose file so containers keep its bind mounts;
 # --no-recreate keeps a config drift here from restarting shared services.
@@ -54,4 +64,4 @@ run pnpm install --frozen-lockfile
 run pnpm db:migrate
 run pnpm --filter @lingkod-hr/web exec playwright install chromium
 
-echo "Worktree ready: database ${database}, E2E ports web ${port_base}, API $((port_base + 1)), OIDC $((port_base + 2))"
+echo "Worktree ready: database ${database}, E2E ports web ${app_port}, API ${api_port}, OIDC ${oidc_port}"

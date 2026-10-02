@@ -166,12 +166,10 @@ checkout.
 Only one dev stack can own ports `3000`–`3002` and `4100` at a time. E2E runs
 do not share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT`,
 `PLAYWRIGHT_API_PORT`, and `PLAYWRIGHT_OIDC_PORT` values to `.env`, and
-`playwright.config.ts` reads them. They are three consecutive ports from a base
-between `20000` and `29990` derived from the worktree name. The script prints
-them, and `grep PLAYWRIGHT .env` shows them; rerun it in older worktrees to add
-them. Two worktrees can run Playwright at
-the same time, but Mailpit is still shared, and each run's global setup clears
-its messages. Drop a removed worktree's database with:
+`playwright.config.ts` reads them. The script picks ports no other worktree has
+claimed, prints them, and `grep PLAYWRIGHT .env` shows them; rerun it in older
+worktrees to add them. Two worktrees can run Playwright at the same time, but
+Mailpit is still shared, and each run's global setup clears its messages. Drop a removed worktree's database with:
 
 ```bash
 docker compose -f infrastructure/compose.yaml exec -T postgres \

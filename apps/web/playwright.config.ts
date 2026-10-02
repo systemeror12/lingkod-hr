@@ -6,9 +6,9 @@ import { defineConfig, devices } from '@playwright/test';
 // Linked worktrees store their own E2E ports in .env (see scripts/setup-worktree.sh).
 // Only those keys are read here; the main checkout and CI keep the defaults.
 const envFile = resolve(__dirname, '../../.env');
-const dotenv = existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) : {};
+const envFileValues = existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) : {};
 for (const key of ['PLAYWRIGHT_APP_PORT', 'PLAYWRIGHT_API_PORT', 'PLAYWRIGHT_OIDC_PORT']) {
-  const value = dotenv[key];
+  const value = envFileValues[key];
   if (value && !process.env[key]) process.env[key] = value;
 }
 
