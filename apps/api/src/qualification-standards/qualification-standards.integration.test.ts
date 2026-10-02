@@ -99,8 +99,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'qualification-standard-integration',
-        externalSubject: `qualification-standard-${suffix}`,
         emailNormalized: `qualification-standard-${suffix}@example.test`,
         displayName: 'Qualification Standard Integration User',
         globalStatus: 'ACTIVE',

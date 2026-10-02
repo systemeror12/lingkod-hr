@@ -55,8 +55,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'application-rls-e2e',
-        externalSubject: `application-${suffix}`,
         emailNormalized: `application-${suffix}@example.test`,
         displayName: 'Application RLS User',
         globalStatus: 'ACTIVE',

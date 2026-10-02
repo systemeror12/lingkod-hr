@@ -147,8 +147,6 @@ async function createAgency(admin: PrismaClient, suffix: string) {
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'assignment-flow-integration',
-      externalSubject: `assignment-flow-${suffix}`,
       emailNormalized: `assignment-flow-${suffix}@example.test`,
       displayName: 'Assignment Flow Integration User',
       globalStatus: 'ACTIVE',

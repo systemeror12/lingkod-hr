@@ -171,8 +171,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'leave-application-integration',
-        externalSubject: `leave-application-${suffix}`,
         emailNormalized: `leave-application-${suffix}@example.test`,
         displayName: 'Leave Application Employee',
         globalStatus: 'ACTIVE',
@@ -180,8 +178,6 @@ it.skipIf(!enabled)(
     });
     const recorderUser = await admin.user.create({
       data: {
-        identityProvider: 'leave-application-integration',
-        externalSubject: `leave-recorder-${suffix}`,
         emailNormalized: `leave-recorder-${suffix}@example.test`,
         displayName: 'Leave Application Recorder',
         globalStatus: 'ACTIVE',
@@ -189,8 +185,6 @@ it.skipIf(!enabled)(
     });
     const foreignUser = await admin.user.create({
       data: {
-        identityProvider: 'leave-application-integration',
-        externalSubject: `foreign-leave-application-${suffix}`,
         emailNormalized: `foreign-leave-application-${suffix}@example.test`,
         displayName: 'Foreign Leave Application Custodian',
         globalStatus: 'ACTIVE',
@@ -198,8 +192,6 @@ it.skipIf(!enabled)(
     });
     const supervisorUser = await admin.user.create({
       data: {
-        identityProvider: 'leave-application-integration',
-        externalSubject: `leave-supervisor-${suffix}`,
         emailNormalized: `leave-supervisor-${suffix}@example.test`,
         displayName: 'Leave Application Supervisor',
         globalStatus: 'ACTIVE',
@@ -207,8 +199,6 @@ it.skipIf(!enabled)(
     });
     const approverUser = await admin.user.create({
       data: {
-        identityProvider: 'leave-application-integration',
-        externalSubject: `leave-approver-${suffix}`,
         emailNormalized: `leave-approver-${suffix}@example.test`,
         displayName: 'Leave Application Approver',
         globalStatus: 'ACTIVE',

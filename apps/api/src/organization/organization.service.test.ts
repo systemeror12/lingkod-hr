@@ -159,8 +159,6 @@ it.skipIf(!enabled)('creates an Agency-scoped Draft and its audit event atomical
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'organization-e2e',
-      externalSubject: `organization-e2e-${suffix}`,
       emailNormalized: `organization-e2e-${suffix}@example.test`,
       displayName: 'Organization E2E User',
       globalStatus: 'ACTIVE',
@@ -179,8 +177,6 @@ it.skipIf(!enabled)('creates an Agency-scoped Draft and its audit event atomical
   });
   const secondUser = await admin.user.create({
     data: {
-      identityProvider: 'organization-e2e',
-      externalSubject: `organization-e2e-second-${suffix}`,
       emailNormalized: `organization-e2e-second-${suffix}@example.test`,
       displayName: 'Second Organization E2E User',
       globalStatus: 'ACTIVE',
@@ -287,8 +283,6 @@ it.skipIf(!enabled)('rolls back the Draft when the audit write fails', async () 
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'organization-e2e',
-      externalSubject: `organization-e2e-${suffix}`,
       emailNormalized: `organization-e2e-${suffix}@example.test`,
       displayName: 'Organization Rollback User',
       globalStatus: 'ACTIVE',
@@ -338,8 +332,6 @@ it.skipIf(!enabled)('rolls back activation when its audit write fails', async ()
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'organization-e2e',
-      externalSubject: `organization-e2e-${suffix}`,
       emailNormalized: `organization-e2e-${suffix}@example.test`,
       displayName: 'Organization Activation Rollback User',
       globalStatus: 'ACTIVE',
@@ -396,8 +388,6 @@ it.skipIf(!enabled)('activates a same-Agency hierarchy and returns its dated sha
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'organization-e2e',
-      externalSubject: `organization-e2e-${suffix}`,
       emailNormalized: `organization-e2e-${suffix}@example.test`,
       displayName: 'Organization Hierarchy User',
       globalStatus: 'ACTIVE',
@@ -528,8 +518,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'organization-e2e',
-        externalSubject: `organization-e2e-${suffix}`,
         emailNormalized: `organization-e2e-${suffix}@example.test`,
         displayName: 'Organization Cycle User',
         globalStatus: 'ACTIVE',
@@ -688,8 +676,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'organization-e2e',
-        externalSubject: `organization-e2e-${suffix}`,
         emailNormalized: `organization-e2e-${suffix}@example.test`,
         displayName: 'Organization Successor User',
         globalStatus: 'ACTIVE',
@@ -876,8 +862,6 @@ it.skipIf(!enabled)('blocks unresolved assignments and preserves lifecycle perio
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'organization-e2e',
-      externalSubject: `organization-e2e-${suffix}`,
       emailNormalized: `organization-e2e-${suffix}@example.test`,
       displayName: 'Organization Lifecycle User',
       globalStatus: 'ACTIVE',

@@ -60,8 +60,6 @@ async function createAdminClient(): Promise<PrismaClient> {
 async function createActor(admin: PrismaClient, agencyId: string, suffix: string, name: string) {
   const user = await admin.user.create({
     data: {
-      identityProvider: 'personnel-action-integration',
-      externalSubject: `${name}-${suffix}`,
       emailNormalized: `${name}-${suffix}@example.test`,
       displayName: name,
       globalStatus: 'ACTIVE',
@@ -1009,8 +1007,6 @@ it.skipIf(!enabled)(
         });
         const employeeUser = await admin.user.create({
           data: {
-            identityProvider: 'personnel-action-integration',
-            externalSubject: `separating-${index}-${suffix}`,
             emailNormalized: `separating-${index}-${suffix}@example.test`,
             displayName: `Separating Employee ${index}`,
             globalStatus: 'ACTIVE',

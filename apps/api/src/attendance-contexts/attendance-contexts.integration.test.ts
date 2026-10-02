@@ -113,8 +113,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'attendance-context-integration',
-        externalSubject: `attendance-context-${suffix}`,
         emailNormalized: `attendance-context-${suffix}@example.test`,
         displayName: 'Attendance Context Custodian',
         globalStatus: 'ACTIVE',
@@ -122,8 +120,6 @@ it.skipIf(!enabled)(
     });
     const foreignUser = await admin.user.create({
       data: {
-        identityProvider: 'attendance-context-integration',
-        externalSubject: `foreign-attendance-context-${suffix}`,
         emailNormalized: `foreign-attendance-context-${suffix}@example.test`,
         displayName: 'Foreign Attendance Context Custodian',
         globalStatus: 'ACTIVE',

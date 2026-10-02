@@ -86,8 +86,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'staffing-authority-integration',
-        externalSubject: `staffing-authority-service-${suffix}`,
         emailNormalized: `staffing-authority-service-${suffix}@example.test`,
         displayName: 'Staffing Authority Integration User',
         globalStatus: 'ACTIVE',

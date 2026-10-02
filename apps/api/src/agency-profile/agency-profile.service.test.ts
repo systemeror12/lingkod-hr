@@ -144,8 +144,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'agency-profile-e2e',
-        externalSubject: `profile-user-${suffix}`,
         emailNormalized: `profile-user-${suffix}@example.test`,
         displayName: 'Agency Profile User',
         globalStatus: 'ACTIVE',
@@ -262,8 +260,6 @@ it.skipIf(!enabled)('voids an active version and creates a reasoned replacement'
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'agency-profile-e2e',
-      externalSubject: `correction-user-${suffix}`,
       emailNormalized: `correction-user-${suffix}@example.test`,
       displayName: 'Correction User',
       globalStatus: 'ACTIVE',
@@ -320,8 +316,6 @@ it.skipIf(!enabled)('voids and replaces a superseded historical version', async 
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'agency-profile-e2e',
-      externalSubject: `historical-user-${suffix}`,
       emailNormalized: `historical-user-${suffix}@example.test`,
       displayName: 'Historical Correction User',
       globalStatus: 'ACTIVE',

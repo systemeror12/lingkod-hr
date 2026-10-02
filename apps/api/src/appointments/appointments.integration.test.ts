@@ -154,8 +154,6 @@ async function setupFixture(
   async function createMember(name: string): Promise<{ userId: string; membershipId: string }> {
     const user = await admin.user.create({
       data: {
-        identityProvider: `appointment-${label}`,
-        externalSubject: `${label}-${name}-${suffix}`,
         emailNormalized: `${label}-${name}-${suffix}@example.test`,
         displayName: name,
         globalStatus: 'ACTIVE',
