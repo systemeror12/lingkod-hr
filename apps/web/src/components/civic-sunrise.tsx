@@ -50,7 +50,7 @@ function Tree({ x, scale = 1 }: { x: number; scale?: number }) {
   );
 }
 
-function CivicScene({ progress }: { progress: number }) {
+function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
   const risen = useArrived();
   const sunDrop = risen ? (1 - progress) * 190 : 340;
   const lit = Math.round(progress * WINDOWS);
@@ -92,7 +92,8 @@ function CivicScene({ progress }: { progress: number }) {
       <g
         style={{
           transform: `translateY(${sunDrop}px)`,
-          transition: `transform 1400ms ${EASE}`,
+          opacity: gloom ? 0.45 : 1,
+          transition: `transform 1400ms ${EASE}, opacity 900ms ease`,
         }}
       >
         <circle cx="320" cy="330" r="230" fill="url(#civic-glow)" />
@@ -157,6 +158,13 @@ function CivicScene({ progress }: { progress: number }) {
       <Tree x={40} scale={1.15} />
       <Tree x={600} scale={1.05} />
       <Tree x={710} scale={0.85} />
+      <rect
+        x="-200"
+        width="1040"
+        height="1000"
+        fill="#3b4558"
+        style={{ opacity: gloom ? 0.5 : 0, transition: 'opacity 900ms ease' }}
+      />
     </svg>
   );
 }
@@ -199,14 +207,17 @@ function LingkodLetterhead() {
 
 /**
  * Split screen with the scene beside a letterhead column. `progress` runs from 0 at the first
- * step to 1 once the User is in. `labelledBy` must match the id of the heading in `children`.
+ * step to 1 once the User is in; `gloom` overcasts it when the flow ends in a refusal.
+ * `labelledBy` must match the id of the heading in `children`.
  */
 export function CivicSunriseLayout({
   progress,
+  gloom = false,
   labelledBy,
   children,
 }: {
   progress: number;
+  gloom?: boolean;
   labelledBy: string;
   children: ReactNode;
 }) {
@@ -214,7 +225,7 @@ export function CivicSunriseLayout({
     <main className="grid min-h-dvh bg-surface text-ink min-[960px]:grid-cols-[minmax(0,1.1fr)_minmax(460px,1fr)]">
       <div className="grid grid-rows-[minmax(0,1fr)_auto] bg-[#0b1a33] min-[960px]:sticky min-[960px]:top-0 min-[960px]:h-dvh">
         <div className="relative h-60 overflow-hidden bg-nav min-[960px]:h-auto">
-          <CivicScene progress={progress} />
+          <CivicScene progress={progress} gloom={gloom} />
           <div className="absolute inset-x-0 top-0 flex items-center gap-2.5 p-6 text-nav-ink min-[960px]:p-10">
             <span className="grid size-8 place-items-center rounded-control bg-white/15 text-small font-bold">
               L

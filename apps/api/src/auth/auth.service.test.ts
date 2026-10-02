@@ -28,6 +28,7 @@ vi.mock('@lingkod-hr/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@lingkod-hr/auth')>();
   return {
     ...actual,
+    verifyPassword: vi.fn(actual.verifyPassword),
     verifyPasswordAgainstDummy: vi.fn(actual.verifyPasswordAgainstDummy),
   };
 });
@@ -83,7 +84,7 @@ async function cleanup(
 it('records an OIDC callback failure once with its reason and client IP', async () => {
   const recordLoginFailure = vi.fn().mockResolvedValue(undefined);
   const authService = {
-    assertLoginAllowed: vi.fn().mockResolvedValue(undefined),
+    assertIpAllowed: vi.fn().mockResolvedValue(undefined),
     completeLogin: vi
       .fn()
       .mockRejectedValue(new AuthServiceError('Membership denied.', 403, 'MEMBERSHIP_DENIED')),
@@ -787,6 +788,7 @@ async function ownedLoginFixture(
     user: { id: user.id, email, password, totpSecret, recoveryCodes },
     cleanup: async () => {
       const emailHash = databaseBytes(hashEmail(email, getConfig().BLIND_INDEX_KEY));
+      await admin.signInThrottle.deleteMany({ where: { emailHash } });
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.securityEvent.deleteMany({
@@ -1636,7 +1638,7 @@ it('sends the enrollment notice only after the response', async () => {
   const notice = { to: 'a@example.test', subject: 'Notice', text: 'Notice' };
   const sendNotice = vi.fn().mockResolvedValue(undefined);
   const authService = {
-    assertLoginAllowed: vi.fn().mockResolvedValue(undefined),
+    assertIpAllowed: vi.fn().mockResolvedValue(undefined),
     completeTotpEnrollment: vi.fn().mockResolvedValue({ token: 'session-token', notice }),
     sendNotice,
   } as unknown as AuthService;
@@ -1652,3 +1654,422 @@ it('sends the enrollment notice only after the response', async () => {
   response.finish();
   expect(sendNotice).toHaveBeenCalledWith(notice);
 });
+
+/** The Sign-in Cool-down row and its events for `email`, removed when the test ends. */
+function throttleOf(admin: PrismaClient, email: string) {
+  const emailHash = databaseBytes(hashEmail(email, getConfig().BLIND_INDEX_KEY));
+  return {
+    row: () => admin.signInThrottle.findUnique({ where: { emailHash } }),
+    /** Ends the running cool-down, as if its time had passed. */
+    expire: () =>
+      admin.signInThrottle.updateMany({
+        where: { emailHash },
+        data: { cooldownUntil: new Date(Date.now() - 1000) },
+      }),
+    cooldownsStarted: () =>
+      admin.securityEvent.findMany({
+        where: { emailHash, eventType: 'SIGN_IN_COOLDOWN_STARTED' },
+        orderBy: { occurredAt: 'asc' },
+        select: { userId: true, details: true },
+      }),
+    remove: async () => {
+      await admin.signInThrottle.deleteMany({ where: { emailHash } });
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.securityEvent.deleteMany({ where: { emailHash } });
+      });
+    },
+  };
+}
+
+async function wrongPasswords(service: AuthService, email: string, count: number) {
+  for (let index = 0; index < count; index += 1) {
+    await expect(
+      service.signInWithPassword(email, 'a wrong passphrase here', null, signInRequest('wrong')),
+    ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+  }
+}
+
+it.skipIf(!enabled)(
+  'cools down a known and an unknown email alike after 5 failures, refusing with 429 and no Argon2id',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false, mfaRequired: false });
+    const unknownEmail = `nobody-${randomUUID()}@example.test`;
+    const known = throttleOf(fixture.admin, fixture.user.email);
+    const unknown = throttleOf(fixture.admin, unknownEmail);
+    try {
+      const service = new AuthService();
+      for (const [email, throttle, userId] of [
+        [fixture.user.email, known, fixture.user.id],
+        [unknownEmail, unknown, null],
+      ] as const) {
+        await wrongPasswords(service, email, 4);
+        await expect(throttle.cooldownsStarted()).resolves.toEqual([]);
+        await wrongPasswords(service, email, 1);
+        await expect(throttle.cooldownsStarted()).resolves.toEqual([
+          { userId: null, details: { level: 1, minutes: 5 } },
+        ]);
+
+        vi.mocked(verifyPassword).mockClear();
+        vi.mocked(verifyPasswordAgainstDummy).mockClear();
+        const refusedRequest = signInRequest('cooldown');
+        const refused = await service
+          .signInWithPassword(email, fixture.user.password, null, refusedRequest)
+          .catch((error: unknown) => error);
+        expect(refused).toMatchObject({
+          code: 'SIGN_IN_COOLDOWN',
+          statusCode: 429,
+          message: 'Too many attempts for this email. Try again in 5 minutes.',
+        });
+        const retryAt = (refused as AuthServiceError).retryAt?.getTime() ?? 0;
+        expect(retryAt - Date.now()).toBeGreaterThan(4 * 60 * 1000);
+        expect(retryAt - Date.now()).toBeLessThanOrEqual(5 * 60 * 1000);
+        expect(verifyPassword).not.toHaveBeenCalled();
+        expect(verifyPasswordAgainstDummy).not.toHaveBeenCalled();
+        await expect(
+          fixture.admin.securityEvent.findMany({
+            where: { requestId: refusedRequest.requestId },
+            select: { eventType: true, userId: true, details: true },
+          }),
+        ).resolves.toEqual([
+          { eventType: 'LOGIN_FAILURE', userId, details: { reason: 'COOLDOWN_ACTIVE' } },
+        ]);
+        // A refused attempt doesn't add to the email's count.
+        await expect(throttle.row()).resolves.toMatchObject({ failureCount: 0, cooldownLevel: 1 });
+      }
+    } finally {
+      await unknown.remove();
+      await known.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'doubles the next cool-down, and resets the ladder after a full sign-in or 24 quiet hours',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false, mfaRequired: false });
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      await wrongPasswords(service, user.email, 5);
+      await throttle.expire();
+      await wrongPasswords(service, user.email, 5);
+      await expect(throttle.cooldownsStarted()).resolves.toEqual([
+        { userId: null, details: { level: 1, minutes: 5 } },
+        { userId: null, details: { level: 2, minutes: 10 } },
+      ]);
+      await expect(
+        service.signInWithPassword(user.email, user.password, null, signInRequest('during')),
+      ).rejects.toMatchObject({
+        code: 'SIGN_IN_COOLDOWN',
+        message: 'Too many attempts for this email. Try again in 10 minutes.',
+      });
+
+      // 24 hours without a failure count as reset: the next cool-down is 5 minutes again.
+      await admin.signInThrottle.updateMany({
+        where: { emailHash: databaseBytes(hashEmail(user.email, getConfig().BLIND_INDEX_KEY)) },
+        data: {
+          cooldownUntil: new Date(Date.now() - 24 * 60 * 60 * 1000),
+          lastFailureAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+        },
+      });
+      await wrongPasswords(service, user.email, 5);
+      expect((await throttle.cooldownsStarted()).at(-1)).toEqual({
+        userId: null,
+        details: { level: 1, minutes: 5 },
+      });
+
+      // A full sign-in resets the ladder.
+      await throttle.expire();
+      await wrongPasswords(service, user.email, 2);
+      const signedIn = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('reset'),
+      );
+      expect(signedIn.status).toBe('SIGNED_IN');
+      await expect(throttle.row()).resolves.toBeNull();
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'counts concurrent failures exactly once each and starts exactly one cool-down',
+  async () => {
+    const admin = await createAdminClient();
+    const email = `nobody-${randomUUID()}@example.test`;
+    const throttle = throttleOf(admin, email);
+    try {
+      const service = new AuthService();
+      const results = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          service.signInWithPassword(email, 'a wrong passphrase', null, signInRequest('race')),
+        ),
+      );
+      expect(results.every(({ status }) => status === 'rejected')).toBe(true);
+      await expect(throttle.row()).resolves.toMatchObject({ failureCount: 4, cooldownLevel: 0 });
+
+      await Promise.allSettled(
+        Array.from({ length: 6 }, () =>
+          service.signInWithPassword(email, 'a wrong passphrase', null, signInRequest('race')),
+        ),
+      );
+      await expect(throttle.cooldownsStarted()).resolves.toEqual([
+        { userId: null, details: { level: 1, minutes: 5 } },
+      ]);
+      await expect(throttle.row()).resolves.toMatchObject({ failureCount: 0, cooldownLevel: 1 });
+    } finally {
+      await throttle.remove();
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses an IP with 100 sign-in failures in the last 15 minutes, counting every email',
+  async () => {
+    const admin = await createAdminClient();
+    const ipAddress = `203.0.113.${1 + ((randomBytes(1)[0] ?? 0) % 254)}`;
+    const prefix = `owned-login-ip-${randomUUID()}`;
+    const fromIp = (label: string) => ({ requestId: `${prefix}-${label}`, ipAddress });
+    const email = `nobody-${randomUUID()}@example.test`;
+    const throttle = throttleOf(admin, email);
+    try {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.securityEvent.deleteMany({ where: { ipAddress } });
+      });
+      const failures = (count: number, minutesAgo: number) =>
+        admin.securityEvent.createMany({
+          data: Array.from({ length: count }, (_, index) => ({
+            eventType: 'LOGIN_FAILURE',
+            requestId: `${prefix}-seed-${minutesAgo}-${index}`,
+            ipAddress,
+            occurredAt: new Date(Date.now() - minutesAgo * 60 * 1000),
+            details: { reason: 'INVALID_CREDENTIALS' },
+          })),
+        });
+      await failures(98, 5);
+      await failures(50, 16);
+      const service = new AuthService();
+      // The 99th failure in the window, from an unknown email, still counts.
+      await expect(
+        service.signInWithPassword(email, 'a wrong passphrase', null, fromIp('99')),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+      await expect(service.assertIpAllowed(fromIp('100'))).resolves.toBeUndefined();
+      await failures(1, 1);
+
+      vi.mocked(verifyPasswordAgainstDummy).mockClear();
+      await expect(
+        service.signInWithPassword(email, 'a wrong passphrase', null, fromIp('refused')),
+      ).rejects.toMatchObject({ code: 'IP_RATE_LIMITED', statusCode: 429 });
+      expect(verifyPasswordAgainstDummy).not.toHaveBeenCalled();
+      await expect(service.assertIpAllowed(fromIp('second-step'))).rejects.toMatchObject({
+        code: 'IP_RATE_LIMITED',
+        statusCode: 429,
+      });
+      const refusals = await admin.securityEvent.findMany({
+        where: { requestId: { in: [`${prefix}-refused`, `${prefix}-second-step`] } },
+        orderBy: { occurredAt: 'asc' },
+        select: { eventType: true, details: true, emailHash: true },
+      });
+      expect(refusals.map(({ eventType, details }) => ({ eventType, details }))).toEqual([
+        { eventType: 'LOGIN_FAILURE', details: { reason: 'IP_RATE_LIMITED' } },
+        { eventType: 'LOGIN_FAILURE', details: { reason: 'IP_RATE_LIMITED' } },
+      ]);
+      expect(Buffer.from(refusals[0]?.emailHash ?? [])).toEqual(
+        hashEmail(email, getConfig().BLIND_INDEX_KEY),
+      );
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.securityEvent.deleteMany({ where: { ipAddress } });
+      });
+      await throttle.remove();
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'disables the password after 10 wrong TOTP or Recovery Codes and tells the User to reset it',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 1 });
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      const pendingToken = await passwordVerified(service, fixture, 'ceiling');
+      const code = totpCode(user.totpSecret ?? '');
+      const wrongTotp = code === '000000' ? '000001' : '000000';
+      const wrong = (index: number) =>
+        index % 2 === 0
+          ? service.completeTotpSignIn(pendingToken, wrongTotp, signInRequest(`ceiling-${index}`))
+          : service.completeRecoveryCodeSignIn(
+              pendingToken,
+              'aaaaa-bbbbb',
+              signInRequest(`ceiling-${index}`),
+            );
+
+      for (let index = 0; index < 5; index += 1) {
+        await expect(wrong(index)).rejects.toMatchObject({ code: 'INVALID_CODE' });
+      }
+      // Wrong codes feed the email's cool-down too, which refuses even a right code.
+      await expect(
+        service.completeTotpSignIn(pendingToken, code, signInRequest('ceiling-cooldown')),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_COOLDOWN', statusCode: 429 });
+      await throttle.expire();
+      for (let index = 5; index < 9; index += 1) {
+        await expect(wrong(index)).rejects.toMatchObject({ code: 'INVALID_CODE' });
+      }
+      await expect(
+        admin.userPassword.findUniqueOrThrow({ where: { userId: user.id } }),
+      ).resolves.toMatchObject({ secondFactorFailures: 9, resetRequiredAt: null });
+
+      const ceiling = await wrong(9).catch((error: unknown) => error);
+      expect(ceiling).toMatchObject({ code: 'PASSWORD_RESET_REQUIRED', statusCode: 403 });
+      const notice = (ceiling as AuthServiceError).notice;
+      expect(notice).toMatchObject({ to: user.email });
+      expect(notice?.text).not.toMatch(/https?:|\d{6}/);
+      const stored = await admin.userPassword.findUniqueOrThrow({ where: { userId: user.id } });
+      expect(stored.secondFactorFailures).toBe(10);
+      expect(stored.resetRequiredAt).not.toBeNull();
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+      await expect(
+        admin.securityEvent.findMany({
+          where: { userId: user.id, eventType: 'PASSWORD_RESET_REQUIRED' },
+          select: { agencyId: true, details: true },
+        }),
+      ).resolves.toEqual([{ agencyId: null, details: { secondFactorFailures: 10 } }]);
+      await expect(admin.user.findUniqueOrThrow({ where: { id: user.id } })).resolves.toMatchObject(
+        { globalStatus: 'ACTIVE' },
+      );
+
+      // The right password is refused from now on; a wrong one looks like any other.
+      await throttle.expire();
+      await expect(
+        service.signInWithPassword(user.email, user.password, null, signInRequest('after')),
+      ).rejects.toMatchObject({ code: 'PASSWORD_RESET_REQUIRED', statusCode: 403 });
+      await expect(
+        service.signInWithPassword(user.email, 'a wrong passphrase', null, signInRequest('x')),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'resets the second-factor count after a full sign-in and reaches the ceiling once under races',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      await admin.userPassword.update({
+        where: { userId: user.id },
+        data: { secondFactorFailures: 9 },
+      });
+      const pendingToken = await passwordVerified(service, fixture, 'count-reset');
+      await service.completeTotpSignIn(
+        pendingToken,
+        totpCode(user.totpSecret ?? ''),
+        signInRequest('count-reset-code'),
+      );
+      await expect(
+        admin.userPassword.findUniqueOrThrow({ where: { userId: user.id } }),
+      ).resolves.toMatchObject({ secondFactorFailures: 0 });
+
+      await admin.userPassword.update({
+        where: { userId: user.id },
+        data: { secondFactorFailures: 8 },
+      });
+      const raced = await passwordVerified(service, fixture, 'ceiling-race');
+      const results = await Promise.allSettled(
+        Array.from({ length: 4 }, (_, index) =>
+          service.completeRecoveryCodeSignIn(raced, `aaaaa-bbbb${index}`, signInRequest('race')),
+        ),
+      );
+      expect(results.every(({ status }) => status === 'rejected')).toBe(true);
+      await expect(
+        admin.securityEvent.count({
+          where: { userId: user.id, eventType: 'PASSWORD_RESET_REQUIRED' },
+        }),
+      ).resolves.toBe(1);
+      const codes = results.map((result) =>
+        result.status === 'rejected' ? (result.reason as AuthServiceError).code : null,
+      );
+      expect(codes.filter((code) => code === 'PASSWORD_RESET_REQUIRED')).toHaveLength(1);
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'checks a burst of TOTP codes one at a time, so no more than 5 are tried before the cool-down',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      const pendingToken = await passwordVerified(service, fixture, 'burst');
+      const wrongTotp = totpCode(user.totpSecret ?? '') === '000000' ? '000001' : '000000';
+      const results = await Promise.allSettled(
+        Array.from({ length: 12 }, (_, index) =>
+          service.completeTotpSignIn(pendingToken, wrongTotp, signInRequest(`burst-${index}`)),
+        ),
+      );
+      const codes = results.map((result) =>
+        result.status === 'rejected' ? (result.reason as AuthServiceError).code : null,
+      );
+      expect(codes.filter((code) => code === 'INVALID_CODE')).toHaveLength(5);
+      expect(codes.filter((code) => code === 'SIGN_IN_COOLDOWN')).toHaveLength(7);
+      await expect(
+        admin.userPassword.findUniqueOrThrow({ where: { userId: user.id } }),
+      ).resolves.toMatchObject({ secondFactorFailures: 5 });
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses a right code on a pending sign-in whose password was disabled after it began',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const pendingToken = await passwordVerified(service, fixture, 'stale');
+      await admin.userPassword.update({
+        where: { userId: user.id },
+        data: { resetRequiredAt: new Date() },
+      });
+      await expect(
+        service.completeTotpSignIn(
+          pendingToken,
+          totpCode(user.totpSecret ?? ''),
+          signInRequest('stale-code'),
+        ),
+      ).rejects.toMatchObject({ code: 'PASSWORD_RESET_REQUIRED', statusCode: 403 });
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);

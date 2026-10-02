@@ -3,6 +3,8 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   acceptTotpCode,
+  activeCooldown,
+  addSignInFailure,
   createSessionToken,
   hashEmail,
   hashPassword,
@@ -49,6 +51,11 @@ import {
 const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
 const OWNED_LOGIN_PROVIDER = 'lingkodhr';
+/** Sign-in failures from one IP address allowed in the window, every email and step counted. */
+const IP_FAILURE_LIMIT = 100;
+const IP_WINDOW_MS = 15 * 60 * 1000;
+/** Consecutive wrong TOTP or Recovery Codes, since the last full sign-in, that disable the password. */
+const SECOND_FACTOR_CEILING = 10;
 
 /** The next step a pending sign-in waits for. */
 type PendingSignInStage = 'TOTP' | typeof ENROLL_SCAN_STAGE | typeof ENROLL_CODES_STAGE;
@@ -93,6 +100,14 @@ export interface LoginResult extends AuthenticatedSession {
 export interface SignInRequest {
   requestId: string;
   ipAddress: string | null;
+}
+
+/** A wrong password or code; `secondFactor` marks a wrong code on the User's pending sign-in. */
+interface GuessFailure {
+  emailHash: Buffer;
+  userId: string | null;
+  reason: string;
+  secondFactor?: { method: SecondFactorMethod; email: string };
 }
 
 /** What the User needs to add a pending TOTP secret to an authenticator app. */
@@ -170,18 +185,45 @@ type SignInTransactionResult =
   | { status: 'authenticated'; session: AuthenticatedSession & { token: string } };
 
 export class AuthServiceError extends Error {
+  /** When a refused attempt may be tried again. */
+  readonly retryAt: Date | undefined;
+  /** A notice for `sendNotice` once the refusal is out. */
+  readonly notice: MailMessage | undefined;
+
   constructor(
     message: string,
     readonly statusCode = 400,
     readonly code = 'AUTHENTICATION_ERROR',
+    options: { retryAt?: Date; notice?: MailMessage } = {},
   ) {
     super(message);
     this.name = 'AuthServiceError';
+    this.retryAt = options.retryAt;
+    this.notice = options.notice;
   }
 }
 
 function invalidCredentials(): AuthServiceError {
   return new AuthServiceError('The email or password is incorrect.', 401, 'INVALID_CREDENTIALS');
+}
+
+function signInCooldown(until: Date, now: Date): AuthServiceError {
+  const minutes = Math.max(1, Math.ceil((until.getTime() - now.getTime()) / 60_000));
+  return new AuthServiceError(
+    `Too many attempts for this email. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+    429,
+    'SIGN_IN_COOLDOWN',
+    { retryAt: until },
+  );
+}
+
+function passwordResetRequired(notice?: MailMessage): AuthServiceError {
+  return new AuthServiceError(
+    'Your password was disabled after too many wrong codes. Reset it to sign in.',
+    403,
+    'PASSWORD_RESET_REQUIRED',
+    notice ? { notice } : {},
+  );
 }
 
 function signInExpired(): AuthServiceError {
@@ -210,6 +252,18 @@ function recoveryCodeNotice(email: string, remaining: number, usedAt: Date): Mai
       `A Recovery Code was used to sign in to your LingkodHR account on ${noticeTime.format(usedAt)} (Philippine time). Your other sessions were signed out.`,
       `${left} If you lost your authenticator, replace it or generate new Recovery Codes.`,
       "If you didn't sign in, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
+function passwordResetRequiredNotice(email: string): MailMessage {
+  return {
+    to: email,
+    subject: 'Reset your LingkodHR password to sign in',
+    text: [
+      'Someone entered your LingkodHR password correctly, then entered too many wrong codes after it. To protect your account, your password no longer works.',
+      'To sign in again, reset your password from the LingkodHR sign-in page.',
+      "If you didn't try to sign in, someone may know your password. Contact your Agency Administrator right away.",
     ].join('\n\n'),
   };
 }
@@ -301,24 +355,37 @@ export class AuthService {
     return this.signIn(identity, flow.membershipId, flow.invitationToken, requestId);
   }
 
-  async assertLoginAllowed(ipAddress: string): Promise<void> {
-    const since = new Date(Date.now() - 15 * 60 * 1000);
-    const failures = await withDatabaseContext(
+  /**
+   * The per-IP limit: 100 sign-in failures in 15 minutes, counted from Security Events. A refusal
+   * is a failure too, so a client that keeps trying stays refused.
+   */
+  async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
+    const { ipAddress } = request;
+    if (!ipAddress) return;
+    const refused = await withDatabaseContext(
       { capabilities: ['platform-security'] },
-      (transaction) =>
-        transaction.securityEvent.count({
+      async (transaction) => {
+        const failures = await transaction.securityEvent.count({
           where: {
             eventType: 'LOGIN_FAILURE',
-            ipAddress: ipAddress ?? null,
-            occurredAt: { gte: since },
+            ipAddress,
+            occurredAt: { gte: new Date(Date.now() - IP_WINDOW_MS) },
           },
-        }),
+        });
+        if (failures < IP_FAILURE_LIMIT) return false;
+        await this.writeSignInFailure(transaction, request, {
+          userId: null,
+          emailHash,
+          reason: 'IP_RATE_LIMITED',
+        });
+        return true;
+      },
     );
-    if (failures >= 20) {
+    if (refused) {
       throw new AuthServiceError(
-        'Too many authentication attempts. Try again later.',
+        'Too many sign-in attempts from this network. Try again later.',
         429,
-        'AUTHENTICATION_RATE_LIMITED',
+        'IP_RATE_LIMITED',
       );
     }
   }
@@ -438,7 +505,9 @@ export class AuthService {
 
   /**
    * First sign-in step. Every failure before the password verifies looks the same, and an unknown
-   * email still costs a full Argon2id verification. A User with a TOTP factor gets a 5-minute
+   * email still costs a full Argon2id verification. During the email's Sign-in Cool-down the
+   * attempt is refused before any verification; a password disabled by the second-factor ceiling
+   * is refused even when it is right. A User with a TOTP factor gets a 5-minute
    * pending sign-in, replacing any earlier one. An MFA-Required User without a factor gets a pending
    * sign-in that enrolls one first. Anyone else gets a session.
    */
@@ -449,30 +518,46 @@ export class AuthService {
     request: SignInRequest,
   ): Promise<PasswordSignInResult> {
     const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
-    const account = await withDatabaseContext({}, async (transaction) => {
-      const user = await transaction.user.findUnique({
-        where: { emailNormalized: email.trim().toLowerCase() },
-        select: { id: true, emailNormalized: true, globalStatus: true },
-      });
-      if (!user) return null;
-      await setDatabaseContext(transaction, { userId: user.id });
-      const stored = await transaction.userPassword.findUnique({
-        where: { userId: user.id },
-        select: { passwordHash: true },
-      });
-      return stored ? { ...user, passwordHash: stored.passwordHash } : null;
-    });
+    await this.assertIpAllowed(request, emailHash);
+    const now = new Date();
+    const { account, cooldownUntil } = await withDatabaseContext(
+      { capabilities: ['platform-security'] },
+      async (transaction) => {
+        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
+        const user = await transaction.user.findUnique({
+          where: { emailNormalized: email.trim().toLowerCase() },
+          select: { id: true, emailNormalized: true, globalStatus: true },
+        });
+        if (!user) return { account: null, cooldownUntil };
+        await setDatabaseContext(transaction, {
+          userId: user.id,
+          capabilities: ['platform-security'],
+        });
+        const stored = await transaction.userPassword.findUnique({
+          where: { userId: user.id },
+          select: { passwordHash: true, resetRequiredAt: true },
+        });
+        return { account: stored ? { ...user, ...stored } : null, cooldownUntil };
+      },
+    );
+    if (cooldownUntil) {
+      await this.recordSignInFailure(request, emailHash, account?.id ?? null, 'COOLDOWN_ACTIVE');
+      throw signInCooldown(cooldownUntil, now);
+    }
     const verified = account
       ? await verifyPassword(account.passwordHash, password)
       : await verifyPasswordAgainstDummy(password);
     if (!account || !verified || account.globalStatus !== 'ACTIVE') {
-      await this.recordSignInFailure(
-        request,
+      await this.recordGuessFailure(request, {
         emailHash,
-        account?.id ?? null,
-        'INVALID_CREDENTIALS',
-      );
+        userId: account?.id ?? null,
+        reason: 'INVALID_CREDENTIALS',
+      });
       throw invalidCredentials();
+    }
+    if (account.resetRequiredAt) {
+      await this.recordSignInFailure(request, emailHash, account.id, 'PASSWORD_RESET_REQUIRED');
+      throw passwordResetRequired();
     }
 
     const userId = account.id;
@@ -602,21 +687,29 @@ export class AuthService {
           'totp',
           now,
         );
-        if (!pending) return { status: 'SIGN_IN_EXPIRED' as const, user: null };
+        if (!pending) return { status: 'SIGN_IN_EXPIRED' as const };
         const { userId, user, emailHash } = pending;
-        const failure = async (reason: 'SIGN_IN_EXPIRED' | 'INVALID_CODE') => {
-          await this.writeSignInFailure(transaction, request, {
+        // One code attempt per User at a time, so each wrong code is counted before the next is
+        // checked and a burst can't pass the cool-down or the second-factor ceiling.
+        await transaction.$queryRaw`
+          SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+        const failure = (reason: 'SIGN_IN_EXPIRED' | 'COOLDOWN_ACTIVE') =>
+          this.writeSignInFailure(transaction, request, {
             userId,
             emailHash,
             reason,
             method: 'totp',
           });
-          return { status: reason, user: null };
-        };
+        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
+        if (cooldownUntil) {
+          await failure('COOLDOWN_ACTIVE');
+          return { status: 'COOLDOWN_ACTIVE' as const, cooldownUntil, now };
+        }
         const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
         if (!factor) {
           await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
-          return failure('SIGN_IN_EXPIRED');
+          await failure('SIGN_IN_EXPIRED');
+          return { status: 'SIGN_IN_EXPIRED' as const };
         }
 
         const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
@@ -632,11 +725,22 @@ export class AuthService {
               data: { lastAcceptedStep: step },
             })
           ).count === 1;
-        if (!accepted) return failure('INVALID_CODE');
+        if (!accepted) {
+          const ceiling = await this.writeGuessFailure(transaction, request, {
+            emailHash,
+            userId,
+            reason: 'INVALID_CODE',
+            secondFactor: { method: 'totp', email: user.emailNormalized },
+          });
+          return { status: 'INVALID_CODE' as const, ceiling };
+        }
         const consumed = await transaction.pendingAuthentication.deleteMany({
           where: { id: pending.id },
         });
-        if (consumed.count !== 1) return failure('SIGN_IN_EXPIRED');
+        if (consumed.count !== 1) {
+          await failure('SIGN_IN_EXPIRED');
+          return { status: 'SIGN_IN_EXPIRED' as const };
+        }
 
         verified.userId = userId;
         verified.emailHash = emailHash;
@@ -656,7 +760,11 @@ export class AuthService {
         };
       });
       if (outcome.status === 'SIGNED_IN') return outcome.user;
+      if (outcome.status === 'COOLDOWN_ACTIVE') {
+        throw signInCooldown(outcome.cooldownUntil, outcome.now);
+      }
       if (outcome.status === 'INVALID_CODE') {
+        if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
         throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
       }
       throw signInExpired();
@@ -685,6 +793,7 @@ export class AuthService {
       pendingTokenHash: hashSessionToken(pendingToken).toString('hex'),
       capabilities: ['platform-security'] as const,
     };
+    const now = new Date();
     const opened = await withDatabaseContext(scope, async (transaction) => {
       const pending = await this.openPendingSignIn(
         transaction,
@@ -692,28 +801,45 @@ export class AuthService {
         pendingToken,
         request,
         'recovery_code',
-        new Date(),
+        now,
       );
       if (!pending) return null;
+      const cooldownUntil = await this.readCooldown(transaction, pending.emailHash, now);
+      if (cooldownUntil) {
+        await this.writeSignInFailure(transaction, request, {
+          userId: pending.userId,
+          emailHash: pending.emailHash,
+          reason: 'COOLDOWN_ACTIVE',
+          method: 'recovery_code',
+        });
+        return { pending, codes: [], cooldownUntil };
+      }
       const codes = await transaction.userRecoveryCode.findMany({
         where: { userId: pending.userId },
         select: { id: true, codeHash: true },
       });
-      return { pending, codes };
+      return { pending, codes, cooldownUntil };
     });
     if (!opened) throw signInExpired();
     const { pending } = opened;
     const { userId, emailHash } = pending;
+    if (opened.cooldownUntil) throw signInCooldown(opened.cooldownUntil, now);
 
     const normalized = normalizeRecoveryCode(code);
     const matches = normalized
       ? await Promise.all(opened.codes.map(({ codeHash }) => verifyPassword(codeHash, normalized)))
       : [];
     const used = opened.codes.find((_, index) => matches[index]);
+    if (!used) {
+      await this.recordGuessFailure(request, {
+        emailHash,
+        userId,
+        reason: 'INVALID_CODE',
+        secondFactor: { method: 'recovery_code', email: pending.user.emailNormalized },
+      });
+      throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
+    }
     try {
-      if (!used) {
-        throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
-      }
       return await withDatabaseContext({ ...scope, userId }, async (transaction) => {
         const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (spent.count !== 1) {
@@ -1718,6 +1844,14 @@ export class AuthService {
   ): Promise<AuthenticatedSession & { token: string }> {
     const now = new Date();
     await transaction.user.update({ where: { id: userId }, data: { lastLoginAt: now } });
+    // A full sign-in resets the second-factor count and the email's Sign-in Cool-down. A password
+    // disabled while this sign-in was under way refuses it.
+    const usable = await transaction.userPassword.updateMany({
+      where: { userId, resetRequiredAt: null },
+      data: { secondFactorFailures: 0 },
+    });
+    if (usable.count !== 1) throw passwordResetRequired();
+    await transaction.signInThrottle.deleteMany({ where: { emailHash: prismaBytes(emailHash) } });
     const membership = await this.selectSignInMembership(
       transaction,
       userId,
@@ -1793,6 +1927,118 @@ export class AuthService {
       user,
       emailHash,
     };
+  }
+
+  /** When the email's running Sign-in Cool-down ends, or null. */
+  private async readCooldown(
+    transaction: Prisma.TransactionClient,
+    emailHash: Buffer,
+    now: Date,
+  ): Promise<Date | null> {
+    const state = await transaction.signInThrottle.findUnique({
+      where: { emailHash: prismaBytes(emailHash) },
+    });
+    return activeCooldown(state, now);
+  }
+
+  /** `writeGuessFailure` in a transaction of its own; throws at the second-factor ceiling. */
+  private async recordGuessFailure(request: SignInRequest, failure: GuessFailure): Promise<void> {
+    const ceiling = await withDatabaseContext(
+      {
+        ...(failure.userId ? { userId: failure.userId } : {}),
+        capabilities: ['platform-security'],
+      },
+      (transaction) => this.writeGuessFailure(transaction, request, failure),
+    );
+    if (ceiling) throw passwordResetRequired(ceiling);
+  }
+
+  /**
+   * A wrong password, TOTP code, or Recovery Code: a LOGIN_FAILURE that also counts toward the
+   * email's Sign-in Cool-down, under the throttle row's lock so concurrent failures each count once.
+   * A wrong code also counts toward the second-factor ceiling; the failure that reaches it disables
+   * the password, ends the User's pending sign-ins, and answers the notice to send. The transaction
+   * needs the platform-security capability, and the User's context for a wrong code.
+   */
+  private async writeGuessFailure(
+    transaction: Prisma.TransactionClient,
+    request: SignInRequest,
+    { emailHash, userId, reason, secondFactor }: GuessFailure,
+  ): Promise<MailMessage | null> {
+    const now = new Date();
+    await this.writeSignInFailure(transaction, request, {
+      userId,
+      emailHash,
+      reason,
+      method: secondFactor?.method,
+    });
+    const key = prismaBytes(emailHash);
+    await transaction.$executeRaw`
+      INSERT INTO "sign_in_throttles" ("email_hash", "last_failure_at")
+      VALUES (${key}, ${now}) ON CONFLICT DO NOTHING`;
+    const [row] = await transaction.$queryRaw<
+      {
+        failure_count: number;
+        cooldown_level: number;
+        cooldown_until: Date | null;
+        last_failure_at: Date;
+      }[]
+    >`
+      SELECT "failure_count", "cooldown_level", "cooldown_until", "last_failure_at"
+      FROM "sign_in_throttles" WHERE "email_hash" = ${key} FOR UPDATE`;
+    const counted = addSignInFailure(
+      row
+        ? {
+            failureCount: row.failure_count,
+            cooldownLevel: row.cooldown_level,
+            cooldownUntil: row.cooldown_until,
+            lastFailureAt: row.last_failure_at,
+          }
+        : null,
+      now,
+    );
+    await transaction.signInThrottle.update({ where: { emailHash: key }, data: counted.state });
+    if (counted.cooldown) {
+      await transaction.securityEvent.create({
+        data: {
+          eventType: 'SIGN_IN_COOLDOWN_STARTED',
+          requestId: request.requestId,
+          ipAddress: request.ipAddress,
+          emailHash: key,
+          details: { level: counted.cooldown.level, minutes: counted.cooldown.minutes },
+        },
+      });
+    }
+
+    if (!secondFactor || !userId) return null;
+    const { secondFactorFailures } = await transaction.userPassword.update({
+      where: { userId },
+      data: { secondFactorFailures: { increment: 1 } },
+      select: { secondFactorFailures: true },
+    });
+    const disabled = await transaction.userPassword.updateMany({
+      where: {
+        userId,
+        resetRequiredAt: null,
+        secondFactorFailures: { gte: SECOND_FACTOR_CEILING },
+      },
+      data: { resetRequiredAt: now },
+    });
+    if (disabled.count !== 1) return null;
+    await transaction.pendingAuthentication.deleteMany({
+      where: { userId, purpose: 'SIGN_IN' },
+    });
+    await transaction.securityEvent.create({
+      data: {
+        userId,
+        eventType: 'PASSWORD_RESET_REQUIRED',
+        requestId: request.requestId,
+        ipAddress: request.ipAddress,
+        emailHash: key,
+        details: { secondFactorFailures },
+      },
+    });
+    return passwordResetRequiredNotice(secondFactor.email);
   }
 
   /** A failed sign-in step, recorded outside the attempt's transaction. */

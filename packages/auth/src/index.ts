@@ -5,5 +5,6 @@ export * from './oidc';
 export * from './password-hash';
 export * from './recovery-codes';
 export * from './session';
+export * from './sign-in-cooldown';
 export * from './totp';
 export * from './totp-secret-envelope';
