@@ -33,6 +33,7 @@ import {
   activationTokenSchema,
   backchannelLogoutSchema,
   callbackQuerySchema,
+  enrollmentFinishSchema,
   loginQuerySchema,
   passwordSignInSchema,
   switchAgencySchema,
@@ -101,7 +102,10 @@ export class AuthController {
     }
   }
 
-  /** Email and password. Answers `TOTP_REQUIRED` with a pending-sign-in cookie, or signs in. */
+  /**
+   * Email and password. Answers `TOTP_REQUIRED`, or `ENROLLMENT_REQUIRED` with the secret to add to
+   * an authenticator app, with a pending-sign-in cookie; otherwise signs in.
+   */
   @Post('sign-in')
   async signIn(
     @Body() body: unknown,
@@ -119,18 +123,29 @@ export class AuthController {
         parsed.data.membershipId ?? null,
         this.signInRequest(request),
       );
-      if (result.status === 'TOTP_REQUIRED') {
-        response.cookie(PENDING_AUTHENTICATION_COOKIE, result.pendingToken, {
-          ...cookieOptions(secure),
-          maxAge: PENDING_SIGN_IN_LIFETIME_MS,
-        });
-      } else {
+      if (result.status === 'SIGNED_IN') {
         response.cookie(SESSION_COOKIE, result.session.token, {
           ...cookieOptions(secure),
           maxAge: 8 * 60 * 60 * 1000,
         });
+        response.status(HttpStatus.OK).json({ status: result.status });
+        return;
       }
-      response.status(HttpStatus.OK).json({ status: result.status });
+      response.cookie(PENDING_AUTHENTICATION_COOKIE, result.pendingToken, {
+        ...cookieOptions(secure),
+        maxAge: PENDING_SIGN_IN_LIFETIME_MS,
+      });
+      response.status(HttpStatus.OK).json(
+        result.status === 'ENROLLMENT_REQUIRED'
+          ? {
+              status: result.status,
+              enrollment: {
+                ...result.enrollment,
+                expiresAt: result.enrollment.expiresAt.toISOString(),
+              },
+            }
+          : { status: result.status },
+      );
     } catch (error: unknown) {
       translateError(error);
     }
@@ -161,9 +176,61 @@ export class AuthController {
       });
       response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
     } catch (error: unknown) {
-      if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
-        response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
-      }
+      this.clearExpiredPendingSignIn(error, response);
+      translateError(error);
+    }
+  }
+
+  /** The first code from the authenticator app; answers the Recovery Codes, shown once. */
+  @Post('sign-in/enrollment/confirm')
+  async confirmEnrollment(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = totpSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A code is required.');
+    try {
+      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      const result = await this.authService.confirmTotpEnrollment(
+        cookieValue(request, PENDING_AUTHENTICATION_COOKIE) ?? '',
+        parsed.data.code,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.OK).json({ status: 'RECOVERY_CODES', ...result });
+    } catch (error: unknown) {
+      this.clearExpiredPendingSignIn(error, response);
+      translateError(error);
+    }
+  }
+
+  /** The acknowledgment that the Recovery Codes are saved; finishes enrollment and signs in. */
+  @Post('sign-in/enrollment/finish')
+  async finishEnrollment(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = enrollmentFinishSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException('Confirm that you saved your Recovery Codes.');
+    }
+    const secure = this.config.NODE_ENV === 'production';
+    try {
+      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      const session = await this.authService.completeTotpEnrollment(
+        cookieValue(request, PENDING_AUTHENTICATION_COOKIE) ?? '',
+        this.signInRequest(request),
+      );
+      response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
+      response.cookie(SESSION_COOKIE, session.token, {
+        ...cookieOptions(secure),
+        maxAge: 8 * 60 * 60 * 1000,
+      });
+      response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
+      this.noticeAfterResponse(response, session.notice);
+    } catch (error: unknown) {
+      this.clearExpiredPendingSignIn(error, response);
       translateError(error);
     }
   }
@@ -196,9 +263,7 @@ export class AuthController {
         .json({ status: 'SIGNED_IN', recoveryCodesRemaining: result.recoveryCodesRemaining });
       this.noticeAfterResponse(response, result.notice);
     } catch (error: unknown) {
-      if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
-        response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
-      }
+      this.clearExpiredPendingSignIn(error, response);
       translateError(error);
     }
   }
@@ -371,6 +436,16 @@ export class AuthController {
    */
   private noticeAfterResponse(response: Response, notice: MailMessage): void {
     response.once('close', () => void this.authService.sendNotice(notice));
+  }
+
+  /** A pending sign-in the service found gone or expired is no use to the browser either. */
+  private clearExpiredPendingSignIn(error: unknown, response: Response): void {
+    if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
+      response.clearCookie(
+        PENDING_AUTHENTICATION_COOKIE,
+        cookieOptions(this.config.NODE_ENV === 'production'),
+      );
+    }
   }
 
   private signInRequest(request: Request) {

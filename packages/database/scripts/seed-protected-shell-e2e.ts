@@ -30,6 +30,8 @@ const phase5OwnerEmail = 'phase5.owner@example.test';
 const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
 const phase5RestrictedEmail = 'phase5.restricted@example.test';
 const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
+// An MFA-Required User left without a TOTP factor, so sign-in starts forced enrollment.
+const enrollmentCandidateEmail = 'enrollment.candidate@example.test';
 const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
 
 /**
@@ -58,6 +60,7 @@ const seededUserEmails = [
   phase5RestrictedEmail,
   'foreign.personnel@example.test',
   'dtr.reviewer@example.test',
+  enrollmentCandidateEmail,
 ];
 
 function manilaToday(): string {
@@ -729,6 +732,49 @@ async function seed(): Promise<void> {
         activatedAt: new Date(),
       },
     }));
+  const enrollmentUser = await prisma.user.upsert({
+    where: { emailNormalized: enrollmentCandidateEmail },
+    update: { displayName: 'Enrollment Candidate', globalStatus: 'ACTIVE' },
+    create: {
+      identityProvider: issuer,
+      externalSubject: 'local-enrollment-candidate',
+      emailNormalized: enrollmentCandidateEmail,
+      displayName: 'Enrollment Candidate',
+      globalStatus: 'ACTIVE',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  const enrollmentMembership =
+    (await prisma.agencyMembership.findFirst({
+      where: { agencyId: agency.id, userId: enrollmentUser.id },
+    })) ??
+    (await prisma.agencyMembership.create({
+      data: {
+        agencyId: agency.id,
+        userId: enrollmentUser.id,
+        status: 'ACTIVE',
+        activatedAt: new Date(),
+      },
+    }));
+  const securityAdministrator = await prisma.role.findFirstOrThrow({
+    where: { agencyId: null, code: 'security_administrator', status: 'ACTIVE' },
+  });
+  if (
+    !(await prisma.membershipRole.findFirst({
+      where: { membershipId: enrollmentMembership.id, roleId: securityAdministrator.id },
+    }))
+  ) {
+    await prisma.membershipRole.create({
+      data: {
+        agencyId: agency.id,
+        membershipId: enrollmentMembership.id,
+        roleId: securityAdministrator.id,
+        effectiveFrom: new Date('2026-01-01'),
+        assignedByMembershipId: membership.id,
+        reason: 'Forced enrollment E2E fixture',
+      },
+    });
+  }
 
   async function seedInvitation(email: string, token: string, roleCodes: string[]) {
     const subject = `local-${createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
@@ -2790,7 +2836,8 @@ async function seed(): Promise<void> {
  * Gives each seeded User the local passphrase and, when their current roles make them an
  * MFA-Required User, a TOTP factor sealed with this run's `DATA_ENCRYPTION_KEY` and a full set of
  * the local Recovery Codes. A factor that already exists keeps its id and replay guard; used
- * Recovery Codes come back on every run.
+ * Recovery Codes come back on every run. The enrollment candidate gets neither, so each run
+ * enrolls again.
  */
 async function seedLocalCredentials(): Promise<void> {
   const dataEncryptionKey = parseProtectedValueKey(getConfig().DATA_ENCRYPTION_KEY);
@@ -2801,7 +2848,7 @@ async function seedLocalCredentials(): Promise<void> {
   const now = new Date();
   const users = await prisma.user.findMany({
     where: { emailNormalized: { in: seededUserEmails } },
-    select: { id: true },
+    select: { id: true, emailNormalized: true },
   });
   for (const user of users) {
     await prisma.userPassword.upsert({
@@ -2828,7 +2875,7 @@ async function seedLocalCredentials(): Promise<void> {
       ),
     );
     await prisma.userRecoveryCode.deleteMany({ where: { userId: user.id } });
-    if (!mfaRequired) {
+    if (!mfaRequired || user.emailNormalized === enrollmentCandidateEmail) {
       await prisma.userTotpFactor.deleteMany({ where: { userId: user.id } });
       continue;
     }

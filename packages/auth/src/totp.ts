@@ -11,6 +11,18 @@ export function generateTotpSecret(): string {
   return new Secret({ size: 20 }).base32;
 }
 
+/** The `otpauth://` URI an authenticator app scans to add the secret for `account`. */
+export function totpUri(secret: string, account: string): string {
+  return new TOTP({
+    issuer: 'LingkodHR',
+    label: account,
+    secret: Secret.fromBase32(secret),
+    algorithm: 'SHA1',
+    digits: DIGITS,
+    period: PERIOD_SECONDS,
+  }).toString();
+}
+
 /** The time step that contains `at`. */
 export function totpStep(at: Date = new Date()): number {
   return TOTP.counter({ period: PERIOD_SECONDS, timestamp: at.getTime() });

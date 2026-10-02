@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { acceptTotpCode, generateTotpSecret, totpCode, totpStep } from './totp';
+import { acceptTotpCode, generateTotpSecret, totpCode, totpStep, totpUri } from './totp';
 
 // RFC 6238 Appendix B: ASCII "12345678901234567890", SHA-1, truncated to six digits.
 const rfcSecret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
@@ -45,4 +45,10 @@ it('generates a 160-bit base32 secret', () => {
 
   expect(secret).toMatch(/^[A-Z2-7]{32}$/);
   expect(generateTotpSecret()).not.toBe(secret);
+});
+
+it('builds the otpauth URI an authenticator app scans, labelled with LingkodHR and the account', () => {
+  expect(totpUri(rfcSecret, 'maria.santos@doh.gov.ph')).toBe(
+    `otpauth://totp/LingkodHR:maria.santos%40doh.gov.ph?issuer=LingkodHR&secret=${rfcSecret}&algorithm=SHA1&digits=6&period=30`,
+  );
 });

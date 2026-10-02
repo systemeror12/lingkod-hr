@@ -1259,6 +1259,136 @@ it.skipIf(!enabled)(
   },
 );
 
+function enrollmentSecret(otpauthUri: string): string {
+  return new URL(otpauthUri).searchParams.get('secret') ?? '';
+}
+
+async function enrollmentWrites(admin: PrismaClient, userId: string) {
+  const [factors, codes, sessions] = await Promise.all([
+    admin.userTotpFactor.count({ where: { userId } }),
+    admin.userRecoveryCode.count({ where: { userId } }),
+    admin.userSession.count({ where: { userId } }),
+  ]);
+  return { factors, codes, sessions };
+}
+
+it.skipIf(!enabled)(
+  'enrolls an MFA-Required User without a factor, writing the factor, codes, and session only at the end',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService({ send: vi.fn().mockResolvedValue(undefined) });
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        fixture.membershipIds[1] ?? null,
+        signInRequest('enroll-password'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      expect(started.enrollment.account).toBe(user.email);
+      expect(started.enrollment.otpauthUri).toMatch(/^otpauth:\/\/totp\/LingkodHR:/);
+      const secret = enrollmentSecret(started.enrollment.otpauthUri);
+
+      const pending = await admin.pendingAuthentication.findFirstOrThrow({
+        where: { userId: user.id },
+      });
+      expect(pending).toMatchObject({ purpose: 'SIGN_IN', stage: 'ENROLL_SCAN' });
+      expect(pending.expiresAt).toEqual(started.enrollment.expiresAt);
+      // The secret is only held sealed.
+      expect(pending.enrollmentSecretEnvelope).not.toBeNull();
+      expect(Buffer.from(pending.enrollmentSecretEnvelope ?? []).toString('latin1')).not.toContain(
+        secret,
+      );
+      await expect(enrollmentWrites(admin, user.id)).resolves.toEqual({
+        factors: 0,
+        codes: 0,
+        sessions: 0,
+      });
+
+      // Steps out of order are refused without ending the enrollment.
+      await expect(
+        service.completeTotpEnrollment(started.pendingToken, signInRequest('enroll-early')),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED' });
+      await expect(
+        service.completeTotpSignIn(
+          started.pendingToken,
+          totpCode(secret),
+          signInRequest('enroll-as-totp'),
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED' });
+
+      const code = totpCode(secret);
+      const wrongCode = code === '000000' ? '000001' : '000000';
+      await expect(
+        service.confirmTotpEnrollment(started.pendingToken, wrongCode, signInRequest('enroll-x')),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE', statusCode: 401 });
+      const confirmed = await service.confirmTotpEnrollment(
+        started.pendingToken,
+        code,
+        signInRequest('enroll-code'),
+      );
+      expect(confirmed.recoveryCodes).toHaveLength(10);
+      await expect(
+        service.confirmTotpEnrollment(started.pendingToken, code, signInRequest('enroll-again')),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED' });
+      const codesStage = await admin.pendingAuthentication.findFirstOrThrow({
+        where: { userId: user.id },
+      });
+      expect(codesStage).toMatchObject({ stage: 'ENROLL_CODES', verifiedMethods: ['pwd', 'totp'] });
+      expect(codesStage.recoveryCodeHashes).toHaveLength(10);
+      await expect(enrollmentWrites(admin, user.id)).resolves.toEqual({
+        factors: 0,
+        codes: 0,
+        sessions: 0,
+      });
+
+      const session = await service.completeTotpEnrollment(
+        started.pendingToken,
+        signInRequest('enroll-finish'),
+      );
+      expect(session.authenticationMethods).toEqual(['pwd', 'totp']);
+      expect(session.context).toMatchObject({ userId: user.id, agencyId: fixture.agencyIds[1] });
+      expect(session.notice.to).toBe(user.email);
+      expect(session.notice.text).toContain('Agency Administrator');
+      expect(session.notice.text).not.toMatch(/https?:|\d{6}/);
+      await expect(enrollmentWrites(admin, user.id)).resolves.toEqual({
+        factors: 1,
+        codes: 10,
+        sessions: 1,
+      });
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+      const storedCodes = await admin.userRecoveryCode.findMany({ where: { userId: user.id } });
+      const firstCode = confirmed.recoveryCodes[0] ?? '';
+      const matches = await Promise.all(
+        storedCodes.map(({ codeHash }) =>
+          verifyPassword(codeHash, firstCode.replace('-', '').toUpperCase()),
+        ),
+      );
+      expect(matches.filter(Boolean)).toHaveLength(1);
+      await expect(
+        admin.securityEvent.count({ where: { userId: user.id, eventType: 'TOTP_ENROLLED' } }),
+      ).resolves.toBe(1);
+
+      // The enrolled factor signs in, and the confirming code can't be replayed.
+      const again = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('enroll-replay'),
+      );
+      if (again.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
+      await expect(
+        service.completeTotpSignIn(again.pendingToken, code, signInRequest('enroll-replay-code')),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE' });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
 it.skipIf(!enabled)(
   'refuses an unknown or malformed Recovery Code and records the attempt without the code',
   async () => {
@@ -1397,3 +1527,128 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)('writes nothing when an enrollment is abandoned or expires', async () => {
+  const fixture = await ownedLoginFixture({ withTotp: false });
+  const { admin, user } = fixture;
+  try {
+    const service = new AuthService({ send: vi.fn().mockResolvedValue(undefined) });
+    const abandoned = await service.signInWithPassword(
+      user.email,
+      user.password,
+      null,
+      signInRequest('enroll-abandon'),
+    );
+    if (abandoned.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+    await service.confirmTotpEnrollment(
+      abandoned.pendingToken,
+      totpCode(enrollmentSecret(abandoned.enrollment.otpauthUri)),
+      signInRequest('enroll-abandon-code'),
+    );
+
+    // Starting over replaces the pending row with a new secret.
+    const restarted = await service.signInWithPassword(
+      user.email,
+      user.password,
+      null,
+      signInRequest('enroll-restart'),
+    );
+    if (restarted.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+    expect(restarted.enrollment.otpauthUri).not.toBe(abandoned.enrollment.otpauthUri);
+    await expect(
+      service.completeTotpEnrollment(abandoned.pendingToken, signInRequest('enroll-stale')),
+    ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED' });
+    await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+      1,
+    );
+
+    await service.confirmTotpEnrollment(
+      restarted.pendingToken,
+      totpCode(enrollmentSecret(restarted.enrollment.otpauthUri)),
+      signInRequest('enroll-restart-code'),
+    );
+    await admin.pendingAuthentication.updateMany({
+      where: { userId: user.id },
+      data: {
+        createdAt: new Date(Date.now() - 10 * 60 * 1000),
+        expiresAt: new Date(Date.now() - 1000),
+      },
+    });
+    await expect(
+      service.completeTotpEnrollment(restarted.pendingToken, signInRequest('enroll-expired')),
+    ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED', statusCode: 401 });
+    await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+      0,
+    );
+    await expect(enrollmentWrites(admin, user.id)).resolves.toEqual({
+      factors: 0,
+      codes: 0,
+      sessions: 0,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+it.skipIf(!enabled)(
+  'refuses an expired enrollment code step without writing a factor',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService({ send: vi.fn().mockResolvedValue(undefined) });
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('enroll-late'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      await admin.pendingAuthentication.updateMany({
+        where: { userId: user.id },
+        data: {
+          createdAt: new Date(Date.now() - 10 * 60 * 1000),
+          expiresAt: new Date(Date.now() - 1000),
+        },
+      });
+      await expect(
+        service.confirmTotpEnrollment(
+          started.pendingToken,
+          totpCode(enrollmentSecret(started.enrollment.otpauthUri)),
+          signInRequest('enroll-late-code'),
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED' });
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+      await expect(enrollmentWrites(admin, user.id)).resolves.toEqual({
+        factors: 0,
+        codes: 0,
+        sessions: 0,
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it('sends the enrollment notice only after the response', async () => {
+  const notice = { to: 'a@example.test', subject: 'Notice', text: 'Notice' };
+  const sendNotice = vi.fn().mockResolvedValue(undefined);
+  const authService = {
+    assertLoginAllowed: vi.fn().mockResolvedValue(undefined),
+    completeTotpEnrollment: vi.fn().mockResolvedValue({ token: 'session-token', notice }),
+    sendNotice,
+  } as unknown as AuthService;
+  const response = fakeResponse();
+
+  await new AuthController(authService).finishEnrollment(
+    { acknowledged: true },
+    pendingRequest('pending-token'),
+    response as unknown as Response,
+  );
+  expect(response.json).toHaveBeenCalledWith({ status: 'SIGNED_IN' });
+  expect(sendNotice).not.toHaveBeenCalled();
+  response.finish();
+  expect(sendNotice).toHaveBeenCalledWith(notice);
+});
