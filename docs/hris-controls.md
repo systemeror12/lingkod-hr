@@ -1613,7 +1613,7 @@ Overrides requiring additional approval include:
 - finalized payroll void;
 - performance-rating amendment;
 - clearance waiver;
-- Agency Membership reactivation after a security-related Agency Membership Suspension.
+- Agency Membership reactivation after Agency Membership Suspension.
 
 ---
 

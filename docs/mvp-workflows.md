@@ -63,7 +63,7 @@ flowchart TD
     D -- No --> E[Expire or resend invitation]
     D -- Yes --> F[Verify email]
     F --> FA{First-time User?}
-    FA -- Yes --> FB[Create User and credentials]
+    FA -- Yes --> FB[Set credentials for new User]
     FA -- No --> FC[Existing User authenticates]
     FB --> G{MFA required?}
     FC --> G
@@ -87,9 +87,7 @@ flowchart TD
     T --> U[Open authorized dashboard]
 ```
 
-Key states (transitions in `docs/hris-controls.md` §5.1):
-
-User:
+User states:
 
 ```text
 ACTIVE
@@ -97,7 +95,7 @@ LOCKED
 DEACTIVATED
 ```
 
-Agency Membership:
+Agency Membership states:
 
 ```text
 INVITED
@@ -105,8 +103,6 @@ ACTIVE
 SUSPENDED
 DEACTIVATED
 ```
-
-Access requires both an ACTIVE User and an ACTIVE Agency Membership in the selected Agency.
 
 ---
 
