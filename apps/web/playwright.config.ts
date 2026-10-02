@@ -1,4 +1,16 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 import { defineConfig, devices } from '@playwright/test';
+
+// Linked worktrees store their own E2E ports in .env (see scripts/setup-worktree.sh).
+// Only those keys are read here; the main checkout and CI keep the defaults.
+const envFile = resolve(__dirname, '../../.env');
+const envFileValues = existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) : {};
+for (const key of ['PLAYWRIGHT_APP_PORT', 'PLAYWRIGHT_API_PORT', 'PLAYWRIGHT_OIDC_PORT']) {
+  const value = envFileValues[key];
+  if (value && !process.env[key]) process.env[key] = value;
+}
 
 const oidcIssuer = `http://127.0.0.1:${process.env.PLAYWRIGHT_OIDC_PORT ?? '4100'}`;
 const apiPort = process.env.PLAYWRIGHT_API_PORT ?? '3101';

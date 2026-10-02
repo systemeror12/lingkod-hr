@@ -163,10 +163,13 @@ In T3 Code, add that command as a project script with "Run on worktree
 creation" enabled. The script is safe to rerun and refuses to run in the main
 checkout.
 
-Only one dev stack can own ports `3000`–`3002` and `4100` at a time. To run
-E2E in two worktrees at once, give the second one the alternate
-[Playwright ports](#playwright-port-hotspot); Mailpit is still shared. Drop a
-removed worktree's database with:
+Only one dev stack can own ports `3000`–`3002` and `4100` at a time. E2E runs
+do not share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT`,
+`PLAYWRIGHT_API_PORT`, and `PLAYWRIGHT_OIDC_PORT` values to `.env`, and
+`playwright.config.ts` reads them. The script picks ports no other worktree has
+claimed, prints them, and `grep PLAYWRIGHT .env` shows them; rerun it in older
+worktrees to add them. Two worktrees can run Playwright at the same time, but
+Mailpit is still shared, and each run's global setup clears its messages. Drop a removed worktree's database with:
 
 ```bash
 docker compose -f infrastructure/compose.yaml exec -T postgres \
@@ -220,6 +223,9 @@ protected shell, and starts or reuses these dedicated services:
 | E2E API | `3101` |
 | Local OIDC | `4100` |
 
+Linked worktrees use their own ports instead; see
+[Parallel worktrees](#parallel-worktrees).
+
 The normal development web server uses port `3000`; it is separate from the
 E2E web server.
 
@@ -254,8 +260,9 @@ pnpm exec playwright test e2e/audit.spec.ts --headed --project=chromium
 
 #### Playwright port hotspot
 
-When another worktree owns the E2E ports, change only these values before the
-Playwright command:
+Linked worktrees get their own E2E ports from `scripts/setup-worktree.sh`. If
+another process still owns the ports, set these values before the Playwright
+command:
 
 ```bash
 PLAYWRIGHT_OIDC_PORT=4200 PLAYWRIGHT_API_PORT=3201 PLAYWRIGHT_APP_PORT=3200
