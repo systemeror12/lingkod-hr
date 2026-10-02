@@ -2,21 +2,28 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  acceptTotpCode,
   createSessionToken,
+  hashEmail,
+  hashPassword,
   hashSessionToken,
   hasMfaEvidence,
   hasPermission,
   isSessionActive,
   OidcClient,
   type OidcIdentity,
+  openTotpSecret,
+  passwordNeedsRehash,
   type PermissionGrant,
   type RequestContext,
   type SessionDisplay,
   permissionsRequireMfa,
   SCOPE_POLICIES,
   sessionExpiry,
+  verifyPassword,
+  verifyPasswordAgainstDummy,
 } from '@lingkod-hr/auth';
-import { getConfig } from '@lingkod-hr/config';
+import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 import { setDatabaseContext, withDatabaseContext } from '@lingkod-hr/database';
 import {
   InvitationDeliveryError,
@@ -31,9 +38,12 @@ import {
 import { prismaBytes, safeJson, selectInvitationRoles } from '../invitations/invitation-utils';
 
 const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
+export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
+const OWNED_LOGIN_PROVIDER = 'lingkodhr';
 
 export const SESSION_COOKIE = 'hris_session';
 export const OIDC_FLOW_COOKIE = 'hris_oidc_flow';
+export const PENDING_AUTHENTICATION_COOKIE = 'hris_pending_auth';
 export const HRMO_ADMINISTRATOR_ROLE_CODE = 'hrmo_administrator';
 const PENDING_INVITATION_PAGE_SIZE = 100;
 
@@ -65,6 +75,26 @@ export interface AuthenticatedSession {
 export interface LoginResult extends AuthenticatedSession {
   token: string;
   providerLogoutUrl: string | null;
+}
+
+/** Who is signing in from where, for Security Events. */
+export interface SignInRequest {
+  requestId: string;
+  ipAddress: string | null;
+}
+
+export type PasswordSignInResult =
+  | { status: 'TOTP_REQUIRED'; pendingToken: string }
+  | { status: 'SIGNED_IN'; session: AuthenticatedSession & { token: string } };
+
+/** What the new session records about how the User proved who they are. */
+interface SessionEvidence {
+  provider: string;
+  providerSid: string | null;
+  authTime: Date | null;
+  authenticationMethods: readonly string[];
+  emailHash?: Buffer;
+  ipAddress?: string | null;
 }
 
 export interface InvitationResult {
@@ -102,6 +132,10 @@ export class AuthServiceError extends Error {
   }
 }
 
+function invalidCredentials(): AuthServiceError {
+  return new AuthServiceError('The email or password is incorrect.', 401, 'INVALID_CREDENTIALS');
+}
+
 function normalizeEmail(email: string): string {
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
@@ -120,6 +154,7 @@ export class AuthService {
     redirectUri: this.config.OIDC_REDIRECT_URI,
   });
   private readonly invitationIssuer: InvitationIssuer;
+  private readonly dataEncryptionKey = parseProtectedValueKey(this.config.DATA_ENCRYPTION_KEY);
 
   constructor(@Optional() @Inject(INVITATION_MAIL_DELIVERY) mailDelivery?: MailDelivery) {
     this.invitationIssuer = new InvitationIssuer(
@@ -280,55 +315,23 @@ export class AuthService {
             )
           : null;
 
-        const memberships = await transaction.agencyMembership.findMany({
-          where: { userId: user.id, status: 'ACTIVE' },
-          orderBy: { createdAt: 'asc' },
-        });
-        const activeMemberships: typeof memberships = [];
-        for (const membership of memberships) {
-          await setDatabaseContext(transaction, {
-            userId: user.id,
-            agencyId: membership.agencyId,
-            membershipId: membership.id,
-          });
-          const agency = await transaction.agency.findUnique({
-            where: { id: membership.agencyId },
-            select: { status: true },
-          });
-          if (agency?.status === 'ACTIVE') activeMemberships.push(membership);
-        }
-        if (activeMemberships.length === 0) {
-          throw new AuthServiceError(
-            'No active Agency Membership is available.',
-            403,
-            'NO_MEMBERSHIP',
-          );
-        }
-
-        const requestedMembershipId = invitationMembershipId ?? selectedMembershipId;
-        const membership = requestedMembershipId
-          ? activeMemberships.find(({ id }) => id === requestedMembershipId)
-          : activeMemberships[0];
-        if (!membership) {
-          throw new AuthServiceError(
-            'The selected Agency Membership is not active.',
-            403,
-            'MEMBERSHIP_DENIED',
-          );
-        }
-
-        await setDatabaseContext(transaction, {
-          userId: user.id,
-          agencyId: membership.agencyId,
-          membershipId: membership.id,
-        });
+        const membership = await this.selectSignInMembership(
+          transaction,
+          user.id,
+          invitationMembershipId ?? selectedMembershipId,
+        );
         return {
           status: 'authenticated' as const,
           session: await this.createSession(
             transaction,
             user.id,
             membership.id,
-            identity,
+            {
+              provider: identity.issuer,
+              providerSid: identity.providerSid,
+              authTime: identity.authTime,
+              authenticationMethods: identity.authenticationMethods,
+            },
             requestId,
           ),
         };
@@ -342,6 +345,217 @@ export class AuthService {
       ...result,
       providerLogoutUrl: await this.oidc.providerLogoutUrl(),
     };
+  }
+
+  /**
+   * First sign-in step. Every failure before the password verifies looks the same, and an unknown
+   * email still costs a full Argon2id verification. A User with a TOTP factor gets a 5-minute
+   * pending sign-in, replacing any earlier one; anyone else gets a session.
+   */
+  async signInWithPassword(
+    email: string,
+    password: string,
+    membershipId: string | null,
+    request: SignInRequest,
+  ): Promise<PasswordSignInResult> {
+    const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
+    const account = await withDatabaseContext({}, async (transaction) => {
+      const user = await transaction.user.findUnique({
+        where: { emailNormalized: email.trim().toLowerCase() },
+        select: { id: true, globalStatus: true },
+      });
+      if (!user) return null;
+      await setDatabaseContext(transaction, { userId: user.id });
+      const stored = await transaction.userPassword.findUnique({
+        where: { userId: user.id },
+        select: { passwordHash: true },
+      });
+      return stored ? { ...user, passwordHash: stored.passwordHash } : null;
+    });
+    const verified = account
+      ? await verifyPassword(account.passwordHash, password)
+      : await verifyPasswordAgainstDummy(password);
+    if (!account || !verified || account.globalStatus !== 'ACTIVE') {
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        account?.id ?? null,
+        'INVALID_CREDENTIALS',
+      );
+      throw invalidCredentials();
+    }
+
+    const userId = account.id;
+    const rehashed = passwordNeedsRehash(account.passwordHash)
+      ? await hashPassword(password)
+      : null;
+    try {
+      return await withDatabaseContext(
+        { userId, capabilities: ['platform-security'] },
+        async (transaction): Promise<PasswordSignInResult> => {
+          if (rehashed) {
+            await transaction.userPassword.updateMany({
+              where: { userId, passwordHash: account.passwordHash },
+              data: { passwordHash: rehashed },
+            });
+          }
+          const factor = await transaction.userTotpFactor.findUnique({
+            where: { userId },
+            select: { id: true },
+          });
+          if (factor) {
+            const pendingToken = createSessionToken();
+            await transaction.pendingAuthentication.deleteMany({
+              where: { userId, purpose: 'SIGN_IN' },
+            });
+            await transaction.pendingAuthentication.create({
+              data: {
+                tokenHash: prismaBytes(hashSessionToken(pendingToken)),
+                purpose: 'SIGN_IN',
+                userId,
+                requestedMembershipId: membershipId,
+                stage: 'TOTP',
+                verifiedMethods: ['pwd'],
+                expiresAt: new Date(Date.now() + PENDING_SIGN_IN_LIFETIME_MS),
+              },
+            });
+            await transaction.securityEvent.create({
+              data: {
+                userId,
+                eventType: 'SIGN_IN_PASSWORD_VERIFIED',
+                requestId: request.requestId,
+                ipAddress: request.ipAddress,
+                emailHash: prismaBytes(emailHash),
+                details: { nextStep: 'TOTP' },
+              },
+            });
+            return { status: 'TOTP_REQUIRED', pendingToken };
+          }
+          return {
+            status: 'SIGNED_IN',
+            session: await this.openOwnedSession(
+              transaction,
+              userId,
+              membershipId,
+              ['pwd'],
+              request,
+              emailHash,
+            ),
+          };
+        },
+      );
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError) {
+        await this.recordSignInFailure(request, emailHash, userId, error.code);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Second sign-in step. A code is accepted once: its time step is saved with a conditional
+   * update, so of two submissions of one code exactly one wins. The session is created and the
+   * pending sign-in deleted in the same transaction.
+   */
+  async completeTotpSignIn(
+    pendingToken: string,
+    code: string,
+    request: SignInRequest,
+  ): Promise<AuthenticatedSession & { token: string }> {
+    const pendingTokenHash = hashSessionToken(pendingToken).toString('hex');
+    const scope = { pendingTokenHash, capabilities: ['platform-security'] as const };
+    // Set once both factors verify, so a later refusal can still be recorded.
+    const verified: { userId?: string; emailHash?: Buffer } = {};
+    try {
+      const outcome = await withDatabaseContext(scope, async (transaction) => {
+        const now = new Date();
+        const pending = await transaction.pendingAuthentication.findUnique({
+          where: { tokenHash: prismaBytes(hashSessionToken(pendingToken)) },
+        });
+        if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== 'TOTP') {
+          await this.writeSignInFailure(transaction, request, {
+            userId: null,
+            emailHash: null,
+            reason: 'SIGN_IN_EXPIRED',
+            method: 'totp',
+          });
+          return { status: 'SIGN_IN_EXPIRED' as const, user: null };
+        }
+        const userId = pending.userId;
+        await setDatabaseContext(transaction, { ...scope, userId });
+        const user = await transaction.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { emailNormalized: true, globalStatus: true },
+        });
+        const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
+        const failure = async (reason: 'SIGN_IN_EXPIRED' | 'INVALID_CODE') => {
+          await this.writeSignInFailure(transaction, request, {
+            userId,
+            emailHash,
+            reason,
+            method: 'totp',
+          });
+          return { status: reason, user: null };
+        };
+        const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
+        if (pending.expiresAt <= now || !factor) {
+          await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
+          return failure('SIGN_IN_EXPIRED');
+        }
+
+        const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
+          userId,
+          factorId: factor.id,
+        });
+        const step = acceptTotpCode(secret, code, Number(factor.lastAcceptedStep), now);
+        const accepted =
+          step !== null &&
+          (
+            await transaction.userTotpFactor.updateMany({
+              where: { id: factor.id, lastAcceptedStep: { lt: step } },
+              data: { lastAcceptedStep: step },
+            })
+          ).count === 1;
+        if (!accepted) return failure('INVALID_CODE');
+        const consumed = await transaction.pendingAuthentication.deleteMany({
+          where: { id: pending.id },
+        });
+        if (consumed.count !== 1) return failure('SIGN_IN_EXPIRED');
+
+        verified.userId = userId;
+        verified.emailHash = emailHash;
+        if (user.globalStatus !== 'ACTIVE') {
+          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+        }
+        return {
+          status: 'SIGNED_IN' as const,
+          user: await this.openOwnedSession(
+            transaction,
+            userId,
+            pending.requestedMembershipId,
+            [...pending.verifiedMethods, 'totp'],
+            request,
+            emailHash,
+          ),
+        };
+      });
+      if (outcome.status !== 'SIGNED_IN') {
+        throw new AuthServiceError(
+          outcome.status === 'INVALID_CODE'
+            ? 'The code is incorrect.'
+            : 'The sign-in expired. Enter your email and password again.',
+          401,
+          outcome.status,
+        );
+      }
+      return outcome.user;
+    } catch (error: unknown) {
+      // A refusal after both factors verified rolls the transaction back; record it separately.
+      if (error instanceof AuthServiceError && verified.userId && verified.emailHash) {
+        await this.recordSignInFailure(request, verified.emailHash, verified.userId, error.code);
+      }
+      throw error;
+    }
   }
 
   async authenticateSession(
@@ -783,11 +997,7 @@ export class AuthService {
             user.id,
             membership.id,
             {
-              issuer: '',
-              subject: '',
-              email: '',
-              displayName: '',
-              emailVerified: true,
+              provider: this.config.OIDC_ISSUER,
               providerSid: session.providerSid,
               authTime: null,
               authenticationMethods: session.authenticationMethods,
@@ -1134,11 +1344,124 @@ export class AuthService {
     return membership.id;
   }
 
+  private async openOwnedSession(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    requestedMembershipId: string | null,
+    methods: readonly string[],
+    request: SignInRequest,
+    emailHash: Buffer,
+  ): Promise<AuthenticatedSession & { token: string }> {
+    const now = new Date();
+    await transaction.user.update({ where: { id: userId }, data: { lastLoginAt: now } });
+    const membership = await this.selectSignInMembership(
+      transaction,
+      userId,
+      requestedMembershipId,
+    );
+    return this.createSession(
+      transaction,
+      userId,
+      membership.id,
+      {
+        provider: OWNED_LOGIN_PROVIDER,
+        providerSid: null,
+        authTime: now,
+        authenticationMethods: methods,
+        emailHash,
+        ipAddress: request.ipAddress,
+      },
+      request.requestId,
+    );
+  }
+
+  /** A failed sign-in step, recorded outside the attempt's transaction. */
+  private async recordSignInFailure(
+    request: SignInRequest,
+    emailHash: Buffer,
+    userId: string | null,
+    reason: string,
+  ): Promise<void> {
+    await withDatabaseContext({ capabilities: ['platform-security'] }, (transaction) =>
+      this.writeSignInFailure(transaction, request, { userId, emailHash, reason }),
+    );
+  }
+
+  /** A sign-in LOGIN_FAILURE event; it never holds the password, code, token, or raw email. */
+  private async writeSignInFailure(
+    transaction: Prisma.TransactionClient,
+    request: SignInRequest,
+    failure: { userId: string | null; emailHash: Buffer | null; reason: string; method?: 'totp' },
+  ): Promise<void> {
+    await transaction.securityEvent.create({
+      data: {
+        userId: failure.userId,
+        eventType: 'LOGIN_FAILURE',
+        requestId: request.requestId,
+        ipAddress: request.ipAddress,
+        emailHash: failure.emailHash ? prismaBytes(failure.emailHash) : null,
+        details: {
+          reason: failure.reason,
+          ...(failure.method ? { method: failure.method } : {}),
+        },
+      },
+    });
+  }
+
+  /**
+   * Picks the requested Agency Membership, or the oldest active one, and leaves the transaction in
+   * its context. Only memberships of an active Agency count.
+   */
+  private async selectSignInMembership(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    requestedMembershipId: string | null,
+  ) {
+    const memberships = await transaction.agencyMembership.findMany({
+      where: { userId, status: 'ACTIVE' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const activeMemberships: typeof memberships = [];
+    for (const membership of memberships) {
+      await setDatabaseContext(transaction, {
+        userId,
+        agencyId: membership.agencyId,
+        membershipId: membership.id,
+      });
+      const agency = await transaction.agency.findUnique({
+        where: { id: membership.agencyId },
+        select: { status: true },
+      });
+      if (agency?.status === 'ACTIVE') activeMemberships.push(membership);
+    }
+    if (activeMemberships.length === 0) {
+      throw new AuthServiceError('No active Agency Membership is available.', 403, 'NO_MEMBERSHIP');
+    }
+
+    const membership = requestedMembershipId
+      ? activeMemberships.find(({ id }) => id === requestedMembershipId)
+      : activeMemberships[0];
+    if (!membership) {
+      throw new AuthServiceError(
+        'The selected Agency Membership is not active.',
+        403,
+        'MEMBERSHIP_DENIED',
+      );
+    }
+
+    await setDatabaseContext(transaction, {
+      userId,
+      agencyId: membership.agencyId,
+      membershipId: membership.id,
+    });
+    return membership;
+  }
+
   private async createSession(
     transaction: Prisma.TransactionClient,
     userId: string,
     membershipId: string,
-    identity: OidcIdentity,
+    evidence: SessionEvidence,
     requestId: string,
     previousSession?: Pick<AuthenticatedSession, 'authTime' | 'createdAt' | 'expiresAt'>,
   ): Promise<AuthenticatedSession & { token: string }> {
@@ -1147,7 +1470,7 @@ export class AuthService {
     });
     if (
       (await this.userRequiresMfa(transaction, userId, membership.agencyId, membership.id)) &&
-      !hasMfaEvidence(identity.authenticationMethods)
+      !hasMfaEvidence(evidence.authenticationMethods)
     ) {
       throw new AuthServiceError('MFA is required for this User identity.', 403, 'MFA_REQUIRED');
     }
@@ -1159,9 +1482,9 @@ export class AuthService {
         agencyId: membership.agencyId,
         agencyMembershipId: membership.id,
         sessionTokenHash: prismaBytes(hashSessionToken(token)),
-        providerSid: identity.providerSid,
-        authTime: previousSession ? previousSession.authTime : identity.authTime,
-        authenticationMethods: [...identity.authenticationMethods],
+        providerSid: evidence.providerSid,
+        authTime: previousSession ? previousSession.authTime : evidence.authTime,
+        authenticationMethods: [...evidence.authenticationMethods],
         createdAt,
         lastSeenAt: new Date(),
         expiresAt: previousSession?.expiresAt ?? sessionExpiry(createdAt),
@@ -1175,7 +1498,9 @@ export class AuthService {
         membershipId: membership.id,
         eventType: 'LOGIN_SUCCESS',
         requestId,
-        details: { provider: identity.issuer || this.config.OIDC_ISSUER },
+        ipAddress: evidence.ipAddress ?? null,
+        emailHash: evidence.emailHash ? prismaBytes(evidence.emailHash) : null,
+        details: { provider: evidence.provider, methods: [...evidence.authenticationMethods] },
       },
     });
     await this.recordAuditEvent(transaction, resolved.context, {
@@ -1183,7 +1508,7 @@ export class AuthService {
       entityType: 'UserSession',
       entityId: session.id,
       requestId,
-      metadata: { provider: identity.issuer || this.config.OIDC_ISSUER },
+      metadata: { provider: evidence.provider },
     });
     return {
       token,

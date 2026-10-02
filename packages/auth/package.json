@@ -19,7 +19,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "jose": "5.10.0"
+    "@lingkod-hr/config": "workspace:*",
+    "jose": "5.10.0",
+    "otpauth": "9.5.2"
   },
   "devDependencies": {
     "@types/node": "24.13.3"

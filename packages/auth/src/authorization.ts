@@ -20,6 +20,7 @@ const SECOND_FACTOR_METHODS = new Set([
   'iris',
   'otp',
   'passkey',
+  'recovery_code',
   'retina',
   'sms',
   'totp',

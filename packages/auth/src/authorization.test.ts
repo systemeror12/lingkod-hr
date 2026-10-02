@@ -52,6 +52,10 @@ it('recognizes MFA evidence without treating a password as MFA', () => {
   expect(hasMfaEvidence(['mfa'])).toBe(true);
   expect(hasMfaEvidence(['otp'])).toBe(false);
   expect(hasMfaEvidence(['pwd'])).toBe(false);
+  expect(hasMfaEvidence(['pwd', 'totp'])).toBe(true);
+  expect(hasMfaEvidence(['pwd', 'recovery_code'])).toBe(true);
+  expect(hasMfaEvidence(['totp'])).toBe(false);
+  expect(hasMfaEvidence(['recovery_code'])).toBe(false);
   expect(permissionsRequireMfa([{ code: 'security.events.read', scopePolicy: 'AGENCY' }])).toBe(
     true,
   );

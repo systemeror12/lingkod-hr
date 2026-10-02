@@ -29,6 +29,8 @@
     "@prisma/client": "6.19.3"
   },
   "devDependencies": {
+    "@lingkod-hr/auth": "workspace:*",
+    "@lingkod-hr/config": "workspace:*",
     "prisma": "6.19.3",
     "tsx": "4.23.12"
   }

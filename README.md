@@ -131,6 +131,12 @@ opening `/dashboard`:
 pnpm --filter @lingkod-hr/database e2e:seed:shell
 ```
 
+The seed also enables password sign-in at `/sign-in` with local-only
+credentials. Every seeded User, such as `marisol.santos@example.test`, has the
+passphrase `local-only seed passphrase`. Users whose roles require MFA also get
+a TOTP factor with the secret `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`; add it to an
+authenticator app to get codes. The seed refuses to run in production.
+
 The gate is complete when migrations report no pending work, each health check
 responds successfully, and `/dashboard` completes local OIDC login. Diagnose
 setup failures before changing application code; do not delete the local

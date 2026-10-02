@@ -16,6 +16,23 @@ export const callbackQuerySchema = z
   })
   .strict();
 
+export const passwordSignInSchema = z
+  .object({
+    email: z.string().trim().min(1).max(320),
+    password: z.string().min(1).max(1024),
+    membershipId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export const totpSignInSchema = z
+  .object({
+    code: z
+      .string()
+      .max(32)
+      .transform((code) => code.replace(/\s/g, '')),
+  })
+  .strict();
+
 export const activationTokenSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]{43}$/, 'Invalid invitation token.');

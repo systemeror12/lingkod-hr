@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
-import { expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { ApprovalCompletionRegistry } from '../approvals/approval.service';
 import { DocumentsService } from '../documents/documents.service';
 import { EmployeesService, employeeAuditWriter } from '../employees/employees.service';
@@ -19,6 +19,16 @@ import {
   AppointmentsService,
   type AppointmentLinkRole,
 } from './appointments.service';
+
+// The service stamps issuance with the current time, and the acknowledgment, oath, and assumption
+// dates below are fixed. Run the clock before those dates so their order never depends on today.
+beforeAll(() => {
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-30T01:00:00.000Z'));
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 const enabled = process.env.DATABASE_E2E === 'true';
 

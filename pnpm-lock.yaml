@@ -175,9 +175,15 @@ importers:
 
   packages/auth:
     dependencies:
+      '@lingkod-hr/config':
+        specifier: workspace:*
+        version: link:../config
       jose:
         specifier: 5.10.0
         version: 5.10.0
+      otpauth:
+        specifier: 9.5.2
+        version: 9.5.2
     devDependencies:
       '@types/node':
         specifier: 24.13.3
@@ -198,6 +204,12 @@ importers:
         specifier: 6.19.3
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
+      '@lingkod-hr/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@lingkod-hr/config':
+        specifier: workspace:*
+        version: link:../config
       prisma:
         specifier: 6.19.3
         version: 6.19.3(typescript@5.9.3)
@@ -1161,6 +1173,13 @@ packages:
     engines: { node: '>= 10' }
     cpu: [x64]
     os: [win32]
+
+  '@noble/hashes@2.4.0':
+    resolution:
+      {
+        integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==,
+      }
+    engines: { node: '>= 20.19.0' }
 
   '@opentelemetry/api-logs@0.221.0':
     resolution:
@@ -4403,6 +4422,12 @@ packages:
       }
     engines: { node: '>= 0.8.0' }
 
+  otpauth@9.5.2:
+    resolution:
+      {
+        integrity: sha512-GQ5emWR/x1tcExT62IBT0UfO95wZzJZyxYOJOGVeQF47SYEN9vmh0vISvDZaNMuFJRG+IaWCKtfm+t9Bfoal6w==,
+      }
+
   p-limit@3.1.0:
     resolution:
       {
@@ -5804,6 +5829,8 @@ snapshots:
 
   '@next/swc-win32-x64-msvc@16.3.0':
     optional: true
+
+  '@noble/hashes@2.4.0': {}
 
   '@opentelemetry/api-logs@0.221.0':
     dependencies:
@@ -7959,6 +7986,10 @@ snapshots:
       prelude-ls: 1.2.1
       type-check: 0.4.0
       word-wrap: 1.2.5
+
+  otpauth@9.5.2:
+    dependencies:
+      '@noble/hashes': 2.4.0
 
   p-limit@3.1.0:
     dependencies:

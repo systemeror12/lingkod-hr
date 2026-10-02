@@ -1,12 +1,32 @@
+import { argon2Sync, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
-import { hashSessionToken, type OidcIdentity, type RequestContext } from '@lingkod-hr/auth';
-import { getConfig } from '@lingkod-hr/config';
+import {
+  generateTotpSecret,
+  hashEmail,
+  hashPassword,
+  hashSessionToken,
+  type OidcIdentity,
+  type RequestContext,
+  sealTotpSecret,
+  totpCode,
+  verifyPassword,
+  verifyPasswordAgainstDummy,
+} from '@lingkod-hr/auth';
+import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 import type { ExecutionContext } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService, AuthServiceError } from './auth.service';
+
+vi.mock('@lingkod-hr/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lingkod-hr/auth')>();
+  return {
+    ...actual,
+    verifyPasswordAgainstDummy: vi.fn(actual.verifyPasswordAgainstDummy),
+  };
+});
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const issuer = getConfig().OIDC_ISSUER;
@@ -347,18 +367,18 @@ it.skipIf(!enabled)(
           data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
         });
         await admin.externalIdentityLink.create({
-          data: { userId: user.id, issuer, subject: user.externalSubject, status: 'ACTIVE' },
+          data: { userId: user.id, issuer, subject: user.externalSubject ?? '', status: 'ACTIVE' },
         });
       }),
     );
 
     try {
-      await new AuthService().signIn(identity(firstUser.externalSubject, newEmail));
+      await new AuthService().signIn(identity(firstUser.externalSubject ?? '', newEmail));
       await expect(
         admin.user.findUniqueOrThrow({ where: { id: firstUser.id } }),
       ).resolves.toMatchObject({ emailNormalized: newEmail });
       await expect(
-        new AuthService().signIn(identity(secondUser.externalSubject, newEmail)),
+        new AuthService().signIn(identity(secondUser.externalSubject ?? '', newEmail)),
       ).rejects.toMatchObject({ code: 'EMAIL_ALREADY_IN_USE', statusCode: 401 });
     } finally {
       await cleanup(
@@ -658,3 +678,422 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
     await admin.$disconnect();
   }
 });
+
+interface OwnedLoginFixture {
+  admin: PrismaClient;
+  agencyIds: string[];
+  membershipIds: string[];
+  user: { id: string; email: string; password: string; totpSecret: string | null };
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * An Agency Administrator (an MFA-Required User) in two Agencies, with a password and, unless
+ * `withTotp` is false, a TOTP factor sealed with the run's `DATA_ENCRYPTION_KEY`.
+ */
+async function ownedLoginFixture(
+  options: { withTotp?: boolean; mfaRequired?: boolean; passwordHash?: string } = {},
+): Promise<OwnedLoginFixture> {
+  const admin = await createAdminClient();
+  const suffix = `${Date.now()}-${randomBytes(4).toString('hex')}`;
+  const email = `owned-login-${suffix}@example.test`;
+  const password = `owned login passphrase ${suffix}`;
+  const agencies = await Promise.all(
+    ['A', 'B'].map((label) =>
+      admin.agency.create({
+        data: {
+          code: `OWNED-LOGIN-${label}-${suffix}`,
+          name: `Owned Login ${label}`,
+          agencyType: 'NGA',
+          status: 'ACTIVE',
+        },
+      }),
+    ),
+  );
+  const user = await admin.user.create({
+    data: { emailNormalized: email, displayName: 'Owned Login User', globalStatus: 'ACTIVE' },
+  });
+  const memberships = [];
+  for (const agency of agencies) {
+    memberships.push(
+      await admin.agencyMembership.create({
+        data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE', activatedAt: new Date() },
+      }),
+    );
+  }
+  if (options.mfaRequired ?? true) {
+    const role = await admin.role.findFirstOrThrow({
+      where: { code: 'agency_administrator', agencyId: null },
+    });
+    for (const membership of memberships) {
+      await admin.membershipRole.create({
+        data: {
+          agencyId: membership.agencyId,
+          membershipId: membership.id,
+          roleId: role.id,
+          effectiveFrom: new Date(Date.now() - 60_000),
+          reason: 'Owned login fixture',
+        },
+      });
+    }
+  }
+  await admin.userPassword.create({
+    data: { userId: user.id, passwordHash: options.passwordHash ?? (await hashPassword(password)) },
+  });
+  let totpSecret: string | null = null;
+  if (options.withTotp ?? true) {
+    totpSecret = generateTotpSecret();
+    const factorId = randomUUID();
+    await admin.userTotpFactor.create({
+      data: {
+        id: factorId,
+        userId: user.id,
+        secretEnvelope: databaseBytes(
+          sealTotpSecret(totpSecret, parseProtectedValueKey(getConfig().DATA_ENCRYPTION_KEY), {
+            userId: user.id,
+            factorId,
+          }),
+        ),
+      },
+    });
+  }
+  const agencyIds = agencies.map(({ id }) => id);
+  return {
+    admin,
+    agencyIds,
+    membershipIds: memberships.map(({ id }) => id),
+    user: { id: user.id, email, password, totpSecret },
+    cleanup: async () => {
+      const emailHash = databaseBytes(hashEmail(email, getConfig().BLIND_INDEX_KEY));
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.securityEvent.deleteMany({
+          where: {
+            OR: [
+              { userId: user.id },
+              { emailHash },
+              { userId: null, requestId: { startsWith: 'owned-login-' } },
+            ],
+          },
+        });
+      });
+      await cleanup(admin, agencyIds, [user.id]);
+      await admin.$disconnect();
+    },
+  };
+}
+
+function signInRequest(label: string) {
+  return { requestId: `owned-login-${label}-${randomUUID()}`, ipAddress: '198.51.100.7' };
+}
+
+it.skipIf(!enabled)(
+  'signs an MFA-Required User in with password and TOTP into the requested Agency Membership',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        fixture.membershipIds[1] ?? null,
+        signInRequest('password'),
+      );
+      if (started.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
+
+      const pending = await admin.pendingAuthentication.findMany({ where: { userId: user.id } });
+      expect(pending).toHaveLength(1);
+      expect(Buffer.from(pending[0]?.tokenHash ?? [])).toEqual(
+        hashSessionToken(started.pendingToken),
+      );
+      expect(pending[0]).toMatchObject({ purpose: 'SIGN_IN', verifiedMethods: ['pwd'] });
+      const lifetime = (pending[0]?.expiresAt.getTime() ?? 0) - Date.now();
+      expect(lifetime).toBeGreaterThan(4 * 60 * 1000);
+      expect(lifetime).toBeLessThanOrEqual(5 * 60 * 1000);
+
+      const before = Date.now();
+      const session = await service.completeTotpSignIn(
+        started.pendingToken,
+        totpCode(user.totpSecret ?? ''),
+        signInRequest('totp'),
+      );
+      expect(session.authenticationMethods).toEqual(['pwd', 'totp']);
+      expect(session.authTime?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+      expect(session.context).toMatchObject({
+        userId: user.id,
+        agencyId: fixture.agencyIds[1],
+        membershipId: fixture.membershipIds[1],
+      });
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+      // The owned methods count as MFA evidence, so the MFA-Required session stays active.
+      await expect(
+        service.authenticateSession(session.token, 'request-owned-me'),
+      ).resolves.toMatchObject({ sessionId: session.sessionId });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'gives a wrong password and an unknown email the same answer after a dummy verification',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    try {
+      const service = new AuthService();
+      const wrongPassword = await service
+        .signInWithPassword(
+          fixture.user.email,
+          'not the right passphrase',
+          null,
+          signInRequest('a'),
+        )
+        .catch((error: unknown) => error);
+      vi.mocked(verifyPasswordAgainstDummy).mockClear();
+      const unknownEmail = await service
+        .signInWithPassword(
+          `nobody-${randomUUID()}@example.test`,
+          fixture.user.password,
+          null,
+          signInRequest('b'),
+        )
+        .catch((error: unknown) => error);
+
+      expect(wrongPassword).toBeInstanceOf(AuthServiceError);
+      expect(unknownEmail).toBeInstanceOf(AuthServiceError);
+      for (const error of [wrongPassword, unknownEmail] as AuthServiceError[]) {
+        expect({ code: error.code, statusCode: error.statusCode, message: error.message }).toEqual({
+          code: 'INVALID_CREDENTIALS',
+          statusCode: 401,
+          message: 'The email or password is incorrect.',
+        });
+      }
+      expect(verifyPasswordAgainstDummy).toHaveBeenCalledOnce();
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'signs a User without a factor straight in and rehashes a password with old parameters',
+  async () => {
+    const salt = Buffer.alloc(16, 5);
+    const password = `legacy passphrase ${randomUUID()}`;
+    const legacyTag = argon2Sync('argon2id', {
+      message: password,
+      nonce: salt,
+      memory: 19456,
+      passes: 2,
+      parallelism: 1,
+      tagLength: 32,
+    });
+    const unpadded = (value: Buffer) => value.toString('base64').replace(/=+$/, '');
+    const legacyHash = `$argon2id$v=19$m=19456,t=2,p=1$${unpadded(salt)}$${unpadded(legacyTag)}`;
+    const fixture = await ownedLoginFixture({
+      withTotp: false,
+      mfaRequired: false,
+      passwordHash: legacyHash,
+    });
+    try {
+      const result = await new AuthService().signInWithPassword(
+        fixture.user.email,
+        password,
+        null,
+        signInRequest('legacy'),
+      );
+      if (result.status !== 'SIGNED_IN') throw new Error('Expected a session.');
+      expect(result.session.authenticationMethods).toEqual(['pwd']);
+
+      const stored = await fixture.admin.userPassword.findUniqueOrThrow({
+        where: { userId: fixture.user.id },
+      });
+      expect(stored.passwordHash).toMatch(/^\$argon2id\$v=19\$m=65536,t=3,p=1\$/);
+      await expect(verifyPassword(stored.passwordHash, password)).resolves.toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'accepts exactly one of two concurrent submissions of a TOTP code, then refuses its replay',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { user } = fixture;
+    try {
+      const service = new AuthService();
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('race'),
+      );
+      if (started.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
+      const code = totpCode(user.totpSecret ?? '');
+
+      const results = await Promise.allSettled([
+        service.completeTotpSignIn(started.pendingToken, code, signInRequest('race-1')),
+        service.completeTotpSignIn(started.pendingToken, code, signInRequest('race-2')),
+      ]);
+      expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+      await expect(fixture.admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(
+        1,
+      );
+
+      const again = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('replay'),
+      );
+      if (again.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
+      await expect(
+        service.completeTotpSignIn(again.pendingToken, code, signInRequest('replay-code')),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE', statusCode: 401 });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'replaces a pending sign-in when the User starts over and refuses an expired one',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const first = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('first'),
+      );
+      const second = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('second'),
+      );
+      if (first.status !== 'TOTP_REQUIRED' || second.status !== 'TOTP_REQUIRED') {
+        throw new Error('Expected TOTP challenges.');
+      }
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        1,
+      );
+      const replacedRequest = signInRequest('first-code');
+      await expect(
+        service.completeTotpSignIn(
+          first.pendingToken,
+          totpCode(user.totpSecret ?? ''),
+          replacedRequest,
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED', statusCode: 401 });
+      // A token that opens no pending sign-in is still a recorded attempt.
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: replacedRequest.requestId },
+          select: { eventType: true, userId: true, ipAddress: true, details: true },
+        }),
+      ).resolves.toEqual([
+        {
+          eventType: 'LOGIN_FAILURE',
+          userId: null,
+          ipAddress: '198.51.100.7',
+          details: { reason: 'SIGN_IN_EXPIRED', method: 'totp' },
+        },
+      ]);
+
+      await admin.pendingAuthentication.updateMany({
+        where: { userId: user.id },
+        data: {
+          createdAt: new Date(Date.now() - 10 * 60 * 1000),
+          expiresAt: new Date(Date.now() - 1000),
+        },
+      });
+      await expect(
+        service.completeTotpSignIn(
+          second.pendingToken,
+          totpCode(user.totpSecret ?? ''),
+          signInRequest('second-code'),
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED', statusCode: 401 });
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'records every sign-in attempt with the email hash and never a password, code, token, or email',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const requests = ['wrong-password', 'password', 'wrong-code', 'code'].map(signInRequest);
+      const [wrongPasswordRequest, passwordRequest, wrongCodeRequest, codeRequest] = requests;
+      if (!wrongPasswordRequest || !passwordRequest || !wrongCodeRequest || !codeRequest) {
+        throw new Error('Requests were not prepared.');
+      }
+      await expect(
+        service.signInWithPassword(
+          user.email,
+          'a wrong passphrase here',
+          null,
+          wrongPasswordRequest,
+        ),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+      const started = await service.signInWithPassword(
+        user.email.toUpperCase(),
+        user.password,
+        null,
+        passwordRequest,
+      );
+      if (started.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
+      const code = totpCode(user.totpSecret ?? '');
+      const wrongCode = code === '000000' ? '000001' : '000000';
+      await expect(
+        service.completeTotpSignIn(started.pendingToken, wrongCode, wrongCodeRequest),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE' });
+      const session = await service.completeTotpSignIn(started.pendingToken, code, codeRequest);
+
+      const events = await admin.securityEvent.findMany({
+        where: { requestId: { in: requests.map(({ requestId }) => requestId) } },
+        orderBy: { occurredAt: 'asc' },
+      });
+      expect(events.map(({ requestId, eventType }) => [requestId, eventType])).toEqual([
+        [wrongPasswordRequest.requestId, 'LOGIN_FAILURE'],
+        [passwordRequest.requestId, 'SIGN_IN_PASSWORD_VERIFIED'],
+        [wrongCodeRequest.requestId, 'LOGIN_FAILURE'],
+        [codeRequest.requestId, 'LOGIN_SUCCESS'],
+      ]);
+      const emailHash = hashEmail(user.email, getConfig().BLIND_INDEX_KEY);
+      for (const event of events) {
+        expect(Buffer.from(event.emailHash ?? [])).toEqual(emailHash);
+        expect(event.ipAddress).toBe('198.51.100.7');
+        const serialized = JSON.stringify(event).toLowerCase();
+        for (const secret of [
+          user.password,
+          user.email,
+          code,
+          started.pendingToken,
+          session.token,
+        ]) {
+          expect(serialized).not.toContain(secret.toLowerCase());
+        }
+      }
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);

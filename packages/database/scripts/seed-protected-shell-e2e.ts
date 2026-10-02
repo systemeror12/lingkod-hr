@@ -1,5 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
+import { hashPassword, permissionsRequireMfa, sealTotpSecret } from '@lingkod-hr/auth';
+import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
+
+if (process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production') {
+  throw new Error('The protected-shell seed holds local-only credentials and refuses production.');
+}
 
 const issuer = process.env.OIDC_ISSUER ?? 'http://127.0.0.1:4100';
 const databaseUrl =
@@ -20,6 +26,22 @@ const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
 const phase5RestrictedEmail = 'phase5.restricted@example.test';
 const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
 const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
+
+/**
+ * Local-only sign-in credentials, documented in the README. Every seeded User gets the passphrase;
+ * seeded MFA-Required Users also get a TOTP factor with this secret. The Playwright fixture in
+ * `apps/web/e2e/sign-in.ts` repeats both values.
+ */
+const LOCAL_SEED_PASSPHRASE = 'local-only seed passphrase';
+const LOCAL_SEED_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+const seededUserEmails = [
+  'marisol.santos@example.test',
+  'personnel.preparer@example.test',
+  phase5OwnerEmail,
+  phase5RestrictedEmail,
+  'foreign.personnel@example.test',
+  'dtr.reviewer@example.test',
+];
 
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -2747,7 +2769,63 @@ async function seed(): Promise<void> {
   await seedDtrFixture();
 }
 
+/**
+ * Gives each seeded User the local passphrase and, when their current roles make them an
+ * MFA-Required User, a TOTP factor sealed with this run's `DATA_ENCRYPTION_KEY`. A factor that
+ * already exists keeps its id and replay guard.
+ */
+async function seedLocalCredentials(): Promise<void> {
+  const dataEncryptionKey = parseProtectedValueKey(getConfig().DATA_ENCRYPTION_KEY);
+  const passwordHash = await hashPassword(LOCAL_SEED_PASSPHRASE);
+  const now = new Date();
+  const users = await prisma.user.findMany({
+    where: { emailNormalized: { in: seededUserEmails } },
+    select: { id: true },
+  });
+  for (const user of users) {
+    await prisma.userPassword.upsert({
+      where: { userId: user.id },
+      update: { passwordHash, changedAt: now, secondFactorFailures: 0, resetRequiredAt: null },
+      create: { userId: user.id, passwordHash },
+    });
+    await prisma.pendingAuthentication.deleteMany({ where: { userId: user.id } });
+    const assignments = await prisma.membershipRole.findMany({
+      where: {
+        membership: { userId: user.id, status: 'ACTIVE' },
+        role: { status: 'ACTIVE' },
+        effectiveFrom: { lte: now },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+      },
+      select: { role: { select: { permissions: { select: { permission: true } } } } },
+    });
+    const mfaRequired = permissionsRequireMfa(
+      assignments.flatMap(({ role }) =>
+        role.permissions.map(({ permission }) => ({
+          code: permission.code,
+          scopePolicy: 'AGENCY' as const,
+        })),
+      ),
+    );
+    if (!mfaRequired) {
+      await prisma.userTotpFactor.deleteMany({ where: { userId: user.id } });
+      continue;
+    }
+    const existing = await prisma.userTotpFactor.findUnique({ where: { userId: user.id } });
+    const factorId = existing?.id ?? randomUUID();
+    const secretEnvelope = sealTotpSecret(LOCAL_SEED_TOTP_SECRET, dataEncryptionKey, {
+      userId: user.id,
+      factorId,
+    });
+    await prisma.userTotpFactor.upsert({
+      where: { userId: user.id },
+      update: { secretEnvelope },
+      create: { id: factorId, userId: user.id, secretEnvelope },
+    });
+  }
+}
+
 seed()
+  .then(seedLocalCredentials)
   .catch((error: unknown) => {
     console.error(error);
     process.exitCode = 1;
