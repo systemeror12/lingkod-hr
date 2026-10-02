@@ -8,7 +8,7 @@
   <circle cx="100" cy="100" r="96" fill="#14532d" />
   <circle cx="100" cy="100" r="62" fill="#fff" />
   <circle cx="100" cy="100" r="62" fill="none" stroke="#c9a227" stroke-width="3" />
-  <text font-family="Georgia, serif" font-size="13" font-weight="700" fill="#fff" letter-spacing="1.6">
+  <text font-family="Georgia, serif" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.6">
     <textPath href="#top" startOffset="50%" text-anchor="middle">CENTER FOR HEALTH DEVELOPMENT</textPath>
   </text>
   <text font-family="Georgia, serif" font-size="12" font-weight="700" fill="#f2d27a" letter-spacing="3">
