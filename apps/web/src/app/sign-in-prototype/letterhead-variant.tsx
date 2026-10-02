@@ -1,8 +1,8 @@
 'use client';
 
-// PROTOTYPE (#398). Variant D: the screen opens with the letterhead of whoever is speaking, the
-// way a Philippine government memorandum does. Invitations carry the inviting Agency's
-// letterhead; sign-in and reset carry LingkodHR's. Throwaway; do not import.
+// PROTOTYPE (#398). The form every scene variant shares. It opens with the letterhead of whoever
+// is speaking, the way a Philippine government memorandum does: invitations carry the inviting
+// Agency's letterhead; sign-in and reset carry LingkodHR's. Throwaway; do not import.
 
 import { useEffect, useState } from 'react';
 import { Button } from '../../components/ui/button';
@@ -341,19 +341,5 @@ export function LetterheadContent(props: VariantProps & { align?: 'center' | 'st
         </footer>
       ) : null}
     </>
-  );
-}
-
-/** Variant D: the letterhead sheet on its own, centred on the canvas. */
-export function Letterhead(props: VariantProps) {
-  return (
-    <main className="grid min-h-dvh place-items-center bg-canvas px-4 py-10 text-ink">
-      <section
-        aria-labelledby="proto-title"
-        className="w-full max-w-[560px] rounded-panel border border-border bg-surface px-6 pt-8 pb-6 min-[621px]:px-12"
-      >
-        <LetterheadContent {...props} />
-      </section>
-    </main>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-// PROTOTYPE (#398). Variant E: the letterhead column beside a civic sunrise. The sun's height and
+// PROTOTYPE (#398). Variant A: the letterhead column beside a civic sunrise. The sun's height and
 // the lit windows encode progress through the flow; terminal errors overcast the sky. The scene
 // persists across steps, so changes transition instead of jumping. Throwaway; do not import.
 
@@ -13,8 +13,8 @@ const SUN = '#f2c14e';
 const NAVY = '#0f2240';
 const WINDOWS = 5;
 
-/** 0 at the first step, 1 once the user is in. */
-function progressOf(props: VariantProps) {
+/** 0 at the first step, 1 once the user is in. Every scene encodes this one number. */
+export function progressOf(props: VariantProps) {
   const { view } = props;
   if (view.outcome?.tone === 'success' || view.codesLeft) return 1;
   const index = view.rail.findIndex(({ status }) => status === 'current');
@@ -49,12 +49,47 @@ function Tree({ x, scale = 1 }: { x: number; scale?: number }) {
   );
 }
 
-function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
-  const [risen, setRisen] = useState(false);
+/** Danger and warning outcomes (lockouts, expired links) darken every scene. */
+export function gloomOf({ view }: VariantProps) {
+  return view.outcome?.tone === 'danger' || view.outcome?.tone === 'warning';
+}
+
+/** False for the first frames after mount, so a scene can play its one entrance transition. */
+export function useArrived() {
+  const [arrived, setArrived] = useState(false);
   useEffect(() => {
-    const frame = setTimeout(() => setRisen(true), 60);
+    const frame = setTimeout(() => setArrived(true), 60);
     return () => clearTimeout(frame);
   }, []);
+  return arrived;
+}
+
+/** The welcome line: the inviting Agency's name on an invitation, the service otherwise. */
+export function captionOf({ view }: VariantProps) {
+  return view.flow === 'Activate access'
+    ? {
+        title: `Maligayang pagdating sa ${agency.acronym}`,
+        body: `${agency.name} invited you to manage your service record, leave, and payroll in one place.`,
+      }
+    : {
+        title: 'Para sa mga lingkod-bayan',
+        body: 'Your service record, leave, and payroll, kept by your agency from appointment to retirement.',
+      };
+}
+
+export function LingkodMark({ className }: { className?: string }) {
+  return (
+    <div className={className}>
+      <span className="grid size-8 place-items-center rounded-control bg-white/15 text-small font-bold">
+        L
+      </span>
+      <span className="text-small font-[650]">LingkodHR</span>
+    </div>
+  );
+}
+
+function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
+  const risen = useArrived();
   const sunDrop = risen ? (1 - progress) * 190 : 340;
   const lit = Math.round(progress * WINDOWS);
   const ease = 'cubic-bezier(.2,.7,.2,1)';
@@ -176,32 +211,21 @@ function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
 }
 
 export function Sunrise(props: VariantProps) {
-  const { view } = props;
-  const fromAgency = view.flow === 'Activate access';
-  const gloom = view.outcome?.tone === 'danger' || view.outcome?.tone === 'warning';
+  const caption = captionOf(props);
 
   return (
     <main className="grid min-h-dvh bg-surface text-ink min-[960px]:grid-cols-[minmax(0,1.1fr)_minmax(460px,1fr)]">
       <div className="grid grid-rows-[minmax(0,1fr)_auto] bg-[#0b1a33] min-[960px]:sticky min-[960px]:top-0 min-[960px]:h-dvh">
         <div className="relative h-60 overflow-hidden bg-nav min-[960px]:h-auto">
-          <CivicScene progress={progressOf(props)} gloom={gloom} />
-          <div className="absolute inset-x-0 top-0 flex items-center gap-2.5 p-6 text-nav-ink min-[960px]:p-10">
-            <span className="grid size-8 place-items-center rounded-control bg-white/15 text-small font-bold">
-              L
-            </span>
-            <span className="text-small font-[650]">LingkodHR</span>
-          </div>
+          <CivicScene progress={progressOf(props)} gloom={gloomOf(props)} />
+          <LingkodMark className="absolute inset-x-0 top-0 flex items-center gap-2.5 p-6 text-nav-ink min-[960px]:p-10" />
         </div>
         {/* Caption sits on the scene's ground colour, below the art, so it never covers the building. */}
         <div className="lh-caption hidden gap-2 px-10 pt-2 pb-12 text-white min-[960px]:grid">
           <p className="m-0 max-w-[18ch] text-[2.5rem] leading-[1.05] font-[700] tracking-[-0.025em] [text-wrap:balance]">
-            {fromAgency ? `Maligayang pagdating sa ${agency.acronym}` : 'Para sa mga lingkod-bayan'}
+            {caption.title}
           </p>
-          <p className="m-0 max-w-[46ch] text-body text-nav-ink/80">
-            {fromAgency
-              ? `${agency.name} invited you to manage your service record, leave, and payroll in one place.`
-              : 'Your service record, leave, and payroll, kept by your agency from appointment to retirement.'}
-          </p>
+          <p className="m-0 max-w-[46ch] text-body text-nav-ink/80">{caption.body}</p>
         </div>
       </div>
 

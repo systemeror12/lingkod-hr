@@ -8,9 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 import { PrototypeSwitcher } from '../../components/prototype-switcher';
 import { screens, variantsFor, type ScreenKey } from './fake-states';
 import { publicView, type Go } from './public-flows';
-import { Letterhead } from './letterhead-variant';
+import { Banig } from './banig-variant';
+import { Capiz } from './capiz-variant';
 import { Sunrise } from './sunrise-variant';
-import { ContextStrip, SingleCard, StepRail } from './public-variants';
+import { Terraces } from './terraces-variant';
 import {
   AccountDialogs,
   AccountInline,
@@ -35,9 +36,7 @@ export function Prototype() {
     definition.states.find(({ key }) => key === params.get('state'))?.key ??
     definition.states[0]!.key;
   const variants = variantsFor(screen);
-  const variant =
-    variants.find(({ key }) => key === params.get('variant'))?.key ??
-    (variants.some(({ key }) => key === 'E') ? 'E' : 'A');
+  const variant = variants.find(({ key }) => key === params.get('variant'))?.key ?? 'A';
   const [busy, setBusy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -93,12 +92,11 @@ export function Prototype() {
       </ProtectedFrame>
     );
   } else {
-    const Variant =
-      { B: StepRail, C: ContextStrip, D: Letterhead, E: Sunrise }[variant] ?? SingleCard;
-    // E keeps its scene mounted across steps so the sunrise transitions between them.
+    const Variant = { B: Terraces, C: Capiz, D: Banig }[variant] ?? Sunrise;
+    // Each scene stays mounted across steps, so progress transitions instead of jumping.
     body = (
       <Variant
-        key={variant === 'E' ? `${screen}:${variant}` : key}
+        key={`${screen}:${variant}`}
         stateKey={key}
         view={publicView(screen, state, go)}
         busy={busy}

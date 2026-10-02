@@ -446,11 +446,10 @@ export const screens: { key: ScreenKey; label: string; states: FakeState[] }[] =
 ];
 
 export const publicVariants = [
-  { key: 'A', label: 'Single card' },
-  { key: 'B', label: 'Step rail' },
-  { key: 'C', label: 'Context strip' },
-  { key: 'D', label: 'Agency letterhead' },
-  { key: 'E', label: 'Civic sunrise' },
+  { key: 'A', label: 'Civic sunrise' },
+  { key: 'B', label: 'Rice terraces' },
+  { key: 'C', label: 'Capiz window' },
+  { key: 'D', label: 'Banig mat' },
 ];
 
 export const protectedVariants = [
