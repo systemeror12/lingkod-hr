@@ -9,8 +9,8 @@ import { agency } from './fake-states';
 import { LetterheadContent } from './letterhead-variant';
 import type { VariantProps } from './public-variants';
 
-const SUN = '#f2c14e';
-const NAVY = '#0f2240';
+export const SUN = '#f2c14e';
+export const NAVY = '#0f2240';
 const WINDOWS = 5;
 
 /** 0 at the first step, 1 once the user is in. Every scene encodes this one number. */
