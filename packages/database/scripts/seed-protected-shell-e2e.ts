@@ -260,7 +260,15 @@ async function seedDtrFixture(): Promise<void> {
       select: { id: true },
     });
     if (reviewer) {
-      await transaction.externalIdentityLink.deleteMany({ where: { userId: reviewer.id } });
+      // Replica mode skips cascades, so remove what the browser journey's activation wrote.
+      const where = { userId: reviewer.id };
+      await transaction.userSession.deleteMany({ where });
+      await transaction.pendingAuthentication.deleteMany({ where });
+      await transaction.userPassword.deleteMany({ where });
+      await transaction.userTotpFactor.deleteMany({ where });
+      await transaction.userRecoveryCode.deleteMany({ where });
+      await transaction.securityEvent.deleteMany({ where });
+      await transaction.externalIdentityLink.deleteMany({ where });
       await transaction.user.deleteMany({ where: { id: reviewer.id } });
     }
   });

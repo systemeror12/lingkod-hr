@@ -85,7 +85,7 @@ export class AgencyController {
           id: invitation.id,
           email: invitation.email,
           expiresAt: invitation.expiresAt,
-          activationUrl: `${this.config.API_URL}/api/v1/auth/invitations/${invitation.activationToken}/activate`,
+          activationUrl: `${this.config.APP_URL.replace(/\/$/, '')}/invite/${invitation.activationToken}`,
         };
   }
 

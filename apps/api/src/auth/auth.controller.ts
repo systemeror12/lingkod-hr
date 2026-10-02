@@ -23,13 +23,17 @@ import {
   AuthService,
   AuthServiceError,
   OIDC_FLOW_COOKIE,
+  PENDING_ACTIVATION_COOKIE,
+  PENDING_ACTIVATION_LIFETIME_MS,
   PENDING_AUTHENTICATION_COOKIE,
   PENDING_SIGN_IN_LIFETIME_MS,
   SESSION_COOKIE,
 } from './auth.service';
+import type { ActivationDone } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
 import type { MailMessage } from '../invitations/mail';
 import {
+  activationStartSchema,
   activationTokenSchema,
   backchannelLogoutSchema,
   callbackQuerySchema,
@@ -85,19 +89,15 @@ export class AuthController {
 
   @Get('login')
   async login(
-    @Query('invitation') invitationToken: string | undefined,
     @Query('membershipId') membershipId: string | undefined,
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
-    const query = loginQuerySchema.safeParse({ invitation: invitationToken, membershipId });
+    const query = loginQuerySchema.safeParse({ membershipId });
     if (!query.success) throw new BadRequestException('Invalid login parameters.');
     try {
       await this.authService.assertIpAllowed(this.signInRequest(request));
-      const start = await this.authService.beginLogin(
-        query.data.invitation ?? null,
-        query.data.membershipId ?? null,
-      );
+      const start = await this.authService.beginLogin(query.data.membershipId ?? null);
       response.cookie(OIDC_FLOW_COOKIE, start.flowCookie, {
         ...cookieOptions(this.config.NODE_ENV === 'production'),
         maxAge: 10 * 60 * 1000,
@@ -273,34 +273,6 @@ export class AuthController {
     }
   }
 
-  @Get('invitations/:token/activate')
-  async activateInvitation(
-    @Param('token') token: string,
-    @Req() request: Request,
-    @Res() response: Response,
-  ): Promise<void> {
-    const parsed = activationTokenSchema.safeParse(token);
-    const recoveryUrl = `${this.config.APP_URL.replace(/\/$/, '')}/invite/error`;
-    if (!parsed.success) {
-      response.redirect(recoveryUrl);
-      return;
-    }
-    try {
-      const status = await this.authService.inspectInvitationToken(
-        parsed.data,
-        request.header('x-request-id') ?? 'unknown-request',
-      );
-      if (status !== 'VALID') {
-        response.redirect(recoveryUrl);
-        return;
-      }
-    } catch {
-      response.redirect(recoveryUrl);
-      return;
-    }
-    response.redirect(`${this.config.APP_URL.replace(/\/$/, '')}/invite/${parsed.data}`);
-  }
-
   @Get('callback')
   async callback(
     @Query('state') state: string | undefined,
@@ -317,7 +289,6 @@ export class AuthController {
       ?.slice(OIDC_FLOW_COOKIE.length + 1);
     if (!flowCookie) throw new BadRequestException('OIDC callback parameters are incomplete.');
     const requestId = request.header('x-request-id') ?? 'unknown-request';
-    let invitationFlow = false;
     try {
       await this.authService.assertIpAllowed(this.signInRequest(request));
       let decodedFlowCookie: string;
@@ -326,9 +297,6 @@ export class AuthController {
       } catch {
         throw new BadRequestException('The authentication flow cookie is invalid.');
       }
-      invitationFlow =
-        typeof this.authService.hasInvitationFlow === 'function' &&
-        this.authService.hasInvitationFlow(decodedFlowCookie);
       const result = await this.authService.completeLogin(
         decodedFlowCookie,
         query.data.state,
@@ -354,21 +322,176 @@ export class AuthController {
           // Preserve the authentication error when the audit store is unavailable.
         }
       }
-      if (
-        invitationFlow ||
-        (error instanceof AuthServiceError &&
-          [
-            'INVITATION_INVALID',
-            'INVITATION_EXPIRED',
-            'INVITATION_EMAIL_MISMATCH',
-            'MEMBERSHIP_EXISTS',
-            'MEMBERSHIP_REACTIVATION_REQUIRED',
-            'ROLE_NOT_FOUND',
-          ].includes(error.code))
-      ) {
-        response.redirect(`${this.config.APP_URL.replace(/\/$/, '')}/invite/error`);
+      translateError(error);
+    }
+  }
+
+  /** What the invitation page shows. Reading it writes nothing. */
+  @Get('invitations/:token')
+  async lookupInvitation(@Param('token') token: string) {
+    const parsed = activationTokenSchema.safeParse(token);
+    if (!parsed.success) return { status: 'INVALID' };
+    const invitation = await this.authService.lookupInvitation(parsed.data);
+    return invitation.status === 'VALID'
+      ? { ...invitation, expiresAt: invitation.expiresAt.toISOString() }
+      : invitation;
+  }
+
+  /**
+   * Starts an Invitation Activation: a new password for a first-time User, or an existing User's
+   * password. Answers `CODE_REQUIRED` or `ENROLLMENT_REQUIRED` with a pending-activation cookie, or
+   * `ACTIVATED` with a session.
+   */
+  @Post('invitations/:token/activation')
+  async startActivation(
+    @Param('token') token: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const invitationToken = this.invitationToken(token);
+    const parsed = activationStartSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A password is required.');
+    const secure = this.config.NODE_ENV === 'production';
+    try {
+      await this.authService.assertIpAllowed(this.signInRequest(request));
+      const result = await this.authService.startActivation(
+        invitationToken,
+        parsed.data,
+        this.signInRequest(request),
+      );
+      if (result.status === 'ACTIVATED') {
+        this.activated(response, result);
         return;
       }
+      response.cookie(PENDING_ACTIVATION_COOKIE, result.pendingToken, {
+        ...cookieOptions(secure),
+        maxAge: PENDING_ACTIVATION_LIFETIME_MS,
+      });
+      response.status(HttpStatus.OK).json(
+        result.status === 'ENROLLMENT_REQUIRED'
+          ? {
+              status: result.status,
+              enrollment: {
+                ...result.enrollment,
+                expiresAt: result.enrollment.expiresAt.toISOString(),
+              },
+            }
+          : { status: result.status },
+      );
+    } catch (error: unknown) {
+      this.clearEndedActivation(error, response);
+      translateError(error);
+    }
+  }
+
+  /** An existing User's TOTP code; finishes the activation. */
+  @Post('invitations/:token/activation/code')
+  async activateWithTotp(
+    @Param('token') token: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const invitationToken = this.invitationToken(token);
+    const parsed = totpSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A code is required.');
+    try {
+      await this.authService.assertIpAllowed(this.signInRequest(request));
+      this.activated(
+        response,
+        await this.authService.completeActivationWithTotp(
+          invitationToken,
+          cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
+          parsed.data.code,
+          this.signInRequest(request),
+        ),
+      );
+    } catch (error: unknown) {
+      this.clearEndedActivation(error, response);
+      translateError(error);
+    }
+  }
+
+  /** An existing User's Recovery Code in place of the TOTP code. Signs out their other sessions. */
+  @Post('invitations/:token/activation/recovery-code')
+  async activateWithRecoveryCode(
+    @Param('token') token: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const invitationToken = this.invitationToken(token);
+    const parsed = recoveryCodeSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A Recovery Code is required.');
+    try {
+      await this.authService.assertIpAllowed(this.signInRequest(request));
+      this.activated(
+        response,
+        await this.authService.completeActivationWithRecoveryCode(
+          invitationToken,
+          cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
+          parsed.data.code,
+          this.signInRequest(request),
+        ),
+      );
+    } catch (error: unknown) {
+      this.clearEndedActivation(error, response);
+      translateError(error);
+    }
+  }
+
+  /** The first code from the authenticator app; answers the Recovery Codes, shown once. */
+  @Post('invitations/:token/activation/enrollment/confirm')
+  async confirmActivationEnrollment(
+    @Param('token') token: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const invitationToken = this.invitationToken(token);
+    const parsed = totpSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A code is required.');
+    try {
+      await this.authService.assertIpAllowed(this.signInRequest(request));
+      const result = await this.authService.confirmActivationEnrollment(
+        invitationToken,
+        cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
+        parsed.data.code,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.OK).json({ status: 'RECOVERY_CODES', ...result });
+    } catch (error: unknown) {
+      this.clearEndedActivation(error, response);
+      translateError(error);
+    }
+  }
+
+  /** The acknowledgment that the Recovery Codes are saved; saves the activation and signs in. */
+  @Post('invitations/:token/activation/enrollment/finish')
+  async finishActivationEnrollment(
+    @Param('token') token: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const invitationToken = this.invitationToken(token);
+    const parsed = enrollmentFinishSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException('Confirm that you saved your Recovery Codes.');
+    }
+    try {
+      await this.authService.assertIpAllowed(this.signInRequest(request));
+      this.activated(
+        response,
+        await this.authService.finishActivationEnrollment(
+          invitationToken,
+          cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
+          this.signInRequest(request),
+        ),
+      );
+    } catch (error: unknown) {
+      this.clearEndedActivation(error, response);
       translateError(error);
     }
   }
@@ -455,6 +578,54 @@ export class AuthController {
     if (error.code === 'SIGN_IN_EXPIRED' || error.code === 'PASSWORD_RESET_REQUIRED') {
       response.clearCookie(
         PENDING_AUTHENTICATION_COOKIE,
+        cookieOptions(this.config.NODE_ENV === 'production'),
+      );
+    }
+    if (error.notice) this.noticeAfterResponse(response, error.notice);
+  }
+
+  private invitationToken(token: string): string {
+    const parsed = activationTokenSchema.safeParse(token);
+    if (!parsed.success) {
+      translateError(
+        new AuthServiceError(
+          'This invitation can’t be used. Ask your Agency Administrator for a new one.',
+          400,
+          'INVITATION_INVALID',
+        ),
+      );
+    }
+    return parsed.data;
+  }
+
+  /** Ends a saved activation: drops its pending cookie, signs in, and sends its notices. */
+  private activated(response: Response, done: ActivationDone): void {
+    const secure = this.config.NODE_ENV === 'production';
+    response.clearCookie(PENDING_ACTIVATION_COOKIE, cookieOptions(secure));
+    response.cookie(SESSION_COOKIE, done.session.token, {
+      ...cookieOptions(secure),
+      maxAge: 8 * 60 * 60 * 1000,
+    });
+    response.status(HttpStatus.OK).json({ status: 'ACTIVATED' });
+    for (const notice of done.notices) this.noticeAfterResponse(response, notice);
+  }
+
+  /** A pending activation the service found gone, or whose invitation can no longer be used. */
+  private clearEndedActivation(error: unknown, response: Response): void {
+    if (!(error instanceof AuthServiceError)) return;
+    if (
+      [
+        'ACTIVATION_EXPIRED',
+        'INVITATION_INVALID',
+        'INVITATION_EXPIRED',
+        'MEMBERSHIP_EXISTS',
+        'PASSWORD_RESET_REQUIRED',
+        'USER_LOCKED',
+        'USER_NOT_ACTIVE',
+      ].includes(error.code)
+    ) {
+      response.clearCookie(
+        PENDING_ACTIVATION_COOKIE,
         cookieOptions(this.config.NODE_ENV === 'production'),
       );
     }

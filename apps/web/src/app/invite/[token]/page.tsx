@@ -1,65 +1,45 @@
 import type { Metadata } from 'next';
 import { getConfig } from '@lingkod-hr/config';
 import {
-  InvitationKicker,
-  InvitationLayout,
-  InvitationTitle,
-} from '../../../components/invitation-layout';
-import { buttonVariants } from '../../../components/ui/button';
-import { cn } from '../../../lib/class-names';
+  ActivationOutcome,
+  InvitationActivationForm,
+  invitationOutcome,
+} from '../../../components/invitation-activation-form';
 
-export const metadata: Metadata = { title: 'Invitation handoff' };
+export const metadata: Metadata = { title: 'Activate your access' };
 
 const ACTIVATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
-export default async function InvitationTransitionPage({
+type Lookup =
+  | {
+      status: 'VALID';
+      email: string;
+      agency: { name: string; acronym: string | null };
+      roleNames: string[];
+      existingUser: boolean;
+      expiresAt: string;
+    }
+  | { status: 'EXPIRED' | 'INVALID' };
+
+/** Looks the invitation up, which writes nothing, so opening the link is safe to repeat. */
+async function lookUp(token: string): Promise<Lookup> {
+  if (!ACTIVATION_TOKEN_PATTERN.test(token)) return { status: 'INVALID' };
+  const response = await fetch(`${getConfig().API_URL}/api/v1/auth/invitations/${token}`, {
+    cache: 'no-store',
+  });
+  if (!response.ok) throw new Error(`Invitation lookup failed with ${response.status}.`);
+  return (await response.json()) as Lookup;
+}
+
+export default async function InvitationActivationPage({
   params,
 }: {
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  if (!ACTIVATION_TOKEN_PATTERN.test(token)) return <RecoverySurface />;
-
-  const apiLoginUrl = new URL('/api/v1/auth/login', getConfig().API_URL);
-  apiLoginUrl.searchParams.set('invitation', token);
-
-  return (
-    <InvitationLayout labelledBy="invitation-title" showMark>
-      <div className="grid gap-2">
-        <InvitationKicker>LingkodHR invitation</InvitationKicker>
-        <InvitationTitle id="invitation-title">
-          You’re about to continue to secure sign-in
-        </InvitationTitle>
-        <p className="m-0 text-body text-ink-muted">
-          LingkodHR will now hand you to the approved identity provider. Use the verified email
-          address that received this invitation. Your Agency access takes effect only after the
-          invitation is accepted.
-        </p>
-      </div>
-      <a
-        className={cn(buttonVariants({ variant: 'primary' }), 'min-h-11')}
-        href={apiLoginUrl.toString()}
-      >
-        Continue to secure sign-in
-      </a>
-      <p className="m-0 text-caption text-ink-muted">
-        This page does not collect credentials. The identity provider handles authentication and
-        verification.
-      </p>
-    </InvitationLayout>
-  );
-}
-
-function RecoverySurface() {
-  return (
-    <InvitationLayout labelledBy="invitation-recovery-title">
-      <InvitationKicker>Invitation</InvitationKicker>
-      <InvitationTitle id="invitation-recovery-title">
-        This invitation could not be opened
-      </InvitationTitle>
-      <p className="m-0 text-body text-ink-muted">
-        Request a new invitation from your Agency Administrator. No access was granted.
-      </p>
-    </InvitationLayout>
-  );
+  const invitation = await lookUp(token);
+  if (invitation.status !== 'VALID') {
+    return <ActivationOutcome outcome={invitationOutcome(invitation.status)} agency={null} />;
+  }
+  return <InvitationActivationForm invitation={{ ...invitation, token }} />;
 }
