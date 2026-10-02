@@ -74,6 +74,7 @@ export function refundSignInGuess(
 ): SignInThrottleState {
   const countedAt = counted.state.lastFailureAt;
   if (counted.cooldown) {
+    // A cool-down is known by its end; once another starts or the row resets, this one is gone.
     if (state.cooldownUntil?.getTime() !== counted.cooldown.until.getTime()) return state;
     return (
       current(before, countedAt) ?? {
