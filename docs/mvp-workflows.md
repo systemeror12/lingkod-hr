@@ -61,31 +61,52 @@ flowchart TD
     B --> C[Send single-use activation link]
     C --> D{Link valid?}
     D -- No --> E[Expire or resend invitation]
-    D -- Yes --> F[Verify email and create credentials]
-    F --> G{MFA required?}
+    D -- Yes --> F[Verify email]
+    F --> FA{First-time User?}
+    FA -- Yes --> FB[Create User and credentials]
+    FA -- No --> FC[Existing User authenticates]
+    FB --> G{MFA required?}
+    FC --> G
     G -- Yes --> H[Enroll or complete MFA]
-    G -- No --> I[Activate account]
+    G -- No --> I[Activate agency membership]
     H --> I
     I --> J[User signs in]
     J --> K{Authentication valid?}
     K -- No --> L[Generic error, rate limit, and security audit]
-    K -- Yes --> M{Account active?}
+    K -- Yes --> M{User ACTIVE?}
     M -- No --> N[Deny protected access]
     M -- Yes --> O[Load agency memberships]
     O --> P{More than one agency?}
     P -- Yes --> Q[Select agency context]
-    P -- No --> R[Set trusted agency context]
-    Q --> R
+    P -- No --> V{Agency membership ACTIVE in selected agency?}
+    Q --> V
+    V -- No --> N
+    V -- Yes --> R[Set trusted agency context]
     R --> S[Load role, office scope, and permissions]
     S --> T[Create secure session]
     T --> U[Open authorized dashboard]
 ```
 
-Key states:
+Key states (transitions in `docs/hris-controls.md` §5.1):
+
+User:
 
 ```text
-INVITED → ACTIVE → LOCKED | SUSPENDED | DEACTIVATED
+ACTIVE
+LOCKED
+DEACTIVATED
 ```
+
+Agency Membership:
+
+```text
+INVITED
+ACTIVE
+SUSPENDED
+DEACTIVATED
+```
+
+Access requires both an ACTIVE User and an ACTIVE Agency Membership in the selected Agency.
 
 ---
 

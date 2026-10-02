@@ -58,7 +58,7 @@ The system shall follow these principles:
 11. Plantilla occupancy must be validated before an appointment or personnel action takes effect.
 12. AI services may not bypass normal workflow, permission, and approval controls.
 13. Agency-specific rules may add restrictions but may not weaken mandatory security controls.
-14. Deactivated or suspended accounts may not perform protected actions.
+14. Protected actions require an ACTIVE User and an ACTIVE Agency Membership in the acting Agency.
 15. Every override requires an explicit reason and audit record.
 
 ---
@@ -1613,7 +1613,7 @@ Overrides requiring additional approval include:
 - finalized payroll void;
 - performance-rating amendment;
 - clearance waiver;
-- account reactivation after security suspension.
+- Agency Membership reactivation after a security-related Agency Membership Suspension.
 
 ---
 
@@ -1688,7 +1688,7 @@ This control specification is ready for ERD design when:
 - [ ] Leave and COC balances use immutable ledger entries.
 - [ ] Payroll finalization is separate from preparation and certification.
 - [ ] Finalized payroll cannot return to Draft.
-- [ ] Account deactivation revokes active sessions.
+- [ ] Agency Membership deactivation revokes active sessions.
 - [ ] Employee, supervisor, HR, payroll, audit, and privacy scopes are distinct.
 - [ ] Sensitive fields require field-level authorization.
 - [ ] AI cannot execute authoritative transitions directly.
