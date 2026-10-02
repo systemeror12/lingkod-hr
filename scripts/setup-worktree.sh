@@ -30,6 +30,16 @@ if [[ "$database" == "hris" ]]; then
   exit 1
 fi
 
+# Give each worktree its own E2E ports so a parallel Playwright run never
+# reuses another worktree's servers. playwright.config.ts reads these from .env.
+port_base=$((20000 + $(printf '%s' "$slug" | cksum | cut -d' ' -f1) % 1000 * 10))
+set_env() {
+  if grep -q "^$1=" .env; then sed -i -E "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >>.env; fi
+}
+set_env PLAYWRIGHT_APP_PORT "$port_base"
+set_env PLAYWRIGHT_API_PORT "$((port_base + 1))"
+set_env PLAYWRIGHT_OIDC_PORT "$((port_base + 2))"
+
 # Use the main checkout's compose file so containers keep its bind mounts;
 # --no-recreate keeps a config drift here from restarting shared services.
 compose=(docker compose -f "$main/infrastructure/compose.yaml")
@@ -44,4 +54,4 @@ run pnpm install --frozen-lockfile
 run pnpm db:migrate
 run pnpm --filter @lingkod-hr/web exec playwright install chromium
 
-echo "Worktree ready: database ${database}"
+echo "Worktree ready: database ${database}, E2E ports web ${port_base}, API $((port_base + 1)), OIDC $((port_base + 2))"
