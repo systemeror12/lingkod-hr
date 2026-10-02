@@ -148,33 +148,31 @@ Within Attendance, HR Officer inherits Employee permissions and HR Administrator
 
 # 5. Status Transition Matrix
 
-## 5.1 User Account
+## 5.1 User and Agency Membership
+
+A User is one identity with one set of credentials. An Agency Membership is that User's access to one Agency. Each has its own status. A first-time Invitation Activation creates both; after that, no transition acts on both.
+
+Access to an Agency requires both an ACTIVE User and an ACTIVE Agency Membership in that Agency.
+
+### User
 
 Statuses:
 
 ```text
-INVITED
 ACTIVE
 LOCKED
-SUSPENDED
 DEACTIVATED
 ```
 
-| Current     | Action             | Next        | Primary actor                                 | Required permission         | Validations                                                                                                                                                                                     | Side effects and audit                                                                                |
-| ----------- | ------------------ | ----------- | --------------------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| None        | Invite user        | INVITED     | Agency Administrator                          | `security.users.invite`     | Valid email; agency exists; role assignment permitted                                                                                                                                           | Create invitation; send email; audit invitation                                                       |
-| INVITED     | Accept invitation  | ACTIVE      | Invited user                                  | Public invitation flow      | Token valid, unused, unexpired; email verified                                                                                                                                                  | Create credentials; activate membership; audit activation                                             |
-| INVITED     | Resend invitation  | INVITED     | Agency Administrator                          | `security.users.invite`     | Existing invitation pending; resend limit                                                                                                                                                       | Replace or renew token; audit resend                                                                  |
-| INVITED     | Cancel invitation  | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Invitation not accepted                                                                                                                                                                         | Invalidate token; audit cancellation                                                                  |
-| ACTIVE      | Lock account       | LOCKED      | Security Administrator                        | `security.users.lock`       | Suspected compromise or security review; User has an ACTIVE Agency Membership in the acting Agency                                                                                              | Record the locking Agency; revoke sessions; audit lock in the acting Agency                           |
-| LOCKED      | Unlock account     | ACTIVE      | Security Administrator                        | `security.users.unlock`     | Identity or security review completed; actor is in the locking Agency, or in one of the User's remaining Agencies when the User no longer has an ACTIVE Agency Membership in the locking Agency | Revoke old sessions; audit unlock in the acting Agency, recording whether the locking Agency was gone |
-| ACTIVE      | Suspend account    | SUSPENDED   | Agency Administrator / Security Administrator | `security.users.suspend`    | Reason required                                                                                                                                                                                 | Revoke sessions; deny access; audit suspension                                                        |
-| SUSPENDED   | Reactivate account | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Reason and review required                                                                                                                                                                      | Restore membership access; audit reactivation                                                         |
-| ACTIVE      | Deactivate account | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Separation or administrative basis                                                                                                                                                              | Revoke sessions; preserve history; audit deactivation                                                 |
-| SUSPENDED   | Deactivate account | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Reason required                                                                                                                                                                                 | Revoke sessions; preserve history                                                                     |
-| DEACTIVATED | Reactivate account | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Valid agency membership; no policy restriction                                                                                                                                                  | Reissue access; audit exceptional reactivation                                                        |
+| Current | Action            | Next   | Primary actor          | Required permission     | Validations                                                                                                                                                                                     | Side effects and audit                                                                                |
+| ------- | ----------------- | ------ | ---------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| None    | Accept invitation | ACTIVE | Invited user           | Public invitation flow  | First-time User only: no User has the invitation's email; token valid, unused, unexpired; email verified                                                                                        | Create the User and credentials, audited with the membership's activation                             |
+| ACTIVE  | Lock account      | LOCKED | Security Administrator | `security.users.lock`   | Suspected compromise or security review; User has an ACTIVE Agency Membership in the acting Agency                                                                                              | Record the locking Agency; revoke sessions; audit lock in the acting Agency                           |
+| LOCKED  | Unlock account    | ACTIVE | Security Administrator | `security.users.unlock` | Identity or security review completed; actor is in the locking Agency, or in one of the User's remaining Agencies when the User no longer has an ACTIVE Agency Membership in the locking Agency | Revoke old sessions; audit unlock in the acting Agency, recording whether the locking Agency was gone |
 
-LOCKED is the Global User Lock. It is a User status only, never an Agency Membership status. Agency Membership statuses are INVITED, ACTIVE, SUSPENDED, and DEACTIVATED.
+LOCKED is the Global User Lock. It denies every Agency Membership without changing any membership's status, and it is never an Agency Membership status.
+
+DEACTIVATED has no transition yet. What sets a User to DEACTIVATED, who may set it, and whether it can be reversed are undecided.
 
 Lock controls:
 
@@ -186,10 +184,42 @@ Invalid examples:
 
 ```text
 DEACTIVATED → successful login
-INVITED → protected dashboard without activation
-SUSPENDED → password reset that silently restores access
 LOCKED → password reset that silently restores access
 failed sign-in attempts → LOCKED
+```
+
+### Agency Membership
+
+Statuses:
+
+```text
+INVITED
+ACTIVE
+SUSPENDED
+DEACTIVATED
+```
+
+| Current     | Action                | Next        | Primary actor                                 | Required permission         | Validations                                                                                                        | Side effects and audit                                                               |
+| ----------- | --------------------- | ----------- | --------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| None        | Invite user           | INVITED     | Agency Administrator                          | `security.users.invite`     | Valid email; agency exists; role assignment permitted                                                              | Create invitation; send email; audit invitation                                      |
+| INVITED     | Accept invitation     | ACTIVE      | Invited user                                  | Public invitation flow      | Token valid, unused, unexpired; email verified; a first-time User sets credentials, an existing User authenticates | Create credentials for a first-time User only; activate membership; audit activation |
+| INVITED     | Resend invitation     | INVITED     | Agency Administrator                          | `security.users.invite`     | Existing invitation pending; resend limit                                                                          | Replace or renew token; audit resend                                                 |
+| INVITED     | Cancel invitation     | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Invitation not accepted                                                                                            | Invalidate token; audit cancellation                                                 |
+| ACTIVE      | Suspend membership    | SUSPENDED   | Agency Administrator / Security Administrator | `security.users.suspend`    | Reason required                                                                                                    | Revoke sessions; deny access; audit suspension                                       |
+| SUSPENDED   | Reactivate membership | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Reason and review required                                                                                         | Restore membership access; audit reactivation                                        |
+| ACTIVE      | Deactivate membership | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Separation or administrative basis                                                                                 | Revoke sessions; preserve history; audit deactivation                                |
+| SUSPENDED   | Deactivate membership | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Reason required                                                                                                    | Revoke sessions; preserve history                                                    |
+| DEACTIVATED | Reactivate membership | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Valid agency membership; no policy restriction                                                                     | Reissue access; audit exceptional reactivation                                       |
+
+Suspend and Reactivate from SUSPENDED are Agency Membership Suspension: they deny or restore access through one Agency Membership and leave the User and the User's other Agency Memberships unchanged.
+
+Deactivate, including deactivation for separation, acts on one Agency Membership in the acting Agency and leaves the User's status unchanged.
+
+Invalid examples:
+
+```text
+INVITED → protected dashboard without activation
+SUSPENDED → password reset that silently restores access
 ```
 
 ---
