@@ -44,7 +44,13 @@ import {
 function translateError(error: unknown): never {
   if (error instanceof AuthServiceError) {
     throw new HttpException(
-      { error: { code: error.code, message: error.message } },
+      {
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.retryAt ? { retryAt: error.retryAt.toISOString() } : {}),
+        },
+      },
       error.statusCode,
     );
   }
@@ -87,7 +93,7 @@ export class AuthController {
     const query = loginQuerySchema.safeParse({ invitation: invitationToken, membershipId });
     if (!query.success) throw new BadRequestException('Invalid login parameters.');
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      await this.authService.assertIpAllowed(this.signInRequest(request));
       const start = await this.authService.beginLogin(
         query.data.invitation ?? null,
         query.data.membershipId ?? null,
@@ -116,7 +122,6 @@ export class AuthController {
     if (!parsed.success) throw new BadRequestException('Email and password are required.');
     const secure = this.config.NODE_ENV === 'production';
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
       const result = await this.authService.signInWithPassword(
         parsed.data.email,
         parsed.data.password,
@@ -163,7 +168,7 @@ export class AuthController {
     const secure = this.config.NODE_ENV === 'production';
     const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      await this.authService.assertIpAllowed(this.signInRequest(request));
       const session = await this.authService.completeTotpSignIn(
         pendingToken ?? '',
         parsed.data.code,
@@ -176,7 +181,7 @@ export class AuthController {
       });
       response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
     } catch (error: unknown) {
-      this.clearExpiredPendingSignIn(error, response);
+      this.clearEndedPendingSignIn(error, response);
       translateError(error);
     }
   }
@@ -191,7 +196,7 @@ export class AuthController {
     const parsed = totpSignInSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException('A code is required.');
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      await this.authService.assertIpAllowed(this.signInRequest(request));
       const result = await this.authService.confirmTotpEnrollment(
         cookieValue(request, PENDING_AUTHENTICATION_COOKIE) ?? '',
         parsed.data.code,
@@ -199,7 +204,7 @@ export class AuthController {
       );
       response.status(HttpStatus.OK).json({ status: 'RECOVERY_CODES', ...result });
     } catch (error: unknown) {
-      this.clearExpiredPendingSignIn(error, response);
+      this.clearEndedPendingSignIn(error, response);
       translateError(error);
     }
   }
@@ -217,7 +222,7 @@ export class AuthController {
     }
     const secure = this.config.NODE_ENV === 'production';
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      await this.authService.assertIpAllowed(this.signInRequest(request));
       const session = await this.authService.completeTotpEnrollment(
         cookieValue(request, PENDING_AUTHENTICATION_COOKIE) ?? '',
         this.signInRequest(request),
@@ -230,7 +235,7 @@ export class AuthController {
       response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
       this.noticeAfterResponse(response, session.notice);
     } catch (error: unknown) {
-      this.clearExpiredPendingSignIn(error, response);
+      this.clearEndedPendingSignIn(error, response);
       translateError(error);
     }
   }
@@ -247,7 +252,7 @@ export class AuthController {
     const secure = this.config.NODE_ENV === 'production';
     const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      await this.authService.assertIpAllowed(this.signInRequest(request));
       const result = await this.authService.completeRecoveryCodeSignIn(
         pendingToken ?? '',
         parsed.data.code,
@@ -263,7 +268,7 @@ export class AuthController {
         .json({ status: 'SIGNED_IN', recoveryCodesRemaining: result.recoveryCodesRemaining });
       this.noticeAfterResponse(response, result.notice);
     } catch (error: unknown) {
-      this.clearExpiredPendingSignIn(error, response);
+      this.clearEndedPendingSignIn(error, response);
       translateError(error);
     }
   }
@@ -314,7 +319,7 @@ export class AuthController {
     const requestId = request.header('x-request-id') ?? 'unknown-request';
     let invitationFlow = false;
     try {
-      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      await this.authService.assertIpAllowed(this.signInRequest(request));
       let decodedFlowCookie: string;
       try {
         decodedFlowCookie = decodeURIComponent(flowCookie);
@@ -337,14 +342,17 @@ export class AuthController {
       });
       response.redirect(this.config.APP_URL);
     } catch (error: unknown) {
-      try {
-        await this.authService.recordLoginFailure(
-          requestId,
-          error instanceof AuthServiceError ? error.code : 'OIDC_CALLBACK_FAILED',
-          request.ip ?? 'unknown',
-        );
-      } catch {
-        // Preserve the authentication error when the audit store is unavailable.
+      // A per-IP refusal is already recorded.
+      if (!(error instanceof AuthServiceError && error.code === 'IP_RATE_LIMITED')) {
+        try {
+          await this.authService.recordLoginFailure(
+            requestId,
+            error instanceof AuthServiceError ? error.code : 'OIDC_CALLBACK_FAILED',
+            request.ip ?? 'unknown',
+          );
+        } catch {
+          // Preserve the authentication error when the audit store is unavailable.
+        }
       }
       if (
         invitationFlow ||
@@ -438,14 +446,19 @@ export class AuthController {
     response.once('close', () => void this.authService.sendNotice(notice));
   }
 
-  /** A pending sign-in the service found gone or expired is no use to the browser either. */
-  private clearExpiredPendingSignIn(error: unknown, response: Response): void {
-    if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
+  /**
+   * A pending sign-in the service found gone or expired, or ended at the second-factor ceiling, is
+   * no use to the browser either. The ceiling's notice goes out once the refusal is.
+   */
+  private clearEndedPendingSignIn(error: unknown, response: Response): void {
+    if (!(error instanceof AuthServiceError)) return;
+    if (error.code === 'SIGN_IN_EXPIRED' || error.code === 'PASSWORD_RESET_REQUIRED') {
       response.clearCookie(
         PENDING_AUTHENTICATION_COOKIE,
         cookieOptions(this.config.NODE_ENV === 'production'),
       );
     }
+    if (error.notice) this.noticeAfterResponse(response, error.notice);
   }
 
   private signInRequest(request: Request) {

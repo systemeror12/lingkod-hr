@@ -45,8 +45,6 @@ it.skipIf(!enabled)(
     );
     const requesterUser = await admin.user.create({
       data: {
-        identityProvider: 'approval-rls-e2e',
-        externalSubject: `requester-${suffix}`,
         emailNormalized: `requester-${suffix}@example.test`,
         displayName: 'Approval Requester',
         globalStatus: 'ACTIVE',
@@ -54,8 +52,6 @@ it.skipIf(!enabled)(
     });
     const reviewerUser = await admin.user.create({
       data: {
-        identityProvider: 'approval-rls-e2e',
-        externalSubject: `reviewer-${suffix}`,
         emailNormalized: `reviewer-${suffix}@example.test`,
         displayName: 'Approval Reviewer',
         globalStatus: 'ACTIVE',

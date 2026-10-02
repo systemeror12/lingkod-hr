@@ -57,8 +57,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'employee-rls-e2e',
-        externalSubject: `employee-rls-${suffix}`,
         emailNormalized: `employee-rls-${suffix}@example.test`,
         displayName: 'Employee RLS User',
         globalStatus: 'ACTIVE',
@@ -66,8 +64,6 @@ it.skipIf(!enabled)(
     });
     const secondUser = await admin.user.create({
       data: {
-        identityProvider: 'employee-rls-e2e',
-        externalSubject: `employee-rls-second-${suffix}`,
         emailNormalized: `employee-rls-second-${suffix}@example.test`,
         displayName: 'Employee RLS Second User',
         globalStatus: 'ACTIVE',

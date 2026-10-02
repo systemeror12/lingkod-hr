@@ -37,8 +37,6 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'e2e',
-      externalSubject: `e2e-${Date.now()}`,
       emailNormalized: `e2e-${Date.now()}@example.test`,
       displayName: 'E2E User',
       globalStatus: 'ACTIVE',
@@ -46,8 +44,6 @@ it.skipIf(!enabled)('prevents a runtime role from reading or writing another Age
   });
   const targetUser = await admin.user.create({
     data: {
-      identityProvider: 'e2e',
-      externalSubject: `e2e-target-${Date.now()}`,
       emailNormalized: `e2e-target-${Date.now()}@example.test`,
       displayName: 'E2E Target User',
       globalStatus: 'ACTIVE',

@@ -46,8 +46,6 @@ it.skipIf(!enabled)(
     });
     const requesterUser = await admin.user.create({
       data: {
-        identityProvider: 'approval-service-e2e',
-        externalSubject: `requester-${suffix}`,
         emailNormalized: `requester-${suffix}@example.test`,
         displayName: 'Approval Service Requester',
         globalStatus: 'ACTIVE',
@@ -55,8 +53,6 @@ it.skipIf(!enabled)(
     });
     const reviewerUser = await admin.user.create({
       data: {
-        identityProvider: 'approval-service-e2e',
-        externalSubject: `reviewer-${suffix}`,
         emailNormalized: `reviewer-${suffix}@example.test`,
         displayName: 'Approval Service Reviewer',
         globalStatus: 'ACTIVE',
@@ -64,8 +60,6 @@ it.skipIf(!enabled)(
     });
     const delegateUser = await admin.user.create({
       data: {
-        identityProvider: 'approval-service-e2e',
-        externalSubject: `delegate-${suffix}`,
         emailNormalized: `delegate-${suffix}@example.test`,
         displayName: 'Approval Service Delegate',
         globalStatus: 'ACTIVE',

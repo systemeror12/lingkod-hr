@@ -52,8 +52,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'document-isolation-e2e',
-        externalSubject: `document-isolation-${suffix}`,
         emailNormalized: `document-isolation-${suffix}@example.test`,
         displayName: 'Document Isolation User',
         globalStatus: 'ACTIVE',

@@ -24,8 +24,6 @@ async function createTenant(admin: PrismaClient, suffix: string, label: string) 
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'posted-leave-input-integration',
-      externalSubject: `posted-leave-input-${label}-${suffix}`,
       emailNormalized: `posted-leave-input-${label}-${suffix}@example.test`,
       displayName: `Posted Leave Input ${label} User`,
       globalStatus: 'ACTIVE',

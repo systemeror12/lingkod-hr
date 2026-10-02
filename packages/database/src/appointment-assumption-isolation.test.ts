@@ -221,8 +221,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'appointment-assumption-rls-e2e',
-        externalSubject: `assumption-${suffix}`,
         emailNormalized: `assumption-rls-${suffix}@example.test`,
         displayName: 'Assumption RLS User',
         globalStatus: 'ACTIVE',

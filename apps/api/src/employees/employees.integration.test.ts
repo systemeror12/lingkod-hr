@@ -50,8 +50,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'employee-integration',
-        externalSubject: `employee-${suffix}`,
         emailNormalized: `employee-${suffix}@example.test`,
         displayName: 'Employee Integration User',
         globalStatus: 'ACTIVE',
@@ -59,8 +57,6 @@ it.skipIf(!enabled)(
     });
     const linkUser = await admin.user.create({
       data: {
-        identityProvider: 'employee-integration',
-        externalSubject: `employee-link-${suffix}`,
         emailNormalized: `employee-link-${suffix}@example.test`,
         displayName: 'Employee Integration Link User',
         globalStatus: 'ACTIVE',
@@ -211,8 +207,6 @@ it.skipIf(!enabled)(
     if (!agency || !foreignAgency) throw new Error('The register Agencies were not created.');
     const user = await admin.user.create({
       data: {
-        identityProvider: 'employee-integration',
-        externalSubject: `employee-${suffix}`,
         emailNormalized: `employee-${suffix}@example.test`,
         displayName: 'Employee Register User',
         globalStatus: 'ACTIVE',

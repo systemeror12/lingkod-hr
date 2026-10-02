@@ -55,8 +55,6 @@ it.skipIf(!enabled)(
       foreignAgencyId = foreignAgency.id;
       const user = await admin.user.create({
         data: {
-          identityProvider: 'service-record-test',
-          externalSubject: `service-record-${suffix}`,
           emailNormalized: `service-record-${suffix}@example.test`,
           displayName: 'Service Record Generator',
           globalStatus: 'ACTIVE',
@@ -65,8 +63,6 @@ it.skipIf(!enabled)(
       userId = user.id;
       const foreignUser = await admin.user.create({
         data: {
-          identityProvider: 'service-record-test',
-          externalSubject: `foreign-service-record-${suffix}`,
           emailNormalized: `foreign-service-record-${suffix}@example.test`,
           displayName: 'Foreign User',
           globalStatus: 'ACTIVE',

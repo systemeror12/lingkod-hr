@@ -22,8 +22,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'saln-test',
-        externalSubject: suffix,
         emailNormalized: `saln-${suffix}@example.test`,
         displayName: 'SALN Officer',
         globalStatus: 'ACTIVE',

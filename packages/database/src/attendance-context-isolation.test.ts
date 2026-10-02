@@ -50,8 +50,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'attendance-context-rls-e2e',
-        externalSubject: 'attendance-context-' + suffix,
         emailNormalized: 'attendance-context-' + suffix + '@example.test',
         displayName: 'Attendance Context RLS User',
         globalStatus: 'ACTIVE',

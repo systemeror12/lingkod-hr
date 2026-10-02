@@ -177,8 +177,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'terminal-leave-input-integration',
-        externalSubject: `terminal-${suffix}`,
         emailNormalized: `terminal-${suffix}@example.test`,
         displayName: 'Terminal Leave Custodian',
         globalStatus: 'ACTIVE',
@@ -186,8 +184,6 @@ it.skipIf(!enabled)(
     });
     const foreignUser = await admin.user.create({
       data: {
-        identityProvider: 'terminal-leave-input-integration',
-        externalSubject: `foreign-terminal-${suffix}`,
         emailNormalized: `foreign-terminal-${suffix}@example.test`,
         displayName: 'Foreign Terminal Leave Custodian',
         globalStatus: 'ACTIVE',

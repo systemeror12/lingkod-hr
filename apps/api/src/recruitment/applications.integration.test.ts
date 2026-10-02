@@ -52,8 +52,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'application-service-e2e',
-        externalSubject: `application-service-${suffix}`,
         emailNormalized: `application-service-${suffix}@example.test`,
         displayName: 'Application Service User',
         globalStatus: 'ACTIVE',

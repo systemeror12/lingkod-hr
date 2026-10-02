@@ -57,8 +57,6 @@ it.skipIf(!enabled)('isolates Leave Types and guards Leave Policy Version state'
   );
   const user = await admin.user.create({
     data: {
-      identityProvider: 'leave-policy-rls-e2e',
-      externalSubject: 'leave-policy-' + suffix,
       emailNormalized: 'leave-policy-' + suffix + '@example.test',
       displayName: 'Leave Policy RLS User',
       globalStatus: 'ACTIVE',

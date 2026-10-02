@@ -52,8 +52,6 @@ it.skipIf(!enabled)('isolates Work Schedules and guards their published history'
   );
   const user = await admin.user.create({
     data: {
-      identityProvider: 'work-schedule-rls-e2e',
-      externalSubject: 'work-schedule-' + suffix,
       emailNormalized: 'work-schedule-' + suffix + '@example.test',
       displayName: 'Work Schedule RLS User',
       globalStatus: 'ACTIVE',
