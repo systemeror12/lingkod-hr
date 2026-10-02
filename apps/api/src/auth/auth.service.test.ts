@@ -182,84 +182,6 @@ it('keeps the HRMO invitation workflow to exactly one eligible role', async () =
   ).rejects.toMatchObject({ code: 'ROLE_NOT_ALLOWED', statusCode: 400 });
 });
 
-it.skipIf(!enabled)(
-  'commits an expired invitation before returning its authentication error',
-  async () => {
-    const admin = await createAdminClient();
-    const suffix = `${Date.now()}-expired`;
-    const agency = await admin.agency.create({
-      data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
-    });
-    const inviter = await admin.user.create({
-      data: {
-        emailNormalized: `inviter-${suffix}@example.test`,
-        displayName: 'E2E User',
-        globalStatus: 'ACTIVE',
-      },
-    });
-    const membership = await admin.agencyMembership.create({
-      data: { agencyId: agency.id, userId: inviter.id, status: 'ACTIVE' },
-    });
-    const inviteeEmail = `expired-${suffix}@example.test`;
-    const token = `expired-token-${suffix}`;
-    const invitation = await admin.invitation.create({
-      data: {
-        agencyId: agency.id,
-        emailNormalized: inviteeEmail,
-        invitedByMembershipId: membership.id,
-        tokenHash: databaseBytes(hashSessionToken(token)),
-        requestedRoleCodes: [],
-        createdAt: new Date('2026-08-01T00:00:00.000Z'),
-        expiresAt: new Date('2026-08-02T00:00:00.000Z'),
-        status: 'PENDING',
-      },
-    });
-
-    try {
-      await expect(
-        new AuthService().signIn(
-          identity(`subject-${suffix}`, inviteeEmail),
-          null,
-          token,
-          `request-${suffix}`,
-        ),
-      ).rejects.toMatchObject({ code: 'INVITATION_EXPIRED' });
-      await expect(
-        admin.invitation.findUniqueOrThrow({ where: { id: invitation.id } }),
-      ).resolves.toMatchObject({ status: 'EXPIRED' });
-      await expect(
-        admin.securityEvent.findFirstOrThrow({
-          where: {
-            agencyId: agency.id,
-            eventType: 'INVITATION_EXPIRED',
-            requestId: `request-${suffix}`,
-          },
-        }),
-      ).resolves.toMatchObject({ details: { invitationId: invitation.id } });
-      await expect(
-        admin.auditEvent.findFirstOrThrow({
-          where: {
-            agencyId: agency.id,
-            action: 'INVITATION_EXPIRED',
-            requestId: `request-${suffix}`,
-          },
-        }),
-      ).resolves.toMatchObject({
-        actorType: 'SYSTEM',
-        entityId: invitation.id,
-        previousStatus: 'PENDING',
-        newStatus: 'EXPIRED',
-      });
-      await expect(
-        admin.user.findUnique({ where: { emailNormalized: inviteeEmail } }),
-      ).resolves.toBeNull();
-    } finally {
-      await cleanup(admin, [agency.id], [inviter.id]);
-      await admin.$disconnect();
-    }
-  },
-);
-
 it.skipIf(!enabled)('allows a replacement after a pending invitation expires', async () => {
   const admin = await createAdminClient();
   const suffix = `${Date.now()}-replacement`;
@@ -438,7 +360,6 @@ it.skipIf(!enabled)(
       const login = await service.signIn(
         identity(subject, user.emailNormalized, authTime),
         null,
-        null,
         `request-${suffix}`,
       );
       const original = await admin.userSession.findUniqueOrThrow({
@@ -573,107 +494,6 @@ it.skipIf(!enabled)(
     }
   },
 );
-
-it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments', async () => {
-  const admin = await createAdminClient();
-  const suffix = `${Date.now()}-role-override`;
-  const requestId = `request-${suffix}`;
-  const agency = await admin.agency.create({
-    data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
-  });
-  const priorAgency = await admin.agency.create({
-    data: {
-      code: `E2E-PRIOR-${suffix}`,
-      name: 'Prior E2E Agency',
-      agencyType: 'NGA',
-      status: 'ACTIVE',
-    },
-  });
-  const inviter = await admin.user.create({
-    data: {
-      emailNormalized: `inviter-${suffix}@example.test`,
-      displayName: 'E2E User',
-      globalStatus: 'ACTIVE',
-    },
-  });
-  const inviterMembership = await admin.agencyMembership.create({
-    data: { agencyId: agency.id, userId: inviter.id, status: 'ACTIVE' },
-  });
-  const agencyRole = await admin.role.create({
-    data: {
-      agencyId: agency.id,
-      code: 'agency_administrator',
-      name: 'Agency override',
-      status: 'ACTIVE',
-    },
-  });
-  const inviteeEmail = `invitee-${suffix}@example.test`;
-  const invitee = await admin.user.create({
-    data: {
-      emailNormalized: inviteeEmail,
-      displayName: 'E2E Invitee',
-      globalStatus: 'ACTIVE',
-    },
-  });
-  await admin.agencyMembership.create({
-    data: { agencyId: priorAgency.id, userId: invitee.id, status: 'ACTIVE' },
-  });
-  await admin.externalIdentityLink.create({
-    data: { userId: invitee.id, issuer, subject: `invitee-${suffix}`, status: 'ACTIVE' },
-  });
-
-  try {
-    const invitation = await new AuthService().createInvitation(
-      {
-        requestId,
-        userId: inviter.id,
-        agencyId: agency.id,
-        membershipId: inviterMembership.id,
-        primaryOrganizationUnitId: null,
-        permissions: [
-          { code: 'security.users.invite', scopePolicy: 'AGENCY' },
-          { code: 'security.users.update_roles', scopePolicy: 'AGENCY' },
-        ],
-      },
-      inviteeEmail,
-      ['agency_administrator'],
-      requestId,
-    );
-    const login = await new AuthService().signIn(
-      identity(`invitee-${suffix}`, inviteeEmail),
-      null,
-      invitation.activationToken,
-      requestId,
-    );
-    const membership = await admin.agencyMembership.findFirstOrThrow({
-      where: { agencyId: agency.id, userId: invitee.id },
-    });
-    expect(login.context).toMatchObject({ agencyId: agency.id, membershipId: membership.id });
-
-    await expect(
-      admin.membershipRole.findFirstOrThrow({
-        where: { agencyId: agency.id, membershipId: membership.id },
-      }),
-    ).resolves.toMatchObject({
-      roleId: agencyRole.id,
-      assignedByMembershipId: inviterMembership.id,
-    });
-    await expect(
-      admin.auditEvent.findFirstOrThrow({
-        where: { agencyId: agency.id, action: 'INVITATION_ACCEPTED', requestId },
-      }),
-    ).resolves.toMatchObject({
-      metadata: {
-        invitationId: invitation.id,
-        roleCodes: ['agency_administrator'],
-        assignedByMembershipId: inviterMembership.id,
-      },
-    });
-  } finally {
-    await cleanup(admin, [agency.id, priorAgency.id], [inviter.id, invitee.id]);
-    await admin.$disconnect();
-  }
-});
 
 interface OwnedLoginFixture {
   admin: PrismaClient;

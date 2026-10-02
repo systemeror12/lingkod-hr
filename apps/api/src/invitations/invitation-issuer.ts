@@ -79,14 +79,15 @@ function normalizeRoleCodes(roleCodes: readonly string[]): string[] {
   return [...new Set(roleCodes.map((code) => code.trim().toLowerCase()).filter(Boolean))];
 }
 
-function activationUrl(apiUrl: string, token: string): string {
-  return `${apiUrl.replace(/\/$/, '')}/api/v1/auth/invitations/${token}/activate`;
+/** The client page that runs the Invitation Activation. Opening it writes nothing. */
+function activationUrl(appUrl: string, token: string): string {
+  return `${appUrl.replace(/\/$/, '')}/invite/${token}`;
 }
 
 export class InvitationIssuer {
   constructor(
     private readonly mailDelivery: MailDelivery,
-    private readonly apiUrl: string,
+    private readonly appUrl: string,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -130,7 +131,12 @@ export class InvitationIssuer {
     });
     const existingMembership = emailOwner
       ? await transaction.agencyMembership.findFirst({
-          where: { agencyId: input.agencyId, userId: emailOwner.id },
+          // A deactivated membership doesn't block; activation adds a new one beside it.
+          where: {
+            agencyId: input.agencyId,
+            userId: emailOwner.id,
+            status: { not: 'DEACTIVATED' },
+          },
           select: { status: true },
         })
       : null;
@@ -199,7 +205,7 @@ export class InvitationIssuer {
         email: normalizedEmail,
         expiresAt,
         activationToken,
-        activationUrl: activationUrl(this.apiUrl, activationToken),
+        activationUrl: activationUrl(this.appUrl, activationToken),
         agencyCode: agency.code,
         agencyName: agency.name,
         roleNames: roles.map(({ name }) => name),
@@ -230,7 +236,7 @@ export class InvitationIssuer {
           '',
           `Activate your access: ${invitation.activationUrl}`,
           '',
-          'The link can be used once. Identity is established through the approved sign-in provider.',
+          'The link can be used once.',
         ].join('\n'),
       });
     } catch (error: unknown) {

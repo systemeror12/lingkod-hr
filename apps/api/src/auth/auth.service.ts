@@ -5,6 +5,7 @@ import {
   acceptTotpCode,
   activeCooldown,
   addSignInFailure,
+  checkNewPassword,
   type CountedSignInFailure,
   createSessionToken,
   hashEmail,
@@ -54,6 +55,7 @@ import {
 
 const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
+export const PENDING_ACTIVATION_LIFETIME_MS = 15 * 60 * 1000;
 const OWNED_LOGIN_PROVIDER = 'lingkodhr';
 /** Sign-in failures from one IP address allowed in the window, every email and step counted. */
 const IP_FAILURE_LIMIT = 100;
@@ -67,6 +69,7 @@ type PendingSignInStage = 'TOTP' | typeof ENROLL_SCAN_STAGE | typeof ENROLL_CODE
 export const SESSION_COOKIE = 'hris_session';
 export const OIDC_FLOW_COOKIE = 'hris_oidc_flow';
 export const PENDING_AUTHENTICATION_COOKIE = 'hris_pending_auth';
+export const PENDING_ACTIVATION_COOKIE = 'hris_pending_activation';
 export const HRMO_ADMINISTRATOR_ROLE_CODE = 'hrmo_administrator';
 const PENDING_INVITATION_PAGE_SIZE = 100;
 
@@ -75,7 +78,6 @@ interface OidcFlowState {
   nonce: string;
   verifier: string;
   issuedAt: number;
-  invitationToken: string | null;
   membershipId: string | null;
 }
 
@@ -196,9 +198,49 @@ export interface PendingInvitation {
   status: 'PENDING';
 }
 
-type SignInTransactionResult =
-  | { status: 'invitation_expired' }
-  | { status: 'authenticated'; session: AuthenticatedSession & { token: string } };
+/** What the invitation page shows. Expired, cancelled, used, and unknown invitations show nothing. */
+export type InvitationLookup =
+  | {
+      status: 'VALID';
+      email: string;
+      agency: { name: string; acronym: string | null };
+      roleNames: string[];
+      existingUser: boolean;
+      expiresAt: Date;
+    }
+  | { status: 'EXPIRED' | 'INVALID' };
+
+/** A finished Invitation Activation, and the notices for `sendNotice` once the response is out. */
+export interface ActivationDone {
+  session: AuthenticatedSession & { token: string };
+  notices: MailMessage[];
+}
+
+export type ActivationStart =
+  | { status: 'CODE_REQUIRED'; pendingToken: string }
+  | { status: 'ENROLLMENT_REQUIRED'; pendingToken: string; enrollment: TotpEnrollmentStart }
+  | ({ status: 'ACTIVATED' } & ActivationDone);
+
+/** Database context for an activation step: its invitation and, once started, its pending activation. */
+interface ActivationScope {
+  invitationTokenHash: string;
+  pendingTokenHash?: string;
+  capabilities: readonly ['platform-security'];
+}
+
+/** A PENDING, unexpired invitation of an active Agency whose roles are all still available. */
+interface ActivationInvitation {
+  id: string;
+  agencyId: string;
+  agency: { name: string; acronym: string | null };
+  emailNormalized: string;
+  invitedByMembershipId: string | null;
+  expiresAt: Date;
+  roles: { id: string; code: string; name: string }[];
+  requiresMfa: boolean;
+}
+
+type PendingActivation = Prisma.PendingAuthenticationGetPayload<object>;
 
 export class AuthServiceError extends Error {
   /** When a refused attempt may be tried again. */
@@ -314,6 +356,49 @@ function totpEnrolledNotice(email: string): MailMessage {
   };
 }
 
+function invitationInvalid(): AuthServiceError {
+  return new AuthServiceError(
+    'This invitation can’t be used. Ask your Agency Administrator for a new one.',
+    400,
+    'INVITATION_INVALID',
+  );
+}
+
+function invitationExpired(): AuthServiceError {
+  return new AuthServiceError(
+    'This invitation has expired. Ask your Agency Administrator to send it again.',
+    400,
+    'INVITATION_EXPIRED',
+  );
+}
+
+function activationExpired(): AuthServiceError {
+  return new AuthServiceError('Your setup timed out. Start again.', 401, 'ACTIVATION_EXPIRED');
+}
+
+function assertUserActive(globalStatus: string): void {
+  if (globalStatus === 'LOCKED') {
+    throw new AuthServiceError(
+      'Your account is locked. Contact your Agency Administrator.',
+      403,
+      'USER_LOCKED',
+    );
+  }
+  if (globalStatus !== 'ACTIVE') {
+    throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+  }
+}
+
+/** A role's permissions as Agency-scoped grants, enough to tell whether they require MFA. */
+function permissionGrants(role: {
+  permissions: { permission: { code: string } }[];
+}): PermissionGrant[] {
+  return role.permissions.map(({ permission }) => ({
+    code: permission.code,
+    scopePolicy: 'AGENCY' as const,
+  }));
+}
+
 function normalizeEmail(email: string): string {
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
@@ -338,39 +423,21 @@ export class AuthService {
 
   constructor(@Optional() @Inject(INVITATION_MAIL_DELIVERY) mailDelivery?: MailDelivery) {
     this.mailDelivery = mailDelivery ?? createMailDelivery(this.config);
-    this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.API_URL);
+    this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.APP_URL);
   }
 
-  async beginLogin(
-    invitationToken: string | null,
-    membershipId: string | null,
-  ): Promise<LoginStart> {
+  async beginLogin(membershipId: string | null): Promise<LoginStart> {
     const state: OidcFlowState = {
       state: createSessionToken(),
       nonce: createSessionToken(),
       verifier: createSessionToken(),
       issuedAt: Date.now(),
-      invitationToken,
       membershipId,
     };
-    const loginHint = invitationToken ? await this.invitationEmailHint(invitationToken) : null;
     return {
-      authorizationUrl: await this.oidc.authorizationUrl(
-        state.state,
-        state.nonce,
-        state.verifier,
-        loginHint,
-      ),
+      authorizationUrl: await this.oidc.authorizationUrl(state.state, state.nonce, state.verifier),
       flowCookie: this.signFlowState(state),
     };
-  }
-
-  hasInvitationFlow(flowCookie: string): boolean {
-    try {
-      return this.readFlowState(flowCookie).invitationToken !== null;
-    } catch {
-      return false;
-    }
   }
 
   async completeLogin(
@@ -387,7 +454,7 @@ export class AuthService {
       await this.oidc.exchangeCode(code, flow.verifier),
       flow.nonce,
     );
-    return this.signIn(identity, flow.membershipId, flow.invitationToken, requestId);
+    return this.signIn(identity, flow.membershipId, requestId);
   }
 
   /**
@@ -428,7 +495,6 @@ export class AuthService {
   async signIn(
     identity: OidcIdentity,
     selectedMembershipId: string | null = null,
-    invitationToken: string | null = null,
     requestId = 'oidc',
   ): Promise<LoginResult> {
     if (identity.issuer !== this.config.OIDC_ISSUER) {
@@ -438,104 +504,31 @@ export class AuthService {
       throw new AuthServiceError('A verified identity is required.', 401, 'EMAIL_NOT_VERIFIED');
     }
 
-    const transactionResult: SignInTransactionResult = await withDatabaseContext(
-      {},
-      async (transaction) => {
-        const now = new Date();
-        const invitationTokenHash = invitationToken ? hashSessionToken(invitationToken) : null;
-        if (invitationTokenHash) {
-          await setDatabaseContext(transaction, {
-            invitationTokenHash: invitationTokenHash.toString('hex'),
-          });
-        }
-        const pendingInvitation = invitationTokenHash
-          ? await transaction.invitation.findFirst({
-              where: { tokenHash: prismaBytes(invitationTokenHash), status: 'PENDING' },
-              select: { id: true, agencyId: true, emailNormalized: true, expiresAt: true },
-            })
-          : null;
-        if (invitationTokenHash && !pendingInvitation) {
-          throw new AuthServiceError(
-            'The invitation is invalid or already used.',
-            400,
-            'INVITATION_INVALID',
-          );
-        }
-        if (pendingInvitation && pendingInvitation.expiresAt <= now) {
-          await this.expireInvitation(transaction, pendingInvitation, requestId);
-          return { status: 'invitation_expired' as const };
-        }
-        if (
-          pendingInvitation &&
-          normalizeEmail(identity.email) !== pendingInvitation.emailNormalized.toLowerCase()
-        ) {
-          throw new AuthServiceError(
-            'The authenticated email does not match the invitation.',
-            403,
-            'INVITATION_EMAIL_MISMATCH',
-          );
-        }
-        if (invitationTokenHash) {
-          await setDatabaseContext(transaction, {
-            invitationTokenHash: invitationTokenHash.toString('hex'),
-          });
-        }
-
-        const user = await this.resolveIdentity(transaction, identity);
-        if (user.globalStatus !== 'ACTIVE') {
-          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
-        }
-
-        if (invitationTokenHash) {
-          await setDatabaseContext(transaction, {
-            userId: user.id,
-            invitationTokenHash: invitationTokenHash.toString('hex'),
-          });
-        } else {
-          await setDatabaseContext(transaction, { userId: user.id });
-        }
-
-        const invitationMembershipId = invitationTokenHash
-          ? await this.acceptInvitation(
-              transaction,
-              user.id,
-              identity.email,
-              invitationTokenHash,
-              requestId,
-              now,
-            )
-          : null;
-
-        const membership = await this.selectSignInMembership(
-          transaction,
-          user.id,
-          invitationMembershipId ?? selectedMembershipId,
-        );
-        return {
-          status: 'authenticated' as const,
-          session: await this.createSession(
-            transaction,
-            user.id,
-            membership.id,
-            {
-              provider: identity.issuer,
-              providerSid: identity.providerSid,
-              authTime: identity.authTime,
-              authenticationMethods: identity.authenticationMethods,
-            },
-            requestId,
-          ),
-        };
-      },
-    );
-    if (transactionResult.status === 'invitation_expired') {
-      throw new AuthServiceError('The invitation has expired.', 400, 'INVITATION_EXPIRED');
-    }
-    const result = transactionResult.session;
-    return {
-      ...result,
-      providerLogoutUrl: await this.oidc.providerLogoutUrl(),
-    };
+    const session = await withDatabaseContext({}, async (transaction) => {
+      const user = await this.resolveIdentity(transaction, identity);
+      if (user.globalStatus !== 'ACTIVE') {
+        throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+      }
+      await setDatabaseContext(transaction, { userId: user.id });
+      const membership = await this.selectSignInMembership(
+        transaction,
+        user.id,
+        selectedMembershipId,
+      );
+      return this.createSession(
+        transaction,
+        user.id,
+        membership.id,
+        {
+          provider: identity.issuer,
+          providerSid: identity.providerSid,
+          authTime: identity.authTime,
+          authenticationMethods: identity.authenticationMethods,
+        },
+        requestId,
+      );
+    });
+    return { ...session, providerLogoutUrl: await this.oidc.providerLogoutUrl() };
   }
 
   /**
@@ -1321,26 +1314,289 @@ export class AuthService {
     });
   }
 
-  async inspectInvitationToken(
+  /**
+   * What the invitation page shows. Opening an invitation writes nothing, not even its expiry; an
+   * expired one stays PENDING until it is replaced or cancelled.
+   */
+  async lookupInvitation(token: string): Promise<InvitationLookup> {
+    const scope = this.activationScope(token);
+    return withDatabaseContext(scope, async (transaction) => {
+      const invitation = await this.readActivationInvitation(transaction, scope, new Date());
+      if (typeof invitation === 'string') return { status: invitation };
+      const existingUser = await transaction.user.findUnique({
+        where: { emailNormalized: invitation.emailNormalized },
+        select: { id: true },
+      });
+      return {
+        status: 'VALID' as const,
+        email: invitation.emailNormalized,
+        agency: invitation.agency,
+        roleNames: invitation.roles.map(({ name }) => name),
+        existingUser: existingUser !== null,
+        expiresAt: invitation.expiresAt,
+      };
+    });
+  }
+
+  /**
+   * First Invitation Activation step. A User who already has the invitation's email proves it is
+   * them with their current password, counted toward the Sign-in Cool-down like a sign-in, and
+   * never sets a password here. Anyone else gives their name and a new password that meets the
+   * password rules. Whoever must add a second factor first gets a 15-minute pending activation,
+   * replacing any earlier one for the invitation; anyone else is activated at once.
+   */
+  async startActivation(
     token: string,
-    requestId: string,
-  ): Promise<'VALID' | 'INVALID' | 'EXPIRED'> {
-    const tokenHash = hashSessionToken(token);
-    return withDatabaseContext(
-      { invitationTokenHash: tokenHash.toString('hex') },
-      async (transaction) => {
-        const invitation = await transaction.invitation.findFirst({
-          where: { tokenHash: prismaBytes(tokenHash), status: 'PENDING' },
-          select: { id: true, agencyId: true, expiresAt: true, emailNormalized: true },
+    input: { name?: string | undefined; password: string },
+    request: SignInRequest,
+  ): Promise<ActivationStart> {
+    return this.activationStep(token, request, async () => {
+      const scope = this.activationScope(token);
+      const opened = await withDatabaseContext(scope, async (transaction) => {
+        const invitation = await this.openActivationInvitation(transaction, scope, new Date());
+        const user = await transaction.user.findUnique({
+          where: { emailNormalized: invitation.emailNormalized },
+          select: { id: true, globalStatus: true },
         });
-        if (!invitation) return 'INVALID' as const;
-        if (invitation.expiresAt <= new Date()) {
-          await this.expireInvitation(transaction, invitation, requestId);
-          return 'EXPIRED' as const;
+        if (!user) return { invitation, account: null };
+        await setDatabaseContext(transaction, {
+          ...scope,
+          agencyId: invitation.agencyId,
+          userId: user.id,
+        });
+        const stored = await transaction.userPassword.findUnique({
+          where: { userId: user.id },
+          select: { passwordHash: true, resetRequiredAt: true },
+        });
+        return { invitation, account: { ...user, stored } };
+      });
+      return opened.account
+        ? this.startExistingUserActivation(
+            scope,
+            opened.invitation,
+            opened.account,
+            input.password,
+            request,
+          )
+        : this.startFirstTimeActivation(scope, opened.invitation, input, request);
+    });
+  }
+
+  /**
+   * An existing User's TOTP code. Accepted once, like the sign-in step; a wrong code counts toward
+   * the Sign-in Cool-down and the second-factor ceiling.
+   */
+  async completeActivationWithTotp(
+    token: string,
+    pendingToken: string,
+    code: string,
+    request: SignInRequest,
+  ): Promise<ActivationDone> {
+    return this.activationStep(token, request, async () => {
+      const scope = this.activationScope(token, pendingToken);
+      const outcome = await withDatabaseContext(scope, async (transaction) => {
+        const now = new Date();
+        const { invitation, pending, userId } = await this.openExistingUserStep(
+          transaction,
+          scope,
+          now,
+        );
+        const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
+        // One code attempt per User at a time, as in `completeTotpSignIn`.
+        await transaction.$queryRaw`
+          SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
+        if (cooldownUntil) {
+          await this.writeSignInFailure(transaction, request, {
+            userId,
+            emailHash,
+            reason: 'COOLDOWN_ACTIVE',
+            method: 'totp',
+          });
+          return { status: 'COOLDOWN_ACTIVE' as const, cooldownUntil, now };
         }
-        return 'VALID' as const;
-      },
-    );
+        const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
+        if (!factor) throw activationExpired();
+        const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
+          userId,
+          factorId: factor.id,
+        });
+        const step = acceptTotpCode(secret, code, Number(factor.lastAcceptedStep), now);
+        const accepted =
+          step !== null &&
+          (
+            await transaction.userTotpFactor.updateMany({
+              where: { id: factor.id, lastAcceptedStep: { lt: step } },
+              data: { lastAcceptedStep: step },
+            })
+          ).count === 1;
+        if (!accepted) {
+          const guess = await this.countGuess(transaction, emailHash, now);
+          const ceiling = await this.writeGuessFailure(transaction, request, {
+            emailHash,
+            userId,
+            reason: 'INVALID_CODE',
+            cooldown: guess.cooldownUntil ? null : guess.counted.cooldown,
+            secondFactor: { method: 'totp', email: invitation.emailNormalized },
+          });
+          return { status: 'INVALID_CODE' as const, ceiling };
+        }
+        return {
+          status: 'ACTIVATED' as const,
+          done: await this.finishActivation(transaction, scope, request, {
+            invitation,
+            pending,
+            userId,
+            methods: [...pending.verifiedMethods, 'totp'],
+          }),
+        };
+      });
+      if (outcome.status === 'ACTIVATED') return outcome.done;
+      if (outcome.status === 'COOLDOWN_ACTIVE') {
+        throw signInCooldown(outcome.cooldownUntil, outcome.now);
+      }
+      if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
+      throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
+    });
+  }
+
+  /**
+   * An existing User's Recovery Code in place of the TOTP code. As in `completeRecoveryCodeSignIn`,
+   * the code is matched outside the transaction and spent in it, and the User's other sessions end.
+   */
+  async completeActivationWithRecoveryCode(
+    token: string,
+    pendingToken: string,
+    code: string,
+    request: SignInRequest,
+  ): Promise<ActivationDone> {
+    return this.activationStep(token, request, async () => {
+      const scope = this.activationScope(token, pendingToken);
+      const now = new Date();
+      const opened = await withDatabaseContext(scope, async (transaction) => {
+        const { invitation, userId } = await this.openExistingUserStep(transaction, scope, now);
+        const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
+        const guess = await this.countGuess(transaction, emailHash, now);
+        if (guess.cooldownUntil) {
+          await this.writeSignInFailure(transaction, request, {
+            userId,
+            emailHash,
+            reason: 'COOLDOWN_ACTIVE',
+            method: 'recovery_code',
+          });
+        }
+        const codes = guess.cooldownUntil
+          ? []
+          : await transaction.userRecoveryCode.findMany({
+              where: { userId },
+              select: { id: true, codeHash: true },
+            });
+        return { email: invitation.emailNormalized, userId, emailHash, codes, guess };
+      });
+      const { guess } = opened;
+      if (guess.cooldownUntil) throw signInCooldown(guess.cooldownUntil, now);
+
+      const normalized = normalizeRecoveryCode(code);
+      const matches = normalized
+        ? await Promise.all(
+            opened.codes.map(({ codeHash }) => verifyPassword(codeHash, normalized)),
+          )
+        : [];
+      const used = opened.codes.find((_, index) => matches[index]);
+      if (!used) {
+        await this.recordGuessFailure(request, {
+          emailHash: opened.emailHash,
+          userId: opened.userId,
+          reason: 'INVALID_CODE',
+          cooldown: guess.counted.cooldown,
+          secondFactor: { method: 'recovery_code', email: opened.email },
+        });
+        throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
+      }
+      await this.refundGuess(opened.emailHash, guess);
+      return withDatabaseContext(scope, async (transaction) => {
+        const { invitation, pending, userId } = await this.openExistingUserStep(
+          transaction,
+          scope,
+          new Date(),
+        );
+        const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
+        if (spent.count !== 1) {
+          throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
+        }
+        return this.finishActivation(transaction, scope, request, {
+          invitation,
+          pending,
+          userId,
+          methods: [...pending.verifiedMethods, 'recovery_code'],
+          recoveryCodeUsed: true,
+        });
+      });
+    });
+  }
+
+  /**
+   * Confirms the pending activation's new TOTP secret with one code and answers the 10 Recovery
+   * Codes, shown once. Like `confirmTotpEnrollment`, but for a pending activation.
+   */
+  async confirmActivationEnrollment(
+    token: string,
+    pendingToken: string,
+    code: string,
+    request: SignInRequest,
+  ): Promise<{ recoveryCodes: string[] }> {
+    return this.activationStep(token, request, async () => {
+      const scope = this.activationScope(token, pendingToken);
+      const { pending } = await withDatabaseContext(scope, (transaction) =>
+        this.openActivationStep(transaction, scope, new Date(), ENROLL_SCAN_STAGE),
+      );
+      const confirmed = await confirmTotpEnrollment(
+        this.dataEncryptionKey,
+        { userId: pending.userId ?? pending.id, factorId: pending.id },
+        Buffer.from(pending.enrollmentSecretEnvelope ?? []),
+        code,
+      );
+      if (!confirmed) throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
+      const advanced = await withDatabaseContext(scope, (transaction) =>
+        transaction.pendingAuthentication.updateMany({
+          where: { id: pending.id, stage: ENROLL_SCAN_STAGE, expiresAt: { gt: new Date() } },
+          data: {
+            stage: ENROLL_CODES_STAGE,
+            verifiedMethods: [...pending.verifiedMethods, 'totp'],
+            enrollmentAcceptedStep: confirmed.step,
+            recoveryCodeHashes: confirmed.recoveryCodeHashes,
+          },
+        }),
+      );
+      if (advanced.count !== 1) throw activationExpired();
+      return { recoveryCodes: confirmed.recoveryCodes };
+    });
+  }
+
+  /** Final enrollment step, once the User acknowledged saving the Recovery Codes. */
+  async finishActivationEnrollment(
+    token: string,
+    pendingToken: string,
+    request: SignInRequest,
+  ): Promise<ActivationDone> {
+    return this.activationStep(token, request, () => {
+      const scope = this.activationScope(token, pendingToken);
+      return withDatabaseContext(scope, async (transaction) => {
+        const { invitation, pending } = await this.openActivationStep(
+          transaction,
+          scope,
+          new Date(),
+          ENROLL_CODES_STAGE,
+        );
+        return this.finishActivation(transaction, scope, request, {
+          invitation,
+          pending,
+          userId: pending.userId ?? pending.id,
+          methods: pending.verifiedMethods,
+          ...(pending.userId ? {} : { newUser: firstTimeUser(pending) }),
+        });
+      });
+    });
   }
 
   async revokeSession(
@@ -1626,57 +1882,6 @@ export class AuthService {
     }
   }
 
-  private async invitationEmailHint(token: string): Promise<string | null> {
-    const tokenHash = hashSessionToken(token);
-    return withDatabaseContext(
-      { invitationTokenHash: tokenHash.toString('hex') },
-      async (transaction) => {
-        const invitation = await transaction.invitation.findFirst({
-          where: {
-            tokenHash: prismaBytes(tokenHash),
-            status: 'PENDING',
-            expiresAt: { gt: new Date() },
-          },
-          select: { emailNormalized: true },
-        });
-        return invitation?.emailNormalized.toLowerCase() ?? null;
-      },
-    );
-  }
-
-  private async expireInvitation(
-    transaction: Prisma.TransactionClient,
-    invitation: { id: string; agencyId: string },
-    requestId: string,
-  ): Promise<void> {
-    await setDatabaseContext(transaction, { agencyId: invitation.agencyId });
-    await transaction.invitation.update({
-      where: { id: invitation.id },
-      data: { status: 'EXPIRED' },
-    });
-    await transaction.securityEvent.create({
-      data: {
-        agencyId: invitation.agencyId,
-        eventType: 'INVITATION_EXPIRED',
-        requestId,
-        details: { invitationId: invitation.id },
-      },
-    });
-    await transaction.auditEvent.create({
-      data: {
-        agencyId: invitation.agencyId,
-        actorType: 'SYSTEM',
-        action: 'INVITATION_EXPIRED',
-        entityType: 'Invitation',
-        entityId: invitation.id,
-        previousStatus: 'PENDING',
-        newStatus: 'EXPIRED',
-        requestId,
-        metadata: {},
-      },
-    });
-  }
-
   private async resolveIdentity(transaction: Prisma.TransactionClient, identity: OidcIdentity) {
     const normalizedEmail = normalizeEmail(identity.email);
     const link = await transaction.externalIdentityLink.findFirst({
@@ -1752,90 +1957,490 @@ export class AuthService {
     return user;
   }
 
-  private async acceptInvitation(
+  private activationScope(token: string, pendingToken?: string): ActivationScope {
+    return {
+      invitationTokenHash: hashSessionToken(token).toString('hex'),
+      ...(pendingToken ? { pendingTokenHash: hashSessionToken(pendingToken).toString('hex') } : {}),
+      capabilities: ['platform-security'],
+    };
+  }
+
+  /** Runs an activation step; each refusal is also an INVITATION_ACTIVATION_FAILED Security Event. */
+  private async activationStep<T>(
+    token: string,
+    request: SignInRequest,
+    step: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await step();
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError) {
+        await this.recordActivationFailure(token, request, error.code);
+      }
+      throw error;
+    }
+  }
+
+  /** Recorded in the inviting Agency, or without one when the token matches no invitation. */
+  private async recordActivationFailure(
+    token: string,
+    request: SignInRequest,
+    reason: string,
+  ): Promise<void> {
+    const scope = this.activationScope(token);
+    await withDatabaseContext(scope, async (transaction) => {
+      const invitation = await transaction.invitation.findUnique({
+        where: { tokenHash: prismaBytes(hashSessionToken(token)) },
+        select: { id: true, agencyId: true },
+      });
+      if (invitation)
+        await setDatabaseContext(transaction, { ...scope, agencyId: invitation.agencyId });
+      await transaction.securityEvent.create({
+        data: {
+          agencyId: invitation?.agencyId ?? null,
+          eventType: 'INVITATION_ACTIVATION_FAILED',
+          requestId: request.requestId,
+          ipAddress: request.ipAddress,
+          details: { invitationId: invitation?.id ?? null, reason },
+        },
+      });
+    });
+  }
+
+  /**
+   * The invitation an activation step uses, with the transaction left in its Agency's context, or
+   * why it can't be used. It is read without writing anything.
+   */
+  private async readActivationInvitation(
     transaction: Prisma.TransactionClient,
-    userId: string,
-    email: string,
-    tokenHash: Buffer,
-    requestId: string,
+    scope: ActivationScope,
     now: Date,
-  ): Promise<string> {
+  ): Promise<ActivationInvitation | 'EXPIRED' | 'INVALID'> {
     const invitation = await transaction.invitation.findFirst({
-      where: { tokenHash: prismaBytes(tokenHash), status: 'PENDING' },
+      where: {
+        tokenHash: prismaBytes(Buffer.from(scope.invitationTokenHash, 'hex')),
+        status: 'PENDING',
+      },
     });
-    if (!invitation) {
-      throw new AuthServiceError(
-        'The invitation is invalid or already used.',
-        400,
-        'INVITATION_INVALID',
-      );
-    }
-    if (normalizeEmail(email) !== invitation.emailNormalized.toLowerCase()) {
-      throw new AuthServiceError(
-        'The authenticated email does not match the invitation.',
-        403,
-        'INVITATION_EMAIL_MISMATCH',
-      );
-    }
-
-    await setDatabaseContext(transaction, { agencyId: invitation.agencyId, userId });
-    let membership = await transaction.agencyMembership.findFirst({
-      where: { agencyId: invitation.agencyId, userId },
+    if (!invitation) return 'INVALID';
+    if (invitation.expiresAt <= now) return 'EXPIRED';
+    await setDatabaseContext(transaction, { ...scope, agencyId: invitation.agencyId });
+    const agency = await transaction.agency.findUniqueOrThrow({
+      where: { id: invitation.agencyId },
+      select: { name: true, acronym: true, status: true },
     });
-    if (membership?.status === 'ACTIVE') {
-      throw new AuthServiceError(
-        'The User already has an active Agency Membership.',
-        409,
-        'MEMBERSHIP_EXISTS',
-      );
-    }
-    if (membership && membership.status !== 'INVITED') {
-      throw new AuthServiceError(
-        'The existing Agency Membership requires an authorized reactivation.',
-        403,
-        'MEMBERSHIP_REACTIVATION_REQUIRED',
-      );
-    }
-    membership = membership
-      ? await transaction.agencyMembership.update({
-          where: { id: membership.id },
-          data: {
-            status: 'ACTIVE',
-            activatedAt: now,
-            deactivatedAt: null,
-            deactivationReason: null,
-          },
-        })
-      : await transaction.agencyMembership.create({
-          data: {
-            agencyId: invitation.agencyId,
-            userId,
-            status: 'ACTIVE',
-            activatedAt: now,
-          },
-        });
-
-    const availableRoles = await transaction.role.findMany({
+    const available = await transaction.role.findMany({
       where: {
         code: { in: invitation.requestedRoleCodes },
         status: 'ACTIVE',
         OR: [{ agencyId: null }, { agencyId: invitation.agencyId }],
       },
-      select: { id: true, agencyId: true, code: true },
+      select: {
+        id: true,
+        agencyId: true,
+        code: true,
+        name: true,
+        permissions: { select: { permission: { select: { code: true } } } },
+      },
     });
     const roles = selectInvitationRoles(
-      availableRoles,
+      available,
       invitation.requestedRoleCodes,
       invitation.agencyId,
     );
-    if (roles.length !== invitation.requestedRoleCodes.length) {
+    if (agency.status !== 'ACTIVE' || roles.length !== invitation.requestedRoleCodes.length) {
+      return 'INVALID';
+    }
+    return {
+      id: invitation.id,
+      agencyId: invitation.agencyId,
+      agency: { name: agency.name, acronym: agency.acronym },
+      emailNormalized: invitation.emailNormalized.toLowerCase(),
+      invitedByMembershipId: invitation.invitedByMembershipId,
+      expiresAt: invitation.expiresAt,
+      roles: roles.map(({ id, code, name }) => ({ id, code, name })),
+      requiresMfa: permissionsRequireMfa(roles.flatMap(permissionGrants)),
+    };
+  }
+
+  /** `readActivationInvitation`, refusing an invitation that can't be used. */
+  private async openActivationInvitation(
+    transaction: Prisma.TransactionClient,
+    scope: ActivationScope,
+    now: Date,
+  ): Promise<ActivationInvitation> {
+    const invitation = await this.readActivationInvitation(transaction, scope, now);
+    if (invitation === 'EXPIRED') throw invitationExpired();
+    if (invitation === 'INVALID') throw invitationInvalid();
+    return invitation;
+  }
+
+  private async startExistingUserActivation(
+    scope: ActivationScope,
+    invitation: ActivationInvitation,
+    account: {
+      id: string;
+      globalStatus: string;
+      stored: { passwordHash: string; resetRequiredAt: Date | null } | null;
+    },
+    password: string,
+    request: SignInRequest,
+  ): Promise<ActivationStart> {
+    const userId = account.id;
+    const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
+    await this.assertIpAllowed(request, emailHash);
+    const now = new Date();
+    const guess = await withDatabaseContext(
+      { capabilities: ['platform-security'] },
+      (transaction) => this.countGuess(transaction, emailHash, now),
+    );
+    if (guess.cooldownUntil) {
+      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      throw signInCooldown(guess.cooldownUntil, now);
+    }
+    const verified = account.stored
+      ? await verifyPassword(account.stored.passwordHash, password)
+      : await verifyPasswordAgainstDummy(password);
+    if (!account.stored || !verified) {
+      await this.recordGuessFailure(request, {
+        emailHash,
+        userId,
+        reason: 'INVALID_CREDENTIALS',
+        cooldown: guess.counted.cooldown,
+      });
+      throw new AuthServiceError('The password is incorrect.', 401, 'INVALID_CREDENTIALS');
+    }
+    await this.refundGuess(emailHash, guess);
+    if (account.stored.resetRequiredAt) {
+      await this.recordSignInFailure(request, emailHash, userId, 'PASSWORD_RESET_REQUIRED');
+      throw passwordResetRequired();
+    }
+    assertUserActive(account.globalStatus);
+
+    const context = { ...scope, agencyId: invitation.agencyId, userId };
+    return withDatabaseContext(context, async (transaction): Promise<ActivationStart> => {
+      const factor = await transaction.userTotpFactor.findUnique({
+        where: { userId },
+        select: { id: true },
+      });
+      if (factor) {
+        const pending = await this.openPendingActivation(transaction, invitation, request, {
+          id: randomUUID(),
+          userId,
+          stage: 'TOTP',
+        });
+        return { status: 'CODE_REQUIRED', pendingToken: pending.token };
+      }
+      const requiresMfa =
+        invitation.requiresMfa || (await this.membershipsRequireMfa(transaction, userId));
+      await setDatabaseContext(transaction, context);
+      if (requiresMfa) {
+        return this.startActivationEnrollment(transaction, invitation, request, { userId });
+      }
+      return {
+        status: 'ACTIVATED',
+        ...(await this.finishActivation(transaction, scope, request, {
+          invitation,
+          userId,
+          methods: ['pwd'],
+        })),
+      };
+    });
+  }
+
+  private async startFirstTimeActivation(
+    scope: ActivationScope,
+    invitation: ActivationInvitation,
+    input: { name?: string | undefined; password: string },
+    request: SignInRequest,
+  ): Promise<ActivationStart> {
+    const displayName = input.name?.trim();
+    if (!displayName) throw new AuthServiceError('Enter your full name.', 400, 'NAME_REQUIRED');
+    const rejected = checkNewPassword(input.password, {
+      email: invitation.emailNormalized,
+      name: displayName,
+    });
+    if (rejected) throw new AuthServiceError(rejected.message, 400, 'PASSWORD_REJECTED');
+    const passwordHash = await hashPassword(input.password);
+    return withDatabaseContext(
+      { ...scope, agencyId: invitation.agencyId },
+      async (transaction): Promise<ActivationStart> => {
+        if (invitation.requiresMfa) {
+          return this.startActivationEnrollment(transaction, invitation, request, {
+            userId: null,
+            displayName,
+            passwordHash,
+          });
+        }
+        return {
+          status: 'ACTIVATED',
+          ...(await this.finishActivation(transaction, scope, request, {
+            invitation,
+            userId: randomUUID(),
+            methods: ['pwd'],
+            newUser: { displayName, passwordHash },
+          })),
+        };
+      },
+    );
+  }
+
+  /**
+   * A pending activation that enrolls a TOTP factor. The secret is sealed for the pending row's id,
+   * which becomes the factor id and, for a first-time User, the new User's id.
+   */
+  private async startActivationEnrollment(
+    transaction: Prisma.TransactionClient,
+    invitation: ActivationInvitation,
+    request: SignInRequest,
+    owner: { userId: string | null; displayName?: string; passwordHash?: string },
+  ): Promise<ActivationStart> {
+    const id = randomUUID();
+    const enrollment = beginTotpEnrollment(
+      this.dataEncryptionKey,
+      { userId: owner.userId ?? id, factorId: id },
+      invitation.emailNormalized,
+    );
+    const pending = await this.openPendingActivation(transaction, invitation, request, {
+      ...owner,
+      id,
+      stage: ENROLL_SCAN_STAGE,
+      enrollmentSecretEnvelope: enrollment.envelope,
+    });
+    return {
+      status: 'ENROLLMENT_REQUIRED',
+      pendingToken: pending.token,
+      enrollment: {
+        otpauthUri: enrollment.otpauthUri,
+        account: invitation.emailNormalized,
+        expiresAt: pending.expiresAt,
+      },
+    };
+  }
+
+  /**
+   * Starts the invitation's pending activation, replacing any earlier one. The invitation row is
+   * locked first, so concurrent starts and saves of one invitation take turns.
+   */
+  private async openPendingActivation(
+    transaction: Prisma.TransactionClient,
+    invitation: ActivationInvitation,
+    request: SignInRequest,
+    pending: {
+      id: string;
+      userId: string | null;
+      stage: PendingSignInStage;
+      displayName?: string;
+      passwordHash?: string;
+      enrollmentSecretEnvelope?: Buffer;
+    },
+  ): Promise<{ token: string; expiresAt: Date }> {
+    const token = createSessionToken();
+    const expiresAt = new Date(Date.now() + PENDING_ACTIVATION_LIFETIME_MS);
+    await transaction.$queryRaw`
+      SELECT 1 FROM "invitations" WHERE "id" = ${invitation.id}::uuid FOR UPDATE`;
+    await transaction.pendingAuthentication.deleteMany({
+      where: { invitationId: invitation.id, purpose: 'ACTIVATION' },
+    });
+    await transaction.pendingAuthentication.create({
+      data: {
+        id: pending.id,
+        tokenHash: prismaBytes(hashSessionToken(token)),
+        purpose: 'ACTIVATION',
+        invitationId: invitation.id,
+        userId: pending.userId,
+        stage: pending.stage,
+        verifiedMethods: ['pwd'],
+        displayName: pending.displayName ?? null,
+        passwordHash: pending.passwordHash ?? null,
+        enrollmentSecretEnvelope: pending.enrollmentSecretEnvelope
+          ? prismaBytes(pending.enrollmentSecretEnvelope)
+          : null,
+        expiresAt,
+      },
+    });
+    await transaction.securityEvent.create({
+      data: {
+        agencyId: invitation.agencyId,
+        userId: pending.userId,
+        eventType: 'INVITATION_ACTIVATION_STARTED',
+        requestId: request.requestId,
+        ipAddress: request.ipAddress,
+        details: {
+          invitationId: invitation.id,
+          path: pending.userId ? 'EXISTING_USER' : 'FIRST_TIME',
+          nextStep: pending.stage,
+        },
+      },
+    });
+    return { token, expiresAt };
+  }
+
+  /**
+   * The pending activation a later step continues, waiting at `stage`, with its invitation checked
+   * again. A replaced, finished, or expired one gives ACTIVATION_EXPIRED.
+   */
+  private async openActivationStep(
+    transaction: Prisma.TransactionClient,
+    scope: ActivationScope,
+    now: Date,
+    stage: PendingSignInStage,
+  ): Promise<{ invitation: ActivationInvitation; pending: PendingActivation }> {
+    const invitation = await this.openActivationInvitation(transaction, scope, now);
+    const pending = await transaction.pendingAuthentication.findUnique({
+      where: { tokenHash: prismaBytes(Buffer.from(scope.pendingTokenHash ?? '', 'hex')) },
+    });
+    if (
+      !pending ||
+      pending.purpose !== 'ACTIVATION' ||
+      pending.invitationId !== invitation.id ||
+      pending.stage !== stage ||
+      pending.expiresAt <= now
+    ) {
+      throw activationExpired();
+    }
+    return { invitation, pending };
+  }
+
+  /** `openActivationStep` for an existing User's code, in the User's context. */
+  private async openExistingUserStep(
+    transaction: Prisma.TransactionClient,
+    scope: ActivationScope,
+    now: Date,
+  ): Promise<{ invitation: ActivationInvitation; pending: PendingActivation; userId: string }> {
+    const opened = await this.openActivationStep(transaction, scope, now, 'TOTP');
+    const userId = opened.pending.userId;
+    if (!userId) throw activationExpired();
+    await setDatabaseContext(transaction, {
+      ...scope,
+      agencyId: opened.invitation.agencyId,
+      userId,
+    });
+    return { ...opened, userId };
+  }
+
+  /**
+   * The final save of an Invitation Activation, in the caller's transaction. It consumes the
+   * pending activation and the invitation; writes a first-time User with their password, any
+   * enrolled factor and Recovery Codes, and the Agency Membership with the invited roles; and opens
+   * a session in the inviting Agency. The invitation is accepted first with a conditional update,
+   * so of two saves exactly one wins, and a refusal after it rolls everything back.
+   */
+  private async finishActivation(
+    transaction: Prisma.TransactionClient,
+    scope: ActivationScope,
+    request: SignInRequest,
+    finish: {
+      invitation: ActivationInvitation;
+      userId: string;
+      methods: readonly string[];
+      pending?: PendingActivation;
+      newUser?: { displayName: string; passwordHash: string };
+      recoveryCodeUsed?: boolean;
+    },
+  ): Promise<ActivationDone> {
+    const { invitation, userId, pending, newUser } = finish;
+    const { requestId, ipAddress } = request;
+    const email = invitation.emailNormalized;
+    const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
+    const now = new Date();
+    const context = { ...scope, agencyId: invitation.agencyId, userId };
+    await setDatabaseContext(transaction, context);
+    if (pending) {
+      const consumed = await transaction.pendingAuthentication.deleteMany({
+        where: { id: pending.id, stage: pending.stage, expiresAt: { gt: now } },
+      });
+      if (consumed.count !== 1) throw activationExpired();
+    }
+    const accepted = await transaction.invitation.updateMany({
+      where: { id: invitation.id, status: 'PENDING', expiresAt: { gt: now } },
+      data: { status: 'ACCEPTED', acceptedAt: now },
+    });
+    if (accepted.count !== 1) throw invitationInvalid();
+    await transaction.pendingAuthentication.deleteMany({
+      where: { invitationId: invitation.id, purpose: 'ACTIVATION' },
+    });
+
+    let wasMfaRequired = false;
+    if (newUser) {
+      // Another invitation activated this email meanwhile; starting again takes the existing path.
+      const taken = await transaction.user.findUnique({
+        where: { emailNormalized: email },
+        select: { id: true },
+      });
+      if (taken) throw activationExpired();
+      await transaction.user.create({
+        data: {
+          id: userId,
+          emailNormalized: email,
+          displayName: newUser.displayName,
+          globalStatus: 'ACTIVE',
+          emailVerifiedAt: now,
+        },
+      });
+      await transaction.userPassword.create({
+        data: { userId, passwordHash: newUser.passwordHash },
+      });
+      await transaction.securityEvent.create({
+        data: {
+          userId,
+          eventType: 'PASSWORD_SET',
+          requestId,
+          ipAddress,
+          emailHash: prismaBytes(emailHash),
+          details: { invitationId: invitation.id },
+        },
+      });
+    } else {
+      // Read again: a Global User Lock may have landed since the password was checked.
+      const user = await transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { globalStatus: true, emailVerifiedAt: true },
+      });
+      assertUserActive(user.globalStatus);
+      if (!user.emailVerifiedAt) {
+        await transaction.user.update({ where: { id: userId }, data: { emailVerifiedAt: now } });
+      }
+      wasMfaRequired = await this.membershipsRequireMfa(transaction, userId);
+      await setDatabaseContext(transaction, context);
+    }
+
+    const notices: MailMessage[] = [];
+    if (pending?.stage === ENROLL_CODES_STAGE) {
+      await writeTotpEnrollment(transaction, pending, userId);
+      await transaction.securityEvent.create({
+        data: {
+          userId,
+          eventType: 'TOTP_ENROLLED',
+          requestId,
+          ipAddress,
+          emailHash: prismaBytes(emailHash),
+          details: { recoveryCodes: pending.recoveryCodeHashes.length },
+        },
+      });
+      notices.push(totpEnrolledNotice(email));
+    }
+
+    // A deactivated membership stays as it is; the User joins again with a new one.
+    const current = await transaction.agencyMembership.findFirst({
+      where: { agencyId: invitation.agencyId, userId, status: { not: 'DEACTIVATED' } },
+    });
+    if (current && current.status !== 'INVITED') {
       throw new AuthServiceError(
-        'One or more invitation roles are no longer available.',
+        'You already have an Agency Membership here.',
         409,
-        'ROLE_NOT_FOUND',
+        'MEMBERSHIP_EXISTS',
       );
     }
-    for (const role of roles) {
+    const membership = current
+      ? await transaction.agencyMembership.update({
+          where: { id: current.id },
+          data: { status: 'ACTIVE', activatedAt: now },
+        })
+      : await transaction.agencyMembership.create({
+          data: { agencyId: invitation.agencyId, userId, status: 'ACTIVE', activatedAt: now },
+        });
+    for (const role of invitation.roles) {
       await transaction.membershipRole.create({
         data: {
           agencyId: invitation.agencyId,
@@ -1847,35 +2452,79 @@ export class AuthService {
         },
       });
     }
-    await transaction.invitation.update({
-      where: { id: invitation.id },
-      data: { status: 'ACCEPTED', acceptedAt: now },
-    });
-    const context = {
+
+    const revocationReason = finish.recoveryCodeUsed
+      ? 'RECOVERY_CODE_SIGN_IN'
+      : !newUser && !wasMfaRequired && invitation.requiresMfa
+        ? 'MFA_REQUIRED'
+        : null;
+    let revokedSessions = 0;
+    if (revocationReason) {
+      const revoked = await transaction.userSession.updateManyAndReturn({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now, revocationReason },
+        select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
+      });
+      for (const session of revoked) {
+        await this.recordSystemSessionRevocation(transaction, session, revocationReason, requestId);
+      }
+      revokedSessions = revoked.length;
+      await setDatabaseContext(transaction, context);
+    }
+
+    const membershipContext: RequestContext = {
       requestId,
       userId,
       agencyId: invitation.agencyId,
       membershipId: membership.id,
       primaryOrganizationUnitId: membership.primaryOrganizationUnitId,
-      permissions: [] as readonly PermissionGrant[],
+      permissions: [],
     };
-    await this.recordSecurityEvent(transaction, context, 'INVITATION_ACCEPTED', requestId, {
+    const details = {
       invitationId: invitation.id,
-      roleCodes: roles.map(({ code }) => code),
+      roleCodes: invitation.roles.map(({ code }) => code),
       assignedByMembershipId: invitation.invitedByMembershipId,
-    });
-    await this.recordAuditEvent(transaction, context, {
+    };
+    await this.recordSecurityEvent(
+      transaction,
+      membershipContext,
+      'INVITATION_ACCEPTED',
+      requestId,
+      details,
+    );
+    await this.recordAuditEvent(transaction, membershipContext, {
       action: 'INVITATION_ACCEPTED',
       entityType: 'AgencyMembership',
       entityId: membership.id,
       requestId,
-      metadata: {
-        invitationId: invitation.id,
-        roleCodes: roles.map(({ code }) => code),
-        assignedByMembershipId: invitation.invitedByMembershipId,
-      },
+      metadata: details,
     });
-    return membership.id;
+    await setDatabaseContext(transaction, context);
+    const session = await this.openOwnedSession(
+      transaction,
+      userId,
+      membership.id,
+      finish.methods,
+      request,
+      emailHash,
+    );
+    if (finish.recoveryCodeUsed) {
+      const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
+      await transaction.securityEvent.create({
+        data: {
+          agencyId: invitation.agencyId,
+          userId,
+          membershipId: membership.id,
+          eventType: 'RECOVERY_CODE_USED',
+          requestId,
+          ipAddress,
+          emailHash: prismaBytes(emailHash),
+          details: { remaining, revokedSessions },
+        },
+      });
+      notices.push(recoveryCodeNotice(email, remaining, now));
+    }
+    return { session, notices };
   }
 
   private async openOwnedSession(
@@ -2052,8 +2701,8 @@ export class AuthService {
    * A wrong password, TOTP code, or Recovery Code, already counted by `countGuess`: a LOGIN_FAILURE,
    * and a SIGN_IN_COOLDOWN_STARTED for the cool-down counting it started.
    * A wrong code also counts toward the second-factor ceiling; the failure that reaches it disables
-   * the password, ends the User's pending sign-ins, and answers the notice to send. The transaction
-   * needs the platform-security capability, and the User's context for a wrong code.
+   * the password, ends the User's pending sign-ins and activations, and answers the notice to send.
+   * The transaction needs the platform-security capability, and the User's context for a wrong code.
    */
   private async writeGuessFailure(
     transaction: Prisma.TransactionClient,
@@ -2094,9 +2743,7 @@ export class AuthService {
       data: { resetRequiredAt: now },
     });
     if (disabled.count !== 1) return null;
-    await transaction.pendingAuthentication.deleteMany({
-      where: { userId, purpose: 'SIGN_IN' },
-    });
+    await transaction.pendingAuthentication.deleteMany({ where: { userId } });
     await transaction.securityEvent.create({
       data: {
         userId,
@@ -2278,60 +2925,62 @@ export class AuthService {
     return this.userRequiresMfa(transaction, userId, membership.agencyId, membership.id);
   }
 
+  /** `membershipsRequireMfa`, returning the transaction to the given membership's context. */
   private async userRequiresMfa(
     transaction: Prisma.TransactionClient,
     userId: string,
     agencyId: string,
     membershipId: string,
   ): Promise<boolean> {
+    try {
+      return await this.membershipsRequireMfa(transaction, userId);
+    } finally {
+      await setDatabaseContext(transaction, { userId, agencyId, membershipId });
+    }
+  }
+
+  /**
+   * Whether any of the User's active Agency Memberships makes them an MFA-Required User. Leaves the
+   * transaction in the context of a membership it checked; callers set their context again.
+   */
+  private async membershipsRequireMfa(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<boolean> {
     const now = new Date();
     const memberships = await transaction.agencyMembership.findMany({
       where: { userId, status: 'ACTIVE' },
       select: { id: true, agencyId: true },
     });
-
-    try {
-      for (const membership of memberships) {
-        await setDatabaseContext(transaction, {
-          userId,
+    for (const membership of memberships) {
+      await setDatabaseContext(transaction, {
+        userId,
+        agencyId: membership.agencyId,
+        membershipId: membership.id,
+      });
+      const assignments = await transaction.membershipRole.findMany({
+        where: {
           agencyId: membership.agencyId,
           membershipId: membership.id,
-        });
-        const assignments = await transaction.membershipRole.findMany({
-          where: {
-            agencyId: membership.agencyId,
-            membershipId: membership.id,
-            role: { status: 'ACTIVE' },
-            effectiveFrom: { lte: now },
-            OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-          },
-          select: {
-            role: {
-              select: {
-                permissions: {
-                  select: { permission: { select: { code: true } } },
-                },
+          role: { status: 'ACTIVE' },
+          effectiveFrom: { lte: now },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+        },
+        select: {
+          role: {
+            select: {
+              permissions: {
+                select: { permission: { select: { code: true } } },
               },
             },
           },
-        });
-        if (
-          permissionsRequireMfa(
-            assignments.flatMap(({ role }) =>
-              role.permissions.map(({ permission }) => ({
-                code: permission.code,
-                scopePolicy: 'AGENCY' as const,
-              })),
-            ),
-          )
-        ) {
-          return true;
-        }
+        },
+      });
+      if (permissionsRequireMfa(assignments.flatMap(({ role }) => permissionGrants(role)))) {
+        return true;
       }
-      return false;
-    } finally {
-      await setDatabaseContext(transaction, { userId, agencyId, membershipId });
     }
+    return false;
   }
 
   private async sessionContextFor(
@@ -2541,11 +3190,21 @@ export class AuthService {
         nonce: flow.nonce,
         verifier: flow.verifier,
         issuedAt: flow.issuedAt,
-        invitationToken: typeof flow.invitationToken === 'string' ? flow.invitationToken : null,
         membershipId: typeof flow.membershipId === 'string' ? flow.membershipId : null,
       };
     } catch {
       throw new AuthServiceError('The authentication flow is invalid.', 401, 'OIDC_FLOW_INVALID');
     }
   }
+}
+
+/** The name and password a first-time invitee chose when the pending activation started. */
+function firstTimeUser(pending: { displayName: string | null; passwordHash: string | null }): {
+  displayName: string;
+  passwordHash: string;
+} {
+  if (pending.displayName === null || pending.passwordHash === null) {
+    throw new Error('A first-time pending activation has no name or password.');
+  }
+  return { displayName: pending.displayName, passwordHash: pending.passwordHash };
 }

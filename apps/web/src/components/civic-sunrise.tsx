@@ -169,8 +169,17 @@ function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
   );
 }
 
-/** LingkodHR's own letterhead, for screens no Agency speaks on: sign-in and password reset. */
-function LingkodLetterhead() {
+/** The Agency that speaks on a screen: the inviting Agency during Invitation Activation. */
+export interface LetterheadAgency {
+  name: string;
+  acronym: string | null;
+}
+
+/**
+ * The letterhead of whoever speaks, as on a government memorandum: the inviting Agency's on an
+ * invitation, LingkodHR's own on sign-in and password reset.
+ */
+function Letterhead({ agency }: { agency: LetterheadAgency | null }) {
   return (
     <>
       <header className="flex items-center gap-3.5">
@@ -185,14 +194,26 @@ function LingkodLetterhead() {
             strokeWidth="1"
             strokeDasharray="2 2.5"
           />
-          <text x="32" y="39" textAnchor="middle" fontSize="20" fontWeight="700" fill={NAVY}>
-            L
+          <text
+            x="32"
+            y="39"
+            textAnchor="middle"
+            fontSize={agency?.acronym && agency.acronym.length > 2 ? 13 : 20}
+            fontWeight="700"
+            fill={NAVY}
+          >
+            {agency ? (agency.acronym ?? agency.name).slice(0, 4) : 'L'}
           </text>
         </svg>
         <div className="grid gap-0.5">
-          <p className="m-0 text-small text-ink">LingkodHR</p>
+          {agency ? (
+            <p className="m-0 text-caption text-ink-muted">Republic of the Philippines</p>
+          ) : null}
+          <p className="m-0 text-small text-ink">
+            {agency ? 'Invitation to LingkodHR' : 'LingkodHR'}
+          </p>
           <p className="m-0 text-[1.0625rem] leading-snug font-[650] text-nav">
-            Personnel records for government agencies
+            {agency ? agency.name : 'Personnel records for government agencies'}
           </p>
         </div>
       </header>
@@ -209,16 +230,19 @@ function LingkodLetterhead() {
  * Split screen with the scene beside a letterhead column. `progress` runs from 0 at the first
  * step to 1 once the User is in; `gloom` overcasts it when the flow ends in a refusal.
  * `labelledBy` must match the id of the heading in `children`. When `children` show an element
- * marked `data-print-slip`, printing keeps only that element.
+ * marked `data-print-slip`, printing keeps only that element. An inviting `agency` takes the
+ * letterhead and the welcome.
  */
 export function CivicSunriseLayout({
   progress,
   gloom = false,
+  agency = null,
   labelledBy,
   children,
 }: {
   progress: number;
   gloom?: boolean;
+  agency?: LetterheadAgency | null;
   labelledBy: string;
   children: ReactNode;
 }) {
@@ -237,18 +261,21 @@ export function CivicSunriseLayout({
         {/* The caption sits on the scene's ground colour, below the art, so it never covers the building. */}
         <div className="lh-caption hidden gap-2 px-10 pt-2 pb-12 text-white min-[960px]:grid">
           <p className="m-0 max-w-[18ch] text-[2.5rem] leading-[1.05] font-[700] tracking-[-0.025em] [text-wrap:balance]">
-            Para sa mga lingkod-bayan
+            {agency
+              ? `Maligayang pagdating sa ${agency.acronym ?? agency.name}`
+              : 'Para sa mga lingkod-bayan'}
           </p>
           <p className="m-0 max-w-[46ch] text-body text-nav-ink/80">
-            Your service record, leave, and payroll, kept by your agency from appointment to
-            retirement.
+            {agency
+              ? `${agency.name} invited you to manage your service record, leave, and payroll in one place.`
+              : 'Your service record, leave, and payroll, kept by your agency from appointment to retirement.'}
           </p>
         </div>
       </div>
 
       <div className="grid place-items-center px-6 py-10 min-[621px]:px-14 print:block print:p-0">
         <section aria-labelledby={labelledBy} className="grid w-full max-w-[440px]">
-          <LingkodLetterhead />
+          <Letterhead agency={agency} />
           {children}
         </section>
       </div>

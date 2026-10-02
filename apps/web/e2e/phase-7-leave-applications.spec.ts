@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { getConfig } from '@lingkod-hr/config';
 import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
+import { activateInvitation } from './sign-in';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
 const leaveRouteCode = 'LEAVE-SPECIAL-PRIVILEGE-ROUTE';
@@ -74,17 +75,12 @@ async function inviteReviewer(
     email,
     'LingkodHR invitation for National Archives Coordination Office',
   );
-  const activationUrl =
-    /https?:\/\/[^\s]+\/api\/v1\/auth\/invitations\/[A-Za-z0-9_-]{43}\/activate/.exec(
-      mailText,
-    )?.[0];
+  const activationUrl = /https?:\/\/[^\s]+\/invite\/[A-Za-z0-9_-]{43}/.exec(mailText)?.[0];
   if (!activationUrl)
     throw new Error('The reviewer invitation email did not contain an activation link.');
   const context = await browser.newContext();
   const reviewerPage = await context.newPage();
-  await reviewerPage.goto(activationUrl);
-  await reviewerPage.getByRole('link', { name: 'Continue to secure sign-in' }).click();
-  await expect(reviewerPage).toHaveURL(/\/dashboard$/);
+  await activateInvitation(reviewerPage, activationUrl, { name: 'Leave Reviewer' });
   const session = await apiBody<{ membershipId: string }>(
     await reviewerPage.request.get('/api/v1/auth/me', {
       headers: { origin: new URL(reviewerPage.url()).origin },
