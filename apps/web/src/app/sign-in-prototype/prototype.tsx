@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PrototypeSwitcher } from '../../components/prototype-switcher';
 import { screens, variantsFor, type ScreenKey } from './fake-states';
 import { publicView, type Go } from './public-flows';
+import { Letterhead } from './letterhead-variant';
 import { ContextStrip, SingleCard, StepRail } from './public-variants';
 import {
   AccountDialogs,
@@ -86,7 +87,7 @@ export function Prototype() {
       </ProtectedFrame>
     );
   } else {
-    const Variant = variant === 'B' ? StepRail : variant === 'C' ? ContextStrip : SingleCard;
+    const Variant = { B: StepRail, C: ContextStrip, D: Letterhead }[variant] ?? SingleCard;
     body = <Variant key={key} view={publicView(screen, state, go)} busy={busy} submit={submit} />;
   }
 

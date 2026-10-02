@@ -9,7 +9,12 @@ export const user = {
   email: 'maria.santos@doh.gov.ph',
 };
 
-export const agency = { name: 'Center for Health Development – NCR', acronym: 'DOH CHD-NCR' };
+export const agency = {
+  department: 'Department of Health',
+  name: 'Center for Health Development – NCR',
+  // Non-breaking hyphen, so the acronym never wraps mid-name.
+  acronym: 'DOH CHD\u2011NCR',
+};
 
 export const otpauthUri =
   'otpauth://totp/LingkodHR:maria.santos%40doh.gov.ph?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=LingkodHR&algorithm=SHA1&digits=6&period=30';
@@ -444,6 +449,7 @@ export const publicVariants = [
   { key: 'A', label: 'Single card' },
   { key: 'B', label: 'Step rail' },
   { key: 'C', label: 'Context strip' },
+  { key: 'D', label: 'Agency letterhead' },
 ];
 
 export const protectedVariants = [

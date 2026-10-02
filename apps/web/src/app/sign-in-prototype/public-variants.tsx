@@ -16,20 +16,20 @@ import type { FieldKey, FieldSpec, StepView } from './public-flows';
 
 export type VariantProps = { view: StepView; busy: boolean; submit(next: () => void): void };
 
-type Mode = 'code' | 'recovery';
+export type Mode = 'code' | 'recovery';
 
 function checked(event: { currentTarget: unknown }) {
   return (event.currentTarget as { checked: boolean }).checked;
 }
 
-function copy(text: string) {
+export function copy(text: string) {
   const clipboard = (
     globalThis as unknown as { navigator?: { clipboard?: { writeText(v: string): Promise<void> } } }
   ).navigator?.clipboard;
   void clipboard?.writeText(text).catch(() => undefined);
 }
 
-function useFactorMode(view: StepView): [Mode, (mode: Mode) => void] {
+export function useFactorMode(view: StepView): [Mode, (mode: Mode) => void] {
   const [mode, setMode] = useState<Mode>(view.factor?.current ?? 'code');
   return [
     mode,
@@ -42,7 +42,7 @@ function useFactorMode(view: StepView): [Mode, (mode: Mode) => void] {
 }
 
 /** Ticks once a second. Only the text changes, so it stays cheap on high-refresh displays. */
-function useCountdown(seconds: number | undefined) {
+export function useCountdown(seconds: number | undefined) {
   const [left, setLeft] = useState(seconds ?? 0);
   useEffect(() => {
     if (!seconds) return;
@@ -56,7 +56,7 @@ function useCountdown(seconds: number | undefined) {
   return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 }
 
-function onSubmit(props: VariantProps, acknowledged: boolean) {
+export function onSubmit(props: VariantProps, acknowledged: boolean) {
   return (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const { primary } = props.view;
@@ -75,7 +75,7 @@ const fieldLabels: Record<FieldKey, string> = {
   recovery: 'Recovery Code',
 };
 
-function FieldInput({
+export function FieldInput({
   spec,
   mode,
   error,
@@ -166,7 +166,7 @@ function SegmentedCode({ error }: { error?: string | undefined }) {
 }
 
 /** Deterministic QR-looking grid. Not a real QR code. */
-function FakeQr({ size = 168 }: { size?: number }) {
+export function FakeQr({ size = 168 }: { size?: number }) {
   const cells = 25;
   let seed = 7;
   const random = () => {
@@ -206,7 +206,7 @@ function FakeQr({ size = 168 }: { size?: number }) {
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
     <Button
@@ -222,7 +222,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-function Ack({
+export function Ack({
   value,
   onChange,
   className,
@@ -244,7 +244,7 @@ function Ack({
   );
 }
 
-function PrimaryButton({
+export function PrimaryButton({
   view,
   busy,
   acknowledged,
@@ -264,7 +264,7 @@ function PrimaryButton({
   );
 }
 
-function fieldError(view: StepView, kind: FieldKey, mode: Mode) {
+export function fieldError(view: StepView, kind: FieldKey, mode: Mode) {
   const shown = kind === 'code' && mode === 'recovery' ? 'recovery' : kind;
   return view.error?.field === shown || (view.error?.field === 'recovery' && kind === 'code')
     ? view.error.message
@@ -473,7 +473,7 @@ export function StepRail(props: VariantProps) {
           {view.pendingSeconds && !view.outcome ? (
             <div className="grid gap-0.5 text-caption">
               <span className="text-nav-muted">{view.pendingLabel}</span>
-              <span className="font-mono text-small">in {countdown}</span>
+              <span className="text-small tabular-nums">in {countdown}</span>
             </div>
           ) : null}
         </aside>
@@ -496,7 +496,7 @@ export function StepRail(props: VariantProps) {
             >
               <span
                 className={cn(
-                  'text-caption font-[650] tracking-[0.08em] uppercase',
+                  'text-small font-[650]',
                   view.outcome ? toneText[view.outcome.tone] : 'text-warning',
                 )}
               >
@@ -728,15 +728,10 @@ export function ContextStrip(props: VariantProps) {
           )}
         >
           <div className="flex items-center justify-between gap-3 text-caption">
-            <span className="font-[650] tracking-[0.08em] uppercase">
-              {outcome?.kicker ?? `${view.flow} · ${view.kicker}`}
-            </span>
+            <span className="text-small font-[650]">{outcome?.kicker ?? view.flow}</span>
             {view.pendingSeconds && !outcome ? (
-              <span
-                className="rounded-full bg-white/10 px-2 py-0.5 font-mono"
-                title={view.pendingLabel}
-              >
-                ⏱ {countdown}
+              <span className="rounded-full bg-white/10 px-2 py-0.5 tabular-nums">
+                {view.pendingLabel} in {countdown}
               </span>
             ) : null}
           </div>
@@ -794,7 +789,6 @@ export function ContextStrip(props: VariantProps) {
                     )}
                   >
                     {action.label}
-                    <span aria-hidden="true">›</span>
                   </button>
                 </li>
               ))}

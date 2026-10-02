@@ -251,7 +251,7 @@ export function enrollView(state: string, go: Go): StepView {
 }
 
 export function inviteView(state: string, go: Go): StepView {
-  const kicker = `Invitation · ${agency.acronym}`;
+  const kicker = `Invitation from ${agency.acronym}`;
   const lead = `${agency.name} invited you as HRMO Officer.`;
   const firstTimeRail: StepView['rail'] = [
     { label: 'Set your password', status: 'current' },
