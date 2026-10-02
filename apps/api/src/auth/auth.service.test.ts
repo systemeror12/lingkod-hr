@@ -768,7 +768,13 @@ async function ownedLoginFixture(
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.securityEvent.deleteMany({
-          where: { OR: [{ userId: user.id }, { emailHash }] },
+          where: {
+            OR: [
+              { userId: user.id },
+              { emailHash },
+              { userId: null, requestId: { startsWith: 'owned-login-' } },
+            ],
+          },
         });
       });
       await cleanup(admin, agencyIds, [user.id]);
@@ -980,13 +986,28 @@ it.skipIf(!enabled)(
       await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
         1,
       );
+      const replacedRequest = signInRequest('first-code');
       await expect(
         service.completeTotpSignIn(
           first.pendingToken,
           totpCode(user.totpSecret ?? ''),
-          signInRequest('first-code'),
+          replacedRequest,
         ),
       ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED', statusCode: 401 });
+      // A token that opens no pending sign-in is still a recorded attempt.
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: replacedRequest.requestId },
+          select: { eventType: true, userId: true, ipAddress: true, details: true },
+        }),
+      ).resolves.toEqual([
+        {
+          eventType: 'LOGIN_FAILURE',
+          userId: null,
+          ipAddress: '198.51.100.7',
+          details: { reason: 'SIGN_IN_EXPIRED', method: 'totp' },
+        },
+      ]);
 
       await admin.pendingAuthentication.updateMany({
         where: { userId: user.id },

@@ -135,6 +135,30 @@ it.skipIf(!enabled)(
           }),
         ),
       ).resolves.toMatchObject({ lastAcceptedStep: 10n });
+
+      // Any insert purges every expired pending row, including other Users' rows it cannot see.
+      await admin.pendingAuthentication.updateMany({
+        where: { userId: userB.id },
+        data: {
+          createdAt: new Date(Date.now() - 20 * 60 * 1000),
+          expiresAt: new Date(Date.now() - 1),
+        },
+      });
+      await withContext(app, { userId: userA.id }, async (transaction) => {
+        await transaction.pendingAuthentication.deleteMany({ where: { userId: userA.id } });
+        await transaction.pendingAuthentication.create({
+          data: {
+            tokenHash: createHash('sha256').update(`pending-${suffix}-a2`).digest(),
+            purpose: 'SIGN_IN',
+            userId: userA.id,
+            stage: 'TOTP',
+            expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+          },
+        });
+      });
+      await expect(
+        admin.pendingAuthentication.count({ where: { userId: { in: [userA.id, userB.id] } } }),
+      ).resolves.toBe(1);
     } finally {
       await admin.user.deleteMany({ where: { id: { in: users.map(({ id }) => id) } } });
       await app.$disconnect();

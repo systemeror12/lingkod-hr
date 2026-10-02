@@ -473,6 +473,12 @@ export class AuthService {
           where: { tokenHash: prismaBytes(hashSessionToken(pendingToken)) },
         });
         if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== 'TOTP') {
+          await this.writeSignInFailure(transaction, request, {
+            userId: null,
+            emailHash: null,
+            reason: 'SIGN_IN_EXPIRED',
+            method: 'totp',
+          });
           return { status: 'SIGN_IN_EXPIRED' as const, user: null };
         }
         const userId = pending.userId;
@@ -481,20 +487,16 @@ export class AuthService {
           where: { id: userId },
           select: { emailNormalized: true, globalStatus: true },
         });
+        const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
         const failure = async (reason: 'SIGN_IN_EXPIRED' | 'INVALID_CODE') => {
-          await transaction.securityEvent.create({
-            data: {
-              userId,
-              eventType: 'LOGIN_FAILURE',
-              requestId: request.requestId,
-              ipAddress: request.ipAddress,
-              emailHash: prismaBytes(emailHash),
-              details: { reason, method: 'totp' },
-            },
+          await this.writeSignInFailure(transaction, request, {
+            userId,
+            emailHash,
+            reason,
+            method: 'totp',
           });
           return { status: reason, user: null };
         };
-        const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
         const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
         if (pending.expiresAt <= now || !factor) {
           await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
@@ -1381,17 +1383,29 @@ export class AuthService {
     reason: string,
   ): Promise<void> {
     await withDatabaseContext({ capabilities: ['platform-security'] }, (transaction) =>
-      transaction.securityEvent.create({
-        data: {
-          userId,
-          eventType: 'LOGIN_FAILURE',
-          requestId: request.requestId,
-          ipAddress: request.ipAddress,
-          emailHash: prismaBytes(emailHash),
-          details: { reason },
-        },
-      }),
+      this.writeSignInFailure(transaction, request, { userId, emailHash, reason }),
     );
+  }
+
+  /** A sign-in LOGIN_FAILURE event; it never holds the password, code, token, or raw email. */
+  private async writeSignInFailure(
+    transaction: Prisma.TransactionClient,
+    request: SignInRequest,
+    failure: { userId: string | null; emailHash: Buffer | null; reason: string; method?: 'totp' },
+  ): Promise<void> {
+    await transaction.securityEvent.create({
+      data: {
+        userId: failure.userId,
+        eventType: 'LOGIN_FAILURE',
+        requestId: request.requestId,
+        ipAddress: request.ipAddress,
+        emailHash: failure.emailHash ? prismaBytes(failure.emailHash) : null,
+        details: {
+          reason: failure.reason,
+          ...(failure.method ? { method: failure.method } : {}),
+        },
+      },
+    });
   }
 
   /**

@@ -24,7 +24,14 @@ export const passwordSignInSchema = z
   })
   .strict();
 
-export const totpSignInSchema = z.object({ code: z.string().max(32) }).strict();
+export const totpSignInSchema = z
+  .object({
+    code: z
+      .string()
+      .max(32)
+      .transform((code) => code.replace(/\s/g, '')),
+  })
+  .strict();
 
 export const activationTokenSchema = z
   .string()

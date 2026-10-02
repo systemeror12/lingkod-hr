@@ -146,17 +146,10 @@ export class AuthController {
     const secure = this.config.NODE_ENV === 'production';
     const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
     try {
-      if (!pendingToken) {
-        throw new AuthServiceError(
-          'The sign-in expired. Enter your email and password again.',
-          401,
-          'SIGN_IN_EXPIRED',
-        );
-      }
       await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
       const session = await this.authService.completeTotpSignIn(
-        pendingToken,
-        parsed.data.code.replace(/\s/g, ''),
+        pendingToken ?? '',
+        parsed.data.code,
         this.signInRequest(request),
       );
       response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
