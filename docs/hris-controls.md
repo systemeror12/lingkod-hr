@@ -161,7 +161,6 @@ Statuses:
 ```text
 ACTIVE
 LOCKED
-DEACTIVATED
 ```
 
 | Current | Action            | Next   | Primary actor          | Required permission     | Validations                                                                                                                                                                                     | Side effects and audit                                                                                |
@@ -172,7 +171,7 @@ DEACTIVATED
 
 LOCKED is the Global User Lock. It denies every Agency Membership without changing any membership's status, and it is never an Agency Membership status.
 
-DEACTIVATED has no transition yet. What sets a User to DEACTIVATED, who may set it, and whether it can be reversed are undecided.
+A User has no DEACTIVATED status. Deactivation, including for separation, acts only on Agency Memberships. A User with no ACTIVE Agency Membership can't reach any Agency, and a new invitation restores access through a new Agency Membership. This is a Project Decision (#390).
 
 Lock controls:
 
@@ -183,7 +182,6 @@ Lock controls:
 Invalid examples:
 
 ```text
-DEACTIVATED → successful login
 LOCKED → password reset that silently restores access
 failed sign-in attempts → LOCKED
 ```

@@ -92,7 +92,6 @@ User states:
 ```text
 ACTIVE
 LOCKED
-DEACTIVATED
 ```
 
 Agency Membership states:
