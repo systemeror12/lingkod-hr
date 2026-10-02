@@ -178,13 +178,13 @@ Every user shall have an individual account. Shared accounts are prohibited.
 
 ## AUTH-002 Login
 
-The MVP shall support email and password login through an approved managed identity or OIDC-compatible service.
+The MVP shall support email and password login owned by LingkodHR. LingkodHR shall verify passwords and second factors itself and issue its own sessions. No managed identity provider or OIDC service shall sit in the login path.
 
 ## AUTH-003 Invitation and activation
 
 Authorized administrators shall invite users, assign agency membership and roles, and track activation.
 
-## AUTH-004 Password recovery
+## AUTH-004 Password Reset
 
 The system shall support secure, non-disclosing password-reset workflows.
 

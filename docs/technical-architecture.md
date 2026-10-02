@@ -2,7 +2,7 @@
 
 ## Technical Stack and Architecture Specification
 
-**Document status:** Draft v0.4
+**Document status:** Draft v0.5
 **Project type:** Solo-developer modular SaaS / deployable HRIS platform  
 **Architecture:** Multi-tenant modular monolith  
 **Product scope:** Philippine Public-Sector HRIS  
@@ -424,13 +424,16 @@ RLS is defense in depth, not a replacement for application authorization.
 
 # 12. Authentication and Authorization
 
-Authentication is delegated to a managed OpenID Connect-compatible provider.
+LingkodHR owns login ([ADR 0004](adr/0004-lingkodhr-owned-login.md)). The API verifies passwords and TOTP codes itself and issues `UserSession` directly. No external identity provider or OIDC service sits in the login path.
+
+Credential flows use vetted primitives and never hand-rolled cryptography: Argon2id from `node:crypto` for passwords and Recovery Codes, and a maintained RFC 6238 library for TOTP.
 
 The application stores:
 
-- external user ID;
 - email;
 - application profile;
+- one password hash and at most one TOTP factor per User, never per Agency Membership;
+- Recovery Code hashes;
 - agency memberships;
 - role assignments;
 - permissions;
@@ -1230,8 +1233,10 @@ Required controls:
 - dependency scanning;
 - audit logging;
 - backup testing;
-- account abuse protection;
-- MFA support through identity provider;
+- account abuse protection, including the Sign-in Cool-down and a per-IP sign-in limit;
+- Argon2id password hashing;
+- TOTP MFA owned by LingkodHR, with Recovery Codes and an audited Factor Reset;
+- TOTP secrets encrypted at rest;
 - signed file URLs;
 - session revocation;
 - segregation-of-duties checks;
@@ -1259,12 +1264,6 @@ DATABASE_OPERATIONAL_URL
 
 # Redis
 REDIS_URL
-
-# Authentication
-OIDC_ISSUER
-OIDC_CLIENT_ID
-OIDC_CLIENT_SECRET
-SESSION_SECRET
 
 # Email
 EMAIL_FROM
@@ -1297,6 +1296,8 @@ ERROR_TRACKING_DSN
 DATA_ENCRYPTION_KEY
 BLIND_INDEX_KEY
 ```
+
+Login needs no identity-provider or OIDC settings. `DATA_ENCRYPTION_KEY` and `BLIND_INDEX_KEY` are required at startup in every environment: `DATA_ENCRYPTION_KEY` encrypts TOTP secrets and other protected values, and `BLIND_INDEX_KEY` keys the email hash used by the Sign-in Cool-down and Security Events.
 
 Processes validate required configuration on startup and fail fast when production values are missing.
 
@@ -1677,3 +1678,4 @@ The first meaningful milestone is:
 | 0.2     | August 7, 2026    | Reframed architecture around the Philippine Public-Sector HRIS implementation                                                                          |
 | 0.3     | August 7, 2026    | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
 | 0.4     | September 4, 2026 | Clarified ownership of database capabilities, External Evidence linking, and the PDS editor model                                                      |
+| 0.5     | October 2, 2026   | Replaced managed authentication with LingkodHR-owned login (ADR 0004)                                                                                  |
