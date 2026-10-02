@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -198,6 +199,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   });
 
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees');

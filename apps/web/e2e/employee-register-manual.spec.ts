@@ -1,9 +1,11 @@
 // Manual walkthrough of the Employee register. It stops in the Playwright Inspector.
 // pnpm --filter @lingkod-hr/web exec playwright test e2e/employee-register-manual.spec.ts --headed
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('try the Employee register search, filters and paging', async ({ page }) => {
   test.skip(Boolean(process.env.CI), 'Manual walkthrough for developers.');
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees');

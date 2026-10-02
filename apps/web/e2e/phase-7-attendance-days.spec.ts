@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 function resetFixture(): void {
   execFileSync('pnpm', ['--filter', '@lingkod-hr/database', 'e2e:seed:shell'], {
@@ -25,6 +26,7 @@ test('calculates an Attendance Day from captured events and inspects its record'
   test.setTimeout(120_000);
   resetFixture();
   await page.setViewportSize({ width: 1280, height: 900 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 

@@ -1,4 +1,5 @@
 import { expect, test, type APIResponse } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
 
@@ -12,6 +13,7 @@ test('opens, adjusts, freezes, reverses, and closes a Leave Account from the pro
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 

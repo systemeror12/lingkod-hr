@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectWithinViewport(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -24,6 +25,7 @@ test('creates a Draft Qualification Standard through the shared modal contract',
 }) => {
   const code = 'QS-E2E-' + Date.now();
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/qualification-standards');

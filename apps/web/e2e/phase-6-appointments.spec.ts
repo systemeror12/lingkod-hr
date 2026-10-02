@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('prepares, reviews, issues, corrects, and cancels an Appointment', async ({ page }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/appointments');

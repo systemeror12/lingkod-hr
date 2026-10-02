@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 function resetFixture(): void {
   execFileSync('pnpm', ['--filter', '@lingkod-hr/database', 'e2e:seed:shell'], {
@@ -35,6 +36,7 @@ test('drives the protected Request to Fill and publication journey', async ({ pa
   test.setTimeout(240_000);
   resetFixture();
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/recruitment');
@@ -248,6 +250,7 @@ test('drives HRMPSB deliberation, the advisory report, and the Selection Decisio
   test.setTimeout(240_000);
   resetFixture();
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/recruitment');

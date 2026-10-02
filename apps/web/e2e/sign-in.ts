@@ -21,6 +21,8 @@ export const LOCAL_SEED_RECOVERY_CODES = [
   'seedc-ode35',
 ];
 const SESSION_COOKIE = 'hris_session';
+/** The seeded Agency Administrator most specs work as. */
+export const MARISOL_EMAIL = 'marisol.santos@example.test';
 
 type Cookie = Parameters<BrowserContext['addCookies']>[0][number];
 

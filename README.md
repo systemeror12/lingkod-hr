@@ -131,22 +131,37 @@ opening `/dashboard`:
 pnpm --filter @lingkod-hr/database e2e:seed:shell
 ```
 
-The seed also enables password sign-in at `/sign-in` with local-only
-credentials. Every seeded User, such as `marisol.santos@example.test`, has the
-passphrase `local-only seed passphrase`. Users whose roles require MFA also get
-a TOTP factor with the secret `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`; add it to an
-authenticator app to get codes. They also get the Recovery Codes `seedc-ode22`,
-`seedc-ode23`, `seedc-ode24`, `seedc-ode25`, `seedc-ode26`, `seedc-ode27`,
-`seedc-ode32`, `seedc-ode33`, `seedc-ode34`, and `seedc-ode35`. Each works once,
-and every seed run restores all ten. The exception is
-`enrollment.candidate@example.test`, which requires MFA but has no factor, so
-signing in walks through authenticator setup. Each seed run removes its factor
-and Recovery Codes again. The seed refuses to run in production.
+The seed gives every seeded User local-only credentials. Every seeded User,
+such as `marisol.santos@example.test`, has the passphrase
+`local-only seed passphrase`. Users whose roles require MFA also get a TOTP
+factor with the secret `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`, and the Recovery
+Codes `seedc-ode22`, `seedc-ode23`, `seedc-ode24`, `seedc-ode25`,
+`seedc-ode26`, `seedc-ode27`, `seedc-ode32`, `seedc-ode33`, `seedc-ode34`, and
+`seedc-ode35`. Each Recovery Code works once, and every seed run restores all
+ten. The exception is `enrollment.candidate@example.test`, which requires MFA
+but has no factor, so signing in walks through authenticator setup. Each seed
+run removes its factor and Recovery Codes again. The seed refuses to run in
+production.
+
+To sign in locally:
+
+1. Open `http://localhost:3000/dashboard`. Without a session, the web sends you
+   to `/sign-in`.
+2. Enter the seeded User's email and the passphrase.
+3. When asked for an authentication code, print the current one:
+
+   ```bash
+   pnpm --filter @lingkod-hr/database dev:totp marisol.santos@example.test
+   ```
+
+   An authenticator app with the seeded secret shows the same code. The API
+   accepts each 30-second code once, so `dev:totp` waits for the next code when
+   the current one was already used.
 
 The gate is complete when migrations report no pending work, each health check
-responds successfully, and `/dashboard` completes local OIDC login. Diagnose
-setup failures before changing application code; do not delete the local
-database or migration history as a shortcut.
+responds successfully, and a seeded User can sign in at `/sign-in` and reach
+`/dashboard`. Diagnose setup failures before changing application code; do not
+delete the local database or migration history as a shortcut.
 
 ### Parallel worktrees
 

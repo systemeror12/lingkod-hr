@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectWithinViewport(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -33,6 +34,7 @@ test('maintains a Work Schedule through the shared modal contract and activates 
 }) => {
   const code = 'WS-E2E-' + Date.now();
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/attendance-configuration');
@@ -125,6 +127,7 @@ test('maintains a Work Schedule through the shared modal contract and activates 
 test('maintains a Work Arrangement pinned to a Holiday Calendar', async ({ page }) => {
   const code = 'WA-E2E-' + Date.now();
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/attendance-configuration');
@@ -187,6 +190,7 @@ test('maintains a Work Arrangement pinned to a Holiday Calendar', async ({ page 
 test('maintains a Holiday Calendar and resolves Schedule Assignments', async ({ page }) => {
   const code = 'HC-E2E-' + Date.now();
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/attendance-configuration');

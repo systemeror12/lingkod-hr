@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 // Activation is prospective: the form accepts only dates after today in Manila.
 function prospectiveDate(offsetDays = 30): string {
@@ -12,6 +13,7 @@ test('administers an effective-dated Agency Profile through the Version Rail', a
   page,
 }, testInfo) => {
   const effectiveDate = prospectiveDate();
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization?workspace=agency');

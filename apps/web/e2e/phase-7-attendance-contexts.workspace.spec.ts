@@ -1,9 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 const alex = 'E2E-0001 · Alex Rivera';
 
 async function openRegister(page: Page, search = ''): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/attendance-contexts' + search);

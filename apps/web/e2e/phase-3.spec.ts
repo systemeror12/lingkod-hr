@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { activateInvitation } from './sign-in';
+import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
 const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
@@ -65,6 +65,7 @@ test.describe('Phase 3 acceptance gate', () => {
     const unitName = 'Phase 3 Records Management Division';
     const originHeaders = { origin: appOrigin };
 
+    await signIn(page, MARISOL_EMAIL);
     await page.goto('/dashboard');
     await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
     await expect(

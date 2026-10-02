@@ -1,10 +1,12 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
 
 test('activates an evidence-backed Leave Policy Version from the government catalogue', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/leave-policies');

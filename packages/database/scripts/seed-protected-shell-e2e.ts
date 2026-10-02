@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import {
   hashEmail,
   hashPassword,
@@ -13,7 +13,6 @@ if (process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production
   throw new Error('The protected-shell seed holds local-only credentials and refuses production.');
 }
 
-const issuer = process.env.OIDC_ISSUER ?? 'http://127.0.0.1:4100';
 const databaseUrl =
   process.env.DATABASE_E2E_ADMIN_URL ??
   process.env.DATABASE_MIGRATION_OWNER_URL ??
@@ -63,28 +62,6 @@ const seededUserEmails = [
   'dtr.reviewer@example.test',
   enrollmentCandidateEmail,
 ];
-
-/** The subject the local OIDC fixture (`apps/web/e2e/local-oidc.ts`) signs `email` in with. */
-function localOidcSubject(email: string): string {
-  if (email === 'marisol.santos@example.test') return 'local-work-queue-user';
-  return `local-${createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
-}
-
-/**
- * Links a seeded User to the local OIDC fixture's subject for their email, so OIDC sign-in finds
- * them until the E2E specs move to owned login.
- */
-async function linkLocalOidcIdentity(
-  client: Prisma.TransactionClient,
-  user: { id: string; emailNormalized: string },
-): Promise<void> {
-  const subject = localOidcSubject(user.emailNormalized);
-  await client.externalIdentityLink.upsert({
-    where: { issuer_subject: { issuer, subject } },
-    update: { userId: user.id, status: 'ACTIVE', supersededAt: null },
-    create: { userId: user.id, issuer, subject, status: 'ACTIVE' },
-  });
-}
 
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -249,12 +226,6 @@ async function seedDtrFixture(): Promise<void> {
     });
     await transaction.agencyMembership.deleteMany({ where: { agencyId: dtrFixture.agencyId } });
     await transaction.agency.deleteMany({ where: { id: dtrFixture.agencyId } });
-    await transaction.externalIdentityLink.deleteMany({
-      where: {
-        issuer,
-        subject: localOidcSubject('dtr.reviewer@example.test'),
-      },
-    });
     const reviewer = await transaction.user.findUnique({
       where: { emailNormalized: 'dtr.reviewer@example.test' },
       select: { id: true },
@@ -268,7 +239,6 @@ async function seedDtrFixture(): Promise<void> {
       await transaction.userTotpFactor.deleteMany({ where });
       await transaction.userRecoveryCode.deleteMany({ where });
       await transaction.securityEvent.deleteMany({ where });
-      await transaction.externalIdentityLink.deleteMany({ where });
       await transaction.user.deleteMany({ where: { id: reviewer.id } });
     }
   });
@@ -355,8 +325,8 @@ async function seedDtrFixture(): Promise<void> {
       where: { id: employee.id },
       data: { currentServiceSegmentId: dtrServiceSegment.id },
     });
-    // The reviewer is a second person. Local OIDC signs the reviewer identity
-    // through the seeded invitation so the browser journey can prove
+    // The reviewer is a second person. The browser journey activates the
+    // seeded invitation as the reviewer so it can prove
     // transaction-level separation of duties between reviewer and locker.
     const reviewerEmail = 'dtr.reviewer@example.test';
     const reviewerUser = await transaction.user.create({
@@ -367,7 +337,6 @@ async function seedDtrFixture(): Promise<void> {
         emailVerifiedAt: new Date(),
       },
     });
-    await linkLocalOidcIdentity(transaction, reviewerUser);
     const reviewerMembership = await transaction.agencyMembership.create({
       data: {
         id: dtrFixture.reviewerMembershipId,
@@ -716,7 +685,6 @@ async function seed(): Promise<void> {
       emailVerifiedAt: new Date(),
     },
   });
-  await linkLocalOidcIdentity(prisma, user);
   const membership =
     (await prisma.agencyMembership.findFirst({
       where: { agencyId: agency.id, userId: user.id },
@@ -810,7 +778,6 @@ async function seed(): Promise<void> {
         emailVerifiedAt: new Date(),
       },
     });
-    await linkLocalOidcIdentity(prisma, invitee);
     const inviteeMembership =
       (await prisma.agencyMembership.findFirst({
         where: { agencyId: agency.id, userId: invitee.id },

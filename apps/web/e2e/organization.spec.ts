@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -18,6 +19,7 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
 }, testInfo) => {
   const code = `RMD-${Date.now()}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -138,6 +140,7 @@ test('guards every Organization Unit dismissal path during submission', async ({
     });
   });
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -172,6 +175,7 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   const rootName = `Administrative Services Office ${suffix}`;
   const childName = `Records Division ${suffix}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -303,6 +307,7 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   const suffix = Date.now();
   const name = `Records Information Office ${suffix}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -342,6 +347,7 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
 test('keeps a missing Unit explicit across reload and returns to the dated Tree', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto(
