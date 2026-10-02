@@ -42,6 +42,29 @@ test('sets up an authenticator and saves Recovery Codes before the first session
   await expect(
     page.getByRole('list', { name: 'Recovery Codes' }).getByRole('listitem'),
   ).toHaveCount(10);
+
+  // Printing keeps only the slip. The scene is decorative, so only its class finds it.
+  const screenOnly = [
+    page.locator('.lh-scene'),
+    page.getByText('Para sa mga lingkod-bayan'),
+    page.getByText('Personnel records for government agencies'),
+    page.getByRole('heading', { name: 'Save your Recovery Codes' }),
+    page.getByRole('button', { name: 'Print slip' }),
+    page.getByRole('button', { name: 'Copy codes' }),
+    page.getByLabel('I’ve saved these Recovery Codes somewhere safe.'),
+    page.getByRole('button', { name: 'Continue' }),
+    page.getByText('Step 3 of 3: Save Recovery Codes'),
+  ];
+  for (const element of screenOnly) await expect(element).toBeVisible();
+  await page.emulateMedia({ media: 'print' });
+  for (const element of screenOnly) await expect(element).toBeHidden();
+  await expect(
+    page.getByRole('list', { name: 'Recovery Codes' }).getByRole('listitem').last(),
+  ).toBeVisible();
+  await expect(page.getByText(email, { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Issued .+\. Each code works once\./)).toBeVisible();
+  await page.emulateMedia({ media: 'screen' });
+
   const finish = page.getByRole('button', { name: 'Continue' });
   await expect(finish).toBeDisabled();
   await page.getByLabel('I’ve saved these Recovery Codes somewhere safe.').check();

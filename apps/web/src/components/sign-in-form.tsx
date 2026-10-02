@@ -376,7 +376,7 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
             >
               <FormError ref={errorRef} tabIndex={-1} message={error} />
               <RecoveryCodeSlip account={enrollment.account} codes={recoveryCodes} />
-              <label className="flex items-start gap-2.5 text-small text-ink print:hidden">
+              <label className="flex items-start gap-2.5 text-small text-ink">
                 <input
                   type="checkbox"
                   className="mt-0.5 size-4 accent-primary"
@@ -385,7 +385,7 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
                 />
                 <span>I’ve saved these Recovery Codes somewhere safe.</span>
               </label>
-              <div className="relative grid justify-items-start print:hidden">
+              <div className="relative grid justify-items-start">
                 <BusyBar busy={busy} />
                 <Button
                   variant="primary"
@@ -629,7 +629,10 @@ function RecoveryCodeSlip({ account, codes }: { account: string; codes: string[]
 
   return (
     <>
-      <figure className="m-0 grid gap-3 rounded-control border-2 border-dashed border-border p-5">
+      <figure
+        data-print-slip
+        className="m-0 grid gap-3 rounded-control border-2 border-dashed border-border p-5 print:break-inside-avoid"
+      >
         <figcaption className="flex flex-wrap justify-between gap-2 text-caption text-ink-muted">
           <span>LingkodHR Recovery Codes</span>
           <span>{account}</span>
@@ -647,7 +650,7 @@ function RecoveryCodeSlip({ account, codes }: { account: string; codes: string[]
           slip away from your phone.
         </p>
       </figure>
-      <div className="flex flex-wrap gap-2 print:hidden">
+      <div className="flex flex-wrap gap-2">
         <Button
           variant="secondary"
           type="button"
