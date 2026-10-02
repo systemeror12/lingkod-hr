@@ -3,6 +3,10 @@ import { LOCAL_SEED_PASSPHRASE, nextTotpCode, signIn } from './sign-in';
 
 const email = 'marisol.santos@example.test';
 
+// A cold dev server compiles /sign-in and /dashboard, and the fixture may wait up to 30 seconds
+// for an unused TOTP step.
+test.describe.configure({ timeout: 90_000 });
+
 test('signs in with email, password, and an authenticator code', async ({ page }) => {
   await page.goto('/sign-in');
   await expect(
