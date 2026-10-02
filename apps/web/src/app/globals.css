@@ -162,3 +162,14 @@ body {
     transition: none !important;
   }
 }
+
+/*
+ * Printing an auth screen that shows a slip, such as the Recovery Codes, prints only the slip:
+ * anything that neither is, holds, nor sits inside the `data-print-slip` element is dropped.
+ */
+@media print {
+  .lh-auth:has([data-print-slip])
+    :not([data-print-slip], [data-print-slip] *, :has([data-print-slip])) {
+    display: none !important;
+  }
+}

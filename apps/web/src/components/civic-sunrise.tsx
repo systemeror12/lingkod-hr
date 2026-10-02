@@ -200,6 +200,7 @@ function LingkodLetterhead() {
 /**
  * Split screen with the scene beside a letterhead column. `progress` runs from 0 at the first
  * step to 1 once the User is in. `labelledBy` must match the id of the heading in `children`.
+ * When `children` show an element marked `data-print-slip`, printing keeps only that element.
  */
 export function CivicSunriseLayout({
   progress,
@@ -211,7 +212,7 @@ export function CivicSunriseLayout({
   children: ReactNode;
 }) {
   return (
-    <main className="grid min-h-dvh bg-surface text-ink min-[960px]:grid-cols-[minmax(0,1.1fr)_minmax(460px,1fr)]">
+    <main className="lh-auth grid min-h-dvh bg-surface text-ink min-[960px]:grid-cols-[minmax(0,1.1fr)_minmax(460px,1fr)] print:block print:min-h-0">
       <div className="grid grid-rows-[minmax(0,1fr)_auto] bg-[#0b1a33] min-[960px]:sticky min-[960px]:top-0 min-[960px]:h-dvh">
         <div className="relative h-60 overflow-hidden bg-nav min-[960px]:h-auto">
           <CivicScene progress={progress} />
@@ -234,7 +235,7 @@ export function CivicSunriseLayout({
         </div>
       </div>
 
-      <div className="grid place-items-center px-6 py-10 min-[621px]:px-14">
+      <div className="grid place-items-center px-6 py-10 min-[621px]:px-14 print:block print:p-0">
         <section aria-labelledby={labelledBy} className="grid w-full max-w-[440px]">
           <LingkodLetterhead />
           {children}
@@ -257,7 +258,7 @@ export function StepFooter({
   note?: string;
 }) {
   return (
-    <footer className="mt-8 flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-border-subtle pt-3 text-caption text-ink-muted print:hidden">
+    <footer className="mt-8 flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-border-subtle pt-3 text-caption text-ink-muted">
       <span>
         Step {step} of {of}: {label}
       </span>
