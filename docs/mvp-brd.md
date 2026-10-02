@@ -188,12 +188,23 @@ Authorized administrators shall invite users, assign agency membership and roles
 
 The system shall support secure, non-disclosing password-reset workflows.
 
-## AUTH-005 Account states
+## AUTH-005 User and Agency Membership statuses
+
+A User and each of the User's Agency Memberships carry separate statuses. Access to an Agency requires both an ACTIVE User and an ACTIVE Agency Membership in that Agency.
+
+User statuses:
+
+```text
+ACTIVE
+LOCKED
+DEACTIVATED
+```
+
+Agency Membership statuses:
 
 ```text
 INVITED
 ACTIVE
-LOCKED
 SUSPENDED
 DEACTIVATED
 ```
