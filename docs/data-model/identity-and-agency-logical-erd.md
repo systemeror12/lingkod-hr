@@ -341,12 +341,13 @@ Short-lived state between sign-in or activation steps, referenced by an HTTP-onl
 | user_id | uuid | Yes | FK users | User signing in; required for SIGN_IN |
 | invitation_id | uuid | Yes | FK invitations | Invitation being activated; required for ACTIVATION |
 | requested_membership_id | uuid | Yes |  | Agency Membership requested for the session |
-| stage | string | No |  | Next step, such as TOTP |
+| stage | string | No |  | Next step: TOTP, ENROLL_SCAN, or ENROLL_CODES |
 | verified_methods | string[] | No |  | Methods already verified, such as `pwd` |
 | display_name | string | Yes |  | Activation input |
 | password_hash | string | Yes |  | Activation input |
-| enrollment_secret_envelope | bytes | Yes |  | Activation input |
-| recovery_code_hashes | string[] | No |  | Activation input |
+| enrollment_secret_envelope | bytes | Yes |  | TOTP secret being enrolled, encrypted like a factor's and bound to the User and the pending row, whose id becomes the factor id |
+| recovery_code_hashes | string[] | No |  | Hashes of the Recovery Codes shown once at enrollment |
+| enrollment_accepted_step | integer | Yes |  | Step of the code that confirmed enrollment; the factor's first `last_accepted_step` |
 | expires_at | datetime | No | After `created_at` | Sign-in expires after 5 minutes |
 | created_at | datetime | No |  | Started |
 
@@ -354,7 +355,7 @@ Short-lived state between sign-in or activation steps, referenced by an HTTP-onl
 
 - SIGN_IN requires `user_id` and no `invitation_id`; ACTIVATION requires `invitation_id`.
 - At most one SIGN_IN row per User and one ACTIVATION row per invitation; starting over replaces it.
-- The final step deletes the row in the transaction that creates the session.
+- The final step deletes the row in the transaction that creates the session. For an enrollment, the same transaction writes the factor and the Recovery Code hashes; an abandoned or expired enrollment writes nothing.
 
 **Deletion behavior:** Deleted when completed, replaced, or found expired; cascades with the User or invitation.
 ## `security_events`

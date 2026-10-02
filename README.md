@@ -138,7 +138,10 @@ a TOTP factor with the secret `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`; add it to an
 authenticator app to get codes. They also get the Recovery Codes `seedc-ode22`,
 `seedc-ode23`, `seedc-ode24`, `seedc-ode25`, `seedc-ode26`, `seedc-ode27`,
 `seedc-ode32`, `seedc-ode33`, `seedc-ode34`, and `seedc-ode35`. Each works once,
-and every seed run restores all ten. The seed refuses to run in production.
+and every seed run restores all ten. The exception is
+`enrollment.candidate@example.test`, which requires MFA but has no factor, so
+signing in walks through authenticator setup. Each seed run removes its factor
+and Recovery Codes again. The seed refuses to run in production.
 
 The gate is complete when migrations report no pending work, each health check
 responds successfully, and `/dashboard` completes local OIDC login. Diagnose

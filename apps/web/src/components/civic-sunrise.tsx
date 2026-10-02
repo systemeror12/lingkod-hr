@@ -244,11 +244,24 @@ export function CivicSunriseLayout({
   );
 }
 
-/** "Step n of m: …" under the form. */
-export function StepFooter({ step, of, label }: { step: number; of: number; label: string }) {
+/** "Step n of m: …" under the form, with an optional `note` such as when the step expires. */
+export function StepFooter({
+  step,
+  of,
+  label,
+  note,
+}: {
+  step: number;
+  of: number;
+  label: string;
+  note?: string;
+}) {
   return (
-    <footer className="mt-8 border-t border-border-subtle pt-3 text-caption text-ink-muted">
-      Step {step} of {of}: {label}
+    <footer className="mt-8 flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-border-subtle pt-3 text-caption text-ink-muted print:hidden">
+      <span>
+        Step {step} of {of}: {label}
+      </span>
+      {note ? <span>{note}</span> : null}
     </footer>
   );
 }

@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
@@ -38,10 +38,20 @@ import {
   type MailMessage,
 } from '../invitations/mail';
 import { prismaBytes, safeJson, selectInvitationRoles } from '../invitations/invitation-utils';
+import {
+  beginTotpEnrollment,
+  confirmTotpEnrollment,
+  ENROLL_CODES_STAGE,
+  ENROLL_SCAN_STAGE,
+  writeTotpEnrollment,
+} from './totp-enrollment';
 
 const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
 const OWNED_LOGIN_PROVIDER = 'lingkodhr';
+
+/** The next step a pending sign-in waits for. */
+type PendingSignInStage = 'TOTP' | typeof ENROLL_SCAN_STAGE | typeof ENROLL_CODES_STAGE;
 
 export const SESSION_COOKIE = 'hris_session';
 export const OIDC_FLOW_COOKIE = 'hris_oidc_flow';
@@ -85,8 +95,16 @@ export interface SignInRequest {
   ipAddress: string | null;
 }
 
+/** What the User needs to add a pending TOTP secret to an authenticator app. */
+export interface TotpEnrollmentStart {
+  otpauthUri: string;
+  account: string;
+  expiresAt: Date;
+}
+
 export type PasswordSignInResult =
   | { status: 'TOTP_REQUIRED'; pendingToken: string }
+  | { status: 'ENROLLMENT_REQUIRED'; pendingToken: string; enrollment: TotpEnrollmentStart }
   | { status: 'SIGNED_IN'; session: AuthenticatedSession & { token: string } };
 
 export interface RecoveryCodeSignIn {
@@ -110,6 +128,9 @@ interface PendingSignIn {
   userId: string;
   requestedMembershipId: string | null;
   verifiedMethods: string[];
+  enrollmentSecretEnvelope: Uint8Array | null;
+  enrollmentAcceptedStep: bigint | null;
+  recoveryCodeHashes: string[];
   user: { emailNormalized: string; globalStatus: string };
   emailHash: Buffer;
 }
@@ -189,6 +210,17 @@ function recoveryCodeNotice(email: string, remaining: number, usedAt: Date): Mai
       `A Recovery Code was used to sign in to your LingkodHR account on ${noticeTime.format(usedAt)} (Philippine time). Your other sessions were signed out.`,
       `${left} If you lost your authenticator, replace it or generate new Recovery Codes.`,
       "If you didn't sign in, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
+function totpEnrolledNotice(email: string): MailMessage {
+  return {
+    to: email,
+    subject: 'An authenticator app was added to your LingkodHR account',
+    text: [
+      'An authenticator app was set up for signing in to your LingkodHR account, and a new set of Recovery Codes was issued.',
+      'If you did not do this, contact your Agency Administrator right away.',
     ].join('\n\n'),
   };
 }
@@ -407,7 +439,8 @@ export class AuthService {
   /**
    * First sign-in step. Every failure before the password verifies looks the same, and an unknown
    * email still costs a full Argon2id verification. A User with a TOTP factor gets a 5-minute
-   * pending sign-in, replacing any earlier one; anyone else gets a session.
+   * pending sign-in, replacing any earlier one. An MFA-Required User without a factor gets a pending
+   * sign-in that enrolls one first. Anyone else gets a session.
    */
   async signInWithPassword(
     email: string,
@@ -419,7 +452,7 @@ export class AuthService {
     const account = await withDatabaseContext({}, async (transaction) => {
       const user = await transaction.user.findUnique({
         where: { emailNormalized: email.trim().toLowerCase() },
-        select: { id: true, globalStatus: true },
+        select: { id: true, emailNormalized: true, globalStatus: true },
       });
       if (!user) return null;
       await setDatabaseContext(transaction, { userId: user.id });
@@ -460,20 +493,31 @@ export class AuthService {
             where: { userId },
             select: { id: true },
           });
-          if (factor) {
-            const pendingToken = createSessionToken();
+          const pendingId = randomUUID();
+          const pendingSignIn = async (
+            stage: PendingSignInStage,
+            enrollmentSecretEnvelope?: Buffer,
+          ) => {
+            const pending = {
+              token: createSessionToken(),
+              expiresAt: new Date(Date.now() + PENDING_SIGN_IN_LIFETIME_MS),
+            };
             await transaction.pendingAuthentication.deleteMany({
               where: { userId, purpose: 'SIGN_IN' },
             });
             await transaction.pendingAuthentication.create({
               data: {
-                tokenHash: prismaBytes(hashSessionToken(pendingToken)),
+                id: pendingId,
+                tokenHash: prismaBytes(hashSessionToken(pending.token)),
                 purpose: 'SIGN_IN',
                 userId,
                 requestedMembershipId: membershipId,
-                stage: 'TOTP',
+                stage,
                 verifiedMethods: ['pwd'],
-                expiresAt: new Date(Date.now() + PENDING_SIGN_IN_LIFETIME_MS),
+                enrollmentSecretEnvelope: enrollmentSecretEnvelope
+                  ? prismaBytes(enrollmentSecretEnvelope)
+                  : null,
+                expiresAt: pending.expiresAt,
               },
             });
             await transaction.securityEvent.create({
@@ -483,10 +527,34 @@ export class AuthService {
                 requestId: request.requestId,
                 ipAddress: request.ipAddress,
                 emailHash: prismaBytes(emailHash),
-                details: { nextStep: 'TOTP' },
+                details: { nextStep: stage },
               },
             });
-            return { status: 'TOTP_REQUIRED', pendingToken };
+            return pending;
+          };
+          if (factor) {
+            const { token } = await pendingSignIn('TOTP');
+            return { status: 'TOTP_REQUIRED', pendingToken: token };
+          }
+          const requiresMfa = await this.signInRequiresMfa(transaction, userId, membershipId);
+          await setDatabaseContext(transaction, { userId, capabilities: ['platform-security'] });
+          if (requiresMfa) {
+            // Sealed for the pending row's id, which becomes the factor id.
+            const enrollment = beginTotpEnrollment(
+              this.dataEncryptionKey,
+              { userId, factorId: pendingId },
+              account.emailNormalized,
+            );
+            const pending = await pendingSignIn(ENROLL_SCAN_STAGE, enrollment.envelope);
+            return {
+              status: 'ENROLLMENT_REQUIRED',
+              pendingToken: pending.token,
+              enrollment: {
+                otpauthUri: enrollment.otpauthUri,
+                account: account.emailNormalized,
+                expiresAt: pending.expiresAt,
+              },
+            };
           }
           return {
             status: 'SIGNED_IN',
@@ -710,6 +778,131 @@ export class AuthService {
     } catch (error: unknown) {
       if (error instanceof AuthServiceError) {
         await this.recordSignInFailure(request, emailHash, userId, error.code, 'recovery_code');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Confirms the secret of a pending enrollment with one code from the authenticator app, then
+   * answers the 10 Recovery Codes. They are shown once: only their hashes stay on the pending row.
+   * Hashing them takes too long to hold a transaction open, so the stage advance is conditional.
+   */
+  async confirmTotpEnrollment(
+    pendingToken: string,
+    code: string,
+    request: SignInRequest,
+  ): Promise<{ recoveryCodes: string[] }> {
+    const scope = {
+      pendingTokenHash: hashSessionToken(pendingToken).toString('hex'),
+      capabilities: ['platform-security'] as const,
+    };
+    const pending = await withDatabaseContext(scope, (transaction) =>
+      this.openPendingSignIn(
+        transaction,
+        scope,
+        pendingToken,
+        request,
+        'totp',
+        new Date(),
+        ENROLL_SCAN_STAGE,
+      ),
+    );
+    if (!pending) throw signInExpired();
+    const { userId, emailHash } = pending;
+    const confirmed = await confirmTotpEnrollment(
+      this.dataEncryptionKey,
+      { userId, factorId: pending.id },
+      Buffer.from(pending.enrollmentSecretEnvelope ?? []),
+      code,
+    );
+    if (!confirmed) {
+      await this.recordSignInFailure(request, emailHash, userId, 'INVALID_CODE');
+      throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
+    }
+    const advanced = await withDatabaseContext({ ...scope, userId }, (transaction) =>
+      transaction.pendingAuthentication.updateMany({
+        where: { id: pending.id, stage: ENROLL_SCAN_STAGE, expiresAt: { gt: new Date() } },
+        data: {
+          stage: ENROLL_CODES_STAGE,
+          verifiedMethods: [...pending.verifiedMethods, 'totp'],
+          enrollmentAcceptedStep: confirmed.step,
+          recoveryCodeHashes: confirmed.recoveryCodeHashes,
+        },
+      }),
+    );
+    if (advanced.count !== 1) {
+      await this.recordSignInFailure(request, emailHash, userId, 'SIGN_IN_EXPIRED');
+      throw signInExpired();
+    }
+    return { recoveryCodes: confirmed.recoveryCodes };
+  }
+
+  /**
+   * Final enrollment step, after the User acknowledged saving the Recovery Codes. The factor, the
+   * Recovery Code hashes, and the session are written and the pending sign-in deleted in one
+   * transaction. Answers the enrollment notice, for `sendNotice` once the response is out.
+   */
+  async completeTotpEnrollment(
+    pendingToken: string,
+    request: SignInRequest,
+  ): Promise<AuthenticatedSession & { token: string; notice: MailMessage }> {
+    const scope = {
+      pendingTokenHash: hashSessionToken(pendingToken).toString('hex'),
+      capabilities: ['platform-security'] as const,
+    };
+    // Set once the pending sign-in opens, so a later refusal can still be recorded.
+    const opened: { userId?: string; emailHash?: Buffer } = {};
+    try {
+      const session = await withDatabaseContext(scope, async (transaction) => {
+        const now = new Date();
+        const pending = await this.openPendingSignIn(
+          transaction,
+          scope,
+          pendingToken,
+          request,
+          'totp',
+          now,
+          ENROLL_CODES_STAGE,
+        );
+        if (!pending) return null;
+        const { userId, emailHash } = pending;
+        opened.userId = userId;
+        opened.emailHash = emailHash;
+        const consumed = await transaction.pendingAuthentication.deleteMany({
+          where: { id: pending.id, stage: ENROLL_CODES_STAGE },
+        });
+        if (consumed.count !== 1) throw signInExpired();
+        if (pending.user.globalStatus !== 'ACTIVE') {
+          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+        }
+        await writeTotpEnrollment(transaction, pending, userId);
+        await transaction.securityEvent.create({
+          data: {
+            userId,
+            eventType: 'TOTP_ENROLLED',
+            requestId: request.requestId,
+            ipAddress: request.ipAddress,
+            emailHash: prismaBytes(emailHash),
+            details: { recoveryCodes: pending.recoveryCodeHashes.length },
+          },
+        });
+        const owned = await this.openOwnedSession(
+          transaction,
+          userId,
+          pending.requestedMembershipId,
+          pending.verifiedMethods,
+          request,
+          emailHash,
+        );
+        return { ...owned, notice: totpEnrolledNotice(pending.user.emailNormalized) };
+      });
+      if (!session) throw signInExpired();
+      return session;
+    } catch (error: unknown) {
+      // A refusal after the pending sign-in opened rolls the transaction back; record it separately.
+      if (error instanceof AuthServiceError && opened.userId && opened.emailHash) {
+        await this.recordSignInFailure(request, opened.emailHash, opened.userId, error.code);
       }
       throw error;
     }
@@ -1547,9 +1740,9 @@ export class AuthService {
   }
 
   /**
-   * The pending sign-in a second-factor step continues, with its User in the transaction's
-   * context. A missing one, or an expired one (which is deleted), is recorded as a
-   * `SIGN_IN_EXPIRED` failure and gives null.
+   * The pending sign-in a second-factor or enrollment step continues, with its User in the
+   * transaction's context. A missing one, one waiting for another stage, or an expired one (which
+   * is deleted), is recorded as a `SIGN_IN_EXPIRED` failure and gives null.
    */
   private async openPendingSignIn(
     transaction: Prisma.TransactionClient,
@@ -1558,11 +1751,12 @@ export class AuthService {
     request: SignInRequest,
     method: SecondFactorMethod,
     now: Date,
+    stage: PendingSignInStage = 'TOTP',
   ): Promise<PendingSignIn | null> {
     const pending = await transaction.pendingAuthentication.findUnique({
       where: { tokenHash: prismaBytes(hashSessionToken(pendingToken)) },
     });
-    if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== 'TOTP') {
+    if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== stage) {
       await this.writeSignInFailure(transaction, request, {
         userId: null,
         emailHash: null,
@@ -1593,6 +1787,9 @@ export class AuthService {
       userId,
       requestedMembershipId: pending.requestedMembershipId,
       verifiedMethods: pending.verifiedMethods,
+      enrollmentSecretEnvelope: pending.enrollmentSecretEnvelope,
+      enrollmentAcceptedStep: pending.enrollmentAcceptedStep,
+      recoveryCodeHashes: pending.recoveryCodeHashes,
       user,
       emailHash,
     };
@@ -1750,6 +1947,20 @@ export class AuthService {
       context: resolved.context,
       display: resolved.display,
     };
+  }
+
+  /** Whether a User signing in into the requested or default membership needs a second factor. */
+  private async signInRequiresMfa(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    requestedMembershipId: string | null,
+  ): Promise<boolean> {
+    const membership = await this.selectSignInMembership(
+      transaction,
+      userId,
+      requestedMembershipId,
+    );
+    return this.userRequiresMfa(transaction, userId, membership.agencyId, membership.id);
   }
 
   private async userRequiresMfa(

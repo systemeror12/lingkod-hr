@@ -295,6 +295,7 @@ CREATE TABLE pending_authentications (
   password_hash text,
   enrollment_secret_envelope bytea,
   recovery_code_hashes text[] NOT NULL DEFAULT ARRAY[]::text[],
+  enrollment_accepted_step bigint,
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (expires_at > created_at),

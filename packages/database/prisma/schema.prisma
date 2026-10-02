@@ -691,6 +691,7 @@ model PendingAuthentication {
   passwordHash             String?  @map("password_hash")
   enrollmentSecretEnvelope Bytes?   @map("enrollment_secret_envelope")
   recoveryCodeHashes       String[] @default([]) @map("recovery_code_hashes")
+  enrollmentAcceptedStep   BigInt?  @map("enrollment_accepted_step")
   expiresAt                DateTime @map("expires_at") @db.Timestamptz(6)
   createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 

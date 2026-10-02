@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto';
+import { hashPassword } from './password-hash';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const CODE_LENGTH = 10;
@@ -24,4 +25,11 @@ export function generateRecoveryCodes(): string[] {
 export function normalizeRecoveryCode(input: string): string | null {
   const normalized = input.replace(/[\s-]/g, '').toUpperCase();
   return new RegExp(`^[A-Z2-7]{${CODE_LENGTH}}$`).test(normalized) ? normalized : null;
+}
+
+/** Hashes a Recovery Code's normalized form with the password hash and its concurrency limit. */
+export async function hashRecoveryCode(code: string): Promise<string> {
+  const normalized = normalizeRecoveryCode(code);
+  if (!normalized) throw new Error('Not a Recovery Code.');
+  return hashPassword(normalized);
 }
