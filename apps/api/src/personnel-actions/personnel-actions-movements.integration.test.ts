@@ -56,8 +56,6 @@ async function createAdminClient(): Promise<PrismaClient> {
 async function createActor(admin: PrismaClient, agencyId: string, suffix: string, name: string) {
   const user = await admin.user.create({
     data: {
-      identityProvider: 'movement-integration',
-      externalSubject: `movement-${name}-${suffix}`,
       emailNormalized: `movement-${name}-${suffix}@example.test`,
       displayName: name,
       globalStatus: 'ACTIVE',

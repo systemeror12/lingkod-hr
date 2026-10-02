@@ -165,8 +165,6 @@ it.skipIf(!enabled)(
       agencyId = agency.id;
       const user = await admin.user.create({
         data: {
-          identityProvider: 'personnel-baseline-integration',
-          externalSubject: `personnel-baseline-${suffix}`,
           emailNormalized: `personnel-baseline-${suffix}@example.test`,
           displayName: 'Personnel Baseline Integration User',
           globalStatus: 'ACTIVE',

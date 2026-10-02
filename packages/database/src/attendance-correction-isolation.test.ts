@@ -52,8 +52,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'attendance-correction-rls-e2e',
-        externalSubject: 'attendance-correction-' + suffix,
         emailNormalized: 'attendance-correction-' + suffix + '@example.test',
         displayName: 'Attendance Correction RLS User',
         globalStatus: 'ACTIVE',

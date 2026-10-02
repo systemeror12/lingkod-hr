@@ -157,8 +157,6 @@ it.skipIf(!enabled)(
     const createUser = (label: string) =>
       admin.user.create({
         data: {
-          identityProvider: 'leave-monetization-integration',
-          externalSubject: `${label}-${suffix}`,
           emailNormalized: `${label}-${suffix}@example.test`,
           displayName: `Leave Monetization ${label}`,
           globalStatus: 'ACTIVE',

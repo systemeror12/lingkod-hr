@@ -98,8 +98,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'leave-policy-integration',
-        externalSubject: `leave-policy-${suffix}`,
         emailNormalized: `leave-policy-${suffix}@example.test`,
         displayName: 'Leave Policy Integration User',
         globalStatus: 'ACTIVE',

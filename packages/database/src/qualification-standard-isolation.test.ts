@@ -48,8 +48,6 @@ it.skipIf(!enabled)('isolates Qualification Standards and guards version state',
   );
   const user = await admin.user.create({
     data: {
-      identityProvider: 'qualification-standard-rls-e2e',
-      externalSubject: 'qualification-standard-' + suffix,
       emailNormalized: 'qualification-standard-' + suffix + '@example.test',
       displayName: 'Qualification Standard RLS User',
       globalStatus: 'ACTIVE',

@@ -178,8 +178,6 @@ async function createUser(
 ): Promise<{ id: string }> {
   return admin.user.create({
     data: {
-      identityProvider: 'attendance-correction-integration',
-      externalSubject: `attendance-correction-${label}-${suffix}`,
       emailNormalized: `attendance-correction-${label}-${suffix}@example.test`,
       displayName: `Attendance Correction ${label}`,
       globalStatus: 'ACTIVE',
@@ -624,7 +622,7 @@ async function cleanupAgency(admin: PrismaClient, agencyId: string, suffix: stri
     await transaction.employee.deleteMany({ where: { agencyId } });
     await transaction.agencyMembership.deleteMany({ where: { agencyId } });
     await transaction.agency.delete({ where: { id: agencyId } });
-    await transaction.user.deleteMany({ where: { externalSubject: { contains: suffix } } });
+    await transaction.user.deleteMany({ where: { emailNormalized: { contains: suffix } } });
   });
 }
 

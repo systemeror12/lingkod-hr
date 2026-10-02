@@ -54,8 +54,6 @@ it.skipIf(!enabled)(
     const agencyB = agencies[1]!;
     const user = await admin.user.create({
       data: {
-        identityProvider: 'attendance-dtr-rls-e2e',
-        externalSubject: 'attendance-dtr-' + suffix,
         emailNormalized: 'attendance-dtr-' + suffix + '@example.test',
         displayName: 'Daily Time Record RLS User',
         globalStatus: 'ACTIVE',
@@ -71,8 +69,6 @@ it.skipIf(!enabled)(
     ]);
     const reviewer = await admin.user.create({
       data: {
-        identityProvider: 'attendance-dtr-rls-e2e',
-        externalSubject: 'attendance-dtr-reviewer-' + suffix,
         emailNormalized: 'attendance-dtr-reviewer-' + suffix + '@example.test',
         displayName: 'Daily Time Record RLS Reviewer',
         globalStatus: 'ACTIVE',
@@ -295,7 +291,7 @@ it.skipIf(!enabled)(
           where: { agencyId: { in: [agencyA.id, agencyB.id] } },
         });
         await transaction.agency.deleteMany({ where: { id: { in: [agencyA.id, agencyB.id] } } });
-        await transaction.user.deleteMany({ where: { externalSubject: { contains: suffix } } });
+        await transaction.user.deleteMany({ where: { emailNormalized: { contains: suffix } } });
       });
       await app.$disconnect();
       await admin.$disconnect();

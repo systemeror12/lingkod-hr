@@ -135,8 +135,6 @@ async function createAgency(admin: PrismaClient, suffix: string) {
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'attendance-capture-integration',
-      externalSubject: `attendance-capture-${suffix}`,
       emailNormalized: `attendance-capture-${suffix}@example.test`,
       displayName: 'Attendance Capture Integration User',
       globalStatus: 'ACTIVE',
@@ -227,8 +225,6 @@ async function createEmployee(
 async function createMembership(admin: PrismaClient, values: { agencyId: string; suffix: string }) {
   const user = await admin.user.create({
     data: {
-      identityProvider: 'attendance-capture-integration',
-      externalSubject: `attendance-capture-${values.suffix}`,
       emailNormalized: `attendance-capture-${values.suffix}@example.test`,
       displayName: 'Attendance Capture Integration User',
       globalStatus: 'ACTIVE',
@@ -312,7 +308,7 @@ async function cleanupAgency(admin: PrismaClient, agencyId: string, suffix: stri
     await transaction.agencyMembership.deleteMany({ where: { agencyId } });
     await transaction.agency.delete({ where: { id: agencyId } });
     await transaction.user.deleteMany({
-      where: { externalSubject: { contains: suffix } },
+      where: { emailNormalized: { contains: suffix } },
     });
   });
 }

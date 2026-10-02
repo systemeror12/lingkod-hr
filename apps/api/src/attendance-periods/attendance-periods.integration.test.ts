@@ -54,8 +54,6 @@ async function createSecondAdministrator(
 ): Promise<RequestContext> {
   const user = await fixture.admin.user.create({
     data: {
-      identityProvider: 'attendance-workflow-integration',
-      externalSubject: `attendance-workflow-admin-two-${fixture.suffix}`,
       emailNormalized: `attendance-workflow-admin-two-${fixture.suffix}@example.test`,
       displayName: 'Attendance Workflow Admin Two',
       globalStatus: 'ACTIVE',

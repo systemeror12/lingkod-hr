@@ -192,8 +192,6 @@ it.skipIf(!enabled)(
     });
     const inviter = await admin.user.create({
       data: {
-        identityProvider: issuer,
-        externalSubject: `inviter-${suffix}`,
         emailNormalized: `inviter-${suffix}@example.test`,
         displayName: 'E2E User',
         globalStatus: 'ACTIVE',
@@ -272,8 +270,6 @@ it.skipIf(!enabled)('allows a replacement after a pending invitation expires', a
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: issuer,
-      externalSubject: `subject-${suffix}`,
       emailNormalized: `inviter-${suffix}@example.test`,
       displayName: 'E2E User',
       globalStatus: 'ACTIVE',
@@ -354,8 +350,6 @@ it.skipIf(!enabled)(
       ['first', 'second'].map((label) =>
         admin.user.create({
           data: {
-            identityProvider: issuer,
-            externalSubject: `${label}-${suffix}`,
             emailNormalized: `${label}-${suffix}@example.test`,
             displayName: `E2E ${label}`,
             globalStatus: 'ACTIVE',
@@ -372,18 +366,18 @@ it.skipIf(!enabled)(
           data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
         });
         await admin.externalIdentityLink.create({
-          data: { userId: user.id, issuer, subject: user.externalSubject ?? '', status: 'ACTIVE' },
+          data: { userId: user.id, issuer, subject: user.id, status: 'ACTIVE' },
         });
       }),
     );
 
     try {
-      await new AuthService().signIn(identity(firstUser.externalSubject ?? '', newEmail));
+      await new AuthService().signIn(identity(firstUser.id, newEmail));
       await expect(
         admin.user.findUniqueOrThrow({ where: { id: firstUser.id } }),
       ).resolves.toMatchObject({ emailNormalized: newEmail });
       await expect(
-        new AuthService().signIn(identity(secondUser.externalSubject ?? '', newEmail)),
+        new AuthService().signIn(identity(secondUser.id, newEmail)),
       ).rejects.toMatchObject({ code: 'EMAIL_ALREADY_IN_USE', statusCode: 401 });
     } finally {
       await cleanup(
@@ -417,8 +411,6 @@ it.skipIf(!enabled)(
     const subject = `subject-${suffix}`;
     const user = await admin.user.create({
       data: {
-        identityProvider: issuer,
-        externalSubject: subject,
         emailNormalized: `switch-${suffix}@example.test`,
         displayName: 'E2E User',
         globalStatus: 'ACTIVE',
@@ -599,8 +591,6 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
   });
   const inviter = await admin.user.create({
     data: {
-      identityProvider: issuer,
-      externalSubject: `inviter-${suffix}`,
       emailNormalized: `inviter-${suffix}@example.test`,
       displayName: 'E2E User',
       globalStatus: 'ACTIVE',
@@ -620,8 +610,6 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
   const inviteeEmail = `invitee-${suffix}@example.test`;
   const invitee = await admin.user.create({
     data: {
-      identityProvider: issuer,
-      externalSubject: `invitee-${suffix}`,
       emailNormalized: inviteeEmail,
       displayName: 'E2E Invitee',
       globalStatus: 'ACTIVE',
@@ -629,6 +617,9 @@ it.skipIf(!enabled)('prefers Agency roles and audits invitation role assignments
   });
   await admin.agencyMembership.create({
     data: { agencyId: priorAgency.id, userId: invitee.id, status: 'ACTIVE' },
+  });
+  await admin.externalIdentityLink.create({
+    data: { userId: invitee.id, issuer, subject: `invitee-${suffix}`, status: 'ACTIVE' },
   });
 
   try {

@@ -67,8 +67,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'audit-api-e2e',
-        externalSubject: `audit-api-${suffix}`,
         emailNormalized: `audit-api-${suffix}@example.test`,
         displayName: 'Audit API User',
         globalStatus: 'ACTIVE',

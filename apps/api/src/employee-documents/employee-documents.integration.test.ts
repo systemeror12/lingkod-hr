@@ -88,8 +88,6 @@ it.skipIf(!enabled)(
     });
     const owner = await admin.user.create({
       data: {
-        identityProvider: 'employee-documents-e2e',
-        externalSubject: `employee-documents-owner-${suffix}`,
         emailNormalized: `employee-documents-owner-${suffix}@example.test`,
         displayName: 'Employee Document Owner',
         globalStatus: 'ACTIVE',
@@ -97,8 +95,6 @@ it.skipIf(!enabled)(
     });
     const hr = await admin.user.create({
       data: {
-        identityProvider: 'employee-documents-e2e',
-        externalSubject: `employee-documents-hr-${suffix}`,
         emailNormalized: `employee-documents-hr-${suffix}@example.test`,
         displayName: 'Personnel Records Officer',
         globalStatus: 'ACTIVE',

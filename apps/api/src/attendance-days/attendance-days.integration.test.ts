@@ -146,8 +146,6 @@ async function createAgency(admin: PrismaClient, suffix: string) {
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'attendance-day-integration',
-      externalSubject: `attendance-day-${suffix}`,
       emailNormalized: `attendance-day-${suffix}@example.test`,
       displayName: 'Attendance Day Integration User',
       globalStatus: 'ACTIVE',
@@ -425,7 +423,7 @@ async function cleanupAgency(admin: PrismaClient, agencyId: string, suffix: stri
     await transaction.employee.deleteMany({ where: { agencyId } });
     await transaction.agencyMembership.deleteMany({ where: { agencyId } });
     await transaction.agency.delete({ where: { id: agencyId } });
-    await transaction.user.deleteMany({ where: { externalSubject: { contains: suffix } } });
+    await transaction.user.deleteMany({ where: { emailNormalized: { contains: suffix } } });
   });
 }
 

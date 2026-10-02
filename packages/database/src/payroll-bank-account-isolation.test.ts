@@ -72,8 +72,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'bank-account-rls-e2e',
-        externalSubject: `bank-account-rls-${suffix}`,
         emailNormalized: `bank-account-rls-${suffix}@example.test`,
         displayName: 'Bank Account RLS User',
         globalStatus: 'ACTIVE',

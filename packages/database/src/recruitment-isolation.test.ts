@@ -53,8 +53,6 @@ it.skipIf(!enabled)('isolates Phase 6 records and protects frozen recruitment fa
   );
   const user = await admin.user.create({
     data: {
-      identityProvider: 'recruitment-rls-e2e',
-      externalSubject: `recruitment-${suffix}`,
       emailNormalized: `recruitment-${suffix}@example.test`,
       displayName: 'Recruitment RLS User',
       globalStatus: 'ACTIVE',

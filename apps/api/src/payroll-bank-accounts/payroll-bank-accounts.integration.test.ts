@@ -31,8 +31,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'bank-service-e2e',
-        externalSubject: `bank-service-${suffix}`,
         emailNormalized: `bank-service-${suffix}@example.test`,
         displayName: 'Bank Service User',
         globalStatus: 'ACTIVE',

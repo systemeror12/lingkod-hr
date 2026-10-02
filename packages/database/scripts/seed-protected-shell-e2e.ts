@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import {
   hashEmail,
   hashPassword,
@@ -63,6 +63,28 @@ const seededUserEmails = [
   'dtr.reviewer@example.test',
   enrollmentCandidateEmail,
 ];
+
+/** The subject the local OIDC fixture (`apps/web/e2e/local-oidc.ts`) signs `email` in with. */
+function localOidcSubject(email: string): string {
+  if (email === 'marisol.santos@example.test') return 'local-work-queue-user';
+  return `local-${createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
+}
+
+/**
+ * Links a seeded User to the local OIDC fixture's subject for their email, so OIDC sign-in finds
+ * them until the E2E specs move to owned login.
+ */
+async function linkLocalOidcIdentity(
+  client: Prisma.TransactionClient,
+  user: { id: string; emailNormalized: string },
+): Promise<void> {
+  const subject = localOidcSubject(user.emailNormalized);
+  await client.externalIdentityLink.upsert({
+    where: { issuer_subject: { issuer, subject } },
+    update: { userId: user.id, status: 'ACTIVE', supersededAt: null },
+    create: { userId: user.id, issuer, subject, status: 'ACTIVE' },
+  });
+}
 
 function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -230,7 +252,7 @@ async function seedDtrFixture(): Promise<void> {
     await transaction.externalIdentityLink.deleteMany({
       where: {
         issuer,
-        subject: `local-${createHash('sha256').update('dtr.reviewer@example.test').digest('hex').slice(0, 24)}`,
+        subject: localOidcSubject('dtr.reviewer@example.test'),
       },
     });
     const reviewer = await transaction.user.findUnique({
@@ -331,14 +353,13 @@ async function seedDtrFixture(): Promise<void> {
     const reviewerEmail = 'dtr.reviewer@example.test';
     const reviewerUser = await transaction.user.create({
       data: {
-        identityProvider: issuer,
-        externalSubject: `local-${createHash('sha256').update(reviewerEmail).digest('hex').slice(0, 24)}`,
         emailNormalized: reviewerEmail,
         displayName: 'DTR Journey Reviewer',
         globalStatus: 'ACTIVE',
         emailVerifiedAt: new Date(),
       },
     });
+    await linkLocalOidcIdentity(transaction, reviewerUser);
     const reviewerMembership = await transaction.agencyMembership.create({
       data: {
         id: dtrFixture.reviewerMembershipId,
@@ -676,21 +697,18 @@ async function seed(): Promise<void> {
   const user = await prisma.user.upsert({
     where: { emailNormalized: 'marisol.santos@example.test' },
     update: {
-      identityProvider: issuer,
-      externalSubject: 'local-work-queue-user',
       displayName: 'Marisol Santos',
       globalStatus: 'ACTIVE',
       emailVerifiedAt: new Date(),
     },
     create: {
-      identityProvider: issuer,
-      externalSubject: 'local-work-queue-user',
       emailNormalized: 'marisol.santos@example.test',
       displayName: 'Marisol Santos',
       globalStatus: 'ACTIVE',
       emailVerifiedAt: new Date(),
     },
   });
+  await linkLocalOidcIdentity(prisma, user);
   const membership =
     (await prisma.agencyMembership.findFirst({
       where: { agencyId: agency.id, userId: user.id },
@@ -713,8 +731,6 @@ async function seed(): Promise<void> {
     where: { emailNormalized: 'personnel.preparer@example.test' },
     update: { displayName: 'Personnel Preparer', globalStatus: 'ACTIVE' },
     create: {
-      identityProvider: issuer,
-      externalSubject: 'local-personnel-preparer',
       emailNormalized: 'personnel.preparer@example.test',
       displayName: 'Personnel Preparer',
       globalStatus: 'ACTIVE',
@@ -737,8 +753,6 @@ async function seed(): Promise<void> {
     where: { emailNormalized: enrollmentCandidateEmail },
     update: { displayName: 'Enrollment Candidate', globalStatus: 'ACTIVE' },
     create: {
-      identityProvider: issuer,
-      externalSubject: 'local-enrollment-candidate',
       emailNormalized: enrollmentCandidateEmail,
       displayName: 'Enrollment Candidate',
       globalStatus: 'ACTIVE',
@@ -778,19 +792,17 @@ async function seed(): Promise<void> {
   }
 
   async function seedInvitation(email: string, token: string, roleCodes: string[]) {
-    const subject = `local-${createHash('sha256').update(email).digest('hex').slice(0, 24)}`;
     const invitee = await prisma.user.upsert({
       where: { emailNormalized: email },
-      update: { identityProvider: issuer, externalSubject: subject, globalStatus: 'ACTIVE' },
+      update: { globalStatus: 'ACTIVE' },
       create: {
-        identityProvider: issuer,
-        externalSubject: subject,
         emailNormalized: email,
         displayName: email === phase5OwnerEmail ? 'Phase5 Owner' : 'Phase5 Restricted',
         globalStatus: 'ACTIVE',
         emailVerifiedAt: new Date(),
       },
     });
+    await linkLocalOidcIdentity(prisma, invitee);
     const inviteeMembership =
       (await prisma.agencyMembership.findFirst({
         where: { agencyId: agency.id, userId: invitee.id },
@@ -2711,8 +2723,6 @@ async function seed(): Promise<void> {
     where: { emailNormalized: 'foreign.personnel@example.test' },
     update: { displayName: 'Foreign Personnel User', globalStatus: 'ACTIVE' },
     create: {
-      identityProvider: issuer,
-      externalSubject: 'local-foreign-personnel',
       emailNormalized: 'foreign.personnel@example.test',
       displayName: 'Foreign Personnel User',
       globalStatus: 'ACTIVE',

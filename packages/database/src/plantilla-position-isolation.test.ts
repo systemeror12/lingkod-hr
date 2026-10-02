@@ -47,8 +47,6 @@ it.skipIf(!enabled)(
     );
     const user = await admin.user.create({
       data: {
-        identityProvider: 'plantilla-position-rls-e2e',
-        externalSubject: `plantilla-position-${suffix}`,
         emailNormalized: `plantilla-position-${suffix}@example.test`,
         displayName: 'Plantilla Position RLS User',
         globalStatus: 'ACTIVE',

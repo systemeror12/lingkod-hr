@@ -148,8 +148,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'attendance-guards-integration',
-        externalSubject: `attendance-guards-${suffix}`,
         emailNormalized: `attendance-guards-${suffix}@example.test`,
         displayName: 'Attendance Guards Integration User',
         globalStatus: 'ACTIVE',
@@ -293,8 +291,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'attendance-configuration-integration',
-        externalSubject: `attendance-configuration-${suffix}`,
         emailNormalized: `attendance-configuration-${suffix}@example.test`,
         displayName: 'Attendance Configuration Integration User',
         globalStatus: 'ACTIVE',

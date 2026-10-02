@@ -129,8 +129,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'leave-account-integration',
-        externalSubject: `leave-account-${suffix}`,
         emailNormalized: `leave-account-${suffix}@example.test`,
         displayName: 'Leave Account Custodian',
         globalStatus: 'ACTIVE',
@@ -138,8 +136,6 @@ it.skipIf(!enabled)(
     });
     const foreignUser = await admin.user.create({
       data: {
-        identityProvider: 'leave-account-integration',
-        externalSubject: `foreign-leave-account-${suffix}`,
         emailNormalized: `foreign-leave-account-${suffix}@example.test`,
         displayName: 'Foreign Leave Account Custodian',
         globalStatus: 'ACTIVE',

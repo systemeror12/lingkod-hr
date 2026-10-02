@@ -74,8 +74,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'plantilla-position-integration',
-        externalSubject: `plantilla-position-${suffix}`,
         emailNormalized: `plantilla-position-${suffix}@example.test`,
         displayName: 'Plantilla Position Integration User',
         globalStatus: 'ACTIVE',

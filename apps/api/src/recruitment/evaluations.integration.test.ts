@@ -116,8 +116,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'evaluation-service-e2e',
-        externalSubject: `evaluation-service-${suffix}`,
         emailNormalized: `evaluation-service-${suffix}@example.test`,
         displayName: 'Evaluation Service User',
         globalStatus: 'ACTIVE',
@@ -125,8 +123,6 @@ it.skipIf(!enabled)(
     });
     const ineligibleUser = await admin.user.create({
       data: {
-        identityProvider: 'evaluation-service-e2e',
-        externalSubject: `evaluation-ineligible-${suffix}`,
         emailNormalized: `evaluation-ineligible-${suffix}@example.test`,
         displayName: 'Ineligible Evaluator',
         globalStatus: 'ACTIVE',
