@@ -17,16 +17,25 @@ import {
 import type { Request, Response } from 'express';
 import { OidcError } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
-import { AuthGuard } from './auth.guard';
+import { AuthGuard, cookieValue } from './auth.guard';
 import { AuthMeResponseDto } from './auth.dto';
-import { AuthService, AuthServiceError, OIDC_FLOW_COOKIE, SESSION_COOKIE } from './auth.service';
+import {
+  AuthService,
+  AuthServiceError,
+  OIDC_FLOW_COOKIE,
+  PENDING_AUTHENTICATION_COOKIE,
+  PENDING_SIGN_IN_LIFETIME_MS,
+  SESSION_COOKIE,
+} from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
 import {
   activationTokenSchema,
   backchannelLogoutSchema,
   callbackQuerySchema,
   loginQuerySchema,
+  passwordSignInSchema,
   switchAgencySchema,
+  totpSignInSchema,
 } from './auth.schemas';
 
 function translateError(error: unknown): never {
@@ -86,6 +95,80 @@ export class AuthController {
       });
       response.redirect(start.authorizationUrl);
     } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
+  /** Email and password. Answers `TOTP_REQUIRED` with a pending-sign-in cookie, or signs in. */
+  @Post('sign-in')
+  async signIn(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = passwordSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Email and password are required.');
+    const secure = this.config.NODE_ENV === 'production';
+    try {
+      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      const result = await this.authService.signInWithPassword(
+        parsed.data.email,
+        parsed.data.password,
+        parsed.data.membershipId ?? null,
+        this.signInRequest(request),
+      );
+      if (result.status === 'TOTP_REQUIRED') {
+        response.cookie(PENDING_AUTHENTICATION_COOKIE, result.pendingToken, {
+          ...cookieOptions(secure),
+          maxAge: PENDING_SIGN_IN_LIFETIME_MS,
+        });
+      } else {
+        response.cookie(SESSION_COOKIE, result.session.token, {
+          ...cookieOptions(secure),
+          maxAge: 8 * 60 * 60 * 1000,
+        });
+      }
+      response.status(HttpStatus.OK).json({ status: result.status });
+    } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
+  /** The TOTP code that completes a pending sign-in. */
+  @Post('sign-in/totp')
+  async signInWithTotp(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = totpSignInSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A code is required.');
+    const secure = this.config.NODE_ENV === 'production';
+    const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
+    try {
+      if (!pendingToken) {
+        throw new AuthServiceError(
+          'The sign-in expired. Enter your email and password again.',
+          401,
+          'SIGN_IN_EXPIRED',
+        );
+      }
+      await this.authService.assertLoginAllowed(request.ip ?? 'unknown');
+      const session = await this.authService.completeTotpSignIn(
+        pendingToken,
+        parsed.data.code.replace(/\s/g, ''),
+        this.signInRequest(request),
+      );
+      response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
+      response.cookie(SESSION_COOKIE, session.token, {
+        ...cookieOptions(secure),
+        maxAge: 8 * 60 * 60 * 1000,
+      });
+      response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError && error.code === 'SIGN_IN_EXPIRED') {
+        response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
+      }
       translateError(error);
     }
   }
@@ -250,6 +333,13 @@ export class AuthController {
     } catch (error: unknown) {
       translateError(error);
     }
+  }
+
+  private signInRequest(request: Request) {
+    return {
+      requestId: request.header('x-request-id') ?? 'unknown-request',
+      ipAddress: request.ip ?? null,
+    };
   }
 
   @Post('backchannel-logout')

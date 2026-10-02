@@ -63,8 +63,8 @@ Add the current-profile foreign key only after both tables exist.
 ```sql
 CREATE TABLE users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  identity_provider text NOT NULL,
-  external_subject text NOT NULL,
+  identity_provider text,         -- null for a LingkodHR-owned User
+  external_subject text,
   email_normalized citext NOT NULL,
   display_name text NOT NULL,
   global_status text NOT NULL
@@ -248,10 +248,70 @@ CREATE TABLE security_events (
   occurred_at timestamptz NOT NULL DEFAULT now(),
   request_id text,
   ip_address inet,
+  email_hash bytea,               -- HMAC-SHA-256 with BLIND_INDEX_KEY; never the raw email
   user_agent text,
   details jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 ```
+
+### Owned sign-in credentials
+
+These rows belong to the User, not to an Agency, so they carry no `agency_id`.
+
+```sql
+CREATE TABLE user_passwords (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  password_hash text NOT NULL,    -- Argon2id PHC string
+  changed_at timestamptz NOT NULL DEFAULT now(),
+  second_factor_failures integer NOT NULL DEFAULT 0 CHECK (second_factor_failures >= 0),
+  reset_required_at timestamptz
+);
+
+CREATE TABLE user_totp_factors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  secret_envelope bytea NOT NULL, -- PV1 envelope bound to user_id and id
+  last_accepted_step bigint NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_recovery_codes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE pending_authentications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash bytea NOT NULL UNIQUE,
+  purpose text NOT NULL CHECK (purpose IN ('SIGN_IN','ACTIVATION')),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  invitation_id uuid REFERENCES invitations(id) ON DELETE CASCADE,
+  requested_membership_id uuid,
+  stage text NOT NULL,
+  verified_methods text[] NOT NULL DEFAULT ARRAY[]::text[],
+  display_name text,
+  password_hash text,
+  enrollment_secret_envelope bytea,
+  recovery_code_hashes text[] NOT NULL DEFAULT ARRAY[]::text[],
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (expires_at > created_at),
+  CHECK (
+    (purpose = 'SIGN_IN' AND user_id IS NOT NULL AND invitation_id IS NULL)
+    OR (purpose = 'ACTIVATION' AND invitation_id IS NOT NULL)
+  )
+);
+
+CREATE UNIQUE INDEX pending_authentications_sign_in_user_uq
+  ON pending_authentications (user_id) WHERE purpose = 'SIGN_IN';
+CREATE UNIQUE INDEX pending_authentications_activation_invitation_uq
+  ON pending_authentications (invitation_id) WHERE purpose = 'ACTIVATION';
+```
+
+The runtime role may update only `last_accepted_step` on `user_totp_factors` and
+may not update `user_recovery_codes`; both are replaced by deleting rows.
 
 ---
 
@@ -279,6 +339,27 @@ WITH CHECK (agency_id = current_setting('app.agency_id', true)::uuid);
 
 `users` is global and should be accessed only through identity services, not ordinary tenant repositories.
 
+The owned sign-in tables follow the `user_sessions` pattern: RLS is enabled and
+forced, and rows are visible only in the owning User's context. Pending state is
+also visible through the hash of its cookie token, before a session exists:
+
+```sql
+CREATE POLICY user_passwords_owner ON user_passwords
+USING (user_id = app_user_id())
+WITH CHECK (user_id = app_user_id());
+-- Same owner policy on user_totp_factors and user_recovery_codes.
+
+CREATE POLICY pending_authentications_owner ON pending_authentications
+USING (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.pending_token_hash', true)
+)
+WITH CHECK (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.pending_token_hash', true)
+);
+```
+
 ---
 
 ## 3. Indexes
@@ -296,6 +377,15 @@ CREATE INDEX delegated_authorities_delegate_active_idx
 
 CREATE INDEX security_events_agency_time_idx
   ON security_events (agency_id, occurred_at DESC);
+
+CREATE INDEX security_events_email_type_time_idx
+  ON security_events (email_hash, event_type, occurred_at);
+
+CREATE INDEX security_events_ip_type_time_idx
+  ON security_events (ip_address, event_type, occurred_at);
+
+CREATE INDEX user_recovery_codes_user_idx
+  ON user_recovery_codes (user_id);
 ```
 
 ---
@@ -308,4 +398,5 @@ CREATE INDEX security_events_agency_time_idx
 - Roles: inactivate after assignment history exists.
 - Permissions: never delete after release.
 - Invitations and sessions: purge after retention.
+- Passwords, TOTP factors, Recovery Codes, and pending authentications: delete on replacement or use; cascade with the User.
 - Security events: append-only and retention-controlled.

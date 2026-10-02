@@ -37,6 +37,11 @@ erDiagram
     PERMISSIONS ||--o{ ROLE_PERMISSIONS : included
     AGENCY_MEMBERSHIPS ||--o{ DELEGATED_AUTHORITIES : participates
     USERS ||--o{ USER_SESSIONS : opens
+    USERS ||--o| USER_PASSWORDS : authenticates_with
+    USERS ||--o| USER_TOTP_FACTORS : verifies_with
+    USERS ||--o{ USER_RECOVERY_CODES : recovers_with
+    USERS ||--o{ PENDING_AUTHENTICATIONS : signs_in_through
+    INVITATIONS ||--o{ PENDING_AUTHENTICATIONS : activates_through
     AGENCIES ||--o{ SECURITY_EVENTS : owns
 ```
 
@@ -94,8 +99,8 @@ Global authenticated identity, independent from agency employment.
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
 | id | uuid | No | PK | User identity |
-| identity_provider | string | No |  | OIDC/authentication provider |
-| external_subject | string | No | Unique with provider | Provider subject identifier |
+| identity_provider | string | Yes |  | OIDC provider; null for a LingkodHR-owned User |
+| external_subject | string | Yes | Unique with provider | OIDC subject identifier; null for a LingkodHR-owned User |
 | email_normalized | string | No | Unique | Normalized login email |
 | display_name | string | No |  | Display name |
 | global_status | enum | No |  | ACTIVE, LOCKED, DEACTIVATED |
@@ -272,6 +277,86 @@ Application session record when sessions are maintained by the application.
 - Deactivated memberships cannot be selected.
 
 **Deletion behavior:** Purge after security retention period.
+## `user_passwords`
+
+The User's LingkodHR-owned password. Carries no `agency_id`; visible only in the owning User's context.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| user_id | uuid | No | PK, FK users | Owning User |
+| password_hash | string | No |  | Argon2id PHC string; the password itself is never stored |
+| changed_at | datetime | No |  | Last change |
+| second_factor_failures | integer | No | ≥ 0 | Consecutive second-factor failures |
+| reset_required_at | datetime | Yes |  | When a reset became required |
+
+**Constraints and indexes**
+
+- One password per User.
+- Rehashed on successful sign-in when the hash parameters are outdated.
+
+**Deletion behavior:** Cascades with the User.
+## `user_totp_factors`
+
+The User's authenticator-app (TOTP) factor. Carries no `agency_id`; visible only in the owning User's context.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Factor |
+| user_id | uuid | No | FK users, unique | Owning User |
+| secret_envelope | bytes | No |  | TOTP secret encrypted with `DATA_ENCRYPTION_KEY`, bound to the User and factor |
+| last_accepted_step | integer | No |  | Newest accepted 30-second step; older or equal steps are refused |
+| created_at | datetime | No |  | Enrollment |
+
+**Constraints and indexes**
+
+- At most one factor per User.
+- Only `last_accepted_step` changes; replacing the secret replaces the row.
+
+**Deletion behavior:** Delete on replacement; cascades with the User.
+## `user_recovery_codes`
+
+Unused single-use Recovery Codes. Carries no `agency_id`; visible only in the owning User's context.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Recovery Code |
+| user_id | uuid | No | FK users | Owning User |
+| code_hash | string | No |  | Hash of the normalized code; the code itself is never stored |
+| created_at | datetime | No |  | Issued |
+
+**Constraints and indexes**
+
+- Index on `user_id`.
+
+**Deletion behavior:** Delete when used or when the set is replaced; cascades with the User.
+## `pending_authentications`
+
+Short-lived state between sign-in or activation steps, referenced by an HTTP-only cookie. Carries no `agency_id`; visible in the owning User's context or through the hash of its cookie token.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Pending authentication |
+| token_hash | bytes | No | Unique | Hash of the cookie token; the token itself is never stored |
+| purpose | enum | No |  | SIGN_IN, ACTIVATION |
+| user_id | uuid | Yes | FK users | User signing in; required for SIGN_IN |
+| invitation_id | uuid | Yes | FK invitations | Invitation being activated; required for ACTIVATION |
+| requested_membership_id | uuid | Yes |  | Agency Membership requested for the session |
+| stage | string | No |  | Next step, such as TOTP |
+| verified_methods | string[] | No |  | Methods already verified, such as `pwd` |
+| display_name | string | Yes |  | Activation input |
+| password_hash | string | Yes |  | Activation input |
+| enrollment_secret_envelope | bytes | Yes |  | Activation input |
+| recovery_code_hashes | string[] | No |  | Activation input |
+| expires_at | datetime | No | After `created_at` | Sign-in expires after 5 minutes |
+| created_at | datetime | No |  | Started |
+
+**Constraints and indexes**
+
+- SIGN_IN requires `user_id` and no `invitation_id`; ACTIVATION requires `invitation_id`.
+- At most one SIGN_IN row per User and one ACTIVATION row per invitation; starting over replaces it.
+- The final step deletes the row in the transaction that creates the session.
+
+**Deletion behavior:** Deleted when completed, replaced, or found expired; cascades with the User or invitation.
 ## `security_events`
 
 Append-only authentication and authorization security events.
@@ -286,12 +371,14 @@ Append-only authentication and authorization security events.
 | occurred_at | datetime | No |  | Event time |
 | request_id | string | Yes |  | Request correlation |
 | ip_address | string | Yes |  | Protected network metadata |
+| email_hash | bytes | Yes |  | Keyed hash (`BLIND_INDEX_KEY`) of the submitted email; the raw email is not stored |
 | user_agent | string | Yes |  | Client metadata |
 | details | json | No |  | Sanitized metadata |
 
 **Constraints and indexes**
 
-- Append-only; no secrets or full sensitive payloads.
+- Append-only; no secrets or full sensitive payloads. Sign-in events never hold a password, code, token, or raw email.
+- Indexes on `(email_hash, event_type, occurred_at)` and `(ip_address, event_type, occurred_at)` for sign-in attempt counts.
 
 **Deletion behavior:** Retention-controlled purge only.
 

@@ -41,8 +41,6 @@ it('treats blank optional environment values as unset', () => {
     AI_EMBEDDING_MODEL: '',
     OTEL_EXPORTER_OTLP_ENDPOINT: '',
     ERROR_TRACKING_DSN: '',
-    DATA_ENCRYPTION_KEY: '',
-    BLIND_INDEX_KEY: '',
   });
 
   expect(config.OPENAI_API_KEY).toBeUndefined();
@@ -50,6 +48,38 @@ it('treats blank optional environment values as unset', () => {
   expect(config.AI_EMBEDDING_MODEL).toBeUndefined();
   expect(config.OTEL_EXPORTER_OTLP_ENDPOINT).toBeUndefined();
   expect(config.ERROR_TRACKING_DSN).toBeUndefined();
-  expect(config.DATA_ENCRYPTION_KEY).toBeUndefined();
-  expect(config.BLIND_INDEX_KEY).toBeUndefined();
+});
+
+it('requires the data-encryption and blind-index keys, with local-only defaults outside production', () => {
+  const local = parseConfig({
+    NODE_ENV: 'development',
+    DATA_ENCRYPTION_KEY: '',
+    BLIND_INDEX_KEY: '',
+  });
+  expect(local.DATA_ENCRYPTION_KEY).toBe('07'.repeat(32));
+  expect(local.BLIND_INDEX_KEY.length).toBeGreaterThanOrEqual(32);
+
+  const production = {
+    ...Object.fromEntries(Object.entries(local).map(([key, value]) => [key, String(value)])),
+    NODE_ENV: 'production',
+    APP_ENV: 'production',
+    APP_URL: 'https://app.example',
+    API_URL: 'https://api.example',
+    OIDC_ISSUER: 'https://issuer.example',
+    OIDC_REDIRECT_URI: 'https://api.example/auth/callback',
+  };
+  expect(parseConfig(production).DATA_ENCRYPTION_KEY).toBe('07'.repeat(32));
+  for (const field of ['DATA_ENCRYPTION_KEY', 'BLIND_INDEX_KEY'] as const) {
+    expect(() => parseConfig({ ...production, [field]: '' })).toThrow(new RegExp(field));
+    const withoutField = Object.fromEntries(
+      Object.entries(production).filter(([key]) => key !== field),
+    );
+    expect(() => parseConfig(withoutField)).toThrow(new RegExp(field));
+  }
+  expect(() => parseConfig({ ...production, DATA_ENCRYPTION_KEY: 'too-short' })).toThrow(
+    /DATA_ENCRYPTION_KEY/,
+  );
+  expect(() => parseConfig({ ...production, BLIND_INDEX_KEY: 'too-short' })).toThrow(
+    /BLIND_INDEX_KEY/,
+  );
 });

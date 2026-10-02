@@ -265,8 +265,8 @@ model OrganizationUnitVersion {
 
 model User {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  identityProvider String    @map("identity_provider")
-  externalSubject  String    @map("external_subject")
+  identityProvider String?   @map("identity_provider")
+  externalSubject  String?   @map("external_subject")
   emailNormalized  String    @map("email_normalized") @db.Citext
   displayName      String    @map("display_name")
   globalStatus     String    @map("global_status")
@@ -274,11 +274,15 @@ model User {
   lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  memberships    AgencyMembership[]
-  identityLinks  ExternalIdentityLink[]
-  sessions       UserSession[]
-  securityEvents SecurityEvent[]        @relation("SecurityEventUser")
-  auditEvents    AuditEvent[]           @relation("AuditEventUser")
+  memberships            AgencyMembership[]
+  identityLinks          ExternalIdentityLink[]
+  sessions               UserSession[]
+  securityEvents         SecurityEvent[]         @relation("SecurityEventUser")
+  auditEvents            AuditEvent[]            @relation("AuditEventUser")
+  password               UserPassword?
+  totpFactor             UserTotpFactor?
+  recoveryCodes          UserRecoveryCode[]
+  pendingAuthentications PendingAuthentication[]
 
   @@unique([identityProvider, externalSubject])
   @@unique([emailNormalized])
@@ -487,6 +491,7 @@ model Invitation {
 
   agency              Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   invitedByMembership AgencyMembership? @relation("InvitationInviter", fields: [agencyId, invitedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  pendingActivations  PendingAuthentication[]
 
   @@index([agencyId, emailNormalized, status])
   @@map("invitations")
@@ -621,13 +626,78 @@ model SecurityEvent {
   ipAddress    String?  @map("ip_address") @db.Inet
   userAgent    String?  @map("user_agent")
   details      Json     @default("{}")
+  emailHash    Bytes?   @map("email_hash")
 
   agency     Agency?           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   user       User?             @relation("SecurityEventUser", fields: [userId], references: [id], onDelete: SetNull)
   membership AgencyMembership? @relation("SecurityEventMembership", fields: [agencyId, membershipId], references: [agencyId, id], onDelete: SetNull)
 
   @@index([agencyId, occurredAt(sort: Desc)])
+  @@index([emailHash, eventType, occurredAt], map: "security_events_email_type_time_idx")
+  @@index([ipAddress, eventType, occurredAt], map: "security_events_ip_type_time_idx")
   @@map("security_events")
+}
+
+/// The User's password as an Argon2id PHC string, kept apart from routine `users` reads.
+model UserPassword {
+  userId               String    @id @map("user_id") @db.Uuid
+  passwordHash         String    @map("password_hash")
+  changedAt            DateTime  @default(now()) @map("changed_at") @db.Timestamptz(6)
+  secondFactorFailures Int       @default(0) @map("second_factor_failures")
+  resetRequiredAt      DateTime? @map("reset_required_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_passwords")
+}
+
+/// The User's TOTP factor. `secretEnvelope` is a PV1 envelope bound to the User and factor ids.
+model UserTotpFactor {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @unique(map: "user_totp_factors_user_key") @map("user_id") @db.Uuid
+  secretEnvelope   Bytes    @map("secret_envelope")
+  lastAcceptedStep BigInt   @default(0) @map("last_accepted_step")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_totp_factors")
+}
+
+model UserRecoveryCode {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  codeHash  String   @map("code_hash")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "user_recovery_codes_user_idx")
+  @@map("user_recovery_codes")
+}
+
+/// A pending sign-in (5 minutes) or pending activation (15 minutes), held by an HTTP-only cookie
+/// whose token is stored only as `tokenHash`.
+model PendingAuthentication {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash                Bytes    @unique @map("token_hash")
+  purpose                  String
+  userId                   String?  @map("user_id") @db.Uuid
+  invitationId             String?  @map("invitation_id") @db.Uuid
+  requestedMembershipId    String?  @map("requested_membership_id") @db.Uuid
+  stage                    String
+  verifiedMethods          String[] @default([]) @map("verified_methods")
+  displayName              String?  @map("display_name")
+  passwordHash             String?  @map("password_hash")
+  enrollmentSecretEnvelope Bytes?   @map("enrollment_secret_envelope")
+  recoveryCodeHashes       String[] @default([]) @map("recovery_code_hashes")
+  expiresAt                DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user       User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@map("pending_authentications")
 }
 
 model AuditEvent {

@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
+import { parseProtectedValueKey } from './protected-values';
 
 loadDotenv({ path: resolve(__dirname, '../../../.env') });
 
@@ -31,6 +32,8 @@ const localDefaults = {
   EMAIL_PORT: '1025',
   EMAIL_SECURE: 'false',
   EMAIL_PROVIDER_API_KEY: 'local-only',
+  DATA_ENCRYPTION_KEY: '07'.repeat(32),
+  BLIND_INDEX_KEY: 'local-development-blind-index-key-change-me',
 };
 
 const emptyStringAsUndefined = (value: unknown): unknown =>
@@ -79,9 +82,27 @@ const configSchema = z.object({
   EMAIL_PROVIDER_API_KEY: z.string().min(1),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
   ERROR_TRACKING_DSN: optionalUrl,
-  DATA_ENCRYPTION_KEY: optionalString,
-  BLIND_INDEX_KEY: optionalString,
+  DATA_ENCRYPTION_KEY: z.string().refine(isProtectedValueKey, {
+    message: 'Must be a 32-byte key as 64 hex characters or canonical base64.',
+  }),
+  BLIND_INDEX_KEY: z.string().min(32),
 });
+
+function isProtectedValueKey(value: string): boolean {
+  try {
+    parseProtectedValueKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Drops blank values so a key left empty in `.env` falls back to its local default. */
+function withoutBlankValues(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([, value]) => emptyStringAsUndefined(value) !== undefined),
+  );
+}
 
 export type AppConfig = z.infer<typeof configSchema>;
 
@@ -95,7 +116,7 @@ export function parseConfig(environment: NodeJS.ProcessEnv = process.env): AppCo
   const values =
     deploymentEnvironment === 'production'
       ? normalizedEnvironment
-      : { ...localDefaults, ...normalizedEnvironment };
+      : { ...localDefaults, ...withoutBlankValues(normalizedEnvironment) };
   const parsed = configSchema.safeParse(values);
 
   if (!parsed.success) {
