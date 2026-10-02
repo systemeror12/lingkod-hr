@@ -197,7 +197,6 @@ User statuses:
 ```text
 ACTIVE
 LOCKED
-DEACTIVATED
 ```
 
 Agency Membership statuses:
