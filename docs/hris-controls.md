@@ -209,17 +209,19 @@ DEACTIVATED
 | SUSPENDED   | Reactivate membership | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Reason and review required                                                                                         | Restore membership access; audit reactivation                                        |
 | ACTIVE      | Deactivate membership | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Separation or administrative basis                                                                                 | Revoke sessions; preserve history; audit deactivation                                |
 | SUSPENDED   | Deactivate membership | DEACTIVATED | Agency Administrator                          | `security.users.deactivate` | Reason required                                                                                                    | Revoke sessions; preserve history                                                    |
-| DEACTIVATED | Reactivate membership | ACTIVE      | Agency Administrator / Security Administrator | `security.users.reactivate` | Valid agency membership; no policy restriction                                                                     | Reissue access; audit exceptional reactivation                                       |
 
-Suspend and Reactivate from SUSPENDED are Agency Membership Suspension: they deny or restore access through one Agency Membership and leave the User and the User's other Agency Memberships unchanged.
+Suspend and Reactivate are Agency Membership Suspension: they deny or restore access through one Agency Membership and leave the User and the User's other Agency Memberships unchanged.
 
 Deactivate, including deactivation for separation, acts on one Agency Membership in the acting Agency and leaves the User's status unchanged.
+
+DEACTIVATED is final. To restore access, including after reemployment, an Agency Administrator invites the User again. The accepted invitation creates a new Agency Membership with its own role assignments; the DEACTIVATED membership stays unchanged as history. This is a Project Decision (#392).
 
 Invalid examples:
 
 ```text
 INVITED → protected dashboard without activation
 SUSPENDED → password reset that silently restores access
+DEACTIVATED → ACTIVE on the same Agency Membership
 ```
 
 ---
