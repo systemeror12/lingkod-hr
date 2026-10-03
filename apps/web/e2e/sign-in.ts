@@ -88,7 +88,8 @@ export async function signIn(
     await codeField.fill(await nextTotpCode());
     await page.getByRole('button', { name: 'Verify' }).click();
   }
-  await expect(page).toHaveURL(/\/dashboard$/);
+  // The first spec of a shard waits for a cold dev server to compile /dashboard.
+  await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
 
   const session = (await page.context().cookies()).find(({ name }) => name === SESSION_COOKIE);
   if (!session) throw new Error(`No session cookie after signing in ${email}.`);
