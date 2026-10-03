@@ -21,17 +21,12 @@ and starts the real API and web application:
 pnpm test:e2e:phase3
 ```
 
-Run the wider acceptance layers with the runtime database role and the
-administrative fixture role:
+Run the wider acceptance layers, including the DB-backed integration tests,
+against this checkout's `.env` database:
 
 ```bash
-DATABASE_E2E=true \
-DATABASE_URL=postgresql://hris_app:local_app@localhost:55432/hris \
-DATABASE_DIRECT_URL=postgresql://hris_migrator:local_migrator@localhost:55432/hris \
-DATABASE_OPERATIONAL_URL=postgresql://hris_operator:local_operator@localhost:55432/hris \
-DATABASE_MIGRATION_OWNER_URL=postgresql://hris_local:local_only@localhost:55432/hris \
-DATABASE_E2E_ADMIN_URL=postgresql://hris_local:local_only@localhost:55432/hris \
 pnpm validate
+pnpm test:db
 ```
 
 The CI workflow runs formatting, lint, typechecking, and the production build

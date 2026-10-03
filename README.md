@@ -186,11 +186,14 @@ share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT` and
 `PLAYWRIGHT_API_PORT` values to `.env`, and `playwright.config.ts` reads them.
 The script picks ports no other worktree has claimed, prints them, and
 `grep PLAYWRIGHT .env` shows them; rerun it in older worktrees to add them. Two worktrees can run Playwright at the same time, but
-Mailpit is still shared, and each run's global setup clears its messages. Drop a removed worktree's database with:
+Mailpit is still shared, and each run's global setup clears its messages.
+
+Removing a worktree leaves its database behind. List the `hris_*` databases no
+current worktree uses, then drop them once the list looks right:
 
 ```bash
-docker compose -f infrastructure/compose.yaml exec -T postgres \
-  psql -U hris_local -d postgres -c 'DROP DATABASE "hris_<worktree>"'
+pnpm db:prune-worktrees
+pnpm db:prune-worktrees --drop
 ```
 
 ### Validation
@@ -199,6 +202,16 @@ Run the full repository validation suite with:
 
 ```bash
 pnpm validate
+```
+
+`pnpm test` and `pnpm validate` skip the DB-backed integration tests. Run them
+against this checkout's `.env` database with:
+
+```bash
+pnpm test:db
+# One package, or one file
+pnpm test:db --filter @lingkod-hr/api
+pnpm test:db --filter @lingkod-hr/api -- src/auth/global-user-lock.test.ts
 ```
 
 ## Playwright E2E testing
