@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { getConfig } from '@lingkod-hr/config';
 import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
-import { activateInvitation } from './sign-in';
+import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 const nationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
 const leaveRouteCode = 'LEAVE-SPECIAL-PRIVILEGE-ROUTE';
@@ -96,6 +96,7 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
 }) => {
   test.setTimeout(240_000);
   await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 

@@ -13,6 +13,7 @@
   "scripts": {
     "build": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.json",
     "generate": "prisma generate --schema prisma/schema.prisma",
+    "dev:totp": "tsx scripts/dev-totp.ts",
     "e2e:seed:shell": "tsx scripts/run-with-root-env.ts e2e:seed:shell:loaded",
     "e2e:seed:shell:loaded": "tsx scripts/seed-protected-shell-e2e.ts",
     "lint": "eslint .",

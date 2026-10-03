@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { expect, test, type APIResponse, type Browser, type Locator } from '@playwright/test';
-import { activateInvitation as activate } from './sign-in';
+import { activateInvitation as activate, MARISOL_EMAIL, signIn } from './sign-in';
 
 const foreignAgencyId = '11111111-1111-4111-8111-111111111111';
 const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
@@ -210,6 +210,7 @@ test('gates the representative protected personnel journey', async ({
   let ownerContext: Awaited<ReturnType<typeof activateInvitation>> | null = null;
   let restrictedContext: Awaited<ReturnType<typeof activateInvitation>> | null = null;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   const adminSession = await body<{ agencyId: string; membershipId: string; userId: string }>(

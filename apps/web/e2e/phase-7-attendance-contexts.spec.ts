@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('records an Attendance Context and reads it across Tree, Form, and Kanban', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 

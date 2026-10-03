@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('maintains masked payroll bank accounts through shared dialogs', async ({ page }) => {
   test.setTimeout(60_000);
@@ -148,6 +149,7 @@ test('maintains masked payroll bank accounts through shared dialogs', async ({ p
     })
     .toBe(true);
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15_000 });
   await page.goto('/employees');

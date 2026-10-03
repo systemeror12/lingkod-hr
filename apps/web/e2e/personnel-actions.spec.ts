@@ -1,4 +1,5 @@
 import { expect, test, type APIResponse, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function apiBody<T>(response: APIResponse): Promise<T> {
   const text = await response.text();
@@ -16,6 +17,7 @@ async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Pro
 
 test('opens Personnel Action preparation with the shared modal contract', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/personnel-actions');
@@ -45,6 +47,7 @@ test('opens Personnel Action preparation with the shared modal contract', async 
 });
 
 test('confirms and shows an effective compensation action in shared modals', async ({ page }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/personnel-actions');
@@ -69,6 +72,7 @@ test('confirms and shows an effective compensation action in shared modals', asy
 test('reviews, confirms, and reports service-status effectuation in shared modals', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await page.route('**/api/v1/agencies/*/personnel-actions/*/effectuate', async (route) => {
     expect(route.request().method()).toBe('POST');
@@ -102,6 +106,7 @@ test('reviews, confirms, and reports service-status effectuation in shared modal
 test('prepares and reviews an Appointment-backed movement from its assumed contract', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   const origin = { origin: new URL(page.url()).origin };
@@ -192,6 +197,7 @@ test('prepares and reviews an Appointment-backed movement from its assumed contr
 test('approves, effectuates, and shows the history of an appointment-backed promotion', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   const origin = { origin: new URL(page.url()).origin };

@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -19,6 +20,7 @@ test('creates an Employee and links an Agency Membership', async ({ page }) => {
   const legalName = `E2E Employee ${stamp}`;
 
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees');
@@ -173,6 +175,7 @@ test('creates an Employee and links an Agency Membership', async ({ page }) => {
 test('keeps Employee creation values after a network failure and permits retry', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/employees/new');
@@ -196,6 +199,7 @@ test('searches and filters the Employee register through the URL', async ({ page
   const employeeNumber = `E2E-SEARCH-${stamp}`;
   const legalName = `E2E Searchable ${stamp}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees/new');

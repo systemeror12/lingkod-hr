@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 // The DTR fixture membership holds the Employee role and is linked to its own Employee record.
 const linkedMembershipId = 'd7a00000-0000-4000-8000-000000000002';
@@ -7,6 +8,7 @@ test('opens My Documents in the workbench with its truthful states and upload di
   page,
 }, testInfo) => {
   test.setTimeout(60_000);
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/my-documents');
@@ -14,7 +16,7 @@ test('opens My Documents in the workbench with its truthful states and upload di
     page.getByRole('heading', { level: 1, name: 'No Employee record is linked' }),
   ).toBeVisible();
 
-  await page.goto(`/api/v1/auth/login?membershipId=${linkedMembershipId}`);
+  await signIn(page, MARISOL_EMAIL, { membershipId: linkedMembershipId });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   const navigation = page.getByRole('navigation', { name: 'Primary' });

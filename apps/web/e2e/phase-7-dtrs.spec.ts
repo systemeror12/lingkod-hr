@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { expect, test, type APIResponse, type Page } from '@playwright/test';
-import { activateInvitation } from './sign-in';
+import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 const dtrMembershipId = 'd7a00000-0000-4000-8000-000000000002';
 const dtrReviewerInvitationToken = 'dtr-reviewer-invitation-token-0000000000000';
@@ -29,13 +29,9 @@ async function apiBody<T>(response: APIResponse): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-async function loginMembership(page: Page, membershipId: string): Promise<void> {
-  await page.goto(`/api/v1/auth/login?membershipId=${membershipId}`);
-  await page.goto('/dashboard');
-}
-
 async function loginDtrWorkspace(page: Page): Promise<void> {
-  await loginMembership(page, dtrMembershipId);
+  await signIn(page, MARISOL_EMAIL, { membershipId: dtrMembershipId });
+  await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 }
 

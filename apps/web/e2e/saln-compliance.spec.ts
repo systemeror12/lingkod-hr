@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('records and corrects SALN filing metadata without a content or due-date surface', async ({
   page,
@@ -6,6 +7,7 @@ test('records and corrects SALN filing metadata without a content or due-date su
   test.setTimeout(60_000);
   const stamp = Date.now();
   const legalName = `SALN E2E Employee ${stamp}`;
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees/new');
@@ -88,6 +90,7 @@ test('records and corrects SALN filing metadata without a content or due-date su
 test('My SALN Compliance reports a failed load without claiming an empty record', async ({
   page,
 }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.route('**/api/v1/agencies/*/employees/me/saln-compliance', (route) =>

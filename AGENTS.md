@@ -99,7 +99,7 @@ The gate is complete only when all of these are true:
   starting a new dev stack;
 - API, worker, and local OIDC health checks respond successfully;
 - for protected browser or admin work, the protected-shell fixture has been
-  seeded and `/dashboard` completes local OIDC login.
+  seeded and a seeded User signs in at `/sign-in` and reaches `/dashboard`.
 
 Do not work around a failed migration by deleting the database or migration
 history. Diagnose ownership, environment, schema drift, or stale processes

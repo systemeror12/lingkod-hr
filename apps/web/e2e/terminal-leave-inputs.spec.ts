@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('shows the protected Terminal Leave Inputs register', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 

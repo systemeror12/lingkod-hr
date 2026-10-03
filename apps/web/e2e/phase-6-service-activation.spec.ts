@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 function localDateTime(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -6,6 +7,7 @@ function localDateTime(date: Date): string {
 }
 
 test('activates the Employee service from an assumed Appointment', async ({ page }) => {
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/appointments');

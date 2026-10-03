@@ -1,12 +1,12 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
-test('enters the protected Work queue through local OIDC and adapts its authorized navigation', async ({
+test('sends an unauthenticated visit to /sign-in, then adapts the Work queue navigation', async ({
   page,
 }, testInfo) => {
   const requests: string[] = [];
   const dashboardStatuses: number[] = [];
   const appUrl = testInfo.project.use.baseURL ?? 'http://localhost:3100';
-  const oidcIssuer = process.env.OIDC_ISSUER ?? 'http://127.0.0.1:4100';
   page.on('request', (request) => requests.push(request.url()));
   page.on('response', (response) => {
     if (response.url() === `${appUrl}/dashboard`) {
@@ -16,10 +16,12 @@ test('enters the protected Work queue through local OIDC and adapts its authoriz
 
   await page.goto('/dashboard');
 
-  expect(requests.some((url) => url.includes('/api/v1/auth/login'))).toBe(true);
   expect(dashboardStatuses[0]).toBe(307);
-  expect(requests.some((url) => url.startsWith(`${oidcIssuer}/authorize`))).toBe(true);
-  expect(requests.some((url) => url.includes('/api/v1/auth/callback'))).toBe(true);
+  await expect(page).toHaveURL(/\/sign-in$/);
+  expect(requests.some((url) => url.includes('/api/v1/auth/login'))).toBe(false);
+
+  await signIn(page, MARISOL_EMAIL);
+  await page.goto('/dashboard');
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await expect(

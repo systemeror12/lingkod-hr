@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
-import { activateInvitation } from './sign-in';
+import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
 const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
@@ -55,6 +55,7 @@ test('invites and activates a first-time HRMO Administrator through Mailpit', as
 }, testInfo) => {
   const recipient = `hrmo-${Date.now()}@example.test`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
@@ -162,6 +163,7 @@ test('invites and activates a first-time HRMO Administrator through Mailpit', as
 
 test('keeps the invitation dialog keyboard-safe at a narrow width', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
@@ -222,6 +224,7 @@ test('keeps invitation framing visible while the body scrolls on a short viewpor
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 320 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
@@ -291,6 +294,7 @@ test('guards every invitation dismissal path during submission', async ({ page }
     });
   });
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
