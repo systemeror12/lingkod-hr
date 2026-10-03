@@ -22,6 +22,7 @@ import type { MailDelivery, MailMessage } from '../invitations/mail';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const NEW_PASSWORD = 'tahimik na umaga sa bundok 42';
+const LATER_PASSWORD = 'maaliwalas na hapon sa dagat 17';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) LingkodHR test';
 const INVALID_LINK = 'This reset link is invalid or has expired. Request a new one.';
 
@@ -304,6 +305,69 @@ it.skipIf(!enabled)('refuses an IP address after 20 requests in an hour', async 
     await fixture.cleanup();
   }
 });
+
+it.skipIf(!enabled)(
+  'refuses a reset from an IP address with 100 sign-in or reset failures in 15 minutes',
+  async () => {
+    const fixture = await resetFixture();
+    const { admin, userId } = fixture;
+    try {
+      const { ipAddress } = fixture.request();
+      await admin.securityEvent.createMany({
+        data: Array.from({ length: 99 }, () => ({
+          eventType: 'PASSWORD_RESET_FAILURE',
+          requestId: `password-reset-seed-${randomUUID()}`,
+          ipAddress,
+          details: { reason: 'TOKEN_UNKNOWN' },
+        })),
+      });
+      const service = new AuthService();
+      // With 99 failures in the window, a reset still goes through.
+      await service.completePasswordReset(
+        await requestLink(service, fixture),
+        { password: NEW_PASSWORD },
+        fixture.request('under-limit'),
+      );
+      // The 100th failure still reaches the link.
+      await expect(
+        service.completePasswordReset(
+          randomBytes(32).toString('base64url'),
+          { password: NEW_PASSWORD },
+          fixture.request('unknown'),
+        ),
+      ).rejects.toMatchObject({ code: 'RESET_LINK_INVALID' });
+
+      const token = await requestLink(service, fixture);
+      await expect(
+        service.completePasswordReset(
+          token,
+          { password: LATER_PASSWORD },
+          fixture.request('refused'),
+        ),
+      ).rejects.toMatchObject({ statusCode: 429, code: 'IP_RATE_LIMITED' });
+      // Reset failures count toward sign-in's limit too.
+      await expect(service.assertIpAllowed(fixture.request('sign-in'))).rejects.toMatchObject({
+        statusCode: 429,
+        code: 'IP_RATE_LIMITED',
+      });
+
+      const [, refusedLink] = await fixture.tokens();
+      expect(refusedLink?.consumedAt).toBeNull();
+      const password = await admin.userPassword.findUniqueOrThrow({ where: { userId } });
+      await expect(verifyPassword(password.passwordHash, NEW_PASSWORD)).resolves.toBe(true);
+      const refusals = await admin.securityEvent.findMany({
+        where: { ipAddress, details: { equals: { reason: 'IP_RATE_LIMITED' } } },
+        orderBy: { occurredAt: 'asc' },
+      });
+      expect(refusals.map(({ eventType, userId }) => ({ eventType, userId }))).toEqual([
+        { eventType: 'PASSWORD_RESET_FAILURE', userId: null },
+        { eventType: 'LOGIN_FAILURE', userId: null },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
 
 it.skipIf(!enabled)(
   'answers a known and an unknown email no sooner than the response floor',

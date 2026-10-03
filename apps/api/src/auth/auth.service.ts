@@ -301,7 +301,11 @@ export interface PasswordResetAnswer {
 
 type ResetLinkFailure = 'TOKEN_UNKNOWN' | 'TOKEN_EXPIRED' | 'TOKEN_USED' | 'TOKEN_SUPERSEDED';
 type ResetFailure =
-  ResetLinkFailure | 'SECOND_FACTOR_INVALID' | 'RECOVERY_CODE_INVALID' | 'COOLDOWN_ACTIVE';
+  | ResetLinkFailure
+  | 'SECOND_FACTOR_INVALID'
+  | 'RECOVERY_CODE_INVALID'
+  | 'COOLDOWN_ACTIVE'
+  | 'IP_RATE_LIMITED';
 
 /** A reset link's row and User, or why the link can't be used. */
 type ResetLink =
@@ -521,6 +525,15 @@ function factorResetNotice(email: string, agencyName: string, resetAt: Date): Ma
   };
 }
 
+/** The refusal for an IP address over the per-IP limit, from sign-in or Password Reset alike. */
+function ipRateLimited(): AuthServiceError {
+  return new AuthServiceError(
+    'Too many attempts from this network. Try again later.',
+    429,
+    'IP_RATE_LIMITED',
+  );
+}
+
 function resetLinkInvalid(): AuthServiceError {
   return new AuthServiceError(
     'This reset link is invalid or has expired. Request a new one.',
@@ -622,39 +635,44 @@ export class AuthService {
     this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.APP_URL);
   }
 
-  /**
-   * The per-IP limit: 100 sign-in failures in 15 minutes, counted from Security Events. A refusal
-   * is a failure too, so a client that keeps trying stays refused.
-   */
+  /** The per-IP limit for a sign-in step; a refusal is a LOGIN_FAILURE. */
   async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
-    const { ipAddress } = request;
+    await this.refuseOverIpLimit(request, (transaction) =>
+      this.writeSignInFailure(transaction, request, {
+        userId: null,
+        emailHash,
+        reason: 'IP_RATE_LIMITED',
+      }),
+    );
+  }
+
+  /**
+   * The per-IP limit: 100 sign-in or Password Reset failures in 15 minutes, counted from Security
+   * Events. The flow records its own refusal, which is a failure too, so a client that keeps trying
+   * stays refused. Failures are written after the attempt's slow work, so a burst of parallel
+   * attempts can each find the count under the limit and overshoot it once.
+   */
+  private async refuseOverIpLimit(
+    { ipAddress }: SignInRequest,
+    recordRefusal: (transaction: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
     if (!ipAddress) return;
     const refused = await withDatabaseContext(
       { capabilities: ['platform-security'] },
       async (transaction) => {
         const failures = await transaction.securityEvent.count({
           where: {
-            eventType: 'LOGIN_FAILURE',
+            eventType: { in: ['LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE'] },
             ipAddress,
             occurredAt: { gte: new Date(Date.now() - IP_WINDOW_MS) },
           },
         });
         if (failures < IP_FAILURE_LIMIT) return false;
-        await this.writeSignInFailure(transaction, request, {
-          userId: null,
-          emailHash,
-          reason: 'IP_RATE_LIMITED',
-        });
+        await recordRefusal(transaction);
         return true;
       },
     );
-    if (refused) {
-      throw new AuthServiceError(
-        'Too many sign-in attempts from this network. Try again later.',
-        429,
-        'IP_RATE_LIMITED',
-      );
-    }
+    if (refused) throw ipRateLimited();
   }
 
   /**
@@ -1888,9 +1906,10 @@ export class AuthService {
   }
 
   /**
-   * Sets a new password from a reset link. A User with a TOTP factor also gives a code or a Recovery
-   * Code; a wrong one counts toward the email's Sign-in Cool-down, not the second-factor ceiling,
-   * and leaves the link usable. Recovery Codes are matched outside a transaction, as at sign-in.
+   * Sets a new password from a reset link. An IP address over the per-IP limit is refused before
+   * the link is opened. A User with a TOTP factor also gives a code or a Recovery Code; a wrong
+   * one counts toward the email's Sign-in Cool-down, not the second-factor ceiling, and leaves
+   * the link usable. Recovery Codes are matched outside a transaction, as at sign-in.
    * The last transaction, holding the User's password row, checks the link and the code again,
    * then consumes the link, sets the password, clears the second-factor ceiling and the
    * cool-down, and ends every session and pending sign-in. It answers the notices to send.
@@ -1905,6 +1924,13 @@ export class AuthService {
       passwordResetTokenHash: tokenHash.toString('hex'),
       capabilities: ['platform-security'] as const,
     };
+    await this.refuseOverIpLimit(request, (transaction) =>
+      this.writeResetFailure(transaction, request, {
+        userId: null,
+        emailHash: null,
+        reason: 'IP_RATE_LIMITED',
+      }),
+    );
     const opened = await withDatabaseContext(scope, async (transaction) => {
       const now = new Date();
       const link = await this.openResetLink(transaction, scope, tokenHash, now);

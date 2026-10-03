@@ -1233,7 +1233,7 @@ Required controls:
 - dependency scanning;
 - audit logging;
 - backup testing;
-- account abuse protection, including the Sign-in Cool-down and a per-IP sign-in limit;
+- account abuse protection, including the Sign-in Cool-down and a per-IP limit shared by sign-in and Password Reset;
 - Argon2id password hashing;
 - TOTP MFA owned by LingkodHR, with Recovery Codes and an audited Factor Reset;
 - TOTP secrets encrypted at rest;
