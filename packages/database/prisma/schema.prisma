@@ -23,6 +23,7 @@ model Agency {
   updatedAt               DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   currentProfile                AgencyProfileVersion?              @relation("AgencyCurrentProfile", fields: [id, currentProfileVersionId], references: [agencyId, id], onDelete: Restrict, map: "agencies_current_profile_fkey")
+  seal                          AgencySeal?
   profiles                      AgencyProfileVersion[]             @relation("AgencyProfiles")
   memberships                   AgencyMembership[]
   invitations                   Invitation[]
@@ -283,6 +284,8 @@ model User {
   totpFactor             UserTotpFactor?
   recoveryCodes          UserRecoveryCode[]
   pendingAuthentications PendingAuthentication[]
+  passwordResetTokens    PasswordResetToken[]
+  changedSeals           AgencySeal[]
 
   @@unique([identityProvider, externalSubject])
   @@unique([emailNormalized])
@@ -334,6 +337,7 @@ model AgencyMembership {
   approvedSeparationCases                SeparationCase[]                   @relation("SeparationCaseApprover")
   createdPersonnelActionVersions         PersonnelActionVersion[]           @relation("PersonnelActionVersionCreator")
   createdPersonnelActionEvidence         PersonnelActionEvidence[]          @relation("PersonnelActionEvidenceCreator")
+  changedSeals                           AgencySeal[]
   sessions                               UserSession[]
   securityEvents                         SecurityEvent[]                    @relation("SecurityEventMembership")
   auditEvents                            AuditEvent[]                       @relation("AuditEventMembership")
@@ -699,6 +703,22 @@ model PendingAuthentication {
   invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
 
   @@map("pending_authentications")
+}
+
+/// A password reset link. Only the SHA-256 hash of its token is kept; a row ends once, by being
+/// consumed or superseded, and stays to tell a later attempt why the link no longer works.
+model PasswordResetToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  tokenHash    Bytes     @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(6)
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
 }
 
 /// The Sign-in Cool-down ladder for one keyed email hash; see `@lingkod-hr/auth` sign-in-cooldown.
@@ -5090,4 +5110,26 @@ model LeaveCancellationEffect {
   @@unique([agencyId, effectKind, ownerRecordId])
   @@unique([agencyId, id])
   @@map("leave_cancellation_effects")
+}
+
+/// The Agency's current official seal. Bytes stay private in object storage; changes are audited.
+model AgencySeal {
+  id                    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String           @unique @map("agency_id") @db.Uuid
+  objectKey             String           @unique @map("object_key")
+  fileName              String           @map("file_name")
+  contentType           String           @map("content_type")
+  byteSize              Int              @map("byte_size")
+  width                 Int
+  height                Int
+  contentHash           String           @map("content_hash")
+  changedAt             DateTime         @default(now()) @map("changed_at") @db.Timestamptz(6)
+  changedByName         String           @map("changed_by_name")
+  changedByUserId       String           @map("changed_by_user_id") @db.Uuid
+  changedByMembershipId String           @map("changed_by_membership_id") @db.Uuid
+  agency                Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  changedByUser         User             @relation(fields: [changedByUserId], references: [id], onDelete: Restrict)
+  changedByMembership   AgencyMembership @relation(fields: [agencyId, changedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@map("agency_seals")
 }

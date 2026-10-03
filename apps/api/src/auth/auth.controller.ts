@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpException,
   HttpStatus,
   Inject,
@@ -40,6 +41,8 @@ import {
   callbackQuerySchema,
   enrollmentFinishSchema,
   loginQuerySchema,
+  passwordResetCompleteSchema,
+  passwordResetRequestSchema,
   passwordSignInSchema,
   reauthenticateSchema,
   switchAgencySchema,
@@ -328,8 +331,66 @@ export class AuthController {
     }
   }
 
+  /**
+   * Asks for a reset link. Every request gets the same answer, whether or not the email has an
+   * account; the link is mailed after the response.
+   */
+  @Post('password-reset')
+  async requestPasswordReset(
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = passwordResetRequestSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('An email is required.');
+    try {
+      const mail = await this.authService.requestPasswordReset(
+        parsed.data.email,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.ACCEPTED).json({ status: 'REQUESTED' });
+      if (mail) this.noticeAfterResponse(response, mail);
+    } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
+  /** What the reset page shows. Reading it writes nothing. */
+  @Get('password-reset/:token')
+  async lookupPasswordReset(@Param('token') token: string) {
+    const parsed = activationTokenSchema.safeParse(token);
+    if (!parsed.success) return { status: 'INVALID' };
+    const link = await this.authService.lookupPasswordReset(parsed.data);
+    return link.status === 'VALID' ? { ...link, expiresAt: link.expiresAt.toISOString() } : link;
+  }
+
+  /** Sets the new password. Signs out every session and doesn't sign the User in. */
+  @Post('password-reset/:token')
+  async completePasswordReset(
+    @Param('token') token: string,
+    @Body() body: unknown,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): Promise<void> {
+    const parsed = passwordResetCompleteSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A new password is required.');
+    const resetToken = activationTokenSchema.safeParse(token);
+    try {
+      const { notices } = await this.authService.completePasswordReset(
+        resetToken.success ? resetToken.data : '',
+        parsed.data,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.OK).json({ status: 'RESET' });
+      for (const notice of notices) this.noticeAfterResponse(response, notice);
+    } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
   /** What the invitation page shows. Reading it writes nothing. */
   @Get('invitations/:token')
+  @Header('Cache-Control', 'no-store')
   async lookupInvitation(@Param('token') token: string) {
     const parsed = activationTokenSchema.safeParse(token);
     if (!parsed.success) return { status: 'INVALID' };

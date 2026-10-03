@@ -7,6 +7,7 @@ allowBuilds:
   esbuild: true
   prisma: true
   protobufjs: true
+  sharp: false
 minimumReleaseAgeExclude:
   - '@nestjs/common@11.1.29'
   - '@nestjs/core@11.1.29'

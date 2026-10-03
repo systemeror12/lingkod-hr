@@ -309,7 +309,32 @@ CREATE UNIQUE INDEX pending_authentications_sign_in_user_uq
   ON pending_authentications (user_id) WHERE purpose = 'SIGN_IN';
 CREATE UNIQUE INDEX pending_authentications_activation_invitation_uq
   ON pending_authentications (invitation_id) WHERE purpose = 'ACTIVATION';
+
+CREATE TABLE password_reset_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash bytea NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+  superseded_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (expires_at > created_at),
+  CHECK (consumed_at IS NULL OR superseded_at IS NULL)
+);
+
+CREATE UNIQUE INDEX password_reset_tokens_outstanding_user_uq
+  ON password_reset_tokens (user_id)
+  WHERE consumed_at IS NULL AND superseded_at IS NULL;
+
+-- Any password change voids the User's outstanding reset link.
+CREATE TRIGGER user_passwords_supersede_reset_tokens_trigger
+  AFTER UPDATE OF changed_at ON user_passwords
+  FOR EACH ROW WHEN (OLD.changed_at IS DISTINCT FROM NEW.changed_at)
+  EXECUTE FUNCTION supersede_password_reset_tokens();
 ```
+
+The runtime role may update only `consumed_at` and `superseded_at` on
+`password_reset_tokens`.
 
 The runtime role may update only `last_accepted_step` on `user_totp_factors` and
 may not update `user_recovery_codes`; both are replaced by deleting rows.
@@ -358,6 +383,16 @@ USING (
 WITH CHECK (
   user_id = app_user_id()
   OR encode(token_hash, 'hex') = current_setting('app.pending_token_hash', true)
+);
+
+CREATE POLICY password_reset_tokens_owner ON password_reset_tokens
+USING (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.password_reset_token_hash', true)
+)
+WITH CHECK (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.password_reset_token_hash', true)
 );
 ```
 

@@ -1,3 +1,5 @@
+import { S3DocumentStorage } from '../documents/documents.storage';
+import { readAgencySealKey } from '../agency-profile/agency-seal.queries';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -68,6 +70,11 @@ const IP_FAILURE_LIMIT = 100;
 const IP_WINDOW_MS = 15 * 60 * 1000;
 /** Consecutive wrong TOTP or Recovery Codes, since the last full sign-in, that disable the password. */
 const SECOND_FACTOR_CEILING = 10;
+const PASSWORD_RESET_LIFETIME_MS = 30 * 60 * 1000;
+/** Reset links sent per email, and reset requests answered per IP address, in the window. */
+const RESET_EMAIL_LIMIT = 3;
+const RESET_IP_LIMIT = 20;
+const RESET_WINDOW_MS = 60 * 60 * 1000;
 
 /** The next step a pending sign-in waits for. */
 type PendingSignInStage = 'TOTP' | typeof ENROLL_SCAN_STAGE | typeof ENROLL_CODES_STAGE;
@@ -217,7 +224,7 @@ export type InvitationLookup =
   | {
       status: 'VALID';
       email: string;
-      agency: { name: string; acronym: string | null };
+      agency: { name: string; acronym: string | null; sealUrl?: string | null };
       roleNames: string[];
       existingUser: boolean;
       expiresAt: Date;
@@ -255,6 +262,39 @@ interface ActivationInvitation {
 }
 
 type PendingActivation = Prisma.PendingAuthenticationGetPayload<object>;
+
+/** A reset link as its page shows it; looked up without side effects. */
+export type PasswordResetLookup =
+  | { status: 'VALID'; email: string; secondFactor: boolean; expiresAt: Date }
+  | { status: 'INVALID' };
+
+/** The new password, plus a TOTP code or a Recovery Code when the User has a factor. */
+export interface PasswordResetAnswer {
+  password: string;
+  code?: string | undefined;
+  recoveryCode?: string | undefined;
+}
+
+type ResetLinkFailure = 'TOKEN_UNKNOWN' | 'TOKEN_EXPIRED' | 'TOKEN_USED' | 'TOKEN_SUPERSEDED';
+type ResetFailure =
+  ResetLinkFailure | 'SECOND_FACTOR_INVALID' | 'RECOVERY_CODE_INVALID' | 'COOLDOWN_ACTIVE';
+
+/** A reset link's row and User, or why the link can't be used. */
+type ResetLink =
+  | {
+      status: 'OPEN';
+      tokenId: string;
+      expiresAt: Date;
+      user: { id: string; emailNormalized: string; displayName: string };
+      emailHash: Buffer;
+      secondFactor: boolean;
+    }
+  | {
+      status: 'INVALID';
+      reason: ResetLinkFailure;
+      userId: string | null;
+      emailHash: Buffer | null;
+    };
 
 export class AuthServiceError extends Error {
   /** When a refused attempt may be tried again. */
@@ -331,12 +371,12 @@ const noticeTime = new Intl.DateTimeFormat('en-PH', {
   timeStyle: 'short',
 });
 
-/** Notice of a Recovery Code spent on a sign-in, or on reauthentication when `reauthenticated`. */
+/** After a Recovery Code signs a User in, completes a password reset, or confirms it’s them. */
 function recoveryCodeNotice(
   email: string,
   remaining: number,
   usedAt: Date,
-  reauthenticated = false,
+  usedFor: 'sign-in' | 'reset' | 'reauthentication' = 'sign-in',
 ): MailMessage {
   const left =
     remaining === 0
@@ -345,13 +385,16 @@ function recoveryCodeNotice(
   const when = `on ${noticeTime.format(usedAt)} (Philippine time)`;
   return {
     to: email,
-    subject: reauthenticated
-      ? 'A Recovery Code was used in your LingkodHR account'
-      : 'A Recovery Code was used to sign in to LingkodHR',
+    subject:
+      usedFor === 'reset'
+        ? 'A Recovery Code was used to reset your LingkodHR password'
+        : usedFor === 'reauthentication'
+          ? 'A Recovery Code was used in your LingkodHR account'
+          : 'A Recovery Code was used to sign in to LingkodHR',
     text: [
-      reauthenticated
+      usedFor === 'reauthentication'
         ? `A Recovery Code was used to confirm it’s you in your LingkodHR account ${when}.`
-        : `A Recovery Code was used to sign in to your LingkodHR account ${when}. Your other sessions were signed out.`,
+        : `A Recovery Code was used to ${usedFor === 'reset' ? 'reset the password of' : 'sign in to'} your LingkodHR account ${when}. Your other sessions were signed out.`,
       `${left} If you lost your authenticator, replace it or generate new Recovery Codes.`,
       "If you didn't sign in, contact your Agency Administrator right away.",
     ].join('\n\n'),
@@ -392,9 +435,64 @@ function recoveryCodesRegeneratedNotice(email: string, at: Date): MailMessage {
   };
 }
 
+function passwordResetLinkMail(email: string, link: string): MailMessage {
+  return {
+    to: email,
+    subject: 'Reset your LingkodHR password',
+    text: [
+      'Someone asked to reset the password of your LingkodHR account. To choose a new one, open this link within 30 minutes:',
+      link,
+      'The link works once, and asking again replaces it.',
+      "If you didn't ask, ignore this email. Your password stays the same.",
+    ].join('\n\n'),
+  };
+}
+
 /** A wrong password or code on reauthentication; it doesn't say which. */
 function reauthenticationRefused(): AuthServiceError {
   return new AuthServiceError('Password or code is incorrect.', 401, 'INVALID_CREDENTIALS');
+}
+
+function passwordResetNotice(email: string, resetAt: Date): MailMessage {
+  return {
+    to: email,
+    subject: 'Your LingkodHR password was reset',
+    text: [
+      `Your LingkodHR password was reset on ${noticeTime.format(resetAt)} (Philippine time). Every session was signed out.`,
+      "If you didn't reset it, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
+function resetLinkInvalid(): AuthServiceError {
+  return new AuthServiceError(
+    'This reset link is invalid or has expired. Request a new one.',
+    400,
+    'RESET_LINK_INVALID',
+  );
+}
+
+function resetCodeInvalid(method: SecondFactorMethod | null): AuthServiceError {
+  return new AuthServiceError(
+    method === 'recovery_code'
+      ? 'That Recovery Code didn’t work. Your link still works.'
+      : 'That code didn’t work. Your link still works.',
+    401,
+    'INVALID_CODE',
+  );
+}
+
+/**
+ * The second factor a reset answer gives: none when the User has no factor, or `missing` when
+ * the User has one and the answer gives neither code.
+ */
+function resetMethod(
+  link: Extract<ResetLink, { status: 'OPEN' }>,
+  answer: PasswordResetAnswer,
+): SecondFactorMethod | 'missing' | null {
+  if (!link.secondFactor) return null;
+  if (answer.recoveryCode) return 'recovery_code';
+  return answer.code ? 'totp' : 'missing';
 }
 
 function invitationInvalid(): AuthServiceError {
@@ -457,6 +555,7 @@ export class AuthService {
     clientSecret: this.config.OIDC_CLIENT_SECRET,
     redirectUri: this.config.OIDC_REDIRECT_URI,
   });
+  private readonly brandingStorage = new S3DocumentStorage(this.config);
   private readonly invitationIssuer: InvitationIssuer;
   private readonly mailDelivery: MailDelivery;
   private readonly logger = new Logger(AuthService.name);
@@ -1330,7 +1429,7 @@ export class AuthService {
           request.requestId,
           { remaining, reauthentication: true },
         );
-        return { notice: recoveryCodeNotice(email, remaining, now, true) };
+        return { notice: recoveryCodeNotice(email, remaining, now, 'reauthentication') };
       }));
     if (spent) {
       await this.refundGuess(emailHash, guess);
@@ -1387,6 +1486,333 @@ export class AuthService {
    * Sends a credential notice. Callers run it after the transaction commits and the response is
    * sent; a delivery failure is logged without the recipient or content and never thrown.
    */
+  /**
+   * Answers the reset mail to send after the response, or null. The caller answers every request
+   * the same, so nothing here may tell whether the email has an account: an unknown email, a User
+   * without a password, and an email past its 3 links an hour all record the attempt and send
+   * nothing. Only an IP address past 20 requests an hour is refused. A User with a password gets a
+   * 30-minute link whatever their status, superseding any earlier one; a Sign-in Cool-down doesn't
+   * stop it.
+   */
+  async requestPasswordReset(email: string, request: SignInRequest): Promise<MailMessage | null> {
+    const emailNormalized = email.trim().toLowerCase();
+    const emailHash = hashEmail(emailNormalized, this.config.BLIND_INDEX_KEY);
+    const scope = { capabilities: ['platform-security'] as const };
+    const now = new Date();
+    const since = new Date(now.getTime() - RESET_WINDOW_MS);
+    const outcome = await withDatabaseContext(scope, async (transaction) => {
+      const requested = async (outcome: string, userId: string | null = null) => {
+        await transaction.securityEvent.create({
+          data: {
+            userId,
+            eventType: 'PASSWORD_RESET_REQUESTED',
+            requestId: request.requestId,
+            ipAddress: request.ipAddress,
+            emailHash: prismaBytes(emailHash),
+            details: { outcome },
+          },
+        });
+        return outcome;
+      };
+      if (request.ipAddress) {
+        const fromIp = await transaction.securityEvent.count({
+          where: {
+            eventType: 'PASSWORD_RESET_REQUESTED',
+            ipAddress: request.ipAddress,
+            occurredAt: { gte: since },
+          },
+        });
+        if (fromIp >= RESET_IP_LIMIT) return { status: await requested('IP_RATE_LIMITED') };
+      }
+      const user = await transaction.user.findUnique({
+        where: { emailNormalized },
+        select: { id: true },
+      });
+      if (!user) return { status: await requested('UNKNOWN_EMAIL') };
+      await setDatabaseContext(transaction, { ...scope, userId: user.id });
+      const password = await transaction.userPassword.findUnique({
+        where: { userId: user.id },
+        select: { userId: true },
+      });
+      if (!password) return { status: await requested('NO_PASSWORD', user.id) };
+      // One request per User at a time, so a burst can't send more links than the limit.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${user.id}::uuid FOR UPDATE`;
+      const sent = await transaction.securityEvent.count({
+        where: {
+          eventType: 'PASSWORD_RESET_REQUESTED',
+          emailHash: prismaBytes(emailHash),
+          occurredAt: { gte: since },
+          details: { path: ['outcome'], equals: 'SENT' },
+        },
+      });
+      if (sent >= RESET_EMAIL_LIMIT) {
+        return { status: await requested('EMAIL_RATE_LIMITED', user.id) };
+      }
+      const token = createSessionToken();
+      await transaction.passwordResetToken.updateMany({
+        where: { userId: user.id, consumedAt: null, supersededAt: null },
+        data: { supersededAt: now },
+      });
+      await transaction.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: prismaBytes(hashSessionToken(token)),
+          expiresAt: new Date(now.getTime() + PASSWORD_RESET_LIFETIME_MS),
+        },
+      });
+      return { status: await requested('SENT', user.id), token };
+    });
+    if (outcome.status === 'IP_RATE_LIMITED') {
+      throw new AuthServiceError(
+        'Too many reset requests from this network. Try again later.',
+        429,
+        'IP_RATE_LIMITED',
+      );
+    }
+    if (!outcome.token) return null;
+    return passwordResetLinkMail(
+      emailNormalized,
+      `${this.config.APP_URL}/reset-password/${outcome.token}`,
+    );
+  }
+
+  /** Whether a reset link can be used, and whether it needs a code. Opening it writes nothing. */
+  async lookupPasswordReset(token: string): Promise<PasswordResetLookup> {
+    const tokenHash = hashSessionToken(token);
+    const scope = {
+      passwordResetTokenHash: tokenHash.toString('hex'),
+      capabilities: ['platform-security'] as const,
+    };
+    const link = await withDatabaseContext(scope, (transaction) =>
+      this.openResetLink(transaction, scope, tokenHash, new Date()),
+    );
+    return link.status === 'OPEN'
+      ? {
+          status: 'VALID',
+          email: link.user.emailNormalized,
+          secondFactor: link.secondFactor,
+          expiresAt: link.expiresAt,
+        }
+      : { status: 'INVALID' };
+  }
+
+  /**
+   * Sets a new password from a reset link. A User with a TOTP factor also gives a code or a Recovery
+   * Code; a wrong one counts toward the email's Sign-in Cool-down, not the second-factor ceiling,
+   * and leaves the link usable. Recovery Codes are matched outside a transaction, as at sign-in.
+   * The last transaction, holding the User's password row, checks the link and the code again,
+   * then consumes the link, sets the password, clears the second-factor ceiling and the
+   * cool-down, and ends every session and pending sign-in. It answers the notices to send.
+   */
+  async completePasswordReset(
+    token: string,
+    answer: PasswordResetAnswer,
+    request: SignInRequest,
+  ): Promise<{ notices: MailMessage[] }> {
+    const tokenHash = hashSessionToken(token);
+    const scope = {
+      passwordResetTokenHash: tokenHash.toString('hex'),
+      capabilities: ['platform-security'] as const,
+    };
+    const opened = await withDatabaseContext(scope, async (transaction) => {
+      const now = new Date();
+      const link = await this.openResetLink(transaction, scope, tokenHash, now);
+      if (link.status === 'INVALID') {
+        await this.writeResetFailure(transaction, request, link);
+        return { status: 'INVALID' as const };
+      }
+      const rejected = checkNewPassword(answer.password, {
+        email: link.user.emailNormalized,
+        name: link.user.displayName,
+      });
+      if (rejected) return { status: 'REJECTED' as const, message: rejected.message };
+      const method = resetMethod(link, answer);
+      if (method === 'missing') return { status: 'CODE_REQUIRED' as const };
+      const failure = { userId: link.user.id, emailHash: link.emailHash };
+      if (!method) {
+        const cooldownUntil = await this.readCooldown(transaction, link.emailHash, now);
+        if (cooldownUntil) {
+          await this.writeResetFailure(transaction, request, {
+            ...failure,
+            reason: 'COOLDOWN_ACTIVE',
+          });
+          return { status: 'COOLDOWN' as const, cooldownUntil, now };
+        }
+        return { status: 'OPEN' as const, link, method, guess: null, codes: [] };
+      }
+      const guess = await this.countGuess(transaction, link.emailHash, now);
+      if (guess.cooldownUntil) {
+        await this.writeResetFailure(transaction, request, {
+          ...failure,
+          reason: 'COOLDOWN_ACTIVE',
+        });
+        return { status: 'COOLDOWN' as const, cooldownUntil: guess.cooldownUntil, now };
+      }
+      const codes =
+        method === 'recovery_code'
+          ? await transaction.userRecoveryCode.findMany({
+              where: { userId: link.user.id },
+              select: { id: true, codeHash: true },
+            })
+          : [];
+      return { status: 'OPEN' as const, link, method, guess, codes };
+    });
+    if (opened.status === 'INVALID') throw resetLinkInvalid();
+    if (opened.status === 'REJECTED') {
+      throw new AuthServiceError(opened.message, 400, 'PASSWORD_REJECTED');
+    }
+    if (opened.status === 'CODE_REQUIRED') {
+      throw new AuthServiceError(
+        'Enter the code from your authenticator app, or a Recovery Code.',
+        400,
+        'CODE_REQUIRED',
+      );
+    }
+    if (opened.status === 'COOLDOWN') throw signInCooldown(opened.cooldownUntil, opened.now);
+
+    const { link, method, guess } = opened;
+    const userId = link.user.id;
+    const wrongCode = {
+      userId,
+      emailHash: link.emailHash,
+      reason:
+        method === 'recovery_code'
+          ? ('RECOVERY_CODE_INVALID' as const)
+          : ('SECOND_FACTOR_INVALID' as const),
+      cooldown: guess && !guess.cooldownUntil ? guess.counted.cooldown : null,
+    };
+    let recoveryCodeId: string | null = null;
+    if (method === 'recovery_code') {
+      const normalized = normalizeRecoveryCode(answer.recoveryCode ?? '');
+      const matches = normalized
+        ? await Promise.all(
+            opened.codes.map(({ codeHash }) => verifyPassword(codeHash, normalized)),
+          )
+        : [];
+      recoveryCodeId = opened.codes.find((_, index) => matches[index])?.id ?? null;
+      if (!recoveryCodeId) {
+        await withDatabaseContext({ ...scope, userId }, (transaction) =>
+          this.writeResetFailure(transaction, request, wrongCode),
+        );
+        throw resetCodeInvalid(method);
+      }
+    }
+    const passwordHash = await hashPassword(answer.password);
+
+    const outcome = await withDatabaseContext({ ...scope, userId }, async (transaction) => {
+      // One completion per User at a time; the second of two finds the link consumed.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+      const now = new Date();
+      const current = await this.openResetLink(transaction, scope, tokenHash, now);
+      if (current.status === 'INVALID') {
+        await this.writeResetFailure(transaction, request, current);
+        return { status: 'INVALID' as const };
+      }
+      // A factor enrolled or removed since the link was opened changes the proof the reset needs.
+      const recheck = resetMethod(current, answer);
+      if (recheck === 'missing') return { status: 'CODE_REQUIRED' as const };
+      if (recheck !== method) return { status: 'INVALID_CODE' as const };
+
+      if (method === 'totp') {
+        const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
+        const step = factor
+          ? acceptTotpCode(
+              openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
+                userId,
+                factorId: factor.id,
+              }),
+              answer.code ?? '',
+              Number(factor.lastAcceptedStep),
+              now,
+            )
+          : null;
+        const accepted =
+          factor !== null &&
+          step !== null &&
+          (
+            await transaction.userTotpFactor.updateMany({
+              where: { id: factor.id, lastAcceptedStep: { lt: step } },
+              data: { lastAcceptedStep: step },
+            })
+          ).count === 1;
+        if (!accepted) {
+          await this.writeResetFailure(transaction, request, wrongCode);
+          return { status: 'INVALID_CODE' as const };
+        }
+      }
+      if (recoveryCodeId) {
+        const spent = await transaction.userRecoveryCode.deleteMany({
+          where: { id: recoveryCodeId },
+        });
+        if (spent.count !== 1) {
+          await this.writeResetFailure(transaction, request, wrongCode);
+          return { status: 'INVALID_CODE' as const };
+        }
+      }
+
+      // Consumed before the password changes, so the change voids no link but this one.
+      await transaction.passwordResetToken.update({
+        where: { id: current.tokenId },
+        data: { consumedAt: now },
+      });
+      await transaction.userPassword.update({
+        where: { userId },
+        data: { passwordHash, changedAt: now, secondFactorFailures: 0, resetRequiredAt: null },
+      });
+      await transaction.pendingAuthentication.deleteMany({ where: { userId } });
+      await transaction.signInThrottle.deleteMany({
+        where: { emailHash: prismaBytes(current.emailHash) },
+      });
+      const revoked = await transaction.userSession.updateManyAndReturn({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now, revocationReason: 'PASSWORD_RESET' },
+        select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
+      });
+      for (const session of revoked) {
+        await this.recordSystemSessionRevocation(
+          transaction,
+          session,
+          'PASSWORD_RESET',
+          request.requestId,
+        );
+      }
+      // Each revocation is recorded in its session's Agency; return to the reset's context.
+      if (revoked.length > 0) await setDatabaseContext(transaction, { ...scope, userId });
+      await transaction.securityEvent.create({
+        data: {
+          userId,
+          eventType: 'PASSWORD_RESET_COMPLETED',
+          requestId: request.requestId,
+          ipAddress: request.ipAddress,
+          emailHash: prismaBytes(current.emailHash),
+          details: {
+            methods: ['email_link', ...(method ? [method] : [])],
+            revokedSessions: revoked.length,
+          },
+        },
+      });
+      const email = current.user.emailNormalized;
+      const notices = [passwordResetNotice(email, now)];
+      if (recoveryCodeId) {
+        const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
+        notices.push(recoveryCodeNotice(email, remaining, now, 'reset'));
+      }
+      return { status: 'RESET' as const, notices };
+    });
+    if (outcome.status === 'INVALID') throw resetLinkInvalid();
+    if (outcome.status === 'CODE_REQUIRED') {
+      throw new AuthServiceError(
+        'Enter the code from your authenticator app, or a Recovery Code.',
+        400,
+        'CODE_REQUIRED',
+      );
+    }
+    if (outcome.status === 'INVALID_CODE') throw resetCodeInvalid(method);
+    return { notices: outcome.notices };
+  }
+
   async sendNotice(message: MailMessage): Promise<void> {
     try {
       await this.mailDelivery.send(message);
@@ -1632,7 +2058,7 @@ export class AuthService {
    */
   async lookupInvitation(token: string): Promise<InvitationLookup> {
     const scope = this.activationScope(token);
-    return withDatabaseContext(scope, async (transaction) => {
+    const result = await withDatabaseContext(scope, async (transaction) => {
       const invitation = await this.readActivationInvitation(transaction, scope, new Date());
       if (typeof invitation === 'string') return { status: invitation };
       const existingUser = await transaction.user.findUnique({
@@ -1641,6 +2067,7 @@ export class AuthService {
       });
       return {
         status: 'VALID' as const,
+        sealKey: await readAgencySealKey(transaction, invitation.agencyId),
         email: invitation.emailNormalized,
         agency: invitation.agency,
         roleNames: invitation.roles.map(({ name }) => name),
@@ -1648,6 +2075,19 @@ export class AuthService {
         expiresAt: invitation.expiresAt,
       };
     });
+    if (result.status !== 'VALID') return result;
+    const { sealKey, ...invitation } = result;
+    const ttl = Math.max(
+      1,
+      Math.min(300, Math.floor((invitation.expiresAt.getTime() - Date.now()) / 1000)),
+    );
+    return {
+      ...invitation,
+      agency: {
+        ...invitation.agency,
+        sealUrl: sealKey ? await this.brandingStorage.signedReadUrl(sealKey, ttl) : null,
+      },
+    };
   }
 
   /**
@@ -3067,6 +3507,88 @@ export class AuthService {
       },
     });
     return passwordResetRequiredNotice(secondFactor.email);
+  }
+
+  /**
+   * A reset link by its token's hash, with its User, leaving the transaction in the User's
+   * context under `scope`. Writes nothing.
+   */
+  private async openResetLink(
+    transaction: Prisma.TransactionClient,
+    scope: { passwordResetTokenHash: string; capabilities: readonly ['platform-security'] },
+    tokenHash: Buffer,
+    now: Date,
+  ): Promise<ResetLink> {
+    const stored = await transaction.passwordResetToken.findUnique({
+      where: { tokenHash: prismaBytes(tokenHash) },
+    });
+    if (!stored)
+      return { status: 'INVALID', reason: 'TOKEN_UNKNOWN', userId: null, emailHash: null };
+    await setDatabaseContext(transaction, { ...scope, userId: stored.userId });
+    const user = await transaction.user.findUniqueOrThrow({
+      where: { id: stored.userId },
+      select: {
+        id: true,
+        emailNormalized: true,
+        displayName: true,
+        totpFactor: { select: { id: true } },
+      },
+    });
+    const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
+    const ended: ResetLinkFailure | null = stored.consumedAt
+      ? 'TOKEN_USED'
+      : stored.supersededAt
+        ? 'TOKEN_SUPERSEDED'
+        : stored.expiresAt <= now
+          ? 'TOKEN_EXPIRED'
+          : null;
+    if (ended) return { status: 'INVALID', reason: ended, userId: user.id, emailHash };
+    return {
+      status: 'OPEN',
+      tokenId: stored.id,
+      expiresAt: stored.expiresAt,
+      user: { id: user.id, emailNormalized: user.emailNormalized, displayName: user.displayName },
+      emailHash,
+      secondFactor: user.totpFactor !== null,
+    };
+  }
+
+  /**
+   * A PASSWORD_RESET_FAILURE, and a SIGN_IN_COOLDOWN_STARTED for the cool-down a wrong code
+   * started. It never holds the token, password, code, or raw email.
+   */
+  private async writeResetFailure(
+    transaction: Prisma.TransactionClient,
+    request: SignInRequest,
+    failure: {
+      userId: string | null;
+      emailHash: Buffer | null;
+      reason: ResetFailure;
+      cooldown?: SignInCooldownStart | null;
+    },
+  ): Promise<void> {
+    const emailHash = failure.emailHash ? prismaBytes(failure.emailHash) : null;
+    await transaction.securityEvent.create({
+      data: {
+        userId: failure.userId,
+        eventType: 'PASSWORD_RESET_FAILURE',
+        requestId: request.requestId,
+        ipAddress: request.ipAddress,
+        emailHash,
+        details: { reason: failure.reason },
+      },
+    });
+    if (failure.cooldown) {
+      await transaction.securityEvent.create({
+        data: {
+          eventType: 'SIGN_IN_COOLDOWN_STARTED',
+          requestId: request.requestId,
+          ipAddress: request.ipAddress,
+          emailHash,
+          details: { level: failure.cooldown.level, minutes: failure.cooldown.minutes },
+        },
+      });
+    }
   }
 
   /** A failed sign-in step, recorded outside the attempt's transaction. */

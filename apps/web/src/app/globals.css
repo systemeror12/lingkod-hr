@@ -173,3 +173,23 @@ body {
     display: none !important;
   }
 }
+
+@keyframes lh-seal-stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.15) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(-5deg);
+  }
+}
+.lh-seal-stamp {
+  transform: rotate(-5deg);
+  animation: lh-seal-stamp 280ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lh-seal-stamp {
+    animation: none;
+  }
+}

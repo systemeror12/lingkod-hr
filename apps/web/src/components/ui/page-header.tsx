@@ -25,7 +25,7 @@ export function PageHeader({
   children?: ReactNode;
 }) {
   return (
-    <header className="-mx-(--workspace-gutter) -mt-6 border-b border-border bg-surface px-(--workspace-gutter) pt-5">
+    <header className="-mx-(--workspace-gutter) -mt-6 min-w-0 border-b border-border bg-surface px-(--workspace-gutter) pt-5">
       <nav aria-label="Breadcrumb">
         <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0 text-caption text-ink-muted">
           {breadcrumbs.map((crumb, index) => (
