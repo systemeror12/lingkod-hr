@@ -1,10 +1,11 @@
 'use client';
 
+import { cn } from '../lib/class-names';
 import { useEffect, useState, type ReactNode } from 'react';
 
 // The public auth screens' design, chosen in #398: a government building at sunrise beside a
 // letterhead form. The sun's height and the lit windows show progress through the flow. Every
-// Agency sees the same scene until #399 decides otherwise.
+// Agency uses the drawn scene; an inviting Agency may supply its official seal.
 
 const SUN = '#f2c14e';
 const NAVY = '#0f2240';
@@ -173,6 +174,60 @@ function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
 export interface LetterheadAgency {
   name: string;
   acronym: string | null;
+  sealUrl?: string | null;
+}
+
+/** The same Agency mark in the letterhead, success stamp, and administrator's live preview. */
+export function AgencySealMark({
+  agency,
+  className,
+}: {
+  agency: LetterheadAgency | null;
+  className: string;
+}) {
+  return agency?.sealUrl ? (
+    <img
+      src={agency.sealUrl}
+      alt={`${agency.name} seal`}
+      width={64}
+      height={64}
+      className={cn('object-contain', className)}
+    />
+  ) : (
+    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
+      <circle cx="32" cy="32" r="30" fill="none" stroke={SEAL_GOLD} strokeWidth="2" />
+      <circle
+        cx="32"
+        cy="32"
+        r="25"
+        fill="none"
+        stroke={SEAL_GOLD}
+        strokeWidth="1"
+        strokeDasharray="2 2.5"
+      />
+      <text
+        x="32"
+        y="39"
+        textAnchor="middle"
+        fontSize={agency?.acronym && agency.acronym.length > 2 ? 13 : 20}
+        fontWeight="700"
+        fill={NAVY}
+      >
+        {agency ? (agency.acronym ?? agency.name).slice(0, 4) : 'L'}
+      </text>
+    </svg>
+  );
+}
+
+export function InvitationStamp({ agency }: { agency: LetterheadAgency }) {
+  return (
+    <div className="lh-seal-stamp grid justify-items-center gap-2" aria-label="Agency seal stamped">
+      <AgencySealMark agency={agency} className="size-20" />
+      <span className="text-caption font-semibold tracking-widest text-ink-muted uppercase">
+        Access activated
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -183,28 +238,7 @@ function Letterhead({ agency }: { agency: LetterheadAgency | null }) {
   return (
     <>
       <header className="flex items-center gap-3.5">
-        <svg viewBox="0 0 64 64" className="size-11 shrink-0" aria-hidden="true">
-          <circle cx="32" cy="32" r="30" fill="none" stroke={SEAL_GOLD} strokeWidth="2" />
-          <circle
-            cx="32"
-            cy="32"
-            r="25"
-            fill="none"
-            stroke={SEAL_GOLD}
-            strokeWidth="1"
-            strokeDasharray="2 2.5"
-          />
-          <text
-            x="32"
-            y="39"
-            textAnchor="middle"
-            fontSize={agency?.acronym && agency.acronym.length > 2 ? 13 : 20}
-            fontWeight="700"
-            fill={NAVY}
-          >
-            {agency ? (agency.acronym ?? agency.name).slice(0, 4) : 'L'}
-          </text>
-        </svg>
+        <AgencySealMark agency={agency} className="size-11 shrink-0" />
         <div className="grid gap-0.5">
           {agency ? (
             <p className="m-0 text-caption text-ink-muted">Republic of the Philippines</p>

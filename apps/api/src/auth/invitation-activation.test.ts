@@ -190,7 +190,7 @@ it.skipIf(!enabled)('opens an invitation without writing anything', async () => 
     await expect(service.lookupInvitation(fixture.token)).resolves.toEqual({
       status: 'VALID',
       email: fixture.email,
-      agency: { name: 'Activation Test Agency', acronym: 'ATA' },
+      agency: { name: 'Activation Test Agency', acronym: 'ATA', sealUrl: null },
       roleNames: ['HRMO Administrator'],
       existingUser: false,
       expiresAt: fixture.invitation.expiresAt,

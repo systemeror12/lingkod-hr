@@ -182,6 +182,11 @@ export default async function OrganizationPage({
                 label: 'Agency Profile',
                 current: showProfile,
               },
+              {
+                href: '/organization/agency-branding',
+                label: 'Seal and building photo',
+                current: false,
+              },
             ]
           : []),
       ]}
