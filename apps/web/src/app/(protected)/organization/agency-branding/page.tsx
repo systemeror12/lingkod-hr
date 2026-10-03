@@ -2,9 +2,10 @@ import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { getConfig } from '@lingkod-hr/config';
 import {
-  AgencySealWorkspace,
+  AgencyBrandingWorkspace,
   type SavedAgencySeal,
-} from '../../../../components/agency-seal-workspace';
+  type SavedBuildingPhoto,
+} from '../../../../components/agency-branding-workspace';
 import { ShellState } from '../../../../components/shell-state';
 import { getActiveSession, hasPermission } from '../../../../lib/session';
 
@@ -23,20 +24,30 @@ export default async function AgencyBrandingPage() {
   }
   const config = getConfig();
   const cookieStore = await cookies();
-  const response = await fetch(
-    `${config.API_URL}/api/v1/agencies/${session.agencyId}/agency-profile/seal`,
-    {
-      headers: { cookie: cookieStore.toString(), origin: new URL(config.APP_URL).origin },
-      cache: 'no-store',
-    },
-  );
-  if (!response.ok) throw new Error('The Agency seal could not be loaded.');
-  const initial = (await response.json()) as { seal: SavedAgencySeal | null };
+  const load = async <T,>(path: string, failure: string) => {
+    const response = await fetch(
+      `${config.API_URL}/api/v1/agencies/${session.agencyId}/agency-profile/${path}`,
+      {
+        headers: { cookie: cookieStore.toString(), origin: new URL(config.APP_URL).origin },
+        cache: 'no-store',
+      },
+    );
+    if (!response.ok) throw new Error(failure);
+    return (await response.json()) as T;
+  };
+  const [{ seal }, { photo }] = await Promise.all([
+    load<{ seal: SavedAgencySeal | null }>('seal', 'The Agency seal could not be loaded.'),
+    load<{ photo: SavedBuildingPhoto | null }>(
+      'building-photo',
+      'The building photo could not be loaded.',
+    ),
+  ]);
   return (
-    <AgencySealWorkspace
+    <AgencyBrandingWorkspace
       agencyId={session.agencyId}
       agency={session.agency}
-      initial={initial.seal}
+      initialSeal={seal}
+      initialPhoto={photo}
       canUpdate={hasPermission(session, 'organization.agency.update')}
     />
   );
