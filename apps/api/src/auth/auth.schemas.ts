@@ -49,6 +49,23 @@ export const activationStartSchema = z
   })
   .strict();
 
+export const passwordResetRequestSchema = z
+  .object({ email: z.string().trim().min(1).max(320) })
+  .strict();
+
+/** A new password, with a TOTP code or a Recovery Code when the User has a factor. */
+export const passwordResetCompleteSchema = z
+  .object({
+    password: z.string().min(1).max(1024),
+    code: z
+      .string()
+      .max(32)
+      .transform((code) => code.replace(/\s/g, ''))
+      .optional(),
+    recoveryCode: z.string().max(64).optional(),
+  })
+  .strict();
+
 export const switchAgencySchema = z.object({ membershipId: z.string().uuid() }).strict();
 
 export const invitationSchema = z
