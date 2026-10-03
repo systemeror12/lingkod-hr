@@ -1,6 +1,7 @@
 import { S3DocumentStorage } from '../documents/documents.storage';
 import { readAgencyBrandKeys } from '../agency-profile/agency-brand.queries';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
@@ -73,6 +74,11 @@ const PASSWORD_RESET_LIFETIME_MS = 30 * 60 * 1000;
 const RESET_EMAIL_LIMIT = 3;
 const RESET_IP_LIMIT = 20;
 const RESET_WINDOW_MS = 60 * 60 * 1000;
+/**
+ * The least time a reset request takes, well above the token work for a known email, so its
+ * answer comes no later than an unknown email's.
+ */
+export const PASSWORD_RESET_RESPONSE_FLOOR_MS = 500;
 
 /** The next step a pending sign-in waits for. */
 type PendingSignInStage = 'TOTP' | typeof ENROLL_SCAN_STAGE | typeof ENROLL_CODES_STAGE;
@@ -97,6 +103,7 @@ export interface AuthenticatedSession {
 export interface SignInRequest {
   requestId: string;
   ipAddress: string | null;
+  userAgent: string | null;
 }
 
 /**
@@ -186,6 +193,7 @@ interface SessionEvidence {
   authenticationMethods: readonly string[];
   emailHash?: Buffer;
   ipAddress?: string | null;
+  userAgent?: string | null;
 }
 
 export interface InvitationResult {
@@ -743,6 +751,7 @@ export class AuthService {
                 eventType: 'SIGN_IN_PASSWORD_VERIFIED',
                 requestId: request.requestId,
                 ipAddress: request.ipAddress,
+                userAgent: request.userAgent,
                 emailHash: prismaBytes(emailHash),
                 details: { nextStep: stage },
               },
@@ -1028,6 +1037,7 @@ export class AuthService {
             eventType: 'RECOVERY_CODE_USED',
             requestId: request.requestId,
             ipAddress: request.ipAddress,
+            userAgent: request.userAgent,
             emailHash: prismaBytes(emailHash),
             details: { remaining, revokedSessions: revoked.length },
           },
@@ -1146,6 +1156,7 @@ export class AuthService {
             eventType: 'TOTP_ENROLLED',
             requestId: request.requestId,
             ipAddress: request.ipAddress,
+            userAgent: request.userAgent,
             emailHash: prismaBytes(emailHash),
             details: { recoveryCodes: pending.recoveryCodeHashes.length },
           },
@@ -1275,6 +1286,7 @@ export class AuthService {
             eventType: 'PASSWORD_CHANGED',
             requestId: request.requestId,
             ipAddress: request.ipAddress,
+            userAgent: request.userAgent,
             emailHash: prismaBytes(emailHash),
             details: { methods, revokedSessions: revoked },
           },
@@ -1402,6 +1414,7 @@ export class AuthService {
           eventType: 'TOTP_REPLACED',
           requestId: request.requestId,
           ipAddress: request.ipAddress,
+          userAgent: request.userAgent,
           emailHash: prismaBytes(emailHash),
           details: { revokedSessions },
         },
@@ -1713,6 +1726,7 @@ export class AuthService {
         eventType: 'REAUTHENTICATED',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
         emailHash: prismaBytes(emailHash),
         details: { methods },
       },
@@ -1748,9 +1762,10 @@ export class AuthService {
    * without a password, and an email past its 3 links an hour all record the attempt and send
    * nothing. Only an IP address past 20 requests an hour is refused. A User with a password gets a
    * 30-minute link whatever their status, superseding any earlier one; a Sign-in Cool-down doesn't
-   * stop it.
+   * stop it. Every request, refused or not, takes at least the response floor.
    */
   async requestPasswordReset(email: string, request: SignInRequest): Promise<MailMessage | null> {
+    const answerAt = Date.now() + PASSWORD_RESET_RESPONSE_FLOOR_MS;
     const emailNormalized = email.trim().toLowerCase();
     const emailHash = hashEmail(emailNormalized, this.config.BLIND_INDEX_KEY);
     const scope = { capabilities: ['platform-security'] as const };
@@ -1764,6 +1779,7 @@ export class AuthService {
             eventType: 'PASSWORD_RESET_REQUESTED',
             requestId: request.requestId,
             ipAddress: request.ipAddress,
+            userAgent: request.userAgent,
             emailHash: prismaBytes(emailHash),
             details: { outcome },
           },
@@ -1818,7 +1834,7 @@ export class AuthService {
         },
       });
       return { status: await requested('SENT', user.id), token };
-    });
+    }).finally(() => sleep(Math.max(0, answerAt - Date.now())));
     if (outcome.status === 'IP_RATE_LIMITED') {
       throw new AuthServiceError(
         'Too many reset requests from this network. Try again later.',
@@ -2042,6 +2058,7 @@ export class AuthService {
           eventType: 'PASSWORD_RESET_COMPLETED',
           requestId: request.requestId,
           ipAddress: request.ipAddress,
+          userAgent: request.userAgent,
           emailHash: prismaBytes(current.emailHash),
           details: {
             methods: ['email_link', ...(method ? [method] : [])],
@@ -3015,6 +3032,7 @@ export class AuthService {
           eventType: 'INVITATION_ACTIVATION_FAILED',
           requestId: request.requestId,
           ipAddress: request.ipAddress,
+          userAgent: request.userAgent,
           details: { invitationId: invitation?.id ?? null, reason },
         },
       });
@@ -3280,6 +3298,7 @@ export class AuthService {
         eventType: 'INVITATION_ACTIVATION_STARTED',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
         details: {
           invitationId: invitation.id,
           path: pending.userId ? 'EXISTING_USER' : 'FIRST_TIME',
@@ -3354,7 +3373,7 @@ export class AuthService {
     },
   ): Promise<ActivationDone> {
     const { invitation, userId, pending, newUser } = finish;
-    const { requestId, ipAddress } = request;
+    const { requestId, ipAddress, userAgent } = request;
     const email = invitation.emailNormalized;
     const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
     const now = new Date();
@@ -3401,6 +3420,7 @@ export class AuthService {
           eventType: 'PASSWORD_SET',
           requestId,
           ipAddress,
+          userAgent,
           emailHash: prismaBytes(emailHash),
           details: { invitationId: invitation.id },
         },
@@ -3428,6 +3448,7 @@ export class AuthService {
           eventType: 'TOTP_ENROLLED',
           requestId,
           ipAddress,
+          userAgent,
           emailHash: prismaBytes(emailHash),
           details: { recoveryCodes: pending.recoveryCodeHashes.length },
         },
@@ -3532,6 +3553,7 @@ export class AuthService {
           eventType: 'RECOVERY_CODE_USED',
           requestId,
           ipAddress,
+          userAgent,
           emailHash: prismaBytes(emailHash),
           details: { remaining, revokedSessions },
         },
@@ -3573,6 +3595,7 @@ export class AuthService {
         authenticationMethods: methods,
         emailHash,
         ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
       },
       request.requestId,
     );
@@ -3734,6 +3757,7 @@ export class AuthService {
           eventType: 'SIGN_IN_COOLDOWN_STARTED',
           requestId: request.requestId,
           ipAddress: request.ipAddress,
+          userAgent: request.userAgent,
           emailHash: prismaBytes(emailHash),
           details: { level: cooldown.level, minutes: cooldown.minutes },
         },
@@ -3762,6 +3786,7 @@ export class AuthService {
         eventType: 'PASSWORD_RESET_REQUIRED',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
         emailHash: prismaBytes(emailHash),
         details: { secondFactorFailures },
       },
@@ -3834,6 +3859,7 @@ export class AuthService {
         eventType: 'PASSWORD_RESET_FAILURE',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
         emailHash,
         details: { reason: failure.reason },
       },
@@ -3844,6 +3870,7 @@ export class AuthService {
           eventType: 'SIGN_IN_COOLDOWN_STARTED',
           requestId: request.requestId,
           ipAddress: request.ipAddress,
+          userAgent: request.userAgent,
           emailHash,
           details: { level: failure.cooldown.level, minutes: failure.cooldown.minutes },
         },
@@ -3881,6 +3908,7 @@ export class AuthService {
         eventType: 'LOGIN_FAILURE',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
+        userAgent: request.userAgent,
         emailHash: failure.emailHash ? prismaBytes(failure.emailHash) : null,
         details: {
           reason: failure.reason,
@@ -3980,6 +4008,7 @@ export class AuthService {
         eventType: 'LOGIN_SUCCESS',
         requestId,
         ipAddress: evidence.ipAddress ?? null,
+        userAgent: evidence.userAgent ?? null,
         emailHash: evidence.emailHash ? prismaBytes(evidence.emailHash) : null,
         details: { methods: [...evidence.authenticationMethods] },
       },

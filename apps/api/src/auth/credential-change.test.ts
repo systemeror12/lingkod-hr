@@ -136,6 +136,7 @@ async function signedInFixture(options: { authAgeMs?: number; recoveryCodes?: nu
     request: (label = 'step') => ({
       requestId: `credential-change-${label}-${randomUUID()}`,
       ipAddress,
+      userAgent: null,
     }),
     events: (eventType: string) =>
       admin.securityEvent.findMany({

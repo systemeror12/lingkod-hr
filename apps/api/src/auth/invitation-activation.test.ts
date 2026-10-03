@@ -22,7 +22,11 @@ function databaseBytes(value: Buffer): Uint8Array<ArrayBuffer> {
 }
 
 function activationRequest(label: string) {
-  return { requestId: `activation-${label}-${randomUUID()}`, ipAddress: '198.51.100.9' };
+  return {
+    requestId: `activation-${label}-${randomUUID()}`,
+    ipAddress: '198.51.100.9',
+    userAgent: null,
+  };
 }
 
 function secretFromUri(uri: string): string {

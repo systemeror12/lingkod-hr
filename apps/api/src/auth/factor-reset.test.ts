@@ -192,6 +192,7 @@ async function resetFixture() {
     request: (label = 'step') => ({
       requestId: `factor-reset-${label}-${randomUUID()}`,
       ipAddress: '198.19.0.1',
+      userAgent: null,
     }),
     cleanup: async () => {
       const agencyIds = [agencyA.id, agencyB.id];
