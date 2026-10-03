@@ -869,7 +869,7 @@ Critical workflows include organization setup, permissions, customers, products,
 
 # 28. Authentication and Authorization
 
-Use a managed OIDC-compatible identity provider.
+Use LingkodHR-owned password sign-in with a second factor; do not depend on an external identity provider.
 
 Security requirements:
 

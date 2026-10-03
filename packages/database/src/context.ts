@@ -38,7 +38,6 @@ export interface DatabaseContext {
   invitationTokenHash?: string;
   pendingTokenHash?: string;
   passwordResetTokenHash?: string;
-  providerSid?: string;
   capabilities?: readonly DatabaseCapability[];
 }
 
@@ -69,7 +68,6 @@ export async function setDatabaseContext(
       set_config('app.invitation_token_hash', ${context.invitationTokenHash ?? ''}, true),
       set_config('app.pending_token_hash', ${context.pendingTokenHash ?? ''}, true),
       set_config('app.password_reset_token_hash', ${context.passwordResetTokenHash ?? ''}, true),
-      set_config('app.provider_sid', ${context.providerSid ?? ''}, true),
       set_config('app.platform_security', ${hasCapability(context, 'platform-security') ? 'true' : ''}, true),
       set_config(
         'app.operational_provisioning',

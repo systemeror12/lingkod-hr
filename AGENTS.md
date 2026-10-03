@@ -56,7 +56,7 @@ Do not invent public-sector business rules.
 - **Killing by pattern.** Never use `pkill -f`, `pgrep | kill`, or kill a PID
   found by matching a process name, path, command, or worktree string. Capture
   PIDs for processes you start. For stale listeners on ports `3000`, `3001`,
-  `3002`, or `4100`, use `ss -H -ltnp`, then confirm `/proc/<pid>/cwd` is this
+  or `3002`, use `ss -H -ltnp`, then confirm `/proc/<pid>/cwd` is this
   worktree before killing it. Before finishing, stop only test or development
   processes started by the task or confirmed through this port check.
 - **Writing to developer state.** Treat `.env`, provider credentials, and the
@@ -95,9 +95,9 @@ The gate is complete only when all of these are true:
   replacing existing local secrets;
 - Docker Compose infrastructure is healthy;
 - `pnpm db:migrate` succeeds and reports no pending migrations;
-- no old LingkodHR process owns ports `3000`, `3001`, `3002`, or `4100` before
-  starting a new dev stack;
-- API, worker, and local OIDC health checks respond successfully;
+- no old LingkodHR process owns ports `3000`, `3001`, or `3002` before starting
+  a new dev stack;
+- API and worker health checks respond successfully;
 - for protected browser or admin work, the protected-shell fixture has been
   seeded and a seeded User signs in at `/sign-in` and reaches `/dashboard`.
 

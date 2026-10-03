@@ -265,18 +265,15 @@ model OrganizationUnitVersion {
 }
 
 model User {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  identityProvider String?   @map("identity_provider")
-  externalSubject  String?   @map("external_subject")
-  emailNormalized  String    @map("email_normalized") @db.Citext
-  displayName      String    @map("display_name")
-  globalStatus     String    @map("global_status")
-  emailVerifiedAt  DateTime? @map("email_verified_at") @db.Timestamptz(6)
-  lastLoginAt      DateTime? @map("last_login_at") @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  emailNormalized String    @map("email_normalized") @db.Citext
+  displayName     String    @map("display_name")
+  globalStatus    String    @map("global_status")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   memberships            AgencyMembership[]
-  identityLinks          ExternalIdentityLink[]
   sessions               UserSession[]
   securityEvents         SecurityEvent[]         @relation("SecurityEventUser")
   auditEvents            AuditEvent[]            @relation("AuditEventUser")
@@ -287,26 +284,8 @@ model User {
   passwordResetTokens    PasswordResetToken[]
   changedSeals           AgencySeal[]
 
-  @@unique([identityProvider, externalSubject])
   @@unique([emailNormalized])
   @@map("users")
-}
-
-model ExternalIdentityLink {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId       String    @map("user_id") @db.Uuid
-  issuer       String
-  subject      String
-  status       String
-  linkedAt     DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
-  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(6)
-  reason       String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
-
-  @@unique([issuer, subject])
-  @@index([userId, status])
-  @@map("external_identity_links")
 }
 
 model AgencyMembership {
@@ -600,7 +579,6 @@ model UserSession {
   agencyId              String    @map("agency_id") @db.Uuid
   agencyMembershipId    String    @map("agency_membership_id") @db.Uuid
   sessionTokenHash      Bytes     @unique @map("session_token_hash")
-  providerSid           String?   @map("provider_sid")
   authTime              DateTime? @map("auth_time") @db.Timestamptz(6)
   authenticationMethods String[]  @default([]) @map("authentication_methods")
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)

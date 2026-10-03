@@ -7,18 +7,15 @@ import { defineConfig, devices } from '@playwright/test';
 // Only those keys are read here; the main checkout and CI keep the defaults.
 const envFile = resolve(__dirname, '../../.env');
 const envFileValues = existsSync(envFile) ? parseEnv(readFileSync(envFile, 'utf8')) : {};
-for (const key of ['PLAYWRIGHT_APP_PORT', 'PLAYWRIGHT_API_PORT', 'PLAYWRIGHT_OIDC_PORT']) {
+for (const key of ['PLAYWRIGHT_APP_PORT', 'PLAYWRIGHT_API_PORT']) {
   const value = envFileValues[key];
   if (value && !process.env[key]) process.env[key] = value;
 }
 
-const oidcIssuer = `http://127.0.0.1:${process.env.PLAYWRIGHT_OIDC_PORT ?? '4100'}`;
 const apiPort = process.env.PLAYWRIGHT_API_PORT ?? '3101';
 const appPort = process.env.PLAYWRIGHT_APP_PORT ?? '3100';
 const apiUrl = `http://localhost:${apiPort}`;
 const appUrl = `http://localhost:${appPort}`;
-
-process.env.OIDC_ISSUER = oidcIssuer;
 
 export default defineConfig({
   testDir: './e2e',
@@ -40,15 +37,6 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'pnpm exec tsx e2e/local-oidc.ts',
-      url: `${oidcIssuer}/health`,
-      reuseExistingServer: !process.env.CI,
-      env: {
-        ...process.env,
-        OIDC_REDIRECT_URI: `${apiUrl}/api/v1/auth/callback`,
-      },
-    },
-    {
       command:
         'pnpm exec turbo run build --filter=@lingkod-hr/api && pnpm --filter @lingkod-hr/api exec tsx src/main.ts',
       url: `http://127.0.0.1:${apiPort}/api/v1/health`,
@@ -59,10 +47,6 @@ export default defineConfig({
         APP_URL: appUrl,
         API_URL: apiUrl,
         API_PORT: apiPort,
-        OIDC_ISSUER: oidcIssuer,
-        OIDC_CLIENT_ID: 'local-client',
-        OIDC_CLIENT_SECRET: 'local-client-secret',
-        OIDC_REDIRECT_URI: `${apiUrl}/api/v1/auth/callback`,
         DATA_ENCRYPTION_KEY: process.env.DATA_ENCRYPTION_KEY || Buffer.alloc(32, 7).toString('hex'),
       },
     },

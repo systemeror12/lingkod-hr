@@ -42,13 +42,11 @@ for _ in {1..1000}; do
   slot=$(((slot + 1) % 1000))
 done
 api_port=$((app_port + 1))
-oidc_port=$((app_port + 2))
 set_env() {
   if grep -q "^$1=" .env; then sed -i -E "s#^$1=.*#$1=$2#" .env; else echo "$1=$2" >>.env; fi
 }
 set_env PLAYWRIGHT_APP_PORT "$app_port"
 set_env PLAYWRIGHT_API_PORT "$api_port"
-set_env PLAYWRIGHT_OIDC_PORT "$oidc_port"
 
 # Use the main checkout's compose file so containers keep its bind mounts;
 # --no-recreate keeps a config drift here from restarting shared services.
@@ -64,4 +62,4 @@ run pnpm install --frozen-lockfile
 run pnpm db:migrate
 run pnpm --filter @lingkod-hr/web exec playwright install chromium
 
-echo "Worktree ready: database ${database}, E2E ports web ${app_port}, API ${api_port}, OIDC ${oidc_port}"
+echo "Worktree ready: database ${database}, E2E ports web ${app_port}, API ${api_port}"

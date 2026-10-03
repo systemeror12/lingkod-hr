@@ -121,19 +121,25 @@ In a second terminal, check the services:
 ```fish
 curl -fsS http://localhost:3001/api/v1/health
 curl -fsS http://localhost:3002/health
-curl -fsS http://127.0.0.1:4100/health
 ```
 
-Open <http://localhost:3000/dashboard>. The local OIDC provider signs you in as
-Marisol Santos with no password prompt. If an earlier login failed, use a
-private window or clear the `localhost` cookies.
+Open <http://localhost:3000/dashboard>. Without a session, the web sends you to
+`/sign-in`. Sign in as `marisol.santos@example.test` with the passphrase
+`local-only seed passphrase`. When asked for an authentication code, print the
+current one:
+
+```fish
+pnpm --filter @lingkod-hr/database dev:totp marisol.santos@example.test
+```
+
+The README's "After pulling changes or switching machines" section lists the
+seeded TOTP secret and Recovery Codes.
 
 | Service              | Address                               |
 | -------------------- | ------------------------------------- |
 | Web                  | `http://localhost:3000`               |
 | API health           | `http://localhost:3001/api/v1/health` |
 | Worker health        | `http://localhost:3002/health`        |
-| Local OIDC           | `http://127.0.0.1:4100`               |
 | PostgreSQL           | `localhost:55432`                     |
 | Redis                | `localhost:6379`                      |
 | SeaweedFS S3 API     | `http://localhost:8333`               |
@@ -163,10 +169,10 @@ existing values.
 
 ## Troubleshooting
 
-**Port already in use.** Check ports 3000, 3001, 3002, and 4100:
+**Port already in use.** Check ports 3000, 3001, and 3002:
 
 ```fish
-ss -ltnp | grep -E ':(3000|3001|3002|4100)([^0-9]|$)'; or true
+ss -ltnp | grep -E ':(3000|3001|3002)([^0-9]|$)'; or true
 ```
 
 Stop only old LingkodHR processes. Leave unrelated services alone.
