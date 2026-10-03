@@ -2159,10 +2159,14 @@ it.skipIf(!enabled)(
         ),
       ).rejects.toMatchObject(refused);
       // The sign-in's own code is a time step already accepted.
+      const { lastAcceptedStep } = await admin.userTotpFactor.findUniqueOrThrow({
+        where: { userId: user.id },
+      });
+      const replayed = totpCode(user.totpSecret ?? '', new Date(Number(lastAcceptedStep) * 30_000));
       await expect(
         service.reauthenticate(
           session,
-          { password: user.password, code: totpCode(user.totpSecret ?? '') },
+          { password: user.password, code: replayed },
           signInRequest('reauth-replay'),
         ),
       ).rejects.toMatchObject(refused);
