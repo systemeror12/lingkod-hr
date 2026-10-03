@@ -635,40 +635,44 @@ export class AuthService {
     this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.APP_URL);
   }
 
+  /** The per-IP limit for a sign-in step; a refusal is a LOGIN_FAILURE. */
+  async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
+    await this.refuseOverIpLimit(request, (transaction) =>
+      this.writeSignInFailure(transaction, request, {
+        userId: null,
+        emailHash,
+        reason: 'IP_RATE_LIMITED',
+      }),
+    );
+  }
+
   /**
    * The per-IP limit: 100 sign-in or Password Reset failures in 15 minutes, counted from Security
-   * Events. A refusal is a failure too, so a client that keeps trying stays refused.
+   * Events. The flow records its own refusal, which is a failure too, so a client that keeps trying
+   * stays refused. Failures are written after the attempt's slow work, so a burst of parallel
+   * attempts can each find the count under the limit and overshoot it once.
    */
-  async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
+  private async refuseOverIpLimit(
+    { ipAddress }: SignInRequest,
+    recordRefusal: (transaction: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    if (!ipAddress) return;
     const refused = await withDatabaseContext(
       { capabilities: ['platform-security'] },
       async (transaction) => {
-        if (!(await this.ipLimitReached(transaction, request))) return false;
-        await this.writeSignInFailure(transaction, request, {
-          userId: null,
-          emailHash,
-          reason: 'IP_RATE_LIMITED',
+        const failures = await transaction.securityEvent.count({
+          where: {
+            eventType: { in: ['LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE'] },
+            ipAddress,
+            occurredAt: { gte: new Date(Date.now() - IP_WINDOW_MS) },
+          },
         });
+        if (failures < IP_FAILURE_LIMIT) return false;
+        await recordRefusal(transaction);
         return true;
       },
     );
     if (refused) throw ipRateLimited();
-  }
-
-  /** Whether the request's IP address has used up the per-IP limit. */
-  private async ipLimitReached(
-    transaction: Prisma.TransactionClient,
-    { ipAddress }: SignInRequest,
-  ): Promise<boolean> {
-    if (!ipAddress) return false;
-    const failures = await transaction.securityEvent.count({
-      where: {
-        eventType: { in: ['LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE'] },
-        ipAddress,
-        occurredAt: { gte: new Date(Date.now() - IP_WINDOW_MS) },
-      },
-    });
-    return failures >= IP_FAILURE_LIMIT;
   }
 
   /**
@@ -1920,15 +1924,14 @@ export class AuthService {
       passwordResetTokenHash: tokenHash.toString('hex'),
       capabilities: ['platform-security'] as const,
     };
+    await this.refuseOverIpLimit(request, (transaction) =>
+      this.writeResetFailure(transaction, request, {
+        userId: null,
+        emailHash: null,
+        reason: 'IP_RATE_LIMITED',
+      }),
+    );
     const opened = await withDatabaseContext(scope, async (transaction) => {
-      if (await this.ipLimitReached(transaction, request)) {
-        await this.writeResetFailure(transaction, request, {
-          userId: null,
-          emailHash: null,
-          reason: 'IP_RATE_LIMITED',
-        });
-        return { status: 'IP_RATE_LIMITED' as const };
-      }
       const now = new Date();
       const link = await this.openResetLink(transaction, scope, tokenHash, now);
       if (link.status === 'INVALID') {
@@ -1971,7 +1974,6 @@ export class AuthService {
           : [];
       return { status: 'OPEN' as const, link, method, guess, codes };
     });
-    if (opened.status === 'IP_RATE_LIMITED') throw ipRateLimited();
     if (opened.status === 'INVALID') throw resetLinkInvalid();
     if (opened.status === 'REJECTED') {
       throw new AuthServiceError(opened.message, 400, 'PASSWORD_REJECTED');
