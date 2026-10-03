@@ -329,9 +329,24 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
     .getByRole('button', { name: new RegExp(name) })
     .first()
     .click();
+  // The review must not wait on a server round trip to update its URL. In CI that response
+  // landed after Escape had closed the review, and the review reopened.
+  await page.route(
+    (url) => url.searchParams.get('section') === 'successor' && url.searchParams.has('_rsc'),
+    () => new Promise<void>(() => undefined),
+  );
+  let escapeSent!: () => void;
+  const escape = new Promise<void>((resolve) => {
+    escapeSent = resolve;
+  });
+  await page.route('**/api/v1/agencies/*/organization-units/*/draft/*', async (route) => {
+    await escape;
+    await route.continue();
+  });
   await page.getByRole('button', { name: 'Prepare change' }).click();
   const dialog = page.getByRole('region', { name: 'Review Organization Unit successor' });
   await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(/section=successor/);
   await expect(dialog).toHaveAccessibleDescription(
     'Edit the proposed values and effective date. The current version remains unchanged until activation.',
   );
@@ -339,9 +354,11 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   await expect(dialog).toContainText(name);
   await expect(dialog).toContainText('Proposed successor');
   await page.getByRole('button', { name: 'Save Draft' }).click();
-  await expect(page.getByRole('status')).toContainText('Draft successor saved');
   await dialog.press('Escape');
+  escapeSent();
+  await expect(page.getByRole('status')).toContainText('Draft successor saved');
   await expect(dialog).toBeHidden();
+  await expect(page).not.toHaveURL(/section=successor/);
 });
 
 test('keeps a missing Unit explicit across reload and returns to the dated Tree', async ({
