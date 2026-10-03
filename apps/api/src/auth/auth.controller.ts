@@ -28,7 +28,7 @@ import {
   SESSION_COOKIE,
 } from './auth.service';
 import type { ActivationDone } from './auth.service';
-import type { AuthenticatedRequest } from './auth.types';
+import { signInRequest, type AuthenticatedRequest } from './auth.types';
 import { ReauthenticationGuard } from './reauthentication.guard';
 import type { MailMessage } from '../invitations/mail';
 import {
@@ -45,9 +45,6 @@ import {
   totpReplacementSchema,
   totpSignInSchema,
 } from './auth.schemas';
-
-/** Longest User-Agent header a Security Event keeps. */
-const USER_AGENT_MAX_LENGTH = 512;
 
 function translateError(error: unknown): never {
   if (error instanceof AuthServiceError) {
@@ -98,7 +95,7 @@ export class AuthController {
         parsed.data.email,
         parsed.data.password,
         parsed.data.membershipId ?? null,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       if (result.status === 'SIGNED_IN') {
         response.cookie(SESSION_COOKIE, result.session.token, {
@@ -140,11 +137,11 @@ export class AuthController {
     const secure = this.config.NODE_ENV === 'production';
     const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       const session = await this.authService.completeTotpSignIn(
         pendingToken ?? '',
         parsed.data.code,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
       response.cookie(SESSION_COOKIE, session.token, {
@@ -168,11 +165,11 @@ export class AuthController {
     const parsed = totpSignInSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException('A code is required.');
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       const result = await this.authService.confirmTotpEnrollment(
         cookieValue(request, PENDING_AUTHENTICATION_COOKIE) ?? '',
         parsed.data.code,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'RECOVERY_CODES', ...result });
     } catch (error: unknown) {
@@ -194,10 +191,10 @@ export class AuthController {
     }
     const secure = this.config.NODE_ENV === 'production';
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       const session = await this.authService.completeTotpEnrollment(
         cookieValue(request, PENDING_AUTHENTICATION_COOKIE) ?? '',
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
       response.cookie(SESSION_COOKIE, session.token, {
@@ -224,11 +221,11 @@ export class AuthController {
     const secure = this.config.NODE_ENV === 'production';
     const pendingToken = cookieValue(request, PENDING_AUTHENTICATION_COOKIE);
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       const result = await this.authService.completeRecoveryCodeSignIn(
         pendingToken ?? '',
         parsed.data.code,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.clearCookie(PENDING_AUTHENTICATION_COOKIE, cookieOptions(secure));
       response.cookie(SESSION_COOKIE, result.session.token, {
@@ -260,7 +257,7 @@ export class AuthController {
     try {
       const mail = await this.authService.requestPasswordReset(
         parsed.data.email,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.ACCEPTED).json({ status: 'REQUESTED' });
       if (mail) this.noticeAfterResponse(response, mail);
@@ -293,7 +290,7 @@ export class AuthController {
       const { notices } = await this.authService.completePasswordReset(
         resetToken.success ? resetToken.data : '',
         parsed.data,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'RESET' });
       for (const notice of notices) this.noticeAfterResponse(response, notice);
@@ -331,11 +328,11 @@ export class AuthController {
     if (!parsed.success) throw new BadRequestException('A password is required.');
     const secure = this.config.NODE_ENV === 'production';
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       const result = await this.authService.startActivation(
         invitationToken,
         parsed.data,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       if (result.status === 'ACTIVATED') {
         this.activated(response, result);
@@ -374,14 +371,14 @@ export class AuthController {
     const parsed = totpSignInSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException('A code is required.');
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       this.activated(
         response,
         await this.authService.completeActivationWithTotp(
           invitationToken,
           cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
           parsed.data.code,
-          this.signInRequest(request),
+          signInRequest(request),
         ),
       );
     } catch (error: unknown) {
@@ -402,14 +399,14 @@ export class AuthController {
     const parsed = recoveryCodeSignInSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException('A Recovery Code is required.');
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       this.activated(
         response,
         await this.authService.completeActivationWithRecoveryCode(
           invitationToken,
           cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
           parsed.data.code,
-          this.signInRequest(request),
+          signInRequest(request),
         ),
       );
     } catch (error: unknown) {
@@ -430,12 +427,12 @@ export class AuthController {
     const parsed = totpSignInSchema.safeParse(body);
     if (!parsed.success) throw new BadRequestException('A code is required.');
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       const result = await this.authService.confirmActivationEnrollment(
         invitationToken,
         cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
         parsed.data.code,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'RECOVERY_CODES', ...result });
     } catch (error: unknown) {
@@ -458,13 +455,13 @@ export class AuthController {
       throw new BadRequestException('Confirm that you saved your Recovery Codes.');
     }
     try {
-      await this.authService.assertIpAllowed(this.signInRequest(request));
+      await this.authService.assertIpAllowed(signInRequest(request));
       this.activated(
         response,
         await this.authService.finishActivationEnrollment(
           invitationToken,
           cookieValue(request, PENDING_ACTIVATION_COOKIE) ?? '',
-          this.signInRequest(request),
+          signInRequest(request),
         ),
       );
     } catch (error: unknown) {
@@ -556,7 +553,7 @@ export class AuthController {
       const { notice } = await this.authService.reauthenticate(
         request.authSession,
         parsed.data,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'REAUTHENTICATED' });
       if (notice) this.noticeAfterResponse(response, notice);
@@ -615,7 +612,7 @@ export class AuthController {
       const { revokedSessions, notices } = await this.authService.changePassword(
         request.authSession,
         parsed.data,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'CHANGED', revokedSessions });
       for (const notice of notices) this.noticeAfterResponse(response, notice);
@@ -654,7 +651,7 @@ export class AuthController {
       const { revokedSessions, notice } = await this.authService.confirmTotpReplacement(
         request.authSession,
         parsed.data.code,
-        this.signInRequest(request),
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'REPLACED', revokedSessions });
       this.noticeAfterResponse(response, notice);
@@ -732,13 +729,5 @@ export class AuthController {
       );
     }
     if (error.notice) this.noticeAfterResponse(response, error.notice);
-  }
-
-  private signInRequest(request: Request) {
-    return {
-      requestId: request.header('x-request-id') ?? 'unknown-request',
-      ipAddress: request.ip ?? null,
-      userAgent: request.header('user-agent')?.slice(0, USER_AGENT_MAX_LENGTH) ?? null,
-    };
   }
 }

@@ -26,7 +26,7 @@ import { CurrentContext, RequirePermission, RequireRole } from './auth.decorator
 import { PermissionGuard } from './permission.guard';
 import { ReauthenticationGuard } from './reauthentication.guard';
 import type { RequestContext } from '@lingkod-hr/auth';
-import type { AuthenticatedRequest } from './auth.types';
+import { signInRequest, type AuthenticatedRequest } from './auth.types';
 import { getConfig } from '@lingkod-hr/config';
 import {
   agencyIdSchema,
@@ -143,10 +143,7 @@ export class AgencyController {
         context,
         membershipId,
         parsedBody.data,
-        {
-          requestId: request.header('x-request-id') ?? 'unknown-request',
-          ipAddress: request.ip ?? null,
-        },
+        signInRequest(request),
       );
       response.status(HttpStatus.OK).json({ status: 'RESET', revokedSessions });
       response.once('close', () => void this.authService.sendNotice(notice));
