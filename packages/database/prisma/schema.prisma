@@ -178,6 +178,7 @@ model Agency {
   dtrDocuments                  DtrDocument[]
   attendancePayrollPublications AttendancePayrollPublication[]
   attendancePayrollFacts        AttendancePayrollFact[]
+  lockedUsers                   User[]                        @relation("UserLockingAgency")
 
   @@unique([id, code])
   @@map("agencies")
@@ -269,7 +270,9 @@ model User {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   emailNormalized String    @map("email_normalized") @db.Citext
   displayName     String    @map("display_name")
-  globalStatus    String    @map("global_status")
+  globalStatus     String    @map("global_status")
+  lockedAt         DateTime? @map("locked_at") @db.Timestamptz(6)
+  lockedByAgencyId String?   @map("locked_by_agency_id") @db.Uuid
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
   lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz(6)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -285,6 +288,7 @@ model User {
   passwordResetTokens    PasswordResetToken[]
   changedSeals           AgencySeal[]
   changedBuildingPhotos  AgencyBuildingPhoto[]
+  lockedByAgency         Agency?                 @relation("UserLockingAgency", fields: [lockedByAgencyId], references: [id], onDelete: Restrict)
 
   @@unique([emailNormalized])
   @@map("users")

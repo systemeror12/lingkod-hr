@@ -36,6 +36,8 @@ const enrollmentCandidateEmail = 'enrollment.candidate@example.test';
 // candidate, an MFA-Required HRMO Administrator, enrolls again.
 const securityOfficerEmail = 'security.officer@example.test';
 const factorResetCandidateEmail = 'factor.reset.candidate@example.test';
+// The same officer locks and unlocks this HRMO Administrator; each seed run unlocks them.
+const userLockCandidateEmail = 'user.lock.candidate@example.test';
 const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
 
 /**
@@ -67,6 +69,7 @@ const seededUserEmails = [
   enrollmentCandidateEmail,
   securityOfficerEmail,
   factorResetCandidateEmail,
+  userLockCandidateEmail,
 ];
 
 function manilaToday(): string {
@@ -682,6 +685,8 @@ async function seed(): Promise<void> {
     update: {
       displayName: 'Marisol Santos',
       globalStatus: 'ACTIVE',
+      lockedAt: null,
+      lockedByAgencyId: null,
       emailVerifiedAt: new Date(),
     },
     create: {
@@ -711,7 +716,12 @@ async function seed(): Promise<void> {
   }
   const preparerUser = await prisma.user.upsert({
     where: { emailNormalized: 'personnel.preparer@example.test' },
-    update: { displayName: 'Personnel Preparer', globalStatus: 'ACTIVE' },
+    update: {
+      displayName: 'Personnel Preparer',
+      globalStatus: 'ACTIVE',
+      lockedAt: null,
+      lockedByAgencyId: null,
+    },
     create: {
       emailNormalized: 'personnel.preparer@example.test',
       displayName: 'Personnel Preparer',
@@ -733,7 +743,12 @@ async function seed(): Promise<void> {
     }));
   const enrollmentUser = await prisma.user.upsert({
     where: { emailNormalized: enrollmentCandidateEmail },
-    update: { displayName: 'Enrollment Candidate', globalStatus: 'ACTIVE' },
+    update: {
+      displayName: 'Enrollment Candidate',
+      globalStatus: 'ACTIVE',
+      lockedAt: null,
+      lockedByAgencyId: null,
+    },
     create: {
       emailNormalized: enrollmentCandidateEmail,
       displayName: 'Enrollment Candidate',
@@ -784,10 +799,20 @@ async function seed(): Promise<void> {
       displayName: 'Factor Reset Candidate',
       role: 'hrmo_administrator',
     },
+    {
+      email: userLockCandidateEmail,
+      displayName: 'User Lock Candidate',
+      role: 'hrmo_administrator',
+    },
   ]) {
     const fixtureUser = await prisma.user.upsert({
       where: { emailNormalized: fixture.email },
-      update: { displayName: fixture.displayName, globalStatus: 'ACTIVE' },
+      update: {
+        displayName: fixture.displayName,
+        globalStatus: 'ACTIVE',
+        lockedAt: null,
+        lockedByAgencyId: null,
+      },
       create: {
         emailNormalized: fixture.email,
         displayName: fixture.displayName,
@@ -831,7 +856,7 @@ async function seed(): Promise<void> {
   async function seedInvitation(email: string, token: string, roleCodes: string[]) {
     const invitee = await prisma.user.upsert({
       where: { emailNormalized: email },
-      update: { globalStatus: 'ACTIVE' },
+      update: { globalStatus: 'ACTIVE', lockedAt: null, lockedByAgencyId: null },
       create: {
         emailNormalized: email,
         displayName: email === phase5OwnerEmail ? 'Phase5 Owner' : 'Phase5 Restricted',
@@ -2757,7 +2782,12 @@ async function seed(): Promise<void> {
   await resetProfile(foreignAgency);
   const foreignUser = await prisma.user.upsert({
     where: { emailNormalized: 'foreign.personnel@example.test' },
-    update: { displayName: 'Foreign Personnel User', globalStatus: 'ACTIVE' },
+    update: {
+      displayName: 'Foreign Personnel User',
+      globalStatus: 'ACTIVE',
+      lockedAt: null,
+      lockedByAgencyId: null,
+    },
     create: {
       emailNormalized: 'foreign.personnel@example.test',
       displayName: 'Foreign Personnel User',

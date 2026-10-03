@@ -224,6 +224,11 @@ export interface AgencyMember {
   email: string;
   membershipStatus: string;
   globalStatus: string;
+  /**
+   * A Global User Lock as this Agency may see it: whether this Agency placed it and whether this
+   * Agency may lift it. Never which other Agency placed it, or why.
+   */
+  lock: { byThisAgency: boolean; unlockable: boolean } | null;
   hasAuthenticator: boolean;
 }
 
@@ -565,6 +570,19 @@ function invitationExpired(): AuthServiceError {
 
 function activationExpired(): AuthServiceError {
   return new AuthServiceError('Your setup timed out. Start again.', 401, 'ACTIVATION_EXPIRED');
+}
+
+function assertLockPermission(
+  context: RequestContext,
+  permission: 'security.users.lock' | 'security.users.unlock',
+): void {
+  if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+    throw new AuthServiceError(
+      'The current Membership cannot lock or unlock Users.',
+      403,
+      'USER_LOCK_FORBIDDEN',
+    );
+  }
 }
 
 function assertUserActive(globalStatus: string): void {
@@ -2329,11 +2347,27 @@ export class AuthService {
               displayName: true,
               emailNormalized: true,
               globalStatus: true,
+              lockedByAgencyId: true,
             },
           },
         },
         orderBy: [{ user: { displayName: 'asc' } }, { user: { emailNormalized: 'asc' } }],
       });
+      // Unlock authority belongs to the User; whether a row offers it depends on that membership.
+      const authority = new Map<string, boolean>();
+      for (const { user } of memberships) {
+        if (!user.lockedByAgencyId || authority.has(user.id)) continue;
+        authority.set(
+          user.id,
+          user.lockedByAgencyId === context.agencyId ||
+            !(await this.lockingAgencyHasUser(
+              transaction,
+              context,
+              user.id,
+              user.lockedByAgencyId,
+            )),
+        );
+      }
       // Factor rows hold secrets, so the Agency Context learns only which members have one.
       const withFactor = new Set(
         (
@@ -2348,6 +2382,12 @@ export class AuthService {
         email: user.emailNormalized,
         membershipStatus: status,
         globalStatus: user.globalStatus,
+        lock: user.lockedByAgencyId
+          ? {
+              byThisAgency: user.lockedByAgencyId === context.agencyId,
+              unlockable: status === 'ACTIVE' && authority.get(user.id) === true,
+            }
+          : null,
         hasAuthenticator: withFactor.has(user.id),
       }));
     });
@@ -2373,24 +2413,7 @@ export class AuthService {
       );
     }
     return withDatabaseContext(context, async (transaction) => {
-      // Held to commit, so a suspension can't land between this check and the reset.
-      await transaction.$queryRaw`
-        SELECT 1 FROM "agency_memberships" WHERE "id" = ${membershipId}::uuid FOR UPDATE`;
-      const target = await transaction.agencyMembership.findFirst({
-        where: { id: membershipId, agencyId: context.agencyId, status: 'ACTIVE' },
-        select: {
-          userId: true,
-          agency: { select: { name: true } },
-          user: { select: { emailNormalized: true } },
-        },
-      });
-      if (!target) {
-        throw new AuthServiceError(
-          'No active member of this Agency matches.',
-          404,
-          'MEMBER_NOT_FOUND',
-        );
-      }
+      const target = await this.activeMember(transaction, context, membershipId);
       if (target.userId === context.userId) {
         throw new AuthServiceError(
           'Reset your own authenticator from Account Security, or ask another Security Administrator.',
@@ -2420,23 +2443,14 @@ export class AuthService {
       await transaction.userRecoveryCode.deleteMany({ where: { userId } });
       await transaction.pendingAuthentication.deleteMany({ where: { userId } });
       const now = new Date();
-      const revoked = await transaction.userSession.updateManyAndReturn({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: now, revocationReason: 'MFA_FACTOR_RESET' },
-        select: { id: true },
-      });
-      // Every revocation is recorded in the acting Agency, against the target's membership there:
-      // the target's other Agencies learn nothing of it.
-      for (const { id } of revoked) {
-        await this.recordSystemSessionRevocation(
-          transaction,
-          { id, agencyId: context.agencyId, userId, agencyMembershipId: membershipId },
-          'MFA_FACTOR_RESET',
-          request.requestId,
-        );
-      }
-      const revokedSessions = revoked.length;
-      await setDatabaseContext(transaction, context);
+      const revokedSessions = await this.revokeMemberSessions(
+        transaction,
+        context,
+        { userId, membershipId },
+        'MFA_FACTOR_RESET',
+        request.requestId,
+        now,
+      );
       await this.recordSecurityEvent(
         transaction,
         { ...context, userId, membershipId },
@@ -2467,6 +2481,220 @@ export class AuthService {
         notice: factorResetNotice(target.user.emailNormalized, target.agency.name, now),
       };
     });
+  }
+
+  /**
+   * Global User Lock (#364): denies the User every Agency and ends every session, without changing
+   * any Agency Membership. The lock records the acting Agency, and is recorded there only.
+   */
+  async lockUser(
+    context: RequestContext,
+    membershipId: string,
+    reason: string,
+    request: SignInRequest,
+  ): Promise<{ revokedSessions: number }> {
+    assertLockPermission(context, 'security.users.lock');
+    return withDatabaseContext(context, async (transaction) => {
+      const { userId } = await this.activeMember(transaction, context, membershipId);
+      if (userId === context.userId) {
+        throw new AuthServiceError(
+          'Ask another Security Administrator to lock your account.',
+          403,
+          'SELF_USER_LOCK',
+        );
+      }
+      const now = new Date();
+      const locked = await transaction.user.updateMany({
+        where: { id: userId, globalStatus: 'ACTIVE' },
+        data: { globalStatus: 'LOCKED', lockedAt: now, lockedByAgencyId: context.agencyId },
+      });
+      if (locked.count === 0) {
+        throw new AuthServiceError('This User is already locked.', 409, 'USER_ALREADY_LOCKED');
+      }
+      const revokedSessions = await this.revokeMemberSessions(
+        transaction,
+        context,
+        { userId, membershipId },
+        'USER_LOCKED',
+        request.requestId,
+        now,
+      );
+      await this.recordSecurityEvent(
+        transaction,
+        { ...context, userId, membershipId },
+        'USER_LOCKED',
+        request.requestId,
+        {
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          reason,
+          revokedSessions,
+        },
+      );
+      await this.recordAuditEvent(transaction, context, {
+        action: 'USER_LOCKED',
+        entityType: 'User',
+        entityId: userId,
+        previousStatus: 'ACTIVE',
+        newStatus: 'LOCKED',
+        reason,
+        requestId: request.requestId,
+        metadata: { targetMembershipId: membershipId, revokedSessions },
+      });
+      return { revokedSessions };
+    });
+  }
+
+  /**
+   * Lifts a Global User Lock (#364). Only the locking Agency may, unless it no longer has the User
+   * as an ACTIVE member; then any Agency that does may, and the event says the locking Agency was
+   * gone without naming it. A Password Reset never lifts a lock.
+   */
+  async unlockUser(
+    context: RequestContext,
+    membershipId: string,
+    reason: string,
+    request: SignInRequest,
+  ): Promise<{ revokedSessions: number }> {
+    assertLockPermission(context, 'security.users.unlock');
+    return withDatabaseContext(context, async (transaction) => {
+      const { userId } = await this.activeMember(transaction, context, membershipId);
+      await transaction.$queryRaw`SELECT 1 FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
+      const { lockedByAgencyId } = await transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { lockedByAgencyId: true },
+      });
+      if (!lockedByAgencyId) {
+        throw new AuthServiceError('This User is not locked.', 409, 'USER_NOT_LOCKED');
+      }
+      const lockingAgencyGone =
+        lockedByAgencyId !== context.agencyId &&
+        !(await this.lockingAgencyHasUser(transaction, context, userId, lockedByAgencyId));
+      if (lockedByAgencyId !== context.agencyId && !lockingAgencyGone) {
+        throw new AuthServiceError(
+          'Only a Security Administrator of the Agency that locked this User can unlock them.',
+          403,
+          'UNLOCK_NOT_PERMITTED',
+        );
+      }
+      await transaction.user.update({
+        where: { id: userId },
+        data: { globalStatus: 'ACTIVE', lockedAt: null, lockedByAgencyId: null },
+      });
+      const revokedSessions = await this.revokeMemberSessions(
+        transaction,
+        context,
+        { userId, membershipId },
+        'USER_UNLOCKED',
+        request.requestId,
+        new Date(),
+      );
+      await this.recordSecurityEvent(
+        transaction,
+        { ...context, userId, membershipId },
+        'USER_UNLOCKED',
+        request.requestId,
+        {
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          reason,
+          lockingAgencyGone,
+          revokedSessions,
+        },
+      );
+      await this.recordAuditEvent(transaction, context, {
+        action: 'USER_UNLOCKED',
+        entityType: 'User',
+        entityId: userId,
+        previousStatus: 'LOCKED',
+        newStatus: 'ACTIVE',
+        reason,
+        requestId: request.requestId,
+        metadata: { targetMembershipId: membershipId, lockingAgencyGone, revokedSessions },
+      });
+      return { revokedSessions };
+    });
+  }
+
+  /**
+   * The ACTIVE member of the acting Agency that a security action targets. The membership row is
+   * held to commit, so a suspension can't land between this check and the action.
+   */
+  private async activeMember(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    membershipId: string,
+  ) {
+    await transaction.$queryRaw`
+      SELECT 1 FROM "agency_memberships" WHERE "id" = ${membershipId}::uuid FOR NO KEY UPDATE`;
+    const member = await transaction.agencyMembership.findFirst({
+      where: { id: membershipId, agencyId: context.agencyId, status: 'ACTIVE' },
+      select: {
+        userId: true,
+        agency: { select: { name: true } },
+        user: { select: { emailNormalized: true } },
+      },
+    });
+    if (!member) {
+      throw new AuthServiceError(
+        'No active member of this Agency matches.',
+        404,
+        'MEMBER_NOT_FOUND',
+      );
+    }
+    return member;
+  }
+
+  /**
+   * Revokes every session of the member's User, in every Agency. Each revocation is recorded in the
+   * acting Agency, against the member's membership there, so the User's other Agencies learn
+   * nothing of it. Leaves the transaction in `context`.
+   */
+  private async revokeMemberSessions(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    member: { userId: string; membershipId: string },
+    reason: string,
+    requestId: string,
+    now: Date,
+  ): Promise<number> {
+    const { userId, membershipId } = member;
+    // Sessions in the User's other Agencies are visible only in the User's own context.
+    await setDatabaseContext(transaction, { agencyId: context.agencyId, userId, membershipId });
+    const revoked = await transaction.userSession.updateManyAndReturn({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: now, revocationReason: reason },
+      select: { id: true },
+    });
+    for (const { id } of revoked) {
+      await this.recordSystemSessionRevocation(
+        transaction,
+        { id, agencyId: context.agencyId, userId, agencyMembershipId: membershipId },
+        reason,
+        requestId,
+      );
+    }
+    await setDatabaseContext(transaction, context);
+    return revoked.length;
+  }
+
+  /**
+   * Whether the locking Agency still has the User as an ACTIVE member, which decides who may unlock.
+   * Read in the User's own context, since the membership is in another Agency. Leaves the
+   * transaction in `context`.
+   */
+  private async lockingAgencyHasUser(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    userId: string,
+    lockedByAgencyId: string,
+  ): Promise<boolean> {
+    await setDatabaseContext(transaction, { agencyId: context.agencyId, userId });
+    const memberships = await transaction.agencyMembership.count({
+      where: { userId, agencyId: lockedByAgencyId, status: 'ACTIVE' },
+    });
+    await setDatabaseContext(transaction, context);
+    return memberships > 0;
   }
 
   /**
@@ -2827,7 +3055,7 @@ export class AuthService {
       where: {
         agencyId: context.agencyId,
         employeeId,
-        status: { in: ['ACTIVE', 'LOCKED', 'SUSPENDED'] },
+        status: { in: ['ACTIVE', 'SUSPENDED'] },
       },
       select: { id: true },
     });
@@ -3572,7 +3800,15 @@ export class AuthService {
     emailHash: Buffer,
   ): Promise<AuthenticatedSession & { token: string }> {
     const now = new Date();
-    await transaction.user.update({ where: { id: userId }, data: { lastLoginAt: now } });
+    // Holds the User row through session creation, so a Global User Lock either commits first and
+    // refuses this sign-in, or waits and then revokes the new session.
+    const active = await transaction.user.updateMany({
+      where: { id: userId, globalStatus: 'ACTIVE' },
+      data: { lastLoginAt: now },
+    });
+    if (active.count !== 1) {
+      throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+    }
     // A full sign-in resets the second-factor count and the email's Sign-in Cool-down. A password
     // disabled while this sign-in was under way refuses it.
     const usable = await transaction.userPassword.updateMany({

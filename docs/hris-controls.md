@@ -178,6 +178,8 @@ Lock controls:
 - Only a Security Administrator places or lifts a Global User Lock. No count of failed sign-in attempts sets LOCKED; repeated failures start a Sign-in Cool-down instead.
 - A lock has no expiry, and a Password Reset never lifts it.
 - Other Agencies see only that the User is locked by another Agency's Security Administrator, without that Agency's name, reason, or events.
+- Lock and unlock require a reason and the Reauthentication Window. No one locks their own account.
+- The Security Events and audit events `USER_LOCKED` and `USER_UNLOCKED` and the session revocations are recorded in the acting Agency only. An unlock after authority passed on records that the locking Agency was gone, without naming it.
 
 Invalid examples:
 

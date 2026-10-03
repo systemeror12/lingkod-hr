@@ -98,3 +98,10 @@ export const factorResetSchema = z
     note: z.string().trim().min(1).max(1000),
   })
   .strict();
+
+/** Why a Security Administrator locks or unlocks a User. */
+export const userLockSchema = z
+  .object({
+    reason: z.string().trim().min(1).max(1000),
+  })
+  .strict();

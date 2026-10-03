@@ -96,6 +96,9 @@ async function activationFixture(
         emailNormalized: email,
         displayName: 'Existing Invitee',
         globalStatus: options.existingUser.globalStatus ?? 'ACTIVE',
+        ...(options.existingUser.globalStatus === 'LOCKED'
+          ? { lockedAt: new Date(), lockedByAgencyId: agency.id }
+          : {}),
       },
     });
     await admin.userPassword.create({

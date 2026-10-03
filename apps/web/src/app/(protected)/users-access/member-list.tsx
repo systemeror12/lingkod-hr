@@ -25,8 +25,12 @@ export interface AgencyMember {
   email: string;
   membershipStatus: string;
   globalStatus: string;
+  /** Never says which other Agency placed a lock, or why. */
+  lock: { byThisAgency: boolean; unlockable: boolean } | null;
   hasAuthenticator: boolean;
 }
+
+type LockAction = { kind: 'lock' | 'unlock'; member: AgencyMember };
 
 const membershipStatus: Record<string, StatusDisplay> = {
   ACTIVE: { label: 'Active', tone: 'success' },
@@ -46,21 +50,28 @@ function eventValue(event: { currentTarget: EventTarget }): string {
 
 /**
  * The Agency's members with their membership status, Global User Lock, and whether each has an
- * authenticator. Holders of `security.mfa.reset_factor` may reset another active member's factor.
+ * authenticator. Holders of `security.mfa.reset_factor` may reset another active member's factor;
+ * holders of `security.users.lock` and `security.users.unlock` may lock and unlock Users.
  */
 export function MemberList({
   agencyId,
   currentUserId,
   canResetFactor,
+  canLock,
+  canUnlock,
   initial,
 }: {
   agencyId: string;
   currentUserId: string;
   canResetFactor: boolean;
+  canLock: boolean;
+  canUnlock: boolean;
   initial: AgencyMember[];
 }) {
   const [members, setMembers] = useState(initial);
   const [resetting, setResetting] = useState<AgencyMember | null>(null);
+  const [locking, setLocking] = useState<LockAction | null>(null);
+  const hasActions = canResetFactor || canLock || canUnlock;
   const [done, setDone] = useState('');
   const { guarded, prompt } = useReauthentication();
 
@@ -86,7 +97,7 @@ export function MemberList({
               <Th>Membership</Th>
               <Th>Account</Th>
               <Th>Authenticator</Th>
-              {canResetFactor ? <Th>Action</Th> : null}
+              {hasActions ? <Th>Action</Th> : null}
             </tr>
           </thead>
           <tbody>
@@ -95,10 +106,11 @@ export function MemberList({
                 label: member.membershipStatus,
                 tone: 'neutral' as const,
               };
-              const resettable =
-                member.membershipStatus === 'ACTIVE' &&
-                member.hasAuthenticator &&
-                member.userId !== currentUserId;
+              const actsOnOther =
+                member.membershipStatus === 'ACTIVE' && member.userId !== currentUserId;
+              const resettable = canResetFactor && actsOnOther && member.hasAuthenticator;
+              const lockable = canLock && actsOnOther && member.globalStatus === 'ACTIVE';
+              const unlockable = canUnlock && member.lock?.unlockable === true;
               return (
                 <Tr key={member.membershipId}>
                   <Td>
@@ -112,26 +124,47 @@ export function MemberList({
                   </Td>
                   <Td>
                     {member.globalStatus === 'LOCKED' ? (
-                      <StatusTag tone="danger">Locked</StatusTag>
+                      <>
+                        <StatusTag tone="danger">Locked</StatusTag>
+                        {member.lock?.byThisAgency === false ? (
+                          <span className="mt-1 block text-caption text-ink-muted">
+                            By another Agency’s Security Administrator
+                          </span>
+                        ) : null}
+                      </>
                     ) : (
                       <StatusTag tone="success">Active</StatusTag>
                     )}
                   </Td>
                   <Td>{member.hasAuthenticator ? 'Set up' : 'Not set up'}</Td>
-                  {canResetFactor ? (
+                  {hasActions ? (
                     <Td>
-                      {resettable ? (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => {
-                            setDone('');
-                            setResetting(member);
-                          }}
-                        >
-                          Reset authenticator
-                        </Button>
-                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        {resettable ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              setDone('');
+                              setResetting(member);
+                            }}
+                          >
+                            Reset authenticator
+                          </Button>
+                        ) : null}
+                        {lockable || unlockable ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                              setDone('');
+                              setLocking({ kind: lockable ? 'lock' : 'unlock', member });
+                            }}
+                          >
+                            {lockable ? 'Lock account' : 'Unlock account'}
+                          </Button>
+                        ) : null}
+                      </div>
                     </Td>
                   ) : null}
                 </Tr>
@@ -161,8 +194,139 @@ export function MemberList({
           }}
         />
       ) : null}
+      {locking ? (
+        <LockDialog
+          agencyId={agencyId}
+          action={locking}
+          guarded={guarded}
+          onClose={() => setLocking(null)}
+          onDone={() => {
+            const { kind, member: target } = locking;
+            setMembers((current) =>
+              current.map((member) =>
+                member.userId !== target.userId
+                  ? member
+                  : kind === 'lock'
+                    ? {
+                        ...member,
+                        globalStatus: 'LOCKED',
+                        lock: { byThisAgency: true, unlockable: true },
+                      }
+                    : { ...member, globalStatus: 'ACTIVE', lock: null },
+              ),
+            );
+            const name = target.displayName ?? target.email;
+            setDone(
+              kind === 'lock'
+                ? `${name}’s account is locked in every Agency and they were signed out everywhere.`
+                : `${name}’s account is unlocked. They can sign in again.`,
+            );
+            setLocking(null);
+          }}
+        />
+      ) : null}
       {prompt}
     </>
+  );
+}
+
+/** Records why the administrator locks or unlocks the User, then does it. */
+function LockDialog({
+  agencyId,
+  action: { kind, member },
+  guarded,
+  onClose,
+  onDone,
+}: {
+  agencyId: string;
+  action: LockAction;
+  guarded: (request: () => Promise<Response>) => Promise<Response>;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const name = member.displayName ?? member.email;
+  const title = kind === 'lock' ? 'Lock account' : 'Unlock account';
+  const failure = `The account could not be ${kind === 'lock' ? 'locked' : 'unlocked'}.`;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setError('');
+    if (!reason.trim()) {
+      setError('Add the reason.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await guarded(() =>
+        fetch(`/api/v1/agencies/${agencyId}/members/${member.membershipId}/${kind}`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        }),
+      );
+      if (response.ok) {
+        onDone();
+        return;
+      }
+      setError((await refusal(response)).message ?? `${failure} Try again.`);
+    } catch {
+      setError(`${failure} Check the connection and try again.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
+      }}
+    >
+      <DialogContent size="compact" aria-busy={busy}>
+        <DialogHeader>
+          <div className="grid gap-1">
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>
+              {kind === 'lock'
+                ? `${name} can’t sign in to any Agency until a Security Administrator unlocks them, and is signed out everywhere. A password reset doesn’t unlock them.`
+                : `${name} can sign in again with their current password and authenticator.`}
+            </DialogDescription>
+          </div>
+        </DialogHeader>
+        <DialogBody>
+          <form className="grid gap-4" id="user-lock-form" onSubmit={submit} noValidate>
+            <FormError message={error} />
+            <Field label="Reason">
+              <textarea
+                className={inputClass}
+                required
+                maxLength={1000}
+                value={reason}
+                onChange={(event) => setReason(eventValue(event))}
+              />
+            </Field>
+            <p className="m-0 text-caption text-ink-muted">
+              {kind === 'lock'
+                ? 'Say what you suspect. Only your Agency sees the reason.'
+                : 'Say what the review found. Only your Agency sees the reason.'}
+            </p>
+          </form>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="secondary" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="user-lock-form" disabled={busy}>
+            {busy ? (kind === 'lock' ? 'Locking…' : 'Unlocking…') : title}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
