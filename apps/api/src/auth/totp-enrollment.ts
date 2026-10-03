@@ -14,9 +14,9 @@ import { prismaBytes } from '../invitations/invitation-utils';
 
 /*
  * TOTP enrollment held on a pending authentication row, whatever its purpose: sign-in, Invitation
- * Activation, or re-enrollment after a Factor Reset. The secret is sealed for the User and the
- * pending row's id, which becomes the factor id, so nothing is written to the User's factor or
- * Recovery Codes until the caller's final transaction.
+ * Activation, re-enrollment after a Factor Reset, or a signed-in User replacing their factor. The
+ * secret is sealed for the User and the pending row's id, which becomes the factor id, so nothing
+ * is written to the User's factor or Recovery Codes until the caller's final transaction.
  */
 
 export const ENROLL_SCAN_STAGE = 'ENROLL_SCAN';
@@ -32,6 +32,17 @@ export function beginTotpEnrollment(
   return { envelope: sealTotpSecret(secret, key, owner), otpauthUri: totpUri(secret, account) };
 }
 
+/** The time step of a code that confirms a pending secret, or null when it doesn't match. */
+export function acceptEnrollmentCode(
+  key: ProtectedValueKey,
+  owner: TotpSecretOwner,
+  envelope: Buffer,
+  code: string,
+  at: Date = new Date(),
+): number | null {
+  return acceptTotpCode(openTotpSecret(envelope, key, owner), code, 0, at);
+}
+
 /**
  * Checks the code that confirms a pending secret. When it matches, returns its step and a new set
  * of Recovery Codes with their hashes; the codes are shown once and only the hashes are kept.
@@ -43,7 +54,7 @@ export async function confirmTotpEnrollment(
   code: string,
   at: Date = new Date(),
 ): Promise<{ step: number; recoveryCodes: string[]; recoveryCodeHashes: string[] } | null> {
-  const step = acceptTotpCode(openTotpSecret(envelope, key, owner), code, 0, at);
+  const step = acceptEnrollmentCode(key, owner, envelope, code, at);
   if (step === null) return null;
   const recoveryCodes = generateRecoveryCodes();
   return {
@@ -54,16 +65,15 @@ export async function confirmTotpEnrollment(
 }
 
 /**
- * Writes the factor and Recovery Codes of a confirmed enrollment. The transaction must be in the
- * User's context; the caller deletes the pending row in the same transaction.
+ * Writes the factor of a confirmed enrollment, whose id is the pending row's. The transaction must
+ * be in the User's context; the caller deletes the pending row in the same transaction.
  */
-export async function writeTotpEnrollment(
+export async function writeTotpFactor(
   transaction: Prisma.TransactionClient,
   pending: {
     id: string;
     enrollmentSecretEnvelope: Uint8Array | null;
     enrollmentAcceptedStep: bigint | null;
-    recoveryCodeHashes: string[];
   },
   userId: string,
 ): Promise<void> {
@@ -78,6 +88,20 @@ export async function writeTotpEnrollment(
       lastAcceptedStep: pending.enrollmentAcceptedStep,
     },
   });
+}
+
+/** Writes the factor and Recovery Codes of a confirmed enrollment, as `writeTotpFactor` does. */
+export async function writeTotpEnrollment(
+  transaction: Prisma.TransactionClient,
+  pending: {
+    id: string;
+    enrollmentSecretEnvelope: Uint8Array | null;
+    enrollmentAcceptedStep: bigint | null;
+    recoveryCodeHashes: string[];
+  },
+  userId: string,
+): Promise<void> {
+  await writeTotpFactor(transaction, pending, userId);
   await transaction.userRecoveryCode.createMany({
     data: pending.recoveryCodeHashes.map((codeHash) => ({ userId, codeHash })),
   });

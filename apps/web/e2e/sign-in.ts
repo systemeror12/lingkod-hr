@@ -100,13 +100,13 @@ export async function signIn(
  * Activates an invitation through `/invite/<token>` and leaves `page` signed in on `/dashboard`.
  * A first-time invitee sets `name` and a new password. An existing User proves the seed password
  * and answers the seeded authenticator. Either one enrolls a new authenticator when the invited
- * roles need MFA and the User has none.
+ * roles need MFA and the User has none, and answers its secret.
  */
 export async function activateInvitation(
   page: Page,
   url: string,
   options: { name?: string; password?: string } = {},
-): Promise<void> {
+): Promise<string | null> {
   await page.goto(url);
   if (options.name) {
     await page.getByLabel('Full name').fill(options.name);
@@ -120,11 +120,13 @@ export async function activateInvitation(
   const enroll = page.getByRole('heading', { name: 'Set up your authenticator' });
   const done = page.getByRole('heading', { name: /^You now have access to / });
   await expect(enroll.or(codeField).or(done).first()).toBeVisible();
+  let enrolledSecret: string | null = null;
   if (await enroll.isVisible()) {
     await page.getByText('Show setup key').click();
     const otpauthUri = await page.getByTestId('otpauth-uri').textContent();
     expect(otpauthUri).toMatch(/^otpauth:\/\/totp\//);
     const secret = new URL(otpauthUri ?? '').searchParams.get('secret') ?? '';
+    enrolledSecret = secret;
     await codeField.fill(totpCode(secret, new Date()));
     await page.getByRole('button', { name: 'Confirm code' }).click();
     await expect(
@@ -139,4 +141,5 @@ export async function activateInvitation(
   await expect(done).toBeVisible();
   await page.getByRole('button', { name: 'Open workspace' }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
+  return enrolledSecret;
 }

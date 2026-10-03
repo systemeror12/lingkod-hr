@@ -681,10 +681,11 @@ model UserRecoveryCode {
 }
 
 /// A pending sign-in (5 minutes) or pending activation (15 minutes), held by an HTTP-only cookie
-/// whose token is stored only as `tokenHash`.
+/// whose token is stored only as `tokenHash`; or a signed-in User's TOTP replacement (5 minutes),
+/// which has no token and is found by its User.
 model PendingAuthentication {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tokenHash                Bytes    @unique @map("token_hash")
+  tokenHash                Bytes?   @unique @map("token_hash")
   purpose                  String
   userId                   String?  @map("user_id") @db.Uuid
   invitationId             String?  @map("invitation_id") @db.Uuid
