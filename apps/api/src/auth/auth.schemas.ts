@@ -1,20 +1,5 @@
 import { z } from 'zod';
 
-const token = z.string().min(1).max(512);
-
-export const loginQuerySchema = z
-  .object({
-    membershipId: z.string().uuid().optional(),
-  })
-  .strict();
-
-export const callbackQuerySchema = z
-  .object({
-    state: token,
-    code: z.string().min(1).max(4096),
-  })
-  .strict();
-
 export const passwordSignInSchema = z
   .object({
     email: z.string().trim().min(1).max(320),
@@ -103,7 +88,3 @@ export const hrmoInvitationSchema = z
   .strict();
 
 export const agencyIdSchema = z.string().uuid();
-
-export const backchannelLogoutSchema = z
-  .object({ logout_token: z.string().min(1).max(8192) })
-  .strict();

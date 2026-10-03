@@ -78,7 +78,6 @@ is not exposed through the web or API runtime.
 | Web              | `http://localhost:3000`               |
 | API health       | `http://localhost:3001/api/v1/health` |
 | Worker health    | `http://localhost:3002/health`        |
-| Local OIDC       | `http://127.0.0.1:4100`               |
 | PostgreSQL       | `localhost:55432`                     |
 | Redis            | `localhost:6379`                      |
 | SeaweedFS S3 API | `http://localhost:8333`               |
@@ -111,7 +110,7 @@ old LingkodHR process owns the normal development ports before starting a new
 stack:
 
 ```bash
-ss -ltnp | grep -E ':(3000|3001|3002|4100)([^0-9]|$)' || true
+ss -ltnp | grep -E ':(3000|3001|3002)([^0-9]|$)' || true
 ```
 
 Stop only identified LingkodHR processes from an older run. Leave unrelated
@@ -121,7 +120,6 @@ services alone. Start development and verify the service boundaries:
 pnpm run dev
 curl -fsS http://localhost:3001/api/v1/health
 curl -fsS http://localhost:3002/health
-curl -fsS http://127.0.0.1:4100/health
 ```
 
 For protected browser or admin work, seed the local protected shell before
@@ -178,12 +176,11 @@ In T3 Code, add that command as a project script with "Run on worktree
 creation" enabled. The script is safe to rerun and refuses to run in the main
 checkout.
 
-Only one dev stack can own ports `3000`–`3002` and `4100` at a time. E2E runs
-do not share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT`,
-`PLAYWRIGHT_API_PORT`, and `PLAYWRIGHT_OIDC_PORT` values to `.env`, and
-`playwright.config.ts` reads them. The script picks ports no other worktree has
-claimed, prints them, and `grep PLAYWRIGHT .env` shows them; rerun it in older
-worktrees to add them. Two worktrees can run Playwright at the same time, but
+Only one dev stack can own ports `3000`–`3002` at a time. E2E runs do not
+share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT` and
+`PLAYWRIGHT_API_PORT` values to `.env`, and `playwright.config.ts` reads them.
+The script picks ports no other worktree has claimed, prints them, and
+`grep PLAYWRIGHT .env` shows them; rerun it in older worktrees to add them. Two worktrees can run Playwright at the same time, but
 Mailpit is still shared, and each run's global setup clears its messages. Drop a removed worktree's database with:
 
 ```bash
@@ -236,7 +233,6 @@ protected shell, and starts or reuses these dedicated services:
 | --- | ---: |
 | E2E web server | `3100` |
 | E2E API | `3101` |
-| Local OIDC | `4100` |
 
 Linked worktrees use their own ports instead; see
 [Parallel worktrees](#parallel-worktrees).
@@ -280,7 +276,7 @@ another process still owns the ports, set these values before the Playwright
 command:
 
 ```bash
-PLAYWRIGHT_OIDC_PORT=4200 PLAYWRIGHT_API_PORT=3201 PLAYWRIGHT_APP_PORT=3200
+PLAYWRIGHT_API_PORT=3201 PLAYWRIGHT_APP_PORT=3200
 ```
 
 To inspect the running application without the E2E test runner, use Playwright

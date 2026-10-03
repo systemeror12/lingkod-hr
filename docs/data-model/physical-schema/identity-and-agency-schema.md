@@ -63,8 +63,6 @@ Add the current-profile foreign key only after both tables exist.
 ```sql
 CREATE TABLE users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  identity_provider text,         -- null for a LingkodHR-owned User
-  external_subject text,
   email_normalized citext NOT NULL,
   display_name text NOT NULL,
   global_status text NOT NULL
@@ -72,7 +70,6 @@ CREATE TABLE users (
   email_verified_at timestamptz,
   last_login_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (identity_provider, external_subject),
   UNIQUE (email_normalized)
 );
 ```

@@ -2,8 +2,8 @@
 
 The Phase 3 gate uses only local deterministic dependencies: the migrated
 PostgreSQL schema, the runtime `hris_app` connection, Mailpit, the real API,
-the production web application, and the in-repository local OIDC fixture.
-It never contacts ZITADEL or an external mail provider.
+and the production web application. It never contacts an identity provider or
+an external mail provider.
 
 ## Commands
 
@@ -15,7 +15,7 @@ pnpm install --frozen-lockfile
 
 Run the complete protected journey. Playwright starts or reuses PostgreSQL
 and Mailpit, applies migrations, seeds a synthetic Agency Administrator,
-starts the local OIDC fixture, and starts the real API and web application:
+and starts the real API and web application:
 
 ```bash
 pnpm test:e2e:phase3
@@ -50,8 +50,7 @@ evidence for 14 days; successful runs do not upload it.
 | API denial, permission, record scope, validation, conflict, and sanitization                        | API assertions in `apps/web/e2e/phase-3.spec.ts` plus the API controller/service tests under `apps/api/src`                                                        |
 | PostgreSQL RLS, Agency-safe relationships and uniqueness, transactional audit, append-only evidence | `packages/database/src/organization-unit-isolation.test.ts`, `packages/database/src/audit-event-isolation.test.ts`, and the Organization service integration tests |
 | Rail, dialogs, keyboard/focus behavior, narrow-width interaction, and token contrast                | `apps/web/e2e/phase-3.spec.ts` and the focused slice specs under `apps/web/e2e`                                                                                    |
-| Visual validation                                                                                   | Playwright screenshots in the ignored `apps/web/test-results/<test-name>/` directory; CI retains the suite-wide browser evidence for 14 days after a failed run     |
-| Manual identity-provider smoke                                                                      | [`phase-3-manual-smoke.md`](phase-3-manual-smoke.md), deliberately excluded from CI                                                                                |
+| Visual validation                                                                                   | Playwright screenshots in the ignored `apps/web/test-results/<test-name>/` directory; CI retains the suite-wide browser evidence for 14 days after a failed run    |
 
 Test data is synthetic, generated with a run suffix, isolated by Agency
 context, and reset by the E2E setup before each browser run. No database row

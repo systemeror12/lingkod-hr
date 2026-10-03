@@ -100,8 +100,6 @@ Global authenticated identity, independent from agency employment.
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
 | id | uuid | No | PK | User identity |
-| identity_provider | string | Yes |  | OIDC provider; null for a LingkodHR-owned User |
-| external_subject | string | Yes | Unique with provider | OIDC subject identifier; null for a LingkodHR-owned User |
 | email_normalized | string | No | Unique | Normalized login email |
 | display_name | string | No |  | Display name |
 | global_status | enum | No |  | ACTIVE, LOCKED, DEACTIVATED |
@@ -111,8 +109,7 @@ Global authenticated identity, independent from agency employment.
 
 **Constraints and indexes**
 
-- Unique `(identity_provider, external_subject)`.
-- Unique normalized email unless provider design explicitly permits aliases.
+- Unique normalized email.
 
 **Deletion behavior:** Deactivate only; identity history remains.
 ## `agency_memberships`

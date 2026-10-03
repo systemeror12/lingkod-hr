@@ -5,6 +5,7 @@ import {
   InvitationActivationForm,
   invitationOutcome,
 } from '../../../components/invitation-activation-form';
+import type { LetterheadAgency } from '../../../components/civic-sunrise';
 
 export const metadata: Metadata = { title: 'Activate your access' };
 
@@ -14,7 +15,7 @@ type Lookup =
   | {
       status: 'VALID';
       email: string;
-      agency: { name: string; acronym: string | null; sealUrl?: string | null };
+      agency: LetterheadAgency;
       roleNames: string[];
       existingUser: boolean;
       expiresAt: string;

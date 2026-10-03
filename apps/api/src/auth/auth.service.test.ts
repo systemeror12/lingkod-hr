@@ -7,7 +7,6 @@ import {
   hashPassword,
   hashSessionToken,
   normalizeRecoveryCode,
-  type OidcIdentity,
   type RequestContext,
   sealTotpSecret,
   totpCode,
@@ -36,21 +35,6 @@ vi.mock('@lingkod-hr/auth', async (importOriginal) => {
 });
 
 const enabled = process.env.DATABASE_E2E === 'true';
-const issuer = getConfig().OIDC_ISSUER;
-
-function identity(subject: string, email: string, authTime: Date | null = null): OidcIdentity {
-  return {
-    issuer,
-    subject,
-    email,
-    displayName: 'E2E User',
-    emailVerified: true,
-    providerSid: null,
-    authTime,
-    authenticationMethods: [],
-  };
-}
-
 function databaseBytes(value: Buffer): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(value.byteLength));
   bytes.set(value);
@@ -75,39 +59,12 @@ async function cleanup(
   });
   await admin.userSession.deleteMany({ where: { userId: { in: [...userIds] } } });
   await admin.membershipRole.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
-  await admin.externalIdentityLink.deleteMany({ where: { userId: { in: [...userIds] } } });
   await admin.invitation.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
   await admin.agencyMembership.deleteMany({ where: { userId: { in: [...userIds] } } });
   await admin.user.deleteMany({ where: { id: { in: [...userIds] } } });
   await admin.role.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
   await admin.agency.deleteMany({ where: { id: { in: [...agencyIds] } } });
 }
-
-it('records an OIDC callback failure once with its reason and client IP', async () => {
-  const recordLoginFailure = vi.fn().mockResolvedValue(undefined);
-  const authService = {
-    assertIpAllowed: vi.fn().mockResolvedValue(undefined),
-    completeLogin: vi
-      .fn()
-      .mockRejectedValue(new AuthServiceError('Membership denied.', 403, 'MEMBERSHIP_DENIED')),
-    recordLoginFailure,
-  } as unknown as AuthService;
-  const request = {
-    headers: { cookie: 'hris_oidc_flow=flow-cookie' },
-    header: () => 'request-callback-failure',
-    ip: '203.0.113.1',
-  } as unknown as Request;
-
-  await expect(
-    new AuthController(authService).callback('state', 'code', request, {} as Response),
-  ).rejects.toMatchObject({ status: 403 });
-  expect(recordLoginFailure).toHaveBeenCalledOnce();
-  expect(recordLoginFailure).toHaveBeenCalledWith(
-    'request-callback-failure',
-    'MEMBERSHIP_DENIED',
-    '203.0.113.1',
-  );
-});
 
 it('rejects an untrusted cookie origin before refreshing the session', async () => {
   const authenticateSession = vi.fn();
@@ -262,115 +219,34 @@ it.skipIf(!enabled)('allows a replacement after a pending invitation expires', a
 });
 
 it.skipIf(!enabled)(
-  'reconciles linked verified emails and rejects ownership conflicts',
-  async () => {
-    const admin = await createAdminClient();
-    const suffix = `${Date.now()}-email-change`;
-    const newEmail = `updated-${suffix}@example.test`;
-    const agency = await admin.agency.create({
-      data: { code: `E2E-${suffix}`, name: 'E2E Agency', agencyType: 'NGA', status: 'ACTIVE' },
-    });
-    const users = await Promise.all(
-      ['first', 'second'].map((label) =>
-        admin.user.create({
-          data: {
-            emailNormalized: `${label}-${suffix}@example.test`,
-            displayName: `E2E ${label}`,
-            globalStatus: 'ACTIVE',
-          },
-        }),
-      ),
-    );
-    const firstUser = users[0];
-    const secondUser = users[1];
-    if (!firstUser || !secondUser) throw new Error('The E2E Users were not created.');
-    await Promise.all(
-      users.map(async (user) => {
-        await admin.agencyMembership.create({
-          data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
-        });
-        await admin.externalIdentityLink.create({
-          data: { userId: user.id, issuer, subject: user.id, status: 'ACTIVE' },
-        });
-      }),
-    );
-
-    try {
-      await new AuthService().signIn(identity(firstUser.id, newEmail));
-      await expect(
-        admin.user.findUniqueOrThrow({ where: { id: firstUser.id } }),
-      ).resolves.toMatchObject({ emailNormalized: newEmail });
-      await expect(
-        new AuthService().signIn(identity(secondUser.id, newEmail)),
-      ).rejects.toMatchObject({ code: 'EMAIL_ALREADY_IN_USE', statusCode: 401 });
-    } finally {
-      await cleanup(
-        admin,
-        [agency.id],
-        users.map(({ id }) => id),
-      );
-      await admin.$disconnect();
-    }
-  },
-);
-
-it.skipIf(!enabled)(
   'keeps absolute expiry and authentication time when switching agencies',
   async () => {
-    const admin = await createAdminClient();
+    const fixture = await ownedLoginFixture({ withTotp: false, mfaRequired: false });
+    const { admin, user } = fixture;
     const suffix = `${Date.now()}-switch`;
-    const agencies = await Promise.all(
-      ['A', 'B'].map((code) =>
-        admin.agency.create({
-          data: {
-            code: `E2E-${code}-${suffix}`,
-            name: `E2E Agency ${code}`,
-            agencyType: 'NGA',
-            status: 'ACTIVE',
-          },
-        }),
-      ),
-    );
-    const authTime = new Date('2026-08-10T23:00:00.000Z');
-    const subject = `subject-${suffix}`;
-    const user = await admin.user.create({
-      data: {
-        emailNormalized: `switch-${suffix}@example.test`,
-        displayName: 'E2E User',
-        globalStatus: 'ACTIVE',
-      },
-    });
-    await admin.externalIdentityLink.create({
-      data: { userId: user.id, issuer, subject, status: 'ACTIVE' },
-    });
-    const memberships = await Promise.all(
-      agencies.map(({ id }) =>
-        admin.agencyMembership.create({
-          data: { agencyId: id, userId: user.id, status: 'ACTIVE' },
-        }),
-      ),
-    );
-    const sourceAgency = agencies[0];
-    const sourceMembership = memberships[0];
-    const targetMembership = memberships[1];
-    if (!sourceAgency || !sourceMembership || !targetMembership) {
+    const [sourceAgencyId] = fixture.agencyIds;
+    const [sourceMembershipId, targetMembershipId] = fixture.membershipIds;
+    if (!sourceAgencyId || !sourceMembershipId || !targetMembershipId) {
       throw new Error('The E2E Agencies and Memberships were not created.');
     }
 
     try {
       const service = new AuthService();
-      const login = await service.signIn(
-        identity(subject, user.emailNormalized, authTime),
-        null,
-        `request-${suffix}`,
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        sourceMembershipId,
+        signInRequest('switch'),
       );
+      if (started.status !== 'SIGNED_IN') throw new Error('Expected a session.');
+      const login = started.session;
       const original = await admin.userSession.findUniqueOrThrow({
         where: { id: login.sessionId },
       });
       const switched = await new AuthService().switchAgency(
         login.token,
         login,
-        targetMembership.id,
+        targetMembershipId,
         `switch-${suffix}`,
       );
       const rotated = await admin.userSession.findUniqueOrThrow({
@@ -404,7 +280,7 @@ it.skipIf(!enabled)(
       ).resolves.toMatchObject({ details: { reason: 'AGENCY_CONTEXT_SWITCHED' } });
       await expect(
         service.revokeSession(login.token, login, 'USER_LOGOUT', `stale-logout-${suffix}`),
-      ).resolves.toBeNull();
+      ).resolves.toBeUndefined();
       await expect(
         admin.auditEvent.findFirst({ where: { requestId: `stale-logout-${suffix}` } }),
       ).resolves.toBeNull();
@@ -435,43 +311,18 @@ it.skipIf(!enabled)(
         actorType: 'SYSTEM',
         reason: 'SESSION_EXPIRED_OR_ACCESS_REMOVED',
       });
-      Object.defineProperty(service, 'oidc', {
-        value: {
-          verifyLogoutToken: async () => ({
-            eventId: `backchannel-${suffix}`,
-            subject,
-            providerSid: null,
-          }),
-        },
-      });
-      await service.handleBackChannelLogout('verified-by-test-double', `backchannel-${suffix}`);
-      await expect(
-        admin.userSession.findUniqueOrThrow({ where: { id: switched.sessionId } }),
-      ).resolves.toMatchObject({
-        revocationReason: 'OIDC_BACKCHANNEL_LOGOUT',
-      });
-      await expect(
-        admin.auditEvent.findFirstOrThrow({
-          where: {
-            agencyId: switched.context.agencyId,
-            action: 'SESSION_REVOKED',
-            entityId: switched.sessionId,
-          },
-        }),
-      ).resolves.toMatchObject({ actorType: 'SYSTEM', reason: 'OIDC_BACKCHANNEL_LOGOUT' });
-
       const inactiveAgencyToken = `inactive-agency-${suffix}`;
       const inactiveAgencySession = await admin.userSession.create({
         data: {
           userId: user.id,
-          agencyId: sourceAgency.id,
-          agencyMembershipId: sourceMembership.id,
+          agencyId: sourceAgencyId,
+          agencyMembershipId: sourceMembershipId,
           sessionTokenHash: databaseBytes(hashSessionToken(inactiveAgencyToken)),
           expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         },
       });
       await admin.agency.update({
-        where: { id: sourceAgency.id },
+        where: { id: sourceAgencyId },
         data: { status: 'SUSPENDED' },
       });
       await expect(
@@ -481,18 +332,15 @@ it.skipIf(!enabled)(
         admin.userSession.findUniqueOrThrow({ where: { id: inactiveAgencySession.id } }),
       ).resolves.toMatchObject({ revocationReason: 'SESSION_EXPIRED_OR_ACCESS_REMOVED' });
       await expect(
-        new AuthService().signIn(
-          identity(subject, user.emailNormalized, authTime),
-          sourceMembership.id,
+        new AuthService().signInWithPassword(
+          user.email,
+          user.password,
+          sourceMembershipId,
+          signInRequest('suspended'),
         ),
       ).rejects.toMatchObject({ code: 'MEMBERSHIP_DENIED' });
     } finally {
-      await cleanup(
-        admin,
-        agencies.map(({ id }) => id),
-        [user.id],
-      );
-      await admin.$disconnect();
+      await fixture.cleanup();
     }
   },
 );

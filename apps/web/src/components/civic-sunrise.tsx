@@ -4,8 +4,8 @@ import { cn } from '../lib/class-names';
 import { useEffect, useState, type ReactNode } from 'react';
 
 // The public auth screens' design, chosen in #398: a government building at sunrise beside a
-// letterhead form. The sun's height and the lit windows show progress through the flow. Every
-// Agency uses the drawn scene; an inviting Agency may supply its official seal.
+// letterhead form. The sun's height and the lit windows show progress through the flow. An inviting
+// Agency may supply its official seal, and a building photo that replaces the drawn scene.
 
 const SUN = '#f2c14e';
 const NAVY = '#0f2240';
@@ -170,11 +170,55 @@ function CivicScene({ progress, gloom }: { progress: number; gloom: boolean }) {
   );
 }
 
+/**
+ * The inviting Agency's building photo in place of the drawn scene. Progress lifts a navy dawn tint
+ * that is gone once the User is in; `gloom` greys the photo out. `onError` restores the drawn scene.
+ */
+function PhotoScene({
+  agency,
+  progress,
+  gloom,
+  onError,
+}: {
+  agency: LetterheadAgency & { photoUrl: string };
+  progress: number;
+  gloom: boolean;
+  onError: () => void;
+}) {
+  const arrived = useArrived();
+  return (
+    <div className="lh-scene absolute inset-0">
+      <img
+        src={agency.photoUrl}
+        alt={`${agency.name} building`}
+        onError={onError}
+        className="size-full object-cover"
+        style={{
+          filter: gloom ? 'grayscale(0.85) brightness(0.6)' : 'none',
+          transition: 'filter 900ms ease',
+        }}
+      />
+      <div
+        data-testid="photo-dawn-tint"
+        className="absolute inset-0"
+        style={{
+          background: `linear-gradient(180deg, ${NAVY} 0%, #1d3d73d0 45%, #e2a65070 100%)`,
+          opacity: arrived ? (1 - progress) * 0.8 : 0.95,
+          transition: `opacity 1400ms ${EASE}`,
+        }}
+      />
+      {/* Keeps the LingkodHR mark readable on a bright sky. */}
+      <div className="absolute inset-x-0 top-0 h-32 bg-linear-to-b from-black/45 to-transparent" />
+    </div>
+  );
+}
+
 /** The Agency that speaks on a screen: the inviting Agency during Invitation Activation. */
 export interface LetterheadAgency {
   name: string;
   acronym: string | null;
   sealUrl?: string | null;
+  photoUrl?: string | null;
 }
 
 /** The same Agency mark in the letterhead, success stamp, and administrator's live preview. */
@@ -262,7 +306,8 @@ function Letterhead({ agency }: { agency: LetterheadAgency | null }) {
 
 /**
  * Split screen with the scene beside a letterhead column. `progress` runs from 0 at the first
- * step to 1 once the User is in; `gloom` overcasts it when the flow ends in a refusal.
+ * step to 1 once the User is in; `gloom` overcasts it when the flow ends in a refusal. An inviting
+ * Agency's `photoUrl` replaces the drawn scene.
  * `labelledBy` must match the id of the heading in `children`. When `children` show an element
  * marked `data-print-slip`, printing keeps only that element. An inviting `agency` takes the
  * letterhead and the welcome.
@@ -280,11 +325,22 @@ export function CivicSunriseLayout({
   labelledBy: string;
   children: ReactNode;
 }) {
+  const [failedPhoto, setFailedPhoto] = useState<string | null>(null);
+  const photoUrl = agency?.photoUrl && agency.photoUrl !== failedPhoto ? agency.photoUrl : null;
   return (
     <main className="lh-auth grid min-h-dvh bg-surface text-ink min-[960px]:grid-cols-[minmax(0,1.1fr)_minmax(460px,1fr)] print:block print:min-h-0">
       <div className="grid grid-rows-[minmax(0,1fr)_auto] bg-[#0b1a33] min-[960px]:sticky min-[960px]:top-0 min-[960px]:h-dvh">
         <div className="relative h-60 overflow-hidden bg-nav min-[960px]:h-auto">
-          <CivicScene progress={progress} gloom={gloom} />
+          {agency && photoUrl ? (
+            <PhotoScene
+              agency={{ ...agency, photoUrl }}
+              progress={progress}
+              gloom={gloom}
+              onError={() => setFailedPhoto(photoUrl)}
+            />
+          ) : (
+            <CivicScene progress={progress} gloom={gloom} />
+          )}
           <div className="absolute inset-x-0 top-0 flex items-center gap-2.5 p-6 text-nav-ink min-[960px]:p-10">
             <span className="grid size-8 place-items-center rounded-control bg-white/15 text-small font-bold">
               L

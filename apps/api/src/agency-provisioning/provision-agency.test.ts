@@ -106,7 +106,6 @@ async function cleanup(
   });
   if (userIds.length > 0) {
     await admin.userSession.deleteMany({ where: { userId: { in: [...userIds] } } });
-    await admin.externalIdentityLink.deleteMany({ where: { userId: { in: [...userIds] } } });
     await admin.membershipRole.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
     await admin.agencyMembership.deleteMany({ where: { userId: { in: [...userIds] } } });
     await admin.user.deleteMany({ where: { id: { in: [...userIds] } } });
