@@ -1,3 +1,5 @@
+import { S3DocumentStorage } from '../documents/documents.storage';
+import { readAgencySealKey } from '../agency-profile/agency-seal.queries';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -208,7 +210,7 @@ export type InvitationLookup =
   | {
       status: 'VALID';
       email: string;
-      agency: { name: string; acronym: string | null };
+      agency: { name: string; acronym: string | null; sealUrl?: string | null };
       roleNames: string[];
       existingUser: boolean;
       expiresAt: Date;
@@ -518,6 +520,7 @@ export class AuthService {
     clientSecret: this.config.OIDC_CLIENT_SECRET,
     redirectUri: this.config.OIDC_REDIRECT_URI,
   });
+  private readonly brandingStorage = new S3DocumentStorage(this.config);
   private readonly invitationIssuer: InvitationIssuer;
   private readonly mailDelivery: MailDelivery;
   private readonly logger = new Logger(AuthService.name);
@@ -1749,7 +1752,7 @@ export class AuthService {
    */
   async lookupInvitation(token: string): Promise<InvitationLookup> {
     const scope = this.activationScope(token);
-    return withDatabaseContext(scope, async (transaction) => {
+    const result = await withDatabaseContext(scope, async (transaction) => {
       const invitation = await this.readActivationInvitation(transaction, scope, new Date());
       if (typeof invitation === 'string') return { status: invitation };
       const existingUser = await transaction.user.findUnique({
@@ -1758,6 +1761,7 @@ export class AuthService {
       });
       return {
         status: 'VALID' as const,
+        sealKey: await readAgencySealKey(transaction, invitation.agencyId),
         email: invitation.emailNormalized,
         agency: invitation.agency,
         roleNames: invitation.roles.map(({ name }) => name),
@@ -1765,6 +1769,19 @@ export class AuthService {
         expiresAt: invitation.expiresAt,
       };
     });
+    if (result.status !== 'VALID') return result;
+    const { sealKey, ...invitation } = result;
+    const ttl = Math.max(
+      1,
+      Math.min(300, Math.floor((invitation.expiresAt.getTime() - Date.now()) / 1000)),
+    );
+    return {
+      ...invitation,
+      agency: {
+        ...invitation.agency,
+        sealUrl: sealKey ? await this.brandingStorage.signedReadUrl(sealKey, ttl) : null,
+      },
+    };
   }
 
   /**

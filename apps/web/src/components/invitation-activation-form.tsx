@@ -4,7 +4,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { cn } from '../lib/class-names';
 import { manilaTime, RecoveryCodeSlip, SetupKey } from './authenticator-setup';
-import { BusyBar, CivicSunriseLayout, StepFooter, type LetterheadAgency } from './civic-sunrise';
+import {
+  BusyBar,
+  CivicSunriseLayout,
+  InvitationStamp,
+  StepFooter,
+  type LetterheadAgency,
+} from './civic-sunrise';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 
@@ -359,6 +365,10 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
       agency={agency}
       labelledBy="activation-title"
     >
+      {/* Keep the fetched stamp mounted: its signed URL may expire during the MFA steps. */}
+      <div hidden={step !== 'done'} className="mb-5">
+        <InvitationStamp agency={agency} />
+      </div>
       <div key={step} className="lh-step-in grid gap-5">
         {step === 'start' ? (
           <>

@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpException,
   HttpStatus,
   Inject,
@@ -387,6 +388,7 @@ export class AuthController {
 
   /** What the invitation page shows. Reading it writes nothing. */
   @Get('invitations/:token')
+  @Header('Cache-Control', 'no-store')
   async lookupInvitation(@Param('token') token: string) {
     const parsed = activationTokenSchema.safeParse(token);
     if (!parsed.success) return { status: 'INVALID' };

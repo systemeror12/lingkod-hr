@@ -14,7 +14,7 @@ type Lookup =
   | {
       status: 'VALID';
       email: string;
-      agency: { name: string; acronym: string | null };
+      agency: { name: string; acronym: string | null; sealUrl?: string | null };
       roleNames: string[];
       existingUser: boolean;
       expiresAt: string;
