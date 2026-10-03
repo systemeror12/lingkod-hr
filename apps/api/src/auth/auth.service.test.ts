@@ -20,8 +20,10 @@ import { type ExecutionContext, Logger } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller';
+import { AgencyController } from './agency.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService, AuthServiceError } from './auth.service';
+import { ReauthenticationGuard } from './reauthentication.guard';
 import type { MailDelivery, MailMessage } from '../invitations/mail';
 
 vi.mock('@lingkod-hr/auth', async (importOriginal) => {
@@ -2048,6 +2050,259 @@ it.skipIf(!enabled)(
         ),
       ).rejects.toMatchObject({ code: 'PASSWORD_RESET_REQUIRED', statusCode: 403 });
       await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+/** A signed-in session of the fixture User whose `authTime` is `ageMs` old. */
+async function agedSession(service: AuthService, fixture: OwnedLoginFixture, ageMs: number) {
+  const pendingToken = await passwordVerified(service, fixture, 'aged');
+  const { token } = await service.completeTotpSignIn(
+    pendingToken,
+    totpCode(fixture.user.totpSecret ?? ''),
+    signInRequest('aged-totp'),
+  );
+  await fixture.admin.userSession.updateMany({
+    where: { sessionTokenHash: databaseBytes(hashSessionToken(token)) },
+    data: { authTime: new Date(Date.now() - ageMs) },
+  });
+  const session = await service.authenticateSession(token, 'owned-login-aged-me');
+  if (!session) throw new Error('Expected an active session.');
+  return session;
+}
+
+function guardAllows(session: Awaited<ReturnType<AuthService['authenticateSession']>>) {
+  const executionContext = {
+    switchToHttp: () => ({ getRequest: () => ({ authSession: session }) }),
+  } as unknown as ExecutionContext;
+  return new ReauthenticationGuard().canActivate(executionContext);
+}
+
+/** A TOTP code of the next time step, so it isn't a replay of the sign-in's code. */
+function nextCode(secret: string | null) {
+  return totpCode(secret ?? '', new Date(Date.now() + 30_000));
+}
+
+it('guards HRMO Administrator invitations with the Reauthentication Window', () => {
+  const guards: unknown[] = Reflect.getMetadata('__guards__', AgencyController.prototype.invite);
+  expect(guards).toContain(ReauthenticationGuard);
+});
+
+it.skipIf(!enabled)(
+  'refuses a sensitive action 5 minutes after sign-in until the User reauthenticates',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const fresh = await agedSession(service, fixture, 60_000);
+      expect(guardAllows(fresh)).toBe(true);
+
+      const stale = { ...fresh, authTime: new Date(Date.now() - 6 * 60_000) };
+      expect(() => guardAllows(stale)).toThrow(
+        expect.objectContaining({
+          status: 403,
+          response: expect.objectContaining({
+            error: expect.objectContaining({ code: 'REAUTHENTICATION_REQUIRED' }),
+          }),
+        }),
+      );
+
+      const before = Date.now();
+      await service.reauthenticate(
+        stale,
+        { password: user.password, code: nextCode(user.totpSecret) },
+        signInRequest('reauth'),
+      );
+      const stored = await admin.userSession.findUniqueOrThrow({ where: { id: stale.sessionId } });
+      expect(stored.authTime?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+      expect(stored.authenticationMethods).toEqual(['pwd', 'totp']);
+      expect(stored.expiresAt).toEqual(stale.expiresAt);
+      expect(stored.revokedAt).toBeNull();
+      await expect(
+        admin.securityEvent.count({
+          where: { userId: user.id, eventType: 'REAUTHENTICATED' },
+        }),
+      ).resolves.toBe(1);
+      expect(guardAllows({ ...stale, authTime: stored.authTime })).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'counts a wrong password or code toward the Sign-in Cool-down and refuses a replayed code',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    const throttle = throttleOf(admin, user.email);
+    try {
+      const service = new AuthService();
+      const session = await agedSession(service, fixture, 6 * 60_000);
+      const refused = { code: 'INVALID_CREDENTIALS', statusCode: 401 };
+
+      await expect(
+        service.reauthenticate(
+          session,
+          { password: 'not the right passphrase', code: nextCode(user.totpSecret) },
+          signInRequest('reauth-password'),
+        ),
+      ).rejects.toMatchObject(refused);
+      await expect(
+        service.reauthenticate(
+          session,
+          { password: user.password, code: '000000' },
+          signInRequest('reauth-code'),
+        ),
+      ).rejects.toMatchObject(refused);
+      // The sign-in's own code is a time step already accepted.
+      const { lastAcceptedStep } = await admin.userTotpFactor.findUniqueOrThrow({
+        where: { userId: user.id },
+      });
+      const replayed = totpCode(user.totpSecret ?? '', new Date(Number(lastAcceptedStep) * 30_000));
+      await expect(
+        service.reauthenticate(
+          session,
+          { password: user.password, code: replayed },
+          signInRequest('reauth-replay'),
+        ),
+      ).rejects.toMatchObject(refused);
+      await expect(
+        service.reauthenticate(session, { password: user.password }, signInRequest('no-code')),
+      ).rejects.toMatchObject(refused);
+
+      await expect(throttle.row()).resolves.toMatchObject({ failureCount: 4 });
+      await expect(
+        admin.userPassword.findUniqueOrThrow({ where: { userId: user.id } }),
+      ).resolves.toMatchObject({ secondFactorFailures: 3 });
+      const stored = await admin.userSession.findUniqueOrThrow({
+        where: { id: session.sessionId },
+      });
+      expect(stored.authTime).toEqual(session.authTime);
+    } finally {
+      await throttle.remove();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses a password alone when the User’s roles require MFA and they have no authenticator',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const session = await agedSession(service, fixture, 6 * 60_000);
+      await admin.userTotpFactor.delete({ where: { userId: user.id } });
+
+      await expect(
+        service.reauthenticate(session, { password: user.password }, signInRequest('pwd-only')),
+      ).rejects.toMatchObject({ code: 'MFA_REQUIRED', statusCode: 403 });
+      const stored = await admin.userSession.findUniqueOrThrow({
+        where: { id: session.sessionId },
+      });
+      expect(stored.authTime).toEqual(session.authTime);
+      expect(stored.authenticationMethods).toEqual(['pwd', 'totp']);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'reauthenticates with a Recovery Code, spends it, and sends a notice',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 2 });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const session = await agedSession(service, fixture, 6 * 60_000);
+      const done = await service.reauthenticate(
+        session,
+        { password: user.password, recoveryCode: user.recoveryCodes[0]?.toUpperCase() },
+        signInRequest('reauth-recovery'),
+      );
+      await expect(admin.userRecoveryCode.count({ where: { userId: user.id } })).resolves.toBe(1);
+      const stored = await admin.userSession.findUniqueOrThrow({
+        where: { id: session.sessionId },
+      });
+      expect(stored.authenticationMethods).toEqual(['pwd', 'recovery_code']);
+      expect(stored.revokedAt).toBeNull();
+      expect(done.notice).toMatchObject({ to: user.email });
+      expect(done.notice?.text).toContain('1 Recovery Code left');
+      expect(done.notice?.text).toContain('Agency Administrator');
+
+      await expect(
+        service.reauthenticate(
+          session,
+          { password: user.password, recoveryCode: user.recoveryCodes[0] },
+          signInRequest('reauth-recovery-again'),
+        ),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'regenerates 10 Recovery Codes, voids the old set, and sends a notice after the response',
+  async () => {
+    const fixture = await ownedLoginFixture({ recoveryCodes: 3 });
+    const { admin, user } = fixture;
+    try {
+      const mail = new RecordingMailDelivery();
+      const service = new AuthService(mail);
+      const controller = new AuthController(service);
+      const session = await agedSession(service, fixture, 60_000);
+      await expect(service.recoveryCodeStatus(session)).resolves.toEqual({
+        hasAuthenticator: true,
+        remaining: 3,
+      });
+
+      const response = fakeResponse();
+      await controller.regenerateRecoveryCodes(
+        {
+          authSession: session,
+          header: () => `owned-login-regenerate-${randomUUID()}`,
+          ip: '198.51.100.7',
+        } as unknown as Parameters<AuthController['regenerateRecoveryCodes']>[0],
+        response as unknown as Response,
+      );
+      const [[body]] = response.json.mock.calls as unknown as [[{ recoveryCodes: string[] }]];
+      expect(body.recoveryCodes).toHaveLength(10);
+      expect(new Set(body.recoveryCodes).size).toBe(10);
+      for (const code of body.recoveryCodes) expect(code).toMatch(/^[a-z2-7]{5}-[a-z2-7]{5}$/);
+      await expect(service.recoveryCodeStatus(session)).resolves.toMatchObject({ remaining: 10 });
+
+      const stored = await admin.userRecoveryCode.findMany({ where: { userId: user.id } });
+      for (const code of user.recoveryCodes) {
+        const normalized = normalizeRecoveryCode(code) ?? '';
+        for (const { codeHash } of stored) {
+          await expect(verifyPassword(codeHash, normalized)).resolves.toBe(false);
+        }
+      }
+      await expect(
+        admin.securityEvent.findFirst({
+          where: { userId: user.id, eventType: 'RECOVERY_CODES_REGENERATED' },
+          select: { details: true },
+        }),
+      ).resolves.toEqual({ details: { recoveryCodes: 10 } });
+
+      expect(mail.messages).toEqual([]);
+      response.finish();
+      await vi.waitFor(() => expect(mail.messages).toHaveLength(1));
+      const [notice] = mail.messages;
+      expect(notice).toMatchObject({ to: user.email });
+      expect(notice?.text).toContain('Agency Administrator');
+      expect(notice?.text).not.toMatch(/https?:/);
+      for (const code of [...user.recoveryCodes, ...body.recoveryCodes]) {
+        expect(JSON.stringify(notice).toLowerCase()).not.toContain(code);
+      }
     } finally {
       await fixture.cleanup();
     }

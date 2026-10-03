@@ -19,6 +19,7 @@ import {
 import { AuthGuard } from './auth.guard';
 import { CurrentContext, RequirePermission, RequireRole } from './auth.decorators';
 import { PermissionGuard } from './permission.guard';
+import { ReauthenticationGuard } from './reauthentication.guard';
 import type { RequestContext } from '@lingkod-hr/auth';
 import type { AuthenticatedRequest } from './auth.types';
 import { getConfig } from '@lingkod-hr/config';
@@ -49,6 +50,7 @@ export class AgencyController {
   @Post(':agencyId/invitations')
   @RequirePermission('security.users.invite', 'security.users.update_roles')
   @RequireRole('agency_administrator')
+  @UseGuards(ReauthenticationGuard)
   async invite(
     @Param('agencyId') agencyId: string,
     @Body() body: unknown,

@@ -32,6 +32,7 @@ import {
 } from './auth.service';
 import type { ActivationDone } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
+import { ReauthenticationGuard } from './reauthentication.guard';
 import type { MailMessage } from '../invitations/mail';
 import {
   activationStartSchema,
@@ -43,6 +44,7 @@ import {
   passwordResetCompleteSchema,
   passwordResetRequestSchema,
   passwordSignInSchema,
+  reauthenticateSchema,
   switchAgencySchema,
   recoveryCodeSignInSchema,
   totpSignInSchema,
@@ -617,6 +619,63 @@ export class AuthController {
         agencyId: result.context.agencyId,
         membershipId: result.context.membershipId,
       });
+    } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
+  /**
+   * Proves again who the signed-in User is, with the same proof as sign-in, and opens the
+   * Reauthentication Window for 5 minutes.
+   */
+  @Post('reauthenticate')
+  @UseGuards(AuthGuard)
+  async reauthenticate(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!request.authSession) throw new UnauthorizedException();
+    const parsed = reauthenticateSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A password is required.');
+    try {
+      const { notice } = await this.authService.reauthenticate(
+        request.authSession,
+        parsed.data,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.OK).json({ status: 'REAUTHENTICATED' });
+      if (notice) this.noticeAfterResponse(response, notice);
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError && error.notice) {
+        this.noticeAfterResponse(response, error.notice);
+      }
+      translateError(error);
+    }
+  }
+
+  @Get('recovery-codes')
+  @UseGuards(AuthGuard)
+  recoveryCodeStatus(@Req() request: AuthenticatedRequest) {
+    if (!request.authSession) throw new UnauthorizedException();
+    return this.authService.recoveryCodeStatus(request.authSession);
+  }
+
+  /** A new set of 10 Recovery Codes, shown once; the old set stops working. */
+  @Post('recovery-codes')
+  @UseGuards(AuthGuard, ReauthenticationGuard)
+  async regenerateRecoveryCodes(
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!request.authSession) throw new UnauthorizedException();
+    try {
+      const { recoveryCodes, notice } = await this.authService.regenerateRecoveryCodes(
+        request.authSession,
+        request.header('x-request-id') ?? 'unknown-request',
+      );
+      response.status(HttpStatus.OK).json({ recoveryCodes });
+      this.noticeAfterResponse(response, notice);
     } catch (error: unknown) {
       translateError(error);
     }

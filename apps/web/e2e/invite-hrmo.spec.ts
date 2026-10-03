@@ -55,7 +55,7 @@ test('invites and activates a first-time HRMO Administrator through Mailpit', as
 }, testInfo) => {
   const recipient = `hrmo-${Date.now()}@example.test`;
 
-  await signIn(page, MARISOL_EMAIL);
+  await signIn(page, MARISOL_EMAIL, { fresh: true });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
