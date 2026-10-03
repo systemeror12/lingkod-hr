@@ -1,27 +1,33 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { HttpException, Inject, Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import sharp from 'sharp';
 import {
   AGENCY_PROFILE_AUDIT_WRITER,
   agencyProfileAuditWriter,
   type AgencyProfileAuditWriter,
 } from './agency-profile.service';
 import { requestDatabaseContext } from '../database-context';
+import {
+  brandError,
+  validateBrandImage,
+  type BrandImageRules,
+  type BrandImageUpload,
+} from './agency-brand-image';
 import type { DocumentStorage } from '../documents/documents.storage';
 
 export const AGENCY_SEAL_STORAGE = Symbol('AGENCY_SEAL_STORAGE');
-export const SEAL_MAX_BYTES = 2 * 1024 * 1024;
-const SIGNED_URL_SECONDS = 300;
-
-export interface SealUpload {
-  originalname: string;
-  mimetype: string;
-  buffer: Buffer;
-  size: number;
-}
+export const SIGNED_URL_SECONDS = 300;
+export const SEAL_RULES: BrandImageRules = {
+  code: 'AGENCY_SEAL',
+  noun: 'seal',
+  maxBytes: 2 * 1024 * 1024,
+  maxLabel: '2 MB',
+  minWidth: 600,
+  minHeight: 600,
+  minLabel: 'Use at least 600 × 600 px to print.',
+};
 
 export interface AgencySealSummary {
   id: string;
@@ -37,15 +43,6 @@ export interface AgencySealSummary {
 }
 
 type SealRecord = Prisma.AgencySealGetPayload<object>;
-
-export function sealError(
-  context: RequestContext,
-  code: string,
-  message: string,
-  status = 400,
-): HttpException {
-  return new HttpException({ error: { code, message, requestId: context.requestId } }, status);
-}
 
 /** Metadata shared by the settings DTO and the before/after Audit Event. Never returns object keys. */
 function fileMetadata(seal: SealRecord) {
@@ -78,54 +75,19 @@ export class AgencySealService {
 
   async save(
     context: RequestContext,
-    file: SealUpload,
+    file: BrandImageUpload,
     expectedSealId: string | null,
   ): Promise<{ seal: AgencySealSummary }> {
     this.authorize(context, 'organization.agency.update');
-    const fileName = file.originalname.trim().slice(0, 255) || 'Unnamed file';
-    const reject = (code: string, message: string) =>
-      sealError(context, code, `${fileName}: ${message} The current seal is unchanged.`);
-    if (file.size > SEAL_MAX_BYTES || file.buffer.length > SEAL_MAX_BYTES) {
-      throw reject('AGENCY_SEAL_TOO_LARGE', 'Use a file no larger than 2 MB.');
-    }
-    if (!['image/png', 'image/jpeg'].includes(file.mimetype)) {
-      throw reject('AGENCY_SEAL_TYPE_INVALID', 'Use a PNG or JPEG image.');
-    }
-    let dimensions;
-    try {
-      const image = sharp(file.buffer, { limitInputPixels: 40_000_000, failOn: 'warning' });
-      const metadata = await image.metadata();
-      if (
-        (metadata.format !== 'png' && metadata.format !== 'jpeg') ||
-        file.mimetype !== `image/${metadata.format}` ||
-        (metadata.pages ?? 1) !== 1
-      ) {
-        throw new Error('Unsupported image');
-      }
-      // Decode all pixels, so a valid header cannot hide truncated or corrupt image bytes.
-      await image.stats();
-      dimensions = { width: metadata.width, height: metadata.height };
-    } catch {
-      throw reject(
-        'AGENCY_SEAL_TYPE_INVALID',
-        'Use a readable, single-frame PNG or JPEG image (at most 40 million pixels).',
-      );
-    }
-    if (dimensions.width < 600 || dimensions.height < 600) {
-      throw reject(
-        'AGENCY_SEAL_TOO_SMALL',
-        `The image is ${dimensions.width} × ${dimensions.height} px. Use at least 600 × 600 px to print.`,
-      );
-    }
-    const contentHash = createHash('sha256').update(file.buffer).digest('hex');
+    const image = await validateBrandImage(context, file, SEAL_RULES);
     const objectKey = `agency-seals/${randomUUID()}`;
     let record: SealRecord;
     try {
       await this.storage.putObject({
         key: objectKey,
         body: file.buffer,
-        contentType: file.mimetype,
-        contentHash,
+        contentType: image.contentType,
+        contentHash: image.contentHash,
       });
       record = await withDatabaseContext(requestDatabaseContext(context), async (tx) => {
         const old = await this.lockCurrent(tx, context, expectedSealId);
@@ -136,11 +98,7 @@ export class AgencySealService {
         const data = {
           id: randomUUID(),
           objectKey,
-          fileName,
-          contentType: file.mimetype,
-          byteSize: file.buffer.length,
-          ...dimensions,
-          contentHash,
+          ...image,
           changedAt: new Date(),
           changedByName: actor.displayName,
           changedByUserId: context.userId,
@@ -188,7 +146,7 @@ export class AgencySealService {
     await tx.$queryRaw`SELECT id FROM agencies WHERE id = ${context.agencyId}::uuid FOR UPDATE`;
     const old = await tx.agencySeal.findUnique({ where: { agencyId: context.agencyId } });
     if ((old?.id ?? null) !== expectedSealId) {
-      throw sealError(
+      throw brandError(
         context,
         'AGENCY_SEAL_CHANGED',
         'The seal changed while you were editing. Reload this page before saving.',
@@ -232,7 +190,7 @@ export class AgencySealService {
 
   private authorize(context: RequestContext, permission: string) {
     if (!hasPermission(context, permission)) {
-      throw sealError(
+      throw brandError(
         context,
         'AGENCY_SEAL_FORBIDDEN',
         'The current Agency Membership lacks the required permission.',

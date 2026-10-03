@@ -24,6 +24,7 @@ model Agency {
 
   currentProfile                AgencyProfileVersion?              @relation("AgencyCurrentProfile", fields: [id, currentProfileVersionId], references: [agencyId, id], onDelete: Restrict, map: "agencies_current_profile_fkey")
   seal                          AgencySeal?
+  buildingPhoto                 AgencyBuildingPhoto?
   profiles                      AgencyProfileVersion[]             @relation("AgencyProfiles")
   memberships                   AgencyMembership[]
   invitations                   Invitation[]
@@ -283,6 +284,7 @@ model User {
   pendingAuthentications PendingAuthentication[]
   passwordResetTokens    PasswordResetToken[]
   changedSeals           AgencySeal[]
+  changedBuildingPhotos  AgencyBuildingPhoto[]
 
   @@unique([emailNormalized])
   @@map("users")
@@ -317,6 +319,7 @@ model AgencyMembership {
   createdPersonnelActionVersions         PersonnelActionVersion[]           @relation("PersonnelActionVersionCreator")
   createdPersonnelActionEvidence         PersonnelActionEvidence[]          @relation("PersonnelActionEvidenceCreator")
   changedSeals                           AgencySeal[]
+  changedBuildingPhotos                  AgencyBuildingPhoto[]
   sessions                               UserSession[]
   securityEvents                         SecurityEvent[]                    @relation("SecurityEventMembership")
   auditEvents                            AuditEvent[]                       @relation("AuditEventMembership")
@@ -5110,4 +5113,27 @@ model AgencySeal {
   changedByMembership   AgencyMembership @relation(fields: [agencyId, changedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@map("agency_seals")
+}
+
+/// The Agency's current building photo for Invitation Activation. Kept but not shown while `shown` is false.
+model AgencyBuildingPhoto {
+  id                    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId              String           @unique @map("agency_id") @db.Uuid
+  objectKey             String           @unique @map("object_key")
+  fileName              String           @map("file_name")
+  contentType           String           @map("content_type")
+  byteSize              Int              @map("byte_size")
+  width                 Int
+  height                Int
+  contentHash           String           @map("content_hash")
+  shown                 Boolean          @default(true)
+  changedAt             DateTime         @default(now()) @map("changed_at") @db.Timestamptz(6)
+  changedByName         String           @map("changed_by_name")
+  changedByUserId       String           @map("changed_by_user_id") @db.Uuid
+  changedByMembershipId String           @map("changed_by_membership_id") @db.Uuid
+  agency                Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  changedByUser         User             @relation(fields: [changedByUserId], references: [id], onDelete: Restrict)
+  changedByMembership   AgencyMembership @relation(fields: [agencyId, changedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@map("agency_building_photos")
 }
