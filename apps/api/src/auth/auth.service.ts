@@ -5,11 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
-  acceptTotpCode,
-  activeCooldown,
-  addSignInFailure,
   checkNewPassword,
-  type CountedSignInFailure,
   createSessionToken,
   generateRecoveryCodes,
   hashEmail,
@@ -20,7 +16,6 @@ import {
   hasPermission,
   isSessionActive,
   normalizeRecoveryCode,
-  openTotpSecret,
   passwordNeedsRehash,
   type PermissionGrant,
   refundSignInGuess,
@@ -61,14 +56,29 @@ import {
   writeTotpEnrollment,
   writeTotpFactor,
 } from './totp-enrollment';
+import { AuthServiceError } from './auth-error';
+import {
+  countGuess,
+  CredentialProof,
+  type GuessCount,
+  type GuessFailure,
+  passwordResetRequired,
+  readCooldown,
+  type SecondFactorMethod,
+  signInCooldown,
+  type ThrottleRow,
+  throttleState,
+  writeGuessFailure,
+  writeSignInFailure,
+} from './credential-proof';
+
+export { AuthServiceError };
 
 export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
 export const PENDING_ACTIVATION_LIFETIME_MS = 15 * 60 * 1000;
 /** Sign-in failures from one IP address allowed in the window, every email and step counted. */
 const IP_FAILURE_LIMIT = 100;
 const IP_WINDOW_MS = 15 * 60 * 1000;
-/** Consecutive wrong TOTP or Recovery Codes, since the last full sign-in, that disable the password. */
-const SECOND_FACTOR_CEILING = 10;
 const PASSWORD_RESET_LIFETIME_MS = 30 * 60 * 1000;
 /** Reset links sent per email, and reset requests answered per IP address, in the window. */
 const RESET_EMAIL_LIMIT = 3;
@@ -106,26 +116,6 @@ export interface SignInRequest {
   userAgent: string | null;
 }
 
-/**
- * A wrong password or code; `secondFactor` marks a wrong code on the User's pending sign-in, and
- * `cooldown` is the Sign-in Cool-down that counting the guess started.
- */
-interface GuessFailure {
-  emailHash: Buffer;
-  userId: string | null;
-  reason: string;
-  cooldown: SignInCooldownStart | null;
-  secondFactor?: { method: SecondFactorMethod; email: string };
-}
-
-/**
- * A guess counted toward the email's Sign-in Cool-down before it is checked, or the end of the
- * running cool-down that refuses it. `before` is the state it was counted on, for a refund.
- */
-type GuessCount =
-  | { cooldownUntil: Date }
-  | { cooldownUntil: null; before: SignInThrottleState | null; counted: CountedSignInFailure };
-
 /** What the User needs to add a pending TOTP secret to an authenticator app. */
 export interface TotpEnrollmentStart {
   otpauthUri: string;
@@ -144,8 +134,6 @@ export interface RecoveryCodeSignIn {
   /** The "Recovery Code used" notice, for `sendNotice` once the response is out. */
   notice: MailMessage;
 }
-
-type SecondFactorMethod = 'totp' | 'recovery_code';
 
 /** Database context for a second-factor step: the pending sign-in it continues. */
 interface PendingScope {
@@ -324,65 +312,8 @@ type ResetLink =
       emailHash: Buffer | null;
     };
 
-export class AuthServiceError extends Error {
-  /** When a refused attempt may be tried again. */
-  readonly retryAt: Date | undefined;
-  /** A notice for `sendNotice` once the refusal is out. */
-  readonly notice: MailMessage | undefined;
-
-  constructor(
-    message: string,
-    readonly statusCode = 400,
-    readonly code = 'AUTHENTICATION_ERROR',
-    options: { retryAt?: Date; notice?: MailMessage } = {},
-  ) {
-    super(message);
-    this.name = 'AuthServiceError';
-    this.retryAt = options.retryAt;
-    this.notice = options.notice;
-  }
-}
-
-/** A `sign_in_throttles` row as raw SQL answers it. */
-interface ThrottleRow {
-  failure_count: number;
-  cooldown_level: number;
-  cooldown_until: Date | null;
-  last_failure_at: Date;
-}
-
-function throttleState(row: ThrottleRow | undefined): SignInThrottleState | null {
-  return row
-    ? {
-        failureCount: row.failure_count,
-        cooldownLevel: row.cooldown_level,
-        cooldownUntil: row.cooldown_until,
-        lastFailureAt: row.last_failure_at,
-      }
-    : null;
-}
-
 function invalidCredentials(): AuthServiceError {
   return new AuthServiceError('The email or password is incorrect.', 401, 'INVALID_CREDENTIALS');
-}
-
-function signInCooldown(until: Date, now: Date): AuthServiceError {
-  const minutes = Math.max(1, Math.ceil((until.getTime() - now.getTime()) / 60_000));
-  return new AuthServiceError(
-    `Too many attempts for this email. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
-    429,
-    'SIGN_IN_COOLDOWN',
-    { retryAt: until },
-  );
-}
-
-function passwordResetRequired(notice?: MailMessage): AuthServiceError {
-  return new AuthServiceError(
-    'Your password was disabled after too many wrong codes. Reset it to sign in.',
-    403,
-    'PASSWORD_RESET_REQUIRED',
-    notice ? { notice } : {},
-  );
 }
 
 function signInExpired(): AuthServiceError {
@@ -425,18 +356,6 @@ function recoveryCodeNotice(
         : `A Recovery Code was used to ${usedFor === 'reset' ? 'reset the password of' : 'sign in to'} your LingkodHR account ${when}. Your other sessions were signed out.`,
       `${left} If you lost your authenticator, replace it or generate new Recovery Codes.`,
       "If you didn't sign in, contact your Agency Administrator right away.",
-    ].join('\n\n'),
-  };
-}
-
-function passwordResetRequiredNotice(email: string): MailMessage {
-  return {
-    to: email,
-    subject: 'Reset your LingkodHR password to sign in',
-    text: [
-      'Someone entered your LingkodHR password correctly, then entered too many wrong codes after it. To protect your account, your password no longer works.',
-      'To sign in again, reset your password from the LingkodHR sign-in page.',
-      "If you didn't try to sign in, someone may know your password. Contact your Agency Administrator right away.",
     ].join('\n\n'),
   };
 }
@@ -629,6 +548,7 @@ export class AuthService {
   private readonly mailDelivery: MailDelivery;
   private readonly logger = new Logger(AuthService.name);
   private readonly dataEncryptionKey = parseProtectedValueKey(this.config.DATA_ENCRYPTION_KEY);
+  private readonly credentialProof = new CredentialProof(this.dataEncryptionKey);
 
   constructor(@Optional() @Inject(INVITATION_MAIL_DELIVERY) mailDelivery?: MailDelivery) {
     this.mailDelivery = mailDelivery ?? createMailDelivery(this.config);
@@ -638,7 +558,7 @@ export class AuthService {
   /** The per-IP limit for a sign-in step; a refusal is a LOGIN_FAILURE. */
   async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
     await this.refuseOverIpLimit(request, (transaction) =>
-      this.writeSignInFailure(transaction, request, {
+      writeSignInFailure(transaction, request, {
         userId: null,
         emailHash,
         reason: 'IP_RATE_LIMITED',
@@ -697,7 +617,7 @@ export class AuthService {
     const { account, guess } = await withDatabaseContext(
       { capabilities: ['platform-security'] },
       async (transaction) => {
-        const guess = await this.countGuess(transaction, emailHash, now);
+        const guess = await countGuess(transaction, emailHash, now);
         const user = await transaction.user.findUnique({
           where: { emailNormalized: email.trim().toLowerCase() },
           select: { id: true, emailNormalized: true, globalStatus: true },
@@ -840,9 +760,9 @@ export class AuthService {
   }
 
   /**
-   * Second sign-in step. A code is accepted once: its time step is saved with a conditional
-   * update, so of two submissions of one code exactly one wins. The session is created and the
-   * pending sign-in deleted in the same transaction.
+   * Second sign-in step. Credential Proof checks the code; the session is created and the pending
+   * sign-in deleted in the transaction that accepts it, so of two submissions of one code exactly
+   * one signs in.
    */
   async completeTotpSignIn(
     pendingToken: string,
@@ -854,99 +774,56 @@ export class AuthService {
     // Set once both factors verify, so a later refusal can still be recorded.
     const verified: { userId?: string; emailHash?: Buffer } = {};
     try {
-      const outcome = await withDatabaseContext(scope, async (transaction) => {
-        const now = new Date();
-        const pending = await this.openPendingSignIn(
-          transaction,
-          scope,
-          pendingToken,
-          request,
-          'totp',
-          now,
-        );
-        if (!pending) return { status: 'SIGN_IN_EXPIRED' as const };
-        const { userId, user, emailHash } = pending;
-        // One code attempt per User at a time, so each wrong code is counted before the next is
-        // checked and a burst can't pass the cool-down or the second-factor ceiling.
-        await transaction.$queryRaw`
-          SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
-        const failure = (reason: 'SIGN_IN_EXPIRED' | 'COOLDOWN_ACTIVE') =>
-          this.writeSignInFailure(transaction, request, {
-            userId,
-            emailHash,
-            reason,
-            method: 'totp',
-          });
-        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
-        if (cooldownUntil) {
-          await failure('COOLDOWN_ACTIVE');
-          return { status: 'COOLDOWN_ACTIVE' as const, cooldownUntil, now };
-        }
-        const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
-        if (!factor) {
-          await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
-          await failure('SIGN_IN_EXPIRED');
-          return { status: 'SIGN_IN_EXPIRED' as const };
-        }
-
-        const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
+      const pending = await withDatabaseContext(scope, (transaction) =>
+        this.openPendingSignIn(transaction, scope, pendingToken, request, 'totp', new Date()),
+      );
+      if (!pending) throw signInExpired();
+      const { userId, user, emailHash } = pending;
+      const expired = async (transaction: Prisma.TransactionClient) => {
+        await writeSignInFailure(transaction, request, {
           userId,
-          factorId: factor.id,
+          emailHash,
+          reason: 'SIGN_IN_EXPIRED',
+          method: 'totp',
         });
-        const step = acceptTotpCode(secret, code, Number(factor.lastAcceptedStep), now);
-        const accepted =
-          step !== null &&
-          (
-            await transaction.userTotpFactor.updateMany({
-              where: { id: factor.id, lastAcceptedStep: { lt: step } },
-              data: { lastAcceptedStep: step },
-            })
-          ).count === 1;
-        if (!accepted) {
-          const guess = await this.countGuess(transaction, emailHash, now);
-          const ceiling = await this.writeGuessFailure(transaction, request, {
-            emailHash,
-            userId,
-            reason: 'INVALID_CODE',
-            cooldown: guess.cooldownUntil ? null : guess.counted.cooldown,
-            secondFactor: { method: 'totp', email: user.emailNormalized },
+        return signInExpired();
+      };
+      const signedIn = await this.credentialProof.proveTotp({
+        scope: { ...scope, userId },
+        user: { id: userId, email: user.emailNormalized, emailHash },
+        code,
+        request,
+        wrongCode: () => new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE'),
+        noFactor: async (transaction) => {
+          await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
+          return expired(transaction);
+        },
+        onProved: async (transaction) => {
+          const consumed = await transaction.pendingAuthentication.deleteMany({
+            where: { id: pending.id },
           });
-          return { status: 'INVALID_CODE' as const, ceiling };
-        }
-        const consumed = await transaction.pendingAuthentication.deleteMany({
-          where: { id: pending.id },
-        });
-        if (consumed.count !== 1) {
-          await failure('SIGN_IN_EXPIRED');
-          return { status: 'SIGN_IN_EXPIRED' as const };
-        }
+          // Another step consumed it meanwhile: the code stays spent and the refusal is recorded.
+          if (consumed.count !== 1) return { refusal: await expired(transaction) };
 
-        verified.userId = userId;
-        verified.emailHash = emailHash;
-        if (user.globalStatus !== 'ACTIVE') {
-          throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
-        }
-        return {
-          status: 'SIGNED_IN' as const,
-          user: await this.openOwnedSession(
-            transaction,
-            userId,
-            pending.requestedMembershipId,
-            [...pending.verifiedMethods, 'totp'],
-            request,
-            emailHash,
-          ),
-        };
+          verified.userId = userId;
+          verified.emailHash = emailHash;
+          if (user.globalStatus !== 'ACTIVE') {
+            throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
+          }
+          return {
+            session: await this.openOwnedSession(
+              transaction,
+              userId,
+              pending.requestedMembershipId,
+              [...pending.verifiedMethods, 'totp'],
+              request,
+              emailHash,
+            ),
+          };
+        },
       });
-      if (outcome.status === 'SIGNED_IN') return outcome.user;
-      if (outcome.status === 'COOLDOWN_ACTIVE') {
-        throw signInCooldown(outcome.cooldownUntil, outcome.now);
-      }
-      if (outcome.status === 'INVALID_CODE') {
-        if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
-        throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
-      }
-      throw signInExpired();
+      if ('refusal' in signedIn) throw signedIn.refusal;
+      return signedIn.session;
     } catch (error: unknown) {
       // A refusal after both factors verified rolls the transaction back; record it separately.
       if (error instanceof AuthServiceError && verified.userId && verified.emailHash) {
@@ -984,9 +861,9 @@ export class AuthService {
         now,
       );
       if (!pending) return null;
-      const guess = await this.countGuess(transaction, pending.emailHash, now);
+      const guess = await countGuess(transaction, pending.emailHash, now);
       if (guess.cooldownUntil) {
-        await this.writeSignInFailure(transaction, request, {
+        await writeSignInFailure(transaction, request, {
           userId: pending.userId,
           emailHash: pending.emailHash,
           reason: 'COOLDOWN_ACTIVE',
@@ -1279,7 +1156,7 @@ export class AuthService {
     await this.assertIpAllowed(request, emailHash);
     const now = new Date();
     const cooldownUntil = await withDatabaseContext(scope, (transaction) =>
-      this.readCooldown(transaction, emailHash, now),
+      readCooldown(transaction, emailHash, now),
     );
     if (cooldownUntil) {
       await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
@@ -1418,7 +1295,7 @@ export class AuthService {
       });
       const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
       if (step === null) {
-        await this.writeSignInFailure(transaction, request, {
+        await writeSignInFailure(transaction, request, {
           userId,
           emailHash,
           reason: 'INVALID_CODE',
@@ -1503,7 +1380,7 @@ export class AuthService {
     await this.assertIpAllowed(request, emailHash);
     const now = new Date();
     const { guess, stored, hasFactor } = await withDatabaseContext(scope, async (transaction) => ({
-      guess: await this.countGuess(transaction, emailHash, now),
+      guess: await countGuess(transaction, emailHash, now),
       stored: await transaction.userPassword.findUnique({
         where: { userId },
         select: { passwordHash: true, resetRequiredAt: true },
@@ -1542,45 +1419,19 @@ export class AuthService {
     if (proof.recoveryCode !== undefined) {
       return this.proveWithRecoveryCode(scope, proved, proof.recoveryCode, purpose, onProved);
     }
-    const outcome = await withDatabaseContext(scope, async (transaction) => {
-      // One code attempt per User at a time, as on sign-in.
-      await transaction.$queryRaw`
-        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
-      const factor = await transaction.userTotpFactor.findUniqueOrThrow({ where: { userId } });
-      const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
-        userId,
-        factorId: factor.id,
-      });
-      const at = new Date();
-      const step = acceptTotpCode(secret, proof.code ?? '', Number(factor.lastAcceptedStep), at);
-      const accepted =
-        step !== null &&
-        (
-          await transaction.userTotpFactor.updateMany({
-            where: { id: factor.id, lastAcceptedStep: { lt: step } },
-            data: { lastAcceptedStep: step },
-          })
-        ).count === 1;
-      if (accepted) {
+    const result = await this.credentialProof.proveTotp({
+      scope,
+      user: { id: userId, email, emailHash },
+      code: proof.code ?? '',
+      request,
+      wrongCode: reauthenticationRefused,
+      noFactor: async () => reauthenticationRefused(),
+      onProved: async (transaction) => {
         await this.clearGuesses(transaction, proved);
-        return {
-          accepted,
-          result: await onProved(transaction, proved, ['pwd', 'totp']),
-        } as const;
-      }
-      const wrong = await this.countGuess(transaction, emailHash, at);
-      const ceiling = await this.writeGuessFailure(transaction, request, {
-        emailHash,
-        userId,
-        reason: 'INVALID_CODE',
-        cooldown: wrong.cooldownUntil ? null : wrong.counted.cooldown,
-        secondFactor: { method: 'totp', email },
-      });
-      return { accepted, ceiling } as const;
+        return onProved(transaction, proved, ['pwd', 'totp']);
+      },
     });
-    if (outcome.accepted) return { result: outcome.result, notice: null };
-    if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
-    throw reauthenticationRefused();
+    return { result, notice: null };
   }
 
   /**
@@ -1665,7 +1516,7 @@ export class AuthService {
     const { userId } = session.context;
     const now = new Date();
     const { guess, codes } = await withDatabaseContext(scope, async (transaction) => ({
-      guess: await this.countGuess(transaction, emailHash, now),
+      guess: await countGuess(transaction, emailHash, now),
       codes: await transaction.userRecoveryCode.findMany({
         where: { userId },
         select: { id: true, codeHash: true },
@@ -1910,9 +1761,10 @@ export class AuthService {
    * the link is opened. A User with a TOTP factor also gives a code or a Recovery Code; a wrong
    * one counts toward the email's Sign-in Cool-down, not the second-factor ceiling, and leaves
    * the link usable. Recovery Codes are matched outside a transaction, as at sign-in.
-   * The last transaction, holding the User's password row, checks the link and the code again,
-   * then consumes the link, sets the password, clears the second-factor ceiling and the
-   * cool-down, and ends every session and pending sign-in. It answers the notices to send.
+   * The last transaction holds the User's password row. Credential Proof checks a TOTP code in
+   * it; then the link is checked again, a Recovery Code spent, the link consumed, the password set,
+   * the Second-factor Ceiling and the cool-down cleared, and every session and pending sign-in
+   * ended. It answers the notices to send.
    */
   async completePasswordReset(
     token: string,
@@ -1947,7 +1799,7 @@ export class AuthService {
       if (method === 'missing') return { status: 'CODE_REQUIRED' as const };
       const failure = { userId: link.user.id, emailHash: link.emailHash };
       if (!method) {
-        const cooldownUntil = await this.readCooldown(transaction, link.emailHash, now);
+        const cooldownUntil = await readCooldown(transaction, link.emailHash, now);
         if (cooldownUntil) {
           await this.writeResetFailure(transaction, request, {
             ...failure,
@@ -1957,7 +1809,7 @@ export class AuthService {
         }
         return { status: 'OPEN' as const, link, method, guess: null, codes: [] };
       }
-      const guess = await this.countGuess(transaction, link.emailHash, now);
+      const guess = await countGuess(transaction, link.emailHash, now);
       if (guess.cooldownUntil) {
         await this.writeResetFailure(transaction, request, {
           ...failure,
@@ -2016,10 +1868,9 @@ export class AuthService {
     }
     const passwordHash = await hashPassword(answer.password);
 
-    const outcome = await withDatabaseContext({ ...scope, userId }, async (transaction) => {
-      // One completion per User at a time; the second of two finds the link consumed.
-      await transaction.$queryRaw`
-        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+    // Runs holding the User's password row: the second of two completions finds the link consumed,
+    // or its TOTP code already spent.
+    const finish = async (transaction: Prisma.TransactionClient) => {
       const now = new Date();
       const current = await this.openResetLink(transaction, scope, tokenHash, now);
       if (current.status === 'INVALID') {
@@ -2031,33 +1882,6 @@ export class AuthService {
       if (recheck === 'missing') return { status: 'CODE_REQUIRED' as const };
       if (recheck !== method) return { status: 'INVALID_CODE' as const };
 
-      if (method === 'totp') {
-        const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
-        const step = factor
-          ? acceptTotpCode(
-              openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
-                userId,
-                factorId: factor.id,
-              }),
-              answer.code ?? '',
-              Number(factor.lastAcceptedStep),
-              now,
-            )
-          : null;
-        const accepted =
-          factor !== null &&
-          step !== null &&
-          (
-            await transaction.userTotpFactor.updateMany({
-              where: { id: factor.id, lastAcceptedStep: { lt: step } },
-              data: { lastAcceptedStep: step },
-            })
-          ).count === 1;
-        if (!accepted) {
-          await this.writeResetFailure(transaction, request, wrongCode);
-          return { status: 'INVALID_CODE' as const };
-        }
-      }
       if (recoveryCodeId) {
         const spent = await transaction.userRecoveryCode.deleteMany({
           where: { id: recoveryCodeId },
@@ -2117,7 +1941,27 @@ export class AuthService {
         notices.push(recoveryCodeNotice(email, remaining, now, 'reset'));
       }
       return { status: 'RESET' as const, notices };
-    });
+    };
+    const outcome =
+      method === 'totp'
+        ? await this.credentialProof.proveTotp({
+            scope: { ...scope, userId },
+            user: { id: userId, email: link.user.emailNormalized, emailHash: link.emailHash },
+            code: answer.code ?? '',
+            request,
+            wrongCode: () => resetCodeInvalid(method),
+            noFactor: async () => resetCodeInvalid(method),
+            passwordReset: {
+              recordWrongCode: (transaction) =>
+                this.writeResetFailure(transaction, request, wrongCode),
+            },
+            onProved: finish,
+          })
+        : await withDatabaseContext({ ...scope, userId }, async (transaction) => {
+            await transaction.$queryRaw`
+              SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+            return finish(transaction);
+          });
     if (outcome.status === 'INVALID') throw resetLinkInvalid();
     if (outcome.status === 'CODE_REQUIRED') {
       throw new AuthServiceError(
@@ -2811,8 +2655,8 @@ export class AuthService {
   }
 
   /**
-   * An existing User's TOTP code. Accepted once, like the sign-in step; a wrong code counts toward
-   * the Sign-in Cool-down and the second-factor ceiling.
+   * An existing User's TOTP code, checked by Credential Proof as on sign-in. The activation is
+   * opened again and finished in the transaction that accepts the code.
    */
   async completeActivationWithTotp(
     token: string,
@@ -2822,69 +2666,27 @@ export class AuthService {
   ): Promise<ActivationDone> {
     return this.activationStep(token, request, async () => {
       const scope = this.activationScope(token, pendingToken);
-      const outcome = await withDatabaseContext(scope, async (transaction) => {
-        const now = new Date();
-        const { invitation, pending, userId } = await this.openExistingUserStep(
-          transaction,
-          scope,
-          now,
-        );
-        const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
-        // One code attempt per User at a time, as in `completeTotpSignIn`.
-        await transaction.$queryRaw`
-          SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
-        const cooldownUntil = await this.readCooldown(transaction, emailHash, now);
-        if (cooldownUntil) {
-          await this.writeSignInFailure(transaction, request, {
+      const { invitation, userId } = await withDatabaseContext(scope, (transaction) =>
+        this.openExistingUserStep(transaction, scope, new Date()),
+      );
+      const email = invitation.emailNormalized;
+      return this.credentialProof.proveTotp({
+        scope: { ...scope, agencyId: invitation.agencyId, userId },
+        user: { id: userId, email, emailHash: hashEmail(email, this.config.BLIND_INDEX_KEY) },
+        code,
+        request,
+        wrongCode: () => new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE'),
+        noFactor: async () => activationExpired(),
+        onProved: async (transaction) => {
+          const opened = await this.openExistingUserStep(transaction, scope, new Date());
+          return this.finishActivation(transaction, scope, request, {
+            invitation: opened.invitation,
+            pending: opened.pending,
             userId,
-            emailHash,
-            reason: 'COOLDOWN_ACTIVE',
-            method: 'totp',
+            methods: [...opened.pending.verifiedMethods, 'totp'],
           });
-          return { status: 'COOLDOWN_ACTIVE' as const, cooldownUntil, now };
-        }
-        const factor = await transaction.userTotpFactor.findUnique({ where: { userId } });
-        if (!factor) throw activationExpired();
-        const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
-          userId,
-          factorId: factor.id,
-        });
-        const step = acceptTotpCode(secret, code, Number(factor.lastAcceptedStep), now);
-        const accepted =
-          step !== null &&
-          (
-            await transaction.userTotpFactor.updateMany({
-              where: { id: factor.id, lastAcceptedStep: { lt: step } },
-              data: { lastAcceptedStep: step },
-            })
-          ).count === 1;
-        if (!accepted) {
-          const guess = await this.countGuess(transaction, emailHash, now);
-          const ceiling = await this.writeGuessFailure(transaction, request, {
-            emailHash,
-            userId,
-            reason: 'INVALID_CODE',
-            cooldown: guess.cooldownUntil ? null : guess.counted.cooldown,
-            secondFactor: { method: 'totp', email: invitation.emailNormalized },
-          });
-          return { status: 'INVALID_CODE' as const, ceiling };
-        }
-        return {
-          status: 'ACTIVATED' as const,
-          done: await this.finishActivation(transaction, scope, request, {
-            invitation,
-            pending,
-            userId,
-            methods: [...pending.verifiedMethods, 'totp'],
-          }),
-        };
+        },
       });
-      if (outcome.status === 'ACTIVATED') return outcome.done;
-      if (outcome.status === 'COOLDOWN_ACTIVE') {
-        throw signInCooldown(outcome.cooldownUntil, outcome.now);
-      }
-      if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
-      throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
     });
   }
 
@@ -2904,9 +2706,9 @@ export class AuthService {
       const opened = await withDatabaseContext(scope, async (transaction) => {
         const { invitation, userId } = await this.openExistingUserStep(transaction, scope, now);
         const emailHash = hashEmail(invitation.emailNormalized, this.config.BLIND_INDEX_KEY);
-        const guess = await this.countGuess(transaction, emailHash, now);
+        const guess = await countGuess(transaction, emailHash, now);
         if (guess.cooldownUntil) {
-          await this.writeSignInFailure(transaction, request, {
+          await writeSignInFailure(transaction, request, {
             userId,
             emailHash,
             reason: 'COOLDOWN_ACTIVE',
@@ -3378,7 +3180,7 @@ export class AuthService {
     const now = new Date();
     const guess = await withDatabaseContext(
       { capabilities: ['platform-security'] },
-      (transaction) => this.countGuess(transaction, emailHash, now),
+      (transaction) => countGuess(transaction, emailHash, now),
     );
     if (guess.cooldownUntil) {
       await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
@@ -3881,7 +3683,7 @@ export class AuthService {
       where: { tokenHash: prismaBytes(hashSessionToken(pendingToken)) },
     });
     if (!pending?.userId || pending.purpose !== 'SIGN_IN' || pending.stage !== stage) {
-      await this.writeSignInFailure(transaction, request, {
+      await writeSignInFailure(transaction, request, {
         userId: null,
         emailHash: null,
         reason: 'SIGN_IN_EXPIRED',
@@ -3898,7 +3700,7 @@ export class AuthService {
     const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
     if (pending.expiresAt <= now) {
       await transaction.pendingAuthentication.deleteMany({ where: { id: pending.id } });
-      await this.writeSignInFailure(transaction, request, {
+      await writeSignInFailure(transaction, request, {
         userId,
         emailHash,
         reason: 'SIGN_IN_EXPIRED',
@@ -3917,42 +3719,6 @@ export class AuthService {
       user,
       emailHash,
     };
-  }
-
-  /** When the email's running Sign-in Cool-down ends, or null. */
-  private async readCooldown(
-    transaction: Prisma.TransactionClient,
-    emailHash: Buffer,
-    now: Date,
-  ): Promise<Date | null> {
-    const state = await transaction.signInThrottle.findUnique({
-      where: { emailHash: prismaBytes(emailHash) },
-    });
-    return activeCooldown(state, now);
-  }
-
-  /**
-   * Counts a guess toward the email's Sign-in Cool-down under the throttle row's lock, so
-   * concurrent guesses each count once, or answers the running cool-down that refuses it.
-   */
-  private async countGuess(
-    transaction: Prisma.TransactionClient,
-    emailHash: Buffer,
-    now: Date,
-  ): Promise<GuessCount> {
-    const key = prismaBytes(emailHash);
-    // One statement creates or locks the row, so a full sign-in deleting it can't slip between.
-    const [row] = await transaction.$queryRaw<ThrottleRow[]>`
-      INSERT INTO "sign_in_throttles" ("email_hash", "last_failure_at")
-      VALUES (${key}, ${now})
-      ON CONFLICT ("email_hash") DO UPDATE SET "email_hash" = EXCLUDED."email_hash"
-      RETURNING "failure_count", "cooldown_level", "cooldown_until", "last_failure_at"`;
-    const before = throttleState(row);
-    const cooldownUntil = activeCooldown(before, now);
-    if (cooldownUntil) return { cooldownUntil };
-    const counted = addSignInFailure(before, now);
-    await transaction.signInThrottle.update({ where: { emailHash: key }, data: counted.state });
-    return { cooldownUntil: null, before, counted };
   }
 
   /** Takes back a counted guess that turned out right, in a transaction of its own. */
@@ -3989,71 +3755,9 @@ export class AuthService {
         ...(failure.userId ? { userId: failure.userId } : {}),
         capabilities: ['platform-security'],
       },
-      (transaction) => this.writeGuessFailure(transaction, request, failure),
+      (transaction) => writeGuessFailure(transaction, request, failure),
     );
     if (ceiling) throw passwordResetRequired(ceiling);
-  }
-
-  /**
-   * A wrong password, TOTP code, or Recovery Code, already counted by `countGuess`: a LOGIN_FAILURE,
-   * and a SIGN_IN_COOLDOWN_STARTED for the cool-down counting it started.
-   * A wrong code also counts toward the second-factor ceiling; the failure that reaches it disables
-   * the password, ends the User's pending sign-ins and activations, and answers the notice to send.
-   * The transaction needs the platform-security capability, and the User's context for a wrong code.
-   */
-  private async writeGuessFailure(
-    transaction: Prisma.TransactionClient,
-    request: SignInRequest,
-    { emailHash, userId, reason, cooldown, secondFactor }: GuessFailure,
-  ): Promise<MailMessage | null> {
-    const now = new Date();
-    await this.writeSignInFailure(transaction, request, {
-      userId,
-      emailHash,
-      reason,
-      method: secondFactor?.method,
-    });
-    if (cooldown) {
-      await transaction.securityEvent.create({
-        data: {
-          eventType: 'SIGN_IN_COOLDOWN_STARTED',
-          requestId: request.requestId,
-          ipAddress: request.ipAddress,
-          userAgent: request.userAgent,
-          emailHash: prismaBytes(emailHash),
-          details: { level: cooldown.level, minutes: cooldown.minutes },
-        },
-      });
-    }
-
-    if (!secondFactor || !userId) return null;
-    const { secondFactorFailures } = await transaction.userPassword.update({
-      where: { userId },
-      data: { secondFactorFailures: { increment: 1 } },
-      select: { secondFactorFailures: true },
-    });
-    const disabled = await transaction.userPassword.updateMany({
-      where: {
-        userId,
-        resetRequiredAt: null,
-        secondFactorFailures: { gte: SECOND_FACTOR_CEILING },
-      },
-      data: { resetRequiredAt: now },
-    });
-    if (disabled.count !== 1) return null;
-    await transaction.pendingAuthentication.deleteMany({ where: { userId } });
-    await transaction.securityEvent.create({
-      data: {
-        userId,
-        eventType: 'PASSWORD_RESET_REQUIRED',
-        requestId: request.requestId,
-        ipAddress: request.ipAddress,
-        userAgent: request.userAgent,
-        emailHash: prismaBytes(emailHash),
-        details: { secondFactorFailures },
-      },
-    });
-    return passwordResetRequiredNotice(secondFactor.email);
   }
 
   /**
@@ -4149,35 +3853,8 @@ export class AuthService {
     method?: SecondFactorMethod,
   ): Promise<void> {
     await withDatabaseContext({ capabilities: ['platform-security'] }, (transaction) =>
-      this.writeSignInFailure(transaction, request, { userId, emailHash, reason, method }),
+      writeSignInFailure(transaction, request, { userId, emailHash, reason, method }),
     );
-  }
-
-  /** A sign-in LOGIN_FAILURE event; it never holds the password, code, token, or raw email. */
-  private async writeSignInFailure(
-    transaction: Prisma.TransactionClient,
-    request: SignInRequest,
-    failure: {
-      userId: string | null;
-      emailHash: Buffer | null;
-      reason: string;
-      method?: SecondFactorMethod | undefined;
-    },
-  ): Promise<void> {
-    await transaction.securityEvent.create({
-      data: {
-        userId: failure.userId,
-        eventType: 'LOGIN_FAILURE',
-        requestId: request.requestId,
-        ipAddress: request.ipAddress,
-        userAgent: request.userAgent,
-        emailHash: failure.emailHash ? prismaBytes(failure.emailHash) : null,
-        details: {
-          reason: failure.reason,
-          ...(failure.method ? { method: failure.method } : {}),
-        },
-      },
-    });
   }
 
   /**

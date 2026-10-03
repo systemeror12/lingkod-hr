@@ -260,6 +260,14 @@ _Avoid_: Agency suspension, role removal, automatic lockout
 A temporary, self-expiring refusal of sign-in attempts for one submitted email after repeated failures, growing longer with each repeat; it never changes account status and behaves the same whether or not the email belongs to a User.
 _Avoid_: Lockout, lockdown, account lock
 
+**Credential Proof**:
+One attempt to prove a User's password, TOTP code, or Recovery Code during sign-in, reauthentication, Invitation Activation, or Password Reset. A wrong guess counts toward the Sign-in Cool-down whichever of these asked for it.
+_Avoid_: Login check, factor verification
+
+**Second-factor Ceiling**:
+Ten consecutive wrong TOTP codes or Recovery Codes since the User last proved both factors, after which their password stops working until a Password Reset. Wrong codes entered during a Password Reset do not count toward it.
+_Avoid_: Lockout, account lock, MFA lock
+
 **MFA-Required User**:
 A user whose effective access through any agency membership meets a mandatory MFA risk trigger or a stricter agency policy; MFA applies to the user's whole identity.
 _Avoid_: Privileged user, MFA role
