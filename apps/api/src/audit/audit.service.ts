@@ -160,6 +160,10 @@ function auditEventFilter(): Prisma.AuditEventWhereInput {
   return {
     OR: [
       {
+        entityType: 'AgencySeal',
+        action: { in: ['AGENCY_SEAL_SAVED', 'AGENCY_SEAL_REPLACED', 'AGENCY_SEAL_REMOVED'] },
+      },
+      {
         entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
         OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
       },
