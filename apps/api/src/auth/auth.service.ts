@@ -1,5 +1,5 @@
 import { S3DocumentStorage } from '../documents/documents.storage';
-import { readAgencySealKey } from '../agency-profile/agency-seal.queries';
+import { readAgencyBrandKeys } from '../agency-profile/agency-brand.queries';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -224,7 +224,12 @@ export type InvitationLookup =
   | {
       status: 'VALID';
       email: string;
-      agency: { name: string; acronym: string | null; sealUrl?: string | null };
+      agency: {
+        name: string;
+        acronym: string | null;
+        sealUrl?: string | null;
+        photoUrl?: string | null;
+      };
       roleNames: string[];
       existingUser: boolean;
       expiresAt: Date;
@@ -2067,7 +2072,7 @@ export class AuthService {
       });
       return {
         status: 'VALID' as const,
-        sealKey: await readAgencySealKey(transaction, invitation.agencyId),
+        brandKeys: await readAgencyBrandKeys(transaction, invitation.agencyId),
         email: invitation.emailNormalized,
         agency: invitation.agency,
         roleNames: invitation.roles.map(({ name }) => name),
@@ -2076,7 +2081,7 @@ export class AuthService {
       };
     });
     if (result.status !== 'VALID') return result;
-    const { sealKey, ...invitation } = result;
+    const { brandKeys, ...invitation } = result;
     const ttl = Math.max(
       1,
       Math.min(300, Math.floor((invitation.expiresAt.getTime() - Date.now()) / 1000)),
@@ -2085,7 +2090,12 @@ export class AuthService {
       ...invitation,
       agency: {
         ...invitation.agency,
-        sealUrl: sealKey ? await this.brandingStorage.signedReadUrl(sealKey, ttl) : null,
+        sealUrl: brandKeys.sealKey
+          ? await this.brandingStorage.signedReadUrl(brandKeys.sealKey, ttl)
+          : null,
+        photoUrl: brandKeys.photoKey
+          ? await this.brandingStorage.signedReadUrl(brandKeys.photoKey, ttl)
+          : null,
       },
     };
   }

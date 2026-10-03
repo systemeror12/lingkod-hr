@@ -164,6 +164,18 @@ function auditEventFilter(): Prisma.AuditEventWhereInput {
         action: { in: ['AGENCY_SEAL_SAVED', 'AGENCY_SEAL_REPLACED', 'AGENCY_SEAL_REMOVED'] },
       },
       {
+        entityType: 'AgencyBuildingPhoto',
+        action: {
+          in: [
+            'AGENCY_PHOTO_SAVED',
+            'AGENCY_PHOTO_REPLACED',
+            'AGENCY_PHOTO_SHOWN',
+            'AGENCY_PHOTO_HIDDEN',
+            'AGENCY_PHOTO_REMOVED',
+          ],
+        },
+      },
+      {
         entityType: ORGANIZATION_UNIT_AUDIT_ENTITY,
         OR: ORGANIZATION_UNIT_AUDIT_TRANSITIONS,
       },
