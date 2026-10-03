@@ -339,9 +339,9 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   await expect(dialog).toContainText(name);
   await expect(dialog).toContainText('Proposed successor');
   await page.getByRole('button', { name: 'Save Draft' }).click();
+  await expect(page.getByRole('status')).toContainText('Draft successor saved');
   await dialog.press('Escape');
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('status')).toContainText('Draft successor saved');
 });
 
 test('keeps a missing Unit explicit across reload and returns to the dated Tree', async ({
