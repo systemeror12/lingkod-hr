@@ -140,47 +140,7 @@ function ReauthenticationPrompt({ onSettle }: { onSettle: (confirmed: boolean) =
               />
             </Field>
             {hasAuthenticator ? (
-              <div className="grid justify-items-start gap-2">
-                <div className="grid w-full">
-                  {method === 'totp' ? (
-                    <Field key="totp" label="Authentication code">
-                      <input
-                        className={inputClass}
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={7}
-                        required
-                        value={code}
-                        onChange={(event) => setCode(eventValue(event))}
-                      />
-                    </Field>
-                  ) : (
-                    <Field key="recovery" label="Recovery Code">
-                      <input
-                        className={inputClass}
-                        autoComplete="off"
-                        spellCheck={false}
-                        maxLength={64}
-                        required
-                        value={code}
-                        onChange={(event) => setCode(eventValue(event))}
-                      />
-                    </Field>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="cursor-pointer text-small font-semibold text-primary underline-offset-2 hover:underline"
-                  onClick={() => {
-                    setCode('');
-                    setMethod(method === 'totp' ? 'recovery_code' : 'totp');
-                  }}
-                >
-                  {method === 'totp'
-                    ? 'Use a Recovery Code instead'
-                    : 'Use your authenticator code'}
-                </button>
-              </div>
+              <CodeField method={method} code={code} onCode={setCode} onMethod={setMethod} />
             ) : null}
           </form>
         </DialogBody>
@@ -199,5 +159,60 @@ function ReauthenticationPrompt({ onSettle }: { onSettle: (confirmed: boolean) =
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The second half of a proof: a code from the authenticator app, or a Recovery Code instead. */
+export function CodeField({
+  method,
+  code,
+  onCode,
+  onMethod,
+}: {
+  method: 'totp' | 'recovery_code';
+  code: string;
+  onCode: (code: string) => void;
+  onMethod: (method: 'totp' | 'recovery_code') => void;
+}) {
+  return (
+    <div className="grid justify-items-start gap-2">
+      <div className="grid w-full">
+        {method === 'totp' ? (
+          <Field key="totp" label="Authentication code">
+            <input
+              className={inputClass}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={7}
+              required
+              value={code}
+              onChange={(event) => onCode(eventValue(event))}
+            />
+          </Field>
+        ) : (
+          <Field key="recovery" label="Recovery Code">
+            <input
+              className={inputClass}
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={64}
+              required
+              value={code}
+              onChange={(event) => onCode(eventValue(event))}
+            />
+          </Field>
+        )}
+      </div>
+      <button
+        type="button"
+        className="cursor-pointer text-small font-semibold text-primary underline-offset-2 hover:underline"
+        onClick={() => {
+          onCode('');
+          onMethod(method === 'totp' ? 'recovery_code' : 'totp');
+        }}
+      >
+        {method === 'totp' ? 'Use a Recovery Code instead' : 'Use your authenticator code'}
+      </button>
+    </div>
   );
 }

@@ -329,14 +329,14 @@ Unused single-use Recovery Codes. Carries no `agency_id`; visible only in the ow
 **Deletion behavior:** Delete when used or when the set is replaced; cascades with the User.
 ## `pending_authentications`
 
-Short-lived state between sign-in or activation steps, referenced by an HTTP-only cookie. Carries no `agency_id`; visible in the owning User's context or through the hash of its cookie token.
+Short-lived state between sign-in or activation steps, referenced by an HTTP-only cookie, or a signed-in User's TOTP replacement, found by its User. Carries no `agency_id`; visible in the owning User's context or through the hash of its cookie token.
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
 | id | uuid | No | PK | Pending authentication |
-| token_hash | bytes | No | Unique | Hash of the cookie token; the token itself is never stored |
-| purpose | enum | No |  | SIGN_IN, ACTIVATION |
-| user_id | uuid | Yes | FK users | User signing in; required for SIGN_IN |
+| token_hash | bytes | Yes | Unique | Hash of the cookie token; the token itself is never stored. Null only for TOTP_REPLACEMENT |
+| purpose | enum | No |  | SIGN_IN, ACTIVATION, TOTP_REPLACEMENT |
+| user_id | uuid | Yes | FK users | User signing in or replacing their factor; required for SIGN_IN and TOTP_REPLACEMENT |
 | invitation_id | uuid | Yes | FK invitations | Invitation being activated; required for ACTIVATION |
 | requested_membership_id | uuid | Yes |  | Agency Membership requested for the session |
 | stage | string | No |  | Next step: TOTP, ENROLL_SCAN, or ENROLL_CODES |
@@ -346,13 +346,15 @@ Short-lived state between sign-in or activation steps, referenced by an HTTP-onl
 | enrollment_secret_envelope | bytes | Yes |  | TOTP secret being enrolled, encrypted like a factor's and bound to the User and the pending row, whose id becomes the factor id |
 | recovery_code_hashes | string[] | No |  | Hashes of the Recovery Codes shown once at enrollment |
 | enrollment_accepted_step | integer | Yes |  | Step of the code that confirmed enrollment; the factor's first `last_accepted_step` |
-| expires_at | datetime | No | After `created_at` | Sign-in expires after 5 minutes |
+| expires_at | datetime | No | After `created_at` | Sign-in and TOTP replacement expire after 5 minutes |
 | created_at | datetime | No |  | Started |
 
 **Constraints and indexes**
 
-- SIGN_IN requires `user_id` and no `invitation_id`; ACTIVATION requires `invitation_id`.
-- At most one SIGN_IN row per User and one ACTIVATION row per invitation; starting over replaces it.
+- SIGN_IN and TOTP_REPLACEMENT require `user_id` and no `invitation_id`; ACTIVATION requires `invitation_id`.
+- Only TOTP_REPLACEMENT has no `token_hash`.
+- At most one SIGN_IN and one TOTP_REPLACEMENT row per User and one ACTIVATION row per invitation; starting over replaces it.
+- Confirming a TOTP_REPLACEMENT deletes the row and the old factor and writes the new factor in one transaction; the Recovery Codes stay.
 - The final step deletes the row in the transaction that creates the session. For an enrollment, the same transaction writes the factor and the Recovery Code hashes; an abandoned or expired enrollment writes nothing.
 
 **Deletion behavior:** Deleted when completed, replaced, or found expired; cascades with the User or invitation.

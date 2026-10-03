@@ -281,8 +281,8 @@ CREATE TABLE user_recovery_codes (
 
 CREATE TABLE pending_authentications (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  token_hash bytea NOT NULL UNIQUE,
-  purpose text NOT NULL CHECK (purpose IN ('SIGN_IN','ACTIVATION')),
+  token_hash bytea UNIQUE,
+  purpose text NOT NULL CHECK (purpose IN ('SIGN_IN','ACTIVATION','TOTP_REPLACEMENT')),
   user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   invitation_id uuid REFERENCES invitations(id) ON DELETE CASCADE,
   requested_membership_id uuid,
@@ -299,13 +299,17 @@ CREATE TABLE pending_authentications (
   CHECK (
     (purpose = 'SIGN_IN' AND user_id IS NOT NULL AND invitation_id IS NULL)
     OR (purpose = 'ACTIVATION' AND invitation_id IS NOT NULL)
-  )
+    OR (purpose = 'TOTP_REPLACEMENT' AND user_id IS NOT NULL AND invitation_id IS NULL)
+  ),
+  CHECK ((token_hash IS NULL) = (purpose = 'TOTP_REPLACEMENT'))
 );
 
 CREATE UNIQUE INDEX pending_authentications_sign_in_user_uq
   ON pending_authentications (user_id) WHERE purpose = 'SIGN_IN';
 CREATE UNIQUE INDEX pending_authentications_activation_invitation_uq
   ON pending_authentications (invitation_id) WHERE purpose = 'ACTIVATION';
+CREATE UNIQUE INDEX pending_authentications_totp_replacement_user_uq
+  ON pending_authentications (user_id) WHERE purpose = 'TOTP_REPLACEMENT';
 
 CREATE TABLE password_reset_tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

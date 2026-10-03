@@ -52,11 +52,13 @@ import {
 } from '../invitations/mail';
 import { prismaBytes, safeJson, selectInvitationRoles } from '../invitations/invitation-utils';
 import {
+  acceptEnrollmentCode,
   beginTotpEnrollment,
   confirmTotpEnrollment,
   ENROLL_CODES_STAGE,
   ENROLL_SCAN_STAGE,
   writeTotpEnrollment,
+  writeTotpFactor,
 } from './totp-enrollment';
 
 export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
@@ -157,7 +159,20 @@ interface PendingSignIn {
   emailHash: Buffer;
 }
 
-/** A reauthentication whose password is verified, for its second step. */
+/** What a signed-in User gives to prove who they are: a TOTP code or Recovery Code with a factor. */
+interface SignedInProof {
+  password: string;
+  code?: string | undefined;
+  recoveryCode?: string | undefined;
+}
+
+/** The context in which a signed-in User changes their own credentials. */
+function signedInScope({ context }: AuthenticatedSession) {
+  const { userId, agencyId, membershipId } = context;
+  return { userId, agencyId, membershipId, capabilities: ['platform-security'] as const };
+}
+
+/** A signed-in User whose password is verified, for the second step. */
 interface ReauthenticationProof {
   session: AuthenticatedSession;
   request: SignInRequest;
@@ -439,6 +454,28 @@ function passwordResetNotice(email: string, resetAt: Date): MailMessage {
     text: [
       `Your LingkodHR password was reset on ${noticeTime.format(resetAt)} (Philippine time). Every session was signed out.`,
       "If you didn't reset it, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
+function passwordChangedNotice(email: string, changedAt: Date): MailMessage {
+  return {
+    to: email,
+    subject: 'Your LingkodHR password was changed',
+    text: [
+      `Your LingkodHR password was changed on ${noticeTime.format(changedAt)} (Philippine time). Your other sessions were signed out.`,
+      "If you didn't change it, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
+function totpReplacedNotice(email: string, replacedAt: Date): MailMessage {
+  return {
+    to: email,
+    subject: 'The authenticator app for your LingkodHR account was replaced',
+    text: [
+      `The authenticator app for signing in to your LingkodHR account was replaced on ${noticeTime.format(replacedAt)} (Philippine time). The old app no longer works, and your other sessions were signed out. Your Recovery Codes still work.`,
+      "If you didn't replace it, contact your Agency Administrator right away.",
     ].join('\n\n'),
   };
 }
@@ -1107,19 +1144,275 @@ export class AuthService {
   }
 
   /**
-   * Proves again who a signed-in User is, with the same proof as sign-in: the password, plus a TOTP
-   * code or Recovery Code when the User has a factor. Wrong guesses count like sign-in's, toward
-   * the Sign-in Cool-down and the second-factor ceiling. Success sets the session's `authTime` to
-   * now and records the methods used; its idle timer and `expiresAt` stay as they were. A spent
-   * Recovery Code answers its notice, for `sendNotice` once the response is out.
+   * Proves again who a signed-in User is, with the same proof as sign-in. Success sets the
+   * session's `authTime` to now and records the methods used; its idle timer and `expiresAt` stay
+   * as they were. A spent Recovery Code answers its notice, for `sendNotice` once the response is
+   * out.
    */
   async reauthenticate(
     session: AuthenticatedSession,
-    proof: { password: string; code?: string | undefined; recoveryCode?: string | undefined },
+    proof: SignedInProof,
     request: SignInRequest,
   ): Promise<{ notice: MailMessage | null }> {
-    const { userId, agencyId, membershipId } = session.context;
-    const scope = { userId, agencyId, membershipId, capabilities: ['platform-security'] as const };
+    const { notice } = await this.proveSignedInUser(
+      session,
+      proof,
+      request,
+      'reauthentication',
+      (transaction, proved, methods) => this.finishReauthentication(transaction, proved, methods),
+    );
+    return { notice };
+  }
+
+  /**
+   * Changes a signed-in User's password. It always asks for the current password, plus a TOTP code
+   * or Recovery Code when the User has a factor, whatever the Reauthentication Window; wrong
+   * guesses count as `reauthenticate`'s do. The new password must pass the password rules and
+   * differ from the current one. Success ends every other session and pending sign-in, and voids
+   * outstanding reset links; this session keeps its `authTime` and expiry. Answers the notices, for
+   * `sendNotice` once the response is out.
+   */
+  async changePassword(
+    session: AuthenticatedSession,
+    answer: Omit<SignedInProof, 'password'> & { currentPassword: string; newPassword: string },
+    request: SignInRequest,
+  ): Promise<{ revokedSessions: number; notices: MailMessage[] }> {
+    const scope = signedInScope(session);
+    const { userId } = scope;
+    const user = await withDatabaseContext(scope, (transaction) =>
+      transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { emailNormalized: true, displayName: true },
+      }),
+    );
+    const rejected = checkNewPassword(answer.newPassword, {
+      email: user.emailNormalized,
+      name: user.displayName,
+    });
+    if (rejected) throw new AuthServiceError(rejected.message, 400, 'PASSWORD_REJECTED');
+    // Passwords are hashed NFKC-normalized, so once the current one verifies this is the same as
+    // the new one verifying against its hash.
+    if (answer.newPassword.normalize('NFKC') === answer.currentPassword.normalize('NFKC')) {
+      throw new AuthServiceError(
+        'Choose a password that’s different from your current one.',
+        400,
+        'PASSWORD_REJECTED',
+      );
+    }
+    // Refuse a throttled caller before the slow hash; the proof below counts the guess.
+    const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
+    await this.assertIpAllowed(request, emailHash);
+    const now = new Date();
+    const cooldownUntil = await withDatabaseContext(scope, (transaction) =>
+      this.readCooldown(transaction, emailHash, now),
+    );
+    if (cooldownUntil) {
+      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      throw signInCooldown(cooldownUntil, now);
+    }
+    // Hashing takes too long to hold a transaction open.
+    const passwordHash = await hashPassword(answer.newPassword);
+    const { result: revokedSessions, notice } = await this.proveSignedInUser(
+      session,
+      { password: answer.currentPassword, code: answer.code, recoveryCode: answer.recoveryCode },
+      request,
+      'passwordChange',
+      async (transaction, _proved, methods) => {
+        // A concurrent change by another session revokes this one; under the lock it shows.
+        await transaction.$queryRaw`
+          SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+        const current = await transaction.userSession.count({
+          where: { id: session.sessionId, revokedAt: null },
+        });
+        if (current !== 1) {
+          throw new AuthServiceError('Your session ended. Sign in again.', 401, 'SESSION_REVOKED');
+        }
+        // Changing `changed_at` voids the User's outstanding reset links.
+        await transaction.userPassword.update({
+          where: { userId },
+          data: { passwordHash, changedAt: new Date() },
+        });
+        await transaction.pendingAuthentication.deleteMany({ where: { userId } });
+        const revoked = await this.revokeOtherSessions(
+          transaction,
+          session,
+          'PASSWORD_CHANGED',
+          request.requestId,
+        );
+        await transaction.securityEvent.create({
+          data: {
+            agencyId: scope.agencyId,
+            userId,
+            membershipId: scope.membershipId,
+            eventType: 'PASSWORD_CHANGED',
+            requestId: request.requestId,
+            ipAddress: request.ipAddress,
+            emailHash: prismaBytes(emailHash),
+            details: { methods, revokedSessions: revoked },
+          },
+        });
+        return revoked;
+      },
+    );
+    const notices = [passwordChangedNotice(user.emailNormalized, new Date())];
+    if (notice) notices.push(notice);
+    return { revokedSessions, notices };
+  }
+
+  /**
+   * Starts replacing the User's authenticator app: a new secret, sealed on the User's pending
+   * replacement, which supersedes any earlier one and lasts 5 minutes. Their factor stays until
+   * `confirmTotpReplacement`. The caller guards it with the Reauthentication Window.
+   */
+  async beginTotpReplacement(
+    session: AuthenticatedSession,
+  ): Promise<{ otpauthUri: string; account: string; expiresAt: Date }> {
+    const scope = signedInScope(session);
+    const { userId } = scope;
+    return withDatabaseContext(scope, async (transaction) => {
+      if ((await transaction.userTotpFactor.count({ where: { userId } })) !== 1) {
+        throw new AuthServiceError(
+          'Set up an authenticator app before replacing it.',
+          409,
+          'NO_AUTHENTICATOR',
+        );
+      }
+      const { emailNormalized: account } = await transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { emailNormalized: true },
+      });
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + PENDING_SIGN_IN_LIFETIME_MS);
+      await transaction.pendingAuthentication.deleteMany({
+        where: { userId, purpose: 'TOTP_REPLACEMENT' },
+      });
+      const pendingId = randomUUID();
+      const { envelope, otpauthUri } = beginTotpEnrollment(
+        this.dataEncryptionKey,
+        { userId, factorId: pendingId },
+        account,
+      );
+      await transaction.pendingAuthentication.create({
+        data: {
+          id: pendingId,
+          purpose: 'TOTP_REPLACEMENT',
+          userId,
+          stage: ENROLL_SCAN_STAGE,
+          enrollmentSecretEnvelope: prismaBytes(envelope),
+          createdAt: now,
+          expiresAt,
+        },
+      });
+      return { otpauthUri, account, expiresAt };
+    });
+  }
+
+  /**
+   * Confirms a replacement with a code from the new app. One transaction ends the pending
+   * replacement, swaps the old factor for the new one, keeps the Recovery Codes, and ends every
+   * other session. A wrong code leaves the replacement open and isn't counted as a guess, as in
+   * enrollment. Answers the notice, for `sendNotice` once the response is out.
+   */
+  async confirmTotpReplacement(
+    session: AuthenticatedSession,
+    code: string,
+    request: SignInRequest,
+  ): Promise<{ revokedSessions: number; notice: MailMessage }> {
+    const scope = signedInScope(session);
+    const { userId } = scope;
+    const outcome = await withDatabaseContext(scope, async (transaction) => {
+      const now = new Date();
+      const pending = await transaction.pendingAuthentication.findFirst({
+        where: { userId, purpose: 'TOTP_REPLACEMENT', expiresAt: { gt: now } },
+      });
+      if (!pending?.enrollmentSecretEnvelope) return { status: 'EXPIRED' as const };
+      const step = acceptEnrollmentCode(
+        this.dataEncryptionKey,
+        { userId, factorId: pending.id },
+        Buffer.from(pending.enrollmentSecretEnvelope),
+        code,
+        now,
+      );
+      const { emailNormalized: email } = await transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { emailNormalized: true },
+      });
+      const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
+      if (step === null) {
+        await this.writeSignInFailure(transaction, request, {
+          userId,
+          emailHash,
+          reason: 'INVALID_CODE',
+          method: 'totp',
+        });
+        return { status: 'INVALID_CODE' as const };
+      }
+      const ended = await transaction.pendingAuthentication.deleteMany({
+        where: { id: pending.id },
+      });
+      if (ended.count !== 1) return { status: 'EXPIRED' as const };
+      await transaction.userTotpFactor.deleteMany({ where: { userId } });
+      await writeTotpFactor(
+        transaction,
+        { ...pending, enrollmentAcceptedStep: BigInt(step) },
+        userId,
+      );
+      const revokedSessions = await this.revokeOtherSessions(
+        transaction,
+        session,
+        'TOTP_REPLACED',
+        request.requestId,
+      );
+      await transaction.securityEvent.create({
+        data: {
+          agencyId: scope.agencyId,
+          userId,
+          membershipId: scope.membershipId,
+          eventType: 'TOTP_REPLACED',
+          requestId: request.requestId,
+          ipAddress: request.ipAddress,
+          emailHash: prismaBytes(emailHash),
+          details: { revokedSessions },
+        },
+      });
+      return {
+        status: 'REPLACED' as const,
+        revokedSessions,
+        notice: totpReplacedNotice(email, now),
+      };
+    });
+    if (outcome.status === 'EXPIRED') {
+      throw new AuthServiceError(
+        'The replacement expired. Start again.',
+        409,
+        'REPLACEMENT_EXPIRED',
+      );
+    }
+    if (outcome.status === 'INVALID_CODE') {
+      throw new AuthServiceError('The code is incorrect.', 401, 'INVALID_CODE');
+    }
+    return { revokedSessions: outcome.revokedSessions, notice: outcome.notice };
+  }
+
+  /**
+   * Proves who a signed-in User is: the password, plus a TOTP code or Recovery Code when the User
+   * has a factor. Wrong guesses count like sign-in's, toward the Sign-in Cool-down and the
+   * second-factor ceiling. A right one resets both, as a full sign-in does, and runs `onProved`
+   * in the same transaction that accepts the code. A spent Recovery Code answers its notice.
+   */
+  private async proveSignedInUser<T>(
+    session: AuthenticatedSession,
+    proof: SignedInProof,
+    request: SignInRequest,
+    purpose: 'reauthentication' | 'passwordChange',
+    onProved: (
+      transaction: Prisma.TransactionClient,
+      proved: ReauthenticationProof,
+      methods: string[],
+    ) => Promise<T>,
+  ): Promise<{ result: T; notice: MailMessage | null }> {
+    const scope = signedInScope(session);
+    const { userId } = scope;
     const { emailNormalized: email } = await withDatabaseContext(scope, (transaction) =>
       transaction.user.findUniqueOrThrow({
         where: { id: userId },
@@ -1162,21 +1455,12 @@ export class AuthService {
     const proved = { session, request, emailHash, email };
     if (!hasFactor) {
       return withDatabaseContext(scope, async (transaction) => {
-        // A password alone would strip the session's MFA evidence and end it on the next request.
-        const { userId, agencyId, membershipId } = session.context;
-        if (await this.userRequiresMfa(transaction, userId, agencyId, membershipId)) {
-          throw new AuthServiceError(
-            'MFA is required for this User identity.',
-            403,
-            'MFA_REQUIRED',
-          );
-        }
-        await this.finishReauthentication(transaction, proved, ['pwd']);
-        return { notice: null };
+        await this.clearGuesses(transaction, proved);
+        return { result: await onProved(transaction, proved, ['pwd']), notice: null };
       });
     }
     if (proof.recoveryCode !== undefined) {
-      return this.reauthenticateWithRecoveryCode(scope, proved, proof.recoveryCode);
+      return this.proveWithRecoveryCode(scope, proved, proof.recoveryCode, purpose, onProved);
     }
     const outcome = await withDatabaseContext(scope, async (transaction) => {
       // One code attempt per User at a time, as on sign-in.
@@ -1198,8 +1482,11 @@ export class AuthService {
           })
         ).count === 1;
       if (accepted) {
-        await this.finishReauthentication(transaction, proved, ['pwd', 'totp']);
-        return { ceiling: null, accepted };
+        await this.clearGuesses(transaction, proved);
+        return {
+          accepted,
+          result: await onProved(transaction, proved, ['pwd', 'totp']),
+        } as const;
       }
       const wrong = await this.countGuess(transaction, emailHash, at);
       const ceiling = await this.writeGuessFailure(transaction, request, {
@@ -1209,11 +1496,11 @@ export class AuthService {
         cooldown: wrong.cooldownUntil ? null : wrong.counted.cooldown,
         secondFactor: { method: 'totp', email },
       });
-      return { ceiling, accepted };
+      return { accepted, ceiling } as const;
     });
+    if (outcome.accepted) return { result: outcome.result, notice: null };
     if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
-    if (!outcome.accepted) throw reauthenticationRefused();
-    return { notice: null };
+    throw reauthenticationRefused();
   }
 
   /**
@@ -1277,14 +1564,20 @@ export class AuthService {
   }
 
   /**
-   * Reauthentication's second step with a Recovery Code: counted as a guess first, matched outside
-   * a transaction, then spent by deleting its row, as on sign-in. Other sessions stay signed in.
+   * `proveSignedInUser`'s second step with a Recovery Code: counted as a guess first, matched
+   * outside a transaction, then spent by deleting its row, as on sign-in.
    */
-  private async reauthenticateWithRecoveryCode(
+  private async proveWithRecoveryCode<T>(
     scope: DatabaseContext,
     proved: ReauthenticationProof,
     code: string,
-  ): Promise<{ notice: MailMessage }> {
+    purpose: 'reauthentication' | 'passwordChange',
+    onProved: (
+      transaction: Prisma.TransactionClient,
+      proved: ReauthenticationProof,
+      methods: string[],
+    ) => Promise<T>,
+  ): Promise<{ result: T; notice: MailMessage }> {
     const { session, request, emailHash, email } = proved;
     const { userId } = session.context;
     const now = new Date();
@@ -1315,16 +1608,17 @@ export class AuthService {
       (await withDatabaseContext(scope, async (transaction) => {
         const deleted = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (deleted.count !== 1) return null;
-        await this.finishReauthentication(transaction, proved, ['pwd', 'recovery_code']);
+        await this.clearGuesses(transaction, proved);
+        const result = await onProved(transaction, proved, ['pwd', 'recovery_code']);
         const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
         await this.recordSecurityEvent(
           transaction,
           session.context,
           'RECOVERY_CODE_USED',
           request.requestId,
-          { remaining, reauthentication: true },
+          { remaining, [purpose]: true },
         );
-        return { notice: recoveryCodeNotice(email, remaining, now, 'reauthentication') };
+        return { result, notice: recoveryCodeNotice(email, remaining, now, 'reauthentication') };
       }));
     if (spent) {
       await this.refundGuess(emailHash, guess);
@@ -1341,21 +1635,35 @@ export class AuthService {
   }
 
   /**
-   * Ends a successful reauthentication as a full sign-in ends: the second-factor count and the
-   * Sign-in Cool-down reset, then the session's `authTime` and methods are refreshed.
+   * A signed-in User proved who they are, as a full sign-in does: the second-factor count and the
+   * Sign-in Cool-down reset.
    */
+  private async clearGuesses(
+    transaction: Prisma.TransactionClient,
+    { session, emailHash }: ReauthenticationProof,
+  ): Promise<void> {
+    const usable = await transaction.userPassword.updateMany({
+      where: { userId: session.context.userId, resetRequiredAt: null },
+      data: { secondFactorFailures: 0 },
+    });
+    if (usable.count !== 1) throw passwordResetRequired();
+    await transaction.signInThrottle.deleteMany({ where: { emailHash: prismaBytes(emailHash) } });
+  }
+
+  /** Ends a successful reauthentication: the session's `authTime` and methods are refreshed. */
   private async finishReauthentication(
     transaction: Prisma.TransactionClient,
     { session, request, emailHash }: ReauthenticationProof,
     methods: string[],
   ): Promise<void> {
-    const { userId } = session.context;
-    const usable = await transaction.userPassword.updateMany({
-      where: { userId, resetRequiredAt: null },
-      data: { secondFactorFailures: 0 },
-    });
-    if (usable.count !== 1) throw passwordResetRequired();
-    await transaction.signInThrottle.deleteMany({ where: { emailHash: prismaBytes(emailHash) } });
+    const { userId, agencyId, membershipId } = session.context;
+    // A password alone would strip the session's MFA evidence and end it on the next request.
+    if (
+      methods.length === 1 &&
+      (await this.userRequiresMfa(transaction, userId, agencyId, membershipId))
+    ) {
+      throw new AuthServiceError('MFA is required for this User identity.', 403, 'MFA_REQUIRED');
+    }
     const refreshed = await transaction.userSession.updateMany({
       where: { id: session.sessionId, userId, revokedAt: null },
       data: { authTime: new Date(), authenticationMethods: methods },
@@ -1365,9 +1673,9 @@ export class AuthService {
     }
     await transaction.securityEvent.create({
       data: {
-        agencyId: session.context.agencyId,
+        agencyId,
         userId,
-        membershipId: session.context.membershipId,
+        membershipId,
         eventType: 'REAUTHENTICATED',
         requestId: request.requestId,
         ipAddress: request.ipAddress,
@@ -1378,9 +1686,28 @@ export class AuthService {
   }
 
   /**
-   * Sends a credential notice. Callers run it after the transaction commits and the response is
-   * sent; a delivery failure is logged without the recipient or content and never thrown.
+   * Ends every session of the User but this one, recording each in its own Agency, then returns
+   * the transaction to this session's context. Answers how many it ended.
    */
+  private async revokeOtherSessions(
+    transaction: Prisma.TransactionClient,
+    session: AuthenticatedSession,
+    reason: string,
+    requestId: string,
+  ): Promise<number> {
+    const { userId } = session.context;
+    const revoked = await transaction.userSession.updateManyAndReturn({
+      where: { userId, revokedAt: null, id: { not: session.sessionId } },
+      data: { revokedAt: new Date(), revocationReason: reason },
+      select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
+    });
+    for (const other of revoked) {
+      await this.recordSystemSessionRevocation(transaction, other, reason, requestId);
+    }
+    if (revoked.length > 0) await setDatabaseContext(transaction, signedInScope(session));
+    return revoked.length;
+  }
+
   /**
    * Answers the reset mail to send after the response, or null. The caller answers every request
    * the same, so nothing here may tell whether the email has an account: an unknown email, a User
@@ -1708,6 +2035,10 @@ export class AuthService {
     return { notices: outcome.notices };
   }
 
+  /**
+   * Sends a credential notice. Callers run it after the transaction commits and the response is
+   * sent; a delivery failure is logged without the recipient or content and never thrown.
+   */
   async sendNotice(message: MailMessage): Promise<void> {
     try {
       await this.mailDelivery.send(message);

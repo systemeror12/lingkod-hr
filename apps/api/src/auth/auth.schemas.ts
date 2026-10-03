@@ -29,6 +29,17 @@ export const reauthenticateSchema = z
   })
   .strict();
 
+export const passwordChangeSchema = z
+  .object({
+    currentPassword: z.string().min(1).max(1024),
+    newPassword: z.string().min(1).max(1024),
+    code: totpSignInSchema.shape.code.optional(),
+    recoveryCode: recoveryCodeSignInSchema.shape.code.optional(),
+  })
+  .strict();
+
+export const totpReplacementSchema = z.object({ code: totpSignInSchema.shape.code }).strict();
+
 export const enrollmentFinishSchema = z.object({ acknowledged: z.literal(true) }).strict();
 
 export const activationTokenSchema = z

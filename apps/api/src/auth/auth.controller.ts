@@ -37,10 +37,12 @@ import {
   enrollmentFinishSchema,
   passwordResetCompleteSchema,
   passwordResetRequestSchema,
+  passwordChangeSchema,
   passwordSignInSchema,
   reauthenticateSchema,
   switchAgencySchema,
   recoveryCodeSignInSchema,
+  totpReplacementSchema,
   totpSignInSchema,
 } from './auth.schemas';
 
@@ -584,6 +586,74 @@ export class AuthController {
         request.header('x-request-id') ?? 'unknown-request',
       );
       response.status(HttpStatus.OK).json({ recoveryCodes });
+      this.noticeAfterResponse(response, notice);
+    } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
+  /**
+   * Changes the signed-in User's password. It asks for the current password and a code every
+   * time, so the Reauthentication Window doesn't guard it.
+   */
+  @Post('password')
+  @UseGuards(AuthGuard)
+  async changePassword(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!request.authSession) throw new UnauthorizedException();
+    const parsed = passwordChangeSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException('The current password and a new password are required.');
+    }
+    try {
+      const { revokedSessions, notices } = await this.authService.changePassword(
+        request.authSession,
+        parsed.data,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.OK).json({ status: 'CHANGED', revokedSessions });
+      for (const notice of notices) this.noticeAfterResponse(response, notice);
+    } catch (error: unknown) {
+      if (error instanceof AuthServiceError && error.notice) {
+        this.noticeAfterResponse(response, error.notice);
+      }
+      translateError(error);
+    }
+  }
+
+  /** Starts replacing the authenticator app with a new secret, to scan within 5 minutes. */
+  @Post('authenticator/replacement')
+  @UseGuards(AuthGuard, ReauthenticationGuard)
+  async beginTotpReplacement(@Req() request: AuthenticatedRequest) {
+    if (!request.authSession) throw new UnauthorizedException();
+    try {
+      return await this.authService.beginTotpReplacement(request.authSession);
+    } catch (error: unknown) {
+      translateError(error);
+    }
+  }
+
+  /** Confirms the replacement with a code from the new app; the old app stops working. */
+  @Post('authenticator/replacement/confirm')
+  @UseGuards(AuthGuard, ReauthenticationGuard)
+  async confirmTotpReplacement(
+    @Body() body: unknown,
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    if (!request.authSession) throw new UnauthorizedException();
+    const parsed = totpReplacementSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('A code is required.');
+    try {
+      const { revokedSessions, notice } = await this.authService.confirmTotpReplacement(
+        request.authSession,
+        parsed.data.code,
+        this.signInRequest(request),
+      );
+      response.status(HttpStatus.OK).json({ status: 'REPLACED', revokedSessions });
       this.noticeAfterResponse(response, notice);
     } catch (error: unknown) {
       translateError(error);
