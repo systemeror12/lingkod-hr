@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../../../components/ui/dialog';
+import { useReauthentication } from '../../../components/reauthentication';
 import { StateSurface } from '../../../components/state-surface';
 import { Button } from '../../../components/ui/button';
 import { FormError, inputClass, labelClass } from '../../../components/ui/field';
@@ -73,6 +74,7 @@ export function InvitationPanel({
   const [sentEmail, setSentEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const emailRef = useRef<{ focus(): void } | null>(null);
+  const { guarded, prompt } = useReauthentication();
 
   function handleOpenChange(nextOpen: boolean): void {
     if (!nextOpen && submitting) return;
@@ -86,12 +88,14 @@ export function InvitationPanel({
     setSentEmail('');
     setSubmitting(true);
     try {
-      const response = await fetch(`/api/v1/agencies/${agencyId}/invitations`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email, roleCodes: ['hrmo_administrator'] }),
-      });
+      const response = await guarded(() =>
+        fetch(`/api/v1/agencies/${agencyId}/invitations`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email, roleCodes: ['hrmo_administrator'] }),
+        }),
+      );
       const value: unknown = await response.json().catch(() => null);
       if (!response.ok) {
         setError(errorMessage(value));
@@ -284,6 +288,7 @@ export function InvitationPanel({
             </Button>
           </DialogFooter>
         </DialogContent>
+        {prompt}
       </div>
     </Dialog>
   );

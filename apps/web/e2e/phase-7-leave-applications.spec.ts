@@ -96,7 +96,7 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
 }) => {
   test.setTimeout(240_000);
   await page.setViewportSize({ width: 1280, height: 800 });
-  await signIn(page, MARISOL_EMAIL);
+  await signIn(page, MARISOL_EMAIL, { fresh: true });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 

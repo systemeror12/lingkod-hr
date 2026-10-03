@@ -8,8 +8,10 @@ import {
   checkNewPassword,
   type CountedSignInFailure,
   createSessionToken,
+  generateRecoveryCodes,
   hashEmail,
   hashPassword,
+  hashRecoveryCode,
   hashSessionToken,
   hasMfaEvidence,
   hasPermission,
@@ -32,7 +34,11 @@ import {
   verifyPasswordAgainstDummy,
 } from '@lingkod-hr/auth';
 import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
-import { setDatabaseContext, withDatabaseContext } from '@lingkod-hr/database';
+import {
+  type DatabaseContext,
+  setDatabaseContext,
+  withDatabaseContext,
+} from '@lingkod-hr/database';
 import {
   InvitationDeliveryError,
   InvitationIssueError,
@@ -166,6 +172,14 @@ interface PendingSignIn {
   recoveryCodeHashes: string[];
   user: { emailNormalized: string; globalStatus: string };
   emailHash: Buffer;
+}
+
+/** A reauthentication whose password is verified, for its second step. */
+interface ReauthenticationProof {
+  session: AuthenticatedSession;
+  request: SignInRequest;
+  emailHash: Buffer;
+  email: string;
 }
 
 /** What the new session records about how the User proved who they are. */
@@ -317,16 +331,27 @@ const noticeTime = new Intl.DateTimeFormat('en-PH', {
   timeStyle: 'short',
 });
 
-function recoveryCodeNotice(email: string, remaining: number, usedAt: Date): MailMessage {
+/** Notice of a Recovery Code spent on a sign-in, or on reauthentication when `reauthenticated`. */
+function recoveryCodeNotice(
+  email: string,
+  remaining: number,
+  usedAt: Date,
+  reauthenticated = false,
+): MailMessage {
   const left =
     remaining === 0
       ? 'You have no Recovery Codes left.'
       : `You have ${remaining} Recovery Code${remaining === 1 ? '' : 's'} left.`;
+  const when = `on ${noticeTime.format(usedAt)} (Philippine time)`;
   return {
     to: email,
-    subject: 'A Recovery Code was used to sign in to LingkodHR',
+    subject: reauthenticated
+      ? 'A Recovery Code was used in your LingkodHR account'
+      : 'A Recovery Code was used to sign in to LingkodHR',
     text: [
-      `A Recovery Code was used to sign in to your LingkodHR account on ${noticeTime.format(usedAt)} (Philippine time). Your other sessions were signed out.`,
+      reauthenticated
+        ? `A Recovery Code was used to confirm it’s you in your LingkodHR account ${when}.`
+        : `A Recovery Code was used to sign in to your LingkodHR account ${when}. Your other sessions were signed out.`,
       `${left} If you lost your authenticator, replace it or generate new Recovery Codes.`,
       "If you didn't sign in, contact your Agency Administrator right away.",
     ].join('\n\n'),
@@ -354,6 +379,22 @@ function totpEnrolledNotice(email: string): MailMessage {
       'If you did not do this, contact your Agency Administrator right away.',
     ].join('\n\n'),
   };
+}
+
+function recoveryCodesRegeneratedNotice(email: string, at: Date): MailMessage {
+  return {
+    to: email,
+    subject: 'New Recovery Codes were generated for your LingkodHR account',
+    text: [
+      `A new set of Recovery Codes was generated for your LingkodHR account on ${noticeTime.format(at)} (Philippine time). Your old Recovery Codes no longer work.`,
+      'If you did not do this, contact your Agency Administrator right away.',
+    ].join('\n\n'),
+  };
+}
+
+/** A wrong password or code on reauthentication; it doesn't say which. */
+function reauthenticationRefused(): AuthServiceError {
+  return new AuthServiceError('Password or code is incorrect.', 401, 'INVALID_CREDENTIALS');
 }
 
 function invitationInvalid(): AuthServiceError {
@@ -1069,6 +1110,277 @@ export class AuthService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Proves again who a signed-in User is, with the same proof as sign-in: the password, plus a TOTP
+   * code or Recovery Code when the User has a factor. Wrong guesses count like sign-in's, toward
+   * the Sign-in Cool-down and the second-factor ceiling. Success sets the session's `authTime` to
+   * now and records the methods used; its idle timer and `expiresAt` stay as they were. A spent
+   * Recovery Code answers its notice, for `sendNotice` once the response is out.
+   */
+  async reauthenticate(
+    session: AuthenticatedSession,
+    proof: { password: string; code?: string | undefined; recoveryCode?: string | undefined },
+    request: SignInRequest,
+  ): Promise<{ notice: MailMessage | null }> {
+    const { userId, agencyId, membershipId } = session.context;
+    const scope = { userId, agencyId, membershipId, capabilities: ['platform-security'] as const };
+    const { emailNormalized: email } = await withDatabaseContext(scope, (transaction) =>
+      transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { emailNormalized: true },
+      }),
+    );
+    const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
+    await this.assertIpAllowed(request, emailHash);
+    const now = new Date();
+    const { guess, stored, hasFactor } = await withDatabaseContext(scope, async (transaction) => ({
+      guess: await this.countGuess(transaction, emailHash, now),
+      stored: await transaction.userPassword.findUnique({
+        where: { userId },
+        select: { passwordHash: true, resetRequiredAt: true },
+      }),
+      hasFactor: (await transaction.userTotpFactor.count({ where: { userId } })) === 1,
+    }));
+    if (guess.cooldownUntil) {
+      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      throw signInCooldown(guess.cooldownUntil, now);
+    }
+    const verified = stored
+      ? await verifyPassword(stored.passwordHash, proof.password)
+      : await verifyPasswordAgainstDummy(proof.password);
+    if (!stored || !verified) {
+      await this.recordGuessFailure(request, {
+        emailHash,
+        userId,
+        reason: 'INVALID_CREDENTIALS',
+        cooldown: guess.counted.cooldown,
+      });
+      throw reauthenticationRefused();
+    }
+    await this.refundGuess(emailHash, guess);
+    if (stored.resetRequiredAt) {
+      await this.recordSignInFailure(request, emailHash, userId, 'PASSWORD_RESET_REQUIRED');
+      throw passwordResetRequired();
+    }
+
+    const proved = { session, request, emailHash, email };
+    if (!hasFactor) {
+      return withDatabaseContext(scope, async (transaction) => {
+        // A password alone would strip the session's MFA evidence and end it on the next request.
+        const { userId, agencyId, membershipId } = session.context;
+        if (await this.userRequiresMfa(transaction, userId, agencyId, membershipId)) {
+          throw new AuthServiceError(
+            'MFA is required for this User identity.',
+            403,
+            'MFA_REQUIRED',
+          );
+        }
+        await this.finishReauthentication(transaction, proved, ['pwd']);
+        return { notice: null };
+      });
+    }
+    if (proof.recoveryCode !== undefined) {
+      return this.reauthenticateWithRecoveryCode(scope, proved, proof.recoveryCode);
+    }
+    const outcome = await withDatabaseContext(scope, async (transaction) => {
+      // One code attempt per User at a time, as on sign-in.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+      const factor = await transaction.userTotpFactor.findUniqueOrThrow({ where: { userId } });
+      const secret = openTotpSecret(Buffer.from(factor.secretEnvelope), this.dataEncryptionKey, {
+        userId,
+        factorId: factor.id,
+      });
+      const at = new Date();
+      const step = acceptTotpCode(secret, proof.code ?? '', Number(factor.lastAcceptedStep), at);
+      const accepted =
+        step !== null &&
+        (
+          await transaction.userTotpFactor.updateMany({
+            where: { id: factor.id, lastAcceptedStep: { lt: step } },
+            data: { lastAcceptedStep: step },
+          })
+        ).count === 1;
+      if (accepted) {
+        await this.finishReauthentication(transaction, proved, ['pwd', 'totp']);
+        return { ceiling: null, accepted };
+      }
+      const wrong = await this.countGuess(transaction, emailHash, at);
+      const ceiling = await this.writeGuessFailure(transaction, request, {
+        emailHash,
+        userId,
+        reason: 'INVALID_CODE',
+        cooldown: wrong.cooldownUntil ? null : wrong.counted.cooldown,
+        secondFactor: { method: 'totp', email },
+      });
+      return { ceiling, accepted };
+    });
+    if (outcome.ceiling) throw passwordResetRequired(outcome.ceiling);
+    if (!outcome.accepted) throw reauthenticationRefused();
+    return { notice: null };
+  }
+
+  /**
+   * Whether the User has an authenticator app and how many unused Recovery Codes they have left.
+   */
+  async recoveryCodeStatus(
+    session: AuthenticatedSession,
+  ): Promise<{ hasAuthenticator: boolean; remaining: number }> {
+    const { userId } = session.context;
+    return withDatabaseContext({ userId }, async (transaction) => ({
+      hasAuthenticator: (await transaction.userTotpFactor.count({ where: { userId } })) === 1,
+      remaining: await transaction.userRecoveryCode.count({ where: { userId } }),
+    }));
+  }
+
+  /**
+   * Replaces the User's Recovery Codes with a new set of 10, shown once: only their hashes are
+   * kept, and the old set stops working in the same transaction. The caller guards it with the
+   * Reauthentication Window. Answers the notice, for `sendNotice` once the response is out.
+   */
+  async regenerateRecoveryCodes(
+    session: AuthenticatedSession,
+    requestId: string,
+  ): Promise<{ recoveryCodes: string[]; notice: MailMessage }> {
+    const recoveryCodes = generateRecoveryCodes();
+    // Hashing takes too long to hold a transaction open.
+    const hashes = await Promise.all(recoveryCodes.map(hashRecoveryCode));
+    const { context } = session;
+    return withDatabaseContext(context, async (transaction) => {
+      const { userId } = context;
+      const hasFactor = (await transaction.userTotpFactor.count({ where: { userId } })) === 1;
+      if (!hasFactor) {
+        throw new AuthServiceError(
+          'Set up an authenticator app before generating Recovery Codes.',
+          409,
+          'NO_AUTHENTICATOR',
+        );
+      }
+      await transaction.userRecoveryCode.deleteMany({ where: { userId } });
+      await transaction.userRecoveryCode.createMany({
+        data: hashes.map((codeHash) => ({ userId, codeHash })),
+      });
+      await this.recordSecurityEvent(
+        transaction,
+        context,
+        'RECOVERY_CODES_REGENERATED',
+        requestId,
+        {
+          recoveryCodes: hashes.length,
+        },
+      );
+      const { emailNormalized } = await transaction.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { emailNormalized: true },
+      });
+      return {
+        recoveryCodes,
+        notice: recoveryCodesRegeneratedNotice(emailNormalized, new Date()),
+      };
+    });
+  }
+
+  /**
+   * Reauthentication's second step with a Recovery Code: counted as a guess first, matched outside
+   * a transaction, then spent by deleting its row, as on sign-in. Other sessions stay signed in.
+   */
+  private async reauthenticateWithRecoveryCode(
+    scope: DatabaseContext,
+    proved: ReauthenticationProof,
+    code: string,
+  ): Promise<{ notice: MailMessage }> {
+    const { session, request, emailHash, email } = proved;
+    const { userId } = session.context;
+    const now = new Date();
+    const { guess, codes } = await withDatabaseContext(scope, async (transaction) => ({
+      guess: await this.countGuess(transaction, emailHash, now),
+      codes: await transaction.userRecoveryCode.findMany({
+        where: { userId },
+        select: { id: true, codeHash: true },
+      }),
+    }));
+    if (guess.cooldownUntil) {
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'COOLDOWN_ACTIVE',
+        'recovery_code',
+      );
+      throw signInCooldown(guess.cooldownUntil, now);
+    }
+    const normalized = normalizeRecoveryCode(code);
+    const matches = normalized
+      ? await Promise.all(codes.map(({ codeHash }) => verifyPassword(codeHash, normalized)))
+      : [];
+    const used = codes.find((_, index) => matches[index]);
+    const spent =
+      used &&
+      (await withDatabaseContext(scope, async (transaction) => {
+        const deleted = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
+        if (deleted.count !== 1) return null;
+        await this.finishReauthentication(transaction, proved, ['pwd', 'recovery_code']);
+        const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
+        await this.recordSecurityEvent(
+          transaction,
+          session.context,
+          'RECOVERY_CODE_USED',
+          request.requestId,
+          { remaining, reauthentication: true },
+        );
+        return { notice: recoveryCodeNotice(email, remaining, now, true) };
+      }));
+    if (spent) {
+      await this.refundGuess(emailHash, guess);
+      return spent;
+    }
+    await this.recordGuessFailure(request, {
+      emailHash,
+      userId,
+      reason: 'INVALID_CODE',
+      cooldown: guess.counted.cooldown,
+      secondFactor: { method: 'recovery_code', email },
+    });
+    throw reauthenticationRefused();
+  }
+
+  /**
+   * Ends a successful reauthentication as a full sign-in ends: the second-factor count and the
+   * Sign-in Cool-down reset, then the session's `authTime` and methods are refreshed.
+   */
+  private async finishReauthentication(
+    transaction: Prisma.TransactionClient,
+    { session, request, emailHash }: ReauthenticationProof,
+    methods: string[],
+  ): Promise<void> {
+    const { userId } = session.context;
+    const usable = await transaction.userPassword.updateMany({
+      where: { userId, resetRequiredAt: null },
+      data: { secondFactorFailures: 0 },
+    });
+    if (usable.count !== 1) throw passwordResetRequired();
+    await transaction.signInThrottle.deleteMany({ where: { emailHash: prismaBytes(emailHash) } });
+    const refreshed = await transaction.userSession.updateMany({
+      where: { id: session.sessionId, userId, revokedAt: null },
+      data: { authTime: new Date(), authenticationMethods: methods },
+    });
+    if (refreshed.count !== 1) {
+      throw new AuthServiceError('An active HRIS session is required.', 401, 'SESSION_ENDED');
+    }
+    await transaction.securityEvent.create({
+      data: {
+        agencyId: session.context.agencyId,
+        userId,
+        membershipId: session.context.membershipId,
+        eventType: 'REAUTHENTICATED',
+        requestId: request.requestId,
+        ipAddress: request.ipAddress,
+        emailHash: prismaBytes(emailHash),
+        details: { methods },
+      },
+    });
   }
 
   /**

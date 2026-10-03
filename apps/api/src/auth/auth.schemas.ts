@@ -35,6 +35,15 @@ export const totpSignInSchema = z
 /** Matched without regard to case, hyphens, or spaces; `normalizeRecoveryCode` does the rest. */
 export const recoveryCodeSignInSchema = z.object({ code: z.string().max(64) }).strict();
 
+/** The password, plus a TOTP code or a Recovery Code when the User has an authenticator app. */
+export const reauthenticateSchema = z
+  .object({
+    password: z.string().min(1).max(1024),
+    code: totpSignInSchema.shape.code.optional(),
+    recoveryCode: recoveryCodeSignInSchema.shape.code.optional(),
+  })
+  .strict();
+
 export const enrollmentFinishSchema = z.object({ acknowledged: z.literal(true) }).strict();
 
 export const activationTokenSchema = z

@@ -55,14 +55,16 @@ export async function nextTotpCode(): Promise<string> {
 /**
  * Signs a seeded User in through `/sign-in`, answering the TOTP step when the User has a factor.
  * Reuses the session cookie for the same User and membership while `/api/v1/auth/me` accepts it.
+ * Pass `fresh` before a guarded action, such as sending an invitation, so the Reauthentication
+ * Window is open.
  */
 export async function signIn(
   page: Page,
   email: string,
-  options: { membershipId?: string } = {},
+  options: { membershipId?: string; fresh?: boolean } = {},
 ): Promise<void> {
   const key = `${email}:${options.membershipId ?? ''}`;
-  const cached = sessions.get(key);
+  const cached = options.fresh ? undefined : sessions.get(key);
   if (cached) {
     await page.context().addCookies([cached]);
     // The API refuses cookie requests without a same-origin Origin or Referer.

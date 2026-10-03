@@ -323,9 +323,13 @@ export function ApplicationShell({
           })}
         </nav>
 
-        <div
+        <Link
+          href="/account-security"
+          onClick={closeMenu}
+          aria-label={`Account security for ${session.identity.displayName}`}
+          aria-current={pathname === '/account-security' ? 'page' : undefined}
           className={cn(
-            'items-center gap-2.5 border-t border-white/10 px-4 py-3 min-[980px]:flex',
+            'items-center gap-2.5 border-t border-white/10 px-4 py-3 no-underline hover:bg-white/6 min-[980px]:flex',
             menuOpen ? 'flex' : 'hidden',
             collapsed && 'min-[980px]:justify-center min-[980px]:px-0',
           )}
@@ -343,7 +347,7 @@ export function ApplicationShell({
             </strong>
             <span className="block truncate text-caption text-nav-muted">{roleNames}</span>
           </span>
-        </div>
+        </Link>
       </aside>
 
       <main

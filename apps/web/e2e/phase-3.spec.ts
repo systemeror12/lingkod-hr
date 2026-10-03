@@ -65,7 +65,7 @@ test.describe('Phase 3 acceptance gate', () => {
     const unitName = 'Phase 3 Records Management Division';
     const originHeaders = { origin: appOrigin };
 
-    await signIn(page, MARISOL_EMAIL);
+    await signIn(page, MARISOL_EMAIL, { fresh: true });
     await page.goto('/dashboard');
     await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
     await expect(
