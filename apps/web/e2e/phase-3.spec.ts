@@ -152,11 +152,6 @@ test.describe('Phase 3 acceptance gate', () => {
       await activateInvitation(hrmoPage, activationUrl, { name: 'Phase Three Administrator' });
       await expect(hrmoPage.getByRole('heading', { name: 'Work queue' })).toBeVisible();
       await expect(hrmoPage.getByText('HRMO Administrator', { exact: true }).first()).toBeVisible();
-      await expect(
-        hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
-          name: 'Users & Access',
-        }),
-      ).toHaveCount(0);
       await expect(hrmoPage.getByRole('button', { name: 'Invite user' })).toHaveCount(0);
       await hrmoPage.screenshot({
         path: testInfo.outputPath('phase3-hrmo-dashboard.png'),

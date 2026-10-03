@@ -376,6 +376,24 @@ USING (user_id = app_user_id())
 WITH CHECK (user_id = app_user_id());
 -- Same owner policy on user_totp_factors and user_recovery_codes.
 
+-- The Users & Access member list shows whether each member has a factor.
+-- Factor rows hold secrets, so the runtime role never reads another User's.
+-- A SECURITY DEFINER function answers only the ids of the Agency Context's
+-- members who have a factor; the table owner it runs as gets the read.
+CREATE POLICY user_totp_factors_owner_agency_member_select ON user_totp_factors
+FOR SELECT TO CURRENT_USER
+USING (EXISTS (
+  SELECT 1 FROM agency_memberships m
+  WHERE m.user_id = user_totp_factors.user_id AND m.agency_id = app_agency_id()
+));
+
+CREATE FUNCTION app_agency_member_factor_user_ids() RETURNS SETOF uuid
+SECURITY DEFINER AS $$
+  SELECT f.user_id FROM user_totp_factors f
+  JOIN agency_memberships m ON m.user_id = f.user_id
+  WHERE m.agency_id = app_agency_id();
+$$;
+
 CREATE POLICY pending_authentications_owner ON pending_authentications
 USING (
   user_id = app_user_id()

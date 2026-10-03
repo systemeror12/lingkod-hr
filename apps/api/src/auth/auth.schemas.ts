@@ -88,3 +88,13 @@ export const hrmoInvitationSchema = z
   .strict();
 
 export const agencyIdSchema = z.string().uuid();
+
+export const membershipIdSchema = z.string().uuid();
+
+/** How a Security Administrator verified the User before a Factor Reset. No ID numbers or images. */
+export const factorResetSchema = z
+  .object({
+    method: z.enum(['IN_PERSON_GOVERNMENT_ID', 'VIDEO_CALL_GOVERNMENT_ID']),
+    note: z.string().trim().min(1).max(1000),
+  })
+  .strict();

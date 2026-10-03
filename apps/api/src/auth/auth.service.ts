@@ -216,6 +216,23 @@ export interface PendingInvitation {
   status: 'PENDING';
 }
 
+/** A row of the Users & Access member list. */
+export interface AgencyMember {
+  membershipId: string;
+  userId: string;
+  displayName: string | null;
+  email: string;
+  membershipStatus: string;
+  globalStatus: string;
+  hasAuthenticator: boolean;
+}
+
+/** How a Security Administrator verified the User before a Factor Reset (#370). */
+export interface FactorResetVerification {
+  method: 'IN_PERSON_GOVERNMENT_ID' | 'VIDEO_CALL_GOVERNMENT_ID';
+  note: string;
+}
+
 /** What the invitation page shows. Expired, cancelled, used, and unknown invitations show nothing. */
 export type InvitationLookup =
   | {
@@ -484,6 +501,17 @@ function totpReplacedNotice(email: string, replacedAt: Date): MailMessage {
     text: [
       `The authenticator app for signing in to your LingkodHR account was replaced on ${noticeTime.format(replacedAt)} (Philippine time). The old app no longer works, and your other sessions were signed out. Your Recovery Codes still work.`,
       "If you didn't replace it, contact your Agency Administrator right away.",
+    ].join('\n\n'),
+  };
+}
+
+function factorResetNotice(email: string, agencyName: string, resetAt: Date): MailMessage {
+  return {
+    to: email,
+    subject: 'The authenticator for your LingkodHR account was reset',
+    text: [
+      `A Security Administrator of ${agencyName} reset your authenticator on ${noticeTime.format(resetAt)} (Philippine time). You'll set it up again the next time you sign in.`,
+      "If you didn't request this, contact your Agency Administrator.",
     ].join('\n\n'),
   };
 }
@@ -1333,6 +1361,9 @@ export class AuthService {
     const scope = signedInScope(session);
     const { userId } = scope;
     const outcome = await withDatabaseContext(scope, async (transaction) => {
+      // One credential change per User at a time, as in `resetFactor`.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
       const now = new Date();
       const pending = await transaction.pendingAuthentication.findFirst({
         where: { userId, purpose: 'TOTP_REPLACEMENT', expiresAt: { gt: now } },
@@ -1544,6 +1575,9 @@ export class AuthService {
     const { context } = session;
     return withDatabaseContext(context, async (transaction) => {
       const { userId } = context;
+      // One credential change per User at a time, as in `resetFactor`.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
       const hasFactor = (await transaction.userTotpFactor.count({ where: { userId } })) === 1;
       if (!hasFactor) {
         throw new AuthServiceError(
@@ -2277,6 +2311,160 @@ export class AuthService {
           expiresAt: invitation.expiresAt,
           status: 'PENDING' as const,
         })),
+      };
+    });
+  }
+
+  /** The Users & Access member list: everyone with a membership in the acting Agency. */
+  async listAgencyMembers(context: RequestContext): Promise<AgencyMember[]> {
+    return withDatabaseContext(context, async (transaction) => {
+      const memberships = await transaction.agencyMembership.findMany({
+        where: { agencyId: context.agencyId },
+        select: {
+          id: true,
+          status: true,
+          user: {
+            select: {
+              id: true,
+              displayName: true,
+              emailNormalized: true,
+              globalStatus: true,
+            },
+          },
+        },
+        orderBy: [{ user: { displayName: 'asc' } }, { user: { emailNormalized: 'asc' } }],
+      });
+      // Factor rows hold secrets, so the Agency Context learns only which members have one.
+      const withFactor = new Set(
+        (
+          await transaction.$queryRaw<{ user_id: string }[]>`
+            SELECT "user_id" FROM app_agency_member_factor_user_ids() AS "user_id"`
+        ).map(({ user_id }) => user_id),
+      );
+      return memberships.map(({ id, status, user }) => ({
+        membershipId: id,
+        userId: user.id,
+        displayName: user.displayName,
+        email: user.emailNormalized,
+        membershipStatus: status,
+        globalStatus: user.globalStatus,
+        hasAuthenticator: withFactor.has(user.id),
+      }));
+    });
+  }
+
+  /**
+   * Factor Reset (#370): removes the User's factor and every Recovery Code, ends their sessions and
+   * pending sign-ins, and records it in the acting Agency only. The password and `globalStatus`
+   * stay as they are; an MFA-Required User enrolls again at their next sign-in. Answers the notice,
+   * for `sendNotice` once the response is out.
+   */
+  async resetFactor(
+    context: RequestContext,
+    membershipId: string,
+    verification: FactorResetVerification,
+    request: SignInRequest,
+  ): Promise<{ revokedSessions: number; notice: MailMessage }> {
+    if (!hasPermission(context, 'security.mfa.reset_factor', { agencyId: context.agencyId })) {
+      throw new AuthServiceError(
+        'The current Membership cannot reset authenticators.',
+        403,
+        'FACTOR_RESET_FORBIDDEN',
+      );
+    }
+    return withDatabaseContext(context, async (transaction) => {
+      // Held to commit, so a suspension can't land between this check and the reset.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "agency_memberships" WHERE "id" = ${membershipId}::uuid FOR UPDATE`;
+      const target = await transaction.agencyMembership.findFirst({
+        where: { id: membershipId, agencyId: context.agencyId, status: 'ACTIVE' },
+        select: {
+          userId: true,
+          agency: { select: { name: true } },
+          user: { select: { emailNormalized: true } },
+        },
+      });
+      if (!target) {
+        throw new AuthServiceError(
+          'No active member of this Agency matches.',
+          404,
+          'MEMBER_NOT_FOUND',
+        );
+      }
+      if (target.userId === context.userId) {
+        throw new AuthServiceError(
+          'Reset your own authenticator from Account Security, or ask another Security Administrator.',
+          403,
+          'SELF_FACTOR_RESET',
+        );
+      }
+      const { userId } = target;
+      // The factor, codes, and pending sign-ins are the target's own rows.
+      await setDatabaseContext(transaction, {
+        agencyId: context.agencyId,
+        userId,
+        membershipId,
+      });
+      // One credential change per User at a time, so new Recovery Codes or a replacement factor
+      // can't land after this reset removes them.
+      await transaction.$queryRaw`
+        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+      const removed = await transaction.userTotpFactor.deleteMany({ where: { userId } });
+      if (removed.count === 0) {
+        throw new AuthServiceError(
+          'This User has no authenticator to reset.',
+          409,
+          'NO_AUTHENTICATOR',
+        );
+      }
+      await transaction.userRecoveryCode.deleteMany({ where: { userId } });
+      await transaction.pendingAuthentication.deleteMany({ where: { userId } });
+      const now = new Date();
+      const revoked = await transaction.userSession.updateManyAndReturn({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: now, revocationReason: 'MFA_FACTOR_RESET' },
+        select: { id: true },
+      });
+      // Every revocation is recorded in the acting Agency, against the target's membership there:
+      // the target's other Agencies learn nothing of it.
+      for (const { id } of revoked) {
+        await this.recordSystemSessionRevocation(
+          transaction,
+          { id, agencyId: context.agencyId, userId, agencyMembershipId: membershipId },
+          'MFA_FACTOR_RESET',
+          request.requestId,
+        );
+      }
+      const revokedSessions = revoked.length;
+      await setDatabaseContext(transaction, context);
+      await this.recordSecurityEvent(
+        transaction,
+        { ...context, userId, membershipId },
+        'MFA_FACTOR_RESET',
+        request.requestId,
+        {
+          actorUserId: context.userId,
+          actorMembershipId: context.membershipId,
+          verificationMethod: verification.method,
+          note: verification.note,
+          revokedSessions,
+        },
+      );
+      await this.recordAuditEvent(transaction, context, {
+        action: 'MFA_FACTOR_RESET',
+        entityType: 'User',
+        entityId: userId,
+        reason: verification.note,
+        requestId: request.requestId,
+        metadata: {
+          targetMembershipId: membershipId,
+          verificationMethod: verification.method,
+          revokedSessions,
+        },
+      });
+      return {
+        revokedSessions,
+        notice: factorResetNotice(target.user.emailNormalized, target.agency.name, now),
       };
     });
   }

@@ -4,13 +4,18 @@ import {
   ForbiddenException,
   Get,
   HttpException,
+  HttpStatus,
   Inject,
+  NotFoundException,
   Param,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
+  type AgencyMember,
   AuthService,
   AuthServiceError,
   type InvitationResult,
@@ -23,7 +28,12 @@ import { ReauthenticationGuard } from './reauthentication.guard';
 import type { RequestContext } from '@lingkod-hr/auth';
 import type { AuthenticatedRequest } from './auth.types';
 import { getConfig } from '@lingkod-hr/config';
-import { agencyIdSchema, hrmoInvitationSchema } from './auth.schemas';
+import {
+  agencyIdSchema,
+  factorResetSchema,
+  hrmoInvitationSchema,
+  membershipIdSchema,
+} from './auth.schemas';
 
 @Controller('agencies')
 @UseGuards(AuthGuard, PermissionGuard)
@@ -89,6 +99,60 @@ export class AgencyController {
           expiresAt: invitation.expiresAt,
           activationUrl: `${this.config.APP_URL.replace(/\/$/, '')}/invite/${invitation.activationToken}`,
         };
+  }
+
+  @Get(':agencyId/members')
+  @RequirePermission('security.users.read')
+  async members(
+    @Param('agencyId') agencyId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<{ members: AgencyMember[] }> {
+    this.assertAgencyContext(agencyId, context);
+    return { members: await this.authService.listAgencyMembers(context) };
+  }
+
+  /** Factor Reset (#370). The notice goes out once the response is out. */
+  @Post(':agencyId/members/:membershipId/factor-reset')
+  @RequirePermission('security.mfa.reset_factor')
+  @UseGuards(ReauthenticationGuard)
+  async resetFactor(
+    @Param('agencyId') agencyId: string,
+    @Param('membershipId') membershipId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Req() request: AuthenticatedRequest,
+    @Res() response: Response,
+  ): Promise<void> {
+    this.assertAgencyContext(agencyId, context);
+    if (!membershipIdSchema.safeParse(membershipId).success) {
+      throw new NotFoundException('No active member of this Agency matches.');
+    }
+    const parsedBody = factorResetSchema.safeParse(body);
+    if (!parsedBody.success)
+      throw new HttpException(
+        {
+          error: {
+            code: 'INVALID_INPUT',
+            message: 'Record how you verified the User and add a note.',
+          },
+        },
+        400,
+      );
+    try {
+      const { revokedSessions, notice } = await this.authService.resetFactor(
+        context,
+        membershipId,
+        parsedBody.data,
+        {
+          requestId: request.header('x-request-id') ?? 'unknown-request',
+          ipAddress: request.ip ?? null,
+        },
+      );
+      response.status(HttpStatus.OK).json({ status: 'RESET', revokedSessions });
+      response.once('close', () => void this.authService.sendNotice(notice));
+    } catch (error: unknown) {
+      this.translateAuthError(error);
+    }
   }
 
   private assertAgencyContext(agencyId: string, context: RequestContext): void {
