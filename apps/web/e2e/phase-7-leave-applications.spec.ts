@@ -45,19 +45,104 @@ async function readMailpitMessage(recipient: string, subject: string): Promise<s
 // Route assignment resolution evaluates roles at 12:00 UTC of the submission
 // date. Backdate the fixture grants so a same-day review flow resolves.
 async function backdateReviewerRoleGrants(membershipId: string): Promise<void> {
-  getConfig();
-  const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
-  if (!adminUrl)
-    throw new Error('A worktree database owner URL is required for the reviewer fixture.');
-  const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
-  try {
-    await admin.membershipRole.updateMany({
+  await withAdmin((admin) =>
+    admin.membershipRole.updateMany({
       where: { membershipId, effectiveTo: null },
       data: { effectiveFrom: new Date('2026-01-01T00:00:00+08:00') },
-    });
+    }),
+  );
+}
+
+async function withAdmin<T>(work: (admin: PrismaClient) => Promise<T>): Promise<T> {
+  getConfig();
+  const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
+  if (!adminUrl) throw new Error('A worktree database owner URL is required for the fixture.');
+  const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+  try {
+    return await work(admin);
   } finally {
     await admin.$disconnect();
   }
+}
+
+// Locking an Attendance Period goes through submission, review, and lock
+// approvals that this journey does not cover. Record an already-locked version
+// over the calculated days so a later cancellation meets a locked Work Date.
+async function lockAttendancePeriod(input: {
+  agencyId: string;
+  employeeId: string;
+  periodCode: string;
+  approvalRouteVersionId: string;
+  submitterMembershipId: string;
+  reviewerMembershipId: string;
+}): Promise<void> {
+  await withAdmin(async (admin) => {
+    const period = await admin.attendancePeriod.findFirstOrThrow({
+      where: { agencyId: input.agencyId, code: input.periodCode },
+    });
+    const days = await admin.attendanceDay.findMany({
+      where: {
+        agencyId: input.agencyId,
+        attendancePeriodId: period.id,
+        employeeId: input.employeeId,
+        isCurrent: true,
+      },
+      select: { id: true },
+    });
+    const now = new Date();
+    const submission = await admin.employeeAttendanceSubmission.create({
+      data: {
+        agencyId: input.agencyId,
+        attendancePeriodId: period.id,
+        employeeId: input.employeeId,
+        versionNo: 1,
+        status: 'APPROVED',
+        submittedByMembershipId: input.submitterMembershipId,
+        submittedAt: now,
+        reviewedByMembershipId: input.reviewerMembershipId,
+        reviewedAt: now,
+        reviewReason: 'Leave cancellation journey fixture.',
+      },
+    });
+    const version = await admin.attendancePeriodVersion.create({
+      data: {
+        agencyId: input.agencyId,
+        attendancePeriodId: period.id,
+        versionNo: 1,
+        status: 'LOCKED',
+        approvalRouteVersionId: input.approvalRouteVersionId,
+        submittedByMembershipId: input.submitterMembershipId,
+        submittedAt: now,
+        reviewedByMembershipId: input.reviewerMembershipId,
+        reviewedAt: now,
+        reviewReason: 'Leave cancellation journey fixture.',
+        lockedByMembershipId: input.submitterMembershipId,
+        lockedAt: now,
+        reconciliation: { source: 'E2E_LEAVE_CANCELLATION_FIXTURE' },
+      },
+    });
+    for (const { id: attendanceDayId } of days) {
+      await admin.employeeAttendanceSubmissionDay.create({
+        data: {
+          agencyId: input.agencyId,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId,
+        },
+      });
+      await admin.attendancePeriodVersionDay.create({
+        data: {
+          agencyId: input.agencyId,
+          attendancePeriodVersionId: version.id,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId,
+        },
+      });
+    }
+    await admin.attendancePeriod.update({
+      where: { id: period.id },
+      data: { status: 'FINALIZED' },
+    });
+  });
 }
 
 async function inviteReviewer(
@@ -713,5 +798,105 @@ test('submits, reviews, withdraws, and applies whole and partial cancellation fr
   await expect(postedEffects).toContainText('Attendance successor input · recalculated');
   await expect(applyDetail.getByRole('region', { name: 'Posting effects' })).toContainText(
     'Leave Ledger Entry',
+  );
+
+  // Cancelling posted leave inside a locked Attendance Period hands Attendance a
+  // Locked Attendance adjustment that waits for a different HR Administrator.
+  const postedLeaveRoute = await apiBody<{ id: string }>(
+    await page.request.post(`${agencyBase}/approval-routes`, {
+      headers,
+      data: {
+        routeCode: 'ATTENDANCE_CORRECTION_POSTED_LEAVE',
+        domain: 'attendance',
+        versionNo: 1,
+        effectiveFrom: '2026-01-01',
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'attendance.corrections.authorize_locked',
+              approvePermission: 'attendance.corrections.authorize_locked',
+              returnPermission: 'attendance.corrections.authorize_locked',
+              rejectPermission: 'attendance.corrections.authorize_locked',
+              assignment: { kind: 'MEMBERSHIP', membershipId: certifier.membershipId },
+              requiresSeparateReview: false,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await apiBody(
+    await page.request.post(`${agencyBase}/approval-routes/${postedLeaveRoute.id}/activate`, {
+      headers,
+      data: { reason: 'Approval route verified for locked posted-leave handoff coverage.' },
+    }),
+  );
+  const { application: lockedApplication } = await approveApplication([
+    { dateFrom: '2026-06-15', dateTo: '2026-06-16' },
+  ]);
+  const lockedBase = `${agencyBase}/leave-applications/${lockedApplication.id}`;
+  await apiBody(
+    await certifier.page.request.post(`${lockedBase}/posting`, {
+      headers: {
+        origin: new URL(certifier.page.url()).origin,
+        'Idempotency-Key': `posting-locked:${lockedApplication.id}`,
+      },
+      data: {},
+    }),
+  );
+  await apiBody(
+    await page.request.post(`${agencyBase}/attendance-days/calculate`, {
+      headers,
+      data: {
+        periodCode: 'E2E-LEAVE-LOCKED-2026-06',
+        dateFrom: '2026-06-15',
+        dateTo: '2026-06-19',
+        employeeIds: [employee.id],
+      },
+    }),
+  );
+  await lockAttendancePeriod({
+    agencyId: session.agencyId,
+    employeeId: employee.id,
+    periodCode: 'E2E-LEAVE-LOCKED-2026-06',
+    approvalRouteVersionId: route.id,
+    submitterMembershipId: session.membershipId,
+    reviewerMembershipId: decider.membershipId,
+  });
+  await apiBody(
+    await page.request.post(`${lockedBase}/cancellation-requests`, {
+      headers,
+      data: {
+        scopeType: 'WHOLE',
+        reason: 'Recalled to duty for the whole posted leave.',
+        evidenceDocumentId: nationalRuleDocumentId,
+      },
+    }),
+  );
+  await apiBody(
+    await decider.page.request.post(`${lockedBase}/cancellation-decisions`, {
+      headers,
+      data: { decision: 'APPROVE' },
+    }),
+  );
+  await page.goto(`/leave-applications?record=${lockedApplication.id}`);
+  const lockedCancellation = applyDetail.getByRole('article', { name: /Cancellation requested/ });
+  await applyDetail.getByRole('button', { name: 'Apply cancellation', exact: true }).click();
+  await expect(applyDetail).toContainText(
+    'Attendance is not corrected until an HR Administrator authorizes the Locked Attendance adjustment.',
+  );
+  await expect(applyDetail).not.toContainText('The cancellation was applied.');
+  const lockedEffects = lockedCancellation.getByRole('list', {
+    name: 'Applied cancellation effects',
+  });
+  await expect(lockedEffects).toContainText(
+    'Locked Attendance adjustment · awaiting HR Administrator authorization',
+  );
+  await expect(lockedEffects).toContainText('Leave Ledger reversal · posted');
+  await page.reload();
+  await expect(lockedEffects).toContainText(
+    'Locked Attendance adjustment · awaiting HR Administrator authorization',
   );
 });

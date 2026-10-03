@@ -6,13 +6,18 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import {
   ApprovalCompletionRegistry,
+  ApprovalServiceError,
   ApprovalsService,
   type ApprovalCompletionRequest,
 } from '../approvals/approval.service';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
-import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
+import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
+import {
+  AttendanceCorrectionServiceError,
+  type PostedLeaveHandoffStatus,
+} from '../attendance-corrections/attendance-corrections.types';
 import { AttendanceDayServiceError } from '../attendance-days/attendance-days.types';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import {
@@ -292,6 +297,8 @@ export interface LeaveCancellationEffectSummary {
   effectKey: string;
   ownerRecordId: string;
   ownerStatus: string;
+  /** Live Attendance status of a locked handoff; ownerStatus is the status accepted at handoff. */
+  attendanceHandoff: PostedLeaveHandoffStatus | null;
 }
 
 export interface LeaveCancellationSummary {
@@ -1064,6 +1071,7 @@ const cancellationSelect = {
 
 function cancellationSummary(
   record: Prisma.LeaveCancellationGetPayload<{ select: typeof cancellationSelect }>,
+  handoffs: ReadonlyMap<string, PostedLeaveHandoffStatus>,
 ): LeaveCancellationSummary {
   return {
     id: record.id,
@@ -1083,7 +1091,13 @@ function cancellationSummary(
     requestedByName: record.requestedBy.employee?.legalName ?? null,
     requestedAt: formatDateTime(record.requestedAt),
     documents: record.documents.map(documentSummary),
-    effects: record.effects,
+    effects: record.effects.map((effect) => ({
+      ...effect,
+      attendanceHandoff:
+        effect.effectKind === 'ATTENDANCE_LOCKED_CORRECTION'
+          ? (handoffs.get(effect.ownerRecordId) ?? null)
+          : null,
+    })),
     scopes: record.scopes.map((scope) => ({
       id: scope.id,
       allocationLineId: scope.approvalAllocationLineId,
@@ -1170,17 +1184,12 @@ function postingLineKey(versionId: string, lineId: string): string {
 
 /** Attendance's refusal stays a deterministic, blocking cancellation failure. */
 function attendanceHandoffFailure(error: unknown): unknown {
-  if (error instanceof AttendanceDayServiceError && error.code === 'ATTENDANCE_PERIOD_LOCKED') {
-    return new LeaveApplicationServiceError(
-      'An affected Work Date is in a locked Attendance Period. Cancelling this posted leave waits for the locked Attendance handoff.',
-      409,
-      'LEAVE_CANCELLATION_ATTENDANCE_LOCKED',
-      error.reasons,
-    );
-  }
   if (
     error instanceof AttendanceDayServiceError ||
-    error instanceof AttendancePostedLeaveInputError
+    error instanceof AttendancePostedLeaveInputError ||
+    error instanceof AttendanceCorrectionServiceError ||
+    // A locked handoff opens an Attendance approval; a missing route is a refusal.
+    error instanceof ApprovalServiceError
   ) {
     return new LeaveApplicationServiceError(
       `Attendance refused the posted-leave correction. ${error.message}`,
@@ -1267,7 +1276,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     @Inject(HolidayCalendarsService) private readonly holidayCalendars: HolidayCalendarsService,
     @Inject(AttendancePostedLeaveInputsService)
     private readonly postedLeaveInputs: AttendancePostedLeaveInputsService,
-    @Inject(AttendanceDaysService) private readonly attendanceDays: AttendanceDaysService,
+    @Inject(AttendanceCorrectionsService)
+    private readonly attendanceCorrections: AttendanceCorrectionsService,
   ) {}
 
   onModuleInit(): void {
@@ -2345,7 +2355,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     const fingerprint = canonicalJson({ command: action, applicationId, cancellationId });
     let eligibleAttempt = false;
     const result = await withDatabaseContext(
-      requestDatabaseContext(context, 'leave-transition'),
+      // A locked Attendance handoff opens an Attendance Correction approval.
+      requestDatabaseContext(context, 'leave-transition', 'approval-transition'),
       async (transaction) => {
         // Serialize key ownership across applications, then lock the exact application.
         await this.lockCancellationApplyKey(transaction, context.agencyId, idempotencyKey);
@@ -3543,6 +3554,15 @@ export class LeaveApplicationsService implements OnModuleInit {
         },
       }),
     ]);
+    const handoffs = await this.attendanceCorrections.postedLeaveHandoffStatusesInTransaction(
+      transaction,
+      context.agencyId,
+      cancellations.flatMap(({ effects }) =>
+        effects
+          .filter(({ effectKind }) => effectKind === 'ATTENDANCE_LOCKED_CORRECTION')
+          .map(({ ownerRecordId }) => ownerRecordId),
+      ),
+    );
     const application = applicationSummary(record);
     application.periods = draftPeriods.map(periodSummary);
     const currentVersion = versions.find(({ id }) => id === record.currentVersionId);
@@ -3565,7 +3585,9 @@ export class LeaveApplicationsService implements OnModuleInit {
       draftPeriods: draftPeriods.map(periodSummary),
       draftDocuments: draftDocuments.map(documentSummary),
       versions: versions.map(versionSummary),
-      cancellations: cancellations.map(cancellationSummary),
+      cancellations: cancellations.map((cancellation) =>
+        cancellationSummary(cancellation, handoffs),
+      ),
       history: events.map((event) => ({
         id: event.id,
         action: event.action,
@@ -4609,8 +4631,10 @@ export class LeaveApplicationsService implements OnModuleInit {
    * ledger entry is reversed exactly, and a retained quantity is posted again
    * as a replacement with the original effective date and policy. Attendance
    * supersedes each cancelled line's posted-leave input and recalculates the
-   * affected Work Dates. Every effect key derives from the cancellation and
-   * line, so a retry cannot duplicate an effect.
+   * affected Work Dates, or, when a Work Date is locked, accepts a pending
+   * Attendance Correction for a different HR Administrator to authorize. Every
+   * effect key derives from the cancellation and line, so a retry cannot
+   * duplicate an effect.
    */
   private async reversePostedLeave(
     transaction: Prisma.TransactionClient,
@@ -4644,6 +4668,23 @@ export class LeaveApplicationsService implements OnModuleInit {
     ].sort();
     for (const accountId of accountIds)
       await this.lockAccount(transaction, context.agencyId, accountId);
+    // The approved cancellation is the locked Attendance handoff's factual
+    // review; its requester and deciders cannot also authorize it.
+    const decisions = await transaction.approvalDecision.findMany({
+      where: {
+        agencyId: context.agencyId,
+        approvalStep: { approvalRequestId: cancellation.approvalRequestId },
+      },
+      orderBy: [{ decidedAt: 'asc' }, { id: 'asc' }],
+      select: { decidedByMembershipId: true, decision: true, decidedAt: true },
+    });
+    const finalApproval = decisions.filter(({ decision }) => decision === 'APPROVE').at(-1);
+    if (!finalApproval) {
+      throw deficiency(
+        'LEAVE_CANCELLATION_SOURCE_INVALID',
+        'The approved cancellation has no recorded approval decision.',
+      );
+    }
     for (const { line, scope } of cancelled) {
       const postedKey = postingLineKey(version.id, line.id);
       const effectKey = `leave-cancellation:${cancellation.id}:${line.id}`;
@@ -4710,8 +4751,8 @@ export class LeaveApplicationsService implements OnModuleInit {
         : scope.dateFrom.getTime() === line.dateFrom.getTime()
           ? { dateFrom: addDays(scope.dateTo, 1), dateTo: line.dateTo }
           : { dateFrom: line.dateFrom, dateTo: addDays(scope.dateFrom, -1) };
-      const successor = await this.attendanceDays
-        .supersedePostedLeaveInTransaction(transaction, context, {
+      const handoff = await this.attendanceCorrections
+        .handOffPostedLeaveInTransaction(transaction, context, {
           sourceKey: `${effectKey}:attendance`,
           employeeId,
           sourceType: 'LeaveCancellation',
@@ -4722,18 +4763,31 @@ export class LeaveApplicationsService implements OnModuleInit {
           quantity: retained.toNumber(),
           allocationKind: line.allocationKind as CreatePostedLeaveInput['allocationKind'],
           predecessorInputId: postedRecordId(`${postedKey}:attendance`),
+          cancellation: {
+            requestedByMembershipId: cancellation.requestedByMembershipId,
+            approvedByMembershipId: finalApproval.decidedByMembershipId,
+            approvedAt: finalApproval.decidedAt,
+            deciderMembershipIds: decisions.map(
+              ({ decidedByMembershipId }) => decidedByMembershipId,
+            ),
+            reason: cancellation.reason,
+          },
         })
         .catch((error: unknown) => {
           throw attendanceHandoffFailure(error);
         });
+      // A locked Work Date leaves the handoff pending until Attendance authorizes it.
       await transaction.leaveCancellationEffect.create({
         data: {
           agencyId: context.agencyId,
           leaveCancellationId: cancellation.id,
-          effectKind: 'ATTENDANCE_CORRECTION',
+          effectKind:
+            handoff.kind === 'RECALCULATED'
+              ? 'ATTENDANCE_CORRECTION'
+              : 'ATTENDANCE_LOCKED_CORRECTION',
           effectKey: `${effectKey}:attendance`,
-          ownerRecordId: successor.id,
-          ownerStatus: 'RECALCULATED',
+          ownerRecordId: handoff.id,
+          ownerStatus: handoff.kind,
         },
       });
     }

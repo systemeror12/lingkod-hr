@@ -1541,6 +1541,36 @@ export class ApprovalsService {
     return assignments;
   }
 
+  /**
+   * Checks that the caller is the active step's assigned or delegated
+   * authority for a decision, without recording one. Owning domains use it for
+   * step actions that do not move the request, such as recording a blocker.
+   */
+  async assertCurrentStepAuthorityInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    requestId: string,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    const current = await this.requireRequest(transaction, context.agencyId, requestId);
+    const step = current.steps.find(
+      ({ stepNo, status }) => stepNo === current.currentStepNo && status === 'ACTIVE',
+    );
+    if (current.status !== 'IN_PROGRESS' || !step || !step.assignedMembershipId) {
+      throw new ApprovalServiceError(
+        'The Approval Request has no active assigned reviewer.',
+        409,
+        'APPROVAL_STEP_INVALID',
+      );
+    }
+    await this.assertDecisionAuthority(
+      transaction,
+      context,
+      step,
+      decisionPermission(step, decision),
+    );
+  }
+
   private async assertDecisionAuthority(
     transaction: Prisma.TransactionClient,
     context: RequestContext,

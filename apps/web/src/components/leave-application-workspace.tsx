@@ -210,6 +210,13 @@ export interface LeaveCancellationEffect {
   effectKey: string;
   ownerRecordId: string;
   ownerStatus: string;
+  /** Current status of a locked Attendance handoff; null for other effects. */
+  attendanceHandoff: {
+    correctionId: string;
+    status: string;
+    blockingReason: string | null;
+    blockedAt: string | null;
+  } | null;
 }
 
 export interface LeaveCancellation {
@@ -408,9 +415,26 @@ function cancellationEffectLabel(effectKind: string): string {
       return 'Leave Ledger replacement';
     case 'ATTENDANCE_CORRECTION':
       return 'Attendance successor input';
+    case 'ATTENDANCE_LOCKED_CORRECTION':
+      return 'Locked Attendance adjustment';
     default:
       return humanize(effectKind);
   }
+}
+
+function cancellationEffectText(effect: LeaveCancellationEffect): string {
+  if (effect.effectKind === 'COMMITMENT_RELEASE') return 'Commitment released';
+  const handoff = effect.attendanceHandoff;
+  if (!handoff) {
+    return `${cancellationEffectLabel(effect.effectKind)} · ${humanize(effect.ownerStatus)} · ${effect.ownerRecordId}`;
+  }
+  const status =
+    handoff.status === 'FOR_AUTHORIZATION'
+      ? `awaiting HR Administrator authorization${handoff.blockingReason ? ` · Blocked: ${handoff.blockingReason}` : ''}`
+      : handoff.status === 'APPLIED'
+        ? 'authorized and applied'
+        : humanize(handoff.status);
+  return `${cancellationEffectLabel(effect.effectKind)} · ${status} · ${handoff.correctionId}`;
 }
 
 function humanize(value: string): string {
@@ -1062,7 +1086,16 @@ export function LeaveApplicationWorkspace({
       )) as LeaveApplicationDetail;
       setDetail(value);
       syncDraft(value);
-      setSuccess('The cancellation was applied.');
+      const attendancePending = value.cancellations
+        .find(({ id }) => id === cancellation.id)
+        ?.effects.some(
+          ({ attendanceHandoff }) => attendanceHandoff?.status === 'FOR_AUTHORIZATION',
+        );
+      setSuccess(
+        attendancePending
+          ? 'The Leave effects were applied. Attendance awaits HR Administrator authorization.'
+          : 'The cancellation was applied.',
+      );
       await refresh().catch(() => {
         setError(
           'The cancellation was applied, but the register could not be refreshed. Reload this page.',
@@ -2051,15 +2084,21 @@ export function LeaveApplicationWorkspace({
                               aria-label="Applied cancellation effects"
                             >
                               {cancellation.effects.map((effect) => (
-                                <li key={effect.id}>
-                                  {effect.effectKind === 'COMMITMENT_RELEASE'
-                                    ? 'Commitment released'
-                                    : `${cancellationEffectLabel(effect.effectKind)} · ${humanize(effect.ownerStatus)} · ${effect.ownerRecordId}`}
-                                </li>
+                                <li key={effect.id}>{cancellationEffectText(effect)}</li>
                               ))}
                             </ul>
                           ) : null}
-                          {cancellation.effectStatus === 'APPLIED' ? (
+                          {cancellation.effectStatus === 'APPLIED' &&
+                          cancellation.effects.some(
+                            ({ attendanceHandoff }) =>
+                              attendanceHandoff?.status === 'FOR_AUTHORIZATION',
+                          ) ? (
+                            <p className="m-0 text-ink-muted">
+                              The Leave effects were applied and the application is cancelled.
+                              Attendance is not corrected until an HR Administrator authorizes the
+                              Locked Attendance adjustment.
+                            </p>
+                          ) : cancellation.effectStatus === 'APPLIED' ? (
                             <p className="m-0 text-ink-muted">
                               The cancellation was applied and the application is cancelled.
                             </p>

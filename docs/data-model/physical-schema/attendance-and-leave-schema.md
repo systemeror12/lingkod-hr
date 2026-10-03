@@ -583,8 +583,23 @@ CREATE TABLE attendance_corrections (
   authorized_at timestamptz,
   applied_by_membership_id uuid,
   applied_at timestamptz,
+  excluded_decider_membership_ids uuid[] NOT NULL DEFAULT '{}',
+  blocking_reason text,
+  blocked_by_membership_id uuid,
+  blocked_at timestamptz,
+  CHECK (
+    (blocking_reason IS NULL AND blocked_by_membership_id IS NULL AND blocked_at IS NULL)
+    OR (target_type = 'POSTED_LEAVE_INPUT' AND btrim(blocking_reason) <> ''
+      AND blocked_by_membership_id IS NOT NULL AND blocked_at IS NOT NULL)
+  ),
+  CHECK (
+    target_type <> 'POSTED_LEAVE_INPUT'
+    OR (requested_action IN ('REPLACE','VOID') AND decided_by_membership_id IS NOT NULL)
+  ),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, blocked_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, initiated_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
   FOREIGN KEY (agency_id, recorded_by_membership_id)
@@ -682,7 +697,7 @@ Applied correction transaction:
 - append sanitized audit and outbox records without partial effects.
 
 An approved correction may produce an Attendance Exception. The effect remains applied, but the affected Employee Attendance Submission becomes stale and no successor period may enter review until the exception is resolved. The input boundary forbids hard deletion or in-place mutation of the target record.
-A `POSTED_LEAVE_INPUT` correction is created only by Leave through the Attendance application service when an applied Leave Cancellation changes posted leave on a Work Date in a locked period. It `REPLACE`s the posted-leave input with the retained successor or `VOID`s it, and its evidence row references the Leave Cancellation as its authoritative source. The approved Leave Cancellation is its factual basis, so it enters at `FOR_AUTHORIZATION` without a second factual review. A different HR Administrator from the cancellation's requester and approvers authorizes it through the ordinary Locked Attendance Adjustment, which produces the successor Attendance Day and Attendance Period Versions, corrected DTRs, and adjustment publication. Attendance cannot change the Leave fact. The authorizer may only authorize or record a blocking reason, which Leave shows as the handoff's current status.
+A `POSTED_LEAVE_INPUT` correction is created only by Leave through the Attendance application service when an applied Leave Cancellation changes posted leave on a Work Date in a locked period. It `REPLACE`s the posted-leave input with the retained successor or `VOID`s it, and its evidence row references the Leave Cancellation as its authoritative source. The approved Leave Cancellation is its factual basis, so it enters at `FOR_AUTHORIZATION` without a second factual review. A different HR Administrator from the cancellation's requester and approvers authorizes it through the ordinary Locked Attendance Adjustment, which produces the successor Attendance Day and Attendance Period Versions, corrected DTRs, and adjustment publication. Attendance cannot change the Leave fact. The authorizer may only authorize or record a blocking reason, which Leave shows as the handoff's current status. Because no reviewer read its impact preview, authorization applies against the period's current locked versions, which an earlier authorization may have moved forward, and records the preview it applied.
 
 ---
 
@@ -1512,10 +1527,14 @@ posted-leave input with the retained range and quantity, or with a
 zero-quantity successor when nothing is retained, and to recalculate the
 current Attendance Days across the original range. The `ATTENDANCE_CORRECTION`
 effect retains the successor input identifier. Ledger and Attendance effect
-rows must name records created for that cancellation. A Work Date in a
-finalized Attendance Period refuses the command with the blocking
-`LEAVE_CANCELLATION_ATTENDANCE_LOCKED` failure until the locked Attendance
-handoff exists. Payroll handoffs belong to M4; leave posted before M4 carries
+rows must name records created for that cancellation. When a finalized
+Attendance Period covers the input's dates, Attendance instead accepts a
+`POSTED_LEAVE_INPUT` correction at `FOR_AUTHORIZATION`, and the
+`ATTENDANCE_LOCKED_CORRECTION` effect retains its identifier with owner status
+`FOR_AUTHORIZATION`. The locked records stay unchanged until a different HR
+Administrator authorizes it. A missing `ATTENDANCE_CORRECTION_POSTED_LEAVE`
+route or other Attendance refusal fails the command with
+`LEAVE_CANCELLATION_ATTENDANCE_REFUSED`. Payroll handoffs belong to M4; leave posted before M4 carries
 no Payroll Input.
 
 A cancellation scope names the exact cancelled dates within one approval

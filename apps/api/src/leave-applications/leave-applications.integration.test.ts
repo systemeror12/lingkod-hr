@@ -9,6 +9,13 @@ import { attendanceDayAuditWriter } from '../attendance-days/attendance-days.aud
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import { attendanceAuditWriter } from '../attendance/attendance.audit';
 import { AttendanceService } from '../attendance/attendance.service';
+import { attendanceCorrectionAuditWriter } from '../attendance-corrections/attendance-corrections.audit';
+import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
+import { ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE } from '../attendance-corrections/attendance-corrections.types';
+import { attendancePeriodAuditWriter } from '../attendance-periods/attendance-periods.audit';
+import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
+import { dtrAuditWriter } from '../dtrs/dtrs.audit';
+import { DtrsService } from '../dtrs/dtrs.service';
 import { expect, it } from 'vitest';
 import {
   approvalAuditWriter,
@@ -204,6 +211,13 @@ it.skipIf(!enabled)(
         globalStatus: 'ACTIVE',
       },
     });
+    const authorizerUser = await admin.user.create({
+      data: {
+        emailNormalized: `leave-attendance-authorizer-${suffix}@example.test`,
+        displayName: 'Locked Attendance Authorizer',
+        globalStatus: 'ACTIVE',
+      },
+    });
     const agencyIds = [agency.id, foreignAgency.id];
     const membership = await admin.agencyMembership.create({
       data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
@@ -216,6 +230,9 @@ it.skipIf(!enabled)(
     });
     const approverMembership = await admin.agencyMembership.create({
       data: { agencyId: agency.id, userId: approverUser.id, status: 'ACTIVE' },
+    });
+    const authorizerMembership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: authorizerUser.id, status: 'ACTIVE' },
     });
     const foreignMembership = await admin.agencyMembership.create({
       data: { agencyId: foreignAgency.id, userId: foreignUser.id, status: 'ACTIVE' },
@@ -232,7 +249,7 @@ it.skipIf(!enabled)(
       },
     });
     await admin.membershipRole.createMany({
-      data: [supervisorMembership, approverMembership].map((target) => ({
+      data: [supervisorMembership, approverMembership, authorizerMembership].map((target) => ({
         agencyId: agency.id,
         membershipId: target.id,
         roleId: approverRole.id,
@@ -322,13 +339,32 @@ it.skipIf(!enabled)(
     const policies = new LeavePoliciesService(leavePolicyAuditWriter, documents);
     const accounts = new LeaveAccountsService(leaveAccountAuditWriter, documents);
     const postedLeaveInputs = new AttendancePostedLeaveInputsService();
+    const attendance = new AttendanceService(attendanceAuditWriter, assignments);
     const attendanceDays = new AttendanceDaysService(
       attendanceDayAuditWriter,
       assignments,
-      new AttendanceService(attendanceAuditWriter, assignments),
+      attendance,
       new AttendanceContextsService(attendanceContextAuditWriter, documents),
       postedLeaveInputs,
     );
+    const dtrs = new DtrsService(dtrAuditWriter, documents);
+    const attendancePeriods = new AttendancePeriodsService(
+      attendancePeriodAuditWriter,
+      approvals,
+      dtrs,
+    );
+    const attendanceCorrections = new AttendanceCorrectionsService(
+      attendanceCorrectionAuditWriter,
+      approvals,
+      completionRegistry,
+      attendanceDays,
+      attendance,
+      assignments,
+      documents,
+      dtrs,
+      attendancePeriods,
+    );
+    attendanceCorrections.onModuleInit();
     const applications = new LeaveApplicationsService(
       leaveApplicationAuditWriter,
       documents,
@@ -338,7 +374,7 @@ it.skipIf(!enabled)(
       arrangements,
       calendars,
       postedLeaveInputs,
-      attendanceDays,
+      attendanceCorrections,
     );
     applications.onModuleInit();
     const applicationApi = new LeaveApplicationsController(applications);
@@ -1738,7 +1774,7 @@ it.skipIf(!enabled)(
         arrangements,
         calendars,
         postedLeaveInputs,
-        attendanceDays,
+        attendanceCorrections,
       );
       await expect(
         failingApplications.applyCancellation(
@@ -1785,7 +1821,7 @@ it.skipIf(!enabled)(
         arrangements,
         calendars,
         postedLeaveInputs,
-        attendanceDays,
+        attendanceCorrections,
       );
       await expect(
         blockingApplications.applyCancellation(
@@ -1832,7 +1868,7 @@ it.skipIf(!enabled)(
         arrangements,
         calendars,
         postedLeaveInputs,
-        attendanceDays,
+        attendanceCorrections,
       );
       await expect(
         expiringApplications.applyCancellation(
@@ -2928,17 +2964,148 @@ it.skipIf(!enabled)(
         absenceMinutes: 480,
       });
 
-      // A Work Date in a locked Attendance Period blocks until the locked handoff exists.
-      const lockedPostedId = await postSpecialLeave(nextMonday(50));
-      await admin.attendancePeriod.create({
+      // Locked Attendance: Leave hands Attendance a pending correction instead.
+      const authorizerContext = context(agency.id, authorizerUser.id, authorizerMembership.id, [
+        { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+        { code: 'attendance.corrections.read', scopePolicy: 'AGENCY' },
+        { code: 'attendance.corrections.authorize_locked', scopePolicy: 'AGENCY' },
+        { code: 'attendance.days.read', scopePolicy: 'AGENCY' },
+      ]);
+      const approverAsAuthorizer = context(agency.id, approverUser.id, approverMembership.id, [
+        { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+        { code: 'attendance.corrections.read', scopePolicy: 'AGENCY' },
+        { code: 'attendance.corrections.authorize_locked', scopePolicy: 'AGENCY' },
+      ]);
+      const recorderAsAuthorizer = context(agency.id, recorderUser.id, recorderMembership.id, [
+        { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+        { code: 'attendance.corrections.read', scopePolicy: 'AGENCY' },
+        { code: 'attendance.corrections.authorize_locked', scopePolicy: 'AGENCY' },
+      ]);
+      await admin.leaveLedgerEntry.create({
         data: {
           agencyId: agency.id,
-          code: `LOCKED-${suffix}`,
-          dateFrom: new Date(`${nextMonday(50)}T00:00:00.000Z`),
-          dateTo: new Date(`${nextMonday(50)}T00:00:00.000Z`),
-          status: 'FINALIZED',
+          leaveAccountId: specialAccount.id,
+          quantity: 5,
+          effectiveDate: new Date(`${manilaDate(-5)}T00:00:00.000Z`),
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'locked-cancellation-credits',
+          policyVersionId: reviewPolicyVersion.id,
         },
       });
+      // Lock the Work Dates' Attendance Period as approved and published.
+      async function lockAttendance(dateFrom: string, dateTo: string) {
+        const currentDays = () =>
+          admin.attendanceDay.findMany({
+            where: {
+              agencyId: agency.id,
+              employeeId: employee.id,
+              workDate: {
+                gte: new Date(`${dateFrom}T00:00:00.000Z`),
+                lte: new Date(`${dateTo}T00:00:00.000Z`),
+              },
+              isCurrent: true,
+            },
+          });
+        let days = await currentDays();
+        if (days.length === 0) {
+          await attendanceDays.calculate(attendanceContext, {
+            periodCode: `LOCKED-${dateFrom}-${suffix}`,
+            dateFrom,
+            dateTo,
+            employeeIds: [employee.id],
+          });
+          days = await currentDays();
+        }
+        const periodId = days[0]!.attendancePeriodId;
+        const dayIds = days.map(({ id }) => id);
+        const submission = await admin.employeeAttendanceSubmission.create({
+          data: {
+            agencyId: agency.id,
+            attendancePeriodId: periodId,
+            employeeId: employee.id,
+            versionNo: 1,
+            status: 'APPROVED',
+            submittedByMembershipId: membership.id,
+            submittedAt: new Date(),
+            reviewedByMembershipId: supervisorMembership.id,
+            reviewedAt: new Date(),
+            reviewReason: 'Seed submission approved.',
+          },
+        });
+        await admin.employeeAttendanceSubmissionDay.createMany({
+          data: dayIds.map((attendanceDayId) => ({
+            agencyId: agency.id,
+            employeeAttendanceSubmissionId: submission.id,
+            attendanceDayId,
+          })),
+        });
+        const version = await admin.attendancePeriodVersion.create({
+          data: {
+            agencyId: agency.id,
+            attendancePeriodId: periodId,
+            versionNo: 1,
+            status: 'LOCKED',
+            approvalRouteVersionId: cancellationRoute.id,
+            submittedByMembershipId: membership.id,
+            submittedAt: new Date(),
+            reviewedByMembershipId: supervisorMembership.id,
+            reviewedAt: new Date(),
+            reviewReason: 'Seed period reviewed.',
+            lockedByMembershipId: approverMembership.id,
+            lockedAt: new Date(),
+            reconciliation: { seed: true },
+          },
+        });
+        await admin.attendancePeriodVersionDay.createMany({
+          data: dayIds.map((attendanceDayId) => ({
+            agencyId: agency.id,
+            attendancePeriodVersionId: version.id,
+            employeeAttendanceSubmissionId: submission.id,
+            attendanceDayId,
+          })),
+        });
+        const publication = await admin.attendancePayrollPublication.create({
+          data: {
+            agencyId: agency.id,
+            attendancePeriodVersionId: version.id,
+            publicationType: 'ORIGINAL',
+            idempotencyKey: `seed-original:${version.id}`,
+            publishedAt: new Date(),
+          },
+        });
+        await admin.attendancePeriod.update({
+          where: { id: periodId },
+          data: { status: 'FINALIZED' },
+        });
+        const originalDtrs = await dtrs.materializeForLockedVersionInTransaction(
+          admin,
+          agencyContext,
+          version.id,
+        );
+        return { periodId, dayIds, version, publication, originalDtrs };
+      }
+      const lockedSnapshot = async (periodId: string, dayIds: string[]) => ({
+        days: await admin.attendanceDay.findMany({
+          where: { id: { in: dayIds } },
+          orderBy: { id: 'asc' },
+        }),
+        versions: await admin.attendancePeriodVersion.findMany({
+          where: { attendancePeriodId: periodId },
+          orderBy: { id: 'asc' },
+        }),
+        dtrs: await admin.dtrDocument.findMany({
+          where: { agencyId: agency.id, attendancePeriodVersion: { attendancePeriodId: periodId } },
+          orderBy: { id: 'asc' },
+        }),
+      });
+
+      // Whole cancellation after locking: a VOID handoff, refused until a route exists.
+      const lockedDate = nextMonday(63);
+      const lockedPostedId = await postSpecialLeave(lockedDate);
+      const wholeLock = await lockAttendance(lockedDate, lockedDate);
+      expect(await postedDayTotals(lockedDate)).toMatchObject({ postedLeaveMinutes: 480 });
+      const lockedBefore = await lockedSnapshot(wholeLock.periodId, wholeLock.dayIds);
       const lockedCancellationId = await requestApprovedCancellation(lockedPostedId, {
         scopeType: 'WHOLE',
         reason: 'Recalled after the period locked.',
@@ -2951,13 +3118,16 @@ it.skipIf(!enabled)(
           lockedCancellationId,
           `apply-locked-${suffix}`,
         ),
-      ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_ATTENDANCE_LOCKED' });
-      const lockedDetail = (await applications.findById(agencyContext, lockedPostedId))!;
-      expect(lockedDetail.application.status).toBe('CANCEL_REQUESTED');
-      expect(lockedDetail.cancellations.at(-1)).toMatchObject({
+      ).rejects.toMatchObject({
+        code: 'LEAVE_CANCELLATION_ATTENDANCE_REFUSED',
+        reasons: ['APPROVAL_ROUTE_RESOLUTION_FAILED'],
+      });
+      const refused = (await applications.findById(agencyContext, lockedPostedId))!;
+      expect(refused.application.status).toBe('CANCEL_REQUESTED');
+      expect(refused.cancellations.at(-1)).toMatchObject({
         effectStatus: 'FAILED',
         lastEffectFailureKind: 'BLOCKING',
-        lastEffectFailureCode: 'LEAVE_CANCELLATION_ATTENDANCE_LOCKED',
+        lastEffectFailureCode: 'LEAVE_CANCELLATION_ATTENDANCE_REFUSED',
         effects: [],
       });
       expect(
@@ -2965,12 +3135,418 @@ it.skipIf(!enabled)(
           where: { agencyId: agency.id, sourceId: lockedCancellationId },
         }),
       ).toBe(0);
+      expect(await admin.attendanceCorrection.count({ where: { agencyId: agency.id } })).toBe(0);
+
+      const postedLeaveRoute = await approvals.createRoute(agencyContext, {
+        routeCode: ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE,
+        domain: 'ATTENDANCE',
+        versionNo: 1,
+        effectiveFrom,
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'attendance.corrections.authorize_locked',
+              assignment: { kind: 'MEMBERSHIP', membershipId: authorizerMembership.id },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      });
+      await approvals.activateRoute(
+        agencyContext,
+        postedLeaveRoute.id,
+        'Activate the posted-leave Attendance Correction route.',
+      );
+      // A late PostgreSQL failure rolls back the accepted correction with the reversal.
+      const lockedFailure = `fail_locked_${randomUUID().replaceAll('-', '')}`;
+      await admin.$executeRawUnsafe(
+        `CREATE FUNCTION ${lockedFailure}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'intentional locked handoff failure'; END; $$`,
+      );
+      await admin.$executeRawUnsafe(
+        `CREATE TRIGGER ${lockedFailure} BEFORE INSERT ON outbox_events FOR EACH ROW WHEN (NEW.aggregate_id = '${lockedCancellationId}'::uuid) EXECUTE FUNCTION ${lockedFailure}()`,
+      );
+      try {
+        await expect(
+          applications.applyCancellation(
+            applyContext,
+            lockedPostedId,
+            lockedCancellationId,
+            `apply-locked-${suffix}`,
+          ),
+        ).rejects.toMatchObject({ code: 'LEAVE_CANCELLATION_APPLY_BLOCKED' });
+      } finally {
+        await admin.$executeRawUnsafe(`DROP TRIGGER ${lockedFailure} ON outbox_events`);
+        await admin.$executeRawUnsafe(`DROP FUNCTION ${lockedFailure}()`);
+      }
+      expect(await admin.attendanceCorrection.count({ where: { agencyId: agency.id } })).toBe(0);
+      expect(
+        (await applications.findById(agencyContext, lockedPostedId))!.cancellations.at(-1)!.effects,
+      ).toEqual([]);
+      // The same key retries once Attendance can accept the handoff.
+      const lockedApplied = await applications.applyCancellation(
+        applyContext,
+        lockedPostedId,
+        lockedCancellationId,
+        `apply-locked-${suffix}`,
+      );
+      expect(lockedApplied.application.status).toBe('CANCELLED');
+      const lockedEffects = lockedApplied.cancellations.at(-1)!;
+      expect(lockedEffects.effectStatus).toBe('APPLIED');
+      expect(lockedEffects.effects.map(({ effectKind }) => effectKind).sort()).toEqual([
+        'ATTENDANCE_LOCKED_CORRECTION',
+        'LEDGER_REVERSAL',
+      ]);
+      const lockedHandoff = lockedEffects.effects.find(
+        ({ effectKind }) => effectKind === 'ATTENDANCE_LOCKED_CORRECTION',
+      )!;
+      expect(lockedHandoff).toMatchObject({
+        ownerStatus: 'FOR_AUTHORIZATION',
+        attendanceHandoff: {
+          correctionId: lockedHandoff.ownerRecordId,
+          status: 'FOR_AUTHORIZATION',
+          blockingReason: null,
+          blockedAt: null,
+        },
+      });
+      const voidCorrection = await admin.attendanceCorrection.findUniqueOrThrow({
+        where: { id: lockedHandoff.ownerRecordId },
+        include: { evidence: true },
+      });
+      expect(voidCorrection).toMatchObject({
+        targetType: 'POSTED_LEAVE_INPUT',
+        requestedAction: 'VOID',
+        status: 'FOR_AUTHORIZATION',
+        initiatedByMembershipId: recorderMembership.id,
+        decidedByMembershipId: approverMembership.id,
+      });
+      expect(voidCorrection.evidence).toMatchObject([
+        { sourceType: 'LeaveCancellation', sourceId: lockedCancellationId },
+      ]);
+      // Nothing locked moved, and Attendance still counts the posted leave.
+      expect(await lockedSnapshot(wholeLock.periodId, wholeLock.dayIds)).toEqual(lockedBefore);
+      expect(await postedDayTotals(lockedDate)).toMatchObject({ postedLeaveMinutes: 480 });
+      expect(
+        await admin.attendancePostedLeaveInput.count({
+          where: {
+            agencyId: agency.id,
+            sourceType: 'LeaveCancellation',
+            sourceId: lockedCancellationId,
+          },
+        }),
+      ).toBe(0);
+
+      // Only a different HR Administrator may authorize; the cancellation's people cannot.
+      for (const separated of [approverAsAuthorizer, recorderAsAuthorizer]) {
+        await expect(
+          attendanceCorrections.authorizeLocked(
+            separated,
+            voidCorrection.id,
+            'Self authorization.',
+          ),
+        ).rejects.toMatchObject({ code: 'ATTENDANCE_CORRECTION_SEPARATION_REQUIRED' });
+        await expect(
+          attendanceCorrections.recordBlockingReason(separated, voidCorrection.id, 'Blocked.'),
+        ).rejects.toMatchObject({ code: 'ATTENDANCE_CORRECTION_SEPARATION_REQUIRED' });
+      }
+      // Another HR Administrator without the assigned step cannot record a blocker.
+      const supervisorAsAuthorizer = context(
+        agency.id,
+        supervisorUser.id,
+        supervisorMembership.id,
+        [
+          { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+          { code: 'attendance.corrections.read', scopePolicy: 'AGENCY' },
+          { code: 'attendance.corrections.authorize_locked', scopePolicy: 'AGENCY' },
+        ],
+      );
+      await expect(
+        attendanceCorrections.recordBlockingReason(
+          supervisorAsAuthorizer,
+          voidCorrection.id,
+          'Blocked.',
+        ),
+      ).rejects.toMatchObject({ code: 'APPROVAL_AUTHORITY_REQUIRED' });
+      // A generic Approval rejection cannot strand the correction outside Attendance.
+      const voidRequest = await admin.approvalRequest.findFirstOrThrow({
+        where: { agencyId: agency.id, subjectId: voidCorrection.id },
+      });
+      await expect(
+        approvals.reject(authorizerContext, voidRequest.id, 'Rejected outside Attendance.'),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_CORRECTION_APPROVAL_EFFECT_REQUIRED' });
+      // The authorizer cannot alter the Leave fact; they record why it is blocked.
+      const blockedHandoff = await attendanceCorrections.recordBlockingReason(
+        authorizerContext,
+        voidCorrection.id,
+        'Payroll for this period is under audit.',
+      );
+      expect(blockedHandoff.correction).toMatchObject({
+        status: 'FOR_AUTHORIZATION',
+        blockingReason: 'Payroll for this period is under audit.',
+        blockedByMembershipId: authorizerMembership.id,
+      });
+      const blockedDetail = (await applications.findById(agencyContext, lockedPostedId))!;
+      expect(
+        blockedDetail.cancellations
+          .at(-1)!
+          .effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_LOCKED_CORRECTION')!
+          .attendanceHandoff,
+      ).toMatchObject({
+        status: 'FOR_AUTHORIZATION',
+        blockingReason: 'Payroll for this period is under audit.',
+      });
+
+      const authorized = await attendanceCorrections.authorizeLocked(
+        authorizerContext,
+        voidCorrection.id,
+        'Audit cleared; authorized.',
+      );
+      expect(authorized.correction.status).toBe('APPLIED');
+      const [adjustedPeriod] = authorized.lockedAdjustment!.periods;
+      expect(adjustedPeriod!.predecessorPeriodVersionId).toBe(wholeLock.version.id);
+      const voidSuccessor = await admin.attendancePeriodVersion.findUniqueOrThrow({
+        where: { id: adjustedPeriod!.successorPeriodVersionId },
+      });
+      expect(voidSuccessor).toMatchObject({
+        predecessorVersionId: wholeLock.version.id,
+        versionNo: 2,
+        status: 'LOCKED',
+      });
+      expect(
+        await admin.attendancePayrollPublication.findFirstOrThrow({
+          where: { attendancePeriodVersionId: voidSuccessor.id },
+        }),
+      ).toMatchObject({
+        publicationType: 'ADJUSTMENT',
+        predecessorPublicationId: wholeLock.publication.id,
+      });
+      expect(
+        await admin.dtrDocument.findFirstOrThrow({
+          where: { agencyId: agency.id, attendancePeriodVersionId: voidSuccessor.id },
+        }),
+      ).toMatchObject({
+        classification: 'CORRECTED',
+        predecessorDtrDocumentId: wholeLock.originalDtrs.dtrDocumentIds[0],
+      });
+      const voidInput = await admin.attendancePostedLeaveInput.findFirstOrThrow({
+        where: {
+          agencyId: agency.id,
+          sourceType: 'LeaveCancellation',
+          sourceId: lockedCancellationId,
+        },
+      });
+      expect(voidInput.quantity.toFixed(4)).toBe('0.0000');
+      expect(voidInput.predecessorInputId).toBe(
+        lockedApplied.versions
+          .at(-1)!
+          .posting!.effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_INPUT')!
+          .ownerRecordId,
+      );
+      expect(await postedDayTotals(lockedDate)).toMatchObject({
+        postedLeaveMinutes: 0,
+        absenceMinutes: 480,
+      });
+      // The predecessor locked records keep their facts; a successor Day supersedes each.
+      const afterAuthorize = await lockedSnapshot(wholeLock.periodId, wholeLock.dayIds);
+      expect(afterAuthorize.days).toEqual(
+        lockedBefore.days.map((day) => ({ ...day, isCurrent: false })),
+      );
+      expect(afterAuthorize.versions).toContainEqual(lockedBefore.versions[0]);
+      expect(afterAuthorize.dtrs).toContainEqual(lockedBefore.dtrs[0]);
+      const authorizedDetail = (await applications.findById(agencyContext, lockedPostedId))!;
+      expect(
+        authorizedDetail.cancellations
+          .at(-1)!
+          .effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_LOCKED_CORRECTION')!
+          .attendanceHandoff,
+      ).toMatchObject({ status: 'APPLIED' });
+
+      // Partial cancellation after locking: a REPLACE handoff retaining two days.
+      const lockedMonday = nextMonday(77);
+      const lockedWednesday = addDays(lockedMonday, 2);
+      const lockedPartialDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: specialLeave.id,
+      });
+      const lockedPartialId = lockedPartialDraft.application.id;
+      await applications.update(agencyContext, lockedPartialId, {
+        reason: 'Three days of special privilege leave.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: lockedMonday, dateTo: lockedWednesday }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await applications.submit(employeeContext, lockedPartialId, submitInput);
+      await applications.route(recorderContext, lockedPartialId);
+      await applications.certify(recorderContext, lockedPartialId, {});
+      await applications.recommend(supervisorContext, lockedPartialId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      await applications.decide(approverContext, lockedPartialId, { decision: 'APPROVE' });
+      const lockedPartialPosting = await applications.post(
+        postingContext,
+        lockedPartialId,
+        `post-locked-partial-${suffix}`,
+      );
+      const lockedPartialLine = lockedPartialPosting.versions.at(-1)!.approvalAllocation!.lines[0]!;
+      const partialLocked = await lockAttendance(lockedMonday, lockedWednesday);
+      const lockedPartialCancellationId = await requestApprovedCancellation(lockedPartialId, {
+        scopeType: 'PARTIAL',
+        reason: 'Returning to duty on the last day.',
+        evidenceDocumentId: signedEvidence.documentId,
+        scopes: [
+          {
+            allocationLineId: lockedPartialLine.id,
+            dateFrom: lockedWednesday,
+            dateTo: lockedWednesday,
+            quantity: '1',
+          },
+        ],
+      });
+      const lockedPartialApplied = await applications.applyCancellation(
+        applyContext,
+        lockedPartialId,
+        lockedPartialCancellationId,
+        `apply-locked-partial-${suffix}`,
+      );
+      expect(lockedPartialApplied.application.status).toBe('CANCELLED');
+      const partialHandoff = lockedPartialApplied.cancellations
+        .at(-1)!
+        .effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_LOCKED_CORRECTION')!;
+      expect(partialHandoff.attendanceHandoff).toMatchObject({ status: 'FOR_AUTHORIZATION' });
+      const replaceCorrection = await admin.attendanceCorrection.findUniqueOrThrow({
+        where: { id: partialHandoff.ownerRecordId },
+      });
+      expect(replaceCorrection).toMatchObject({
+        targetType: 'POSTED_LEAVE_INPUT',
+        requestedAction: 'REPLACE',
+        requestedRecord: {
+          dateFrom: lockedMonday,
+          dateTo: addDays(lockedMonday, 1),
+          quantity: 2,
+          unitCode: 'WORKING_DAY',
+          allocationKind: 'LEAVE_ACCOUNT',
+        },
+      });
+      expect(await postedDayTotals(lockedWednesday)).toMatchObject({ postedLeaveMinutes: 480 });
+      const partialAuthorized = await attendanceCorrections.authorizeLocked(
+        authorizerContext,
+        replaceCorrection.id,
+        'Authorized.',
+      );
+      expect(partialAuthorized.lockedAdjustment!.periods).toMatchObject([
+        { predecessorPeriodVersionId: partialLocked.version.id },
+      ]);
+      const replaceInput = await admin.attendancePostedLeaveInput.findFirstOrThrow({
+        where: {
+          agencyId: agency.id,
+          sourceType: 'LeaveCancellation',
+          sourceId: lockedPartialCancellationId,
+        },
+      });
+      expect(replaceInput).toMatchObject({
+        dateFrom: new Date(`${lockedMonday}T00:00:00.000Z`),
+        dateTo: new Date(`${addDays(lockedMonday, 1)}T00:00:00.000Z`),
+      });
+      expect(replaceInput.quantity.toFixed(4)).toBe('2.0000');
+      expect(await postedDayTotals(lockedMonday)).toMatchObject({ postedLeaveMinutes: 480 });
+      expect(await postedDayTotals(lockedWednesday)).toMatchObject({
+        postedLeaveMinutes: 0,
+        absenceMinutes: 480,
+      });
+
+      // Two pending handoffs over one locked period both authorize: the second
+      // applies against the version the first authorization produced.
+      const sharedMonday = nextMonday(91);
+      const sharedTuesday = addDays(sharedMonday, 1);
+      const sharedPostedIds = [
+        await postSpecialLeave(sharedMonday),
+        await postSpecialLeave(sharedTuesday),
+      ];
+      const sharedLock = await lockAttendance(sharedMonday, sharedTuesday);
+      const sharedCorrectionIds: string[] = [];
+      for (const [index, postedId] of sharedPostedIds.entries()) {
+        const cancellationId = await requestApprovedCancellation(postedId, {
+          scopeType: 'WHOLE',
+          reason: 'Recalled after the period locked.',
+          evidenceDocumentId: signedEvidence.documentId,
+        });
+        const applied = await applications.applyCancellation(
+          applyContext,
+          postedId,
+          cancellationId,
+          `apply-shared-${index}-${suffix}`,
+        );
+        sharedCorrectionIds.push(
+          applied.cancellations
+            .at(-1)!
+            .effects.find(({ effectKind }) => effectKind === 'ATTENDANCE_LOCKED_CORRECTION')!
+            .ownerRecordId,
+        );
+      }
+      const firstShared = await attendanceCorrections.authorizeLocked(
+        authorizerContext,
+        sharedCorrectionIds[0]!,
+        'Authorized.',
+      );
+      const secondShared = await attendanceCorrections.authorizeLocked(
+        authorizerContext,
+        sharedCorrectionIds[1]!,
+        'Authorized.',
+      );
+      expect(firstShared.lockedAdjustment!.periods).toMatchObject([
+        { predecessorPeriodVersionId: sharedLock.version.id },
+      ]);
+      expect(secondShared.lockedAdjustment!.periods).toMatchObject([
+        {
+          predecessorPeriodVersionId:
+            firstShared.lockedAdjustment!.periods[0]!.successorPeriodVersionId,
+        },
+      ]);
+      expect(await postedDayTotals(sharedMonday)).toMatchObject({ postedLeaveMinutes: 0 });
+      expect(await postedDayTotals(sharedTuesday)).toMatchObject({ postedLeaveMinutes: 0 });
 
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
         await transaction.outboxEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.lockedAttendanceAdjustmentPeriod.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.lockedAttendanceAdjustment.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendanceCorrectionEffect.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendanceCorrectionEvidence.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendanceCorrection.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendancePayrollFact.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendancePayrollPublication.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.dtrDocument.deleteMany({ where: { agencyId: { in: agencyIds } } });
+        await transaction.attendancePeriodVersionDay.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.attendancePeriodVersion.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.employeeAttendanceSubmissionDay.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.employeeAttendanceSubmission.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
         await transaction.attendanceException.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });
@@ -3101,7 +3677,14 @@ it.skipIf(!enabled)(
         await transaction.user.deleteMany({
           where: {
             id: {
-              in: [user.id, recorderUser.id, foreignUser.id, supervisorUser.id, approverUser.id],
+              in: [
+                user.id,
+                recorderUser.id,
+                foreignUser.id,
+                supervisorUser.id,
+                approverUser.id,
+                authorizerUser.id,
+              ],
             },
           },
         });

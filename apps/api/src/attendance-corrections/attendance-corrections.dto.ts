@@ -43,6 +43,10 @@ export class AttendanceCorrectionDto {
   readonly authorizedAt: string | null;
   readonly appliedByMembershipId: string | null;
   readonly appliedAt: string | null;
+  readonly excludedDeciderMembershipIds: string[];
+  readonly blockingReason: string | null;
+  readonly blockedByMembershipId: string | null;
+  readonly blockedAt: string | null;
   readonly createdAt: string;
 
   constructor(record: AttendanceCorrectionSummary) {
@@ -66,6 +70,10 @@ export class AttendanceCorrectionDto {
     this.authorizedAt = record.authorizedAt;
     this.appliedByMembershipId = record.appliedByMembershipId;
     this.appliedAt = record.appliedAt;
+    this.excludedDeciderMembershipIds = record.excludedDeciderMembershipIds;
+    this.blockingReason = record.blockingReason;
+    this.blockedByMembershipId = record.blockedByMembershipId;
+    this.blockedAt = record.blockedAt;
     this.createdAt = record.createdAt;
   }
 }
