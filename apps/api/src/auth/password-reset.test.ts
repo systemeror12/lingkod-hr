@@ -17,11 +17,12 @@ import {
 import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller';
-import { AuthService } from './auth.service';
+import { AuthService, PASSWORD_RESET_RESPONSE_FLOOR_MS } from './auth.service';
 import type { MailDelivery, MailMessage } from '../invitations/mail';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const NEW_PASSWORD = 'tahimik na umaga sa bundok 42';
+const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) LingkodHR test';
 const INVALID_LINK = 'This reset link is invalid or has expired. Request a new one.';
 
 function databaseBytes(value: Buffer): Uint8Array<ArrayBuffer> {
@@ -129,6 +130,7 @@ async function resetFixture(
     request: (label = 'step') => ({
       requestId: `password-reset-${label}-${randomUUID()}`,
       ipAddress,
+      userAgent: USER_AGENT,
     }),
     events: (eventType: string) =>
       admin.securityEvent.findMany({
@@ -202,6 +204,7 @@ it.skipIf(!enabled)(
       expect(events[0]).toMatchObject({
         userId: fixture.userId,
         agencyId: null,
+        userAgent: USER_AGENT,
         details: { outcome: 'SENT' },
       });
       expect(Buffer.from(events[0]?.emailHash ?? []).equals(Buffer.from(fixture.emailHash))).toBe(
@@ -298,6 +301,30 @@ it.skipIf(!enabled)('refuses an IP address after 20 requests in an hour', async 
     await fixture.cleanup();
   }
 });
+
+it.skipIf(!enabled)(
+  'answers a known and an unknown email no sooner than the response floor',
+  async () => {
+    const fixture = await resetFixture();
+    try {
+      const service = new AuthService();
+      for (const email of [fixture.email, `nobody-${randomUUID()}@example.test`]) {
+        const started = performance.now();
+        await service.requestPasswordReset(email, fixture.request('timed'));
+        expect(performance.now() - started).toBeGreaterThanOrEqual(
+          PASSWORD_RESET_RESPONSE_FLOOR_MS - 1,
+        );
+      }
+      const events = await fixture.events('PASSWORD_RESET_REQUESTED');
+      expect(events.map(({ details }) => details)).toEqual([
+        { outcome: 'SENT' },
+        { outcome: 'UNKNOWN_EMAIL' },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
 
 it.skipIf(!enabled)('accepts a request during a Sign-in Cool-down', async () => {
   const fixture = await resetFixture();
@@ -398,6 +425,7 @@ it.skipIf(!enabled)(
       expect(completed).toMatchObject({
         userId,
         agencyId: null,
+        userAgent: USER_AGENT,
         details: { methods: ['email_link'], revokedSessions: 2 },
       });
       expectNoSecrets(await fixture.events('PASSWORD_RESET_COMPLETED'), [
@@ -674,11 +702,12 @@ function fakeResponse() {
   return response;
 }
 
-function endpointRequest(ipAddress: string) {
+function endpointRequest(ipAddress: string, userAgent?: string) {
+  const headers: Record<string, string | undefined> = { 'user-agent': userAgent };
   return {
     headers: {},
     header: (name: string) =>
-      name === 'x-request-id' ? `password-reset-endpoint-${randomUUID()}` : undefined,
+      name === 'x-request-id' ? `password-reset-endpoint-${randomUUID()}` : headers[name],
     ip: ipAddress,
   } as unknown as Request;
 }
@@ -732,3 +761,27 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)('records the request user agent cut to 512 characters', async () => {
+  const fixture = await resetFixture();
+  const { ipAddress } = fixture.request();
+  try {
+    const controller = new AuthController(new AuthService(new RecordingMailDelivery()));
+    const userAgent = `Mozilla/5.0 ${'x'.repeat(600)}`;
+    await controller.requestPasswordReset(
+      { email: fixture.email },
+      endpointRequest(ipAddress, userAgent),
+      fakeResponse() as unknown as Response,
+    );
+    await controller.requestPasswordReset(
+      { email: fixture.email },
+      endpointRequest(ipAddress),
+      fakeResponse() as unknown as Response,
+    );
+
+    const events = await fixture.events('PASSWORD_RESET_REQUESTED');
+    expect(events.map((event) => event.userAgent)).toEqual([userAgent.slice(0, 512), null]);
+  } finally {
+    await fixture.cleanup();
+  }
+});

@@ -46,6 +46,9 @@ import {
   totpSignInSchema,
 } from './auth.schemas';
 
+/** Longest User-Agent header a Security Event keeps. */
+const USER_AGENT_MAX_LENGTH = 512;
+
 function translateError(error: unknown): never {
   if (error instanceof AuthServiceError) {
     throw new HttpException(
@@ -735,6 +738,7 @@ export class AuthController {
     return {
       requestId: request.header('x-request-id') ?? 'unknown-request',
       ipAddress: request.ip ?? null,
+      userAgent: request.header('user-agent')?.slice(0, USER_AGENT_MAX_LENGTH) ?? null,
     };
   }
 }

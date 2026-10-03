@@ -468,8 +468,14 @@ async function ownedLoginFixture(
   };
 }
 
+const SIGN_IN_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) LingkodHR test';
+
 function signInRequest(label: string) {
-  return { requestId: `owned-login-${label}-${randomUUID()}`, ipAddress: '198.51.100.7' };
+  return {
+    requestId: `owned-login-${label}-${randomUUID()}`,
+    ipAddress: '198.51.100.7',
+    userAgent: SIGN_IN_USER_AGENT,
+  };
 }
 
 it.skipIf(!enabled)(
@@ -766,6 +772,7 @@ it.skipIf(!enabled)(
       for (const event of events) {
         expect(Buffer.from(event.emailHash ?? [])).toEqual(emailHash);
         expect(event.ipAddress).toBe('198.51.100.7');
+        expect(event.userAgent).toBe(SIGN_IN_USER_AGENT);
         const serialized = JSON.stringify(event).toLowerCase();
         for (const secret of [
           user.password,
@@ -1498,7 +1505,11 @@ it.skipIf(!enabled)(
     const admin = await createAdminClient();
     const ipAddress = `203.0.113.${1 + ((randomBytes(1)[0] ?? 0) % 254)}`;
     const prefix = `owned-login-ip-${randomUUID()}`;
-    const fromIp = (label: string) => ({ requestId: `${prefix}-${label}`, ipAddress });
+    const fromIp = (label: string) => ({
+      requestId: `${prefix}-${label}`,
+      ipAddress,
+      userAgent: null,
+    });
     const email = `nobody-${randomUUID()}@example.test`;
     const throttle = throttleOf(admin, email);
     try {

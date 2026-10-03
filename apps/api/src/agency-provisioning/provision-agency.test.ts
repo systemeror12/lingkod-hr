@@ -32,7 +32,7 @@ class FailingMailDelivery implements MailDelivery {
 
 /** Runs the invitation's whole activation as a first-time User, enrolling TOTP when required. */
 async function activate(service: AuthService, token: string, requestId: string) {
-  const request = { requestId, ipAddress: '198.51.100.20' };
+  const request = { requestId, ipAddress: '198.51.100.20', userAgent: null };
   const started = await service.startActivation(
     token,
     { name: 'First Administrator', password: 'tahimik na umaga sa bundok 42' },
