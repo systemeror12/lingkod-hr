@@ -5,10 +5,17 @@ import {
   ATTENDANCE_CONTEXT_TYPES,
 } from '../attendance-contexts/attendance-contexts.types';
 import { ATTENDANCE_EVENT_TYPES } from '../attendance/attendance.types';
+import {
+  POSTED_LEAVE_ALLOCATION_KINDS,
+  POSTED_LEAVE_UNIT_CODES,
+  type CreatePostedLeaveInput,
+} from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 
 export const ATTENDANCE_CORRECTION_TARGET_TYPES = [
   'ATTENDANCE_EVENT',
   'ATTENDANCE_CONTEXT',
+  // Raised only by Leave when a cancellation changes posted leave on a locked Work Date.
+  'POSTED_LEAVE_INPUT',
 ] as const;
 export type AttendanceCorrectionTargetType = (typeof ATTENDANCE_CORRECTION_TARGET_TYPES)[number];
 
@@ -29,6 +36,7 @@ export type AttendanceCorrectionState = (typeof ATTENDANCE_CORRECTION_STATES)[nu
 
 export const ATTENDANCE_CORRECTION_ROUTE_CODE = 'ATTENDANCE_CORRECTION';
 export const ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE = 'ATTENDANCE_CORRECTION_LOCKED';
+export const ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE = 'ATTENDANCE_CORRECTION_POSTED_LEAVE';
 export const ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE = 'ATTENDANCE_CORRECTION';
 export const ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND = 'ATTENDANCE_CORRECTION';
 
@@ -63,7 +71,48 @@ export interface RequestedAttendanceContextFact {
   evidenceDocumentVersionId: string | null;
 }
 
-export type RequestedAttendanceFact = RequestedAttendanceEventFact | RequestedAttendanceContextFact;
+/** The successor posted-leave input a REPLACE asks Attendance to create. */
+export interface RequestedPostedLeaveFact {
+  dateFrom: string;
+  dateTo: string;
+  unitCode: (typeof POSTED_LEAVE_UNIT_CODES)[number];
+  quantity: number;
+  allocationKind: (typeof POSTED_LEAVE_ALLOCATION_KINDS)[number];
+}
+
+export type RequestedAttendanceFact =
+  RequestedAttendanceEventFact | RequestedAttendanceContextFact | RequestedPostedLeaveFact;
+
+/**
+ * Leave's request to change posted leave after an approved Leave Cancellation.
+ * The cancellation is the factual basis: its requester and approvers are named
+ * so none of them can authorize the Locked Attendance Adjustment.
+ */
+export type PostedLeaveHandoffInput = CreatePostedLeaveInput & {
+  predecessorInputId: string;
+  cancellation: {
+    requestedByMembershipId: string;
+    approvedByMembershipId: string;
+    approvedAt: Date;
+    deciderMembershipIds: string[];
+    reason: string;
+  };
+};
+
+/**
+ * RECALCULATED means Attendance applied the successor input now; the id is
+ * that input. FOR_AUTHORIZATION means a locked Work Date is affected and the
+ * id is the pending Attendance Correction.
+ */
+export type PostedLeaveHandoff =
+  { kind: 'RECALCULATED'; id: string } | { kind: 'FOR_AUTHORIZATION'; id: string };
+
+export interface PostedLeaveHandoffStatus {
+  correctionId: string;
+  status: AttendanceCorrectionState;
+  blockingReason: string | null;
+  blockedAt: string | null;
+}
 
 export interface AttendanceCorrectionEvidenceSummary {
   id: string;
@@ -124,6 +173,10 @@ export interface AttendanceCorrectionSummary {
   authorizedAt: string | null;
   appliedByMembershipId: string | null;
   appliedAt: string | null;
+  excludedDeciderMembershipIds: string[];
+  blockingReason: string | null;
+  blockedByMembershipId: string | null;
+  blockedAt: string | null;
   createdAt: string;
 }
 
@@ -242,6 +295,16 @@ const requestedContextFactSchema = z
   });
 
 export const attendanceCorrectionContextFactSchema = requestedContextFactSchema;
+
+export const attendanceCorrectionPostedLeaveFactSchema = z
+  .object({
+    dateFrom: z.string().date(),
+    dateTo: z.string().date(),
+    unitCode: z.enum(POSTED_LEAVE_UNIT_CODES),
+    quantity: z.number().positive(),
+    allocationKind: z.enum(POSTED_LEAVE_ALLOCATION_KINDS),
+  })
+  .strict();
 
 const correctionFactDefinition = {
   employeeId: z.string().uuid().optional(),

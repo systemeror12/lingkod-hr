@@ -338,6 +338,7 @@ model AgencyMembership {
   recordedAttendanceCorrections          AttendanceCorrection[]             @relation("AttendanceCorrectionRecorder")
   decidedAttendanceCorrections           AttendanceCorrection[]             @relation("AttendanceCorrectionDecider")
   authorizedAttendanceCorrections        AttendanceCorrection[]             @relation("AttendanceCorrectionAuthorizer")
+  blockedAttendanceCorrections           AttendanceCorrection[]             @relation("AttendanceCorrectionBlocker")
   appliedAttendanceCorrections           AttendanceCorrection[]             @relation("AttendanceCorrectionApplier")
   appliedAttendanceCorrectionEffects     AttendanceCorrectionEffect[]       @relation("AttendanceCorrectionEffectApplier")
   authorizedLockedAttendanceAdjustments  LockedAttendanceAdjustment[]       @relation("LockedAttendanceAdjustmentAuthorizer")
@@ -3900,6 +3901,10 @@ model AttendanceCorrection {
   authorizedAt             DateTime? @map("authorized_at") @db.Timestamptz(6)
   appliedByMembershipId    String?   @map("applied_by_membership_id") @db.Uuid
   appliedAt                DateTime? @map("applied_at") @db.Timestamptz(6)
+  excludedDeciderMembershipIds String[] @default([]) @map("excluded_decider_membership_ids") @db.Uuid
+  blockingReason           String?   @map("blocking_reason")
+  blockedByMembershipId    String?   @map("blocked_by_membership_id") @db.Uuid
+  blockedAt                DateTime? @map("blocked_at") @db.Timestamptz(6)
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion               Int       @default(1) @map("row_version")
@@ -3912,6 +3917,7 @@ model AttendanceCorrection {
   decidedBy      AgencyMembership? @relation("AttendanceCorrectionDecider", fields: [agencyId, decidedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   authorizedBy   AgencyMembership? @relation("AttendanceCorrectionAuthorizer", fields: [agencyId, authorizedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   appliedBy      AgencyMembership? @relation("AttendanceCorrectionApplier", fields: [agencyId, appliedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  blockedBy      AgencyMembership? @relation("AttendanceCorrectionBlocker", fields: [agencyId, blockedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   evidence       AttendanceCorrectionEvidence[] @relation("AttendanceCorrectionEvidence")
   effect         AttendanceCorrectionEffect?
   lockedAdjustment LockedAttendanceAdjustment?

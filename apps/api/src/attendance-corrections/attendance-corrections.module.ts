@@ -33,5 +33,6 @@ import { AttendanceCorrectionsService } from './attendance-corrections.service';
       useValue: attendanceCorrectionAuditWriter,
     },
   ],
+  exports: [AttendanceCorrectionsService],
 })
 export class AttendanceCorrectionsModule {}

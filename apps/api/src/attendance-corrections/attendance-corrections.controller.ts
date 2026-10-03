@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
+import { ApprovalServiceError } from '../approvals/approval.service';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
@@ -56,6 +57,12 @@ function translateServiceError(error: unknown, requestId: string): never {
           requestId,
         },
       },
+      error.statusCode,
+    );
+  }
+  if (error instanceof ApprovalServiceError) {
+    throw new HttpException(
+      { error: { code: error.code, message: error.message, requestId } },
       error.statusCode,
     );
   }
@@ -274,6 +281,34 @@ export class AttendanceCorrectionsController {
           context,
           parsed.data,
           decision.data.comments,
+          this.idempotencyKey(idempotencyKey, context),
+        ),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/attendance-corrections/:correctionId/block-authorization')
+  @RequirePermission('attendance.corrections.authorize_locked')
+  async recordBlockingReason(
+    @Param('agencyId') agencyId: string,
+    @Param('correctionId') correctionId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<AttendanceCorrectionDetailDto> {
+    this.assertAgency(agencyId, context);
+    const parsed = attendanceCorrectionIdSchema.safeParse(correctionId);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const reason = attendanceCorrectionReasonSchema.safeParse(body);
+    if (!reason.success) throw this.invalidInput(reason.error.issues, context);
+    try {
+      return new AttendanceCorrectionDetailDto(
+        await this.service.recordBlockingReason(
+          context,
+          parsed.data,
+          reason.data.reason,
           this.idempotencyKey(idempotencyKey, context),
         ),
       );

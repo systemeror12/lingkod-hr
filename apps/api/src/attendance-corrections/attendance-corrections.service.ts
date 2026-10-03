@@ -28,6 +28,7 @@ import {
 import { DocumentsService } from '../documents/documents.service';
 import { DtrsService } from '../dtrs/dtrs.service';
 import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
+import { AttendancePostedLeaveInputError } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import {
   ATTENDANCE_CORRECTION_AUDIT_WRITER,
   type AttendanceCorrectionAuditWriter,
@@ -36,10 +37,12 @@ import {
   ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND,
   ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
   ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE,
+  ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE,
   ATTENDANCE_CORRECTION_ROUTE_CODE,
   AttendanceCorrectionServiceError,
   attendanceCorrectionContextFactSchema,
   attendanceCorrectionEventFactSchema,
+  attendanceCorrectionPostedLeaveFactSchema,
   type AttendanceCorrectionAction,
   type AttendanceCorrectionCreateInput,
   type AttendanceCorrectionDetail,
@@ -49,9 +52,13 @@ import {
   type AttendanceCorrectionState,
   type AttendanceCorrectionSummary,
   type AttendanceCorrectionTargetType,
+  type PostedLeaveHandoff,
+  type PostedLeaveHandoffInput,
+  type PostedLeaveHandoffStatus,
   type RequestedAttendanceContextFact,
   type RequestedAttendanceEventFact,
   type RequestedAttendanceFact,
+  type RequestedPostedLeaveFact,
 } from './attendance-corrections.types';
 
 const MAX_LIST_LIMIT = 200;
@@ -59,6 +66,31 @@ const DEFAULT_LIST_LIMIT = 100;
 const MAX_CONTEXT_ENUMERATION_DAYS = 62;
 const CORRECTION_REVIEW_PERMISSIONS = ['attendance.corrections.approve'] as const;
 const CORRECTION_AUTHORIZE_PERMISSIONS = ['attendance.corrections.authorize_locked'] as const;
+const LEAVE_CANCELLATION_SOURCE_TYPE = 'LeaveCancellation';
+const LEAVE_CANCELLATION_DECISION_REASON = 'Leave Cancellation approved.';
+
+/** A VOID proposes no fact; every VOID fingerprints this same placeholder. */
+const VOID_FACT: RequestedAttendanceEventFact = {
+  eventType: 'TIME_IN',
+  eventTime: '',
+  sourceReference: null,
+  reason: null,
+};
+
+type CorrectionRouteKind = 'OPEN' | 'LOCKED' | 'POSTED_LEAVE';
+
+const CORRECTION_ROUTES: Record<CorrectionRouteKind, { code: string; steps: string[] }> = {
+  OPEN: { code: ATTENDANCE_CORRECTION_ROUTE_CODE, steps: ['attendance.corrections.approve'] },
+  LOCKED: {
+    code: ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE,
+    steps: ['attendance.corrections.approve', 'attendance.corrections.authorize_locked'],
+  },
+  // The approved Leave Cancellation is the factual review, so only authorization remains.
+  POSTED_LEAVE: {
+    code: ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE,
+    steps: ['attendance.corrections.authorize_locked'],
+  },
+};
 
 const correctionEmployeeSelect = {
   id: true,
@@ -88,6 +120,10 @@ const correctionSelect = {
   authorizedAt: true,
   appliedByMembershipId: true,
   appliedAt: true,
+  excludedDeciderMembershipIds: true,
+  blockingReason: true,
+  blockedByMembershipId: true,
+  blockedAt: true,
   createdAt: true,
   employee: { select: correctionEmployeeSelect },
 } as const;
@@ -150,6 +186,10 @@ function correctionSummary(record: CorrectionRecord): AttendanceCorrectionSummar
     authorizedAt: record.authorizedAt ? record.authorizedAt.toISOString() : null,
     appliedByMembershipId: record.appliedByMembershipId,
     appliedAt: record.appliedAt ? record.appliedAt.toISOString() : null,
+    excludedDeciderMembershipIds: record.excludedDeciderMembershipIds,
+    blockingReason: record.blockingReason,
+    blockedByMembershipId: record.blockedByMembershipId,
+    blockedAt: record.blockedAt ? record.blockedAt.toISOString() : null,
     createdAt: record.createdAt.toISOString(),
   };
 }
@@ -259,6 +299,16 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
       (transaction, context, request) => this.completeApproval(transaction, context, request),
     );
+    // Return and reject go through Attendance so the correction moves with
+    // its request; a generic Approval decision would strand it.
+    this.completionRegistry.registerDecision(
+      ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
+      async (_transaction, _context, request) => {
+        if (request.effectContext?.kind !== ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND) {
+          throw this.approvalEffectRequired();
+        }
+      },
+    );
   }
 
   async create(
@@ -305,7 +355,11 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         normalizeFact(input),
       );
       const locked = preview.lockedPeriodVersionIds.length > 0;
-      const route = await this.resolveCorrectionRoute(transaction, context, locked);
+      const route = await this.resolveCorrectionRoute(
+        transaction,
+        context,
+        locked ? 'LOCKED' : 'OPEN',
+      );
       const requestedRecord = this.requestedRecordJson(input);
       const created = await transaction.attendanceCorrection.create({
         data: {
@@ -436,7 +490,11 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       if (evidenceCount === 0) throw this.evidenceRequired();
       const preview = await this.computePreviewFromRecord(transaction, context, record);
       const locked = preview.lockedPeriodVersionIds.length > 0;
-      const route = await this.resolveCorrectionRoute(transaction, context, locked);
+      const route = await this.resolveCorrectionRoute(
+        transaction,
+        context,
+        locked ? 'LOCKED' : 'OPEN',
+      );
       await transaction.attendanceCorrection.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: record.id } },
         data: {
@@ -445,9 +503,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
           updatedAt: new Date(),
         },
       });
-      const routeCode = locked
-        ? ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE
-        : ATTENDANCE_CORRECTION_ROUTE_CODE;
+      const routeCode = CORRECTION_ROUTES[locked ? 'LOCKED' : 'OPEN'].code;
       await this.cancelOpenApprovalWork(
         transaction,
         context,
@@ -721,12 +777,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       const record = await this.requireCorrection(transaction, context, correctionId);
       if (record.status !== 'FOR_AUTHORIZATION')
         throw this.invalidState(record.status, 'authorize');
-      await this.assertDecisionSeparation(transaction, context, record);
-      if (record.decidedByMembershipId === context.membershipId) {
-        throw this.separationRequired(
-          'The factual approver cannot authorize the same Attendance Correction.',
-        );
-      }
+      await this.assertMayAuthorize(transaction, context, record);
       const request = await this.requireActiveApprovalRequest(
         transaction,
         context,
@@ -745,6 +796,260 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       if (summary.status !== 'APPROVED') throw this.routeInvalid();
       return this.findByIdInTransaction(transaction, context, correctionId);
     });
+  }
+
+  /**
+   * The authorizer of a Leave handoff cannot change the Leave fact. When it
+   * cannot be authorized, they record why; the correction stays pending at
+   * FOR_AUTHORIZATION and the Leave workspace shows the reason.
+   */
+  async recordBlockingReason(
+    context: RequestContext,
+    correctionId: string,
+    rawReason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<AttendanceCorrectionDetail> {
+    this.assertPermission(
+      context,
+      'attendance.corrections.authorize_locked',
+      'ATTENDANCE_CORRECTION_AUTHORIZE_FORBIDDEN',
+    );
+    const reason = rawReason.trim();
+    if (!reason) throw this.reasonRequired();
+    const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const command = fingerprint({ command: 'BLOCK', correctionId, reason });
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      if (idempotencyKey) {
+        const replay = await this.completedCommand(transaction, context, {
+          action: 'ATTENDANCE_CORRECTION_AUTHORIZATION_BLOCKED',
+          idempotencyKey,
+          command,
+        });
+        if (replay) return this.findByIdInTransaction(transaction, context, replay);
+      }
+      await this.lockCorrection(transaction, context.agencyId, correctionId);
+      const record = await this.requireCorrection(transaction, context, correctionId);
+      if (record.targetType !== 'POSTED_LEAVE_INPUT' || record.status !== 'FOR_AUTHORIZATION') {
+        throw this.invalidState(record.status, 'record a blocking reason');
+      }
+      await this.assertMayAuthorize(transaction, context, record);
+      const request = await this.requireActiveApprovalRequest(
+        transaction,
+        context,
+        record,
+        CORRECTION_AUTHORIZE_PERMISSIONS,
+      );
+      // Only the authority who could authorize may record why they cannot.
+      await this.approvals.assertCurrentStepAuthorityInTransaction(
+        transaction,
+        context,
+        request.id,
+        'APPROVE',
+      );
+      await transaction.attendanceCorrection.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: record.id } },
+        data: {
+          blockingReason: reason,
+          blockedByMembershipId: context.membershipId,
+          blockedAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'ATTENDANCE_CORRECTION_AUTHORIZATION_BLOCKED',
+        entityType: 'AttendanceCorrection',
+        entityId: record.id,
+        previousStatus: record.status,
+        newStatus: record.status,
+        reason,
+        requestId: context.requestId,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        metadata: { command, approvalRequestId: request.id },
+      });
+      return this.findByIdInTransaction(transaction, context, correctionId);
+    });
+  }
+
+  /**
+   * Leave's handoff when an applied Leave Cancellation changes posted leave,
+   * inside Leave's transaction. Without a finalized Attendance Period across
+   * the predecessor's dates, Attendance supersedes the input and recalculates
+   * now. Otherwise it accepts a POSTED_LEAVE_INPUT correction at
+   * FOR_AUTHORIZATION: the approved cancellation is its factual review, and a
+   * different HR Administrator authorizes the Locked Attendance Adjustment.
+   */
+  async handOffPostedLeaveInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: PostedLeaveHandoffInput,
+  ): Promise<PostedLeaveHandoff> {
+    const { cancellation, ...posted } = input;
+    const predecessor = await transaction.attendancePostedLeaveInput.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        employeeId: posted.employeeId,
+        id: posted.predecessorInputId,
+      },
+      select: { dateFrom: true, dateTo: true },
+    });
+    if (!predecessor) {
+      throw new AttendancePostedLeaveInputError(
+        'The predecessor is not a posted-leave input for this Employee.',
+        404,
+        'POSTED_LEAVE_INPUT_PREDECESSOR_NOT_FOUND',
+      );
+    }
+    // Hold every overlapping period so a concurrent lock waits for this handoff.
+    const periods = await transaction.$queryRaw<Array<{ status: string }>>(
+      Prisma.sql`SELECT "status" FROM "attendance_periods"
+        WHERE "agency_id" = CAST(${context.agencyId} AS uuid)
+          AND "date_from" <= CAST(${formatDate(predecessor.dateTo)} AS date)
+          AND "date_to" >= CAST(${formatDate(predecessor.dateFrom)} AS date)
+        ORDER BY "id"
+        FOR UPDATE`,
+    );
+    if (!periods.some(({ status }) => status === 'FINALIZED')) {
+      const successor = await this.days.supersedePostedLeaveInTransaction(
+        transaction,
+        context,
+        posted,
+      );
+      return { kind: 'RECALCULATED', id: successor.id };
+    }
+    const requestedAction = posted.quantity > 0 ? 'REPLACE' : 'VOID';
+    const fact: RequestedAttendanceFact =
+      requestedAction === 'REPLACE'
+        ? {
+            dateFrom: posted.dateFrom,
+            dateTo: posted.dateTo,
+            unitCode: posted.unitCode,
+            quantity: posted.quantity,
+            allocationKind: posted.allocationKind,
+          }
+        : VOID_FACT;
+    const preview = await this.computePreview(
+      transaction,
+      context,
+      posted.employeeId,
+      'POSTED_LEAVE_INPUT',
+      requestedAction,
+      posted.predecessorInputId,
+      fact,
+    );
+    if (
+      preview.lockedPeriodVersionIds.length === 0 ||
+      preview.days.some((day) => day.periodStatus === 'FINALIZED' && !day.lockedPeriodVersionId)
+    ) {
+      throw new AttendanceCorrectionServiceError(
+        'An affected finalized Attendance Period has no locked version for this Employee to adjust.',
+        409,
+        'ATTENDANCE_CORRECTION_LOCKED_VERSION_REQUIRED',
+      );
+    }
+    const route = await this.resolveCorrectionRoute(transaction, context, 'POSTED_LEAVE');
+    const now = new Date();
+    const created = await transaction.attendanceCorrection.create({
+      data: {
+        agencyId: context.agencyId,
+        employeeId: posted.employeeId,
+        initiatedByMembershipId: cancellation.requestedByMembershipId,
+        recordedByMembershipId: context.membershipId,
+        targetType: 'POSTED_LEAVE_INPUT',
+        requestedAction,
+        targetId: posted.predecessorInputId,
+        status: 'FOR_AUTHORIZATION',
+        ...(requestedAction === 'REPLACE'
+          ? { requestedRecord: this.factRecordJson('POSTED_LEAVE_INPUT', fact) }
+          : {}),
+        reason: cancellation.reason,
+        approvalRouteVersionId: route.id,
+        impactPreview: preview as unknown as Prisma.InputJsonValue,
+        submittedAt: now,
+        decidedByMembershipId: cancellation.approvedByMembershipId,
+        decidedAt: cancellation.approvedAt,
+        decisionReason: LEAVE_CANCELLATION_DECISION_REASON,
+        excludedDeciderMembershipIds: unique([
+          cancellation.requestedByMembershipId,
+          ...cancellation.deciderMembershipIds,
+        ]),
+        updatedAt: now,
+      },
+      select: { id: true },
+    });
+    await transaction.attendanceCorrectionEvidence.create({
+      data: {
+        agencyId: context.agencyId,
+        attendanceCorrectionId: created.id,
+        documentVersionId: null,
+        sourceType: posted.sourceType,
+        sourceId: posted.sourceId,
+      },
+    });
+    const request = await this.approvals.createRequestInTransaction(
+      transaction,
+      context,
+      {
+        routeCode: CORRECTION_ROUTES.POSTED_LEAVE.code,
+        subjectType: ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
+        subjectId: created.id,
+        effectiveDate: manilaToday(),
+      },
+      undefined,
+      route.id,
+    );
+    await this.approvals.submitInTransaction(transaction, context, request.id);
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'ATTENDANCE_CORRECTION_FOR_AUTHORIZATION',
+      entityType: 'AttendanceCorrection',
+      entityId: created.id,
+      previousStatus: null,
+      newStatus: 'FOR_AUTHORIZATION',
+      reason: cancellation.reason,
+      requestId: context.requestId,
+      metadata: {
+        source: 'LEAVE_CANCELLATION',
+        leaveCancellationId: posted.sourceId,
+        predecessorInputId: posted.predecessorInputId,
+        approvalRequestId: request.id,
+        approvalRouteVersionId: route.id,
+        affectedWorkDates: preview.days.map((day) => day.workDate),
+        lockedPeriodVersionIds: preview.lockedPeriodVersionIds,
+        previewFingerprint: preview.fingerprint,
+      },
+    });
+    return { kind: 'FOR_AUTHORIZATION', id: created.id };
+  }
+
+  /** Live status of the corrections Leave handed off, keyed by correction id. */
+  async postedLeaveHandoffStatusesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    correctionIds: readonly string[],
+  ): Promise<Map<string, PostedLeaveHandoffStatus>> {
+    if (correctionIds.length === 0) return new Map();
+    const rows = await transaction.attendanceCorrection.findMany({
+      where: { agencyId, id: { in: [...correctionIds] }, targetType: 'POSTED_LEAVE_INPUT' },
+      select: { id: true, status: true, blockingReason: true, blockedAt: true },
+    });
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          correctionId: row.id,
+          status: row.status as AttendanceCorrectionState,
+          blockingReason: row.blockingReason,
+          blockedAt: row.blockedAt ? row.blockedAt.toISOString() : null,
+        },
+      ]),
+    );
   }
 
   async cancel(
@@ -870,7 +1175,13 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       unique(storedPreview.days.map((day) => day.attendancePeriodId)),
     );
     const preview = await this.computePreviewFromRecord(transaction, context, record);
-    await this.assertPreviewUnchanged(record, preview);
+    // A posted-leave correction rests on the approved Leave Cancellation, not
+    // on a reviewer's reading of the preview. An earlier authorization over
+    // the same locked period moves its versions forward, so the authorizer
+    // applies against the current locked versions and the applied preview is
+    // recorded instead.
+    if (record.targetType !== 'POSTED_LEAVE_INPUT')
+      await this.assertPreviewUnchanged(record, preview);
     const locked = preview.lockedPeriodVersionIds.length > 0;
     if (locked && command !== 'AUTHORIZE') {
       throw this.approvalEffectRequired();
@@ -913,6 +1224,10 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       },
       select: { id: true },
     });
+    const successorInputId =
+      record.targetType === 'POSTED_LEAVE_INPUT'
+        ? await this.createPostedLeaveSuccessor(transaction, context, record, fact)
+        : null;
     const daysByPeriod = new Map<string, string[]>();
     for (const day of preview.days) {
       const dates = daysByPeriod.get(day.attendancePeriodId) ?? [];
@@ -974,6 +1289,9 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         status: 'APPLIED',
         appliedByMembershipId: context.membershipId,
         appliedAt: now,
+        ...(record.targetType === 'POSTED_LEAVE_INPUT'
+          ? { impactPreview: preview as unknown as Prisma.InputJsonValue }
+          : {}),
         ...(locked
           ? { authorizedByMembershipId: context.membershipId, authorizedAt: now }
           : {
@@ -1001,6 +1319,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         effectAction: record.requestedAction,
         targetType: record.targetType,
         originalTargetId: record.targetId,
+        successorPostedLeaveInputId: successorInputId,
         locked,
         affectedWorkDates: preview.days.map((day) => day.workDate),
         successorAttendanceDayIds: [...successorDayIds.values()],
@@ -1011,6 +1330,61 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         payrollPublicationIds,
       },
     });
+  }
+
+  /**
+   * The authorized posted-leave successor. A VOID withdraws the predecessor's
+   * coverage with a zero-quantity successor over the same dates.
+   */
+  private async createPostedLeaveSuccessor(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    record: CorrectionRecord,
+    fact: RequestedAttendanceFact,
+  ): Promise<string> {
+    const [evidence, predecessor] = await Promise.all([
+      transaction.attendanceCorrectionEvidence.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          attendanceCorrectionId: record.id,
+          sourceType: LEAVE_CANCELLATION_SOURCE_TYPE,
+        },
+        select: { sourceId: true },
+      }),
+      transaction.attendancePostedLeaveInput.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          id: record.targetId ?? '',
+          employeeId: record.employeeId,
+        },
+        select: { id: true, dateFrom: true, dateTo: true, unitCode: true, allocationKind: true },
+      }),
+    ]);
+    if (!evidence?.sourceId || !predecessor) throw this.factInvalid();
+    const successorFact: RequestedPostedLeaveFact =
+      record.requestedAction === 'VOID'
+        ? {
+            dateFrom: formatDate(predecessor.dateFrom),
+            dateTo: formatDate(predecessor.dateTo),
+            unitCode: predecessor.unitCode as RequestedPostedLeaveFact['unitCode'],
+            quantity: 0,
+            allocationKind:
+              predecessor.allocationKind as RequestedPostedLeaveFact['allocationKind'],
+          }
+        : (fact as RequestedPostedLeaveFact);
+    const successor = await this.days.createPostedLeaveSuccessorInTransaction(
+      transaction,
+      context,
+      {
+        sourceKey: `attendance-correction:${record.id}`,
+        employeeId: record.employeeId,
+        sourceType: LEAVE_CANCELLATION_SOURCE_TYPE,
+        sourceId: evidence.sourceId,
+        ...successorFact,
+        predecessorInputId: predecessor.id,
+      },
+    );
+    return successor.id;
   }
 
   private async markSubmissionsStale(
@@ -1271,13 +1645,11 @@ export class AttendanceCorrectionsService implements OnModuleInit {
   private async normalizedFactFromRecord(
     record: CorrectionRecord,
   ): Promise<RequestedAttendanceFact> {
-    if (record.requestedAction === 'VOID') {
-      return {
-        eventType: 'TIME_IN',
-        eventTime: '',
-        sourceReference: null,
-        reason: null,
-      };
+    if (record.requestedAction === 'VOID') return VOID_FACT;
+    if (record.targetType === 'POSTED_LEAVE_INPUT') {
+      const parsed = attendanceCorrectionPostedLeaveFactSchema.safeParse(record.requestedRecord);
+      if (!parsed.success) throw this.factInvalid();
+      return parsed.data;
     }
     if (record.targetType === 'ATTENDANCE_EVENT') {
       const parsed = attendanceCorrectionEventFactSchema.safeParse(record.requestedRecord);
@@ -1338,8 +1710,9 @@ export class AttendanceCorrectionsService implements OnModuleInit {
             timezone,
           )
         : [];
+    // A posted-leave successor never covers a date outside its predecessor.
     const proposedWorkDates =
-      requestedAction !== 'VOID'
+      requestedAction !== 'VOID' && targetType !== 'POSTED_LEAVE_INPUT'
         ? await this.proposedWorkDates(transaction, context, employeeId, targetType, fact, timezone)
         : [];
     const affectedDates = unique([...targetWorkDates, ...proposedWorkDates]).sort();
@@ -1418,7 +1791,12 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         requestedAction,
         targetId,
         fact,
-        days: preview.days,
+        // Leave's handoff waits for authorization while open Work Dates keep
+        // recalculating, so only the locked days bind its preview.
+        days:
+          targetType === 'POSTED_LEAVE_INPUT'
+            ? preview.days.filter((day) => day.lockedPeriodVersionId !== null)
+            : preview.days,
         lockedPeriodVersionIds: preview.lockedPeriodVersionIds,
       }),
     };
@@ -1432,6 +1810,24 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     targetId: string,
     timezone: string,
   ): Promise<string[]> {
+    if (targetType === 'POSTED_LEAVE_INPUT') {
+      const input = await transaction.attendancePostedLeaveInput.findFirst({
+        where: { agencyId: context.agencyId, id: targetId, employeeId },
+        select: { dateFrom: true, dateTo: true },
+      });
+      if (!input) throw this.targetNotFound();
+      // Only a calculated Attendance Day changes when posted leave changes.
+      const days = await transaction.attendanceDay.findMany({
+        where: {
+          agencyId: context.agencyId,
+          employeeId,
+          isCurrent: true,
+          workDate: { gte: input.dateFrom, lte: input.dateTo },
+        },
+        select: { workDate: true },
+      });
+      return days.map(({ workDate }) => formatDate(workDate));
+    }
     if (targetType === 'ATTENDANCE_EVENT') {
       const event = await transaction.attendanceEvent.findFirst({
         where: { agencyId: context.agencyId, id: targetId, employeeId },
@@ -1622,6 +2018,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     targetType: AttendanceCorrectionTargetType,
     fact: RequestedAttendanceFact,
   ): Prisma.InputJsonValue {
+    if (targetType === 'POSTED_LEAVE_INPUT') return { ...(fact as RequestedPostedLeaveFact) };
     if (targetType === 'ATTENDANCE_EVENT') {
       const record = fact as RequestedAttendanceEventFact;
       return {
@@ -1650,20 +2047,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
   private async resolveCorrectionRoute(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
-    locked: boolean,
+    kind: CorrectionRouteKind,
   ): Promise<ApprovalRouteSummary> {
-    const routeCode = locked
-      ? ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE
-      : ATTENDANCE_CORRECTION_ROUTE_CODE;
+    const { code, steps: expected } = CORRECTION_ROUTES[kind];
     const route = await this.approvals.resolveActiveRouteInTransaction(
       transaction,
       context,
-      routeCode,
+      code,
       manilaToday(),
     );
-    const expected = locked
-      ? ['attendance.corrections.approve', 'attendance.corrections.authorize_locked']
-      : ['attendance.corrections.approve'];
     const steps = route.stepDefinition.steps;
     if (
       steps.length !== expected.length ||
@@ -1732,6 +2124,11 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         'The initiator or recorder cannot decide the same Attendance Correction.',
       );
     }
+    if (record.excludedDeciderMembershipIds.includes(context.membershipId)) {
+      throw this.separationRequired(
+        'The Leave Cancellation requester or approvers cannot authorize its Attendance Correction.',
+      );
+    }
     const subjectMembership = await transaction.agencyMembership.findFirst({
       where: {
         agencyId: context.agencyId,
@@ -1743,6 +2140,19 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     if (subjectMembership) {
       throw this.separationRequired(
         'The Employee subject cannot decide their own Attendance Correction.',
+      );
+    }
+  }
+
+  private async assertMayAuthorize(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    record: CorrectionRecord,
+  ): Promise<void> {
+    await this.assertDecisionSeparation(transaction, context, record);
+    if (record.decidedByMembershipId === context.membershipId) {
+      throw this.separationRequired(
+        'The factual approver cannot authorize the same Attendance Correction.',
       );
     }
   }

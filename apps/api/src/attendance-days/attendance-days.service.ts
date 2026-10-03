@@ -512,6 +512,18 @@ export class AttendanceDaysService {
     };
   }
 
+  /**
+   * Creates the successor posted-leave input an authorized Locked Attendance
+   * Adjustment carries. The caller recalculates the affected Work Dates.
+   */
+  async createPostedLeaveSuccessorInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: CreatePostedLeaveInput & { predecessorInputId: string },
+  ): Promise<{ id: string }> {
+    return this.postedLeaveInputs.createInTransaction(transaction, context.agencyId, input);
+  }
+
   private async appliedCorrectionOverlays(
     transaction: Prisma.TransactionClient,
     agencyId: string,

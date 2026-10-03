@@ -12,7 +12,8 @@ import { StatusTag, type StatusTone } from './ui/status-tag';
 import { RowHeader, Table, Td, Th, TableFooter, Tr } from './ui/table';
 
 export type AttendanceCorrectionAction = 'ADD' | 'REPLACE' | 'VOID';
-export type AttendanceCorrectionTargetType = 'ATTENDANCE_EVENT' | 'ATTENDANCE_CONTEXT';
+export type AttendanceCorrectionTargetType =
+  'ATTENDANCE_EVENT' | 'ATTENDANCE_CONTEXT' | 'POSTED_LEAVE_INPUT';
 export type AttendanceCorrectionStatus =
   | 'DRAFT'
   | 'SUBMITTED'
@@ -42,6 +43,10 @@ export interface AttendanceCorrection {
   decisionReason: string | null;
   authorizedByMembershipId: string | null;
   authorizedAt: string | null;
+  excludedDeciderMembershipIds: string[];
+  blockingReason: string | null;
+  blockedByMembershipId: string | null;
+  blockedAt: string | null;
   appliedByMembershipId: string | null;
   appliedAt: string | null;
   createdAt: string;
@@ -155,6 +160,12 @@ function valueOf(event: { currentTarget: EventTarget }): string {
 function manilaFactInstant(value: string): string {
   return `${value}:00+08:00`;
 }
+
+const TARGET_LABEL: Record<AttendanceCorrectionTargetType, string> = {
+  ATTENDANCE_EVENT: 'attendance event',
+  ATTENDANCE_CONTEXT: 'attendance context',
+  POSTED_LEAVE_INPUT: 'posted leave',
+};
 
 function actionLabel(action: AttendanceCorrectionAction): string {
   if (action === 'ADD') return 'Add';
@@ -713,7 +724,9 @@ export function AttendanceCorrectionsWorkspace({
                           {correction.employee.employeeNumber}
                         </p>
                       </RowHeader>
-                      <Td>{correction.targetType === 'ATTENDANCE_EVENT' ? 'Event' : 'Context'}</Td>
+                      <Td className="first-letter:uppercase">
+                        {TARGET_LABEL[correction.targetType]}
+                      </Td>
                       <Td>{actionLabel(correction.requestedAction)}</Td>
                       <Td>{correction.reason}</Td>
                       <Td>
@@ -835,16 +848,15 @@ function CorrectionDetail({
   const showReturn = canReturn && correction.status === 'SUBMITTED';
   const showReject = canReject && correction.status === 'SUBMITTED';
   const showAuthorize = canAuthorizeLocked && correction.status === 'FOR_AUTHORIZATION';
+  // A Leave handoff carries an approved Leave fact: its authorizer may only record a blocker.
+  const showBlock = showAuthorize && correction.targetType === 'POSTED_LEAVE_INPUT';
   const showCancel = canCancel && ['DRAFT', 'SUBMITTED'].includes(correction.status);
   return (
     <div className="grid gap-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="m-0 text-panel-title text-ink">
-            {actionLabel(correction.requestedAction)}{' '}
-            {correction.targetType === 'ATTENDANCE_EVENT'
-              ? 'attendance event'
-              : 'attendance context'}
+            {actionLabel(correction.requestedAction)} {TARGET_LABEL[correction.targetType]}
           </h2>
           <p className="m-0 text-small text-ink-muted">
             {correction.employee.legalName} ({correction.employee.employeeNumber})
@@ -869,6 +881,15 @@ function CorrectionDetail({
           <dd className="m-0 break-all text-ink">{correction.approvalRouteVersionId}</dd>
         </div>
       </dl>
+
+      {correction.targetType === 'POSTED_LEAVE_INPUT' &&
+      correction.status === 'FOR_AUTHORIZATION' ? (
+        <p className="m-0 text-small text-ink-muted">
+          Handed off by an applied Leave Cancellation. Attendance cannot change the Leave fact;
+          authorize the adjustment or record why it cannot be authorized.
+          {correction.blockingReason ? ` Blocked: ${correction.blockingReason}` : ''}
+        </p>
+      ) : null}
 
       <section className="grid gap-2">
         <h3 className={sectionTitleClass}>Impact Preview</h3>
@@ -1017,6 +1038,21 @@ function CorrectionDetail({
               }
             >
               Authorize locked adjustment
+            </Button>
+          ) : null}
+          {showBlock ? (
+            <Button
+              variant="secondary"
+              disabled={busy || comments.trim() === ''}
+              onClick={() =>
+                void runAction(
+                  '/block-authorization',
+                  { reason: comments },
+                  'Blocking reason recorded. The adjustment stays pending.',
+                )
+              }
+            >
+              Record blocking reason
             </Button>
           ) : null}
           {showCancel ? (

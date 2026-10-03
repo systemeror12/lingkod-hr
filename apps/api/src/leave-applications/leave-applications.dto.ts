@@ -275,6 +275,7 @@ export class LeaveCancellationEffectDto {
   readonly effectKey: string;
   readonly ownerRecordId: string;
   readonly ownerStatus: string;
+  readonly attendanceHandoff: LeaveCancellationEffectSummary['attendanceHandoff'];
 
   constructor(effect: LeaveCancellationEffectSummary) {
     this.id = effect.id;
@@ -282,6 +283,7 @@ export class LeaveCancellationEffectDto {
     this.effectKey = effect.effectKey;
     this.ownerRecordId = effect.ownerRecordId;
     this.ownerStatus = effect.ownerStatus;
+    this.attendanceHandoff = effect.attendanceHandoff;
   }
 }
 
