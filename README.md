@@ -138,8 +138,11 @@ Codes `seedc-ode22`, `seedc-ode23`, `seedc-ode24`, `seedc-ode25`,
 `seedc-ode35`. Each Recovery Code works once, and every seed run restores all
 ten. The exception is `enrollment.candidate@example.test`, which requires MFA
 but has no factor, so signing in walks through authenticator setup. Each seed
-run removes its factor and Recovery Codes again. The seed refuses to run in
-production.
+run removes its factor and Recovery Codes again. For Factor Reset,
+`security.officer@example.test` is a Security Administrator and
+`factor.reset.candidate@example.test` is an HRMO Administrator whose factor
+the officer can reset; each seed run restores the candidate's factor. The seed
+refuses to run in production.
 
 To sign in locally:
 

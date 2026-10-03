@@ -32,6 +32,10 @@ const phase5RestrictedEmail = 'phase5.restricted@example.test';
 const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
 // An MFA-Required User left without a TOTP factor, so sign-in starts forced enrollment.
 const enrollmentCandidateEmail = 'enrollment.candidate@example.test';
+// A Security Administrator who resets the Factor Reset candidate's authenticator, after which the
+// candidate, an MFA-Required HRMO Administrator, enrolls again.
+const securityOfficerEmail = 'security.officer@example.test';
+const factorResetCandidateEmail = 'factor.reset.candidate@example.test';
 const seedPhase5Access = process.env.PHASE5_ACCESS_FIXTURES === 'true';
 
 /**
@@ -61,6 +65,8 @@ const seededUserEmails = [
   'foreign.personnel@example.test',
   'dtr.reviewer@example.test',
   enrollmentCandidateEmail,
+  securityOfficerEmail,
+  factorResetCandidateEmail,
 ];
 
 function manilaToday(): string {
@@ -765,6 +771,61 @@ async function seed(): Promise<void> {
         reason: 'Forced enrollment E2E fixture',
       },
     });
+  }
+
+  for (const fixture of [
+    {
+      email: securityOfficerEmail,
+      displayName: 'Security Officer',
+      role: 'security_administrator',
+    },
+    {
+      email: factorResetCandidateEmail,
+      displayName: 'Factor Reset Candidate',
+      role: 'hrmo_administrator',
+    },
+  ]) {
+    const fixtureUser = await prisma.user.upsert({
+      where: { emailNormalized: fixture.email },
+      update: { displayName: fixture.displayName, globalStatus: 'ACTIVE' },
+      create: {
+        emailNormalized: fixture.email,
+        displayName: fixture.displayName,
+        globalStatus: 'ACTIVE',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    const fixtureMembership =
+      (await prisma.agencyMembership.findFirst({
+        where: { agencyId: agency.id, userId: fixtureUser.id },
+      })) ??
+      (await prisma.agencyMembership.create({
+        data: {
+          agencyId: agency.id,
+          userId: fixtureUser.id,
+          status: 'ACTIVE',
+          activatedAt: new Date(),
+        },
+      }));
+    const role = await prisma.role.findFirstOrThrow({
+      where: { agencyId: null, code: fixture.role, status: 'ACTIVE' },
+    });
+    if (
+      !(await prisma.membershipRole.findFirst({
+        where: { membershipId: fixtureMembership.id, roleId: role.id },
+      }))
+    ) {
+      await prisma.membershipRole.create({
+        data: {
+          agencyId: agency.id,
+          membershipId: fixtureMembership.id,
+          roleId: role.id,
+          effectiveFrom: new Date('2026-01-01'),
+          assignedByMembershipId: membership.id,
+          reason: 'Factor Reset E2E fixture',
+        },
+      });
+    }
   }
 
   async function seedInvitation(email: string, token: string, roleCodes: string[]) {

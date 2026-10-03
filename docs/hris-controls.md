@@ -186,6 +186,13 @@ LOCKED → password reset that silently restores access
 failed sign-in attempts → LOCKED
 ```
 
+Factor Reset controls (#370):
+
+- Only a Security Administrator holds `security.mfa.reset_factor`, acting in an Agency where the target User has an ACTIVE Agency Membership. No one resets their own factor, and a User without a factor has nothing to reset. The Reauthentication Window applies.
+- The administrator records how identity was verified: `IN_PERSON_GOVERNMENT_ID` or `VIDEO_CALL_GOVERNMENT_ID`, and a required note. No ID numbers or images are stored.
+- The reset removes the TOTP factor and every Recovery Code, revokes every session, and ends pending sign-ins. It changes neither the password nor the User status; an MFA-Required User enrolls again at the next sign-in.
+- The Security Event and audit event `MFA_FACTOR_RESET` and the session revocations are recorded in the acting Agency only. The User receives a notice naming that Agency.
+
 ### Agency Membership
 
 Statuses:
