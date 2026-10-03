@@ -18,19 +18,12 @@ it('provides safe local defaults and rejects incomplete production configuration
     APP_ENV: 'production',
     APP_URL: 'https://app.example',
     API_URL: 'https://api.example',
-    OIDC_ISSUER: 'https://issuer.example',
-    OIDC_REDIRECT_URI: 'https://api.example/auth/callback',
   };
   expect(parseConfig(production).NODE_ENV).toBe('production');
   const productionWithoutOperationalUrl = Object.fromEntries(
     Object.entries(production).filter(([key]) => key !== 'DATABASE_OPERATIONAL_URL'),
   );
   expect(parseConfig(productionWithoutOperationalUrl).DATABASE_OPERATIONAL_URL).toBeUndefined();
-  for (const field of ['OIDC_ISSUER', 'OIDC_REDIRECT_URI'] as const) {
-    expect(() => parseConfig({ ...production, [field]: `http://${field}.example` })).toThrow(
-      new RegExp(`${field}: Production URL must use HTTPS`),
-    );
-  }
 });
 
 it('treats blank optional environment values as unset', () => {
@@ -65,8 +58,6 @@ it('requires the data-encryption and blind-index keys, with local-only defaults 
     APP_ENV: 'production',
     APP_URL: 'https://app.example',
     API_URL: 'https://api.example',
-    OIDC_ISSUER: 'https://issuer.example',
-    OIDC_REDIRECT_URI: 'https://api.example/auth/callback',
   };
   expect(parseConfig(production).DATA_ENCRYPTION_KEY).toBe('07'.repeat(32));
   for (const field of ['DATA_ENCRYPTION_KEY', 'BLIND_INDEX_KEY'] as const) {

@@ -1,6 +1,6 @@
 import { S3DocumentStorage } from '../documents/documents.storage';
 import { readAgencyBrandKeys } from '../agency-profile/agency-brand.queries';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
@@ -19,8 +19,6 @@ import {
   hasPermission,
   isSessionActive,
   normalizeRecoveryCode,
-  OidcClient,
-  type OidcIdentity,
   openTotpSecret,
   passwordNeedsRehash,
   type PermissionGrant,
@@ -61,10 +59,8 @@ import {
   writeTotpEnrollment,
 } from './totp-enrollment';
 
-const OIDC_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 export const PENDING_SIGN_IN_LIFETIME_MS = 5 * 60 * 1000;
 export const PENDING_ACTIVATION_LIFETIME_MS = 15 * 60 * 1000;
-const OWNED_LOGIN_PROVIDER = 'lingkodhr';
 /** Sign-in failures from one IP address allowed in the window, every email and step counted. */
 const IP_FAILURE_LIMIT = 100;
 const IP_WINDOW_MS = 15 * 60 * 1000;
@@ -80,39 +76,19 @@ const RESET_WINDOW_MS = 60 * 60 * 1000;
 type PendingSignInStage = 'TOTP' | typeof ENROLL_SCAN_STAGE | typeof ENROLL_CODES_STAGE;
 
 export const SESSION_COOKIE = 'hris_session';
-export const OIDC_FLOW_COOKIE = 'hris_oidc_flow';
 export const PENDING_AUTHENTICATION_COOKIE = 'hris_pending_auth';
 export const PENDING_ACTIVATION_COOKIE = 'hris_pending_activation';
 export const HRMO_ADMINISTRATOR_ROLE_CODE = 'hrmo_administrator';
 const PENDING_INVITATION_PAGE_SIZE = 100;
 
-interface OidcFlowState {
-  state: string;
-  nonce: string;
-  verifier: string;
-  issuedAt: number;
-  membershipId: string | null;
-}
-
-export interface LoginStart {
-  authorizationUrl: string;
-  flowCookie: string;
-}
-
 export interface AuthenticatedSession {
   sessionId: string;
-  providerSid: string | null;
   authenticationMethods: readonly string[];
   authTime: Date | null;
   createdAt: Date;
   expiresAt: Date;
   context: RequestContext;
   display: SessionDisplay;
-}
-
-export interface LoginResult extends AuthenticatedSession {
-  token: string;
-  providerLogoutUrl: string | null;
 }
 
 /** Who is signing in from where, for Security Events. */
@@ -191,8 +167,6 @@ interface ReauthenticationProof {
 
 /** What the new session records about how the User proved who they are. */
 interface SessionEvidence {
-  provider: string;
-  providerSid: string | null;
   authTime: Date | null;
   authenticationMethods: readonly string[];
   emailHash?: Buffer;
@@ -543,23 +517,9 @@ function permissionGrants(role: {
   }));
 }
 
-function normalizeEmail(email: string): string {
-  const normalized = email.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
-    throw new AuthServiceError('A valid email address is required.', 400, 'INVALID_EMAIL');
-  }
-  return normalized;
-}
-
 @Injectable()
 export class AuthService {
   private readonly config = getConfig();
-  private readonly oidc = new OidcClient({
-    issuer: this.config.OIDC_ISSUER,
-    clientId: this.config.OIDC_CLIENT_ID,
-    clientSecret: this.config.OIDC_CLIENT_SECRET,
-    redirectUri: this.config.OIDC_REDIRECT_URI,
-  });
   private readonly brandingStorage = new S3DocumentStorage(this.config);
   private readonly invitationIssuer: InvitationIssuer;
   private readonly mailDelivery: MailDelivery;
@@ -569,37 +529,6 @@ export class AuthService {
   constructor(@Optional() @Inject(INVITATION_MAIL_DELIVERY) mailDelivery?: MailDelivery) {
     this.mailDelivery = mailDelivery ?? createMailDelivery(this.config);
     this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.APP_URL);
-  }
-
-  async beginLogin(membershipId: string | null): Promise<LoginStart> {
-    const state: OidcFlowState = {
-      state: createSessionToken(),
-      nonce: createSessionToken(),
-      verifier: createSessionToken(),
-      issuedAt: Date.now(),
-      membershipId,
-    };
-    return {
-      authorizationUrl: await this.oidc.authorizationUrl(state.state, state.nonce, state.verifier),
-      flowCookie: this.signFlowState(state),
-    };
-  }
-
-  async completeLogin(
-    flowCookie: string,
-    returnedState: string,
-    code: string,
-    requestId = 'oidc',
-  ): Promise<LoginResult> {
-    const flow = this.readFlowState(flowCookie);
-    if (flow.state !== returnedState) {
-      throw new AuthServiceError('The authentication state is invalid.', 401, 'OIDC_STATE_INVALID');
-    }
-    const identity = await this.oidc.verifyIdToken(
-      await this.oidc.exchangeCode(code, flow.verifier),
-      flow.nonce,
-    );
-    return this.signIn(identity, flow.membershipId, requestId);
   }
 
   /**
@@ -635,45 +564,6 @@ export class AuthService {
         'IP_RATE_LIMITED',
       );
     }
-  }
-
-  async signIn(
-    identity: OidcIdentity,
-    selectedMembershipId: string | null = null,
-    requestId = 'oidc',
-  ): Promise<LoginResult> {
-    if (identity.issuer !== this.config.OIDC_ISSUER) {
-      throw new AuthServiceError('The identity provider is not trusted.', 401, 'ISSUER_INVALID');
-    }
-    if (!identity.emailVerified) {
-      throw new AuthServiceError('A verified identity is required.', 401, 'EMAIL_NOT_VERIFIED');
-    }
-
-    const session = await withDatabaseContext({}, async (transaction) => {
-      const user = await this.resolveIdentity(transaction, identity);
-      if (user.globalStatus !== 'ACTIVE') {
-        throw new AuthServiceError('This identity is not active.', 403, 'USER_NOT_ACTIVE');
-      }
-      await setDatabaseContext(transaction, { userId: user.id });
-      const membership = await this.selectSignInMembership(
-        transaction,
-        user.id,
-        selectedMembershipId,
-      );
-      return this.createSession(
-        transaction,
-        user.id,
-        membership.id,
-        {
-          provider: identity.issuer,
-          providerSid: identity.providerSid,
-          authTime: identity.authTime,
-          authenticationMethods: identity.authenticationMethods,
-        },
-        requestId,
-      );
-    });
-    return { ...session, providerLogoutUrl: await this.oidc.providerLogoutUrl() };
   }
 
   /**
@@ -1912,7 +1802,6 @@ export class AuthService {
         if (refreshed.count !== 1) return null;
         return {
           sessionId: session.id,
-          providerSid: session.providerSid,
           authenticationMethods: session.authenticationMethods,
           authTime: session.authTime,
           createdAt: session.createdAt,
@@ -1922,19 +1811,6 @@ export class AuthService {
         };
       },
     );
-  }
-
-  async recordLoginFailure(requestId: string, reason: string, ipAddress?: string): Promise<void> {
-    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
-      await transaction.securityEvent.create({
-        data: {
-          eventType: 'LOGIN_FAILURE',
-          requestId,
-          ipAddress: ipAddress ?? null,
-          details: { reason },
-        },
-      });
-    });
   }
 
   async createInvitation(
@@ -2366,7 +2242,7 @@ export class AuthService {
     session: AuthenticatedSession,
     reason: string,
     requestId: string,
-  ): Promise<string | null> {
+  ): Promise<void> {
     const tokenHash = hashSessionToken(rawToken);
     await withDatabaseContext(
       { ...session.context, sessionTokenHash: tokenHash.toString('hex') },
@@ -2398,7 +2274,6 @@ export class AuthService {
         }
       },
     );
-    return this.oidc.providerLogoutUrl();
   }
 
   /** Internal contract: the caller owns the transaction; Identity owns access closure. */
@@ -2476,7 +2351,7 @@ export class AuthService {
     session: AuthenticatedSession,
     membershipId: string,
     requestId: string,
-  ): Promise<LoginResult> {
+  ): Promise<AuthenticatedSession & { token: string }> {
     const tokenHash = hashSessionToken(rawToken);
     return withDatabaseContext(
       { ...session.context, sessionTokenHash: tokenHash.toString('hex') },
@@ -2543,87 +2418,20 @@ export class AuthService {
         const user = await transaction.user.findUniqueOrThrow({
           where: { id: session.context.userId },
         });
-        return {
-          ...(await this.createSession(
-            transaction,
-            user.id,
-            membership.id,
-            {
-              provider: this.config.OIDC_ISSUER,
-              providerSid: session.providerSid,
-              authTime: null,
-              authenticationMethods: session.authenticationMethods,
-            },
-            requestId,
-            {
-              authTime: session.authTime,
-              createdAt: session.createdAt,
-              expiresAt: session.expiresAt,
-            },
-          )),
-          providerLogoutUrl: null,
-        };
+        return this.createSession(
+          transaction,
+          user.id,
+          membership.id,
+          { authTime: null, authenticationMethods: session.authenticationMethods },
+          requestId,
+          {
+            authTime: session.authTime,
+            createdAt: session.createdAt,
+            expiresAt: session.expiresAt,
+          },
+        );
       },
     );
-  }
-
-  async handleBackChannelLogout(token: string, requestId: string): Promise<void> {
-    const identity = await this.oidc.verifyLogoutToken(token);
-    await withDatabaseContext({ capabilities: ['platform-security'] }, async (transaction) => {
-      try {
-        await transaction.securityEvent.create({
-          data: {
-            eventKey: identity.eventId,
-            eventType: 'OIDC_BACKCHANNEL_LOGOUT',
-            details: { subject: identity.subject, providerSid: identity.providerSid },
-            requestId,
-          },
-        });
-      } catch (error: unknown) {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return;
-        throw error;
-      }
-      const identityLink = identity.subject
-        ? await transaction.externalIdentityLink.findFirst({
-            where: {
-              issuer: this.config.OIDC_ISSUER,
-              subject: identity.subject,
-            },
-            select: { userId: true },
-          })
-        : null;
-      const userId = identityLink?.userId ?? null;
-      if (!userId && !identity.providerSid) return;
-      if (userId && identity.providerSid) {
-        await setDatabaseContext(transaction, {
-          userId,
-          providerSid: identity.providerSid,
-        });
-      } else if (userId) {
-        await setDatabaseContext(transaction, { userId });
-      } else {
-        await setDatabaseContext(transaction, { providerSid: identity.providerSid as string });
-      }
-      const revokedAt = new Date();
-      const sessions = await transaction.userSession.updateManyAndReturn({
-        where: {
-          ...(userId ? { userId } : {}),
-          ...(identity.providerSid ? { providerSid: identity.providerSid } : {}),
-          revokedAt: null,
-        },
-        data: { revokedAt, revocationReason: 'OIDC_BACKCHANNEL_LOGOUT' },
-        select: { id: true, agencyId: true, userId: true, agencyMembershipId: true },
-      });
-      for (const session of sessions) {
-        await this.recordSystemSessionRevocation(
-          transaction,
-          session,
-          'OIDC_BACKCHANNEL_LOGOUT',
-          requestId,
-          { providerEventId: identity.eventId },
-        );
-      }
-    });
   }
 
   private assertInvitationManagementAccess(context: RequestContext): void {
@@ -2642,81 +2450,6 @@ export class AuthService {
         'ROLE_ASSIGNMENT_FORBIDDEN',
       );
     }
-  }
-
-  private async resolveIdentity(transaction: Prisma.TransactionClient, identity: OidcIdentity) {
-    const normalizedEmail = normalizeEmail(identity.email);
-    const link = await transaction.externalIdentityLink.findFirst({
-      where: { issuer: identity.issuer, subject: identity.subject },
-    });
-    if (link && link.status !== 'ACTIVE') {
-      throw new AuthServiceError(
-        'The external identity link is no longer active.',
-        401,
-        'IDENTITY_LINK_INACTIVE',
-      );
-    }
-    let user = link
-      ? await transaction.user.findUniqueOrThrow({ where: { id: link.userId } })
-      : await transaction.user.findFirst({
-          where: { identityProvider: identity.issuer, externalSubject: identity.subject },
-        });
-    if (!user) {
-      const emailOwner = await transaction.user.findUnique({
-        where: { emailNormalized: normalizedEmail },
-      });
-      if (emailOwner) {
-        throw new AuthServiceError(
-          'The identity is not linked to this HRIS User.',
-          401,
-          'IDENTITY_NOT_LINKED',
-        );
-      }
-      user = await transaction.user.create({
-        data: {
-          identityProvider: identity.issuer,
-          externalSubject: identity.subject,
-          emailNormalized: normalizedEmail,
-          displayName: identity.displayName,
-          globalStatus: 'ACTIVE',
-          emailVerifiedAt: identity.emailVerified ? new Date() : null,
-          lastLoginAt: new Date(),
-        },
-      });
-    } else {
-      try {
-        user = await transaction.user.update({
-          where: { id: user.id },
-          data: {
-            emailNormalized: normalizedEmail,
-            displayName: identity.displayName,
-            emailVerifiedAt: identity.emailVerified ? new Date() : user.emailVerifiedAt,
-            lastLoginAt: new Date(),
-          },
-        });
-      } catch (error: unknown) {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          throw new AuthServiceError(
-            'The verified email belongs to another HRIS User.',
-            401,
-            'EMAIL_ALREADY_IN_USE',
-          );
-        }
-        throw error;
-      }
-    }
-
-    if (!link) {
-      await transaction.externalIdentityLink.create({
-        data: {
-          userId: user.id,
-          issuer: identity.issuer,
-          subject: identity.subject,
-          status: 'ACTIVE',
-        },
-      });
-    }
-    return user;
   }
 
   private activationScope(token: string, pendingToken?: string): ActivationScope {
@@ -3317,8 +3050,6 @@ export class AuthService {
       userId,
       membership.id,
       {
-        provider: OWNED_LOGIN_PROVIDER,
-        providerSid: null,
         authTime: now,
         authenticationMethods: methods,
         emailHash,
@@ -3714,7 +3445,6 @@ export class AuthService {
         agencyId: membership.agencyId,
         agencyMembershipId: membership.id,
         sessionTokenHash: prismaBytes(hashSessionToken(token)),
-        providerSid: evidence.providerSid,
         authTime: previousSession ? previousSession.authTime : evidence.authTime,
         authenticationMethods: [...evidence.authenticationMethods],
         createdAt,
@@ -3732,7 +3462,7 @@ export class AuthService {
         requestId,
         ipAddress: evidence.ipAddress ?? null,
         emailHash: evidence.emailHash ? prismaBytes(evidence.emailHash) : null,
-        details: { provider: evidence.provider, methods: [...evidence.authenticationMethods] },
+        details: { methods: [...evidence.authenticationMethods] },
       },
     });
     await this.recordAuditEvent(transaction, resolved.context, {
@@ -3740,12 +3470,11 @@ export class AuthService {
       entityType: 'UserSession',
       entityId: session.id,
       requestId,
-      metadata: { provider: evidence.provider },
+      metadata: {},
     });
     return {
       token,
       sessionId: session.id,
-      providerSid: session.providerSid,
       authenticationMethods: session.authenticationMethods,
       authTime: session.authTime,
       createdAt: session.createdAt,
@@ -3990,55 +3719,6 @@ export class AuthService {
         metadata: safeJson(event.metadata),
       },
     });
-  }
-
-  private signFlowState(state: OidcFlowState): string {
-    const payload = Buffer.from(JSON.stringify(state)).toString('base64url');
-    const signature = createHmac('sha256', this.config.SESSION_SECRET)
-      .update(payload)
-      .digest('base64url');
-    return `${payload}.${signature}`;
-  }
-
-  private readFlowState(value: string): OidcFlowState {
-    const [payload, signature] = value.split('.');
-    if (!payload || !signature)
-      throw new AuthServiceError('The authentication flow expired.', 401, 'OIDC_FLOW_INVALID');
-    const expected = createHmac('sha256', this.config.SESSION_SECRET)
-      .update(payload)
-      .digest('base64url');
-    const actualBytes = Buffer.from(signature);
-    const expectedBytes = Buffer.from(expected);
-    if (
-      actualBytes.length !== expectedBytes.length ||
-      !timingSafeEqual(actualBytes, expectedBytes)
-    ) {
-      throw new AuthServiceError('The authentication flow is invalid.', 401, 'OIDC_FLOW_INVALID');
-    }
-    try {
-      const parsed: unknown = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-      if (!parsed || typeof parsed !== 'object') throw new Error('invalid state');
-      const flow = parsed as Partial<OidcFlowState>;
-      if (
-        typeof flow.state !== 'string' ||
-        typeof flow.nonce !== 'string' ||
-        typeof flow.verifier !== 'string' ||
-        typeof flow.issuedAt !== 'number' ||
-        !Number.isFinite(flow.issuedAt) ||
-        Date.now() - flow.issuedAt > OIDC_FLOW_LIFETIME_MS ||
-        flow.issuedAt - Date.now() > 30_000
-      )
-        throw new Error('invalid state');
-      return {
-        state: flow.state,
-        nonce: flow.nonce,
-        verifier: flow.verifier,
-        issuedAt: flow.issuedAt,
-        membershipId: typeof flow.membershipId === 'string' ? flow.membershipId : null,
-      };
-    } catch {
-      throw new AuthServiceError('The authentication flow is invalid.', 401, 'OIDC_FLOW_INVALID');
-    }
   }
 }
 
