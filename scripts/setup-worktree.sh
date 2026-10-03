@@ -22,6 +22,10 @@ slug=$(basename "$worktree" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '_')
 database="hris_${slug:0:50}"
 
 [[ -f .env ]] || cp "$main/.env" .env
+# Add keys that are new in .env.example without touching existing local values.
+grep -E '^[A-Z_]+=' .env.example | while IFS= read -r line; do
+  grep -q "^${line%%=*}=" .env || echo "$line" >>.env
+done
 sed -i -E "s#^(DATABASE_[A-Z_]*URL=.*/)hris\$#\1${database}#" .env
 database=$(sed -nE 's#^DATABASE_MIGRATION_OWNER_URL=.*/([^/?]+).*$#\1#p' .env)
 
@@ -62,4 +66,5 @@ run pnpm install --frozen-lockfile
 run pnpm db:migrate
 run pnpm --filter @lingkod-hr/web exec playwright install chromium
 
-echo "Worktree ready: database ${database}, E2E ports web ${app_port}, API ${api_port}"
+echo "Worktree ready on Node $(run node --version): database ${database} migrated," \
+  "infrastructure healthy, E2E ports web ${app_port}, API ${api_port}"
