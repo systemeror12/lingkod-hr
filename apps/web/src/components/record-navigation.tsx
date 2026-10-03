@@ -18,6 +18,14 @@ export function useRecordNavigation() {
     navigate(values: Record<string, string | null>) {
       router.push(href(values), { scroll: false });
     },
+    /** Updates params only the client reads, such as an open dialog, without a server round trip. */
+    show(values: Record<string, string | null>) {
+      const browser = globalThis as unknown as {
+        history: { pushState(data: null, unused: string, url: string): void };
+        location: { search: string };
+      };
+      browser.history.pushState(null, '', recordHref(pathname, browser.location.search, values));
+    },
   };
 }
 

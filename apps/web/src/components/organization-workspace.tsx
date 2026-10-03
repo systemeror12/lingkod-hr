@@ -377,14 +377,11 @@ export function OrganizationWorkspace({
   const [parentOptions, setParentOptions] = useState<OrganizationHierarchyUnit[]>([]);
   const [successor, setSuccessor] = useState<OrganizationUnitSuccessor | null>(null);
   const [successorValues, setSuccessorValues] = useState<SuccessorValues | null>(null);
-  const [successorOpen, setSuccessorOpen] = useState(false);
   const successorCloseAfterSave = useRef(false);
   const showSuccessor = navigation.search.get('section') === 'successor';
   useEffect(() => {
-    if (!selectedId || !showSuccessor) {
-      setSuccessorOpen(false);
-      return;
-    }
+    if (!selectedId || !showSuccessor) return;
+    setSuccessor(null);
     let active = true;
     void (async () => {
       const response = await fetch(
@@ -397,15 +394,24 @@ export function OrganizationWorkspace({
       if (!active) return;
       setSuccessor({ current: value.current, draft: value.draft });
       setSuccessorValues(successorValuesFromVersion(value.draft));
-      setSuccessorOpen(true);
-      const parents = await requestHierarchy(value.draft.effectiveFrom, selectedId);
-      if (active)
-        setSuccessorParentOptions(
-          parents.units.filter((unit) => parents.eligibleParentIds.includes(unit.id)),
+      try {
+        const parents = await requestHierarchy(value.draft.effectiveFrom, selectedId);
+        if (active)
+          setSuccessorParentOptions(
+            parents.units.filter((unit) => parents.eligibleParentIds.includes(unit.id)),
+          );
+      } catch {
+        if (!active) return;
+        setSuccessorParentOptions([]);
+        setSuccessorError(
+          'Eligible parent units could not be loaded. You can still review the draft.',
         );
+      }
     })().catch((cause: unknown) => {
-      if (active)
-        setFormError(cause instanceof Error ? cause.message : 'The successor could not be loaded.');
+      if (!active) return;
+      setFormError(cause instanceof Error ? cause.message : 'The successor could not be loaded.');
+      // Leave the section so reviewing again retries the load.
+      navigation.show({ section: null });
     });
     return () => {
       active = false;
@@ -761,26 +767,11 @@ export function OrganizationWorkspace({
         setSuccessorError('The proposed successor was not confirmed. Refresh and try again.');
         return;
       }
-      setSuccessor(value);
-      setSuccessorValues(successorValuesFromVersion(value.draft));
       setSuccessorDrafts((current) => [
         value.draft,
         ...current.filter((draft) => draft.organizationUnitId !== unitId),
       ]);
-      navigation.navigate({ unit: unitId, view: 'form', section: 'successor' });
-      setSuccessorOpen(true);
-      try {
-        const eligibleHierarchy = await requestHierarchy(value.draft.effectiveFrom, unitId);
-        const eligibleIds = new Set(eligibleHierarchy.eligibleParentIds);
-        setSuccessorParentOptions(
-          eligibleHierarchy.units.filter((candidate) => eligibleIds.has(candidate.id)),
-        );
-      } catch {
-        setSuccessorParentOptions([]);
-        setSuccessorError(
-          'Eligible parent units could not be loaded. You can still review the draft.',
-        );
-      }
+      navigation.show({ unit: unitId, view: 'form', section: 'successor' });
     } catch {
       setSuccessorError(
         'The Organization Unit successor could not be prepared. Check the connection and try again.',
@@ -879,7 +870,7 @@ export function OrganizationWorkspace({
       setSuccess(
         `${value.officialName} is scheduled as the new Organization Unit version effective ${dateLabel(value.effectiveDate)}.`,
       );
-      setSuccessorOpen(false);
+      navigation.show({ section: null });
       await loadHierarchy(asOf, value.id);
       await loadHistory(value.id);
     } catch {
@@ -900,10 +891,7 @@ export function OrganizationWorkspace({
       successorCloseAfterSave.current = false;
       if (saved) {
         setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
-        if (closeAfterSave) {
-          setSuccessorOpen(false);
-          navigation.navigate({ section: null });
-        }
+        if (closeAfterSave) navigation.show({ section: null });
       }
     } finally {
       setSuccessorSubmitting(false);
@@ -1493,7 +1481,7 @@ export function OrganizationWorkspace({
                             variant="secondary"
                             type="button"
                             onClick={() =>
-                              navigation.navigate({
+                              navigation.show({
                                 unit: draft.organizationUnitId,
                                 view: 'form',
                                 section: 'successor',
@@ -1702,11 +1690,9 @@ export function OrganizationWorkspace({
       </Dialog>
       <Dialog
         presentation="form"
-        open={successorOpen}
+        open={showSuccessor && successor !== null}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && successorSubmitting) return;
-          setSuccessorOpen(nextOpen);
-          if (!nextOpen) navigation.navigate({ section: null });
+          if (!nextOpen && !successorSubmitting) navigation.show({ section: null });
         }}
       >
         {successor && successorValues ? (
