@@ -1869,7 +1869,14 @@ it.skipIf(!enabled)(
       });
 
       // A right Recovery Code refused after it matched still isn't a guess against the count.
-      await admin.user.update({ where: { id: user.id }, data: { globalStatus: 'LOCKED' } });
+      await admin.user.update({
+        where: { id: user.id },
+        data: {
+          globalStatus: 'LOCKED',
+          lockedAt: new Date(),
+          lockedByAgencyId: fixture.agencyIds[0] ?? null,
+        },
+      });
       const [code] = user.recoveryCodes;
       await expect(
         service.completeRecoveryCodeSignIn(pendingToken, code ?? '', signInRequest('locked')),

@@ -70,6 +70,9 @@ async function resetFixture(
       emailNormalized: email,
       displayName: 'Reset User',
       globalStatus: options.globalStatus ?? 'ACTIVE',
+      ...(options.globalStatus === 'LOCKED'
+        ? { lockedAt: new Date(), lockedByAgencyId: agency.id }
+        : {}),
     },
   });
   const membership = await admin.agencyMembership.create({

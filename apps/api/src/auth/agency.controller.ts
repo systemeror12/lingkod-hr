@@ -33,6 +33,7 @@ import {
   factorResetSchema,
   hrmoInvitationSchema,
   membershipIdSchema,
+  userLockSchema,
 } from './auth.schemas';
 
 @Controller('agencies')
@@ -150,6 +151,69 @@ export class AgencyController {
     } catch (error: unknown) {
       this.translateAuthError(error);
     }
+  }
+
+  /** Global User Lock (#364). */
+  @Post(':agencyId/members/:membershipId/lock')
+  @RequirePermission('security.users.lock')
+  @UseGuards(ReauthenticationGuard)
+  async lockUser(
+    @Param('agencyId') agencyId: string,
+    @Param('membershipId') membershipId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ status: 'LOCKED'; revokedSessions: number }> {
+    const reason = this.lockReason(agencyId, membershipId, body, context);
+    try {
+      const { revokedSessions } = await this.authService.lockUser(
+        context,
+        membershipId,
+        reason,
+        signInRequest(request),
+      );
+      return { status: 'LOCKED', revokedSessions };
+    } catch (error: unknown) {
+      this.translateAuthError(error);
+    }
+  }
+
+  @Post(':agencyId/members/:membershipId/unlock')
+  @RequirePermission('security.users.unlock')
+  @UseGuards(ReauthenticationGuard)
+  async unlockUser(
+    @Param('agencyId') agencyId: string,
+    @Param('membershipId') membershipId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+    @Req() request: AuthenticatedRequest,
+  ): Promise<{ status: 'ACTIVE' }> {
+    const reason = this.lockReason(agencyId, membershipId, body, context);
+    try {
+      await this.authService.unlockUser(context, membershipId, reason, signInRequest(request));
+      return { status: 'ACTIVE' };
+    } catch (error: unknown) {
+      this.translateAuthError(error);
+    }
+  }
+
+  private lockReason(
+    agencyId: string,
+    membershipId: string,
+    body: unknown,
+    context: RequestContext,
+  ): string {
+    this.assertAgencyContext(agencyId, context);
+    if (!membershipIdSchema.safeParse(membershipId).success) {
+      throw new NotFoundException('No active member of this Agency matches.');
+    }
+    const parsedBody = userLockSchema.safeParse(body);
+    if (!parsedBody.success)
+      throw new HttpException(
+        { error: { code: 'INVALID_INPUT', message: 'Add the reason.' } },
+        400,
+      );
+    return parsedBody.data.reason;
   }
 
   private assertAgencyContext(agencyId: string, context: RequestContext): void {

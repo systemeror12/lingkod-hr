@@ -141,7 +141,9 @@ but has no factor, so signing in walks through authenticator setup. Each seed
 run removes its factor and Recovery Codes again. For Factor Reset,
 `security.officer@example.test` is a Security Administrator and
 `factor.reset.candidate@example.test` is an HRMO Administrator whose factor
-the officer can reset; each seed run restores the candidate's factor. The seed
+the officer can reset; each seed run restores the candidate's factor. For
+Global User Lock, the officer can lock and unlock
+`user.lock.candidate@example.test`; each seed run unlocks the candidate. The seed
 refuses to run in production.
 
 To sign in locally:

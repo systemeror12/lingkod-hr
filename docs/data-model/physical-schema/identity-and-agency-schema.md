@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Tables
 
 ### `agencies`
@@ -65,14 +64,25 @@ CREATE TABLE users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email_normalized citext NOT NULL,
   display_name text NOT NULL,
-  global_status text NOT NULL
-    CHECK (global_status IN ('ACTIVE','LOCKED','DEACTIVATED')),
+  global_status text NOT NULL,
+  locked_at timestamptz,
+  locked_by_agency_id uuid REFERENCES agencies(id) ON DELETE RESTRICT,
   email_verified_at timestamptz,
   last_login_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (email_normalized)
+  UNIQUE (email_normalized),
+  CONSTRAINT users_global_status_check CHECK (
+    (global_status = 'ACTIVE' AND locked_at IS NULL AND locked_by_agency_id IS NULL)
+    OR (global_status = 'LOCKED' AND locked_at IS NOT NULL AND locked_by_agency_id IS NOT NULL)
+  )
 );
 ```
+
+A User is ACTIVE or LOCKED; there is no User DEACTIVATED status (#390).
+LOCKED is the Global User Lock. A lock sets `locked_at` and the locking Agency
+in `locked_by_agency_id`, and an unlock clears both. The API never shows
+another Agency which Agency locked a User or why. Lock and unlock events are
+recorded in the acting Agency only.
 
 ### `agency_memberships`
 
@@ -84,7 +94,7 @@ CREATE TABLE agency_memberships (
   employee_id uuid,
   primary_organization_unit_id uuid,
   status text NOT NULL
-    CHECK (status IN ('INVITED','ACTIVE','LOCKED','SUSPENDED','DEACTIVATED')),
+    CHECK (status IN ('INVITED','ACTIVE','SUSPENDED','DEACTIVATED')),
   activated_at timestamptz,
   deactivated_at timestamptz,
   deactivation_reason text,
@@ -94,7 +104,7 @@ CREATE TABLE agency_memberships (
 
 CREATE UNIQUE INDEX agency_memberships_active_user_uq
 ON agency_memberships (agency_id, user_id)
-WHERE status IN ('INVITED','ACTIVE','LOCKED','SUSPENDED');
+WHERE status IN ('INVITED','ACTIVE','SUSPENDED');
 ```
 
 Employee and organization-unit foreign keys are added in later migrations after those tables exist.

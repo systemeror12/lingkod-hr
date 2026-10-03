@@ -73,6 +73,8 @@ export default async function UsersAccessPage() {
         agencyId={session.agencyId}
         currentUserId={session.userId}
         canResetFactor={hasPermission(session, 'security.mfa.reset_factor')}
+        canLock={hasPermission(session, 'security.users.lock')}
+        canUnlock={hasPermission(session, 'security.users.unlock')}
         initial={members}
       />
     </div>
