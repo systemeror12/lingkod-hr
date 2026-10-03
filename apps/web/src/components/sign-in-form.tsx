@@ -307,6 +307,9 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
                   {busy ? 'Signing in…' : 'Sign in'}
                 </Button>
               </div>
+              <a className={linkClass} href="/forgot-password">
+                Forgot password?
+              </a>
             </form>
           </>
         ) : step === 'enroll-scan' && enrollment ? (
@@ -424,9 +427,14 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
               </Lead>
               {account}
             </div>
-            <button type="button" className={linkClass} onClick={() => goTo('password')}>
-              Use a different account
-            </button>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <a className={linkClass} href="/forgot-password">
+                Reset your password
+              </a>
+              <button type="button" className={linkClass} onClick={() => goTo('password')}>
+                Use a different account
+              </button>
+            </div>
           </>
         ) : step === 'recovery-used' ? (
           <>

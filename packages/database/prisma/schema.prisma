@@ -283,6 +283,7 @@ model User {
   totpFactor             UserTotpFactor?
   recoveryCodes          UserRecoveryCode[]
   pendingAuthentications PendingAuthentication[]
+  passwordResetTokens    PasswordResetToken[]
 
   @@unique([identityProvider, externalSubject])
   @@unique([emailNormalized])
@@ -699,6 +700,22 @@ model PendingAuthentication {
   invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
 
   @@map("pending_authentications")
+}
+
+/// A password reset link. Only the SHA-256 hash of its token is kept; a row ends once, by being
+/// consumed or superseded, and stays to tell a later attempt why the link no longer works.
+model PasswordResetToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  tokenHash    Bytes     @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(6)
+  supersededAt DateTime? @map("superseded_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
 }
 
 /// The Sign-in Cool-down ladder for one keyed email hash; see `@lingkod-hr/auth` sign-in-cooldown.

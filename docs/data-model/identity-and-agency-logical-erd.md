@@ -42,6 +42,7 @@ erDiagram
     USERS ||--o{ USER_RECOVERY_CODES : recovers_with
     USERS ||--o{ PENDING_AUTHENTICATIONS : signs_in_through
     INVITATIONS ||--o{ PENDING_AUTHENTICATIONS : activates_through
+    USERS ||--o{ PASSWORD_RESET_TOKENS : resets_through
     AGENCIES ||--o{ SECURITY_EVENTS : owns
 ```
 
@@ -358,6 +359,27 @@ Short-lived state between sign-in or activation steps, referenced by an HTTP-onl
 - The final step deletes the row in the transaction that creates the session. For an enrollment, the same transaction writes the factor and the Recovery Code hashes; an abandoned or expired enrollment writes nothing.
 
 **Deletion behavior:** Deleted when completed, replaced, or found expired; cascades with the User or invitation.
+## `password_reset_tokens`
+
+Emailed password reset links. Carries no `agency_id`; visible in the owning User's context or through the hash of its token.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Reset link |
+| user_id | uuid | No | FK users | User whose password the link resets |
+| token_hash | bytes | No | Unique | SHA-256 hash of the link's token; the token itself is never stored |
+| expires_at | datetime | No | After `created_at` | The link works for 30 minutes |
+| consumed_at | datetime | Yes |  | Set when a reset completes through the link |
+| superseded_at | datetime | Yes |  | Set when a newer request or any password change voids the link |
+| created_at | datetime | No |  | Requested |
+
+**Constraints and indexes**
+
+- At most one outstanding link per User (neither consumed nor superseded); a new request supersedes the older one.
+- A link ends once: `consumed_at` and `superseded_at` are never both set. Only those two columns are updatable.
+- Changing `user_passwords.changed_at`, by any route, supersedes the User's outstanding link. A completing reset consumes its link first.
+
+**Deletion behavior:** Kept while the User exists, so a failed reset can tell a used, superseded, or expired link from an unknown one; cascades with the User.
 ## `security_events`
 
 Append-only authentication and authorization security events.
