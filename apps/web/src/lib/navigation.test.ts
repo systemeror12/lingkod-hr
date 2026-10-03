@@ -25,7 +25,7 @@ function session(roleCode: string, permissions: readonly string[]): ActiveSessio
   };
 }
 
-it('shows Users & Access only to an Agency Administrator with both handoff permissions', () => {
+it('shows Users & Access to readers of users, and invitations only to an Agency Administrator', () => {
   const administrator = session('agency_administrator', [
     'security.users.read',
     'security.users.invite',
@@ -38,7 +38,10 @@ it('shows Users & Access only to an Agency Administrator with both handoff permi
   expect(authorizedDestinations(administrator).some(({ href }) => href === '/users-access')).toBe(
     true,
   );
-  expect(authorizedDestinations(hrmo).some(({ href }) => href === '/users-access')).toBe(false);
+  expect(authorizedDestinations(hrmo).some(({ href }) => href === '/users-access')).toBe(true);
+  expect(
+    authorizedDestinations(session('employee', [])).some(({ href }) => href === '/users-access'),
+  ).toBe(false);
 });
 
 it('shows My SALN Compliance only for own-record access', () => {
@@ -107,6 +110,7 @@ it('groups authorized destinations by lifecycle stage below the Work queue', () 
 
 it('orders every stage along the personnel lifecycle', () => {
   const administrator = session('agency_administrator', [
+    'security.users.read',
     'security.users.invite',
     'security.users.update_roles',
     'organization.units.read',

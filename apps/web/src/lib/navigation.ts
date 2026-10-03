@@ -219,7 +219,7 @@ const destinations: readonly (Destination & {
     href: '/users-access',
     label: 'Users & Access',
     stage: 'Oversight',
-    visible: canManageHrmoInvitations,
+    permission: 'security.users.read',
   },
   { href: '/audit', label: 'Audit Log', stage: 'Oversight', permission: 'audit.events.read' },
 ];
