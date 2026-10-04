@@ -4,6 +4,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { requestDatabaseContext } from '../database-context';
+import { findDirectReportEmployeeIds } from '../direct-reports';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
 import {
   mandatoryLeaveAssessmentCursorSchema,
@@ -135,7 +136,6 @@ const assessmentSelect = {
     select: {
       employeeNumber: true,
       legalName: true,
-      memberships: { select: { id: true } },
     },
   },
   successors: { select: { id: true } },
@@ -448,19 +448,18 @@ export class MandatoryLeaveAssessmentsService {
     filters: MandatoryLeaveAssessmentFilters = {},
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveAssessmentPage> {
-    const scope = requireReadScope(context);
+    const scopes = requireReadScopes(context);
     const limit = page.limit ?? 25;
     const cursor = page.cursor ? decodeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context, scopes);
       const records = await transaction.mandatoryLeaveAssessment.findMany({
         where: {
           agencyId: context.agencyId,
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.year ? { assessmentYear: filters.year } : {}),
           ...(filters.result ? { result: filters.result } : {}),
-          ...(scope === 'OWN'
-            ? { employee: { memberships: { some: { id: context.membershipId } } } }
-            : {}),
+          ...(readable ? { employee: { id: { in: readable } } } : {}),
           ...(cursor ? { AND: [afterCursor(cursor)] } : {}),
         },
         orderBy: [
@@ -501,14 +500,15 @@ export class MandatoryLeaveAssessmentsService {
     assessmentYear: number,
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveEmployeeLatestPage> {
-    const scope = requireReadScope(context);
+    const scopes = requireReadScopes(context);
     const limit = page.limit ?? 25;
     const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context, scopes);
       const employees = await transaction.employee.findMany({
         where: {
           agencyId: context.agencyId,
-          ...(scope === 'OWN' ? { memberships: { some: { id: context.membershipId } } } : {}),
+          ...(readable ? { id: { in: readable } } : {}),
           ...(cursor
             ? {
                 OR: [
@@ -556,19 +556,15 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentId: string,
   ): Promise<MandatoryLeaveAssessmentDetail | null> {
-    const scope = requireReadScope(context);
+    const scopes = requireReadScopes(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const record = await transaction.mandatoryLeaveAssessment.findFirst({
         where: { agencyId: context.agencyId, id: assessmentId },
         select: assessmentSelect,
       });
       if (!record) return null;
-      if (
-        scope === 'OWN' &&
-        !record.employee.memberships.some((membership) => membership.id === context.membershipId)
-      ) {
-        return null;
-      }
+      const readable = await readableEmployeeIds(transaction, context, scopes);
+      if (readable && !readable.includes(record.employeeId)) return null;
       return {
         ...summaryOf(record),
         materialFingerprint: record.materialFingerprint,
@@ -854,14 +850,51 @@ function hasScope(context: RequestContext, code: string, scopePolicy: string): b
   );
 }
 
-function requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {
-  if (hasScope(context, 'leave.mandatory_assessments.read', 'AGENCY')) return 'AGENCY';
-  if (hasScope(context, 'leave.mandatory_assessments.read', 'OWN')) return 'OWN';
-  throw new MandatoryLeaveAssessmentServiceError(
-    'The leave.mandatory_assessments.read permission is required.',
-    403,
-    'MANDATORY_LEAVE_ASSESSMENT_READ_FORBIDDEN',
+type ReadScope = 'AGENCY' | 'OWN' | 'DIRECT_REPORTS';
+const READ_SCOPES: readonly string[] = ['AGENCY', 'OWN', 'DIRECT_REPORTS'] satisfies ReadScope[];
+
+function requireReadScopes(context: RequestContext): ReadonlySet<ReadScope> {
+  const scopes = new Set(
+    context.permissions
+      .filter(
+        (grant) =>
+          grant.code === 'leave.mandatory_assessments.read' &&
+          READ_SCOPES.includes(grant.scopePolicy),
+      )
+      .map((grant) => grant.scopePolicy as ReadScope),
   );
+  if (scopes.size === 0) {
+    throw new MandatoryLeaveAssessmentServiceError(
+      'The leave.mandatory_assessments.read permission is required.',
+      403,
+      'MANDATORY_LEAVE_ASSESSMENT_READ_FORBIDDEN',
+    );
+  }
+  return scopes;
+}
+
+/**
+ * The Employees whose assessments the caller may read, or null for the whole
+ * Agency. OWN adds the caller's linked Employee; DIRECT_REPORTS adds that
+ * Employee's direct reports today.
+ */
+async function readableEmployeeIds(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  scopes: ReadonlySet<ReadScope>,
+): Promise<string[] | null> {
+  if (scopes.has('AGENCY')) return null;
+  const membership = await transaction.agencyMembership.findFirst({
+    where: { agencyId: context.agencyId, id: context.membershipId },
+    select: { employeeId: true },
+  });
+  const employeeId = membership?.employeeId;
+  if (!employeeId) return [];
+  const employeeIds = scopes.has('DIRECT_REPORTS')
+    ? await findDirectReportEmployeeIds(transaction, context.agencyId, employeeId, manilaToday())
+    : [];
+  if (scopes.has('OWN')) employeeIds.push(employeeId);
+  return employeeIds;
 }
 
 function summaryOf(record: AssessmentRecord): MandatoryLeaveAssessmentSummary {

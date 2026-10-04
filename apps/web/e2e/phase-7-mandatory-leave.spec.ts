@@ -359,3 +359,155 @@ test('evaluates a reached vacation balance, starts fulfillment as an ordinary ap
   await expect(ownRows.nth(1)).toContainText(employeeNumber);
   await expect(ownRows.nth(1)).toContainText('SUBJECT');
 });
+
+test('shows a Supervisor only their direct reports, without the Evaluate action', async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  await signIn(page, MARISOL_EMAIL, { fresh: true });
+  await page.goto('/dashboard');
+  const headers = { origin: new URL(page.url()).origin };
+  const session = await apiBody<{ agencyId: string; membershipId: string }>(
+    await page.request.get('/api/v1/auth/me', { headers }),
+  );
+  const agencyBase = `/api/v1/agencies/${session.agencyId}`;
+  const stamp = Date.now();
+  const createEmployee = async (role: string) =>
+    apiBody<{ id: string; employeeNumber: string; legalName: string }>(
+      await page.request.post(`${agencyBase}/employees`, {
+        headers,
+        data: {
+          employeeNumber: `E2E-SUP-${role}-${stamp}`,
+          legalName: `Supervisor ${role} ${stamp}`,
+          birthDate: '1990-05-01',
+          sex: 'FEMALE',
+          civilStatus: 'SINGLE',
+          contactEmail: `supervisor-${role.toLowerCase()}-${stamp}@example.test`,
+        },
+      }),
+    );
+  const chief = await createEmployee('CHIEF');
+  const report = await createEmployee('REPORT');
+
+  // ADR 0005: the chief heads a fresh Division through its head Plantilla Position, and the
+  // report serves in it. Organization and Plantilla projections normally require their
+  // application services, which this journey does not exercise.
+  await withAdmin((admin) =>
+    admin.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      const position = await tx.plantillaPosition.create({
+        data: {
+          agencyId: session.agencyId,
+          itemNumber: `E2E-SUP-ITEM-${stamp}`,
+          status: 'OCCUPIED',
+          createdByMembershipId: session.membershipId,
+          updatedByMembershipId: session.membershipId,
+        },
+      });
+      const unit = await tx.organizationUnit.create({
+        data: {
+          agencyId: session.agencyId,
+          code: `E2E-SUP-${stamp}`,
+          unitType: 'DIVISION',
+          status: 'ACTIVE',
+        },
+      });
+      const version = await tx.organizationUnitVersion.create({
+        data: {
+          agencyId: session.agencyId,
+          organizationUnitId: unit.id,
+          versionNo: 1,
+          name: `Supervisor Division ${stamp}`,
+          headPositionId: position.id,
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+          domainStatus: 'ACTIVE',
+        },
+      });
+      await tx.organizationUnit.update({
+        where: { id: unit.id },
+        data: { currentVersionId: version.id },
+      });
+      for (const employee of [chief, report]) {
+        const segment = await tx.serviceSegment.create({
+          data: {
+            agencyId: session.agencyId,
+            employeeId: employee.id,
+            positionId: employee === chief ? position.id : null,
+            organizationUnitId: unit.id,
+            appointmentStatus: 'PERMANENT',
+            effectiveFrom: new Date('2026-01-01'),
+            status: 'ACTIVE',
+            createdByMembershipId: session.membershipId,
+          },
+        });
+        if (employee === chief) {
+          await tx.positionIncumbency.create({
+            data: {
+              agencyId: session.agencyId,
+              positionId: position.id,
+              employeeId: chief.id,
+              serviceSegmentId: segment.id,
+              effectiveFrom: new Date('2026-01-01'),
+              status: 'ACTIVE',
+              createdByMembershipId: session.membershipId,
+            },
+          });
+        }
+        await tx.mandatoryLeaveAssessment.create({
+          data: {
+            agencyId: session.agencyId,
+            employeeId: employee.id,
+            assessmentYear: 2026,
+            assessmentDate: new Date('2026-06-30'),
+            result: 'INDETERMINATE',
+            materialFingerprint: `e2e-supervisor-${employee.id}`,
+            inputFacts: { indeterminateReasons: ['MISSING_POLICY'] },
+            ruleResults: [],
+          },
+        });
+      }
+    }),
+  );
+
+  const invitation = await apiBody<{ activationUrl: string }>(
+    await page.request.post(`${agencyBase}/invitations`, {
+      headers,
+      data: { email: `supervisor-chief-${stamp}@example.test`, roleCodes: ['hrmo_administrator'] },
+    }),
+  );
+  const supervisorPage = await (await browser.newContext()).newPage();
+  await activateInvitation(supervisorPage, invitation.activationUrl, { name: chief.legalName });
+  const own = await apiBody<{ membershipId: string }>(
+    await supervisorPage.request.get('/api/v1/auth/me', {
+      headers: { origin: new URL(supervisorPage.url()).origin },
+    }),
+  );
+  // No API reassigns roles yet; hold the invitee to the Supervisor role.
+  await withAdmin(async (admin) => {
+    const role = await admin.role.findFirstOrThrow({
+      where: { code: 'supervisor', agencyId: null },
+    });
+    await admin.membershipRole.updateMany({
+      where: { membershipId: own.membershipId },
+      data: { roleId: role.id },
+    });
+  });
+  await apiBody(
+    await page.request.post(`${agencyBase}/employees/${chief.id}/membership-link`, {
+      headers,
+      data: { membershipId: own.membershipId },
+    }),
+  );
+
+  await supervisorPage.goto('/mandatory-leave?year=2026');
+  await expect(
+    supervisorPage.getByRole('heading', { level: 1, name: 'Mandatory Leave' }),
+  ).toBeVisible();
+  await expect(supervisorPage.getByRole('button', { name: /^Evaluate/ })).toHaveCount(0);
+  const rows = supervisorPage.getByRole('table').getByRole('row');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(1)).toContainText(report.employeeNumber);
+  await expect(rows.nth(1)).toContainText('INDETERMINATE');
+});
