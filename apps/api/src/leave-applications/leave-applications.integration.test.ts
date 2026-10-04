@@ -2523,6 +2523,67 @@ it.skipIf(!enabled)(
         }),
       ).toMatchObject({ allocationKind: 'NON_CREDIT', employeeId: employee.id });
 
+      // Separate requested periods stay separate through Attendance (#456).
+      const splitMonday = nextMonday(52);
+      const splitWednesday = addDays(splitMonday, 2);
+      const splitDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: nonCreditType.id,
+      });
+      const splitId = splitDraft.application.id;
+      await applications.update(agencyContext, splitId, {
+        reason: 'Two separate requested periods.',
+        policyDetails: { qualifyingEvent: 'DECLARED_CALAMITY' },
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [
+          { dateFrom: splitMonday, dateTo: splitMonday },
+          { dateFrom: splitWednesday, dateTo: splitWednesday },
+        ],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'CALAMITY_DECLARATION_EVIDENCE' },
+        ],
+      });
+      const splitSubmitted = await applications.submit(employeeContext, splitId, submitInput);
+      expect(
+        splitSubmitted.versions
+          .at(-1)!
+          .calculationSegments.map(({ dateFrom, dateTo, requestedQuantity }) => ({
+            dateFrom,
+            dateTo,
+            requestedQuantity: Number(requestedQuantity),
+          })),
+      ).toEqual([
+        { dateFrom: splitMonday, dateTo: splitMonday, requestedQuantity: 1 },
+        { dateFrom: splitWednesday, dateTo: splitWednesday, requestedQuantity: 1 },
+      ]);
+      await applications.route(recorderContext, splitId);
+      await applications.certify(recorderContext, splitId, {});
+      await applications.recommend(supervisorContext, splitId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      await applications.decide(approverContext, splitId, { decision: 'APPROVE' });
+      const splitPosted = await applications.post(postingContext, splitId, `split-${suffix}`);
+      const splitInputs = await admin.attendancePostedLeaveInput.findMany({
+        where: {
+          id: {
+            in: splitPosted.versions
+              .at(-1)!
+              .posting!.effects.filter(({ effectKind }) => effectKind === 'ATTENDANCE_INPUT')
+              .map(({ ownerRecordId }) => ownerRecordId),
+          },
+        },
+        orderBy: { dateFrom: 'asc' },
+      });
+      expect(
+        splitInputs.map(({ dateFrom, dateTo }) => [
+          dateFrom.toISOString().slice(0, 10),
+          dateTo.toISOString().slice(0, 10),
+        ]),
+      ).toEqual([
+        [splitMonday, splitMonday],
+        [splitWednesday, splitWednesday],
+      ]);
+
       const changedDraft = await applications.create(agencyContext, {
         employeeId: employee.id,
         leaveTypeId: specialLeave.id,
