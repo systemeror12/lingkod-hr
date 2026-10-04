@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { NON_WORKING_HOLIDAY_DAY_TYPES } from '../attendance-configuration/attendance-configuration.types';
 import { requestDatabaseContext } from '../database-context';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
 import {
@@ -668,15 +669,37 @@ export class MandatoryLeaveAssessmentsService {
             dateTo: true,
             quantity: true,
             unitCode: true,
+            policyVersionId: true,
             leaveApprovalAllocation: {
               select: {
                 leaveApplicationVersionId: true,
                 postings: { select: { id: true }, take: 1 },
+                leaveApplicationVersion: {
+                  select: {
+                    acceptedAssessmentId: true,
+                    calculationSegments: {
+                      select: {
+                        eligibilityAssessmentId: true,
+                        policyVersionId: true,
+                        dateFrom: true,
+                        dateTo: true,
+                        holidayFacts: true,
+                        scheduleAssignment: {
+                          select: {
+                            workScheduleVersion: {
+                              select: { dayRules: { select: { weekday: true, ruleType: true } } },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
               },
             },
             cancellationScopes: {
               where: { leaveCancellation: { effectStatus: 'APPLIED' } },
-              select: { quantity: true },
+              select: { dateFrom: true, dateTo: true, quantity: true },
             },
           },
         })
@@ -720,10 +743,13 @@ export class MandatoryLeaveAssessmentsService {
         dateFrom: formatDate(line.dateFrom),
         dateTo: formatDate(line.dateTo),
         quantity: line.quantity.toFixed(4),
-        cancelledQuantity: line.cancellationScopes
-          .reduce((total, scope) => total.plus(scope.quantity), new Prisma.Decimal(0))
-          .toFixed(4),
         unitCode: line.unitCode,
+        workingDates: postedWorkingDates(line),
+        cancellations: line.cancellationScopes.map((scope) => ({
+          dateFrom: formatDate(scope.dateFrom),
+          dateTo: formatDate(scope.dateTo),
+          quantity: scope.quantity.toFixed(4),
+        })),
       })),
     });
   }
@@ -856,6 +882,76 @@ function summaryOf(record: AssessmentRecord): MandatoryLeaveAssessmentSummary {
     isLatest: record.successors.length === 0,
     assessedAt: record.assessedAt.toISOString(),
   };
+}
+
+/**
+ * Rebuilds a posted allocation line's working dates from the Leave Calculation
+ * Segment it was approved from: the immutable Work Schedule day rules of the
+ * segment's Schedule Assignment, less the non-working holidays preserved in its
+ * holiday facts. Null when the segment or any date's facts are missing.
+ */
+function postedWorkingDates(line: {
+  policyVersionId: string;
+  dateFrom: Date;
+  dateTo: Date;
+  leaveApprovalAllocation: {
+    leaveApplicationVersion: {
+      acceptedAssessmentId: string | null;
+      calculationSegments: {
+        eligibilityAssessmentId: string;
+        policyVersionId: string;
+        dateFrom: Date;
+        dateTo: Date;
+        holidayFacts: Prisma.JsonValue;
+        scheduleAssignment: {
+          workScheduleVersion: { dayRules: { weekday: number; ruleType: string }[] };
+        } | null;
+      }[];
+    };
+  };
+}): string[] | null {
+  const version = line.leaveApprovalAllocation.leaveApplicationVersion;
+  const segment = version.calculationSegments.find(
+    (candidate) =>
+      candidate.eligibilityAssessmentId === version.acceptedAssessmentId &&
+      candidate.policyVersionId === line.policyVersionId &&
+      candidate.dateFrom.getTime() === line.dateFrom.getTime() &&
+      candidate.dateTo.getTime() === line.dateTo.getTime(),
+  );
+  const dayRules = segment?.scheduleAssignment?.workScheduleVersion.dayRules;
+  const holidays = segment ? nonWorkingHolidayDates(segment.holidayFacts) : null;
+  if (!dayRules || !holidays) return null;
+  const dates: string[] = [];
+  for (
+    let date = new Date(line.dateFrom.getTime());
+    date.getTime() <= line.dateTo.getTime();
+    date.setUTCDate(date.getUTCDate() + 1)
+  ) {
+    const weekday = date.getUTCDay() === 0 ? 7 : date.getUTCDay();
+    const rule = dayRules.find((candidate) => candidate.weekday === weekday);
+    if (!rule) return null;
+    const value = formatDate(date);
+    if (rule.ruleType !== 'REST' && !holidays.has(value)) dates.push(value);
+  }
+  return dates;
+}
+
+function nonWorkingHolidayDates(holidayFacts: Prisma.JsonValue): Set<string> | null {
+  if (holidayFacts === null || typeof holidayFacts !== 'object' || Array.isArray(holidayFacts)) {
+    return null;
+  }
+  const entries = holidayFacts.entries;
+  if (!Array.isArray(entries)) return null;
+  const dates = new Set<string>();
+  for (const entry of entries) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const { holidayDate, dayType } = entry;
+    if (typeof holidayDate !== 'string' || typeof dayType !== 'string') return null;
+    if ((NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(dayType)) {
+      dates.add(holidayDate);
+    }
+  }
+  return dates;
 }
 
 function toDatabaseDate(value: string): Date {

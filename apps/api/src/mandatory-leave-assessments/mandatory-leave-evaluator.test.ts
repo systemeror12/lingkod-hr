@@ -33,8 +33,9 @@ function allocation(
     dateFrom: '2026-03-02',
     dateTo: '2026-03-04',
     quantity: '3.0000',
-    cancelledQuantity: '0.0000',
     unitCode: 'WORKING_DAY',
+    workingDates: null,
+    cancellations: [],
     ...overrides,
   };
 }
@@ -291,7 +292,7 @@ describe('evaluateMandatoryLeave', () => {
             dateFrom: '2026-04-06',
             dateTo: '2026-04-07',
             quantity: '2.0000',
-            cancelledQuantity: '1.5000',
+            cancellations: [{ dateFrom: '2026-04-07', dateTo: '2026-04-07', quantity: '1.5000' }],
           }),
         ],
       }),
@@ -306,7 +307,10 @@ describe('evaluateMandatoryLeave', () => {
       input({
         allocations: [
           allocation({ dateFrom: '2025-12-01', dateTo: '2025-12-03' }),
-          allocation({ lineId: 'line-2', cancelledQuantity: '3.0000' }),
+          allocation({
+            lineId: 'line-2',
+            cancellations: [{ dateFrom: '2026-03-02', dateTo: '2026-03-04', quantity: '3.0000' }],
+          }),
           allocation({ lineId: 'line-3', leaveAccountId: 'other-account' }),
         ],
       }),
@@ -387,6 +391,118 @@ describe('evaluateMandatoryLeave', () => {
     expect(result.result).toBe('INDETERMINATE');
     expect(result.indeterminateReasons).toEqual(['ALLOCATION_NOT_ATTRIBUTABLE']);
     expect(ruleOutcome(result, 'FULFILLMENT')).toBe('INDETERMINATE');
+    expect(result.inputFacts.fulfillmentFacts?.unattributableLineIds).toEqual(['line-1']);
+  });
+
+  describe('a posted allocation crossing December 31', () => {
+    // December 31, 2026 is a Thursday; January 1, 2027 is a holiday and
+    // January 2-3 a weekend, so the working dates are December 31 and January 4.
+    const crossing = allocation({
+      dateFrom: '2026-12-31',
+      dateTo: '2027-01-04',
+      quantity: '2.0000',
+      workingDates: ['2026-12-31', '2027-01-04'],
+    });
+
+    it('counts each working date in its own calendar year', () => {
+      const in2026 = evaluateMandatoryLeave(input({ allocations: [crossing] }));
+      const in2027 = evaluateMandatoryLeave(
+        input({
+          assessmentYear: 2027,
+          asOf: '2027-01-10',
+          ledgerEntries: [entry('2026-12-30', '12.0000')],
+          allocations: [crossing],
+        }),
+      );
+
+      expect(in2026.result).toBe('SUBJECT');
+      expect(in2026.fulfilledQuantity).toBe('1.0000');
+      expect(in2026.inputFacts.fulfillmentFacts?.allocations).toEqual([
+        expect.objectContaining({
+          lineId: 'line-1',
+          netQuantity: '2.0000',
+          countedDates: ['2026-12-31'],
+          countedQuantity: '1.0000',
+        }),
+      ]);
+      expect(in2027.result).toBe('SUBJECT');
+      expect(in2027.fulfilledQuantity).toBe('1.0000');
+      expect(in2027.inputFacts.fulfillmentFacts?.allocations).toEqual([
+        expect.objectContaining({ countedDates: ['2027-01-04'], countedQuantity: '1.0000' }),
+      ]);
+    });
+
+    it('removes applied cancellations on their exact dates', () => {
+      const cancelled = {
+        ...crossing,
+        cancellations: [{ dateFrom: '2027-01-01', dateTo: '2027-01-04', quantity: '1.0000' }],
+      };
+      const in2026 = evaluateMandatoryLeave(input({ allocations: [cancelled] }));
+      const in2027 = evaluateMandatoryLeave(
+        input({ assessmentYear: 2027, asOf: '2027-01-10', allocations: [cancelled] }),
+      );
+
+      expect(in2026.fulfilledQuantity).toBe('1.0000');
+      expect(in2026.inputFacts.fulfillmentFacts?.allocations).toEqual([
+        expect.objectContaining({
+          cancelledQuantity: '1.0000',
+          netQuantity: '1.0000',
+          countedDates: ['2026-12-31'],
+        }),
+      ]);
+      expect(in2027.result).not.toBe('INDETERMINATE');
+      expect(in2027.fulfilledQuantity).toBe('0.0000');
+      expect(in2027.inputFacts.fulfillmentFacts?.allocations).toEqual([]);
+    });
+
+    it('stays INDETERMINATE when the line has no preserved working dates', () => {
+      const result = evaluateMandatoryLeave(
+        input({ allocations: [{ ...crossing, workingDates: null }] }),
+      );
+
+      expect(result.result).toBe('INDETERMINATE');
+      expect(result.indeterminateReasons).toEqual(['ALLOCATION_NOT_ATTRIBUTABLE']);
+    });
+
+    it('stays INDETERMINATE when the line charges fewer days than its working dates', () => {
+      const result = evaluateMandatoryLeave(
+        input({ allocations: [{ ...crossing, quantity: '1.0000' }] }),
+      );
+
+      expect(result.result).toBe('INDETERMINATE');
+      expect(result.indeterminateReasons).toEqual(['ALLOCATION_NOT_ATTRIBUTABLE']);
+    });
+
+    it('stays INDETERMINATE when a cancellation cannot be placed on exact dates', () => {
+      const result = evaluateMandatoryLeave(
+        input({
+          allocations: [
+            {
+              ...crossing,
+              cancellations: [{ dateFrom: '2026-12-31', dateTo: '2027-01-04', quantity: '1.0000' }],
+            },
+          ],
+        }),
+      );
+
+      expect(result.result).toBe('INDETERMINATE');
+      expect(result.indeterminateReasons).toEqual(['ALLOCATION_NOT_ATTRIBUTABLE']);
+    });
+  });
+
+  it('lists the counted dates of an in-year line whose working dates are preserved', () => {
+    const result = evaluateMandatoryLeave(
+      input({
+        allocations: [allocation({ workingDates: ['2026-03-02', '2026-03-03', '2026-03-04'] })],
+      }),
+    );
+
+    expect(result.inputFacts.fulfillmentFacts?.allocations).toEqual([
+      expect.objectContaining({
+        countedDates: ['2026-03-02', '2026-03-03', '2026-03-04'],
+        countedQuantity: '3.0000',
+      }),
+    ]);
   });
 
   it('records why every rule passed or failed', () => {

@@ -74,6 +74,8 @@ interface MandatoryLeaveAssessmentDetail extends MandatoryLeaveAssessment {
         dateFrom: string;
         dateTo: string;
         netQuantity: string;
+        /** Absent on assessments recorded before cross-year attribution (#459). */
+        countedQuantity?: string;
       }[];
       unattributableLineIds: string[];
     } | null;
@@ -197,7 +199,7 @@ function Sources({ facts }: { facts: MandatoryLeaveAssessmentDetail['inputFacts'
                     <li className="grid gap-0.5" key={line.lineId}>
                       <span className="text-small text-ink">
                         {dateLabel(line.dateFrom)} – {dateLabel(line.dateTo)}:{' '}
-                        {quantityLabel(line.netQuantity)} working days
+                        {quantityLabel(line.countedQuantity ?? line.netQuantity)} working days
                       </span>
                       <span className={sourceIdClass}>
                         Posting {line.leavePostingId} · Application version{' '}

@@ -68,8 +68,14 @@ export interface MandatoryLeaveAllocationFact {
   dateFrom: string;
   dateTo: string;
   quantity: string;
-  cancelledQuantity: string;
   unitCode: string;
+  /**
+   * The line's working dates, rebuilt from the date facts preserved with the
+   * posted application, or null when those facts cannot place them.
+   */
+  workingDates: readonly string[] | null;
+  /** Exact-date scopes of applied cancellations (#220). */
+  cancellations: readonly { dateFrom: string; dateTo: string; quantity: string }[];
 }
 
 export interface MandatoryLeaveEvaluationInput {
@@ -135,6 +141,9 @@ export interface MandatoryLeaveInputFacts {
       quantity: string;
       cancelledQuantity: string;
       netQuantity: string;
+      /** Net working dates counted in the year, or null for an in-year line that cannot be placed. */
+      countedDates: string[] | null;
+      countedQuantity: string;
     }[];
     unattributableLineIds: string[];
   } | null;
@@ -330,12 +339,27 @@ export function evaluateMandatoryLeave(
     for (const line of input.allocations) {
       if (line.leaveAccountId !== account.id) continue;
       if (line.dateTo < yearStart || line.dateFrom > yearEnd) continue;
-      const net = new Prisma.Decimal(line.quantity).minus(line.cancelledQuantity);
+      const cancelled = line.cancellations.reduce(
+        (total, scope) => total.plus(scope.quantity),
+        ZERO,
+      );
+      const net = new Prisma.Decimal(line.quantity).minus(cancelled);
       if (net.lte(ZERO)) continue;
-      if (line.dateFrom < yearStart || line.dateTo > yearEnd || line.unitCode !== 'WORKING_DAY') {
+      if (line.unitCode !== 'WORKING_DAY') {
         unattributable.push(line.lineId);
         continue;
       }
+      // A line inside the year counts its net quantity even when its dates
+      // cannot be placed; a line crossing the year needs every date placed.
+      const netDates = placeNetWorkingDates(line);
+      const countedDates =
+        netDates?.filter((date) => date >= yearStart && date <= yearEnd) ?? null;
+      if (!countedDates && (line.dateFrom < yearStart || line.dateTo > yearEnd)) {
+        unattributable.push(line.lineId);
+        continue;
+      }
+      const counted = countedDates ? new Prisma.Decimal(countedDates.length) : net;
+      if (counted.lte(ZERO)) continue;
       contributing.push({
         lineId: line.lineId,
         leavePostingId: line.leavePostingId,
@@ -343,8 +367,10 @@ export function evaluateMandatoryLeave(
         dateFrom: line.dateFrom,
         dateTo: line.dateTo,
         quantity: formatQuantity(new Prisma.Decimal(line.quantity)),
-        cancelledQuantity: formatQuantity(new Prisma.Decimal(line.cancelledQuantity)),
+        cancelledQuantity: formatQuantity(cancelled),
         netQuantity: formatQuantity(net),
+        countedDates,
+        countedQuantity: formatQuantity(counted),
       });
     }
     contributing.sort(
@@ -352,13 +378,13 @@ export function evaluateMandatoryLeave(
     );
     unattributable.sort();
     fulfillmentFacts = { allocations: contributing, unattributableLineIds: unattributable };
-    fulfilled = contributing.reduce((total, line) => total.plus(line.netQuantity), ZERO);
+    fulfilled = contributing.reduce((total, line) => total.plus(line.countedQuantity), ZERO);
     if (unattributable.length > 0) {
       reasons.push('ALLOCATION_NOT_ATTRIBUTABLE');
       rule(
         'FULFILLMENT',
         'INDETERMINATE',
-        `${unattributable.length} posted allocation line(s) cross the year boundary or are not in working days, so their working dates in ${input.assessmentYear} cannot be counted.`,
+        `${unattributable.length} posted allocation line(s) are not in working days, or cross the year boundary without exactly placeable working dates, so their working dates in ${input.assessmentYear} cannot be counted.`,
       );
     } else if (!thresholdBasis.reached) {
       rule(
@@ -439,6 +465,26 @@ export function evaluateMandatoryLeave(
     inputFacts,
     ruleResults: rules,
   };
+}
+
+/**
+ * The line's working dates net of its applied cancellations, or null unless
+ * every charged and cancelled day lands on an exact working date: the line
+ * charges all of its working dates, and each cancellation scope cancels all of
+ * the working dates inside its range.
+ */
+function placeNetWorkingDates(line: MandatoryLeaveAllocationFact): string[] | null {
+  if (!line.workingDates || !new Prisma.Decimal(line.quantity).equals(line.workingDates.length)) {
+    return null;
+  }
+  let remaining = [...line.workingDates];
+  for (const scope of line.cancellations) {
+    const inScope = (date: string) => date >= scope.dateFrom && date <= scope.dateTo;
+    const cancelled = remaining.filter(inScope);
+    if (!new Prisma.Decimal(scope.quantity).equals(cancelled.length)) return null;
+    remaining = remaining.filter((date) => !inScope(date));
+  }
+  return remaining;
 }
 
 function policyThresholds(
