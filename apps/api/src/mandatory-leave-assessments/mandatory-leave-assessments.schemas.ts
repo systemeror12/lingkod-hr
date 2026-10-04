@@ -20,3 +20,7 @@ export const mandatoryLeaveAssessmentCursorSchema = z
     id: z.string().uuid(),
   })
   .strict();
+
+export const mandatoryLeaveEmployeeCursorSchema = z
+  .object({ legalName: z.string(), id: z.string().uuid() })
+  .strict();
