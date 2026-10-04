@@ -1,4 +1,5 @@
 # Business Requirements Document (BRD)
+
 ## Philippine Public-Sector HRIS MVP
 
 **Document status:** Draft for approval  
@@ -8,7 +9,7 @@
 **Architecture:** Multi-tenant SaaS, with optional dedicated-agency deployment  
 **Primary objective:** Digitize and control government human resource management processes  
 **Version:** 1.0  
-**Date:** August 5, 2026  
+**Date:** August 5, 2026
 
 ---
 
@@ -28,18 +29,18 @@ The initial implementation profile is for a civilian National Government Agency.
 
 The public-sector product profile shall be maintained separately from a private-sector HRIS profile.
 
-| Area | Private-sector HRIS | Public-sector HRIS |
-|---|---|---|
-| Position control | Company-defined jobs and headcount | Authorized organizational structure, plantilla, item number, salary grade, and step |
-| Hiring | Company recruitment policy | Publication, qualification standards, merit selection, appointing authority, and CSC appointment rules |
-| Employee record | Company employee profile | PDS, eligibility, appointment, oath, assumption, service record, and personnel actions |
-| Employment status | Regular, probationary, contractual, etc. | Career/non-career and government appointment statuses under applicable rules |
-| Performance | Company appraisal | Agency SPMS, OPCR/IPCR, targets, ratings, and review cycle |
-| Leave | Company policy and labor law | Government leave credits, CSC leave rules, Form 6, mandatory leave, monetization, and special leave |
-| Overtime | Company-authorized OT pay | Prior-authorized overtime service, overtime pay or COC/CTO, subject to applicable rules and funds |
-| Payroll | Company pay structure and SSS | Salary grade/step, DBM salary schedule, GSIS, government allowances, and agency-specific deductions |
-| Audit | Management and statutory audit | CSC, DBM, COA, agency internal control, records, and public accountability requirements |
-| Separation | Company clearance/final pay | Acceptance of resignation, clearance, service record, retirement or separation action, and access revocation |
+| Area              | Private-sector HRIS                      | Public-sector HRIS                                                                                           |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Position control  | Company-defined jobs and headcount       | Authorized organizational structure, plantilla, item number, salary grade, and step                          |
+| Hiring            | Company recruitment policy               | Publication, qualification standards, merit selection, appointing authority, and CSC appointment rules       |
+| Employee record   | Company employee profile                 | PDS, eligibility, appointment, oath, assumption, service record, and personnel actions                       |
+| Employment status | Regular, probationary, contractual, etc. | Career/non-career and government appointment statuses under applicable rules                                 |
+| Performance       | Company appraisal                        | Agency SPMS, OPCR/IPCR, targets, ratings, and review cycle                                                   |
+| Leave             | Company policy and labor law             | Government leave credits, CSC leave rules, Form 6, mandatory leave, monetization, and special leave          |
+| Overtime          | Company-authorized OT pay                | Prior-authorized overtime service, overtime pay or COC/CTO, subject to applicable rules and funds            |
+| Payroll           | Company pay structure and SSS            | Salary grade/step, DBM salary schedule, GSIS, government allowances, and agency-specific deductions          |
+| Audit             | Management and statutory audit           | CSC, DBM, COA, agency internal control, records, and public accountability requirements                      |
+| Separation        | Company clearance/final pay              | Acceptance of resignation, clearance, service record, retirement or separation action, and access revocation |
 
 The system shall not mix public- and private-sector rule engines within one organization profile.
 
@@ -126,23 +127,24 @@ The MVP shall:
 
 # 6. Primary Users and Stakeholders
 
-| Role | Responsibilities |
-|---|---|
-| Agency Administrator | Agency profile, security, users, and configuration |
-| HRMO / HR Administrator | Plantilla, recruitment, appointments, personnel records, leave, and HR reports |
-| HRMPSB / Selection Board Member | Candidate evaluation, deliberation, and recommendations |
-| Appointing Authority / Authorized Approver | Appointment and designated high-level approvals |
-| Supervisor / Division Chief | Attendance, leave, overtime, and performance review |
-| Payroll Preparer | Payroll data, calculation, deductions, and reconciliation |
-| Payroll Reviewer / Certifying Officer | Review, certification, and exception resolution |
-| Payroll Approver / Agency Authority | Payroll authorization and finalization |
-| Employee / Official | PDS, DTR, leave, payslip, performance commitments, and self-service |
-| Budget Officer | Position and personnel-services validation |
-| Accounting Office | Payroll obligations, deductions, and accounting reports |
-| Cashier / Disbursing Officer | Payment processing and remittance support |
-| Records Officer | Retention, document control, and certified records |
-| Internal Audit / COA Auditor | Audit evidence and control review |
-| Data Protection Officer | Privacy, access, retention, and incident controls |
+| Role                                       | Responsibilities                                                                                          |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Agency Administrator                       | Agency profile, security, users, and configuration                                                        |
+| HR Administrator                           | Broad HR administration, attendance configuration and locking, and inherited HR Officer attendance access |
+| HR Officer                                 | Attendance review and approval within assigned scope, with inherited Employee attendance access           |
+| HRMPSB / Selection Board Member            | Candidate evaluation, deliberation, and recommendations                                                   |
+| Appointing Authority / Authorized Approver | Appointment and designated high-level approvals                                                           |
+| Supervisor / Division Chief                | Leave, overtime, and performance review                                                                   |
+| Payroll Preparer                           | Payroll data, calculation, deductions, and reconciliation                                                 |
+| Payroll Reviewer / Certifying Officer      | Review, certification, and exception resolution                                                           |
+| Payroll Approver / Agency Authority        | Payroll authorization and finalization                                                                    |
+| Employee / Official                        | PDS, attendance submission, DTR, leave, payslip, performance commitments, and self-service                |
+| Budget Officer                             | Position and personnel-services validation                                                                |
+| Accounting Office                          | Payroll obligations, deductions, and accounting reports                                                   |
+| Cashier / Disbursing Officer               | Payment processing and remittance support                                                                 |
+| Records Officer                            | Retention, document control, and certified records                                                        |
+| Internal Audit / COA Auditor               | Audit evidence and control review                                                                         |
+| Data Protection Officer                    | Privacy, access, retention, and incident controls                                                         |
 
 ---
 
@@ -176,22 +178,32 @@ Every user shall have an individual account. Shared accounts are prohibited.
 
 ## AUTH-002 Login
 
-The MVP shall support email and password login through an approved managed identity or OIDC-compatible service.
+The MVP shall support email and password login owned by LingkodHR. LingkodHR shall verify passwords and second factors itself and issue its own sessions. No managed identity provider or OIDC service shall sit in the login path.
 
 ## AUTH-003 Invitation and activation
 
 Authorized administrators shall invite users, assign agency membership and roles, and track activation.
 
-## AUTH-004 Password recovery
+## AUTH-004 Password Reset
 
 The system shall support secure, non-disclosing password-reset workflows.
 
-## AUTH-005 Account states
+## AUTH-005 User and Agency Membership statuses
+
+A User and each of the User's Agency Memberships carry separate statuses. Access to an Agency requires both an ACTIVE User and an ACTIVE Agency Membership in that Agency.
+
+User statuses:
+
+```text
+ACTIVE
+LOCKED
+```
+
+Agency Membership statuses:
 
 ```text
 INVITED
 ACTIVE
-LOCKED
 SUSPENDED
 DEACTIVATED
 ```
@@ -331,19 +343,28 @@ Recruitment for plantilla appointments shall originate from a valid vacant autho
 
 ## RSP-001 Request to fill
 
-HR or the requesting office shall create a request to fill a valid vacancy.
+HR or the requesting office shall create a request to fill only for a Recruitable Vacancy. During controlled review, the server shall resolve exactly one active Agency Merit Selection Plan Version and its applicable Merit Selection Criteria Set, Board Definition, effective Board Appointments, and required Approval Route Versions. Zero or multiple applicable matches shall block publication.
+
+The resolved bindings shall be agency-scoped and immutable after publication. Before publication, an authorized MSP Rebaseline shall require a reason, authority, evidence, and Audit Event. A material policy change after publication shall require cancellation and republication with lineage.
+
+The Reference Agency Profile shall contain no invented active MSP, criteria, board appointments, approval hierarchy, signatories, or agency procedure. Missing Pilot Agency facts are Configurable Placeholders that block the affected transition.
 
 ## RSP-002 Publication
 
 The system shall track:
 
-- vacancy-publication request;
+- exact CS Form No. 9 Document Version;
 - posting dates;
 - closing date;
-- publication channel or CSC reference;
+- CSC Field Office submission, CSC Job Portal publication, at least three Agency posting places for the required period, supplemental channels, and their available references or timestamps;
 - position details;
-- qualification standards;
-- application requirements.
+- the bound Qualification Standard Version;
+- application requirements;
+- active contact details, posting evidence, and HRMO certification.
+
+Unsupported publication exceptions shall fail closed. Materially incorrect publication data shall be cancelled and republished rather than silently corrected.
+
+Publication remains valid until filled but no longer than nine months unless a separately sourced exception applies.
 
 ## RSP-003 Applicant record
 
@@ -362,14 +383,14 @@ The applicant record shall support information needed for government recruitment
 
 ## RSP-004 Qualification screening
 
-The system shall compare applicant credentials with the approved qualification standard and identify:
+The system shall compare applicant evidence with the Qualification Standard Version bound to the Recruitment Case and identify:
 
 - meets requirements;
 - conditionally reviewable;
 - does not meet requirements;
 - missing evidence.
 
-The system shall not automatically make the final qualification or selection decision.
+The system shall not automatically make the final qualification or selection decision. Corrections to screening or assessment results shall create reasoned replacement versions and preserve the original evidence-backed result.
 
 ## RSP-005 Merit selection
 
@@ -385,9 +406,13 @@ The system shall support:
 - appointing-authority decision;
 - conflict-of-interest disclosure.
 
+Criteria, weights, scales, cutoffs, rounding, tie rules, required evidence, and evaluator eligibility shall come from the bound Merit Selection Criteria Set rather than executable agency-specific workflow code.
+
 ## RSP-006 Selection board records
 
-Board membership, quorum, attendance, scores, comments, deliberation, and recommendation shall be auditable.
+Board Definition, Board Appointment, frozen Board Roster Snapshot, actual participation, attendance, declarations, recusals, applicant-specific quorum, scores, deliberation, and recommendation shall be distinct and auditable. One person shall not fill two voting seats or act as both voting member and secretariat. Conflicted or recused members shall be excluded from the affected applicant's evaluation and quorum.
+
+The Board Recommendation and Comprehensive Candidate Evaluation Report are advisory. The appointing authority's Selection Decision is a separate Recruitment record, not an Approval Decision. A later Appointment return, invalidation, cancellation, or failure to assume shall not alter it.
 
 ## RSP-007 Non-selection and applicant status
 
@@ -399,17 +424,24 @@ Decisions and notices shall be recorded without exposing confidential deliberati
 
 ## APP-001 Appointment preparation
 
-The system shall prepare appointment data using:
+Appointment shall accept an immutable selected-candidate package through the Recruitment application service and revalidate the current reservation through the Plantilla application service. It shall prepare appointment data using:
 
-- selected applicant;
-- authorized position;
-- appointment status;
+- exact selected Application;
+- reserved Plantilla Position;
+- Employment Status;
 - nature of appointment;
 - salary grade and step;
 - effectivity;
 - appointing authority;
 - qualification evidence;
-- required CSC forms and attachments.
+- the applicable exact CS Form No. 33 variant and Document Version;
+- required evidence and exact supporting Document Versions.
+
+Supporting records include the applicable PDS and Work Experience Sheet, proof of eligibility, Position Description Form, selection and publication certifications, authority or delegation evidence, and condition-specific attachments.
+
+The Agency's evidenced regulatory or accreditation status shall select exactly one supported form and submission package. The regulated path uses CS Form No. 33-A, Revised 2025 with CS Form No. 1, Revised 2025. The accredited or deregulated path uses CS Form No. 33-B, Revised 2025 with CS Form No. 2, Revised 2025. Missing or unsupported Agency configuration shall block issuance rather than use a Reference Agency default.
+
+Every Appointment shall retain the applicable authority version and date. The 2025 ORAOHRA took effect on August 3, 2025 and shall not be treated as timeless.
 
 ## APP-002 Appointment validation
 
@@ -422,38 +454,49 @@ Before issuance, the system shall validate:
 - compensation alignment;
 - absence of conflicting active incumbency.
 
-## APP-003 Appointment statuses
+Issuance shall also require the authorized appointing authority, a still-valid reservation, the applicable signature contract, and all required evidence. It shall freeze the signed Appointment Version, exact Document Version, issue date, authority, and acknowledgment path. Rubber-stamped signatures and initials are not supported; electronic or digital signatures require their applicable evidenced certification contract.
+
+## APP-003 Appointment workflow statuses
 
 ```text
 DRAFT
 FOR_REVIEW
 FOR_SIGNATURE
 ISSUED
-SUBMITTED
-VALIDATED
-INVALIDATED
-RETURNED
 CANCELLED
 ```
 
+Employment Status and Nature of Appointment are separate official attributes. A Draft may be edited, but a correction after issuance shall create an authorized linked replacement or successor with reason and evidence.
+
 ## APP-004 CSC transaction tracking
 
-The MVP shall track submission, acknowledgment, action, return, validation, invalidation, and compliance dates. Direct CSC integration is future scope.
+The MVP shall append external submission, acknowledgment or receipt, return, resubmission, and official CSC action events against an exact Appointment Version and evidence Document Version. Regulated agencies use approval or disapproval; accredited or deregulated agencies use validation or invalidation. Events shall preserve the external reference, event date and time when available, receiving office, recording actor, and reason or deficiency.
+
+External events are the source of truth and may produce a derived standing for display or command eligibility. Downloading a form, internal approval, elapsed time, or an absent response shall not create an external action. Direct CSC integration is future scope.
+
+Submission deadlines and receiving office shall come from evidenced Agency configuration. The national baseline is within 30 calendar days from issuance for regulated agencies and on or before the 30th day of the succeeding month for accredited or deregulated agencies.
 
 ## APP-005 Oath and assumption
 
 The system shall record:
 
-- oath of office;
-- certification of assumption to duty;
+- the oath using the exact SS Porma Blg. 32, Narebisa 2025 Document Version;
+- certification using the exact CS Form No. 4, Revised 2025 Document Version;
 - actual assumption date;
-- first day of service;
-- responsible certifying officer;
-- supporting documents.
+- administering and certifying authorities;
+- certification time, signatures, and supporting evidence;
+- appointee receipt or acknowledgment of the issued Appointment;
+- failure to assume or lawful pre-assumption cancellation evidence.
+
+CSC approval or validation is not a prerequisite for oath, Assumption to Duty, salary entitlement, or service activation. After issuance, external CSC tracking and oath or assumption may advance independently. Corrections shall preserve the former oath or assumption version, reason, authority, evidence, and dependent recalculation. The conflicting national oath-copy deadline shall remain a Configurable Placeholder while both oath and assumption dates and the actual submission event are preserved.
+
+The period to assume shall run from evidenced receipt of the issued Appointment. `DID_NOT_ASSUME` requires the applicable notice, authority, dates, and evidence; any exception must come from configured authority rather than inference.
 
 ## APP-006 Employee creation
 
-An issued appointment and assumption shall create or activate the employee service segment and occupy the plantilla item.
+Only Appointment's immutable Assumed Appointment Contract shall activate an Employee and Service Segment through Personnel and create Position Incumbency through Plantilla. The owning application services shall apply the handoff idempotently and atomically, then Recruitment may close the Recruitment Case. Selection or issuance alone shall not create service or occupancy.
+
+A later adverse CSC action shall remain external history and route to the applicable evidence-backed personnel-action or separation contract. It shall not erase service already rendered or rewrite the Selection Decision, issued Appointment, oath, or assumption.
 
 ---
 
@@ -552,7 +595,10 @@ The MVP shall support:
 
 - authorized manual time entry;
 - employee web clock-in and clock-out when enabled;
-- HR-entered official business, travel, training, and approved absence records.
+- immutable HR-entered Attendance Context for already-authorized official business, official travel, training, and approved non-leave absence;
+- posted leave supplied by the Leave domain without copying the Leave Application into Attendance.
+
+Attendance Context shall not introduce another approval workflow. An authorized HR Administrator records the covered Work Date or exact interval, reason, recorder, and linked source record or supporting Document Version. Attendance Correction is the approval path for adding, replacing, or voiding an Attendance Event or Attendance Context.
 
 The MVP shall not support biometric-device integrations or biometric export-file imports.
 
@@ -560,45 +606,64 @@ The MVP shall not support biometric-device integrations or biometric export-file
 
 The system shall support:
 
-- regular schedules;
-- flexible work schedules;
-- compressed workweek where authorized;
-- shifting schedules;
-- work-from-home or hybrid arrangements;
-- field work and official business;
-- rest days and holidays;
-- effective-dated assignments.
+- a dedicated Attendance configuration section for reusable Work Schedules and their immutable, effective-dated versions;
+- seven Day Rules per Work Schedule Version, with fixed or flexible duty, rest days, required whole minutes, unpaid breaks, and event-collection windows;
+- regular, authorized flexible, compressed, daytime, overnight, and shifting schedules through the same Day Rule model;
+- Work Arrangement Versions that define the authorized place or operating mode separately from expected duty intervals;
+- non-overlapping Schedule Assignments that bind eligible Appointed Personnel to one Work Schedule Version and one Work Arrangement Version for an effective period;
+- stable, scoped Holiday Calendars with immutable effective-dated versions and categorized source issuances;
+- explicit authority evidence for activated schedule, arrangement, calendar, and assignment records.
+
+A duty or break interval may end on the next calendar day. Its Work Date is the local date on which the duty interval begins in the Work Schedule Version's time zone. The system shall seed an authority-backed ordinary Work Schedule Version but shall not silently use it when an explicit Schedule Assignment is missing.
 
 ## ATT-003 Raw time events
 
-Original time events shall remain immutable. Corrections shall be stored separately.
+Original time events shall remain immutable. Raw event types are `TIME_IN`, `BREAK_OUT`, `BREAK_IN`, and `TIME_OUT`; AM In, AM Out, PM In, and PM Out are ordinary daytime DTR presentation slots rather than source-event types. Corrections shall be stored separately and may add, replace, or void a source event without deleting it.
 
 ## ATT-004 DTR
 
-The system shall generate a Daily Time Record view and printable report from approved attendance data.
+The system shall generate:
+
+- an explicitly unfinalized Daily Time Record Preview from an Employee's current approved Attendance Day versions;
+- one immutable Finalized Daily Time Record per Employee from each locked Attendance Period Version; and
+- an Exact Versioned Form only when a supported national or agency-approved template version and its authority evidence are configured.
+
+The ordinary printable DTR is a Printable System View and shall not imply a universal official form. A corrected successor shall create a new retained DTR linked to its predecessor. Each printable output shall identify its Attendance Period, version, original or corrected classification, lock timestamp, and applicable authoritative template revision. Full source-version lineage shall remain available from the record and audit history.
 
 ## ATT-005 Attendance calculations
 
 The system shall calculate:
 
-- hours rendered;
-- tardiness;
-- undertime;
-- absence;
-- incomplete time entries;
-- official business;
-- leave;
-- overtime candidate hours;
-- compensatory time candidate hours;
-- schedule and work-arrangement compliance.
+- expected-duty, worked, covered, and outside-schedule minutes;
+- mutually exclusive tardiness, undertime, and absence minutes without double-counting an Attendance Deficit;
+- official business, official travel, training, approved non-leave absence, and posted-leave coverage;
+- incomplete, duplicate, out-of-order, unmatched, and ambiguous time events as blocking Attendance Exceptions;
+- holiday and work-arrangement classification from the exact effective versions;
+- factual outside-schedule and statutory-night-window minutes without treating them as authorized overtime, COC, night differential, or compensation.
+
+Calculations shall use exact whole minutes without a default grace period or timestamp rounding. One immutable Attendance Day calculation version shall preserve its governing service applicability, Schedule Assignment, Work Schedule Version, Work Arrangement Version, Holiday Calendar Version, source records, rules, and non-overlapping Attendance Day Segments. Missing or conflicting authoritative input shall fail closed as an Attendance Exception.
+
+For flexible duty, the first qualifying worked or Attendance Context minute within the permitted start window shall anchor the expected interval; earlier coverage clamps to the earliest start, later coverage uses the latest start and produces tardiness, and no coverage uses the latest start only to place the required absent minutes. Scheduled unpaid breaks remain outside expected duty. A fully uncovered expected Work Date is absence; otherwise leading, trailing, and internal uncovered minutes are tardiness, undertime, and absence respectively.
 
 ## ATT-006 Correction workflow
 
-Employees may request a correction with date, requested values, reason, and evidence. Supervisor or HR approval shall be required.
+An Employee may submit an Attendance Correction for their own record, and an HR Administrator may submit one within assigned scope with an on-behalf reason and evidence. Each request shall preserve the subject, initiator, recorder, exact target or proposed source fact, `ADD`, `REPLACE`, or `VOID` values, reason, immutable evidence references, resolved Approval Route Version, and Attendance Correction Impact Preview.
+
+An HR Officer shall review the factual correction and shall not be the subject, initiator, recorder, or effect applier. Approval and application against an open period shall occur atomically against the previewed source versions. A post-lock correction shall additionally require authorization by a different HR Administrator before it creates one grouped Locked Attendance Adjustment across every affected Attendance Day or Attendance Period. Any intervening source change shall require a refreshed preview and approval.
+
+Applying a correction shall preserve the original source, create an immutable Attendance Correction Effect, and recalculate every affected Work Date, including both sides of a changed event-window or period boundary. A resulting Attendance Exception shall block later period review without undoing the approved factual correction.
 
 ## ATT-007 Period locking
 
-Attendance periods used in payroll shall be lockable. Changes after payroll shall create an adjustment process.
+An Employee Attendance Submission shall bind one Employee's exact Attendance Day versions within an Attendance Period. An HR Officer may return or approve the submission; recalculation makes it stale. Every covered Employee shall have an approved submission, including a reasoned and evidenced on-behalf submission where permitted, before period review.
+
+Submitting an Attendance Period for review shall create an immutable Attendance Period Version containing the complete applicable Employee and Work Date population and the exact approved Attendance Day versions. Versions shall progress through `FOR_REVIEW`, `APPROVED`, `RETURNED`, or `LOCKED`; Attendance Days shall not carry period review, lock, or adjustment states. A returned version shall remain immutable. A locked version shall never reopen or be overwritten.
+
+An HR Officer shall approve an Attendance Period Version, and a different HR Administrator shall lock it. Lock shall fail closed unless Attendance Period Reconciliation proves complete applicability, current approved submissions and Attendance Day versions, no unresolved exceptions or corrections, unchanged source bindings, valid routed authority, and matching DTR and payroll-publication counts and minute totals.
+
+Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects.
+
+A Locked Attendance Adjustment shall create and lock a complete successor Attendance Period Version rather than reopen its predecessor. Its adjustment publication shall link the predecessor, omit unchanged facts, and state each changed fact's prior value, corrected value, and nonnegative `INCREASE` or `DECREASE` difference. Outside-schedule and statutory-night-window minutes shall remain separate factual candidate-hours handoffs to Overtime and COC processing.
 
 ---
 
@@ -606,7 +671,22 @@ Attendance periods used in payroll shall be lockable. Changes after payroll shal
 
 ## LEA-001 Government leave types
 
-The system shall support configurable government leave categories, including:
+The system shall support agency-scoped Leave Types governed by immutable,
+effective-dated Leave Policy Versions. A policy version shall use fixed,
+validated evaluator kinds and typed parameters rather than administrator-authored
+formulas. It shall bind applicable national rules, evidence-backed Agency
+configuration, authority references, personnel applicability, evidence
+requirements, and these category capabilities:
+
+- entitlement basis: accrued account, periodic allowance, qualifying event, or
+  non-credit authorization;
+- calendar basis: working day, calendar day, scheduled time, or a duration
+  prescribed by the governing source;
+- the credited or charged Leave Type, where one category affects another
+  category's Leave Account; and
+- accumulation, expiration, forfeiture, and conversion behavior.
+
+The supported catalogue shall include:
 
 - vacation leave;
 - sick leave;
@@ -624,43 +704,275 @@ The system shall support configurable government leave categories, including:
 - other leave under law or CSC issuance;
 - leave without pay.
 
+Coverage shall follow the applicable authority profile. The system shall not
+apply ordinary civilian NGA vacation and sick leave rules to teachers,
+special-law personnel, JO/COS Workers, or other excluded categories without an
+applicable source. Missing, ambiguous, or conflicting authority shall produce
+an `INDETERMINATE` result rather than an assumed entitlement.
+
 ## LEA-002 Leave-credit ledger
 
-Vacation and sick leave credits shall use a ledger containing:
+Vacation and sick leave credits shall use one Leave Account per Employee,
+credit-bearing Leave Type, and continuous agency-employment entitlement period.
+Separation closes the account after its required postings; reemployment opens a
+new account from zero or from an evidence-backed opening or transfer source.
 
-- opening balance;
-- earned credits;
-- deduction;
-- restoration;
-- adjustment;
-- monetization;
-- terminal leave;
-- forfeiture or expiration where applicable;
-- source and rule version.
+The posted balance shall be the sum of signed, immutable Leave Ledger Entries.
+Each entry shall contain the account, quantity, effective date, unique source
+posting key, governing Leave Policy Version, posting actor and time, and an
+original-entry reference when it reverses a posting. The authoritative source,
+not a ledger entry-type enum, shall identify whether a posting arose from an
+opening balance, accrual, leave use, restoration, transfer, monetization,
+terminal event, forfeiture, or authorized adjustment.
+
+Posted entries shall never be edited. A reversal shall exactly negate its
+original entry in the same account. An adjustment shall require authority,
+evidence, and a reason. Balance-sensitive posting shall lock the account,
+recalculate availability, reject overspending, enforce source idempotency, and
+commit atomically.
+
+The balance contract shall distinguish:
+
+- posted balance as of an effective date and ledger knowledge cutoff;
+- active Leave Credit Commitments, which never enter the ledger; and
+- currently available credits after those commitments and the transaction under
+  review.
+
+Ordinary vacation and sick leave rules, category-specific units, transfers,
+restorations, forfeitures, and Agency configuration boundaries are documented in
+[the authoritative leave research](research/authoritative-leave-credit-and-mandatory-leave-rules.md).
 
 ## LEA-003 Leave application
 
-The workflow shall capture the information required for the applicable government leave form and agency approval process.
+The Leave Application shall be a stable Agency-scoped case. Its mutable initial
+draft becomes an immutable Leave Application Version at each submission or
+material resubmission. A submitted version shall preserve the typed request
+facts required by the applicable government form and Agency process, including
+the Leave Type, requested date ranges, source-prescribed unit, policy-relevant
+details, commutation choice where applicable, and Employee declarations.
+
+Each submitted version shall bind the exact applicable form-template Document
+Version, exact supporting Document Versions, one Leave Submission Attestation,
+one accepted Leave Eligibility Assessment, and one effective Approval Route
+Version. Authenticated Employee submission is an attestation. An authorized
+administrator may record an externally signed application only by linking the
+exact signed Document Version and separately recording the Employee, recorder,
+submission method, and received time; the administrator shall not impersonate
+the Employee or supply a missing signature.
+
+Required supporting evidence shall come from applicable national authority or
+evidence-backed Agency configuration. The Leave domain shall keep typed core
+facts and validated policy-specific details rather than treating an opaque form
+payload as the authoritative application. Immutable Leave Calculation Segments
+shall record the policy, schedule, holiday, unit, and quantity applied to each
+effective portion of the request, separate from any Leave Account debit.
+
+Eligibility evaluation shall return `ELIGIBLE`, `INELIGIBLE`, or
+`INDETERMINATE` with the applicable rule results, input facts, missing facts,
+authority references, and calculation segments. Drafts may be saved with
+deficiencies, but submission validation, credit certification, approval, and
+posting shall fail closed when a required policy, schedule, holiday, or authority
+fact is missing or ambiguous.
+
+Each requested date shall use the policy, schedule, and holiday versions
+effective on that date. A submitted evaluation snapshot shall list every
+contributing version. Later configuration changes shall not silently change an
+accepted result. A change to a submitted Leave Type, period, quantity, unit,
+policy-relevant detail, commutation choice, declaration, required evidence,
+accepted assessment, or route binding shall create a new Leave Application
+Version and restart evaluation, certification, and routing. Reviewer comments,
+task assignment, notification delivery, and display-only corrections remain
+Audit Events and do not create a new version.
+
+Structured Leave records are authoritative. Generated and uploaded official
+forms are immutable Document Versions linked to the exact application stage.
+Electronic or digital signatures shall be claimed only under an evidenced
+Agency signature contract.
 
 ## LEA-004 Certification of leave credits
 
-HR shall certify available credits as of the applicable date.
+HR shall create an immutable Leave Credit Certification for the application and
+Leave Application Version. It shall preserve the effective balance date, ledger
+knowledge cutoff, posted balance, active Leave Credit Commitments, current
+application quantity, resulting available credits, exact Leave Eligibility
+Assessment, and certifying actor and time. Certification shall atomically create
+the application commitments while locking the affected Leave Accounts.
+
+A certification remains a permanently valid historical attestation. Its current
+authority for approval and posting shall be derived from the continued validity
+of its application version, assessment, commitments, and accounts. A new
+application version or assessment, a released or replaced commitment other than
+an authorized smaller successor, or a frozen or closed account shall require
+recertification or block progression. A later transaction that honors the active
+commitment shall not cause blanket recertification, and a later backdated entry
+may change a newly reconstructed balance but shall not rewrite a historical
+certification.
 
 ## LEA-005 Approval
 
-Approval routing shall support supervisor recommendation, HR certification, and authorized approving official.
+Submission shall resolve one effective Approval Route Version. Shared Approval
+Routes own task ordering, assignments, delegation, and immutable Approval
+Decisions; Leave owns eligibility, certification validity, commitment state,
+self-approval prevention, and posting readiness. A route change shall not alter
+an in-flight application. An authorized reroute shall create a new Leave
+Application Version, release the old commitments, and require recertification.
+
+HR certification attests credit facts but does not approve leave. A Supervisor's
+immutable Leave Recommendation is advisory and proceeds to the authorized
+approving official even when negative unless an evidenced route says otherwise.
+The final official may approve the full request, approve an exact subset through
+a Leave Approval Allocation, or reject it. The Leave Policy Version bound to
+each calculation segment authorizes the allocation kind: a charging policy
+approves against its certified account and classifies only the quantity the
+account cannot cover as leave without pay; a paid policy outside the ledger is
+non-credit, and an unpaid policy is leave without pay. The allocation shall not
+add dates, increase quantity, change the Leave Type, charge a different account
+than the bound policy, move credit-covered quantity to unpaid leave, or
+otherwise rewrite Employee-submitted facts.
+
+Partial approval may atomically release a certified commitment and create a
+linked successor for a smaller approved quantity without recertification. Any
+increase, account substitution, policy change, or other replacement requires a
+new application version and recertification. Rejection releases commitments.
+Commitments shall not silently expire; any expiry requires authoritative policy
+or evidence-backed Agency configuration.
+
+Posting shall be a separate, atomic, idempotent Leave-owned command. It shall
+revalidate the exact approved application version, assessment, certification,
+commitments, allocation, and Approval Decisions while locking affected accounts;
+then create every required source-linked ledger entry, Attendance input, Payroll
+Input, Audit Event, and outbox record through owning application services. It
+shall consume the active commitments and mark the application posted only when
+all authoritative effects commit. Failure shall roll back all effects and leave
+the application approved for a recorded retry.
+
+An Employee may withdraw a submitted but unapproved application, cancelling
+unfinished route work and releasing commitments. An administrator may record an
+evidenced Employee withdrawal but shall not originate one. Cancellation after
+approval requires a separate Leave Cancellation with its exact scope, reason,
+evidence, Approval Route Version, decisions, and effect state. Whole and
+policy-permitted partial cancellation are supported; neither may add or
+substitute leave.
+
+For posted leave, whole cancellation creates exact linked ledger reversals.
+Partial cancellation fully reverses each affected original entry and creates
+replacement entries for the retained effect, using the original effective dates
+and later posting times. Leave shall obtain idempotent Attendance and Payroll
+correction handoffs through their owning services. Unlocked attendance may be
+recalculated; locked attendance requires its correction or adjustment contract.
+Pending Payroll Inputs may be cancelled or replaced; consumed inputs require a
+linked adjustment, and finalized payroll remains immutable.
+
+Cancellation approval and effect application are separate facts. The application
+shall project `CANCELLED` only after one atomic command creates every required
+reversal or owner handoff. A failed command shall leave the cancellation approved,
+the original posting effective, and a truthful retryable or blocking failure.
+Accepted downstream adjustments may remain pending and shall be shown as such.
 
 ## LEA-006 Mandatory leave
 
-The system shall identify employees subject to mandatory or forced leave based on applicable balances and policy.
+For the ordinary civilian NGA profile, the system shall apply the authoritative
+five-working-day mandatory or forced leave rule to Employees whose vacation
+leave credits reached ten during the calendar year. The system shall preserve a
+material Mandatory Leave Assessment containing its as-of policy, balance basis,
+qualifying leave, result, and explanation.
+
+A resulting obligation shall be fulfilled by ordinary vacation leave posted
+against the vacation Leave Account, whether filed as vacation leave or as
+mandatory or forced leave. It shall not create a separate balance or workflow.
+Phase 7 does not post forfeiture of unused mandatory days; any later forfeiture
+shall require its own authoritative source posting and shall never be inferred
+from an assessment or alert.
 
 ## LEA-007 Monetization
 
-The system shall support a request, eligibility validation, funding/authority review, approval, payroll input, and ledger deduction.
+The system shall keep one stable Leave Monetization Request with immutable
+submitted versions. A version shall preserve the Employee's attestation or an
+administrator-recorded signed Document Version, exact requested allocations by
+Leave Account, applicable Leave Policy and authority versions, supporting
+evidence, and Approval Route Version. Ordinary monetization shall draw only from
+vacation leave; special monetization may allocate across vacation and sick leave
+only as the applicable authority permits.
+
+Leave shall create an explainable Monetization Eligibility Assessment and an HR
+credit certification for the exact request version. Certification shall lock all
+affected accounts, recheck posted balances and active commitments, and create one
+Leave Credit Commitment per allocation. A separate immutable Monetization
+Funding Determination shall bind the Budget review, funding source, applicable
+fiscal authority, and exact evidence. Missing or conflicting eligibility,
+valuation-date, allocation, salary-component, rounding, funding, approval, or
+authority facts shall produce `INDETERMINATE` and block approval or posting.
+
+The subject or recorder shall not certify, review funding, approve, or post the
+request. The HR credit certifier, Budget funding reviewer, final approver, and
+posting executor shall be different people unless a controlling authority
+expressly establishes another arrangement. The authorized final decision shall
+bind the exact request version, current assessment, certification, funding
+determination, commitments, and Approval Decisions. A partial approval may only
+replace commitments with linked, smaller allocations against the same accounts.
+
+Withdrawal, rejection, material return, supersession, invalid eligibility, or
+invalid funding shall release active commitments. Commitments shall not expire
+silently. Approval shall not change the ledger or create a Payroll Input.
+
+Posting shall be a separate atomic and idempotent Leave-owned command. Leave
+shall call Payroll with an authority-bound input containing the Employee, exact
+request version and posting, approved account allocations and total credits,
+stable effect key, effective valuation date, fixed calculator kind and factor,
+applicable policy and authority Document Versions, funding determination, final
+Approval Decisions, and required salary-basis semantics. It shall not supply a
+free-form salary or payout amount.
+
+Payroll shall resolve the authoritative salary source, perform the fixed
+calculation, apply evidence-backed rounding configuration, and freeze its inputs
+and amount in an immutable Monetization Earning Input. Payroll shall return
+`ACCEPTED`, matching `ALREADY_ACCEPTED`, `REJECTED`, or `RETRYABLE_FAILURE`.
+Leave shall commit source-owned negative Leave Ledger Entries, commitment
+consumption, request status, audit, and outbox records only with an accepted
+Payroll result. Otherwise the approved request shall retain no ledger deduction
+and expose its blocking or retryable result.
+
+An authorized Monetization Adjustment shall preserve exact scope, reason,
+evidence, route, and decisions. A pending Payroll Input may be cancelled or
+replaced. A consumed input requires Payroll's linked adjustment contract, and a
+finalized payroll result shall never be edited. Leave shall restore credits only
+when Payroll accepts the correction handoff. Whole adjustment shall exactly
+reverse every original ledger entry; partial adjustment shall fully reverse each
+affected original entry and post replacements for retained quantities. A failed
+or rejected handoff shall leave the original posting effective, while duplicate
+retries return the original accepted result through stable effect keys.
+
+The unresolved solo-parent forfeiture and cash-conversion conflict shall create
+no automatic cash liability. A controlling authority or an evidence-backed
+greater benefit must expressly support any such conversion.
 
 ## LEA-008 Terminal leave
 
-The system shall preserve data required for a later terminal-leave computation, but full retirement-benefit computation is outside MVP.
+After a qualifying Separation takes effect and all required Leave postings
+through the last service date are complete, Separation may request terminal-leave
+input preservation. Leave shall create an immutable Terminal Leave Input
+Assessment. An `INDETERMINATE` assessment shall retain every missing or
+conflicting fact and create no consumable snapshot.
+
+A `READY` assessment shall create an immutable Terminal Leave Input Snapshot
+that binds the exact Separation record and version, separation classification
+and effective date, referenced service-period facts, vacation and sick Leave
+Accounts, posted balances as of the effective separation or last service date,
+ledger-knowledge cutoff, applicable policy and authority versions, clearance and
+supporting Document Versions, and the exact highest-monthly-salary source
+reference verified by its owning module.
+
+Leave shall return the stable snapshot reference to Separation. Separation shall
+record acceptance, duplicate acceptance, rejection, or retryable technical
+failure without taking ownership of Leave facts. A corrected or backdated source
+shall create a reasoned successor assessment and, when ready, a successor
+snapshot. Historical snapshots shall never be rewritten.
+
+A Terminal Leave Input Snapshot shall not close a Leave Account, create a Leave
+Ledger Entry, authorize payment, calculate a terminal benefit, or create a
+Payroll Input. Account closure remains part of the separation-driven Leave
+posting sequence. Full terminal-leave benefit calculation and payment are
+outside MVP and remain future Payroll and Separation responsibilities.
 
 ---
 
@@ -1205,18 +1517,18 @@ The public-sector MVP is acceptable when an agency can:
 
 # 28. Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| Treating all public agencies as identical | Incorrect workflows | Agency profiles and a defined first pilot |
-| Outdated CSC or DBM rule | Invalid transaction | Effective-dated policies and formal update process |
-| Incomplete plantilla data | Invalid appointment or payroll | Position reconciliation and migration validation |
-| Appointment-document error | CSC return or invalidation | Completeness checks and human review |
-| Payroll rule error | Financial and audit exposure | Regression tests, certification, and immutable finalization |
-| Excessive scope | Delayed MVP | Phased modules and explicit exclusions |
-| Sensitive-record breach | Legal and trust impact | Least privilege, MFA, encryption, and audit |
-| AI-generated error | Incorrect HR action | Draft-only output and human approval |
-| Agency-specific legacy process | Adoption difficulty | Configurable workflows without arbitrary scripting |
-| Regulatory integration expectation | Deployment delay | Export-first boundary and later official integration |
+| Risk                                      | Impact                         | Mitigation                                                  |
+| ----------------------------------------- | ------------------------------ | ----------------------------------------------------------- |
+| Treating all public agencies as identical | Incorrect workflows            | Agency profiles and a defined first pilot                   |
+| Outdated CSC or DBM rule                  | Invalid transaction            | Effective-dated policies and formal update process          |
+| Incomplete plantilla data                 | Invalid appointment or payroll | Position reconciliation and migration validation            |
+| Appointment-document error                | CSC return or invalidation     | Completeness checks and human review                        |
+| Payroll rule error                        | Financial and audit exposure   | Regression tests, certification, and immutable finalization |
+| Excessive scope                           | Delayed MVP                    | Phased modules and explicit exclusions                      |
+| Sensitive-record breach                   | Legal and trust impact         | Least privilege, MFA, encryption, and audit                 |
+| AI-generated error                        | Incorrect HR action            | Draft-only output and human approval                        |
+| Agency-specific legacy process            | Adoption difficulty            | Configurable workflows without arbitrary scripting          |
+| Regulatory integration expectation        | Deployment delay               | Export-first boundary and later official integration        |
 
 ---
 
@@ -1239,18 +1551,18 @@ The reference baseline must be revalidated before production and whenever an iss
 
 # 30. Approval
 
-| Role | Name | Decision | Date |
-|---|---|---|---|
-| Product Owner |  | Pending |  |
-| Government HR / HRMO Reviewer |  | Pending |  |
-| Payroll / Accounting Reviewer |  | Pending |  |
-| Technical Owner |  | Pending |  |
-| Privacy / Security Reviewer |  | Pending |  |
+| Role                          | Name | Decision | Date |
+| ----------------------------- | ---- | -------- | ---- |
+| Product Owner                 |      | Pending  |      |
+| Government HR / HRMO Reviewer |      | Pending  |      |
+| Payroll / Accounting Reviewer |      | Pending  |      |
+| Technical Owner               |      | Pending  |      |
+| Privacy / Security Reviewer   |      | Pending  |      |
 
 ---
 
 # 31. Change Log
 
-| Version | Date | Description |
-|---|---|---|
-| 1.0 | August 5, 2026 | Reframed the product as a Philippine public-sector HRIS and replaced private-sector assumptions |
+| Version | Date           | Description                                                                                     |
+| ------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| 1.0     | August 5, 2026 | Reframed the product as a Philippine public-sector HRIS and replaced private-sector assumptions |

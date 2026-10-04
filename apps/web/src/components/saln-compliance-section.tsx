@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useRecordNavigation } from './record-navigation';
+
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -12,7 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-import { employeeInputClass, employeeLabelClass, formatEmployeeDate } from './employee-directory';
+import { formatEmployeeDate } from './employee-directory';
+import { FormError, inputClass, labelClass } from './ui/field';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 
 interface SalnRecord {
   id: string;
@@ -45,6 +52,12 @@ const emptyValues = {
   repositoryReference: '',
   acknowledgment: '',
   reason: '',
+};
+
+const filingTone: Record<string, StatusTone> = {
+  NOT_SUBMITTED: 'neutral',
+  SUBMITTED: 'info',
+  ACKNOWLEDGED: 'success',
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -126,6 +139,7 @@ export function SalnComplianceSection({
   const [selected, setSelected] = useState<SalnRecord | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(canRead);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh(): Promise<void> {
@@ -135,8 +149,10 @@ export function SalnComplianceSection({
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(errorMessage(body));
       setItems(parseRecords(body));
+      setLoadFailed(false);
       setError(null);
     } catch (caught: unknown) {
+      setLoadFailed(true);
       setError(
         caught instanceof Error ? caught.message : 'SALN compliance records could not be loaded.',
       );
@@ -148,6 +164,33 @@ export function SalnComplianceSection({
   useEffect(() => {
     void refresh();
   }, [endpoint, canRead]);
+
+  const navigation = useRecordNavigation();
+  const salnId = navigation.search.get('saln');
+  const salnHistory = navigation.search.get('salnHistory') === 'true';
+  const historyRequest = useRef(0);
+  useEffect(() => {
+    historyRequest.current += 1;
+    setBusy(false);
+    if (!salnId && !salnHistory) {
+      setOpen((current) => (current === 'detail' || current === 'history' ? null : current));
+      return;
+    }
+    if (loading) return;
+    if (salnHistory) {
+      if (canReadHistory) begin('history');
+      else setError('SALN history is outside your permitted scope.');
+      return;
+    }
+    const record = items.find((item) => item.id === salnId);
+    if (!record) {
+      setError('This SALN record is missing or outside your permitted scope.');
+      setSelected(null);
+      setOpen(null);
+      return;
+    }
+    begin('detail', record);
+  }, [salnId, salnHistory, loading, canReadHistory]);
 
   async function loadEvidence(): Promise<void> {
     if (!canReadEvidence || !employeeId || evidence.length > 0) return;
@@ -179,17 +222,22 @@ export function SalnComplianceSection({
     setOpen(kind);
     if (kind === 'create' || kind === 'update' || kind === 'correct') void loadEvidence();
     if (kind === 'history') {
+      const requestId = ++historyRequest.current;
+      setHistory([]);
       setBusy(true);
       void fetch(`${endpoint}/history`, { credentials: 'include' })
         .then(async (response) => {
           const body: unknown = await response.json().catch(() => null);
           if (!response.ok) throw new Error(errorMessage(body));
-          setHistory(parseRecords(body));
+          if (requestId === historyRequest.current) setHistory(parseRecords(body));
         })
-        .catch((caught: unknown) =>
-          setError(caught instanceof Error ? caught.message : 'History could not be loaded.'),
-        )
-        .finally(() => setBusy(false));
+        .catch((caught: unknown) => {
+          if (requestId === historyRequest.current)
+            setError(caught instanceof Error ? caught.message : 'History could not be loaded.');
+        })
+        .finally(() => {
+          if (requestId === historyRequest.current) setBusy(false);
+        });
     }
   }
 
@@ -205,116 +253,155 @@ export function SalnComplianceSection({
 
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
-    const selectedEvidence = evidence.find(
-      ({ documentId, documentVersionId }) =>
-        `${documentId}:${documentVersionId}` === values.acknowledgment,
-    );
-    const payload = {
-      requirementReference: values.requirementReference,
-      filingYear: Number(values.filingYear),
-      filingType: values.filingType,
-      status: values.status,
-      submittedAt: dateTime(values.submittedAt),
-      repositoryReference: values.repositoryReference || null,
-      acknowledgmentDocumentId: selectedEvidence?.documentId ?? null,
-      acknowledgmentDocumentVersionId: selectedEvidence?.documentVersionId ?? null,
-      ...(open === 'correct' ? { reason: values.reason } : {}),
-    };
-    const transitionEndpoint =
-      selected && (open === 'correct' || open === 'update')
-        ? `${endpoint}/${selected.id}/${open}`
-        : endpoint;
-    const response = await fetch(transitionEndpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload),
-    });
-    const body: unknown = await response.json().catch(() => null);
-    if (response.ok) {
-      setOpen(null);
-      await refresh();
-    } else setError(errorMessage(body));
-    setBusy(false);
+    setError(null);
+    try {
+      const selectedEvidence = evidence.find(
+        ({ documentId, documentVersionId }) =>
+          `${documentId}:${documentVersionId}` === values.acknowledgment,
+      );
+      const payload = {
+        requirementReference: values.requirementReference,
+        filingYear: Number(values.filingYear),
+        filingType: values.filingType,
+        status: values.status,
+        submittedAt: dateTime(values.submittedAt),
+        repositoryReference: values.repositoryReference || null,
+        acknowledgmentDocumentId: selectedEvidence?.documentId ?? null,
+        acknowledgmentDocumentVersionId: selectedEvidence?.documentVersionId ?? null,
+        ...(open === 'correct' ? { reason: values.reason } : {}),
+      };
+      const transitionEndpoint =
+        selected && (open === 'correct' || open === 'update')
+          ? `${endpoint}/${selected.id}/${open}`
+          : endpoint;
+      const response = await fetch(transitionEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (response.ok) {
+        setOpen(null);
+        await refresh();
+      } else setError(errorMessage(body));
+    } catch {
+      setError('The SALN filing could not be saved. Check the connection and try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!canRead && !canManage) return null;
 
   return (
-    <section
-      className="border-t border-line px-6 py-6 min-[700px]:px-8"
-      aria-labelledby="saln-compliance-heading"
+    <Panel
+      title="SALN filing compliance"
+      flush
+      actions={
+        canReadHistory || canManage ? (
+          <>
+            {canReadHistory ? (
+              <Button
+                variant="secondary"
+                onClick={() => navigation.navigate({ salnHistory: 'true', saln: null })}
+              >
+                History
+              </Button>
+            ) : null}
+            {canManage ? (
+              <Button variant="primary" onClick={() => begin('create')}>
+                Record filing
+              </Button>
+            ) : null}
+          </>
+        ) : null
+      }
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 id="saln-compliance-heading" className="m-0 text-base text-midnight">
-            SALN filing compliance
-          </h2>
-          <p className="mt-1 mb-0 text-xs text-muted">
-            Metadata only. SALN declarations and contents are not stored here.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {canReadHistory ? (
-            <Button variant="secondary" onClick={() => begin('history')}>
-              History
-            </Button>
-          ) : null}
-          {canManage ? <Button onClick={() => begin('create')}>Record filing</Button> : null}
-        </div>
+      <div className="grid gap-3 px-4 pt-3">
+        <p className="m-0 text-small text-ink-muted">
+          Metadata only. SALN declarations and contents are not stored here.
+        </p>
+        {!open ? <FormError message={error ?? ''} /> : null}
       </div>
-      {error && !open ? (
-        <p role="alert" className="text-sm text-[#8f2d2d]">
-          {error}
-        </p>
-      ) : null}
       {loading ? (
-        <p role="status" className="text-sm text-muted">
-          Loading SALN compliance metadata…
-        </p>
+        <StateSurface compact busy>
+          <p role="status" className="m-0">
+            Loading SALN compliance metadata…
+          </p>
+        </StateSurface>
       ) : items.length === 0 ? (
-        <p className="text-sm text-muted">No SALN compliance metadata is recorded.</p>
+        <StateSurface compact>
+          <p className="m-0">
+            {loadFailed
+              ? 'SALN compliance metadata is unavailable.'
+              : 'No SALN compliance metadata is recorded.'}
+          </p>
+        </StateSurface>
       ) : (
-        <div className="mt-4 grid gap-3">
-          {items.map((record) => (
-            <article
-              key={record.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-[4px] border border-line bg-canvas/35 p-4"
-            >
-              <div>
-                <strong className="text-sm text-midnight">
+        <Table className="mt-3">
+          <thead>
+            <tr>
+              <Th>Filing</Th>
+              <Th>Status</Th>
+              <Th>
+                <span className="sr-only">Actions</span>
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((record) => (
+              <Tr key={record.id} selected={record.id === salnId}>
+                <Td className="font-[600] text-ink">
                   {record.filingYear} · {record.filingType}
-                </strong>
-                <p className="mt-1 mb-0 text-xs text-muted">{record.status.replaceAll('_', ' ')}</p>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => begin('detail', record)}>
-                  Details
-                </Button>
-                {canManage ? (
-                  <Button variant="secondary" onClick={() => begin('update', record)}>
-                    Update
-                  </Button>
-                ) : null}
-                {canCorrect ? (
-                  <Button variant="secondary" onClick={() => begin('correct', record)}>
-                    Correct
-                  </Button>
-                ) : null}
-              </div>
-            </article>
-          ))}
-        </div>
+                </Td>
+                <Td>
+                  <StatusTag tone={filingTone[record.status] ?? 'neutral'}>
+                    {record.status.replaceAll('_', ' ')}
+                  </StatusTag>
+                </Td>
+                <Td>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => navigation.navigate({ saln: record.id, salnHistory: null })}
+                    >
+                      Details
+                    </Button>
+                    {canManage ? (
+                      <Button variant="secondary" onClick={() => begin('update', record)}>
+                        Update
+                      </Button>
+                    ) : null}
+                    {canCorrect ? (
+                      <Button variant="secondary" onClick={() => begin('correct', record)}>
+                        Correct
+                      </Button>
+                    ) : null}
+                  </div>
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
       )}
 
       <Dialog
+        presentation="form"
         open={open !== null}
         onOpenChange={(value) => {
-          if (!value && !busy) setOpen(null);
+          if (!value && !busy) {
+            navigation.navigate({ saln: null, salnHistory: null });
+            setOpen(null);
+          }
         }}
       >
-        <DialogContent aria-describedby="saln-dialog-description" size="compact">
+        <DialogContent
+          aria-describedby="saln-dialog-description"
+          className="rounded-none border-x-0 border-b-0"
+        >
           <DialogHeader>
             <div className="grid gap-1.5">
               <DialogTitle>
@@ -341,81 +428,74 @@ export function SalnComplianceSection({
           {open === 'create' || open === 'update' || open === 'correct' ? (
             <form className="contents" onSubmit={submit}>
               <DialogBody className="grid gap-4">
-                {error ? (
-                  <p role="alert" className="m-0 text-sm text-[#8f2d2d]">
-                    {error}
-                  </p>
-                ) : null}
-                <label className={employeeLabelClass}>
+                <FormError message={error ?? ''} />
+                <label className={labelClass}>
                   Authorized requirement reference
                   <input
                     autoFocus
+                    data-autofocus=""
                     required
-                    className={employeeInputClass}
+                    className={inputClass}
                     value={values.requirementReference}
                     onChange={change('requirementReference')}
                   />
                 </label>
                 <div className="grid grid-cols-2 gap-3">
-                  <label className={employeeLabelClass}>
+                  <label className={labelClass}>
                     Filing year
                     <input
                       required
                       type="number"
                       min="1900"
                       max="2200"
-                      className={employeeInputClass}
+                      className={inputClass}
                       value={values.filingYear}
                       onChange={change('filingYear')}
                     />
                   </label>
-                  <label className={employeeLabelClass}>
+                  <label className={labelClass}>
                     Filing type
                     <input
                       required
-                      className={employeeInputClass}
+                      className={inputClass}
                       value={values.filingType}
                       onChange={change('filingType')}
                     />
                   </label>
                 </div>
-                <label className={employeeLabelClass}>
+                <label className={labelClass}>
                   Filing status
-                  <select
-                    className={employeeInputClass}
-                    value={values.status}
-                    onChange={change('status')}
-                  >
+                  <select className={inputClass} value={values.status} onChange={change('status')}>
                     <option value="NOT_SUBMITTED">Not submitted</option>
                     <option value="SUBMITTED">Submitted</option>
                     <option value="ACKNOWLEDGED">Acknowledged</option>
                   </select>
                 </label>
                 {values.status !== 'NOT_SUBMITTED' ? (
-                  <label className={employeeLabelClass}>
+                  <label className={labelClass}>
                     Submission date
                     <input
                       required
                       type="date"
-                      className={employeeInputClass}
+                      className={inputClass}
                       value={values.submittedAt}
                       onChange={change('submittedAt')}
                     />
                   </label>
                 ) : null}
-                <label className={employeeLabelClass}>
+                <label className={labelClass}>
                   Repository reference
                   <input
-                    className={employeeInputClass}
+                    className={inputClass}
                     value={values.repositoryReference}
                     onChange={change('repositoryReference')}
                   />
                 </label>
                 {canReadEvidence ? (
-                  <label className={employeeLabelClass}>
+                  <label className={labelClass}>
                     Acknowledgment evidence
                     <select
-                      className={employeeInputClass}
+                      className={inputClass}
                       value={values.acknowledgment}
                       onChange={change('acknowledgment')}
                     >
@@ -432,12 +512,12 @@ export function SalnComplianceSection({
                   </label>
                 ) : null}
                 {open === 'correct' ? (
-                  <label className={employeeLabelClass}>
+                  <label className={labelClass}>
                     Correction reason
                     <textarea
                       autoFocus
                       required
-                      className={employeeInputClass}
+                      className={inputClass}
                       value={values.reason}
                       onChange={(event) => {
                         const reason = (event.currentTarget as unknown as { value: string }).value;
@@ -453,7 +533,7 @@ export function SalnComplianceSection({
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button type="submit" disabled={busy}>
+                <Button type="submit" variant="primary" disabled={busy}>
                   {busy
                     ? 'Saving…'
                     : open === 'correct'
@@ -466,49 +546,83 @@ export function SalnComplianceSection({
             </form>
           ) : (
             <>
-              <DialogBody className="grid gap-3">
+              <DialogBody className={open === 'history' && !busy ? 'p-0' : 'grid gap-3'}>
                 {error ? (
-                  <p role="alert" className="m-0 text-sm text-[#8f2d2d]">
-                    {error}
-                  </p>
+                  <div className={open === 'history' && !busy ? 'p-5' : undefined}>
+                    <FormError message={error} />
+                  </div>
                 ) : null}
                 {busy ? (
-                  <p role="status">Loading…</p>
-                ) : (
-                  (open === 'history' ? history : selected ? [selected] : []).map((record) => (
-                    <article key={record.id} className="rounded-[4px] border border-line p-4">
-                      <strong>
-                        {record.filingYear} · {record.filingType}
-                      </strong>
-                      <p className="text-sm">Status: {record.status.replaceAll('_', ' ')}</p>
-                      {record.requirementReference ? (
-                        <p className="text-sm">Requirement: {record.requirementReference}</p>
-                      ) : null}
-                      {record.submittedAt ? (
-                        <p className="text-sm">
-                          Submitted: {formatEmployeeDate(record.submittedAt)}
-                        </p>
-                      ) : null}
-                      {record.repositoryReference ? (
-                        <p className="text-sm">
-                          Repository reference: {record.repositoryReference}
-                        </p>
-                      ) : null}
-                      {record.acknowledgmentDocumentVersionId ? (
-                        <p className="break-all text-sm">
-                          Acknowledgment version: {record.acknowledgmentDocumentVersionId}
-                        </p>
-                      ) : null}
-                      {record.correctionReason ? (
-                        <p className="text-sm">Change reason: {record.correctionReason}</p>
-                      ) : null}
-                      <p className="mb-0 text-xs text-muted">
-                        Recorded {formatEmployeeDate(record.createdAt)}
-                        {record.actorDisplayName ? ` by ${record.actorDisplayName}` : ''}
-                      </p>
-                    </article>
-                  ))
-                )}
+                  <p role="status" className="m-0 text-small text-ink-muted">
+                    Loading…
+                  </p>
+                ) : open === 'history' ? (
+                  <Table>
+                    <thead>
+                      <tr>
+                        <Th>Filing</Th>
+                        <Th>Status</Th>
+                        <Th>Requirement</Th>
+                        <Th kind="date">Submitted</Th>
+                        <Th>Repository reference</Th>
+                        <Th>Acknowledgment version</Th>
+                        <Th>Change reason</Th>
+                        <Th>Recorded</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.map((record) => (
+                        <Tr key={record.id}>
+                          <Td className="font-[600] text-ink">
+                            {record.filingYear} · {record.filingType}
+                          </Td>
+                          <Td>{record.status.replaceAll('_', ' ')}</Td>
+                          <Td>{record.requirementReference}</Td>
+                          <Td kind="date">
+                            {record.submittedAt ? formatEmployeeDate(record.submittedAt) : null}
+                          </Td>
+                          <Td>{record.repositoryReference}</Td>
+                          <Td className="break-all">{record.acknowledgmentDocumentVersionId}</Td>
+                          <Td>{record.correctionReason}</Td>
+                          <Td>
+                            {formatEmployeeDate(record.createdAt)}
+                            {record.actorDisplayName ? ` by ${record.actorDisplayName}` : ''}
+                          </Td>
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                ) : selected ? (
+                  <dl className="m-0 grid gap-4">
+                    {(
+                      [
+                        ['Filing', `${selected.filingYear} · ${selected.filingType}`],
+                        ['Status', selected.status.replaceAll('_', ' ')],
+                        ['Requirement', selected.requirementReference],
+                        [
+                          'Submitted',
+                          selected.submittedAt ? formatEmployeeDate(selected.submittedAt) : null,
+                        ],
+                        ['Repository reference', selected.repositoryReference],
+                        ['Acknowledgment version', selected.acknowledgmentDocumentVersionId],
+                        ['Change reason', selected.correctionReason],
+                        [
+                          'Recorded',
+                          `${formatEmployeeDate(selected.createdAt)}${
+                            selected.actorDisplayName ? ` by ${selected.actorDisplayName}` : ''
+                          }`,
+                        ],
+                      ] as const
+                    )
+                      .filter(([, value]) => value)
+                      .map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="text-caption text-ink-muted">{label}</dt>
+                          <dd className="m-0 break-words text-body font-[600] text-ink">{value}</dd>
+                        </div>
+                      ))}
+                  </dl>
+                ) : null}
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
@@ -519,6 +633,6 @@ export function SalnComplianceSection({
           )}
         </DialogContent>
       </Dialog>
-    </section>
+    </Panel>
   );
 }

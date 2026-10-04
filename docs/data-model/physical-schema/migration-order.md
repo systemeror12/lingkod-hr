@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Purpose
 
 This document defines the dependency-safe migration sequence for the Philippine Public-Sector HRIS physical schema.
@@ -224,21 +223,40 @@ Create:
 
 1. `work_schedules`
 2. `work_schedule_versions`
-3. `work_arrangements`
-4. `schedule_assignments`
+3. `work_schedule_day_rules`
+4. `work_schedule_break_intervals`
 5. `holiday_calendars`
-6. `holidays`
-7. `attendance_periods`
-8. `attendance_events`
-9. `attendance_days`
-10. `attendance_exceptions`
-11. `attendance_corrections`
+6. `holiday_calendar_versions`
+7. `holiday_calendar_entries`
+8. `work_arrangements`
+9. `work_arrangement_versions`
+10. `schedule_assignments`
+11. `attendance_periods`
+12. `employee_attendance_submissions`
+13. `attendance_period_versions`
+14. `attendance_events`
+15. `attendance_contexts`
+16. `attendance_days`
+17. `attendance_day_segments`
+18. `attendance_exceptions`
+19. `employee_attendance_submission_days`
+20. `attendance_period_version_days`
+21. `attendance_corrections`
+22. `attendance_correction_evidence`
+23. `attendance_correction_effects`
+24. `locked_attendance_adjustments`
+25. `locked_attendance_adjustment_periods`
+26. `dtr_documents`
+27. `attendance_payroll_publications`
+28. `attendance_payroll_facts`
 
 Add:
 
 - schedule overlap exclusion constraints;
+- configuration-version immutability and activation checks;
 - attendance current-version unique index;
-- immutable event trigger;
+- immutable event, context, segment, submitted snapshot, locked period version, correction effect, adjustment, DTR, and publication triggers;
+- attendance lock and correction-application transaction checks;
 - RLS and high-volume indexes.
 
 ---
@@ -249,15 +267,26 @@ Create:
 
 1. `leave_types`
 2. `leave_policy_versions`
-3. `leave_accounts`
-4. `leave_ledger_entries`
-5. `leave_applications`
-6. `leave_credit_certifications`
-7. `leave_monetization_requests`
+3. `leave_policy_authorities`
+4. `leave_accounts`
+5. `leave_ledger_entries`
+6. `leave_credit_commitments`
+7. the Leave Application draft, version, period, document, calculation,
+   eligibility, certification, recommendation, allocation, posting, cancellation,
+   and effect tables in `attendance-and-leave-schema.md`
+8. `mandatory_leave_assessments`
+9. the Leave Monetization request, version, allocation, assessment,
+   certification, funding, posting, adjustment, and line tables
+10. the Terminal Leave Input assessment, snapshot, line, and handoff-outcome
+    tables
 
-The `payroll_input_id` FK remains deferred until payroll tables exist.
+Payroll Input identifiers remain application-validated until the Payroll tables
+exist. Separation source identities remain polymorphic and are validated through
+the Separation application service.
 
-Attach immutable trigger to leave ledger.
+Attach immutable triggers to ledger entries, terminal commitments, submitted
+versions, material assessments and determinations, certifications, postings,
+applied adjustments, terminal input snapshots, and append-only handoff outcomes.
 
 ---
 
@@ -304,7 +333,8 @@ Create:
 
 Add deferred FKs:
 
-- leave monetization to payroll input;
+- accepted Leave Monetization and adjustment inputs to Payroll Input where the
+  chosen migration can preserve module ownership;
 - overtime compensation to payroll input;
 - payroll input to domain source remains polymorphic and application-validated.
 

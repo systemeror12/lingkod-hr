@@ -38,11 +38,84 @@ export const separationAuditWriter: SeparationAuditWriter = {
   },
 };
 
+export interface SeparationCaseForTerminalLeaveInput {
+  id: string;
+  employeeId: string;
+  separationType: string;
+  status: string;
+  approvedEffectiveDate: Date | null;
+  effectuatedAt: Date | null;
+  serviceSegmentId: string | null;
+  positionIncumbencyId: string | null;
+  employee: { employeeNumber: string; legalName: string };
+}
+
+export interface EffectiveSeparationCaseForTerminalLeaveInput extends SeparationCaseForTerminalLeaveInput {
+  status: 'EFFECTIVE';
+  approvedEffectiveDate: Date;
+  effectuatedAt: Date;
+}
+
+const separationCaseForTerminalLeaveInputSelect = {
+  id: true,
+  employeeId: true,
+  separationType: true,
+  status: true,
+  approvedEffectiveDate: true,
+  effectuatedAt: true,
+  serviceSegmentId: true,
+  positionIncumbencyId: true,
+  employee: { select: { employeeNumber: true, legalName: true } },
+} as const;
+
+export function isEffectiveSeparationCase(
+  record: SeparationCaseForTerminalLeaveInput,
+): record is EffectiveSeparationCaseForTerminalLeaveInput {
+  return (
+    record.status === 'EFFECTIVE' &&
+    record.approvedEffectiveDate !== null &&
+    record.effectuatedAt !== null
+  );
+}
+
 @Injectable()
 export class SeparationsService {
   constructor(
     @Inject(SEPARATION_AUDIT_WRITER) private readonly auditWriter: SeparationAuditWriter,
   ) {}
+
+  /**
+   * Read-side contract for the Leave-owned Terminal Leave Input preservation.
+   * The caller decides whether the case qualifies and is effective.
+   */
+  async findCaseInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    separationCaseId: string,
+  ): Promise<SeparationCaseForTerminalLeaveInput | null> {
+    return transaction.separationCase.findFirst({
+      where: { agencyId, id: separationCaseId },
+      select: separationCaseForTerminalLeaveInputSelect,
+    });
+  }
+
+  async listEffectiveCasesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+  ): Promise<EffectiveSeparationCaseForTerminalLeaveInput[]> {
+    const records = await transaction.separationCase.findMany({
+      where: {
+        agencyId,
+        status: 'EFFECTIVE',
+        effectuatedAt: { not: null },
+        approvedEffectiveDate: { not: null },
+      },
+      orderBy: [{ effectuatedAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+      select: separationCaseForTerminalLeaveInputSelect,
+    });
+    return records.filter(isEffectiveSeparationCase);
+  }
 
   async requireClearedCaseInTransaction(
     transaction: Prisma.TransactionClient,

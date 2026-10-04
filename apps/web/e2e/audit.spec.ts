@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -6,7 +7,6 @@ async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Pro
   if (!box) throw new Error('The Audit Event dialog geometry was unavailable.');
   expect(box.x).toBeGreaterThanOrEqual(16);
   expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 16);
-  expect(Math.abs(box.x + box.width / 2 - viewportWidth / 2)).toBeLessThanOrEqual(1);
 }
 
 async function expectFocusInside(dialog: Locator): Promise<void> {
@@ -18,6 +18,7 @@ test('reads persisted Agency evidence in a keyboard-safe detail dialog', async (
 }, testInfo) => {
   const code = `AUDIT-${Date.now()}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/audit');
@@ -33,12 +34,16 @@ test('reads persisted Agency evidence in a keyboard-safe detail dialog', async (
 
   await page.goto('/audit');
   await expect(page.getByRole('heading', { name: 'Audit Log' })).toBeVisible();
-  const event = page.getByRole('button').filter({ hasText: 'ORGANIZATION_UNIT_CREATED' }).first();
-  await expect(event).toContainText('None → DRAFT');
+  const row = page.getByRole('row').filter({ hasText: 'ORGANIZATION_UNIT_CREATED' }).first();
+  await expect(row).toContainText('None → DRAFT');
+  const event = row.getByRole('button', { name: 'ORGANIZATION_UNIT_CREATED' });
   await page.screenshot({ path: testInfo.outputPath('list.png'), fullPage: true });
 
   await event.click();
-  const dialog = page.getByRole('dialog', { name: 'Audit Event detail' });
+  const dialog = page.getByRole('region', { name: 'Audit Event detail' });
+  await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(/record=/);
+  await page.reload();
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAccessibleDescription(
     'Inspect persisted evidence from the active Agency Context.',
@@ -58,8 +63,8 @@ test('reads persisted Agency evidence in a keyboard-safe detail dialog', async (
   await page.screenshot({ path: testInfo.outputPath('narrow-modal.png'), fullPage: true });
   await page.keyboard.press('Tab');
   await expectFocusInside(dialog);
-  await page.keyboard.press('Escape');
+  await page.getByRole('link', { name: '← Audit Log', exact: true }).click();
   await expect(dialog).toBeHidden();
-  await expect(event).toBeFocused();
+  await expect(event).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('narrow.png'), fullPage: true });
 });

@@ -789,18 +789,6 @@ This keeps local, CI, and production tooling aligned.
 
 Not every external account is required on the first development day.
 
-## Required before authentication integration
-
-An OpenID Connect-compatible identity provider.
-
-Required values will eventually include:
-
-```text
-OIDC_ISSUER
-OIDC_CLIENT_ID
-OIDC_CLIENT_SECRET
-```
-
 ## Required before AI features
 
 OpenAI API credentials:
@@ -868,12 +856,6 @@ DATABASE_MIGRATION_OWNER_URL
 # Redis
 REDIS_URL
 
-# Authentication
-OIDC_ISSUER
-OIDC_CLIENT_ID
-OIDC_CLIENT_SECRET
-SESSION_SECRET
-
 # Object storage
 S3_ENDPOINT
 S3_REGION
@@ -922,7 +904,6 @@ Examples:
 ```text
 DATA_ENCRYPTION_KEY
 BLIND_INDEX_KEY
-SESSION_SECRET
 ```
 
 Generate development-only random values rather than using memorable strings.
@@ -1269,7 +1250,6 @@ Before handling real HR information:
 - never place real bank details in tests;
 - never expose local PostgreSQL or Redis to the public network;
 - never use production S3 buckets from local development;
-- never use production OIDC credentials locally;
 - rotate any secret accidentally committed;
 - treat Docker group membership as privileged access;
 - keep the system and dependencies updated.

@@ -42,8 +42,6 @@ it.skipIf(!enabled)('hides foreign Audit Events and keeps the store append-only'
   );
   const user = await admin.user.create({
     data: {
-      identityProvider: 'audit-rls-e2e',
-      externalSubject: `audit-rls-${suffix}`,
       emailNormalized: `audit-rls-${suffix}@example.test`,
       displayName: 'Audit RLS User',
       globalStatus: 'ACTIVE',

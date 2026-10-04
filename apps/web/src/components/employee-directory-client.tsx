@@ -2,21 +2,22 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { cn } from '../lib/class-names';
+import { Field, FormError, inputClass } from './ui/field';
 import { Button, buttonVariants } from './ui/button';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { RecordHeader } from './ui/record-header';
+import { SectionTabList, SectionTabPanel, SectionTabs } from './ui/section-tabs';
+import { StatusTag } from './ui/status-tag';
+import { useRecordNavigation } from './record-navigation';
+import { employeeRecordSectionFor, type EmployeeRecordSection } from './employee-record-sections';
 import { EmployeeDocumentsSection } from './employee-documents-client';
 import { GovernmentIdentifiersSection } from './government-identifiers-client';
 import { PayrollBankAccountsSection } from './payroll-bank-accounts-client';
 import { SalnComplianceSection } from './saln-compliance-section';
-import {
-  EmployeeInitials,
-  EmployeePageTitle,
-  EmployeeStatus,
-  employeeInputClass,
-  employeeLabelClass,
-  formatEmployeeDate,
-  titleCase,
-} from './employee-directory';
+import { EmployeeServiceStatus, formatEmployeeDate, titleCase } from './employee-directory';
 
 export interface EmployeeMembershipSummary {
   id: string;
@@ -77,34 +78,41 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setSubmitting(true);
     setError(null);
     setFields({});
-    const response = await fetch(`/api/v1/agencies/${agencyId}/employees`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        ...values,
-        employeeNumber: values.employeeNumber.trim(),
-        legalName: values.legalName.trim(),
-        contactEmail: values.contactEmail.trim(),
-      }),
-    });
-    const value: unknown = await response.json().catch(() => null);
-    if (
-      response.ok &&
-      value &&
-      typeof value === 'object' &&
-      typeof (value as { id?: unknown }).id === 'string'
-    ) {
-      router.push(`/employees/${(value as { id: string }).id}`);
-      return;
+    try {
+      const response = await fetch(`/api/v1/agencies/${agencyId}/employees`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          ...values,
+          employeeNumber: values.employeeNumber.trim(),
+          legalName: values.legalName.trim(),
+          contactEmail: values.contactEmail.trim(),
+        }),
+      });
+      const value: unknown = await response.json().catch(() => null);
+      if (
+        response.ok &&
+        value &&
+        typeof value === 'object' &&
+        typeof (value as { id?: unknown }).id === 'string'
+      ) {
+        router.push(`/employees/${(value as { id: string }).id}`);
+        return;
+      }
+      setSubmitting(false);
+      const envelope = (value ?? {}) as ErrorEnvelope;
+      setFields(envelope.error?.fields ?? {});
+      setError(envelope.error?.message ?? 'The Employee record could not be saved.');
+    } catch {
+      setError('The Employee record could not be saved. Check the connection and try again.');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
-    const envelope = (value ?? {}) as ErrorEnvelope;
-    setFields(envelope.error?.fields ?? {});
-    setError(envelope.error?.message ?? 'The Employee record could not be saved.');
   }
 
   function fieldError(name: string): string | undefined {
@@ -112,134 +120,102 @@ export function EmployeeCreateForm({ agencyId }: { agencyId: string }) {
   }
 
   return (
-    <>
-      <Link
-        href="/employees"
-        className="mb-6 inline-block text-xs font-[650] text-cobalt no-underline"
-      >
-        ← Employee directory
-      </Link>
-      <header className="mb-7">
-        <EmployeePageTitle
-          eyebrow="Personnel records"
-          title="Create preboarding employee"
-          description="Add the stable identity record only. Service and appointment details come later."
-        />
-      </header>
-      <form onSubmit={submit} className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        {error && (
-          <p
-            role="alert"
-            className="m-0 border-b border-line bg-[#fdeeee] px-6 py-4 text-sm text-[#8f2d2d] min-[620px]:px-8"
-          >
-            {error}
+    <div className="grid gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Employees', href: '/employees' }, { label: 'Create employee' }]}
+        title="Create preboarding employee"
+      />
+      <form onSubmit={submit} className="grid gap-4">
+        <FormError message={error ?? ''} />
+        <Panel title="Stable identity record">
+          <p className="mt-0 mb-4 text-body text-ink-muted">
+            Add the stable identity record only. Service and appointment details come later.
           </p>
-        )}
-        <div className="grid gap-5 px-6 py-7 min-[620px]:grid-cols-2 min-[700px]:px-8">
-          <label className={employeeLabelClass}>
-            Employee number
-            <input
-              className={employeeInputClass}
-              name="employeeNumber"
-              value={values.employeeNumber}
-              onChange={change('employeeNumber')}
-              required
-              maxLength={80}
-            />
-            {fieldError('employeeNumber') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('employeeNumber')}</span>
-            )}
-          </label>
-          <label className={employeeLabelClass}>
-            Legal name
-            <input
-              className={employeeInputClass}
-              name="legalName"
-              value={values.legalName}
-              onChange={change('legalName')}
-              placeholder="Given, middle, family name"
-              required
-              maxLength={300}
-            />
-            {fieldError('legalName') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('legalName')}</span>
-            )}
-          </label>
-          <label className={employeeLabelClass}>
-            Birth date
-            <input
-              className={employeeInputClass}
-              name="birthDate"
-              type="date"
-              value={values.birthDate}
-              onChange={change('birthDate')}
-              required
-            />
-            {fieldError('birthDate') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('birthDate')}</span>
-            )}
-          </label>
-          <label className={employeeLabelClass}>
-            Sex
-            <select
-              className={employeeInputClass}
-              name="sex"
-              value={values.sex}
-              onChange={change('sex')}
-              required
-            >
-              <option value="FEMALE">Female</option>
-              <option value="MALE">Male</option>
-            </select>
-          </label>
-          <label className={employeeLabelClass}>
-            Civil status
-            <select
-              className={employeeInputClass}
-              name="civilStatus"
-              value={values.civilStatus}
-              onChange={change('civilStatus')}
-              required
-            >
-              <option value="SINGLE">Single</option>
-              <option value="MARRIED">Married</option>
-              <option value="WIDOWED">Widowed</option>
-              <option value="SEPARATED">Separated</option>
-            </select>
-          </label>
-          <label className={employeeLabelClass}>
-            Contact email
-            <input
-              className={employeeInputClass}
-              name="contactEmail"
-              type="email"
-              value={values.contactEmail}
-              onChange={change('contactEmail')}
-              placeholder="name@example.com"
-              required
-              maxLength={320}
-            />
-            {fieldError('contactEmail') && (
-              <span className="text-xs text-[#8f2d2d]">{fieldError('contactEmail')}</span>
-            )}
-          </label>
-          <p className="mb-0 border-l-2 border-[#d99a32] bg-[#fff9ec] p-4 text-xs leading-5 text-[#70490f] min-[620px]:col-span-2">
-            Email is contact information. It will not link or replace an Agency Membership.
-          </p>
-        </div>
-        <footer className="flex flex-col-reverse gap-3 border-t border-line px-6 py-5 min-[620px]:flex-row min-[620px]:justify-end min-[700px]:px-8">
-          <Link
-            href="/employees"
-            className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink no-underline hover:bg-[#e8edf3]"
-          >
+          <div className="grid gap-4 min-[621px]:grid-cols-2">
+            <Field label="Employee number" error={fieldError('employeeNumber')}>
+              <input
+                className={inputClass}
+                name="employeeNumber"
+                value={values.employeeNumber}
+                onChange={change('employeeNumber')}
+                required
+                maxLength={80}
+              />
+            </Field>
+            <Field label="Legal name" error={fieldError('legalName')}>
+              <input
+                className={inputClass}
+                name="legalName"
+                value={values.legalName}
+                onChange={change('legalName')}
+                placeholder="Given, middle, family name"
+                required
+                maxLength={300}
+              />
+            </Field>
+            <Field label="Birth date" error={fieldError('birthDate')}>
+              <input
+                className={inputClass}
+                name="birthDate"
+                type="date"
+                value={values.birthDate}
+                onChange={change('birthDate')}
+                required
+              />
+            </Field>
+            <Field label="Sex" error={fieldError('sex')}>
+              <select
+                className={inputClass}
+                name="sex"
+                value={values.sex}
+                onChange={change('sex')}
+                required
+              >
+                <option value="FEMALE">Female</option>
+                <option value="MALE">Male</option>
+              </select>
+            </Field>
+            <Field label="Civil status" error={fieldError('civilStatus')}>
+              <select
+                className={inputClass}
+                name="civilStatus"
+                value={values.civilStatus}
+                onChange={change('civilStatus')}
+                required
+              >
+                <option value="SINGLE">Single</option>
+                <option value="MARRIED">Married</option>
+                <option value="WIDOWED">Widowed</option>
+                <option value="SEPARATED">Separated</option>
+              </select>
+            </Field>
+            <Field label="Contact email" error={fieldError('contactEmail')}>
+              <input
+                className={inputClass}
+                name="contactEmail"
+                type="email"
+                value={values.contactEmail}
+                onChange={change('contactEmail')}
+                placeholder="name@example.com"
+                required
+                maxLength={320}
+              />
+            </Field>
+            <p className="m-0 border-l-2 border-info bg-canvas px-3 py-2.5 text-small text-ink-muted min-[621px]:col-span-2">
+              Email is contact information. It will not link or replace an Agency Membership.
+            </p>
+          </div>
+        </Panel>
+        <div className="flex flex-col-reverse gap-2 min-[621px]:flex-row min-[621px]:justify-end">
+          <Link href="/employees" className={buttonVariants({ variant: 'secondary' })}>
             Cancel
           </Link>
-          <Button type="submit" variant="primary" size="default" disabled={submitting}>
-            Create employee
+          <Button type="submit" variant="primary" disabled={submitting}>
+            {submitting ? 'Creating…' : 'Create employee'}
           </Button>
-        </footer>
+        </div>
       </form>
-    </>
+    </div>
   );
 }
 
@@ -291,6 +267,12 @@ export function EmployeeDetailView({
   const [selectedMembershipId, setSelectedMembershipId] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<'ok' | 'error'>('ok');
+  const { search } = useRecordNavigation();
+  const selection = employeeRecordSectionFor(search);
+  const [section, setSection] = useState<EmployeeRecordSection>(selection ?? 'details');
+  useEffect(() => {
+    if (selection) setSection(selection);
+  }, [selection]);
   const linked = detail.membershipId
     ? (detail.linkableMemberships.find((membership) => membership.id === detail.membershipId) ??
       null)
@@ -315,119 +297,170 @@ export function EmployeeDetailView({
   }
 
   async function link(membershipId: string): Promise<void> {
+    if (busy) return;
     setBusy(true);
-    const response = await fetch(
-      `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ membershipId }),
-      },
-    );
-    await respond(response, 'Agency Membership linked to this Employee.');
-    setBusy(false);
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ membershipId }),
+        },
+      );
+      await respond(response, 'Agency Membership linked to this Employee.');
+    } catch {
+      setMessageTone('error');
+      setMessage(
+        'The membership change could not be confirmed. Check the connection and try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function unlink(): Promise<void> {
+    if (busy) return;
     setBusy(true);
-    const response = await fetch(
-      `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
-      { method: 'DELETE', credentials: 'include' },
-    );
-    await respond(response, 'Agency Membership unlinked from this Employee.');
-    setBusy(false);
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/employees/${detail.id}/membership-link`,
+        { method: 'DELETE', credentials: 'include' },
+      );
+      await respond(response, 'Agency Membership unlinked from this Employee.');
+    } catch {
+      setMessageTone('error');
+      setMessage(
+        'The membership change could not be confirmed. Check the connection and try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sections: [EmployeeRecordSection, string, boolean][] = [
+    ['details', 'Details', true],
+    ['documents', 'Documents', canReadDocuments],
+    [
+      'identifiers',
+      'Government identifiers',
+      canReadIdentifiers ||
+        canManageIdentifiers ||
+        canRevealIdentifiers ||
+        canReadIdentifierHistory,
+    ],
+    [
+      'bank-accounts',
+      'Payroll bank accounts',
+      canReadBankAccounts ||
+        canManageBankAccounts ||
+        canRevealBankAccounts ||
+        canReadBankAccountHistory,
+    ],
+    ['saln', 'SALN compliance', canReadSaln || canManageSaln],
+  ];
+  const tabs = sections
+    .filter(([, , visible]) => visible)
+    .map(([value, label]) => ({ value, label }));
+  const selected = tabs.some((tab) => tab.value === section) ? section : 'details';
+
+  function panel(value: EmployeeRecordSection) {
+    // Hidden sections stay mounted so each keeps loading and holding its state as before.
+    return { value, forceMount: true as const, hidden: selected !== value };
   }
 
   return (
-    <>
-      <Link
-        href="/employees"
-        className="mb-6 inline-block text-xs font-[650] text-cobalt no-underline"
+    <SectionTabs
+      value={selected}
+      onValueChange={(value) => setSection(value as EmployeeRecordSection)}
+      className="grid gap-5"
+    >
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Personnel' },
+          { label: 'Employee directory', href: '/employees' },
+          { label: detail.legalName },
+        ]}
+        tabs={<SectionTabList label="Employee record sections" tabs={tabs} />}
       >
-        ← Employee directory
-      </Link>
-      <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-        <EmployeePageTitle
-          eyebrow="Personnel records"
-          title={detail.legalName}
-          description={`Stable identity record · ${detail.employeeNumber}`}
+        <RecordHeader
+          name={detail.legalName}
+          status={<EmployeeServiceStatus status={detail.serviceStatus} />}
+          facts={[
+            { label: 'Employee no.', value: detail.employeeNumber },
+            {
+              label: 'Agency membership',
+              value: detail.membershipId ? (
+                <StatusTag tone="success">LINKED</StatusTag>
+              ) : (
+                <StatusTag tone="warning">UNLINKED</StatusTag>
+              ),
+            },
+            { label: 'Created', value: formatEmployeeDate(detail.createdAt) },
+          ]}
+          actions={
+            canReadPds ? (
+              <Link
+                href={`/employees/${detail.id}/pds`}
+                className={buttonVariants({ variant: 'secondary' })}
+              >
+                Maintain PDS
+              </Link>
+            ) : null
+          }
         />
-        <div className="flex flex-wrap items-center gap-3">
-          <EmployeeStatus linked={Boolean(detail.membershipId)} />
-          {canReadPds && (
-            <Link
-              href={`/employees/${detail.id}/pds`}
-              className={buttonVariants({ variant: 'secondary', size: 'default' })}
-            >
-              Maintain PDS
-            </Link>
-          )}
-        </div>
-      </header>
-      <article className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        <div className="flex items-center gap-5 border-b border-line px-6 py-6 min-[700px]:px-8">
-          <EmployeeInitials name={detail.legalName} large />
-          <div>
-            <p className="m-0 text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-              Service status
-            </p>
-            <strong className="mt-1 block text-sm text-ink">{detail.serviceStatus}</strong>
-          </div>
-        </div>
-        <dl className="grid gap-x-10 gap-y-6 px-6 py-7 min-[620px]:grid-cols-2 min-[700px]:px-8">
-          {[
-            ['Legal name', detail.legalName],
-            ['Birth date', formatEmployeeDate(detail.birthDate)],
-            ['Sex', titleCase(detail.sex)],
-            ['Civil status', titleCase(detail.civilStatus)],
-            ['Contact email', detail.contactEmail],
-            ['Employee number', detail.employeeNumber],
-            ['Created', formatEmployeeDate(detail.createdAt)],
-          ].map(([label, value]) => (
-            <div key={label}>
-              <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                {label}
-              </dt>
-              <dd className="mt-1 ml-0 text-sm font-[560] text-ink">{value}</dd>
-            </div>
-          ))}
-        </dl>
-        <div className="border-t border-line px-6 py-5 min-[700px]:px-8">
-          <p className="m-0 text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-            Agency membership
-          </p>
-          <strong className="mt-1 block text-sm text-ink">
+      </PageHeader>
+      <SectionTabPanel {...panel('details')} className="grid gap-5">
+        <Panel title="Identity">
+          <dl className="m-0 grid gap-x-10 gap-y-4 min-[620px]:grid-cols-2">
+            {[
+              ['Legal name', detail.legalName],
+              ['Birth date', formatEmployeeDate(detail.birthDate)],
+              ['Sex', titleCase(detail.sex)],
+              ['Civil status', titleCase(detail.civilStatus)],
+              ['Contact email', detail.contactEmail],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-caption text-ink-muted">{label}</dt>
+                <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </Panel>
+        <Panel title="Membership link">
+          <p className="m-0 text-caption text-ink-muted">Linked Agency Membership</p>
+          <p className="m-0 text-body font-[600] text-ink">
             {linked ? membershipLabel(linked) : 'Not linked'}
-          </strong>
+          </p>
           {canUpdate && (
-            <div className="mt-4 flex flex-col gap-3 min-[620px]:flex-row min-[620px]:items-center">
+            <div className="mt-4 flex flex-col gap-3 min-[620px]:flex-row min-[620px]:items-end">
               {detail.membershipId ? (
-                <Button variant="secondary" size="default" onClick={unlink} disabled={busy}>
+                <Button variant="secondary" onClick={unlink} disabled={busy}>
                   Unlink membership
                 </Button>
               ) : detail.linkableMemberships.length > 0 ? (
                 <>
-                  <label className={`${employeeLabelClass} min-[620px]:max-w-96 min-[620px]:grow`}>
-                    Agency Membership
-                    <select
-                      className={employeeInputClass}
-                      value={selectedMembershipId}
-                      onChange={(event) => setSelectedMembershipId(targetValue(event))}
-                    >
-                      <option value="" disabled>
-                        Select the membership that represents this Employee
-                      </option>
-                      {detail.linkableMemberships.map((membership) => (
-                        <option key={membership.id} value={membership.id}>
-                          {membershipLabel(membership)}
+                  <div className="min-[620px]:max-w-96 min-[620px]:grow">
+                    <Field label="Agency Membership">
+                      <select
+                        className={inputClass}
+                        value={selectedMembershipId}
+                        onChange={(event) => setSelectedMembershipId(targetValue(event))}
+                      >
+                        <option value="" disabled>
+                          Select the membership that represents this Employee
                         </option>
-                      ))}
-                    </select>
-                  </label>
+                        {detail.linkableMemberships.map((membership) => (
+                          <option key={membership.id} value={membership.id}>
+                            {membershipLabel(membership)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
                   <Button
                     variant="primary"
-                    size="default"
                     disabled={busy}
                     onClick={() => {
                       if (selectedMembershipId) void link(selectedMembershipId);
@@ -437,7 +470,7 @@ export function EmployeeDetailView({
                   </Button>
                 </>
               ) : (
-                <p className="m-0 text-xs text-muted">
+                <p className="m-0 text-small text-ink-muted">
                   No Agency Memberships are available to link.
                 </p>
               )}
@@ -445,11 +478,20 @@ export function EmployeeDetailView({
           )}
           <p
             role="status"
-            className={`mb-0 mt-3 min-h-5 text-xs ${messageTone === 'ok' ? 'text-[#27633b]' : 'text-[#8f2d2d]'}`}
+            className={cn(
+              'mb-0 mt-3 min-h-5 text-small',
+              messageTone === 'ok' ? 'text-success' : 'text-danger',
+            )}
           >
             {message}
           </p>
-        </div>
+        </Panel>
+        <p className="m-0 text-small text-ink-muted">
+          Appointments, positions, salary, supervisors, separation, and retirement remain outside
+          this record.
+        </p>
+      </SectionTabPanel>
+      <SectionTabPanel {...panel('documents')}>
         <EmployeeDocumentsSection
           agencyId={agencyId}
           employeeId={detail.id}
@@ -459,6 +501,8 @@ export function EmployeeDetailView({
           canBrowseSource={canBrowseSourceDocuments}
           canRemoveOwn={canUploadOwnDocuments}
         />
+      </SectionTabPanel>
+      <SectionTabPanel {...panel('identifiers')}>
         <GovernmentIdentifiersSection
           agencyId={agencyId}
           employeeId={detail.id}
@@ -467,6 +511,8 @@ export function EmployeeDetailView({
           canReveal={canRevealIdentifiers}
           canReadHistory={canReadIdentifierHistory}
         />
+      </SectionTabPanel>
+      <SectionTabPanel {...panel('bank-accounts')}>
         <PayrollBankAccountsSection
           agencyId={agencyId}
           employeeId={detail.id}
@@ -476,6 +522,8 @@ export function EmployeeDetailView({
           canReveal={canRevealBankAccounts}
           canReadHistory={canReadBankAccountHistory}
         />
+      </SectionTabPanel>
+      <SectionTabPanel {...panel('saln')}>
         <SalnComplianceSection
           agencyId={agencyId}
           employeeId={detail.id}
@@ -485,11 +533,7 @@ export function EmployeeDetailView({
           canReadHistory={canReadSalnHistory}
           canReadEvidence={canReadDocuments}
         />
-        <div className="border-t border-line bg-pale-blue px-6 py-4 text-xs leading-5 text-[#34557e] min-[700px]:px-8">
-          Appointments, positions, salary, supervisors, separation, and retirement remain outside
-          this record.
-        </div>
-      </article>
-    </>
+      </SectionTabPanel>
+    </SectionTabs>
   );
 }

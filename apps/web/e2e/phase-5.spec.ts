@@ -1,13 +1,23 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 import { expect, test, type APIResponse, type Browser, type Locator } from '@playwright/test';
+import { activateInvitation as activate, MARISOL_EMAIL, signIn } from './sign-in';
 
 const foreignAgencyId = '11111111-1111-4111-8111-111111111111';
 const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
 const foreignIdentifierId = '66666666-6666-4666-8666-666666666666';
 const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
 const phase5RestrictedToken = 'phase5-restricted-invitation-token-00000000';
-const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
+const rootEnvPath = resolve(__dirname, '../../../.env');
+// The API reads the root .env, so direct database checks must target the same database.
+const runtimeUrl =
+  process.env.DATABASE_URL ??
+  (existsSync(rootEnvPath)
+    ? parseEnv(readFileSync(rootEnvPath, 'utf8')).DATABASE_URL
+    : undefined) ??
+  'postgresql://hris_app:local_app@localhost:55432/hris';
 
 test.use({ trace: 'off' });
 
@@ -20,9 +30,7 @@ async function body<T>(response: APIResponse): Promise<T> {
 async function activateInvitation(browser: Browser, token: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto(`${apiUrl}/api/v1/auth/invitations/${token}/activate`);
-  await page.getByRole('link', { name: 'Continue to secure sign-in' }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await activate(page, `/invite/${token}`);
   const session = await body<{ agencyId: string; membershipId: string; userId: string }>(
     await page.request.get('/api/v1/auth/me', {
       headers: { origin: new URL(page.url()).origin },
@@ -202,14 +210,13 @@ test('gates the representative protected personnel journey', async ({
   let ownerContext: Awaited<ReturnType<typeof activateInvitation>> | null = null;
   let restrictedContext: Awaited<ReturnType<typeof activateInvitation>> | null = null;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   const adminSession = await body<{ agencyId: string; membershipId: string; userId: string }>(
     await page.request.get('/api/v1/auth/me', { headers: origin() }),
   );
   const agencyId = adminSession.agencyId;
-  const runtimeUrl =
-    process.env.DATABASE_URL ?? 'postgresql://hris_app:local_app@localhost:55432/hris';
   let employeeId = '';
   let baselineId = '';
   let pdsVersionId = '';
@@ -470,6 +477,7 @@ test('gates the representative protected personnel journey', async ({
 
       await page.setViewportSize({ width: 1280, height: 720 });
       await page.goto(`/employees/${employeeId}`);
+      await page.getByRole('tab', { name: 'Government identifiers' }).click();
       await expect(page.getByText(protectedValue, { exact: true })).toHaveCount(0);
       await expect(page.getByText(created.maskedValue, { exact: true })).toBeVisible();
       const trigger = page.getByRole('button', { name: 'Reveal value' });

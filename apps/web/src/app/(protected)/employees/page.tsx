@@ -5,12 +5,24 @@ import { getConfig } from '@lingkod-hr/config';
 import { buttonVariants } from '../../../components/ui/button';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 import { ShellState } from '../../../components/shell-state';
+import { StateCode, StateSurface } from '../../../components/state-surface';
 import {
-  EmployeeInitials,
-  EmployeePageTitle,
+  EmployeeServiceStatus,
   EmployeeStatus,
   formatEmployeeDate,
 } from '../../../components/employee-directory';
+import {
+  EmployeeRegisterControls,
+  type EmployeeRegisterFacets,
+} from '../../../components/employee-register-controls';
+import {
+  employeeRegisterApiQuery,
+  employeeRegisterHref,
+  readEmployeeRegisterParams,
+} from '../../../lib/employee-register';
+import { PageHeader } from '../../../components/ui/page-header';
+import { Panel } from '../../../components/ui/panel';
+import { Table, Td, Th, Tr } from '../../../components/ui/table';
 
 export const metadata: Metadata = { title: 'Employees' };
 export const dynamic = 'force-dynamic';
@@ -19,11 +31,24 @@ interface EmployeeRow {
   id: string;
   employeeNumber: string;
   legalName: string;
+  serviceStatus: string;
   membershipId: string | null;
   createdAt: string;
 }
 
-export default async function EmployeesPage() {
+interface EmployeeListResponse {
+  employees: EmployeeRow[];
+  total: number;
+  offset: number;
+  facets: EmployeeRegisterFacets;
+}
+
+export default async function EmployeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = readEmployeeRegisterParams(await searchParams);
   const session = await getActiveSession();
   if (!hasPermission(session, 'personnel.employees.read')) {
     return (
@@ -36,10 +61,13 @@ export default async function EmployeesPage() {
   }
   const config = getConfig();
   const cookieStore = await cookies();
-  const response = await fetch(`${config.API_URL}/api/v1/agencies/${session.agencyId}/employees`, {
-    headers: { cookie: cookieStore.toString(), origin: new URL(config.APP_URL).origin },
-    cache: 'no-store',
-  });
+  const response = await fetch(
+    `${config.API_URL}/api/v1/agencies/${session.agencyId}/employees?${employeeRegisterApiQuery(params)}`,
+    {
+      headers: { cookie: cookieStore.toString(), origin: new URL(config.APP_URL).origin },
+      cache: 'no-store',
+    },
+  );
   if (response.status === 403) {
     return (
       <ShellState
@@ -63,111 +91,133 @@ export default async function EmployeesPage() {
   if (
     typeof value !== 'object' ||
     value === null ||
-    !Array.isArray((value as { employees?: unknown }).employees)
+    !Array.isArray((value as { employees?: unknown }).employees) ||
+    typeof (value as { total?: unknown }).total !== 'number' ||
+    typeof (value as { facets?: unknown }).facets !== 'object'
   ) {
     throw new Error('The Employee directory response was invalid.');
   }
-  const employees = (value as { employees: EmployeeRow[] }).employees;
-  const linked = employees.filter((employee) => employee.membershipId).length;
-  return (
-    <>
-      <header className="mb-7 flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-        <EmployeePageTitle
-          eyebrow="Personnel records"
-          title="Employee directory"
-          description="Create and inspect stable employee identity records before active service begins."
-        />
-        <Link
-          href="/employees/new"
-          className={buttonVariants({ variant: 'primary', size: 'default' })}
-        >
+  const { employees, total, offset, facets } = value as EmployeeListResponse;
+  const filtered =
+    params.q !== '' || params.serviceStatus.length > 0 || params.membership.length > 0;
+  const header = (
+    <PageHeader
+      breadcrumbs={[{ label: 'Personnel' }]}
+      title="Employee directory"
+      actions={
+        <Link href="/employees/new" className={buttonVariants({ variant: 'primary' })}>
           Create employee
         </Link>
-      </header>
+      }
+    />
+  );
 
-      <div className="mb-5 grid border-y border-line bg-paper min-[700px]:grid-cols-3">
-        {[
-          ['PREBOARDING', employees.length],
-          ['MEMBERSHIP LINKED', linked],
-          ['NEEDS LINK', employees.length - linked],
-        ].map(([label, count]) => (
-          <div
-            key={label}
-            className="flex items-baseline justify-between border-b border-line px-5 py-4 last:border-0 min-[700px]:border-r min-[700px]:border-b-0 min-[700px]:last:border-r-0"
-          >
-            <span className="text-[10px] font-bold tracking-[.08em] text-muted">{label}</span>
-            <strong className="font-mono text-2xl text-midnight">{count}</strong>
-          </div>
-        ))}
-      </div>
-
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        {employees.length === 0 ? (
-          <p className="m-0 px-5 py-8 text-sm text-muted">
-            No Employee records have been created in this Agency.
+  if (total === 0 && !filtered) {
+    return (
+      <div className="grid gap-5">
+        {header}
+        <StateSurface labelledBy="employees-empty-title">
+          <StateCode>Empty</StateCode>
+          <h2 className="m-0 text-panel-title text-ink" id="employees-empty-title">
+            No Employee records yet
+          </h2>
+          <p className="m-0 max-w-[500px] text-body text-ink-muted">
+            No Employee records have been created in this Agency. Create a preboarding Employee to
+            start a stable identity record before active service begins.
           </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-left">
+        </StateSurface>
+      </div>
+    );
+  }
+
+  const hasPrevious = params.page > 1;
+  const hasNext = offset + employees.length < total;
+  return (
+    <div className="grid gap-5">
+      {header}
+      <EmployeeRegisterControls key={params.q} params={params} facets={facets}>
+        <Panel
+          title="Employees"
+          flush
+          actions={
+            <p className="m-0 text-caption text-ink-muted tabular-nums">
+              {employees.length === 0
+                ? `No matches · ${total} total`
+                : `Showing ${offset + 1}–${offset + employees.length} of ${total}`}
+            </p>
+          }
+        >
+          {employees.length === 0 ? (
+            <p className="m-0 px-4 py-6 text-body text-ink-muted">
+              {total === 0
+                ? 'No Employees match this search and these filters. Change the search or clear a filter.'
+                : 'This page is past the last Employee. Go back to the first page.'}
+            </p>
+          ) : (
+            <Table>
               <thead>
-                <tr className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
-                  <th className="px-5 py-3 font-bold">Employee</th>
-                  <th className="px-5 py-3 font-bold">Employee no.</th>
-                  <th className="px-5 py-3 font-bold">Membership</th>
-                  <th className="px-5 py-3 font-bold">Created</th>
-                  <th className="w-16">
-                    <span className="sr-only">Open</span>
-                  </th>
+                <tr>
+                  <Th>Employee no.</Th>
+                  <Th>Name</Th>
+                  <Th>Service status</Th>
+                  <Th>Membership</Th>
+                  <Th kind="date">Created</Th>
                 </tr>
               </thead>
               <tbody>
-                {employees.map((employee) => {
-                  const href = `/employees/${employee.id}`;
-                  return (
-                    <tr
-                      key={employee.id}
-                      className="border-b border-line last:border-0 hover:bg-[#f8fafd]"
-                    >
-                      <td className="px-5 py-4">
-                        <Link
-                          href={href}
-                          className="flex items-center gap-3 text-left no-underline"
-                        >
-                          <EmployeeInitials name={employee.legalName} />
-                          <span>
-                            <strong className="block text-sm font-[650] text-ink">
-                              {employee.legalName}
-                            </strong>
-                            <span className="text-xs text-muted">PREBOARDING</span>
-                          </span>
-                        </Link>
-                      </td>
-                      <td className="px-5 py-4 font-mono text-xs text-ink">
-                        {employee.employeeNumber}
-                      </td>
-                      <td className="px-5 py-4">
-                        <EmployeeStatus linked={Boolean(employee.membershipId)} />
-                      </td>
-                      <td className="px-5 py-4 text-xs text-muted">
-                        {formatEmployeeDate(employee.createdAt)}
-                      </td>
-                      <td className="px-5">
-                        <Link
-                          href={href}
-                          className="text-lg text-cobalt no-underline"
-                          aria-label={`Open ${employee.legalName}`}
-                        >
-                          →
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {employees.map((employee) => (
+                  <Tr key={employee.id}>
+                    <Td className="whitespace-nowrap">{employee.employeeNumber}</Td>
+                    <Td className="whitespace-nowrap">
+                      <Link
+                        href={`/employees/${employee.id}`}
+                        className="font-[600] text-primary no-underline hover:underline"
+                      >
+                        {employee.legalName}
+                      </Link>
+                    </Td>
+                    <Td>
+                      <EmployeeServiceStatus status={employee.serviceStatus} />
+                    </Td>
+                    <Td>
+                      <EmployeeStatus linked={Boolean(employee.membershipId)} />
+                    </Td>
+                    <Td kind="date">{formatEmployeeDate(employee.createdAt)}</Td>
+                  </Tr>
+                ))}
               </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </>
+            </Table>
+          )}
+          {hasPrevious || hasNext ? (
+            <nav
+              aria-label="Employee pages"
+              className="flex items-center justify-between gap-2 border-t border-border px-4 py-2"
+            >
+              {hasPrevious ? (
+                <Link
+                  href={employeeRegisterHref({
+                    ...params,
+                    page: employees.length === 0 ? 1 : params.page - 1,
+                  })}
+                  className={buttonVariants({ variant: 'secondary' })}
+                >
+                  {employees.length === 0 ? 'First page' : 'Previous page'}
+                </Link>
+              ) : (
+                <span />
+              )}
+              {hasNext ? (
+                <Link
+                  href={employeeRegisterHref({ ...params, page: params.page + 1 })}
+                  className={buttonVariants({ variant: 'secondary' })}
+                >
+                  Next page
+                </Link>
+              ) : null}
+            </nav>
+          ) : null}
+        </Panel>
+      </EmployeeRegisterControls>
+    </div>
   );
 }

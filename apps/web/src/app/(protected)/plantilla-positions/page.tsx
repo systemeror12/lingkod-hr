@@ -12,7 +12,14 @@ import {
 export const metadata: Metadata = { title: 'Plantilla Positions' };
 export const dynamic = 'force-dynamic';
 
-export default async function PlantillaPositionsPage() {
+export default async function PlantillaPositionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ asOf?: string }>;
+}) {
+  const requestedDate = (await searchParams).asOf;
+  const asOf =
+    requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : manilaToday();
   const session = await getActiveSession();
   if (!hasPermission(session, 'positions.items.read')) {
     return (
@@ -26,7 +33,7 @@ export default async function PlantillaPositionsPage() {
   const config = getConfig();
   const cookieStore = await cookies();
   const response = await fetch(
-    `${config.API_URL}/api/v1/agencies/${session.agencyId}/plantilla-positions?asOf=${manilaToday()}`,
+    `${config.API_URL}/api/v1/agencies/${session.agencyId}/plantilla-positions?asOf=${asOf}`,
     {
       headers: { cookie: cookieStore.toString(), origin: new URL(config.APP_URL).origin },
       cache: 'no-store',
@@ -61,6 +68,7 @@ export default async function PlantillaPositionsPage() {
   }
   return (
     <PlantillaPositionWorkspace
+      key={asOf}
       agencyId={session.agencyId}
       initial={value as PlantillaPositionListResponse}
       canCreate={hasPermission(session, 'positions.items.create')}

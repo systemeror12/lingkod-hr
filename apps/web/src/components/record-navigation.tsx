@@ -1,0 +1,38 @@
+'use client';
+
+import { recordHref } from '../lib/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { buttonVariants } from './ui/button';
+
+/** Record selection belongs to the existing router; edits stay in the owning form. */
+export function useRecordNavigation() {
+  const pathname = usePathname();
+  const search = useSearchParams();
+  const router = useRouter();
+  function href(values: Record<string, string | null>) {
+    return recordHref(pathname, search.toString(), values);
+  }
+  return {
+    search,
+    href,
+    navigate(values: Record<string, string | null>) {
+      router.push(href(values), { scroll: false });
+    },
+    /** Updates params only the client reads, such as an open dialog, without a server round trip. */
+    show(values: Record<string, string | null>) {
+      const browser = globalThis as unknown as {
+        history: { pushState(data: null, unused: string, url: string): void };
+        location: { search: string };
+      };
+      browser.history.pushState(null, '', recordHref(pathname, browser.location.search, values));
+    },
+  };
+}
+
+export function RecordReturn({ href, children }: { href: string; children: string }) {
+  return (
+    <a className={buttonVariants({ variant: 'secondary', size: 'default' })} href={href}>
+      {children}
+    </a>
+  );
+}

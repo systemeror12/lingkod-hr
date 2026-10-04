@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+export const PERSONNEL_ACTION_MOVEMENT_TYPES = [
+  'PROMOTION',
+  'TRANSFER',
+  'DEMOTION',
+  'RECLASSIFICATION',
+  'COMPARABLE_REINSTATEMENT',
+] as const;
+
 export const PERSONNEL_ACTION_TYPES = [
   'REASSIGNMENT',
   'DETAIL',
@@ -15,7 +23,10 @@ export const PERSONNEL_ACTION_TYPES = [
   'SEPARATION_DEATH',
   'SALARY_ADJUSTMENT',
   'STEP_INCREMENT',
+  ...PERSONNEL_ACTION_MOVEMENT_TYPES,
 ] as const;
+
+export type PersonnelActionMovementType = (typeof PERSONNEL_ACTION_MOVEMENT_TYPES)[number];
 
 export const PERSONNEL_ACTION_EVIDENCE_TYPES = [
   'ABSENCE_RECORD',
@@ -176,6 +187,14 @@ const schemas = [
       .strict(),
   ),
   variant('STEP_INCREMENT', z.object({ newSalaryStep: z.number().int().min(1).max(8) }).strict()),
+  variant('PROMOTION', z.object({ appointmentVersionId: z.string().uuid() }).strict()),
+  variant('TRANSFER', z.object({ appointmentVersionId: z.string().uuid() }).strict()),
+  variant('DEMOTION', z.object({ appointmentVersionId: z.string().uuid() }).strict()),
+  variant('RECLASSIFICATION', z.object({ appointmentVersionId: z.string().uuid() }).strict()),
+  variant(
+    'COMPARABLE_REINSTATEMENT',
+    z.object({ appointmentVersionId: z.string().uuid() }).strict(),
+  ),
 ] as const;
 
 export const personnelActionCreateSchema = z.discriminatedUnion('actionType', schemas);

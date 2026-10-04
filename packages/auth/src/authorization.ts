@@ -13,24 +13,12 @@ export interface PermissionGrant {
   scopePolicy: ScopePolicy;
 }
 
-const SECOND_FACTOR_METHODS = new Set([
-  'face',
-  'fpt',
-  'hwk',
-  'iris',
-  'otp',
-  'passkey',
-  'retina',
-  'sms',
-  'totp',
-  'webauthn',
-]);
+const SECOND_FACTOR_METHODS = ['totp', 'recovery_code'];
 
+/** Whether a session's methods show a password plus a TOTP code or Recovery Code. */
 export function hasMfaEvidence(methods: readonly string[]): boolean {
-  const normalized = new Set(methods.map((method) => method.toLowerCase()));
   return (
-    normalized.has('mfa') ||
-    (normalized.has('pwd') && [...normalized].some((method) => SECOND_FACTOR_METHODS.has(method)))
+    methods.includes('pwd') && SECOND_FACTOR_METHODS.some((method) => methods.includes(method))
   );
 }
 

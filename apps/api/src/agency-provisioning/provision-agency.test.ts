@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { PrismaClient } from '@prisma/client';
-import type { OidcIdentity } from '@lingkod-hr/auth';
+import { totpCode } from '@lingkod-hr/auth';
 import { createOperationalDatabaseClient } from '@lingkod-hr/database';
 import { getConfig } from '@lingkod-hr/config';
 import { expect, it } from 'vitest';
@@ -30,17 +30,19 @@ class FailingMailDelivery implements MailDelivery {
   }
 }
 
-function identity(subject: string, email: string): OidcIdentity {
-  return {
-    issuer: getConfig().OIDC_ISSUER,
-    subject,
-    email,
-    displayName: 'First Administrator',
-    emailVerified: true,
-    providerSid: null,
-    authTime: new Date('2026-08-14T00:00:00.000Z'),
-    authenticationMethods: ['mfa'],
-  };
+/** Runs the invitation's whole activation as a first-time User, enrolling TOTP when required. */
+async function activate(service: AuthService, token: string, requestId: string) {
+  const request = { requestId, ipAddress: '198.51.100.20', userAgent: null };
+  const started = await service.startActivation(
+    token,
+    { name: 'First Administrator', password: 'tahimik na umaga sa bundok 42' },
+    request,
+  );
+  if (started.status === 'ACTIVATED') return started.session;
+  if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error(started.status);
+  const secret = new URL(started.enrollment.otpauthUri).searchParams.get('secret') ?? '';
+  await service.confirmActivationEnrollment(token, started.pendingToken, totpCode(secret), request);
+  return (await service.finishActivationEnrollment(token, started.pendingToken, request)).session;
 }
 
 async function createAdminClient(): Promise<PrismaClient> {
@@ -97,12 +99,13 @@ async function cleanup(
 ): Promise<void> {
   await admin.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
-    await transaction.securityEvent.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
+    await transaction.securityEvent.deleteMany({
+      where: { OR: [{ agencyId: { in: [...agencyIds] } }, { userId: { in: [...userIds] } }] },
+    });
     await transaction.auditEvent.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
   });
   if (userIds.length > 0) {
     await admin.userSession.deleteMany({ where: { userId: { in: [...userIds] } } });
-    await admin.externalIdentityLink.deleteMany({ where: { userId: { in: [...userIds] } } });
     await admin.membershipRole.deleteMany({ where: { agencyId: { in: [...agencyIds] } } });
     await admin.agencyMembership.deleteMany({ where: { userId: { in: [...userIds] } } });
     await admin.user.deleteMany({ where: { id: { in: [...userIds] } } });
@@ -187,7 +190,7 @@ it.skipIf(!enabled)(
     const mail = createMailDelivery(config);
     const command = new AgencyProvisioningCommand({
       database,
-      invitationIssuer: new InvitationIssuer(mail, config.API_URL),
+      invitationIssuer: new InvitationIssuer(mail, config.APP_URL),
       requestId: () => requestId,
     });
     let agencyId: string | undefined;
@@ -208,7 +211,7 @@ it.skipIf(!enabled)(
         `LingkodHR invitation for ${result.agency.name}`,
       );
       expect(messageText).toContain(result.agency.name);
-      const token = /\/auth\/invitations\/([A-Za-z0-9_-]+)\/activate/.exec(messageText)?.[1];
+      const token = /\/invite\/([A-Za-z0-9_-]+)/.exec(messageText)?.[1];
       if (!token) throw new Error('The invitation email did not contain an activation link.');
       expect(JSON.stringify(result)).not.toContain(token);
 
@@ -262,12 +265,7 @@ it.skipIf(!enabled)(
         await runtime.$disconnect();
       }
 
-      const login = await new AuthService(mail).signIn(
-        identity(`first-admin-${suffix}`, email),
-        null,
-        token,
-        `${requestId}-accept`,
-      );
+      const login = await activate(new AuthService(mail), token, `${requestId}-accept`);
       userId = login.context.userId;
       expect(login.context.agencyId).toBe(agencyId);
       await expect(
@@ -276,12 +274,7 @@ it.skipIf(!enabled)(
         }),
       ).resolves.toMatchObject({ assignedByMembershipId: null });
       await expect(
-        new AuthService(mail).signIn(
-          identity(`first-admin-${suffix}`, email),
-          null,
-          token,
-          `${requestId}-reuse`,
-        ),
+        activate(new AuthService(mail), token, `${requestId}-reuse`),
       ).rejects.toMatchObject({ code: 'INVITATION_INVALID' });
     } finally {
       await cleanup(admin, agencyId ? [agencyId] : [], userId ? [userId] : []);
@@ -352,7 +345,7 @@ it.skipIf(!enabled)(
         email,
         'LingkodHR invitation for Issue 64 Command Boundary Agency',
       );
-      const token = /\/auth\/invitations\/([A-Za-z0-9_-]+)\/activate/.exec(messageText)?.[1];
+      const token = /\/invite\/([A-Za-z0-9_-]+)/.exec(messageText)?.[1];
       if (!token) throw new Error('The command-boundary invitation email did not contain a token.');
       expect(output).not.toContain(token);
       expect(messageText).toContain('Agency Administrator');
@@ -406,7 +399,7 @@ it.skipIf(!enabled)('rejects an expired provisioned invitation', async () => {
   const email = `expired-${suffix}@example.test`;
   const command = new AgencyProvisioningCommand({
     database,
-    invitationIssuer: new InvitationIssuer(mail, config.API_URL),
+    invitationIssuer: new InvitationIssuer(mail, config.APP_URL),
     requestId: () => `provision-expired-${suffix}`,
   });
   let agencyId: string | undefined;
@@ -421,7 +414,7 @@ it.skipIf(!enabled)('rejects an expired provisioned invitation', async () => {
     agencyId = result.agency.id;
     const message = mail.messages[0];
     if (!message) throw new Error('The invitation email was not captured.');
-    const token = /\/auth\/invitations\/([A-Za-z0-9_-]+)\/activate/.exec(message.text)?.[1];
+    const token = /\/invite\/([A-Za-z0-9_-]+)/.exec(message.text)?.[1];
     if (!token) throw new Error('The invitation email did not contain an activation link.');
     const expiredCreatedAt = new Date(Date.now() - 2_000);
     const expiredAt = new Date(Date.now() - 1_000);
@@ -431,17 +424,13 @@ it.skipIf(!enabled)('rejects an expired provisioned invitation', async () => {
     });
 
     await expect(
-      new AuthService(mail).signIn(
-        identity(`expired-${suffix}`, email),
-        null,
-        token,
-        `accept-expired-${suffix}`,
-      ),
+      activate(new AuthService(mail), token, `accept-expired-${suffix}`),
     ).rejects.toMatchObject({ code: 'INVITATION_EXPIRED' });
+    // An expired invitation is refused without being written.
     await expect(
       admin.invitation.findUniqueOrThrow({ where: { id: result.invitation.id } }),
     ).resolves.toMatchObject({
-      status: 'EXPIRED',
+      status: 'PENDING',
     });
   } finally {
     await cleanup(admin, agencyId ? [agencyId] : []);
@@ -458,7 +447,7 @@ it.skipIf(!enabled)('cancels the complete provisioning state when delivery fails
   const code = `E2E-I60-MAIL-${suffix}`;
   const command = new AgencyProvisioningCommand({
     database,
-    invitationIssuer: new InvitationIssuer(new FailingMailDelivery(), config.API_URL),
+    invitationIssuer: new InvitationIssuer(new FailingMailDelivery(), config.APP_URL),
     requestId: () => `provision-mail-${suffix}`,
   });
   let agencyId: string | undefined;

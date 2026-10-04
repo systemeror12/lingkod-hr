@@ -12,14 +12,14 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "pnpm --dir ../../apps/web exec tsx e2e/local-oidc.ts",
     "lint": "eslint .",
     "test": "vitest run",
     "test:e2e": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "jose": "5.10.0"
+    "@lingkod-hr/config": "workspace:*",
+    "otpauth": "9.5.2"
   },
   "devDependencies": {
     "@types/node": "24.13.3"

@@ -1,4 +1,8 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
+
+const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
+const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
 
 interface MailpitMessageSummary {
   ID: string;
@@ -45,12 +49,13 @@ async function readMailpitMessage(recipient: string, subject: string): Promise<s
   return ((await detailResponse.json()) as MailpitMessage).Text;
 }
 
-test('invites and activates an HRMO Administrator through Mailpit and local OIDC', async ({
+test('invites and activates a first-time HRMO Administrator through Mailpit', async ({
   page,
   browser,
 }, testInfo) => {
   const recipient = `hrmo-${Date.now()}@example.test`;
 
+  await signIn(page, MARISOL_EMAIL, { fresh: true });
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
@@ -94,10 +99,7 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
     recipient,
     'LingkodHR invitation for National Archives Coordination Office',
   );
-  const activationUrl =
-    /https?:\/\/[^\s]+\/api\/v1\/auth\/invitations\/([A-Za-z0-9_-]{43})\/activate/.exec(
-      mailText,
-    )?.[0];
+  const activationUrl = new RegExp(`${appOrigin}/invite/[A-Za-z0-9_-]{43}`).exec(mailText)?.[0];
   if (!activationUrl)
     throw new Error('The HRMO invitation email did not contain an activation link.');
   expect(mailText).toContain('National Archives Coordination Office');
@@ -108,22 +110,22 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
   try {
     await hrmoPage.goto(activationUrl);
     await expect(
-      hrmoPage.getByRole('heading', { name: 'You’re about to continue to secure sign-in' }),
+      hrmoPage.getByRole('heading', { name: 'Activate your LingkodHR access' }),
     ).toBeVisible();
+    await expect(hrmoPage.getByLabel('Email')).toHaveValue(recipient);
+    await expect(hrmoPage.getByText(/^Maligayang pagdating sa /)).toBeVisible();
     await hrmoPage.screenshot({
-      path: testInfo.outputPath('invitation-transition.png'),
+      path: testInfo.outputPath('invitation-activation.png'),
       fullPage: true,
     });
-    await hrmoPage.getByRole('link', { name: 'Continue to secure sign-in' }).click();
-    await expect(hrmoPage).toHaveURL(/\/dashboard$/);
+    await activateInvitation(hrmoPage, activationUrl, { name: 'Hiraya Dela Cruz' });
     await expect(hrmoPage.getByRole('heading', { name: 'Work queue' })).toBeVisible();
     await expect(hrmoPage.getByText('HRMO Administrator', { exact: true }).first()).toBeVisible();
-    await hrmoPage.screenshot({ path: testInfo.outputPath('hrmo-handoff.png'), fullPage: true });
-    await expect(
-      hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
-        name: 'Users & Access',
-      }),
-    ).toHaveCount(0);
+    await hrmoPage.screenshot({ path: testInfo.outputPath('hrmo-activated.png'), fullPage: true });
+    await hrmoPage
+      .getByRole('navigation', { name: 'Primary' })
+      .getByRole('button', { name: 'Structure' })
+      .click();
     await expect(
       hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
         name: 'Organization',
@@ -131,15 +133,15 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
     ).toBeVisible();
     await expect(hrmoPage.getByRole('button', { name: 'Invite user' })).toHaveCount(0);
 
-    const me = await hrmoPage.request.get('http://localhost:3101/api/v1/auth/me', {
-      headers: { origin: 'http://localhost:3100' },
+    const me = await hrmoPage.request.get(`${apiUrl}/api/v1/auth/me`, {
+      headers: { origin: appOrigin },
     });
     expect(me.ok()).toBe(true);
     const session = (await me.json()) as { agencyId: string };
     const forbidden = await hrmoPage.request.post(
-      `http://localhost:3101/api/v1/agencies/${session.agencyId}/invitations`,
+      `${apiUrl}/api/v1/agencies/${session.agencyId}/invitations`,
       {
-        headers: { origin: 'http://localhost:3100' },
+        headers: { origin: appOrigin },
         data: { email: 'forbidden@example.test', roleCodes: ['hrmo_administrator'] },
       },
     );
@@ -156,6 +158,7 @@ test('invites and activates an HRMO Administrator through Mailpit and local OIDC
 
 test('keeps the invitation dialog keyboard-safe at a narrow width', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
@@ -216,6 +219,7 @@ test('keeps invitation framing visible while the body scrolls on a short viewpor
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 320 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');
@@ -285,6 +289,7 @@ test('guards every invitation dismissal path during submission', async ({ page }
     });
   });
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/users-access');

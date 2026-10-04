@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -198,6 +199,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   });
 
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees');
@@ -215,6 +217,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   await page.getByRole('button', { name: 'Create employee' }).click();
 
   await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
+  await page.getByRole('tab', { name: 'Government identifiers' }).click();
   await expect(
     page.getByRole('heading', { name: 'Government identifiers', exact: true }),
   ).toBeVisible();
@@ -272,7 +275,7 @@ test('manages masked government identifiers through the shared dialogs', async (
   await expect(page.getByRole('button', { name: 'Reveal value' }).first()).toBeFocused();
 
   await page.getByRole('button', { name: 'View history' }).first().click();
-  const historyDialog = page.getByRole('dialog', { name: 'Government identifier history' });
+  const historyDialog = page.getByRole('region', { name: 'Government identifier history' });
   await expect(historyDialog).toBeVisible();
   await expect(historyDialog).toHaveAccessibleDescription(
     'Inspect retained events for the selected protected identifier without exposing its full value.',
@@ -313,6 +316,6 @@ test('manages masked government identifiers through the shared dialogs', async (
   await expect(invalidateDialog).toBeHidden();
   await expect(page.getByText('Invalid', { exact: true })).toBeVisible();
   await expect(
-    page.locator('section[aria-labelledby="government-identifiers-heading"]'),
+    page.getByRole('region', { name: 'Government identifiers', exact: true }),
   ).toBeFocused();
 });

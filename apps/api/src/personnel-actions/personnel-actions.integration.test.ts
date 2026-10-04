@@ -5,6 +5,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { AuthService } from '../auth/auth.service';
+import { AppointmentReadModel, AppointmentsService } from '../appointments/appointments.service';
 import {
   plantillaPositionAuditWriter,
   PlantillaPositionsService,
@@ -59,8 +60,6 @@ async function createAdminClient(): Promise<PrismaClient> {
 async function createActor(admin: PrismaClient, agencyId: string, suffix: string, name: string) {
   const user = await admin.user.create({
     data: {
-      identityProvider: 'personnel-action-integration',
-      externalSubject: `${name}-${suffix}`,
       emailNormalized: `${name}-${suffix}@example.test`,
       displayName: name,
       globalStatus: 'ACTIVE',
@@ -349,12 +348,20 @@ it.skipIf(!enabled)(
         plantillaPositionAuditWriter,
         documentsService,
       );
+      const appointmentReadModel = new AppointmentReadModel({} as never, plantillaPositionsService);
       const service = new PersonnelActionsService(
         personnelActionAuditWriter,
         documentsService,
         plantillaPositionsService,
         new AuthService(),
         new SeparationsService(separationAuditWriter),
+        new AppointmentsService(
+          documentsService,
+          plantillaPositionsService,
+          {} as never,
+          {} as never,
+          appointmentReadModel,
+        ),
       );
       const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [
         'personnel.actions.read',
@@ -601,6 +608,7 @@ it.skipIf(!enabled)(
         plantillaPositionsService,
         new AuthService(),
         new SeparationsService(separationAuditWriter),
+        {} as never,
       );
       await expect(
         failingService.effectuate(preparerContext, salaryAction.id, 'salary-effectuation-key'),
@@ -883,6 +891,7 @@ it.skipIf(!enabled)(
         plantillaService,
         new AuthService(),
         new SeparationsService(separationAuditWriter),
+        {} as never,
       );
       const preparerContext = context(agencyId, preparer.userId, preparer.membershipId, [
         'personnel.actions.read',
@@ -998,8 +1007,6 @@ it.skipIf(!enabled)(
         });
         const employeeUser = await admin.user.create({
           data: {
-            identityProvider: 'personnel-action-integration',
-            externalSubject: `separating-${index}-${suffix}`,
             emailNormalized: `separating-${index}-${suffix}@example.test`,
             displayName: `Separating Employee ${index}`,
             globalStatus: 'ACTIVE',
@@ -1187,6 +1194,7 @@ it.skipIf(!enabled)(
             } as never,
             new AuthService(),
             new SeparationsService(separationAuditWriter),
+            {} as never,
           );
           await expect(
             failingService.effectuate(preparerContext, prepared.id, `rollback-${suffix}`),

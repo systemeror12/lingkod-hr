@@ -108,7 +108,6 @@ export default async function MyPdsPage() {
       canGenerateOutputs={canAgencyUpdate}
       canBrowseEvidence={hasPermission(session, 'documents.evidence.read')}
       createUrl={`/api/v1/agencies/${session.agencyId}/my-pds`}
-      backHref="/dashboard"
     />
   );
 }

@@ -174,6 +174,61 @@ export interface PlantillaPositionSuccessor {
   draft: PlantillaPositionVersionSummary;
 }
 
+export interface ReservedAssignmentFacts {
+  organizationUnitId: string;
+  salaryGrade: number;
+}
+
+export interface CompleteReservedAssignmentInput {
+  employeeId: string;
+  serviceSegmentId: string;
+  appointmentId: string;
+  appointmentVersionId: string;
+  effectiveDate: string;
+  expectedOrganizationUnitId: string;
+  expectedSalaryGrade: number;
+  reason: string;
+}
+
+export interface CompletedAssignment {
+  versionId: string;
+  positionIncumbencyId: string;
+}
+
+export type RecruitableVacancyRejectionReason =
+  | 'POSITION_NOT_VACANT'
+  | 'POSITION_NOT_AUTHORIZED'
+  | 'POSITION_NOT_PLANTILLA'
+  | 'POSITION_FROZEN'
+  | 'POSITION_ABOLISHED'
+  | 'POSITION_VERSION_MISSING'
+  | 'POSITION_AUTHORITY_INVALID'
+  | 'POSITION_QUALIFICATION_INVALID';
+
+export type RecruitableVacancyResolution =
+  | {
+      eligible: true;
+      positionId: string;
+      itemNumber: string;
+      positionVersionId: string;
+      positionVersionNo: number;
+      title: string;
+      parentheticalTitle: string | null;
+      salaryGrade: number;
+      organizationUnitId: string;
+      organizationUnitCode: string;
+      organizationUnitName: string;
+      qualificationStandardVersionId: string;
+      staffingAuthorityId: string;
+      effectiveFrom: string;
+      employmentCategory: PlantillaPositionEmploymentCategory;
+    }
+  | {
+      eligible: false;
+      positionId: string;
+      reason: RecruitableVacancyRejectionReason;
+    };
+
 export interface PlantillaPositionAuditWriter {
   write(
     transaction: Prisma.TransactionClient,
@@ -221,7 +276,8 @@ const versionSelect = {
     select: {
       id: true,
       code: true,
-      currentVersion: { select: { name: true } },
+      currentVersion: { select: { name: true, status: true, domainStatus: true } },
+      status: true,
     },
   },
   qualificationStandardVersion: {
@@ -230,7 +286,9 @@ const versionSelect = {
       versionNo: true,
       effectiveFrom: true,
       effectiveTo: true,
-      qualificationStandard: { select: { code: true, name: true } },
+      status: true,
+      domainStatus: true,
+      qualificationStandard: { select: { code: true, name: true, status: true } },
     },
   },
   staffingAuthority: {
@@ -239,6 +297,9 @@ const versionSelect = {
       referenceNo: true,
       authorityType: true,
       effectiveDate: true,
+      status: true,
+      supersededEffectiveDate: true,
+      revokedEffectiveDate: true,
     },
   },
 } as const;
@@ -510,6 +571,94 @@ export class PlantillaPositionsService {
       });
       return records.map((record) => positionSummary(record, asOf));
     });
+  }
+
+  /** Internal contract: Recruitment may open a case only from this resolved vacancy. */
+  async resolveRecruitableVacancy(
+    context: RequestContext,
+    positionId: string,
+    asOfValue = manilaToday(),
+  ): Promise<RecruitableVacancyResolution | null> {
+    this.assertPermission(context, 'positions.items.read', 'PLANTILLA_POSITION_READ_FORBIDDEN');
+    return withDatabaseContext(databaseContext(context), (transaction) =>
+      this.resolveRecruitableVacancyInTransaction(transaction, context, positionId, asOfValue),
+    );
+  }
+
+  /** Internal contract: an owning workflow may revalidate the same vacancy inside its transaction. */
+  async resolveRecruitableVacancyInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    asOfValue = manilaToday(),
+  ): Promise<RecruitableVacancyResolution | null> {
+    const asOf = toDatabaseDate(asOfValue);
+    const locked = await transaction.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`SELECT "id" FROM "plantilla_positions" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${positionId} AS uuid) FOR UPDATE`,
+    );
+    if (locked.length !== 1) return null;
+    const record = await transaction.plantillaPosition.findFirst({
+      where: { agencyId: context.agencyId, id: positionId },
+      select: positionSelect,
+    });
+    if (!record) return null;
+
+    const current = effectiveVersion(record.versions, asOf);
+    if (!current) return { eligible: false, positionId, reason: 'POSITION_VERSION_MISSING' };
+    if (record.status === 'FROZEN' || current.domainStatus === 'FROZEN') {
+      return { eligible: false, positionId, reason: 'POSITION_FROZEN' };
+    }
+    if (record.status === 'ABOLISHED' || current.domainStatus === 'ABOLISHED') {
+      return { eligible: false, positionId, reason: 'POSITION_ABOLISHED' };
+    }
+    if (record.status !== 'VACANT' || current.domainStatus !== 'VACANT') {
+      return { eligible: false, positionId, reason: 'POSITION_NOT_VACANT' };
+    }
+    if (current.employmentCategory !== 'PLANTILLA') {
+      return { eligible: false, positionId, reason: 'POSITION_NOT_PLANTILLA' };
+    }
+    if (
+      current.organizationUnit.status !== 'ACTIVE' ||
+      current.organizationUnit.currentVersion?.status !== 'ACTIVE' ||
+      current.organizationUnit.currentVersion.domainStatus !== 'ACTIVE'
+    ) {
+      return { eligible: false, positionId, reason: 'POSITION_NOT_AUTHORIZED' };
+    }
+    if (
+      current.staffingAuthority.status !== 'ACTIVE' ||
+      current.staffingAuthority.effectiveDate > asOf ||
+      (current.staffingAuthority.supersededEffectiveDate !== null &&
+        current.staffingAuthority.supersededEffectiveDate <= asOf) ||
+      (current.staffingAuthority.revokedEffectiveDate !== null &&
+        current.staffingAuthority.revokedEffectiveDate <= asOf)
+    ) {
+      return { eligible: false, positionId, reason: 'POSITION_AUTHORITY_INVALID' };
+    }
+    if (
+      current.qualificationStandardVersion.status !== 'ACTIVE' ||
+      current.qualificationStandardVersion.domainStatus !== 'ACTIVE' ||
+      current.qualificationStandardVersion.qualificationStandard.status !== 'ACTIVE'
+    ) {
+      return { eligible: false, positionId, reason: 'POSITION_QUALIFICATION_INVALID' };
+    }
+    return {
+      eligible: true,
+      positionId: record.id,
+      itemNumber: record.itemNumber,
+      positionVersionId: current.id,
+      positionVersionNo: current.versionNo,
+      title: current.positionTitle,
+      parentheticalTitle: current.parentheticalTitle,
+      salaryGrade: current.salaryGrade,
+      organizationUnitId: current.organizationUnit.id,
+      organizationUnitCode: current.organizationUnit.code,
+      organizationUnitName:
+        current.organizationUnit.currentVersion?.name ?? current.organizationUnit.code,
+      qualificationStandardVersionId: current.qualificationStandardVersion.id,
+      staffingAuthorityId: current.staffingAuthority.id,
+      effectiveFrom: formatDate(current.effectiveFrom),
+      employmentCategory: current.employmentCategory as PlantillaPositionEmploymentCategory,
+    };
   }
 
   async findById(
@@ -1213,6 +1362,449 @@ export class PlantillaPositionsService {
     );
   }
 
+  /** Internal contract: Recruitment owns the transaction; Plantilla owns this reservation. */
+  async reserveInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    return this.transitionInTransaction(
+      transaction,
+      context,
+      positionId,
+      { effectiveDate, reason },
+      {
+        action: 'PLANTILLA_POSITION_RESERVED',
+        from: ['VACANT'],
+        to: 'RESERVED',
+      },
+      rawIdempotencyKey,
+    );
+  }
+
+  /** Internal contract: Appointment revalidates the Recruitment reservation through Plantilla. */
+  async resolveReservationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    positionId: string,
+  ): Promise<PlantillaPositionSummary | null> {
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    return record ? positionSummary(record, toDatabaseDate(manilaToday())) : null;
+  }
+
+  /**
+   * Internal contract: Appointment owns the transaction; Plantilla owns this release.
+   * Cancellation must always be able to free the item, so the release does not
+   * revalidate staffing authority or qualification of a reservation made earlier.
+   * A same-day release voids the never-effective reservation instead of dating a
+   * zero-day successor.
+   */
+  async releaseReservationInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    if (idempotencyKey) {
+      const completed = await transaction.auditEvent.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          action: 'PLANTILLA_POSITION_RESERVATION_RELEASED',
+          entityId: positionId,
+          idempotencyKey,
+        },
+        select: { id: true },
+      });
+      if (completed) return positionSummary(record, toDatabaseDate(manilaToday()));
+    }
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (
+      current?.status !== 'ACTIVE' ||
+      current.domainStatus !== 'RESERVED' ||
+      current.effectiveFrom.getTime() !== effectiveFrom.getTime()
+    ) {
+      return this.transitionInTransaction(
+        transaction,
+        context,
+        positionId,
+        { effectiveDate, reason },
+        {
+          action: 'PLANTILLA_POSITION_RESERVATION_RELEASED',
+          from: ['RESERVED'],
+          to: 'VACANT',
+          skipReferenceValidation: true,
+        },
+        rawIdempotencyKey,
+      );
+    }
+    const latest = record.versions.reduce(
+      (maxVersion, version) => Math.max(maxVersion, version.versionNo),
+      current.versionNo,
+    );
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+      data: { status: 'VOIDED' },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(
+        context,
+        positionId,
+        this.inputFromVersion(current, effectiveFrom),
+        effectiveFrom,
+        {
+          versionNo: latest + 1,
+          status: 'ACTIVE',
+          domainStatus: 'VACANT',
+          effectiveTo: current.effectiveTo,
+        },
+      ),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_RESERVATION_RELEASED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'RESERVED',
+      newStatus: 'VACANT',
+      reason,
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        before: {
+          lifecycleStatus: current.domainStatus,
+          versionState: current.status,
+          versionId: current.id,
+          effectiveDate: formatDate(current.effectiveFrom),
+        },
+        after: {
+          lifecycleStatus: 'VACANT',
+          versionState: 'ACTIVE',
+          versionId: replacement.id,
+          effectiveDate: formatDate(effectiveFrom),
+        },
+        predecessorId: current.id,
+        versionId: replacement.id,
+        effectiveDate: formatDate(effectiveFrom),
+        sameDayRelease: true,
+      },
+    });
+    return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+  }
+
+  /**
+   * Internal contract: Personnel Actions own the transaction; Plantilla owns this
+   * reservation consumption. An appointment assumed on the reservation date
+   * would otherwise produce a zero-day Reserved version, so the same-day case
+   * voids the never-effective reservation and records occupancy in place.
+   */
+  async occupyReservedInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    effectiveDate: string,
+    reason: string,
+    rawIdempotencyKey?: string,
+  ): Promise<PlantillaPositionSummary> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    if (idempotencyKey) {
+      const completed = await transaction.auditEvent.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          action: 'PLANTILLA_POSITION_OCCUPIED',
+          entityId: positionId,
+          idempotencyKey,
+        },
+        select: { reason: true, metadata: true },
+      });
+      if (completed) {
+        if (
+          completed.reason !== reason ||
+          this.metadataString(completed.metadata, 'effectiveDate') !== effectiveDate
+        ) {
+          throw this.idempotencyConflict();
+        }
+        return positionSummary(record, toDatabaseDate(manilaToday()));
+      }
+    }
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (
+      current?.status !== 'ACTIVE' ||
+      current.domainStatus !== 'RESERVED' ||
+      current.effectiveFrom.getTime() !== effectiveFrom.getTime()
+    ) {
+      return this.transitionInTransaction(
+        transaction,
+        context,
+        positionId,
+        { effectiveDate, reason },
+        {
+          action: 'PLANTILLA_POSITION_OCCUPIED',
+          from: ['RESERVED'],
+          to: 'OCCUPIED',
+        },
+        rawIdempotencyKey,
+      );
+    }
+    const input = this.inputFromVersion(current, effectiveFrom);
+    await this.validateReferences(transaction, context, input, effectiveFrom, {
+      requireActiveAuthority: true,
+    });
+    const latest = Math.max(...record.versions.map(({ versionNo }) => versionNo));
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+      data: { status: 'VOIDED' },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(context, positionId, input, effectiveFrom, {
+        versionNo: latest + 1,
+        status: 'ACTIVE',
+        domainStatus: 'OCCUPIED',
+        effectiveTo: current.effectiveTo,
+      }),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_OCCUPIED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'RESERVED',
+      newStatus: 'OCCUPIED',
+      reason,
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        before: {
+          lifecycleStatus: current.domainStatus,
+          versionState: current.status,
+          versionId: current.id,
+          effectiveDate: formatDate(current.effectiveFrom),
+        },
+        after: {
+          lifecycleStatus: 'OCCUPIED',
+          versionState: 'ACTIVE',
+          versionId: replacement.id,
+          effectiveDate: formatDate(effectiveFrom),
+        },
+        predecessorId: current.id,
+        versionId: replacement.id,
+        effectiveDate: formatDate(effectiveFrom),
+        sameDayOccupation: true,
+      },
+    });
+    return positionSummary(refreshed, toDatabaseDate(manilaToday()));
+  }
+
+  /** Internal contract: Appointment resolves the reserved assignment it will consume. */
+  async resolveReservedAssignmentInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    positionId: string,
+    effectiveDate: string,
+  ): Promise<ReservedAssignmentFacts | null> {
+    const effectiveFrom = toDatabaseDate(effectiveDate);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) return null;
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (!current || current.status !== 'ACTIVE' || current.domainStatus !== 'RESERVED') {
+      return null;
+    }
+    return {
+      organizationUnitId: current.organizationUnit.id,
+      salaryGrade: current.salaryGrade,
+    };
+  }
+
+  /**
+   * Internal contract: Appointment owns the transaction; Plantilla owns the
+   * occupancy and the Position Incumbency. The reserved version is revalidated
+   * at the assumption date, then consumed: a same-day consumption voids the
+   * never-effective reservation, a later assumption supersedes it like any
+   * other transition. The Service Segment is Personnel-owned; this method only
+   * links the incumbency to it.
+   */
+  async completeReservedAssignmentInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    positionId: string,
+    input: CompleteReservedAssignmentInput,
+    rawIdempotencyKey?: string,
+  ): Promise<CompletedAssignment> {
+    const reason = input.reason.trim();
+    if (!reason) throw this.transitionReasonRequired();
+    const effectiveFrom = toDatabaseDate(input.effectiveDate);
+    const idempotencyKey = normalizeIdempotencyKey(rawIdempotencyKey);
+    await this.lockPosition(transaction, context.agencyId, positionId);
+    const record = await this.positionRecord(transaction, context.agencyId, positionId);
+    if (!record) throw this.notFound();
+    if (idempotencyKey) {
+      const completed = await transaction.auditEvent.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          action: 'PLANTILLA_POSITION_OCCUPIED',
+          entityId: positionId,
+          idempotencyKey,
+        },
+        select: { metadata: true },
+      });
+      if (completed) {
+        if (
+          this.metadataString(completed.metadata, 'appointmentId') !== input.appointmentId ||
+          this.metadataString(completed.metadata, 'effectiveDate') !== input.effectiveDate
+        ) {
+          throw this.idempotencyConflict();
+        }
+        const incumbent = await transaction.positionIncumbency.findFirst({
+          where: { agencyId: context.agencyId, serviceSegmentId: input.serviceSegmentId },
+          select: { id: true },
+        });
+        const versionId = this.metadataString(completed.metadata, 'versionId');
+        if (!incumbent || !versionId) throw this.idempotencyConflict();
+        return {
+          versionId,
+          positionIncumbencyId: incumbent.id,
+        };
+      }
+    }
+    if (draftVersion(record.versions)) throw this.transitionDraftConflict();
+    const current = effectiveVersion(record.versions, effectiveFrom);
+    if (
+      !current ||
+      current.status !== 'ACTIVE' ||
+      current.domainStatus !== 'RESERVED' ||
+      current.effectiveFrom.getTime() > effectiveFrom.getTime()
+    ) {
+      throw this.assignmentInvalid();
+    }
+    if (
+      current.organizationUnit.id !== input.expectedOrganizationUnitId ||
+      current.salaryGrade !== input.expectedSalaryGrade
+    ) {
+      throw this.assignmentMismatch();
+    }
+    const overlap = await transaction.positionIncumbency.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        positionId,
+        status: { not: 'VOIDED' },
+        effectiveFrom: { lte: effectiveFrom },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: effectiveFrom } }],
+      },
+      select: { id: true },
+    });
+    if (overlap) throw this.incumbencyConflict();
+    const latest = record.versions.reduce(
+      (maxVersion, version) => Math.max(maxVersion, version.versionNo),
+      current.versionNo,
+    );
+    const sameDay = current.effectiveFrom.getTime() === effectiveFrom.getTime();
+    await transaction.plantillaPositionVersion.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: current.id } },
+      data: sameDay
+        ? { status: 'VOIDED' }
+        : { status: 'SUPERSEDED', effectiveTo: addDays(effectiveFrom, -1) },
+    });
+    const replacement = await transaction.plantillaPositionVersion.create({
+      data: this.versionData(
+        context,
+        positionId,
+        this.inputFromVersion(current, effectiveFrom),
+        effectiveFrom,
+        {
+          versionNo: latest + 1,
+          status: 'ACTIVE',
+          domainStatus: 'OCCUPIED',
+          effectiveTo: sameDay ? current.effectiveTo : null,
+        },
+      ),
+      select: { id: true },
+    });
+    const refreshed = await this.refreshProjection(transaction, context.agencyId, positionId);
+    if (!refreshed) throw this.notFound();
+    const incumbency = await transaction.positionIncumbency.create({
+      data: {
+        agencyId: context.agencyId,
+        positionId,
+        employeeId: input.employeeId,
+        serviceSegmentId: input.serviceSegmentId,
+        effectiveFrom,
+        effectiveTo: null,
+        status: 'ACTIVE',
+        createdByMembershipId: context.membershipId,
+      },
+      select: { id: true },
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'PLANTILLA_POSITION_OCCUPIED',
+      entityType: 'PlantillaPosition',
+      entityId: positionId,
+      previousStatus: 'RESERVED',
+      newStatus: 'OCCUPIED',
+      reason,
+      requestId: context.requestId,
+      occurredAt: new Date(),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      metadata: {
+        before: {
+          lifecycleStatus: current.domainStatus,
+          versionState: current.status,
+          versionId: current.id,
+          effectiveDate: formatDate(current.effectiveFrom),
+        },
+        after: {
+          lifecycleStatus: 'OCCUPIED',
+          versionState: 'ACTIVE',
+          versionId: replacement.id,
+          effectiveDate: formatDate(effectiveFrom),
+        },
+        predecessorId: current.id,
+        versionId: replacement.id,
+        effectiveDate: formatDate(effectiveFrom),
+        positionIncumbencyId: incumbency.id,
+        appointmentId: input.appointmentId,
+        appointmentVersionId: input.appointmentVersionId,
+        serviceSegmentId: input.serviceSegmentId,
+        employeeId: input.employeeId,
+        sameDayAssignment: sameDay,
+      },
+    });
+    return {
+      versionId: replacement.id,
+      positionIncumbencyId: incumbency.id,
+    };
+  }
+
   /** Internal contract: Personnel Actions own the transaction; Plantilla owns this transition. */
   async lockInTransaction(
     transaction: Prisma.TransactionClient,
@@ -1851,6 +2443,30 @@ export class PlantillaPositionsService {
       'A successor effective date must follow the current version.',
       409,
       'PLANTILLA_POSITION_SUCCESSOR_DATE_INVALID',
+    );
+  }
+
+  private assignmentInvalid(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Plantilla Position is no longer reserved for this activation.',
+      409,
+      'PLANTILLA_POSITION_ASSIGNMENT_INVALID',
+    );
+  }
+
+  private assignmentMismatch(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The reserved Plantilla Position changed before service activation.',
+      409,
+      'PLANTILLA_POSITION_ASSIGNMENT_MISMATCH',
+    );
+  }
+
+  private incumbencyConflict(): PlantillaPositionServiceError {
+    return new PlantillaPositionServiceError(
+      'The Plantilla Position already has a conflicting Position Incumbency.',
+      409,
+      'PLANTILLA_POSITION_INCUMBENCY_CONFLICT',
     );
   }
 

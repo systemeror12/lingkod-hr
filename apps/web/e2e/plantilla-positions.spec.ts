@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -13,11 +14,12 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   const itemNumber = 'E2E-' + Date.now();
 
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/plantilla-positions');
   await expect(
-    page.getByRole('heading', { name: 'Plantilla positions', exact: true }),
+    page.getByRole('heading', { name: 'Plantilla Positions', exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: /HRM-000142/ })).toBeVisible();
 
@@ -46,12 +48,9 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await dialog.getByLabel('Applicable Staffing Authority').selectOption({ index: 1 });
   await dialog.getByRole('button', { name: 'Create proposed position' }).click();
 
-  await expect(page.getByRole('status')).toContainText(
-    `Proposed position “${itemNumber}” was created.`,
-  );
-  const result = page.getByRole('button', { name: new RegExp(itemNumber) });
-  await expect(result).toBeVisible();
-  await result.click();
+  await expect(
+    page.getByRole('status').filter({ hasText: `Proposed position “${itemNumber}” was created.` }),
+  ).toBeVisible();
   await expect(
     page.getByRole('heading', { name: 'Human Resource Management Officer III' }),
   ).toBeVisible();
@@ -85,9 +84,11 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   await linkDialog.getByLabel('Evidence purpose').selectOption('POSITION_DESCRIPTION');
   await linkDialog.getByLabel('Effectivity Optional').fill('2026-01-01');
   await linkDialog.getByRole('button', { name: 'Link evidence', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText(
-    'External Evidence E2E-PLANTILLA-AUTHORITY was linked',
-  );
+  await expect(
+    page
+      .getByRole('status')
+      .filter({ hasText: 'External Evidence E2E-PLANTILLA-AUTHORITY was linked' }),
+  ).toBeVisible();
   const evidenceDocument = page.getByText('E2E-PLANTILLA-AUTHORITY', { exact: true });
   await expect(evidenceDocument).toBeVisible();
   const evidenceDocumentBox = await evidenceDocument.boundingBox();
@@ -102,7 +103,7 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
   const linkButtonBox = await linkTrigger.boundingBox();
   expect(linkButtonBox).not.toBeNull();
   if (!linkButtonBox) throw new Error('Evidence link trigger geometry was unavailable.');
-  expect(linkButtonBox.height).toBe(44);
+  expect(linkButtonBox.height).toBe(36);
 
   const removeTrigger = page.getByRole('button', { name: 'Remove link' }).first();
   await removeTrigger.click();
@@ -127,14 +128,16 @@ test('creates a proposed Plantilla Position and prepares one successor', async (
     .getByLabel('Reason for removal')
     .fill('The document was attached to the wrong controlled purpose.');
   await removeDialog.getByRole('button', { name: 'Remove link', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('position description link was removed');
+  await expect(
+    page.getByRole('status').filter({ hasText: 'position description link was removed' }),
+  ).toBeVisible();
   await expect(page.getByText('E2E-PLANTILLA-AUTHORITY', { exact: true })).toBeHidden();
   await expect(linkTrigger).toBeFocused();
 
   await page.getByRole('button', { name: 'Prepare successor' }).click();
-  await expect(page.getByRole('status')).toContainText(
-    `Draft successor prepared for “${itemNumber}”.`,
-  );
+  await expect(
+    page.getByRole('status').filter({ hasText: `Draft successor prepared for “${itemNumber}”.` }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Draft successor exists' })).toBeDisabled();
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -149,11 +152,12 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
   const itemNumber = 'LIFE-E2E-' + Date.now();
 
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/plantilla-positions');
   await expect(
-    page.getByRole('heading', { name: 'Plantilla positions', exact: true }),
+    page.getByRole('heading', { name: 'Plantilla Positions', exact: true }),
   ).toBeVisible();
 
   await page.getByRole('button', { name: 'Create proposed position' }).click();
@@ -167,10 +171,9 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
   await createDialog.getByLabel('Applicable Staffing Authority').selectOption({ index: 1 });
   await createDialog.getByRole('button', { name: 'Create proposed position' }).click();
 
-  await expect(page.getByRole('status')).toContainText(
-    `Proposed position “${itemNumber}” was created.`,
-  );
-  await page.getByRole('button', { name: new RegExp(itemNumber) }).click();
+  await expect(
+    page.getByRole('status').filter({ hasText: `Proposed position “${itemNumber}” was created.` }),
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Authorize position' })).toBeVisible();
 
   async function linkEvidence(purpose: 'CREATION' | 'FREEZE' | 'ABOLITION'): Promise<void> {
@@ -181,9 +184,11 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     });
     await linkDialog.getByLabel('Evidence purpose').selectOption(purpose);
     await linkDialog.getByRole('button', { name: 'Link evidence', exact: true }).click();
-    await expect(page.getByRole('status')).toContainText(
-      'External Evidence E2E-PLANTILLA-AUTHORITY was linked',
-    );
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'External Evidence E2E-PLANTILLA-AUTHORITY was linked' }),
+    ).toBeVisible();
   }
 
   async function completeTransition(
@@ -198,7 +203,7 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
     await expect(transitionDialog.getByLabel('Effective date')).toBeFocused();
     await transitionDialog.getByLabel('Reason').fill(reason);
     await transitionDialog.getByRole('button', { name: submitButton, exact: true }).click();
-    await expect(page.getByRole('status')).toContainText(successText);
+    await expect(page.getByRole('status').filter({ hasText: successText })).toBeVisible();
     await expect(page.locator('[aria-label="Position lifecycle actions"]')).toBeFocused();
   }
 
@@ -288,13 +293,13 @@ test('authorizes and controls a Plantilla Position lifecycle with evidence', asy
 
   await page.goto('/audit');
   await expect(page.getByRole('heading', { name: 'Audit Log' })).toBeVisible();
-  const auditEvent = page
-    .getByRole('button')
+  const auditRow = page
+    .getByRole('row')
     .filter({ hasText: 'PLANTILLA_POSITION_ABOLISHED' })
     .first();
-  await expect(auditEvent).toContainText('VACANT → ABOLISHED');
-  await auditEvent.click();
-  const auditDialog = page.getByRole('dialog', { name: 'Audit Event detail' });
+  await expect(auditRow).toContainText('VACANT → ABOLISHED');
+  await auditRow.getByRole('button', { name: 'PLANTILLA_POSITION_ABOLISHED' }).click();
+  const auditDialog = page.getByRole('region', { name: 'Audit Event detail' });
   await expect(auditDialog).toContainText('PLANTILLA_POSITION_ABOLISHED');
   await expect(auditDialog).toContainText('ABOLISHED');
 });

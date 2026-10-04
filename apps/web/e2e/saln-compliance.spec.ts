@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('records and corrects SALN filing metadata without a content or due-date surface', async ({
   page,
@@ -6,6 +7,7 @@ test('records and corrects SALN filing metadata without a content or due-date su
   test.setTimeout(60_000);
   const stamp = Date.now();
   const legalName = `SALN E2E Employee ${stamp}`;
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
   await page.goto('/employees/new');
@@ -18,8 +20,9 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await page.getByRole('button', { name: 'Create employee' }).click();
   await expect(page.getByRole('heading', { name: legalName })).toBeVisible();
 
+  await page.getByRole('tab', { name: 'SALN compliance' }).click();
   await page.getByRole('button', { name: 'Record filing' }).click();
-  const create = page.getByRole('dialog', { name: 'Record SALN filing metadata' });
+  const create = page.getByRole('region', { name: 'Record SALN filing metadata' });
   await expect(create).toHaveAccessibleDescription(
     'This surface stores compliance metadata only. Do not enter declaration contents.',
   );
@@ -32,25 +35,34 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await create.getByLabel('Filing status').selectOption('SUBMITTED');
   await create.getByLabel('Submission date').fill('2026-04-30');
   await create.getByLabel('Repository reference').fill(`Records/2026/${stamp}`);
+  await page.route(
+    '**/api/v1/agencies/*/employees/*/saln-compliance',
+    (route) => route.abort('failed'),
+    { times: 1 },
+  );
+  await create.getByRole('button', { name: 'Record filing' }).click();
+  await expect(create.getByRole('alert')).toContainText('Check the connection');
+  await expect(create.getByLabel('Filing year')).toHaveValue('2026');
+  await expect(create.getByRole('button', { name: 'Record filing' })).toBeEnabled();
   await create.getByRole('button', { name: 'Record filing' }).click();
   await expect(create).toBeHidden();
   await expect(page.getByText('2026 · ANNUAL')).toBeVisible();
 
   await page.getByRole('button', { name: 'Details' }).click();
-  const detail = page.getByRole('dialog', { name: 'SALN filing details' });
+  const detail = page.getByRole('region', { name: 'SALN filing details' });
   await expect(detail).toContainText('Agency memorandum 2026-04');
   await expect(detail).toContainText(`Records/2026/${stamp}`);
   await detail.getByRole('button', { name: 'Close', exact: true }).click();
 
   await page.getByRole('button', { name: 'Update' }).click();
-  const update = page.getByRole('dialog', { name: 'Update SALN filing metadata' });
+  const update = page.getByRole('region', { name: 'Update SALN filing metadata' });
   await update.getByLabel('Filing type').fill('ANNUAL UPDATED');
   await update.getByRole('button', { name: 'Save update' }).click();
   await expect(update).toBeHidden();
   await expect(page.getByText('2026 · ANNUAL UPDATED')).toBeVisible();
 
   await page.getByRole('button', { name: 'Correct' }).click();
-  const correction = page.getByRole('dialog', { name: 'Correct SALN filing metadata' });
+  const correction = page.getByRole('region', { name: 'Correct SALN filing metadata' });
   await correction.getByLabel('Filing type').fill('ANNUAL CORRECTED');
   await correction
     .getByLabel('Correction reason')
@@ -61,8 +73,37 @@ test('records and corrects SALN filing metadata without a content or due-date su
   await expect(page.getByText('2026 · ANNUAL', { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'History' }).click();
-  const history = page.getByRole('dialog', { name: 'SALN compliance history' });
+  const history = page.getByRole('region', { name: 'SALN compliance history' });
   await expect(history.getByText('2026 · ANNUAL', { exact: true })).toBeVisible();
   await expect(history.getByText('2026 · ANNUAL UPDATED', { exact: true })).toBeVisible();
   await expect(history.getByText('2026 · ANNUAL CORRECTED', { exact: true })).toBeVisible();
+
+  // The history stays open in the hidden SALN tab without trapping focus on the visible one.
+  const detailsTab = page.getByRole('tab', { name: 'Details' });
+  await detailsTab.click();
+  await expect(history).toBeHidden();
+  await detailsTab.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('tabpanel', { name: 'Details' })).toBeFocused();
+});
+
+test('My SALN Compliance reports a failed load without claiming an empty record', async ({
+  page,
+}) => {
+  await signIn(page, MARISOL_EMAIL);
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15000 });
+  await page.route('**/api/v1/agencies/*/employees/me/saln-compliance', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: 'SALN compliance is temporarily unavailable.' } }),
+    }),
+  );
+  await page.goto('/my-saln');
+  await expect(page.getByRole('heading', { level: 1, name: 'My SALN Compliance' })).toBeVisible();
+  const panel = page.getByRole('region', { name: 'SALN filing compliance' });
+  await expect(panel.getByRole('alert')).toHaveText('SALN compliance is temporarily unavailable.');
+  await expect(panel.getByText('SALN compliance metadata is unavailable.')).toBeVisible();
+  await expect(panel.getByText('No SALN compliance metadata is recorded.')).toHaveCount(0);
 });

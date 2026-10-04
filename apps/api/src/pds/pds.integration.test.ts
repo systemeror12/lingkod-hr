@@ -59,8 +59,6 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'pds-api-e2e',
-      externalSubject: `pds-api-${suffix}`,
       emailNormalized: `pds-api-${suffix}@example.test`,
       displayName: 'PDS API User',
       globalStatus: 'ACTIVE',
@@ -71,8 +69,6 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
   });
   const otherUser = await admin.user.create({
     data: {
-      identityProvider: 'pds-api-e2e',
-      externalSubject: `pds-api-other-${suffix}`,
       emailNormalized: `pds-api-other-${suffix}@example.test`,
       displayName: 'Other PDS API User',
       globalStatus: 'ACTIVE',

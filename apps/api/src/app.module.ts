@@ -17,6 +17,22 @@ import { PersonnelActionsModule } from './personnel-actions/personnel-actions.mo
 import { PayrollBankAccountsModule } from './payroll-bank-accounts/payroll-bank-accounts.module';
 import { SalnComplianceModule } from './saln-compliance/saln-compliance.module';
 import { ServiceRecordsModule } from './service-records/service-records.module';
+import { ApprovalModule } from './approvals/approval.module';
+import { RecruitmentModule } from './recruitment/recruitment.module';
+import { AppointmentsModule } from './appointments/appointments.module';
+import { AttendanceConfigurationModule } from './attendance-configuration/attendance-configuration.module';
+import { AttendanceContextsModule } from './attendance-contexts/attendance-contexts.module';
+import { AttendanceDaysModule } from './attendance-days/attendance-days.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { AttendanceCorrectionsModule } from './attendance-corrections/attendance-corrections.module';
+import { AttendanceSubmissionsModule } from './attendance-submissions/attendance-submissions.module';
+import { AttendancePeriodsModule } from './attendance-periods/attendance-periods.module';
+import { DtrsModule } from './dtrs/dtrs.module';
+import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
+import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
+import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
+import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
+import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leave-inputs.module';
 
 @Module({
   imports: [
@@ -37,6 +53,22 @@ import { ServiceRecordsModule } from './service-records/service-records.module';
     PayrollBankAccountsModule,
     SalnComplianceModule,
     ServiceRecordsModule,
+    ApprovalModule,
+    RecruitmentModule,
+    AppointmentsModule,
+    AttendanceConfigurationModule,
+    AttendanceContextsModule,
+    AttendanceDaysModule,
+    AttendanceModule,
+    AttendanceCorrectionsModule,
+    AttendanceSubmissionsModule,
+    AttendancePeriodsModule,
+    DtrsModule,
+    LeavePoliciesModule,
+    LeaveAccountsModule,
+    LeaveApplicationsModule,
+    LeaveMonetizationModule,
+    TerminalLeaveInputsModule,
   ],
   controllers: [HealthController],
 })

@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -18,6 +19,7 @@ test('creates and highlights a Draft Organization Unit through the Work queue', 
 }, testInfo) => {
   const code = `RMD-${Date.now()}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -138,6 +140,7 @@ test('guards every Organization Unit dismissal path during submission', async ({
     });
   });
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -172,6 +175,7 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   const rootName = `Administrative Services Office ${suffix}`;
   const childName = `Records Division ${suffix}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -238,13 +242,12 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   await expect(activationDialog).toBeVisible();
   releaseActivation();
 
-  await expect(page.getByRole('status')).toContainText(`${rootName} is now active.`);
+  await expect(page.getByText(`${rootName} is now active.`, { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Effective hierarchy' })).toBeVisible();
+  await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
   await page.getByRole('button', { name: new RegExp(rootName) }).click();
-  await expect(page.getByRole('button', { name: new RegExp(rootName) })).toHaveCSS(
-    'background-color',
-    'rgb(23, 32, 51)',
-  );
+  await expect(page).toHaveURL(/unit=/);
+  await page.reload();
   const selectedRecord = page.getByRole('region', { name: 'Selected Organization Unit' });
   await expect(selectedRecord).toContainText(rootName);
   await expect(selectedRecord).toContainText('No parent · Agency root');
@@ -262,14 +265,14 @@ test('places Draft units into the effective hierarchy and inspects the dated tre
   await page.getByLabel('Activation reason').fill('Approved reporting placement');
   await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
 
-  await expect(page.getByRole('status')).toContainText(`${childName} is now active.`);
-  await page.getByRole('button', { name: new RegExp(childName) }).click();
+  await expect(page.getByText(`${childName} is now active.`, { exact: true })).toBeVisible();
   await expect(selectedRecord).toContainText(rootName);
   await expect(selectedRecord).toContainText('0 children');
+  await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
   const verticalConnector = page.locator('[data-tree-connector="vertical"]');
   await expect(verticalConnector.first()).toBeVisible();
   await expect(verticalConnector.first()).toHaveCSS('width', '1px');
-  await expect(verticalConnector.first()).toHaveCSS('background-color', 'rgb(174, 184, 199)');
+  await expect(verticalConnector.first()).toHaveCSS('background-color', 'rgb(212, 217, 225)');
   const childHierarchyButton = page
     .getByRole('navigation', { name: 'Organization hierarchy' })
     .getByRole('button', { name: new RegExp(childName) });
@@ -304,6 +307,7 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   const suffix = Date.now();
   const name = `Records Information Office ${suffix}`;
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/organization');
@@ -318,15 +322,31 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   await row.getByRole('button', { name: `Place and activate ${name}` }).click();
   await page.getByLabel('Activation reason').fill('Approved as an Agency root');
   await page.getByRole('button', { name: 'Activate Organization Unit' }).click();
-  await expect(page.getByRole('status')).toContainText(`${name} is now active.`);
+  await expect(page.getByText(`${name} is now active.`, { exact: true })).toBeVisible();
 
+  await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
   await page
     .getByRole('button', { name: new RegExp(name) })
     .first()
     .click();
+  // The review must not wait on a server round trip to update its URL. In CI that response
+  // landed after Escape had closed the review, and the review reopened.
+  await page.route(
+    (url) => url.searchParams.get('section') === 'successor' && url.searchParams.has('_rsc'),
+    () => new Promise<void>(() => undefined),
+  );
+  let escapeSent!: () => void;
+  const escape = new Promise<void>((resolve) => {
+    escapeSent = resolve;
+  });
+  await page.route('**/api/v1/agencies/*/organization-units/*/draft/*', async (route) => {
+    await escape;
+    await route.continue();
+  });
   await page.getByRole('button', { name: 'Prepare change' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Review Organization Unit successor' });
+  const dialog = page.getByRole('region', { name: 'Review Organization Unit successor' });
   await expect(dialog).toBeVisible();
+  await expect(page).toHaveURL(/section=successor/);
   await expect(dialog).toHaveAccessibleDescription(
     'Edit the proposed values and effective date. The current version remains unchanged until activation.',
   );
@@ -335,6 +355,33 @@ test('reviews an effective-dated Organization Unit successor without rewriting t
   await expect(dialog).toContainText('Proposed successor');
   await page.getByRole('button', { name: 'Save Draft' }).click();
   await dialog.press('Escape');
-  await expect(dialog).toBeHidden();
+  escapeSent();
   await expect(page.getByRole('status')).toContainText('Draft successor saved');
+  await expect(dialog).toBeHidden();
+  await expect(page).not.toHaveURL(/section=successor/);
+});
+
+test('keeps a missing Unit explicit across reload and returns to the dated Tree', async ({
+  page,
+}) => {
+  await signIn(page, MARISOL_EMAIL);
+  await page.goto('/dashboard');
+  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+  await page.goto(
+    '/organization?asOf=2026-08-15&unit=00000000-0000-4000-8000-000000000000&view=form',
+  );
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'This Organization Unit is unavailable' }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'This Organization Unit is unavailable' }),
+  ).toBeVisible();
+  await page.getByRole('link', { name: '← Organization Units', exact: true }).click();
+  await expect(page).toHaveURL(/asOf=2026-08-15/);
+  await expect(page.getByLabel('Hierarchy as of')).toHaveValue('2026-08-15');
+  await page.goBack();
+  await expect(
+    page.locator('p[role="alert"]').filter({ hasText: 'This Organization Unit is unavailable' }),
+  ).toBeVisible();
 });

@@ -58,6 +58,16 @@ export interface LinkableDocumentVersionSummary {
   version: DocumentVersionSummary;
 }
 
+export interface FinalizedDocumentVersionSummary {
+  id: string;
+  documentId: string;
+  documentNo: string | null;
+  documentType: string;
+  classification: DocumentClassification;
+  status: string;
+  issuedAt: string;
+}
+
 export interface DocumentAccess {
   document: DocumentSummary;
   accessUrl: string;
@@ -700,6 +710,115 @@ export class DocumentsService {
         (currentVersion.issuedAt !== null || linkableStatus));
     if (!eligible) return { ok: false, reason: 'STATUS_INELIGIBLE' };
     return { ok: true, document: { ...document, currentVersion } };
+  }
+
+  /**
+   * Internal contract: an owning domain records the exact rendering it
+   * produced as an issued Document Version inside its own authoritative
+   * transaction. The bytes are retained by the caller's immutable source, so
+   * no object is uploaded here; the Version records the rendering identity.
+   */
+  async createIssuedVersionInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: {
+      documentType: string;
+      classification: DocumentClassification;
+      content: Buffer;
+      mimeType: string;
+    },
+  ): Promise<{ documentId: string; versionId: string }> {
+    const contentHash = createHash('sha256').update(input.content).digest('hex');
+    const document = await transaction.document.create({
+      data: {
+        agencyId: context.agencyId,
+        documentNo: null,
+        documentType: input.documentType,
+        classification: input.classification,
+        status: 'APPROVED',
+        createdByMembershipId: context.membershipId,
+      },
+      select: { id: true },
+    });
+    const version = await transaction.documentVersion.create({
+      data: {
+        agencyId: context.agencyId,
+        documentId: document.id,
+        versionNo: 1,
+        storageKey: `rendered/${randomUUID()}`,
+        contentHash,
+        mimeType: input.mimeType,
+        sizeBytes: BigInt(input.content.byteLength),
+        createdByMembershipId: context.membershipId,
+        issuedAt: new Date(),
+      },
+      select: { id: true },
+    });
+    await transaction.document.update({
+      where: { agencyId_id: { agencyId: context.agencyId, id: document.id } },
+      data: { currentVersionId: version.id, updatedByMembershipId: context.membershipId },
+    });
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'DOCUMENT_VERSION_CREATED',
+      entityType: 'DocumentVersion',
+      entityId: version.id,
+      previousStatus: null,
+      newStatus: 'APPROVED',
+      requestId: context.requestId,
+      metadata: {
+        versionNo: 1,
+        documentType: input.documentType,
+        mimeType: input.mimeType,
+        sizeBytes: input.content.byteLength,
+      },
+    });
+    return { documentId: document.id, versionId: version.id };
+  }
+
+  /** Internal contract: another domain may validate an exact finalized version without owning Documents. */
+  async resolveFinalizedVersionInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: Pick<RequestContext, 'agencyId'>,
+    versionId: string,
+  ): Promise<FinalizedDocumentVersionSummary | null> {
+    const record = await transaction.documentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: versionId },
+      select: {
+        id: true,
+        documentId: true,
+        issuedAt: true,
+        document: {
+          select: {
+            documentNo: true,
+            documentType: true,
+            classification: true,
+            status: true,
+          },
+        },
+      },
+    });
+    if (
+      !record ||
+      !record.issuedAt ||
+      !LINKABLE_EXTERNAL_EVIDENCE_STATUSES.includes(
+        record.document.status as (typeof LINKABLE_EXTERNAL_EVIDENCE_STATUSES)[number],
+      )
+    ) {
+      return null;
+    }
+    return {
+      id: record.id,
+      documentId: record.documentId,
+      documentNo: record.document.documentNo,
+      documentType: record.document.documentType,
+      classification: record.document.classification as DocumentClassification,
+      status: record.document.status,
+      issuedAt: record.issuedAt.toISOString(),
+    };
   }
 
   /** Internal contract: personnel own-record links may use only their uploaded version. */

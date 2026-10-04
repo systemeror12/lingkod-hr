@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
-import { EmployeePageTitle } from '../../../components/employee-directory';
 import { SalnComplianceSection } from '../../../components/saln-compliance-section';
 import { ShellState } from '../../../components/shell-state';
+import { PageHeader } from '../../../components/ui/page-header';
 import { getActiveSession } from '../../../lib/session';
 
 export const metadata: Metadata = { title: 'My SALN Compliance' };
@@ -22,25 +22,20 @@ export default async function MySalnPage() {
   }
 
   return (
-    <>
-      <header className="mb-7">
-        <EmployeePageTitle
-          eyebrow="Employee self-service"
-          title="My SALN Compliance"
-          description="Review your released filing year, type, status, and submission timestamp."
-        />
-      </header>
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
-        <SalnComplianceSection
-          agencyId={session.agencyId}
-          endpoint={`/api/v1/agencies/${session.agencyId}/employees/me/saln-compliance`}
-          canRead
-          canManage={false}
-          canCorrect={false}
-          canReadHistory={false}
-          canReadEvidence={false}
-        />
-      </section>
-    </>
+    <div className="grid gap-5">
+      <PageHeader
+        breadcrumbs={[{ label: 'Personnel' }, { label: 'My SALN Compliance' }]}
+        title="My SALN Compliance"
+      />
+      <SalnComplianceSection
+        agencyId={session.agencyId}
+        endpoint={`/api/v1/agencies/${session.agencyId}/employees/me/saln-compliance`}
+        canRead
+        canManage={false}
+        canCorrect={false}
+        canReadHistory={false}
+        canReadEvidence={false}
+      />
+    </div>
   );
 }

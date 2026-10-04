@@ -15,13 +15,10 @@ export function ShellState({
   return (
     <StateSurface labelledBy="shell-state-title">
       <StateCode>{code}</StateCode>
-      <h1
-        className="m-0 text-2xl font-[670] tracking-[-0.025em] text-midnight"
-        id="shell-state-title"
-      >
+      <h1 className="m-0 text-page-title text-ink" id="shell-state-title">
         {title}
       </h1>
-      <p className="m-0 max-w-[500px] text-sm leading-[1.6] text-muted">{message}</p>
+      <p className="m-0 max-w-[500px] text-body text-ink-muted">{message}</p>
       <Link
         className={cn(buttonVariants({ variant: 'primary', size: 'default' }), 'mt-2 no-underline')}
         href="/dashboard"

@@ -1,4 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
@@ -6,23 +7,23 @@ async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Pro
   if (!box) throw new Error('The Personnel Baseline dialog geometry was unavailable.');
   expect(box.x).toBeGreaterThanOrEqual(16);
   expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 16);
-  expect(Math.abs(box.x + box.width / 2 - viewportWidth / 2)).toBeLessThanOrEqual(1);
 }
 
 test('opens the Personnel Baseline workflow with the shared modal contract', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/personnel-baselines');
   await expect(
-    page.getByRole('heading', { name: 'Personnel Baseline', exact: true }),
+    page.getByRole('heading', { name: 'Personnel Baselines', exact: true }),
   ).toBeVisible();
 
   const trigger = page.getByRole('button', { name: 'Prepare baseline' });
   await expect(trigger).toBeVisible();
   await trigger.click();
 
-  const dialog = page.getByRole('dialog', { name: 'Prepare Personnel Baseline' });
+  const dialog = page.getByRole('region', { name: 'Prepare Personnel Baseline' });
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAccessibleDescription(
     'Capture the approved authority evidence and effective-dated facts for an existing Employee.',
@@ -34,7 +35,7 @@ test('opens the Personnel Baseline workflow with the shared modal contract', asy
   await expect(dialog).toBeVisible();
   await page.keyboard.press('Tab');
   expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
-  await page.keyboard.press('Escape');
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 

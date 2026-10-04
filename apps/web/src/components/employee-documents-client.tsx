@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useRecordNavigation } from './record-navigation';
+
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -13,12 +15,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import {
-  employeeInputClass,
-  employeeLabelClass,
-  formatEmployeeDate,
-  titleCase,
-} from './employee-directory';
+import { formatEmployeeDate, titleCase } from './employee-directory';
+import { FormError, inputClass, labelClass } from './ui/field';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { Table, Td, Th, Tr } from './ui/table';
+import { StateSurface } from './state-surface';
 
 const personnelClassifications = [
   'PDS',
@@ -51,6 +53,12 @@ const purposeLabels = {
   COMPLIANCE_SUPPORT: 'Compliance support',
   OWN_RECORD_UPLOAD: 'Own-record upload',
 } as const;
+
+const releaseTone: Record<EmployeeDocument['releaseState'], StatusTone> = {
+  PENDING: 'warning',
+  RELEASED: 'success',
+  WITHHELD: 'neutral',
+};
 
 const purposes = Object.keys(purposeLabels) as Array<keyof typeof purposeLabels>;
 
@@ -166,10 +174,14 @@ export function EmployeeDocumentsSection({
   canRemoveOwn: boolean;
 }) {
   const [documents, setDocuments] = useState<EmployeeDocument[]>([]);
+  const navigation = useRecordNavigation();
+  const documentId = navigation.search.get('document');
+
   const [linkableDocuments, setLinkableDocuments] = useState<LinkableDocument[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');
   const [loading, setLoading] = useState(canRead);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -177,9 +189,22 @@ export function EmployeeDocumentsSection({
   const [message, setMessage] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const uploadAttempt = useRef<{ file: unknown; metadata: string; key: string } | null>(null);
   const [detail, setDetail] = useState<EmployeeDocument | null>(null);
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<EmployeeDocument | null>(null);
+
+  useEffect(() => {
+    setAccessUrl(null);
+    if (!documentId) {
+      setDetail(null);
+      return;
+    }
+    if (loading) return;
+    const selected = documents.find((item) => item.id === documentId);
+    setDetail(selected ?? null);
+    if (!selected) setError('This Personnel Document is missing or outside your permitted scope.');
+  }, [documentId, documents, loading]);
 
   const endpoint = `/api/v1/agencies/${agencyId}/employees/${employeeId}/documents`;
 
@@ -192,8 +217,10 @@ export function EmployeeDocumentsSection({
       if (!response.ok)
         throw new Error(errorMessage(value, 'Personnel Documents could not be loaded.'));
       setDocuments(parseDocumentList(value));
+      setLoadFailed(false);
       setError(null);
     } catch (caught: unknown) {
+      setLoadFailed(true);
       setError(
         caught instanceof Error ? caught.message : 'Personnel Documents could not be loaded.',
       );
@@ -235,6 +262,7 @@ export function EmployeeDocumentsSection({
 
   async function link(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     const form = event.currentTarget as unknown;
     setBusy(true);
     setError(null);
@@ -270,6 +298,7 @@ export function EmployeeDocumentsSection({
 
   async function upload(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     const formElement = event.currentTarget as unknown;
     const form = new FormData();
     const file = formFile(formElement);
@@ -279,17 +308,30 @@ export function EmployeeDocumentsSection({
     form.append('classification', formValue(formElement, 'classification'));
     form.append('personnelClassification', formValue(formElement, 'personnelClassification'));
     form.append('purpose', formValue(formElement, 'purpose'));
+    const metadata = JSON.stringify(
+      ['classification', 'personnelClassification', 'purpose'].map((name) =>
+        formValue(formElement, name),
+      ),
+    );
+    if (
+      !uploadAttempt.current ||
+      uploadAttempt.current.file !== file ||
+      uploadAttempt.current.metadata !== metadata
+    ) {
+      uploadAttempt.current = { file, metadata, key: crypto.randomUUID() };
+    }
     setBusy(true);
     setError(null);
     try {
       const response = await fetch(`${endpoint}/upload`, {
         method: 'POST',
-        headers: { 'idempotency-key': `employee-upload-${Date.now()}` },
+        headers: { 'idempotency-key': uploadAttempt.current.key },
         credentials: 'include',
         body: form,
       });
       const value: unknown = await response.json().catch(() => null);
       if (response.ok) {
+        uploadAttempt.current = null;
         setUploadOpen(false);
         setMessage('Own-record evidence uploaded and held pending release.');
         await refresh();
@@ -306,7 +348,7 @@ export function EmployeeDocumentsSection({
   }
 
   function inspect(document: EmployeeDocument): void {
-    setDetail(document);
+    navigation.navigate({ document: document.id });
     setAccessUrl(null);
     setError(null);
   }
@@ -370,27 +412,11 @@ export function EmployeeDocumentsSection({
   if (!canRead) return null;
 
   return (
-    <section
-      className="border-t border-line px-6 py-6 min-[700px]:px-8"
-      aria-labelledby="personnel-documents-heading"
-    >
-      <div className="flex flex-col gap-4 min-[620px]:flex-row min-[620px]:items-start min-[620px]:justify-between">
-        <div>
-          <p className="m-0 text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-            Controlled evidence
-          </p>
-          <h2
-            id="personnel-documents-heading"
-            className="mt-1 mb-0 text-lg font-[680] tracking-[-.02em] text-midnight"
-          >
-            Personnel Documents
-          </h2>
-          <p className="mt-1 mb-0 max-w-[620px] text-xs leading-5 text-muted">
-            Each link points to one exact immutable Document Version. Removing a link never deletes
-            the source evidence.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <Panel
+      title="Personnel Documents"
+      flush
+      actions={
+        <>
           {canManage && canBrowseSource ? (
             <Dialog open={linkOpen} onOpenChange={(open) => !busy && setLinkOpen(open)}>
               <DialogTrigger asChild>
@@ -421,27 +447,17 @@ export function EmployeeDocumentsSection({
                     </DialogClose>
                   </DialogHeader>
                   <DialogBody className="grid gap-5">
-                    {error ? (
-                      <p
-                        role="alert"
-                        className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                      >
-                        {error}
-                      </p>
-                    ) : null}
+                    <FormError message={error ?? ''} />
                     {sourceLoading ? (
-                      <p
-                        role="status"
-                        className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted"
-                      >
+                      <p role="status" className="m-0 text-small text-ink-muted">
                         Loading finalized Agency Documents…
                       </p>
                     ) : null}
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Document Version
                       <select
                         autoFocus
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="documentVersionChoice"
                         required
                         onChange={(event) => {
@@ -467,10 +483,10 @@ export function EmployeeDocumentsSection({
                       </select>
                     </label>
                     <input type="hidden" name="documentId" value={selectedDocumentId} />
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Exact version ID
                       <input
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="documentVersionId"
                         value={selectedVersionId}
                         readOnly
@@ -478,10 +494,10 @@ export function EmployeeDocumentsSection({
                         required
                       />
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Personnel classification
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="personnelClassification"
                         defaultValue="PDS"
                         required
@@ -493,10 +509,10 @@ export function EmployeeDocumentsSection({
                         ))}
                       </select>
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Purpose
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="purpose"
                         defaultValue="PDS_SUPPORT"
                         required
@@ -508,10 +524,10 @@ export function EmployeeDocumentsSection({
                         ))}
                       </select>
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Release state
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="releaseState"
                         defaultValue="RELEASED"
                         required
@@ -520,7 +536,7 @@ export function EmployeeDocumentsSection({
                         <option value="WITHHELD">Withheld from Employee self-service</option>
                       </select>
                     </label>
-                    <p className="m-0 border-l-2 border-cobalt bg-[#f3f7fc] px-3 py-2.5 text-xs leading-[1.55] text-muted">
+                    <p className="m-0 border-l-2 border-info bg-canvas px-3 py-2.5 text-small text-ink-muted">
                       The source Document’s classification stays authoritative. Restricted medical,
                       SALN, bank, and identifier evidence remains hidden without the separate
                       sensitive permission.
@@ -575,28 +591,21 @@ export function EmployeeDocumentsSection({
                     </DialogClose>
                   </DialogHeader>
                   <DialogBody className="grid gap-5">
-                    {error ? (
-                      <p
-                        role="alert"
-                        className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                      >
-                        {error}
-                      </p>
-                    ) : null}
-                    <label className={employeeLabelClass}>
+                    <FormError message={error ?? ''} />
+                    <label className={labelClass}>
                       File
                       <input
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="file"
                         type="file"
                         accept="application/pdf,image/png,image/jpeg,text/plain"
                         required
                       />
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Document classification
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="classification"
                         defaultValue="CONFIDENTIAL"
                         required
@@ -607,10 +616,10 @@ export function EmployeeDocumentsSection({
                         <option value="PUBLIC">Public</option>
                       </select>
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Personnel classification
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="personnelClassification"
                         defaultValue="PDS"
                         required
@@ -622,10 +631,10 @@ export function EmployeeDocumentsSection({
                         ))}
                       </select>
                     </label>
-                    <label className={employeeLabelClass}>
+                    <label className={labelClass}>
                       Purpose
                       <select
-                        className={employeeInputClass}
+                        className={inputClass}
                         name="purpose"
                         defaultValue="OWN_RECORD_UPLOAD"
                         required
@@ -652,82 +661,110 @@ export function EmployeeDocumentsSection({
               </DialogContent>
             </Dialog>
           ) : null}
-        </div>
+        </>
+      }
+    >
+      <div className="grid gap-3 px-4 pt-3">
+        <p className="m-0 text-small text-ink-muted">
+          Each link points to one exact immutable Document Version. Removing a link never deletes
+          the source evidence.
+        </p>
+        {message ? (
+          <p role="status" className="m-0 text-small text-success">
+            {message}
+          </p>
+        ) : null}
+        {!linkOpen && !uploadOpen && !removeTarget ? <FormError message={error ?? ''} /> : null}
       </div>
-      {message ? (
-        <p role="status" className="mb-0 mt-4 text-xs text-[#27633b]">
-          {message}
-        </p>
-      ) : null}
-      {error && !linkOpen && !uploadOpen && !removeTarget ? (
-        <p role="alert" className="mb-0 mt-4 text-xs text-[#8f2d2d]">
-          {error}
-        </p>
-      ) : null}
-      <div className="mt-5 grid gap-3">
-        {loading ? (
-          <p role="status" className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted">
+      {loading ? (
+        <StateSurface compact busy>
+          <p role="status" className="m-0">
             Loading Personnel Documents…
           </p>
-        ) : null}
-        {!loading && documents.length === 0 ? (
-          <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted">
-            No Personnel Documents are visible in this scope.
+        </StateSurface>
+      ) : documents.length === 0 ? (
+        <StateSurface compact>
+          <p className="m-0">
+            {loadFailed
+              ? 'Personnel Documents are unavailable until the list loads. Reload the page to try again.'
+              : 'No Personnel Documents are visible in this scope.'}
           </p>
-        ) : null}
-        {documents.map((document) => (
-          <article
-            key={document.id}
-            className="grid gap-4 rounded-[4px] border border-line bg-[#fbfcfe] px-4 py-4 min-[620px]:grid-cols-[1fr_auto] min-[620px]:items-center"
-          >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <strong className="text-sm text-midnight">{documentLabel(document)}</strong>
-                <span className="rounded-full bg-pale-blue px-2 py-1 text-[10px] font-bold tracking-[.04em] text-cobalt uppercase">
-                  v{document.versionNo}
-                </span>
-                <span className="rounded-full bg-canvas px-2 py-1 text-[10px] font-bold tracking-[.04em] text-muted uppercase">
-                  {human(document.releaseState)}
-                </span>
-              </div>
-              <p className="mt-1 mb-0 text-xs text-muted">
-                {human(document.personnelClassification)} ·{' '}
-                {purposeLabels[document.purpose] ?? human(document.purpose)} · {document.mimeType} ·{' '}
-                {document.sizeBytes.toLocaleString()} bytes
-              </p>
-              <p className="mt-1 mb-0 text-[11px] text-muted">
-                Created {formatEmployeeDate(document.createdAt)} · {human(document.status)} ·{' '}
-                {titleCase(document.classification)}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2 min-[620px]:justify-end">
-              <Button size="default" variant="secondary" onClick={() => void inspect(document)}>
-                Inspect document
-              </Button>
-              {canManage || canRemoveOwn ? (
-                <Button
-                  size="default"
-                  variant="secondary"
-                  onClick={() => setRemoveTarget(document)}
-                >
-                  Remove link
-                </Button>
-              ) : null}
-            </div>
-          </article>
-        ))}
-      </div>
+        </StateSurface>
+      ) : (
+        <Table className="mt-3">
+          <thead>
+            <tr>
+              <Th>Document</Th>
+              <Th>Release state</Th>
+              <Th>Classification</Th>
+              <Th>File</Th>
+              <Th kind="date">Created</Th>
+              <Th>
+                <span className="sr-only">Actions</span>
+              </Th>
+            </tr>
+          </thead>
+          <tbody>
+            {documents.map((document) => (
+              <Tr key={document.id} selected={document.id === documentId}>
+                <Td>
+                  <span className="font-[600] text-ink">{documentLabel(document)}</span>
+                  <span className="block text-caption text-ink-muted">
+                    Version {document.versionNo} · {human(document.status)} ·{' '}
+                    {titleCase(document.classification)}
+                  </span>
+                </Td>
+                <Td>
+                  <StatusTag tone={releaseTone[document.releaseState]}>
+                    {human(document.releaseState)}
+                  </StatusTag>
+                </Td>
+                <Td>
+                  {human(document.personnelClassification)}
+                  <span className="block text-caption text-ink-muted">
+                    {purposeLabels[document.purpose] ?? human(document.purpose)}
+                  </span>
+                </Td>
+                <Td>
+                  {document.mimeType}
+                  <span className="block text-caption text-ink-muted tabular-nums">
+                    {document.sizeBytes.toLocaleString()} bytes
+                  </span>
+                </Td>
+                <Td kind="date">{formatEmployeeDate(document.createdAt)}</Td>
+                <Td>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button variant="secondary" onClick={() => void inspect(document)}>
+                      Inspect document
+                    </Button>
+                    {canManage || canRemoveOwn ? (
+                      <Button variant="secondary" onClick={() => setRemoveTarget(document)}>
+                        Remove link
+                      </Button>
+                    ) : null}
+                  </div>
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
 
       <Dialog
+        presentation="form"
         open={Boolean(detail)}
         onOpenChange={(open) => {
           if (!open && !accessBusy) {
+            navigation.navigate({ document: null });
             setDetail(null);
             setAccessUrl(null);
           }
         }}
       >
-        <DialogContent aria-describedby="personnel-document-detail-description" size="compact">
+        <DialogContent
+          aria-describedby="personnel-document-detail-description"
+          className="rounded-none border-x-0 border-b-0"
+        >
           <DialogHeader>
             <div className="grid gap-1.5">
               <DialogTitle>Personnel Document detail</DialogTitle>
@@ -761,18 +798,16 @@ export function EmployeeDocumentsSection({
                   ['Issued', detail.issuedAt ? formatEmployeeDate(detail.issuedAt) : 'Not issued'],
                 ].map(([label, value]) => (
                   <div key={label}>
-                    <dt className="text-[10px] font-bold tracking-[.08em] text-muted uppercase">
-                      {label}
-                    </dt>
-                    <dd className="mt-1 break-words text-sm font-[560] text-ink">{value}</dd>
+                    <dt className="text-caption text-ink-muted">{label}</dt>
+                    <dd className="m-0 break-words text-body font-[600] text-ink">{value}</dd>
                   </div>
                 ))}
               </dl>
             ) : null}
             {accessUrl ? (
-              <p className="m-0 rounded-[3px] bg-[#e7f4eb] px-4 py-3 text-sm text-[#27633b]">
+              <p className="m-0 text-small">
                 <a
-                  className="font-[650] text-[#27633b] underline"
+                  className="font-[650] text-primary underline"
                   href={accessUrl}
                   rel="noreferrer"
                   target="_blank"
@@ -781,14 +816,7 @@ export function EmployeeDocumentsSection({
                 </a>
               </p>
             ) : null}
-            {error ? (
-              <p
-                role="alert"
-                className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-              >
-                {error}
-              </p>
-            ) : null}
+            <FormError message={error ?? ''} />
           </DialogBody>
           <DialogFooter>
             <DialogClose asChild>
@@ -836,19 +864,12 @@ export function EmployeeDocumentsSection({
               </DialogClose>
             </DialogHeader>
             <DialogBody className="grid gap-5">
-              {error ? (
-                <p
-                  role="alert"
-                  className="m-0 rounded-[3px] bg-[#fdeeee] px-4 py-3 text-sm text-[#8f2d2d]"
-                >
-                  {error}
-                </p>
-              ) : null}
-              <label className={employeeLabelClass}>
+              <FormError message={error ?? ''} />
+              <label className={labelClass}>
                 Reason for removal
                 <textarea
                   autoFocus
-                  className={`${employeeInputClass} min-h-28 resize-y py-3`}
+                  className={`${inputClass} min-h-28 resize-y py-3`}
                   maxLength={500}
                   name="reason"
                   placeholder="Explain why this link was attached in error."
@@ -863,7 +884,7 @@ export function EmployeeDocumentsSection({
                 </Button>
               </DialogClose>
               <Button
-                className="border-[#9a3030] bg-[#9a3030] hover:bg-[#7d2525]"
+                className="border-danger bg-danger hover:border-danger hover:bg-danger/90"
                 disabled={busy}
                 size="default"
                 type="submit"
@@ -875,6 +896,6 @@ export function EmployeeDocumentsSection({
           </form>
         </DialogContent>
       </Dialog>
-    </section>
+    </Panel>
   );
 }

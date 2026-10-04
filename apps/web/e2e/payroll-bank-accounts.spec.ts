@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
 test('maintains masked payroll bank accounts through shared dialogs', async ({ page }) => {
   test.setTimeout(60_000);
@@ -148,6 +149,7 @@ test('maintains masked payroll bank accounts through shared dialogs', async ({ p
     })
     .toBe(true);
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible({ timeout: 15_000 });
   await page.goto('/employees');
@@ -160,6 +162,7 @@ test('maintains masked payroll bank accounts through shared dialogs', async ({ p
   await page.getByLabel('Contact email').fill(`bank.${stamp}@example.test`);
   await page.getByRole('button', { name: 'Create employee' }).click();
 
+  await page.getByRole('tab', { name: 'Payroll bank accounts' }).click();
   await expect(page.getByRole('heading', { name: 'Payroll bank accounts' })).toBeVisible();
   await page.getByRole('button', { name: 'Add bank account' }).click();
   const create = page.getByRole('dialog', { name: 'Add payroll bank account' });
@@ -211,7 +214,7 @@ test('maintains masked payroll bank accounts through shared dialogs', async ({ p
   await expect(page.getByText('********9012', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'View history' }).first().click();
-  const historyDialog = page.getByRole('dialog', { name: 'History payroll bank account' });
+  const historyDialog = page.getByRole('region', { name: 'History payroll bank account' });
   await expect(historyDialog.getByText('********1234', { exact: true })).toBeVisible();
   await expect(historyDialog.getByText(accountNumber, { exact: true })).toHaveCount(0);
   await historyDialog.getByRole('button', { name: 'Close', exact: true }).click();

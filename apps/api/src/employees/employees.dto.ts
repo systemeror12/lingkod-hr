@@ -1,5 +1,8 @@
+import type { EmployeeListQuery } from './employees.schemas';
 import type {
   EmployeeDetail,
+  EmployeeListFacets,
+  EmployeeListPage,
   EmployeeMembershipSummary,
   EmployeeSummary,
 } from './employees.service';
@@ -40,9 +43,17 @@ export class EmployeeDto {
 
 export class EmployeeListResponseDto {
   readonly employees: EmployeeDto[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly facets: EmployeeListFacets;
 
-  constructor(employees: EmployeeSummary[]) {
-    this.employees = employees.map((employee) => new EmployeeDto(employee));
+  constructor(page: EmployeeListPage, query: Pick<EmployeeListQuery, 'limit' | 'offset'>) {
+    this.employees = page.employees.map((employee) => new EmployeeDto(employee));
+    this.total = page.total;
+    this.limit = query.limit;
+    this.offset = query.offset;
+    this.facets = page.facets;
   }
 }
 

@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Tables
 
 ### `agencies`
@@ -63,19 +62,27 @@ Add the current-profile foreign key only after both tables exist.
 ```sql
 CREATE TABLE users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  identity_provider text NOT NULL,
-  external_subject text NOT NULL,
   email_normalized citext NOT NULL,
   display_name text NOT NULL,
-  global_status text NOT NULL
-    CHECK (global_status IN ('ACTIVE','LOCKED','DEACTIVATED')),
+  global_status text NOT NULL,
+  locked_at timestamptz,
+  locked_by_agency_id uuid REFERENCES agencies(id) ON DELETE RESTRICT,
   email_verified_at timestamptz,
   last_login_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (identity_provider, external_subject),
-  UNIQUE (email_normalized)
+  UNIQUE (email_normalized),
+  CONSTRAINT users_global_status_check CHECK (
+    (global_status = 'ACTIVE' AND locked_at IS NULL AND locked_by_agency_id IS NULL)
+    OR (global_status = 'LOCKED' AND locked_at IS NOT NULL AND locked_by_agency_id IS NOT NULL)
+  )
 );
 ```
+
+A User is ACTIVE or LOCKED; there is no User DEACTIVATED status (#390).
+LOCKED is the Global User Lock. A lock sets `locked_at` and the locking Agency
+in `locked_by_agency_id`, and an unlock clears both. The API never shows
+another Agency which Agency locked a User or why. Lock and unlock events are
+recorded in the acting Agency only.
 
 ### `agency_memberships`
 
@@ -87,7 +94,7 @@ CREATE TABLE agency_memberships (
   employee_id uuid,
   primary_organization_unit_id uuid,
   status text NOT NULL
-    CHECK (status IN ('INVITED','ACTIVE','LOCKED','SUSPENDED','DEACTIVATED')),
+    CHECK (status IN ('INVITED','ACTIVE','SUSPENDED','DEACTIVATED')),
   activated_at timestamptz,
   deactivated_at timestamptz,
   deactivation_reason text,
@@ -97,7 +104,7 @@ CREATE TABLE agency_memberships (
 
 CREATE UNIQUE INDEX agency_memberships_active_user_uq
 ON agency_memberships (agency_id, user_id)
-WHERE status IN ('INVITED','ACTIVE','LOCKED','SUSPENDED');
+WHERE status IN ('INVITED','ACTIVE','SUSPENDED');
 ```
 
 Employee and organization-unit foreign keys are added in later migrations after those tables exist.
@@ -248,10 +255,100 @@ CREATE TABLE security_events (
   occurred_at timestamptz NOT NULL DEFAULT now(),
   request_id text,
   ip_address inet,
+  email_hash bytea,               -- HMAC-SHA-256 with BLIND_INDEX_KEY; never the raw email
   user_agent text,
   details jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 ```
+
+### Owned sign-in credentials
+
+These rows belong to the User, not to an Agency, so they carry no `agency_id`.
+
+```sql
+CREATE TABLE user_passwords (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  password_hash text NOT NULL,    -- Argon2id PHC string
+  changed_at timestamptz NOT NULL DEFAULT now(),
+  second_factor_failures integer NOT NULL DEFAULT 0 CHECK (second_factor_failures >= 0),
+  reset_required_at timestamptz
+);
+
+CREATE TABLE user_totp_factors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  secret_envelope bytea NOT NULL, -- PV1 envelope bound to user_id and id
+  last_accepted_step bigint NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_recovery_codes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE pending_authentications (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash bytea UNIQUE,
+  purpose text NOT NULL CHECK (purpose IN ('SIGN_IN','ACTIVATION','TOTP_REPLACEMENT')),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  invitation_id uuid REFERENCES invitations(id) ON DELETE CASCADE,
+  requested_membership_id uuid,
+  stage text NOT NULL,
+  verified_methods text[] NOT NULL DEFAULT ARRAY[]::text[],
+  display_name text,
+  password_hash text,
+  enrollment_secret_envelope bytea,
+  recovery_code_hashes text[] NOT NULL DEFAULT ARRAY[]::text[],
+  enrollment_accepted_step bigint,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (expires_at > created_at),
+  CHECK (
+    (purpose = 'SIGN_IN' AND user_id IS NOT NULL AND invitation_id IS NULL)
+    OR (purpose = 'ACTIVATION' AND invitation_id IS NOT NULL)
+    OR (purpose = 'TOTP_REPLACEMENT' AND user_id IS NOT NULL AND invitation_id IS NULL)
+  ),
+  CHECK ((token_hash IS NULL) = (purpose = 'TOTP_REPLACEMENT'))
+);
+
+CREATE UNIQUE INDEX pending_authentications_sign_in_user_uq
+  ON pending_authentications (user_id) WHERE purpose = 'SIGN_IN';
+CREATE UNIQUE INDEX pending_authentications_activation_invitation_uq
+  ON pending_authentications (invitation_id) WHERE purpose = 'ACTIVATION';
+CREATE UNIQUE INDEX pending_authentications_totp_replacement_user_uq
+  ON pending_authentications (user_id) WHERE purpose = 'TOTP_REPLACEMENT';
+
+CREATE TABLE password_reset_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash bytea NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL,
+  consumed_at timestamptz,
+  superseded_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (expires_at > created_at),
+  CHECK (consumed_at IS NULL OR superseded_at IS NULL)
+);
+
+CREATE UNIQUE INDEX password_reset_tokens_outstanding_user_uq
+  ON password_reset_tokens (user_id)
+  WHERE consumed_at IS NULL AND superseded_at IS NULL;
+
+-- Any password change voids the User's outstanding reset link.
+CREATE TRIGGER user_passwords_supersede_reset_tokens_trigger
+  AFTER UPDATE OF changed_at ON user_passwords
+  FOR EACH ROW WHEN (OLD.changed_at IS DISTINCT FROM NEW.changed_at)
+  EXECUTE FUNCTION supersede_password_reset_tokens();
+```
+
+The runtime role may update only `consumed_at` and `superseded_at` on
+`password_reset_tokens`.
+
+The runtime role may update only `last_accepted_step` on `user_totp_factors` and
+may not update `user_recovery_codes`; both are replaced by deleting rows.
 
 ---
 
@@ -279,6 +376,55 @@ WITH CHECK (agency_id = current_setting('app.agency_id', true)::uuid);
 
 `users` is global and should be accessed only through identity services, not ordinary tenant repositories.
 
+The owned sign-in tables follow the `user_sessions` pattern: RLS is enabled and
+forced, and rows are visible only in the owning User's context. Pending state is
+also visible through the hash of its cookie token, before a session exists:
+
+```sql
+CREATE POLICY user_passwords_owner ON user_passwords
+USING (user_id = app_user_id())
+WITH CHECK (user_id = app_user_id());
+-- Same owner policy on user_totp_factors and user_recovery_codes.
+
+-- The Users & Access member list shows whether each member has a factor.
+-- Factor rows hold secrets, so the runtime role never reads another User's.
+-- A SECURITY DEFINER function answers only the ids of the Agency Context's
+-- members who have a factor; the table owner it runs as gets the read.
+CREATE POLICY user_totp_factors_owner_agency_member_select ON user_totp_factors
+FOR SELECT TO CURRENT_USER
+USING (EXISTS (
+  SELECT 1 FROM agency_memberships m
+  WHERE m.user_id = user_totp_factors.user_id AND m.agency_id = app_agency_id()
+));
+
+CREATE FUNCTION app_agency_member_factor_user_ids() RETURNS SETOF uuid
+SECURITY DEFINER AS $$
+  SELECT f.user_id FROM user_totp_factors f
+  JOIN agency_memberships m ON m.user_id = f.user_id
+  WHERE m.agency_id = app_agency_id();
+$$;
+
+CREATE POLICY pending_authentications_owner ON pending_authentications
+USING (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.pending_token_hash', true)
+)
+WITH CHECK (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.pending_token_hash', true)
+);
+
+CREATE POLICY password_reset_tokens_owner ON password_reset_tokens
+USING (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.password_reset_token_hash', true)
+)
+WITH CHECK (
+  user_id = app_user_id()
+  OR encode(token_hash, 'hex') = current_setting('app.password_reset_token_hash', true)
+);
+```
+
 ---
 
 ## 3. Indexes
@@ -296,6 +442,15 @@ CREATE INDEX delegated_authorities_delegate_active_idx
 
 CREATE INDEX security_events_agency_time_idx
   ON security_events (agency_id, occurred_at DESC);
+
+CREATE INDEX security_events_email_type_time_idx
+  ON security_events (email_hash, event_type, occurred_at);
+
+CREATE INDEX security_events_ip_type_time_idx
+  ON security_events (ip_address, event_type, occurred_at);
+
+CREATE INDEX user_recovery_codes_user_idx
+  ON user_recovery_codes (user_id);
 ```
 
 ---
@@ -308,4 +463,5 @@ CREATE INDEX security_events_agency_time_idx
 - Roles: inactivate after assignment history exists.
 - Permissions: never delete after release.
 - Invitations and sessions: purge after retention.
+- Passwords, TOTP factors, Recovery Codes, and pending authentications: delete on replacement or use; cascade with the User.
 - Security events: append-only and retention-controlled.

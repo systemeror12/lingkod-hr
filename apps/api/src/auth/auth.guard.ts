@@ -11,7 +11,7 @@ import { AuthService } from './auth.service';
 import type { AuthenticatedRequest } from './auth.types';
 import { assertCookieMutationOrigin } from './csrf';
 
-function cookieValue(request: Request, name: string): string | null {
+export function cookieValue(request: Request, name: string): string | null {
   const header = request.headers.cookie;
   if (!header) return null;
   for (const part of header.split(';')) {

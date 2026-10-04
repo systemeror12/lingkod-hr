@@ -1,8 +1,17 @@
 'use client';
 
+import { Field, inputClass, FormError } from './ui/field';
+
+import { useRecordNavigation } from './record-navigation';
+
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { manilaToday } from '../lib/manila-date';
+import { StateCode, StateSurface } from './state-surface';
 import { Button } from './ui/button';
+import { PageHeader, type Breadcrumb } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, TableFooter, Td, Th, Tr } from './ui/table';
 import {
   Dialog,
   DialogBody,
@@ -140,10 +149,6 @@ interface FormValues {
 type DialogKind = 'prepare' | 'detail' | 'review' | 'effectuate' | 'history';
 type FormMode = 'create' | 'edit' | 'correct';
 
-const inputClass =
-  'min-h-11 w-full rounded-[3px] border border-line bg-paper px-3 text-sm text-ink outline-none focus:border-cobalt focus:ring-2 focus:ring-cobalt/15';
-const labelClass = 'grid gap-1.5 text-xs font-[650] text-ink';
-
 function emptyValues(): FormValues {
   return {
     employeeId: '',
@@ -202,40 +207,23 @@ function errorMessage(value: unknown, fallback: string): string {
   return typeof error?.message === 'string' ? error.message : fallback;
 }
 
-function statusClass(status: PersonnelBaseline['status']): string {
-  if (status === 'EFFECTIVE') return 'bg-[#e8f3ed] text-[#316647]';
-  if (status === 'REJECTED' || status === 'VOIDED') return 'bg-[#f0f2f5] text-muted';
-  if (status === 'APPROVED') return 'bg-[#e8edf8] text-[#315f99]';
-  return 'bg-[#fff3d6] text-[#79531c]';
+const statusTone: Record<PersonnelBaseline['status'], StatusTone> = {
+  DRAFT: 'warning',
+  FOR_REVIEW: 'warning',
+  RETURNED: 'warning',
+  APPROVED: 'info',
+  EFFECTIVE: 'success',
+  SUPERSEDED: 'neutral',
+  REJECTED: 'neutral',
+  VOIDED: 'neutral',
+};
+
+function statusLabel(status: string): string {
+  return status.replaceAll('_', ' ');
 }
 
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  children: ReactNode;
-}) {
-  return (
-    <label className={labelClass} htmlFor={htmlFor}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function FormError({ message }: { message: string }) {
-  return message ? (
-    <p
-      className="m-0 rounded-[3px] border border-[#e8b6b6] bg-[#fff4f4] px-3 py-3 text-[13px] leading-[1.5] text-[#9a3030]"
-      role="alert"
-    >
-      {message}
-    </p>
-  ) : null;
-}
+const sectionTitleClass = 'm-0 text-panel-title text-ink';
+const noteClass = 'm-0 border-l-2 border-primary bg-canvas px-3 py-2.5 text-small text-ink-muted';
 
 function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
@@ -275,6 +263,45 @@ export function PersonnelBaselineWorkspace({
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [formMode, setFormMode] = useState<FormMode>('create');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const navigation = useRecordNavigation();
+  const recordId = navigation.search.get('record');
+  const historyView = navigation.search.get('section') === 'history';
+
+  useEffect(() => {
+    let active = true;
+    setSelectedId(null);
+    setError('');
+    if (!recordId) {
+      setDialog(null);
+      return;
+    }
+    setDialog(null);
+    void (async () => {
+      const next = (await request(
+        agencyId,
+        `/personnel-baselines/${encodeURIComponent(recordId)}`,
+      )) as PersonnelBaseline;
+      if (!active) return;
+      setBaselines((current) => [next, ...current.filter((item) => item.id !== next.id)]);
+      setSelectedId(next.id);
+      if (historyView) {
+        if (!canAudit) throw new Error('History is outside your permitted scope.');
+        const historyValue = (await request(
+          agencyId,
+          `/personnel-baselines/${encodeURIComponent(recordId)}/history`,
+        )) as { entries: typeof history };
+        if (!active) return;
+        setHistory(historyValue.entries);
+        setDialog('history');
+      } else setDialog('detail');
+    })().catch((cause: unknown) => {
+      if (active) setError(errorMessage(cause, 'This record is unavailable.'));
+    });
+    return () => {
+      active = false;
+    };
+  }, [recordId, historyView, canAudit]);
+
   const [values, setValues] = useState(emptyValues);
   const [reviewDecision, setReviewDecision] = useState<'APPROVE' | 'RETURN' | 'REJECT'>('APPROVE');
   const [reviewReason, setReviewReason] = useState('');
@@ -294,7 +321,10 @@ export function PersonnelBaselineWorkspace({
   const returnFocusRef = useRef<(() => void) | null>(null);
   const employeeFieldRef = useRef<{ focus(): void } | null>(null);
 
-  const selected = baselines.find((baseline) => baseline.id === selectedId) ?? null;
+  const selected =
+    baselines.find(
+      (baseline) => baseline.id === selectedId && (!recordId || baseline.id === recordId),
+    ) ?? null;
 
   useEffect(() => {
     if (!canPrepare) return;
@@ -349,10 +379,8 @@ export function PersonnelBaselineWorkspace({
     setDialog('prepare');
   }
 
-  function openDetail(baseline: PersonnelBaseline): void {
-    setSelectedId(baseline.id);
-    setError('');
-    setDialog('detail');
+  function openDetail(record: PersonnelBaseline): void {
+    navigation.navigate({ record: record.id, view: 'form', section: null });
   }
 
   function replaceBaseline(next: PersonnelBaseline): void {
@@ -363,10 +391,12 @@ export function PersonnelBaselineWorkspace({
         : [next, ...current];
     });
     setSelectedId(next.id);
+    navigation.navigate({ record: next.id, view: 'form', section: null });
   }
 
   async function submitForm(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError('');
     try {
@@ -435,7 +465,7 @@ export function PersonnelBaselineWorkspace({
   }
 
   async function runAction(path: string, init: RequestInit, message: string): Promise<void> {
-    if (!selected) return;
+    if (!selected || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -455,177 +485,167 @@ export function PersonnelBaselineWorkspace({
   }
 
   async function openHistory(): Promise<void> {
-    if (!selected) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = (await request(agencyId, `/personnel-baselines/${selected.id}/history`)) as {
-        entries: typeof history;
-      };
-      setHistory(result.entries);
-      setDialog('history');
-    } catch (reason: unknown) {
-      setError(errorMessage(reason, 'Baseline history could not be loaded.'));
-    } finally {
-      setBusy(false);
-    }
+    if (selected) navigation.navigate({ record: selected.id, view: 'form', section: 'history' });
   }
 
-  const counts = ['DRAFT', 'FOR_REVIEW', 'APPROVED', 'EFFECTIVE'].map(
+  const counts = (['DRAFT', 'FOR_REVIEW', 'APPROVED', 'EFFECTIVE'] as const).map(
     (status) =>
       [status, baselines.filter((baseline) => baseline.status === status).length] as const,
   );
 
+  const inline = Boolean(recordId) || dialog === 'prepare';
+  const canEditDraft =
+    canPrepare && (selected?.status === 'DRAFT' || selected?.status === 'RETURNED');
+  const breadcrumbs: Breadcrumb[] = [{ label: 'Personnel' }];
+  // Only record views change the URL, so only they can link back to the register.
+  if (recordId) {
+    breadcrumbs.push({
+      label: 'Personnel Baselines',
+      href: navigation.href({ record: null, view: null, section: null }),
+    });
+    if (selected) breadcrumbs.push({ label: selected.employee.legalName });
+  } else if (dialog === 'prepare') {
+    breadcrumbs.push({ label: 'Personnel Baselines' }, { label: 'Prepare' });
+  }
+
   return (
-    <div className="grid min-w-0 gap-7">
-      <header className="flex flex-col gap-5 min-[700px]:flex-row min-[700px]:items-end min-[700px]:justify-between">
-        <div>
-          <p className="mb-2 text-[10px] font-bold tracking-[.12em] text-cobalt uppercase">
-            Personnel records / Phase 5
-          </p>
-          <h1 className="m-0 text-[30px] font-[700] tracking-[-.035em] text-midnight">
-            Personnel Baseline
-          </h1>
-          <p className="mt-2 max-w-[650px] text-sm leading-6 text-muted">
-            Establish the evidence-backed starting point for an existing Appointed Personnel record.
-            This adoption record does not issue a new Appointment.
-          </p>
-        </div>
-        {canPrepare ? (
-          <Button
-            className="shrink-0"
-            onClick={(event) => {
-              const trigger = event.currentTarget as unknown as { focus(): void };
-              openPrepare('create', undefined, () => trigger.focus());
-            }}
-            size="default"
-            type="button"
-            variant="primary"
-          >
-            Prepare baseline
-          </Button>
-        ) : null}
-      </header>
+    <div className="grid min-w-0 gap-5">
+      <PageHeader
+        breadcrumbs={breadcrumbs}
+        title="Personnel Baselines"
+        actions={
+          canPrepare ? (
+            <Button
+              // Hidden rather than unmounted, so focus can return here when the form closes.
+              hidden={inline}
+              onClick={(event) => {
+                const trigger = event.currentTarget as unknown as { focus(): void };
+                openPrepare('create', undefined, () => trigger.focus());
+              }}
+              type="button"
+              variant="primary"
+            >
+              Prepare baseline
+            </Button>
+          ) : null
+        }
+      />
 
-      <section className="grid gap-4 border-l-[3px] border-cobalt bg-[#edf3fb] px-5 py-4 min-[700px]:grid-cols-[1fr_auto] min-[700px]:items-center">
-        <div>
-          <strong className="block text-sm font-[700] text-midnight">
-            Adoption, not appointment issuance
-          </strong>
-          <p className="m-0 mt-1 text-[13px] leading-6 text-muted">
-            The baseline records service history, the current Organization Unit, and optional
-            Plantilla occupancy from approved evidence. Appointment, oath, assumption, and CSC
-            records remain separate workflows.
+      {recordId && dialog === null && error ? (
+        <StateSurface labelledBy="baseline-record-state-title">
+          <StateCode>Unavailable</StateCode>
+          <h2 className="m-0 text-page-title text-ink" id="baseline-record-state-title">
+            This Personnel Baseline view could not be opened
+          </h2>
+          <p className="m-0 max-w-[500px] text-body text-ink-muted" role="alert">
+            {error}
           </p>
-        </div>
-        <span className="font-mono text-[11px] font-bold tracking-[.08em] text-cobalt">
-          EVIDENCE → SERVICE
-        </span>
-      </section>
-
-      {success ? (
-        <p
-          className="m-0 border border-[#b8d8c0] bg-[#f1faf3] px-4 py-3 text-sm text-[#316647]"
-          role="status"
-        >
-          {success}
-        </p>
+        </StateSurface>
+      ) : recordId && !selected && !error ? (
+        <StateSurface busy label="Personnel Baseline">
+          <StateCode>Loading</StateCode>
+          <p className="m-0 text-body text-ink-muted" role="status">
+            Loading record…
+          </p>
+        </StateSurface>
       ) : null}
 
-      <div className="grid border-y border-line bg-paper min-[700px]:grid-cols-4">
-        {counts.map(([label, count]) => (
-          <div
-            key={label}
-            className="flex items-baseline justify-between border-b border-line px-5 py-4 last:border-0 min-[700px]:border-r min-[700px]:border-b-0 min-[700px]:last:border-r-0"
-          >
-            <span className="text-[10px] font-bold tracking-[.08em] text-muted">{label}</span>
-            <strong className="font-mono text-2xl text-midnight">{count}</strong>
-          </div>
-        ))}
-      </div>
-
-      <section className="overflow-hidden rounded-[4px] border border-line bg-paper">
+      <Panel
+        title="Baseline register"
+        flush
+        hidden={inline}
+        actions={
+          <dl className="m-0 flex flex-wrap gap-x-4 gap-y-1 text-caption text-ink-muted">
+            {counts.map(([status, count]) => (
+              <div className="flex gap-1.5" key={status}>
+                <dt>{statusLabel(status)}</dt>
+                <dd className="m-0 font-[650] text-ink">{count}</dd>
+              </div>
+            ))}
+          </dl>
+        }
+      >
+        <div className="grid gap-3 px-4 pt-3">
+          <p className="m-0 max-w-[760px] text-small text-ink-muted">
+            Establish the evidence-backed starting point for an existing Appointed Personnel record.
+            The baseline records service history, the current Organization Unit, and optional
+            Plantilla occupancy from approved evidence.
+          </p>
+          <p className={noteClass}>
+            <strong className="font-[650] text-ink">Adoption, not appointment issuance.</strong>{' '}
+            Appointment, oath, assumption, and CSC records remain separate workflows.
+          </p>
+          {success ? (
+            <p role="status" className="m-0 text-small text-success">
+              {success}
+            </p>
+          ) : null}
+        </div>
         {baselines.length === 0 ? (
-          <div className="px-5 py-10">
-            <strong className="block text-sm text-midnight">No Personnel Baselines yet</strong>
-            <p className="m-0 mt-2 max-w-[540px] text-sm leading-6 text-muted">
+          <StateSurface compact label="Personnel Baseline register">
+            <strong className="text-body font-[650] text-ink">No Personnel Baselines yet</strong>
+            <p className="m-0 max-w-[540px]">
               Prepare one when the Personnel Records Officer has the authority evidence and
               effective-dated service facts for an existing Employee.
             </p>
-          </div>
+          </StateSurface>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] border-collapse text-left">
+          <>
+            <Table aria-label="Personnel Baselines" className="mt-3 min-w-[760px]">
               <thead>
-                <tr className="border-b border-line bg-[#f9fafc] text-[10px] tracking-[.08em] text-muted uppercase">
-                  <th className="px-5 py-3 font-bold">Employee</th>
-                  <th className="px-5 py-3 font-bold">Service start</th>
-                  <th className="px-5 py-3 font-bold">Organization / position</th>
-                  <th className="px-5 py-3 font-bold">State</th>
-                  <th className="w-20">
-                    <span className="sr-only">Open</span>
-                  </th>
+                <tr>
+                  <Th>Employee</Th>
+                  <Th kind="date">Service start</Th>
+                  <Th>Organization / position</Th>
+                  <Th>State</Th>
                 </tr>
               </thead>
               <tbody>
                 {baselines.map((baseline) => (
-                  <tr
-                    key={baseline.id}
-                    className="border-b border-line last:border-0 hover:bg-[#f8fafd]"
-                  >
-                    <td className="px-5 py-4">
-                      <button
-                        className="text-left"
-                        onClick={() => openDetail(baseline)}
-                        type="button"
-                      >
-                        <strong className="block text-sm font-[650] text-ink">
-                          {baseline.employee.legalName}
-                        </strong>
-                        <span className="font-mono text-xs text-muted">
-                          {baseline.employee.employeeNumber}
-                        </span>
-                      </button>
-                    </td>
-                    <td className="px-5 py-4 text-xs text-muted">
-                      {dateLabel(baseline.agencyServiceStartDate)}
-                    </td>
-                    <td className="px-5 py-4">
-                      <strong className="block text-sm font-[620] text-ink">
-                        {baseline.organizationUnit.code}
-                      </strong>
-                      <span className="text-xs text-muted">
-                        {baseline.position?.itemNumber ?? 'No Plantilla Position'}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(baseline.status)}`}
-                      >
-                        {baseline.status.replaceAll('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-5">
+                  <Tr key={baseline.id}>
+                    <RowHeader>
                       <button
                         aria-label={`Open baseline for ${baseline.employee.legalName}`}
-                        className="text-lg text-cobalt"
+                        className="w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
                         onClick={() => openDetail(baseline)}
                         type="button"
                       >
-                        →
+                        {baseline.employee.legalName}
                       </button>
-                    </td>
-                  </tr>
+                      <span className="block font-mono text-caption font-normal text-ink-muted">
+                        {baseline.employee.employeeNumber}
+                      </span>
+                    </RowHeader>
+                    <Td kind="date">{dateLabel(baseline.agencyServiceStartDate)}</Td>
+                    <Td>
+                      <span className="block font-[600] text-ink">
+                        {baseline.organizationUnit.code}
+                      </span>
+                      <span className="text-caption text-ink-muted">
+                        {baseline.position?.itemNumber ?? 'No Plantilla Position'}
+                      </span>
+                    </Td>
+                    <Td>
+                      <StatusTag tone={statusTone[baseline.status]}>
+                        {statusLabel(baseline.status)}
+                      </StatusTag>
+                    </Td>
+                  </Tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+            </Table>
+            <TableFooter shown={baselines.length} total={baselines.length} />
+          </>
         )}
-      </section>
+      </Panel>
 
       <Dialog
+        presentation={
+          dialog === 'detail' || dialog === 'prepare' || dialog === 'history' ? 'form' : 'dialog'
+        }
         onOpenChange={(open) => {
           if (!open && !busy) {
+            navigation.navigate({ record: null, view: null, section: null });
             setDialog(null);
             setError('');
           }
@@ -635,7 +655,6 @@ export function PersonnelBaselineWorkspace({
         {dialog === 'prepare' ? (
           <DialogContent
             aria-describedby="baseline-prepare-description"
-            className="max-w-[900px]"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               returnFocusRef.current?.();
@@ -646,7 +665,7 @@ export function PersonnelBaselineWorkspace({
             }}
           >
             <DialogHeader>
-              <div className="min-w-0">
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>
                   {formMode === 'correct'
                     ? 'Prepare baseline correction'
@@ -667,24 +686,20 @@ export function PersonnelBaselineWorkspace({
                 </Button>
               </DialogClose>
             </DialogHeader>
-            <form onSubmit={submitForm}>
+            <form className="flex min-h-0 flex-1 flex-col" onSubmit={submitForm}>
               <DialogBody className="grid gap-6">
                 <FormError message={error || optionsError} />
                 {optionsLoading ? (
-                  <p
-                    className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-sm text-muted"
-                    role="status"
-                  >
-                    Loading Employee, Organization, Position, and evidence choices…
-                  </p>
+                  <StateSurface compact busy label="Baseline reference values">
+                    <p className="m-0" role="status">
+                      Loading Employee, Organization, Position, and evidence choices…
+                    </p>
+                  </StateSurface>
                 ) : null}
                 <section className="grid gap-4" aria-labelledby="baseline-identity-fields">
-                  <h2
-                    id="baseline-identity-fields"
-                    className="m-0 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase"
-                  >
+                  <h3 className={sectionTitleClass} id="baseline-identity-fields">
                     Existing personnel record
-                  </h2>
+                  </h3>
                   <div className="grid gap-4 min-[700px]:grid-cols-2">
                     <Field htmlFor="baseline-employee" label="Employee">
                       <select
@@ -725,12 +740,9 @@ export function PersonnelBaselineWorkspace({
                 </section>
 
                 <section className="grid gap-4" aria-labelledby="baseline-evidence-fields">
-                  <h2
-                    id="baseline-evidence-fields"
-                    className="m-0 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase"
-                  >
+                  <h3 className={sectionTitleClass} id="baseline-evidence-fields">
                     Authority evidence
-                  </h2>
+                  </h3>
                   <div className="grid gap-4 min-[700px]:grid-cols-2">
                     <Field htmlFor="baseline-evidence-document" label="External Evidence Document">
                       <select
@@ -756,21 +768,18 @@ export function PersonnelBaselineWorkspace({
                         ))}
                       </select>
                     </Field>
-                    <div className="rounded-[3px] bg-canvas px-4 py-3 text-xs leading-5 text-muted">
+                    <p className="m-0 self-end rounded-control border border-border bg-canvas px-3 py-2.5 text-small text-ink-muted">
                       {values.authorityEvidenceVersionId
                         ? `Exact evidence version selected: ${values.authorityEvidenceVersionId}`
                         : 'Choose the exact evidence document version used for this baseline.'}
-                    </div>
+                    </p>
                   </div>
                 </section>
 
                 <section className="grid gap-4" aria-labelledby="baseline-service-fields">
-                  <h2
-                    id="baseline-service-fields"
-                    className="m-0 text-[11px] font-bold tracking-[.1em] text-cobalt uppercase"
-                  >
+                  <h3 className={sectionTitleClass} id="baseline-service-fields">
                     Effective-dated service facts
-                  </h2>
+                  </h3>
                   <div className="grid gap-4 min-[700px]:grid-cols-2">
                     <Field
                       htmlFor="baseline-first-service-date"
@@ -872,30 +881,25 @@ export function PersonnelBaselineWorkspace({
 
                 <Field htmlFor="baseline-reason" label="Reason for adoption or correction">
                   <textarea
-                    className={`${inputClass} min-h-24 py-3`}
+                    className={`${inputClass} min-h-24 resize-y py-3`}
                     id="baseline-reason"
                     onChange={(event) => setValue('reason', targetValue(event))}
                     required
                     value={values.reason}
                   />
                 </Field>
-                <p className="m-0 rounded-[3px] bg-canvas px-4 py-3 text-[13px] leading-6 text-muted">
+                <p className={noteClass}>
                   Saving creates a Draft. Submit it for review before effectuation. No Appointment
                   or oath record is created by this workflow.
                 </p>
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                  <Button disabled={busy} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button
-                  disabled={busy || optionsLoading}
-                  size="default"
-                  type="submit"
-                  variant="primary"
-                >
+                <Button disabled={busy || optionsLoading} type="submit" variant="primary">
                   {busy
                     ? 'Saving…'
                     : formMode === 'correct'
@@ -910,10 +914,15 @@ export function PersonnelBaselineWorkspace({
         ) : null}
 
         {dialog === 'detail' && selected ? (
-          <DialogContent aria-describedby="baseline-detail-description" className="max-w-[820px]">
+          <DialogContent aria-describedby="baseline-detail-description">
             <DialogHeader>
-              <div className="min-w-0">
-                <DialogTitle>{selected.employee.legalName}</DialogTitle>
+              <div className="grid min-w-0 gap-1.5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <DialogTitle>{selected.employee.legalName}</DialogTitle>
+                  <StatusTag tone={statusTone[selected.status]}>
+                    {statusLabel(selected.status)}
+                  </StatusTag>
+                </div>
                 <DialogDescription id="baseline-detail-description">
                   Personnel Baseline · {selected.employee.employeeNumber}
                 </DialogDescription>
@@ -928,152 +937,138 @@ export function PersonnelBaselineWorkspace({
             </DialogHeader>
             <DialogBody className="grid gap-6">
               <FormError message={error} />
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-                <span
-                  className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold tracking-[.06em] ${statusClass(selected.status)}`}
-                >
-                  {selected.status.replaceAll('_', ' ')}
-                </span>
-                <span className="font-mono text-xs text-muted">{selected.id}</span>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap gap-2">
+                  {canEditDraft ? (
+                    <Button
+                      onClick={() => openPrepare('edit', selected)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      Edit draft
+                    </Button>
+                  ) : null}
+                  {canEditDraft ? (
+                    <Button
+                      disabled={busy}
+                      onClick={() => void submitBaseline()}
+                      type="button"
+                      variant="primary"
+                    >
+                      Submit for review
+                    </Button>
+                  ) : null}
+                  {canReview && selected.status === 'FOR_REVIEW' ? (
+                    <Button
+                      onClick={() => {
+                        setReviewDecision('APPROVE');
+                        setReviewReason('');
+                        setError('');
+                        setDialog('review');
+                      }}
+                      type="button"
+                      variant="primary"
+                    >
+                      Review baseline
+                    </Button>
+                  ) : null}
+                  {canEffectuate && selected.status === 'APPROVED' ? (
+                    <Button
+                      onClick={() => {
+                        setError('');
+                        setDialog('effectuate');
+                      }}
+                      type="button"
+                      variant="primary"
+                    >
+                      Effectuate baseline
+                    </Button>
+                  ) : null}
+                  {canCorrect && selected.status === 'EFFECTIVE' ? (
+                    <Button
+                      onClick={() => openPrepare('correct', selected)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      Prepare correction
+                    </Button>
+                  ) : null}
+                  {canAudit ? (
+                    <Button
+                      disabled={busy}
+                      onClick={() => void openHistory()}
+                      type="button"
+                      variant="secondary"
+                    >
+                      View history
+                    </Button>
+                  ) : null}
+                </div>
+                <span className="font-mono text-caption text-ink-muted">{selected.id}</span>
               </div>
-              <div className="grid gap-5 min-[700px]:grid-cols-2">
-                <DetailGroup title="Authority evidence">
-                  <DetailRow
-                    label="Document"
-                    value={
+              <div className="grid gap-x-10 gap-y-6 min-[700px]:grid-cols-2">
+                <FactSection
+                  title="Authority evidence"
+                  facts={[
+                    [
+                      'Document',
                       selected.authorityEvidence.documentNo ??
-                      selected.authorityEvidence.documentType
-                    }
-                  />
-                  <DetailRow
-                    label="Status"
-                    value={`${selected.authorityEvidence.status} · v${selected.authorityEvidence.versionNo}`}
-                  />
-                  <DetailRow
-                    label="Classification"
-                    value={selected.authorityEvidence.classification}
-                  />
-                </DetailGroup>
-                <DetailGroup title="Effective service">
-                  <DetailRow
-                    label="First government service"
-                    value={dateLabel(selected.firstGovernmentServiceDate)}
-                  />
-                  <DetailRow
-                    label="Agency service start"
-                    value={dateLabel(selected.agencyServiceStartDate)}
-                  />
-                  <DetailRow label="Appointment status" value={selected.appointmentStatus} />
-                </DetailGroup>
-                <DetailGroup title="Current assignment">
-                  <DetailRow
-                    label="Organization Unit"
-                    value={`${selected.organizationUnit.code} · ${selected.organizationUnit.name}`}
-                  />
-                  <DetailRow
-                    label="Plantilla Position"
-                    value={
+                        selected.authorityEvidence.documentType,
+                    ],
+                    [
+                      'Status',
+                      `${selected.authorityEvidence.status} · v${selected.authorityEvidence.versionNo}`,
+                    ],
+                    ['Classification', selected.authorityEvidence.classification],
+                  ]}
+                />
+                <FactSection
+                  title="Effective service"
+                  facts={[
+                    ['First government service', dateLabel(selected.firstGovernmentServiceDate)],
+                    ['Agency service start', dateLabel(selected.agencyServiceStartDate)],
+                    ['Appointment status', selected.appointmentStatus],
+                  ]}
+                />
+                <FactSection
+                  title="Current assignment"
+                  facts={[
+                    [
+                      'Organization Unit',
+                      `${selected.organizationUnit.code} · ${selected.organizationUnit.name}`,
+                    ],
+                    [
+                      'Plantilla Position',
                       selected.position
                         ? `${selected.position.itemNumber} · ${selected.position.title ?? 'Untitled'}`
-                        : 'None'
-                    }
-                  />
-                  <DetailRow
-                    label="Salary"
-                    value={
+                        : 'None',
+                    ],
+                    [
+                      'Salary',
                       selected.salaryGrade === null
                         ? 'Not recorded'
-                        : `SG ${selected.salaryGrade}, Step ${selected.salaryStep ?? '—'}`
-                    }
-                  />
-                </DetailGroup>
-                <DetailGroup title="Workflow record">
-                  <DetailRow label="Reason" value={selected.reason} />
-                  <DetailRow label="Reviewed" value={dateTimeLabel(selected.reviewedAt)} />
-                  <DetailRow label="Effectuated" value={dateTimeLabel(selected.effectuatedAt)} />
-                </DetailGroup>
+                        : `SG ${selected.salaryGrade}, Step ${selected.salaryStep ?? '—'}`,
+                    ],
+                  ]}
+                />
+                <FactSection
+                  title="Workflow record"
+                  facts={[
+                    ['Reason', selected.reason],
+                    ['Reviewed', dateTimeLabel(selected.reviewedAt)],
+                    ['Effectuated', dateTimeLabel(selected.effectuatedAt)],
+                  ]}
+                />
               </div>
               {selected.serviceSegment ? (
-                <div className="border-l-[3px] border-[#5a8f6a] bg-[#f1faf3] px-4 py-3 text-[13px] leading-6 text-[#316647]">
+                <p className="m-0 border-l-2 border-success bg-canvas px-3 py-2.5 text-small text-ink">
                   Active Service Segment {selected.serviceSegment.id} begins{' '}
                   {dateLabel(selected.serviceSegment.effectiveFrom)}.
                   {selected.positionIncumbency
                     ? ' The Plantilla Position has an active Position Incumbency.'
                     : ''}
-                </div>
+                </p>
               ) : null}
-              <div className="flex flex-wrap gap-2">
-                {canPrepare && (selected.status === 'DRAFT' || selected.status === 'RETURNED') ? (
-                  <Button
-                    onClick={() => openPrepare('edit', selected)}
-                    size="default"
-                    type="button"
-                    variant="secondary"
-                  >
-                    Edit draft
-                  </Button>
-                ) : null}
-                {canPrepare && (selected.status === 'DRAFT' || selected.status === 'RETURNED') ? (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void submitBaseline()}
-                    size="default"
-                    type="button"
-                    variant="primary"
-                  >
-                    Submit for review
-                  </Button>
-                ) : null}
-                {canReview && selected.status === 'FOR_REVIEW' ? (
-                  <Button
-                    onClick={() => {
-                      setReviewDecision('APPROVE');
-                      setReviewReason('');
-                      setError('');
-                      setDialog('review');
-                    }}
-                    size="default"
-                    type="button"
-                    variant="primary"
-                  >
-                    Review baseline
-                  </Button>
-                ) : null}
-                {canEffectuate && selected.status === 'APPROVED' ? (
-                  <Button
-                    onClick={() => {
-                      setError('');
-                      setDialog('effectuate');
-                    }}
-                    size="default"
-                    type="button"
-                    variant="primary"
-                  >
-                    Effectuate baseline
-                  </Button>
-                ) : null}
-                {canCorrect && selected.status === 'EFFECTIVE' ? (
-                  <Button
-                    onClick={() => openPrepare('correct', selected)}
-                    size="default"
-                    type="button"
-                    variant="secondary"
-                  >
-                    Prepare correction
-                  </Button>
-                ) : null}
-                {canAudit ? (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void openHistory()}
-                    size="default"
-                    type="button"
-                    variant="secondary"
-                  >
-                    View history
-                  </Button>
-                ) : null}
-              </div>
             </DialogBody>
           </DialogContent>
         ) : null}
@@ -1081,7 +1076,7 @@ export function PersonnelBaselineWorkspace({
         {dialog === 'review' && selected ? (
           <DialogContent aria-describedby="baseline-review-description" size="compact">
             <DialogHeader>
-              <div className="min-w-0">
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Review Personnel Baseline</DialogTitle>
                 <DialogDescription id="baseline-review-description">
                   Record a review decision for {selected.employee.legalName}. Approval allows
@@ -1096,7 +1091,7 @@ export function PersonnelBaselineWorkspace({
                 </Button>
               </DialogClose>
             </DialogHeader>
-            <form onSubmit={reviewBaseline}>
+            <form className="contents" onSubmit={reviewBaseline}>
               <DialogBody className="grid gap-5">
                 <FormError message={error} />
                 <Field htmlFor="baseline-review-decision" label="Decision">
@@ -1115,7 +1110,7 @@ export function PersonnelBaselineWorkspace({
                 </Field>
                 <Field htmlFor="baseline-review-reason" label="Review reason">
                   <textarea
-                    className={`${inputClass} min-h-24 py-3`}
+                    className={`${inputClass} min-h-24 resize-y py-3`}
                     id="baseline-review-reason"
                     onChange={(event) => setReviewReason(targetValue(event))}
                     required
@@ -1125,11 +1120,11 @@ export function PersonnelBaselineWorkspace({
               </DialogBody>
               <DialogFooter>
                 <DialogClose asChild>
-                  <Button disabled={busy} size="default" type="button" variant="secondary">
+                  <Button disabled={busy} type="button" variant="secondary">
                     Cancel
                   </Button>
                 </DialogClose>
-                <Button disabled={busy} size="default" type="submit" variant="primary">
+                <Button disabled={busy} type="submit" variant="primary">
                   {busy ? 'Recording…' : 'Record decision'}
                 </Button>
               </DialogFooter>
@@ -1140,7 +1135,7 @@ export function PersonnelBaselineWorkspace({
         {dialog === 'effectuate' && selected ? (
           <DialogContent aria-describedby="baseline-effectuate-description" size="compact">
             <DialogHeader>
-              <div className="min-w-0">
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Effectuate Personnel Baseline</DialogTitle>
                 <DialogDescription id="baseline-effectuate-description">
                   Activate the approved service facts for {selected.employee.legalName}.
@@ -1156,25 +1151,24 @@ export function PersonnelBaselineWorkspace({
             </DialogHeader>
             <DialogBody className="grid gap-4">
               <FormError message={error} />
-              <p className="m-0 text-sm leading-6 text-muted">
+              <p className="m-0 text-body text-ink-muted">
                 This one transaction will activate the Service Segment, update the Employee service
                 projection, request Plantilla occupancy when selected, and append Audit and outbox
                 records.
               </p>
-              <div className="border-l-[3px] border-cobalt bg-[#edf3fb] px-4 py-3 text-[13px] leading-6 text-muted">
+              <p className={noteClass}>
                 No Appointment, oath, assumption, or CSC record will be created.
-              </div>
+              </p>
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button disabled={busy} size="default" type="button" variant="secondary">
+                <Button disabled={busy} type="button" variant="secondary">
                   Cancel
                 </Button>
               </DialogClose>
               <Button
                 disabled={busy}
                 onClick={() => void effectuateBaseline()}
-                size="default"
                 type="button"
                 variant="primary"
               >
@@ -1185,9 +1179,9 @@ export function PersonnelBaselineWorkspace({
         ) : null}
 
         {dialog === 'history' && selected ? (
-          <DialogContent aria-describedby="baseline-history-description" className="max-w-[760px]">
+          <DialogContent aria-describedby="baseline-history-description">
             <DialogHeader>
-              <div className="min-w-0">
+              <div className="grid min-w-0 gap-1.5">
                 <DialogTitle>Personnel Baseline history</DialogTitle>
                 <DialogDescription id="baseline-history-description">
                   Retained workflow events for {selected.employee.legalName}.
@@ -1201,31 +1195,41 @@ export function PersonnelBaselineWorkspace({
                 </Button>
               </DialogClose>
             </DialogHeader>
-            <DialogBody className="grid gap-3">
+            <DialogBody className="p-0">
               {history.length === 0 ? (
-                <p className="m-0 text-sm text-muted">No history events were found.</p>
+                <StateSurface compact label="Personnel Baseline history">
+                  <p className="m-0">No history events were found.</p>
+                </StateSurface>
               ) : (
-                history.map((entry) => (
-                  <article className="grid gap-1 border-l-2 border-line px-4 py-3" key={entry.id}>
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <strong className="text-sm text-midnight">
-                        {entry.action.replaceAll('_', ' ')}
-                      </strong>
-                      <time className="text-xs text-muted">{dateTimeLabel(entry.occurredAt)}</time>
-                    </div>
-                    <span className="text-xs text-muted">
-                      {entry.previousStatus ?? '—'} → {entry.newStatus ?? '—'}
-                    </span>
-                    {entry.reason ? (
-                      <p className="m-0 text-sm leading-6 text-ink">{entry.reason}</p>
-                    ) : null}
-                  </article>
-                ))
+                <Table aria-label="Personnel Baseline history" className="min-w-[640px]">
+                  <thead>
+                    <tr>
+                      <Th>Action</Th>
+                      <Th>Status change</Th>
+                      <Th kind="date">Occurred</Th>
+                      <Th>Reason</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((entry) => (
+                      <Tr key={entry.id}>
+                        <RowHeader>{statusLabel(entry.action)}</RowHeader>
+                        <Td className="whitespace-nowrap">
+                          {entry.previousStatus ?? '—'} → {entry.newStatus ?? '—'}
+                        </Td>
+                        <Td kind="date">
+                          <time dateTime={entry.occurredAt}>{dateTimeLabel(entry.occurredAt)}</time>
+                        </Td>
+                        <Td className="text-ink-muted">{entry.reason ?? '—'}</Td>
+                      </Tr>
+                    ))}
+                  </tbody>
+                </Table>
               )}
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <Button size="default" type="button" variant="secondary">
+                <Button type="button" variant="secondary">
                   Close
                 </Button>
               </DialogClose>
@@ -1237,21 +1241,20 @@ export function PersonnelBaselineWorkspace({
   );
 }
 
-function DetailGroup({ title, children }: { title: string; children: ReactNode }) {
+/** Titled group of label and value pairs in the record view. */
+function FactSection({ title, facts }: { title: string; facts: [string, ReactNode][] }) {
   return (
-    <section className="grid gap-3 border-t border-line pt-3">
-      <h2 className="m-0 text-[10px] font-bold tracking-[.1em] text-cobalt uppercase">{title}</h2>
-      <div className="grid gap-2">{children}</div>
+    <section className="grid content-start gap-3">
+      <h3 className={sectionTitleClass}>{title}</h3>
+      <dl className="m-0 grid gap-3">
+        {facts.map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-caption text-ink-muted">{label}</dt>
+            <dd className="m-0 text-body text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
     </section>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 min-[520px]:grid-cols-[145px_1fr] min-[520px]:gap-3">
-      <span className="text-xs text-muted">{label}</span>
-      <span className="text-sm leading-5 text-ink">{value}</span>
-    </div>
   );
 }
 

@@ -18,7 +18,7 @@ export const getActiveSession = cache(async (): Promise<ActiveSession> => {
   });
 
   if (response.status === 401) {
-    redirect(`${apiUrl}/api/v1/auth/login`);
+    redirect('/sign-in');
   }
   if (!response.ok) {
     throw new Error('The protected workspace could not be loaded.');
@@ -31,6 +31,4 @@ export const getActiveSession = cache(async (): Promise<ActiveSession> => {
   return value;
 });
 
-export function hasPermission(session: ActiveSession, permission: string): boolean {
-  return session.permissions.some((grant) => grant.code === permission);
-}
+export { hasPermission } from './navigation';

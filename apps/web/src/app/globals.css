@@ -1,32 +1,48 @@
 @import 'tailwindcss';
 
-:root {
-  color-scheme: light;
-  --midnight: #172033;
-  --canvas: #f4f6f9;
-  --cobalt: #416da9;
-  --pale-blue: #e6edf8;
-  --ink: #202a38;
-  --line: #dce2ea;
-  --paper: #ffffff;
-  --muted: #667184;
-  --focus: #2f5e9e;
-  font-family: 'Noto Sans Variable', 'Noto Sans', sans-serif;
-  background: var(--canvas);
-  color: var(--ink);
-}
+/*
+ * Enterprise workbench tokens (#231, variant B). Screens use only these.
+ * Contrast pairs are checked for WCAG 2.2 AA against canvas and surface; nav
+ * text and nav-focus are checked against nav.
+ */
+@theme static {
+  --color-nav: #0f2240;
+  --color-nav-ink: #e8eef7;
+  --color-nav-muted: #93a3bd;
+  --color-nav-focus: #6fa3ec;
+  --color-canvas: #f2f4f7;
+  --color-surface: #ffffff;
+  --color-border: #d4d9e1;
+  --color-border-subtle: #e6e9ee;
+  --color-ink: #121a26;
+  --color-ink-muted: #566175;
+  --color-primary: #1a4fa0;
+  --color-primary-hover: #153f80;
+  --color-focus: #1a4fa0;
+  --color-success: #1e6b3a;
+  --color-warning: #9a6200;
+  --color-danger: #a4262c;
+  --color-neutral: #566175;
+  --color-info: #1a4fa0;
 
-@theme inline {
-  --color-midnight: var(--midnight);
-  --color-canvas: var(--canvas);
-  --color-cobalt: var(--cobalt);
-  --color-pale-blue: var(--pale-blue);
-  --color-ink: var(--ink);
-  --color-line: var(--line);
-  --color-paper: var(--paper);
-  --color-muted: var(--muted);
-  --color-focus: var(--focus);
+  --radius-control: 2px;
+  --radius-panel: 2px;
+  --radius-tag: 2px;
+
   --font-sans: 'Noto Sans Variable', 'Noto Sans', sans-serif;
+  --text-page-title: 1.375rem;
+  --text-page-title--line-height: 1.2;
+  --text-page-title--font-weight: 650;
+  --text-page-title--letter-spacing: -0.01em;
+  --text-panel-title: 0.875rem;
+  --text-panel-title--line-height: 1.4;
+  --text-panel-title--font-weight: 650;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.5;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.45;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
 }
 
 * {
@@ -35,34 +51,145 @@
 
 html {
   min-width: 320px;
-  background: var(--canvas);
+  color-scheme: light;
+  font-family: var(--font-sans);
+  background: var(--color-canvas);
+  color: var(--color-ink);
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--canvas);
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
+  background: var(--color-canvas);
 }
 
 @layer base {
+  /* Layered so text and font utilities on controls win over the inherited font. */
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
   a {
     color: inherit;
   }
+
+  table {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
+/* Dark surfaces such as the nav override --color-focus with --color-nav-focus. */
 :focus-visible {
-  outline: 3px solid var(--focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 3px;
 }
 
 ::selection {
-  background: var(--pale-blue);
-  color: var(--midnight);
+  background: var(--color-primary);
+  color: var(--color-surface);
+}
+
+/*
+ * Civic sunrise motion for the public auth screens. Each animation answers a step change or a
+ * user action and runs once; only the busy bar repeats, and only while a request is in flight.
+ */
+@keyframes lh-step-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes lh-nudge {
+  0%,
+  100% {
+    transform: none;
+  }
+  20% {
+    transform: translateX(-7px);
+  }
+  45% {
+    transform: translateX(6px);
+  }
+  70% {
+    transform: translateX(-3px);
+  }
+}
+@keyframes lh-busy {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@keyframes lh-caption {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.lh-step-in {
+  animation: lh-step-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.lh-nudge {
+  animation: lh-nudge 360ms ease-out 120ms both;
+}
+.lh-busy {
+  animation: lh-busy 900ms cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+.lh-caption {
+  animation: lh-caption 700ms cubic-bezier(0.2, 0.7, 0.2, 1) 900ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lh-step-in,
+  .lh-nudge,
+  .lh-busy,
+  .lh-caption {
+    animation: none !important;
+  }
+  .lh-scene * {
+    transition: none !important;
+  }
+}
+
+/*
+ * Printing an auth screen that shows a slip, such as the Recovery Codes, prints only the slip:
+ * anything that neither is, holds, nor sits inside the `data-print-slip` element is dropped.
+ */
+@media print {
+  .lh-auth:has([data-print-slip])
+    :not([data-print-slip], [data-print-slip] *, :has([data-print-slip])) {
+    display: none !important;
+  }
+}
+
+@keyframes lh-seal-stamp {
+  from {
+    opacity: 0;
+    transform: scale(1.15) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(-5deg);
+  }
+}
+.lh-seal-stamp {
+  transform: rotate(-5deg);
+  animation: lh-seal-stamp 280ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lh-seal-stamp {
+    animation: none;
+  }
 }

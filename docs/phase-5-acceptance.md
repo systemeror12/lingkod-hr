@@ -1,8 +1,8 @@
 # Phase 5 acceptance gate
 
 The Phase 5 gate runs one representative protected personnel journey through
-the real API and web application with PostgreSQL RLS and the local OIDC
-fixture. Its records, identities, documents, and foreign-Agency controls are
+the real API and web application with PostgreSQL RLS and owned sign-in. Its
+records, identities, documents, and foreign-Agency controls are
 synthetic and deterministically reset after the run.
 
 ## Commands

@@ -1,12 +1,12 @@
 import { expect, test, type Locator } from '@playwright/test';
+import { MARISOL_EMAIL, signIn } from './sign-in';
 
-async function expectCenteredDialog(dialog: Locator, viewportWidth: number): Promise<void> {
+async function expectWithinViewport(dialog: Locator, viewportWidth: number): Promise<void> {
   const box = await dialog.boundingBox();
   expect(box).not.toBeNull();
   if (!box) throw new Error('The Staffing Authority dialog geometry was unavailable.');
   expect(box.x).toBeGreaterThanOrEqual(16);
   expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 16);
-  expect(Math.abs(box.x + box.width / 2 - viewportWidth / 2)).toBeLessThanOrEqual(1);
 }
 
 async function expectFocusInside(dialog: Locator): Promise<void> {
@@ -16,6 +16,7 @@ async function expectFocusInside(dialog: Locator): Promise<void> {
 test('registers a Draft Staffing Authority through the shared modal contract', async ({ page }) => {
   const reference = 'LAW-E2E-80-001';
 
+  await signIn(page, MARISOL_EMAIL);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
   await page.goto('/staffing-authorities');
@@ -25,18 +26,19 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
 
   const trigger = page.getByRole('button', { name: 'Register Staffing Authority' });
   await trigger.click();
-  const dialog = page.getByRole('dialog', { name: 'Register Staffing Authority' });
+  const dialog = page.getByRole('region', { name: 'Register Staffing Authority' });
   await expect(dialog).toBeVisible();
+  await expect(trigger).toBeHidden();
   await expect(dialog).toHaveAccessibleDescription(
     'Record official metadata first. The record remains Draft until External Evidence is linked and validated.',
   );
   await expect(page.getByLabel('Official reference')).toBeFocused();
-  await expectCenteredDialog(dialog, page.viewportSize()?.width ?? 1280);
+  await expectWithinViewport(dialog, page.viewportSize()?.width ?? 1280);
   const cancelButton = dialog.getByRole('button', { name: 'Cancel' });
   const createButton = dialog.getByRole('button', { name: 'Create Draft' });
-  await expect(cancelButton).toHaveCSS('min-height', '44px');
-  await expect(cancelButton).toHaveClass(/bg-canvas/);
-  await expect(createButton).toHaveCSS('min-height', '44px');
+  await expect(cancelButton).toHaveCSS('min-height', '36px');
+  await expect(cancelButton).toHaveClass(/bg-surface/);
+  await expect(createButton).toHaveCSS('min-height', '36px');
   const cancelBox = await cancelButton.boundingBox();
   const createBox = await createButton.boundingBox();
   expect(cancelBox).not.toBeNull();
@@ -70,9 +72,22 @@ test('registers a Draft Staffing Authority through the shared modal contract', a
   await expect(row).toContainText('Not linked');
   await expect(trigger).toBeFocused();
 
+  await row.getByRole('button', { name: 'Details' }).click();
+  const record = page.getByRole('region', { name: `Staffing Authority · ${reference}` });
+  await expect(record).toBeVisible();
+  await expect(trigger).toBeHidden();
+  await expect(record.getByRole('table', { name: 'History' })).toContainText(
+    'STAFFING_AUTHORITY_DRAFT_CREATED',
+  );
+  const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' });
+  await expect(breadcrumb).toContainText(reference);
+  await breadcrumb.getByRole('link', { name: 'Staffing Authorities' }).click();
+  await expect(record).toBeHidden();
+  await expect(page.getByRole('region', { name: 'Agency register' })).toBeVisible();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await trigger.click();
-  await expectCenteredDialog(dialog, 390);
+  await expectWithinViewport(dialog, 390);
   await expect(cancelButton).toBeVisible();
   await cancelButton.click();
   await expect(dialog).toBeHidden();

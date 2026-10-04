@@ -1,7 +1,8 @@
 # Philippine Public-Sector HRIS
+
 ## Technical Stack and Architecture Specification
 
-**Document status:** Draft v0.4
+**Document status:** Draft v0.5
 **Project type:** Solo-developer modular SaaS / deployable HRIS platform  
 **Architecture:** Multi-tenant modular monolith  
 **Product scope:** Philippine Public-Sector HRIS  
@@ -56,7 +57,7 @@ The architecture should:
 11. Minimize languages and infrastructure products.
 12. Keep hosting and maintenance predictable.
 13. Keep private- and public-sector rules explicitly separated.
-13. Allow agency rules, forms, and rates to be versioned rather than permanently hard-coded.
+14. Allow agency rules, forms, and rates to be versioned rather than permanently hard-coded.
 
 ---
 
@@ -121,32 +122,32 @@ Responsible for document processing, email delivery, PDF generation, imports/exp
 
 # 5. Approved Technology Stack
 
-| Area | Technology |
-|---|---|
-| Runtime | Node.js active LTS |
-| Language | TypeScript |
-| Package manager | pnpm |
-| Monorepo | pnpm workspaces + Turborepo |
-| Frontend | Next.js App Router + React |
-| Styling | Tailwind CSS |
-| Components | shadcn/ui |
-| Tables | TanStack Table |
-| Forms | React Hook Form |
-| Validation | Zod |
-| Server state | TanStack Query |
-| Backend | NestJS |
-| API | REST + OpenAPI |
-| Database | PostgreSQL |
-| ORM | Prisma |
-| Vector search | pgvector |
-| Queue/cache | Redis + BullMQ |
-| Files | S3-compatible object storage |
-| AI | OpenAI Responses API behind provider-neutral interface |
-| Local infra | Docker Compose |
-| CI/CD | GitHub Actions |
-| Observability | OpenTelemetry |
-| Unit/integration testing | Vitest |
-| E2E testing | Playwright |
+| Area                     | Technology                                             |
+| ------------------------ | ------------------------------------------------------ |
+| Runtime                  | Node.js active LTS                                     |
+| Language                 | TypeScript                                             |
+| Package manager          | pnpm                                                   |
+| Monorepo                 | pnpm workspaces + Turborepo                            |
+| Frontend                 | Next.js App Router + React                             |
+| Styling                  | Tailwind CSS                                           |
+| Components               | shadcn/ui                                              |
+| Tables                   | TanStack Table                                         |
+| Forms                    | React Hook Form                                        |
+| Validation               | Zod                                                    |
+| Server state             | TanStack Query                                         |
+| Backend                  | NestJS                                                 |
+| API                      | REST + OpenAPI                                         |
+| Database                 | PostgreSQL                                             |
+| ORM                      | Prisma                                                 |
+| Vector search            | pgvector                                               |
+| Queue/cache              | Redis + BullMQ                                         |
+| Files                    | S3-compatible object storage                           |
+| AI                       | OpenAI Responses API behind provider-neutral interface |
+| Local infra              | Docker Compose                                         |
+| CI/CD                    | GitHub Actions                                         |
+| Observability            | OpenTelemetry                                          |
+| Unit/integration testing | Vitest                                                 |
+| E2E testing              | Playwright                                             |
 
 TypeScript is used throughout the web, API, worker, and shared packages.
 
@@ -319,6 +320,7 @@ Examples:
 
 - recruitment may request appointment creation but may not insert appointment rows;
 - appointment may request personnel activation but may not directly alter payroll;
+- attendance may publish immutable non-monetary facts and adjustment deltas but may not select payroll treatment or edit payroll results;
 - leave may create approved payroll inputs but may not edit finalized payroll lines;
 - separation may request membership deactivation but may not bypass identity controls.
 
@@ -422,13 +424,16 @@ RLS is defense in depth, not a replacement for application authorization.
 
 # 12. Authentication and Authorization
 
-Authentication is delegated to a managed OpenID Connect-compatible provider.
+LingkodHR owns login ([ADR 0004](adr/0004-lingkodhr-owned-login.md)). The API verifies passwords and TOTP codes itself and issues `UserSession` directly. No external identity provider or OIDC service sits in the login path.
+
+Credential flows use vetted primitives and never hand-rolled cryptography: Argon2id from `node:crypto` for passwords and Recovery Codes, and a maintained RFC 6238 library for TOTP.
 
 The application stores:
 
-- external user ID;
 - email;
 - application profile;
+- one password hash and at most one TOTP factor per User, never per Agency Membership;
+- Recovery Code hashes;
 - agency memberships;
 - role assignments;
 - permissions;
@@ -515,6 +520,8 @@ Examples:
 - service segments;
 - personnel actions;
 - work schedules;
+- work arrangements;
+- holiday calendars;
 - schedule assignments;
 - leave policies;
 - salary schedules;
@@ -609,22 +616,162 @@ WEB_CLOCK
 MANUAL
 ```
 
-Raw events are immutable. Corrections create replacement events or controlled adjustments. Locked periods are never directly edited.
+Attendance calculation resolves, for one Work Date, qualifying active Appointed Personnel service and exactly one effective Schedule Assignment, Work Schedule Version, Work Arrangement Version, and scoped Holiday Calendar Version. Missing, overlapping, unauthorized, or ambiguous inputs fail closed as an Attendance Exception. The ordinary seeded schedule is never an implicit assignment fallback.
+
+Work Schedule Versions are immutable, authority-bearing definitions containing seven fixed, flexible, or rest Day Rules. Duty and break intervals may cross midnight; the Work Date is the local start date in the version's time zone. A flexible day anchors on the first qualifying worked or Attendance Context minute within its authorized start window, subject to its earliest/latest bounds and required minutes. Exact whole minutes are retained. Event Collection Windows associate events with Work Dates but never act as grace periods or rounding rules.
+
+Work Arrangement Versions define authorized operating mode or place separately from duty time. Holiday Calendars have stable scoped identities and effective-dated versions so annual proclamations and later issuances do not require changing every employee assignment. Holiday classification alone does not erase expected duty; the applicable authority-backed schedule rule supplies the effect.
+
+Raw events are immutable and use `TIME_IN`, `BREAK_OUT`, `BREAK_IN`, and `TIME_OUT`. AM In, AM Out, PM In, and PM Out are ordinary daytime DTR projection slots. Corrections add, replace, or void events or Attendance Context through retained correction records; locked periods are never directly edited.
+
+Attendance Context is an immutable, evidence-backed whole-Work-Date or timed fact entered by an authorized HR Administrator for official business, official travel, training, or approved non-leave absence. It records prior authorization without adding a second Attendance approval workflow. Posted leave reaches Attendance only through Attendance-owned immutable posted-leave inputs that Leave Posting creates through the Attendance application service; Attendance never reads the Leave Ledger.
+
+Each calculation creates an immutable Attendance Day version and non-overlapping Attendance Day Segments. Segments retain source references, expected or outside-schedule relation, coverage or deficit classification, and holiday classification. Summary totals never count overlapping coverage or deficit minutes twice. Outside-schedule and statutory-night-window minutes are factual handoffs only, not compensation authorization.
+
+Attendance lifecycle state belongs to the record whose meaning changes. Attendance Day versions use only `PENDING`, `CALCULATED`, `EXCEPTION`, and `APPROVED`. Employee Attendance Submissions bind one Employee's exact day versions for HR Officer review. Immutable Attendance Period Versions own `FOR_REVIEW`, `APPROVED`, `RETURNED`, and `LOCKED`; the Attendance Period is `OPEN` until its first lock and `FINALIZED` thereafter.
+
+An HR Administrator has the full Attendance permission set and inherits HR Officer access. An HR Officer inherits Employee access and may review, return, and approve attendance within assigned scope. An Employee may submit their own attendance. The HR Officer who approves an Attendance Period Version and the HR Administrator who locks it must be different Agency Memberships.
+
+Lock is the attendance certification and publication transaction. It revalidates the complete applicable Employee and Work Date population, approved current day versions and submissions, unresolved exceptions and corrections, source bindings, routed authority, actor separation, and DTR and payroll-fact reconciliation. It then atomically records the lock, creates immutable Finalized Daily Time Records and an idempotent Attendance Payroll Publication, and appends audit and outbox records. A failure leaves the version `APPROVED` with no partial publication.
+
+Attendance Payroll Facts are exact nonnegative minute quantities by Employee, Work Date, and attendance classification. They retain the source Attendance Day version and holiday classification but contain no rate, money, deduction decision, or target payroll period. Posted leave remains provenance in Attendance while Leave owns its payroll effect. Outside-schedule and statutory-night-window minutes remain separate candidate-hours handoffs to Phase 8.
+
+An Attendance Correction stores an immutable impact preview over every affected Work Date and period. Open-period approval and application are atomic. A locked-period correction requires HR Officer approval and separate HR Administrator authorization, then creates retained correction effects, successor day versions, a grouped Locked Attendance Adjustment, and a complete successor Attendance Period Version. Locking the successor creates new corrected DTRs and an idempotent delta publication; original locked versions and outputs never reopen, change, or disappear.
 
 ## Leave
 
-Leave uses an immutable ledger with entry types such as:
+Leave separates policy evaluation, requests, commitments, and posted credits:
 
 ```text
-OPENING
-EARNED
-USED
-ADJUSTMENT
-RESTORATION
-MONETIZATION
-TERMINAL
-REVERSAL
+Leave Type
+  -> immutable effective-dated Leave Policy Versions
+  -> fixed evaluator kind and typed parameters
+
+Leave Application
+  -> effective-dated Leave Calculation Segments
+  -> explainable Leave Eligibility Assessment
+  -> immutable Leave Credit Certification where credits apply
+
+Leave Account
+  -> active Leave Credit Commitments
+  -> immutable signed Leave Ledger Entries
 ```
+
+A Leave Policy Version is one reproducible agency-scoped bundle. It binds the
+applicable national rules, evidence-backed Agency configuration, authority
+references, entitlement and calendar bases, optional charged Leave Type,
+evidence requirements, and typed evaluator parameters. The Leave domain does
+not execute administrator-authored formulas. Missing, ambiguous, or conflicting
+required facts return `INDETERMINATE` and block authoritative progression.
+
+Each requested date uses the policy, schedule, and holiday versions effective
+on that date. Requests crossing a version boundary remain one application but
+produce separate immutable Leave Calculation Segments. The source-prescribed
+unit is preserved; calendar-day statutory leave is not silently converted to a
+working-day credit debit.
+
+The posted balance is the sum of signed Leave Ledger Entries for an account,
+effective date, and ledger knowledge cutoff. An entry stores a unique source
+posting key and policy provenance. Its source record owns the business meaning,
+such as accrual, leave use, transfer, monetization, forfeiture, or correction, so
+the ledger does not duplicate that meaning in an entry-type enum. Reversals
+reference and exactly negate their original entry. Posted entries cannot be
+edited.
+
+Pending or approved-but-unposted effects use Leave Credit Commitments outside
+the ledger. An immutable Leave Credit Certification freezes its effective
+balance date, ledger cutoff, posted balance, active commitments, application
+quantity, resulting availability, and exact eligibility assessment. Later
+backdated facts may alter a new reconstruction but never rewrite the historical
+certification.
+
+A Leave Application is a stable case whose submitted facts live in immutable
+Leave Application Versions. Each version binds one Leave Submission Attestation,
+exact form and supporting Document Versions, an accepted Leave Eligibility
+Assessment, and an effective Approval Route Version. A material resubmission or
+authorized reroute creates a successor version. Shared Approval Routes own task
+progression and immutable Approval Decisions; Leave owns certification,
+recommendation, allocation, commitment, posting, withdrawal, and cancellation
+rules.
+
+HR certification creates the Leave Credit Commitments under the affected
+account locks. A partial approval may replace a certified commitment only with
+a linked, smaller successor. Other replacement requires recertification.
+Commitments remain active through valid review without a system-invented expiry,
+are released by withdrawal, rejection, material return, invalidation, or
+supersession, and are consumed by posting.
+
+Balance-sensitive posting locks the Leave Account, recomputes availability,
+enforces unique source effect keys, and invokes Attendance and Payroll through
+their application services inside one transaction. It writes the required
+ledger entries, posted-leave inputs, Payroll Inputs, application status, Audit
+Events, and outbox records, then consumes the commitments. Any authoritative
+failure rolls back the full Leave Posting and leaves the application approved
+for a recorded retry. External delivery remains asynchronous after commit.
+
+Leave Cancellation is a separate authorized record over an approved or posted
+application. Applying it is another atomic Leave-owned command. Whole
+cancellation creates exact linked reversals; partial cancellation fully reverses
+affected original entries and creates replacements for the retained effect.
+Attendance and Payroll own their correction records. Unlocked attendance may be
+recalculated, while locked attendance and consumed or finalized payroll receive
+linked adjustment handoffs. Leave stores their identifiers and states but never
+modifies another module's tables directly.
+
+An approved cancellation whose effect command fails remains approved with the
+original posting effective. The application projects `CANCELLED` only after all
+required reversals or owner handoffs have committed. A downstream adjustment may
+remain pending after its owner accepted the handoff, and the Leave workspace
+must expose that status rather than claiming completion.
+
+Mandatory or forced leave is an explainable, policy-derived assessment over an
+Employee's applicable facts and vacation Leave Account. It uses the ordinary
+Leave Application and ledger path. An alert or assessment is not itself an
+approval or posting authority.
+
+Leave Monetization follows the same history and balance boundaries without
+pretending to be an ordinary Leave Application. A stable Leave Monetization
+Request owns immutable submitted versions and per-account allocations. An HR
+credit certification creates Leave Credit Commitments under every affected
+account lock; a separate Budget-owned funding determination and the bound
+Approval Route supply the remaining authority. Approval does not post.
+
+Monetization Posting is an atomic Leave-owned orchestration over Leave and
+Payroll application services. Leave supplies approved account quantities,
+source and effect identities, authority and policy versions, funding and
+approval lineage, valuation date, fixed calculator kind and factor, and the
+required salary semantics. Payroll alone resolves the authoritative salary,
+calculates and rounds the amount, and stores the immutable Monetization Earning
+Input. It returns `ACCEPTED`, matching `ALREADY_ACCEPTED`, `REJECTED`, or
+`RETRYABLE_FAILURE`. Leave writes negative source-owned ledger entries and
+consumes commitments only with an accepted Payroll result in the same
+transaction.
+
+Missing monetization valuation-date, allocation, salary-component, rounding,
+funding, or authority facts fail closed as indeterminate. The product provides
+no default for gaps left by national sources. The unresolved solo-parent
+forfeiture and cash-conversion conflict creates no automatic earning.
+
+Monetization Adjustment is a separate authorized source. Pending Payroll Inputs
+may be cancelled or replaced; consumed inputs receive a linked Payroll
+adjustment, and finalized results remain immutable. Leave restores credits only
+after Payroll accepts the correction handoff. A failed or rejected handoff
+leaves the original posting effective and the adjustment available for recorded
+retry or correction.
+
+Separation initiates terminal-leave input preservation only after its effective
+date and the required Leave postings through the last service date. Leave
+records a `READY` or `INDETERMINATE` Terminal Leave Input Assessment. A ready
+result freezes a Terminal Leave Input Snapshot containing exact separation and
+service references, account balances at the effective separation date, the
+ledger-knowledge cutoff, policy and authority versions, clearance evidence, and
+the owning module's verified highest-monthly-salary source reference.
+
+Leave returns the stable snapshot reference to Separation and retains acceptance,
+duplicate, rejection, or retryable handoff results. Corrected sources create
+reasoned successors. A snapshot never closes an account, creates a ledger or
+Payroll effect, calculates a terminal benefit, or authorizes payment. Full
+terminal-leave calculation and payment remain outside MVP.
 
 ## Overtime
 
@@ -937,14 +1084,14 @@ services:
       POSTGRES_USER: erp_local
       POSTGRES_PASSWORD: local_only
     ports:
-      - "55432:5432"
+      - '55432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - '6379:6379'
 
 volumes:
   postgres_data:
@@ -1086,8 +1233,10 @@ Required controls:
 - dependency scanning;
 - audit logging;
 - backup testing;
-- account abuse protection;
-- MFA support through identity provider;
+- account abuse protection, including the Sign-in Cool-down and a per-IP limit shared by sign-in and Password Reset;
+- Argon2id password hashing;
+- TOTP MFA owned by LingkodHR, with Recovery Codes and an audited Factor Reset;
+- TOTP secrets encrypted at rest;
 - signed file URLs;
 - session revocation;
 - segregation-of-duties checks;
@@ -1115,12 +1264,6 @@ DATABASE_OPERATIONAL_URL
 
 # Redis
 REDIS_URL
-
-# Authentication
-OIDC_ISSUER
-OIDC_CLIENT_ID
-OIDC_CLIENT_SECRET
-SESSION_SECRET
 
 # Email
 EMAIL_FROM
@@ -1153,6 +1296,8 @@ ERROR_TRACKING_DSN
 DATA_ENCRYPTION_KEY
 BLIND_INDEX_KEY
 ```
+
+Login needs no identity-provider or OIDC settings. `DATA_ENCRYPTION_KEY` and `BLIND_INDEX_KEY` are required at startup in every environment: `DATA_ENCRYPTION_KEY` encrypts TOTP secrets and other protected values, and `BLIND_INDEX_KEY` keys the email hash used by the Sign-in Cool-down and Security Events.
 
 Processes validate required configuration on startup and fail fast when production values are missing.
 
@@ -1239,8 +1384,10 @@ Create agency
 - leave policies;
 - leave accounts;
 - leave ledger;
+- leave credit commitments;
 - applications;
-- monetization.
+- monetization requests, funding, postings, and adjustments;
+- terminal-leave input assessments and snapshots.
 
 ## Phase 8 — Overtime, COC, and CTO
 
@@ -1411,6 +1558,8 @@ AI features additionally require:
 
 ## ADR-006 — Managed Authentication
 
+**Status:** Superseded by [ADR 0004: LingkodHR owns login](adr/0004-lingkodhr-owned-login.md).
+
 **Decision:** Delegate authentication to an OIDC-compatible provider.
 
 **Reason:** Initial effort should focus on HRIS rather than identity infrastructure.
@@ -1523,9 +1672,10 @@ The first meaningful milestone is:
 
 # 12. Change Log
 
-| Version | Date | Description |
-|---|---|---|
-| 0.1 | August 2, 2026 | Initial general AI-enabled ERP architecture |
-| 0.2 | August 7, 2026 | Reframed architecture around the Philippine Public-Sector HRIS implementation |
-| 0.3 | August 7, 2026 | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
-| 0.4 | September 4, 2026 | Clarified ownership of database capabilities, External Evidence linking, and the PDS editor model |
+| Version | Date              | Description                                                                                                                                            |
+| ------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.1     | August 2, 2026    | Initial general AI-enabled ERP architecture                                                                                                            |
+| 0.2     | August 7, 2026    | Reframed architecture around the Philippine Public-Sector HRIS implementation                                                                          |
+| 0.3     | August 7, 2026    | Narrowed the architecture to an exclusive Philippine Public-Sector HRIS scope and aligned terminology, modules, and architecture decisions accordingly |
+| 0.4     | September 4, 2026 | Clarified ownership of database capabilities, External Evidence linking, and the PDS editor model                                                      |
+| 0.5     | October 2, 2026   | Replaced managed authentication with LingkodHR-owned login (ADR 0004)                                                                                  |

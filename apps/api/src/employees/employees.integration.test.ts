@@ -50,8 +50,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'employee-integration',
-        externalSubject: `employee-${suffix}`,
         emailNormalized: `employee-${suffix}@example.test`,
         displayName: 'Employee Integration User',
         globalStatus: 'ACTIVE',
@@ -59,8 +57,6 @@ it.skipIf(!enabled)(
     });
     const linkUser = await admin.user.create({
       data: {
-        identityProvider: 'employee-integration',
-        externalSubject: `employee-link-${suffix}`,
         emailNormalized: `employee-link-${suffix}@example.test`,
         displayName: 'Employee Integration Link User',
         globalStatus: 'ACTIVE',
@@ -116,8 +112,13 @@ it.skipIf(!enabled)(
         service.create(context, { ...input, employeeNumber: `OTHER-${suffix}` }),
       ).rejects.toMatchObject({ code: 'EMPLOYEE_IDENTITY_CONFLICT' });
 
-      const list = await service.list(context);
-      expect(list).toHaveLength(1);
+      const list = await service.list(context, {
+        serviceStatus: [],
+        membership: [],
+        limit: 200,
+        offset: 0,
+      });
+      expect(list.employees.map(({ id }) => id)).toEqual([created.id]);
 
       const detail = await service.findById(context, created.id);
       expect(detail?.linkableMemberships.map(({ id }) => id)).toContain(linkMembership.id);
@@ -181,6 +182,127 @@ it.skipIf(!enabled)(
       await admin.agency.deleteMany({ where: { id: { in: [agency.id, foreignAgency.id] } } });
       await admin.user.delete({ where: { id: user.id } });
       await admin.user.delete({ where: { id: linkUser.id } });
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'searches, filters, counts, and pages the register inside the active Agency only',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-employee-register`;
+    const [agency, foreignAgency] = await Promise.all(
+      ['REG', 'REG-F'].map((prefix) =>
+        admin.agency.create({
+          data: {
+            code: `${prefix}-${suffix}`,
+            name: `Employee Register ${prefix}`,
+            agencyType: 'NGA',
+            status: 'ACTIVE',
+          },
+        }),
+      ),
+    );
+    if (!agency || !foreignAgency) throw new Error('The register Agencies were not created.');
+    const user = await admin.user.create({
+      data: {
+        emailNormalized: `employee-${suffix}@example.test`,
+        displayName: 'Employee Register User',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const membership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const foreignMembership = await admin.agencyMembership.create({
+      data: { agencyId: foreignAgency.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const context = createContext(agency.id, user.id, membership.id);
+    const service = new EmployeesService(employeeAuditWriter);
+
+    async function employee(
+      agencyId: string,
+      membershipId: string,
+      employeeNumber: string,
+      legalName: string,
+      serviceStatus: string,
+    ) {
+      return admin.employee.create({
+        data: {
+          agencyId,
+          employeeNumber,
+          legalName,
+          birthDate: new Date('1990-01-01'),
+          sex: 'FEMALE',
+          civilStatus: 'SINGLE',
+          contactEmail: 'register@example.test',
+          serviceStatus,
+          createdByMembershipId: membershipId,
+          updatedByMembershipId: membershipId,
+        },
+      });
+    }
+
+    try {
+      const santos = await employee(agency.id, membership.id, 'REG-001', 'Mara Santos', 'ACTIVE');
+      await employee(agency.id, membership.id, 'REG-002', 'Liza Santos Cruz', 'PREBOARDING');
+      await employee(agency.id, membership.id, 'REG-003', 'Paolo Reyes', 'ACTIVE');
+      await employee(foreignAgency.id, foreignMembership.id, 'REG-001', 'Mara Santos', 'ACTIVE');
+      await service.linkMembership(context, santos.id, membership.id);
+      const page = { serviceStatus: [], membership: [], limit: 200, offset: 0 };
+
+      const all = await service.list(context, page);
+      expect(all.total).toBe(3);
+      expect(all.facets).toEqual({
+        serviceStatus: { ACTIVE: 2, PREBOARDING: 1 },
+        membership: { LINKED: 1, UNLINKED: 2 },
+      });
+
+      const bySearch = await service.list(context, { ...page, q: 'santos' });
+      expect(bySearch.total).toBe(2);
+      expect(bySearch.employees.map(({ employeeNumber }) => employeeNumber).sort()).toEqual([
+        'REG-001',
+        'REG-002',
+      ]);
+      const byNumber = await service.list(context, { ...page, q: 'reg-003' });
+      expect(byNumber.employees.map(({ legalName }) => legalName)).toEqual(['Paolo Reyes']);
+
+      const filtered = await service.list(context, {
+        ...page,
+        q: 'santos',
+        serviceStatus: ['ACTIVE'],
+        membership: ['UNLINKED'],
+      });
+      expect(filtered.total).toBe(0);
+      expect(filtered.facets).toEqual({
+        serviceStatus: { PREBOARDING: 1 },
+        membership: { LINKED: 1, UNLINKED: 0 },
+      });
+
+      const firstPage = await service.list(context, { ...page, limit: 2 });
+      const secondPage = await service.list(context, { ...page, limit: 2, offset: 2 });
+      expect(firstPage).toMatchObject({ total: 3 });
+      expect(firstPage.employees).toHaveLength(2);
+      expect(secondPage.employees).toHaveLength(1);
+      expect(
+        new Set([...firstPage.employees, ...secondPage.employees].map(({ id }) => id)).size,
+      ).toBe(3);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.auditEvent.deleteMany({
+          where: { agencyId: { in: [agency.id, foreignAgency.id] } },
+        });
+        await transaction.agencyMembership.deleteMany({
+          where: { agencyId: { in: [agency.id, foreignAgency.id] } },
+        });
+        await transaction.employee.deleteMany({
+          where: { agencyId: { in: [agency.id, foreignAgency.id] } },
+        });
+      });
+      await admin.agency.deleteMany({ where: { id: { in: [agency.id, foreignAgency.id] } } });
+      await admin.user.delete({ where: { id: user.id } });
       await admin.$disconnect();
     }
   },

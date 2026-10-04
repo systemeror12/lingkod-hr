@@ -48,10 +48,15 @@ it('enforces the permission scope for a record', () => {
 });
 
 it('recognizes MFA evidence without treating a password as MFA', () => {
-  expect(hasMfaEvidence(['pwd', 'otp'])).toBe(true);
-  expect(hasMfaEvidence(['mfa'])).toBe(true);
-  expect(hasMfaEvidence(['otp'])).toBe(false);
   expect(hasMfaEvidence(['pwd'])).toBe(false);
+  expect(hasMfaEvidence(['pwd', 'totp'])).toBe(true);
+  expect(hasMfaEvidence(['pwd', 'recovery_code'])).toBe(true);
+  expect(hasMfaEvidence(['totp'])).toBe(false);
+  expect(hasMfaEvidence(['recovery_code'])).toBe(false);
+  // Methods only an identity provider reported are not evidence.
+  expect(hasMfaEvidence(['mfa'])).toBe(false);
+  expect(hasMfaEvidence(['pwd', 'otp'])).toBe(false);
+  expect(hasMfaEvidence(['pwd', 'webauthn'])).toBe(false);
   expect(permissionsRequireMfa([{ code: 'security.events.read', scopePolicy: 'AGENCY' }])).toBe(
     true,
   );

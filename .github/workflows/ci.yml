@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main, dev]
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
 
 permissions:
   contents: read
@@ -12,10 +14,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Jobs run in parallel. The browser suite is the long pole, so it is sharded
+# by spec file; each shard gets its own runner and database, which keeps the
+# shared protected-shell fixture safe without running specs in parallel.
 jobs:
-  validate:
+  checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/setup@v2
@@ -34,40 +41,76 @@ jobs:
         run: pnpm typecheck
       - name: Build
         run: pnpm build
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
+      DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
+      DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
+      DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
+      DATABASE_E2E: 'true'
+      DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/setup@v2
+        with:
+          version: 11.17.0
+          runtime: node@24
+          cache: true
+          install: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Start local infrastructure
+        run: docker compose -f infrastructure/compose.yaml up -d --wait
+      - name: Apply Prisma migrations
+        run: pnpm db:migrate
+      - name: Test repository
+        run: pnpm test
+      - name: Stop local infrastructure
+        if: always()
+        run: docker compose -f infrastructure/compose.yaml down
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
+      DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
+      DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
+      DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
+      DATABASE_E2E: 'true'
+      DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/setup@v2
+        with:
+          version: 11.17.0
+          runtime: node@24
+          cache: true
+          install: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Install Playwright Chromium
         run: pnpm --filter @lingkod-hr/web exec playwright install --with-deps chromium
       - name: Start local infrastructure
         run: docker compose -f infrastructure/compose.yaml up -d --wait
       - name: Apply Prisma migrations
-        env:
-          DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
-          DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
-          DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
-          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
         run: pnpm db:migrate
-      - name: Test repository
-        env:
-          DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
-          DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
-          DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
-          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
-          DATABASE_E2E: 'true'
-          DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
-        run: pnpm test
       - name: Test browser suite
-        env:
-          DATABASE_URL: postgresql://hris_app:local_app@localhost:55432/hris
-          DATABASE_DIRECT_URL: postgresql://hris_migrator:local_migrator@localhost:55432/hris
-          DATABASE_OPERATIONAL_URL: postgresql://hris_operator:local_operator@localhost:55432/hris
-          DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
-          DATABASE_E2E: 'true'
-          DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
-        run: pnpm --filter @lingkod-hr/web test:e2e
+        run: pnpm --filter @lingkod-hr/web test:e2e --shard=${{ matrix.shard }}/3
       - name: Upload browser evidence
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-evidence
+          name: browser-evidence-${{ matrix.shard }}
           path: |
             apps/web/test-results
             apps/web/playwright-report

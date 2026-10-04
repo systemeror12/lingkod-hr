@@ -46,6 +46,9 @@ Use these project documents as primary sources:
 - `docs/conceptual-erd.md` — conceptual data model
 - `docs/erp-ai-coding-practices.md` — coding and integrity rules
 - `docs/tech-stack-prerequisites.md` — development environment
+- `docs/data-model/physical-schema/` — tables, columns, and constraints per
+  module; `pnpm db:policies <table>` prints a table's live grants and RLS
+  policies, which migrations otherwise spread across many files
 
 Read only the sources that apply to the task.
 
@@ -56,7 +59,7 @@ Do not invent public-sector business rules.
 - **Killing by pattern.** Never use `pkill -f`, `pgrep | kill`, or kill a PID
   found by matching a process name, path, command, or worktree string. Capture
   PIDs for processes you start. For stale listeners on ports `3000`, `3001`,
-  `3002`, or `4100`, use `ss -H -ltnp`, then confirm `/proc/<pid>/cwd` is this
+  or `3002`, use `ss -H -ltnp`, then confirm `/proc/<pid>/cwd` is this
   worktree before killing it. Before finishing, stop only test or development
   processes started by the task or confirmed through this port check.
 - **Writing to developer state.** Treat `.env`, provider credentials, and the
@@ -76,6 +79,9 @@ Do not invent public-sector business rules.
   validation once after the final code change; rerun it only after a relevant
   fix. For documentation-only changes, use focused checks unless the user asks
   for wider validation.
+- `pnpm test` skips the DB-backed integration tests. Run them with
+  `pnpm test:db`, or one file with
+  `pnpm test:db --filter @lingkod-hr/api -- src/auth/global-user-lock.test.ts`.
 - Use shell commands and repo-native tools by default. Use computer-use or
   browser automation only when the user explicitly asks for it.
 - Apply `$unslop-response` to every user-facing response.
@@ -83,23 +89,19 @@ Do not invent public-sector business rules.
 ## Cross-machine setup gate
 
 After any `git pull`, branch checkout, worktree handoff, or continuation from
-another machine, complete the `After pulling changes` procedure in `README.md`
-before investigating or changing application code. Treat a setup failure as
-the first task.
+another machine, pass the setup gate before investigating or changing
+application code. Treat a setup failure as the first task.
 
-The gate is complete only when all of these are true:
+- In a linked worktree, run `bash scripts/setup-worktree.sh`. Its closing
+  `Worktree ready` line confirms Node 24, dependencies, `.env` keys, healthy
+  infrastructure, and applied migrations.
+- In the main checkout, follow `After pulling changes` in `README.md`.
 
-- the repository runtime is Node 24 from `.node-version` and dependencies match
-  `pnpm-lock.yaml`;
-- `.env` exists and contains every current key from `.env.example` without
-  replacing existing local secrets;
-- Docker Compose infrastructure is healthy;
-- `pnpm db:migrate` succeeds and reports no pending migrations;
-- no old LingkodHR process owns ports `3000`, `3001`, `3002`, or `4100` before
-  starting a new dev stack;
-- API, worker, and local OIDC health checks respond successfully;
-- for protected browser or admin work, the protected-shell fixture has been
-  seeded and `/dashboard` completes local OIDC login.
+Before starting a dev stack, confirm no old LingkodHR process owns ports
+`3000`, `3001`, or `3002`, then check the API and worker health endpoints. For
+protected browser or admin work, seed the protected-shell fixture and sign in a
+seeded User at `/sign-in` through to `/dashboard`; `README.md` has the
+commands and credentials.
 
 Do not work around a failed migration by deleting the database or migration
 history. Diagnose ownership, environment, schema drift, or stale processes
@@ -120,6 +122,9 @@ first, then leave the setup reproducible for the next machine.
   animations that waste GPU time on high-refresh displays.
 - If a rule here conflicts with the requested task, name the conflict and get
   explicit developer approval before breaking the rule.
+- After the implementation tickets are done, **always** put the playwright
+  test script on the chat to help the developers to test UI themselves.
+  Example: pnpm --filter @lingkod-hr/web exec playwright test e2e/<test_name> --headed
 
 ## Agent skills
 

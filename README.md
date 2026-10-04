@@ -13,6 +13,9 @@ AI-enabled Philippine Public-Sector HRIS for end-to-end workforce management—f
 
 The repository pins pnpm 11.17.0 through `package.json`.
 
+For a full Arch Linux walkthrough using the fish shell, see
+[`docs/local-setup-arch-fish.md`](docs/local-setup-arch-fish.md).
+
 Verify the required tools:
 
 ```bash
@@ -75,7 +78,6 @@ is not exposed through the web or API runtime.
 | Web              | `http://localhost:3000`               |
 | API health       | `http://localhost:3001/api/v1/health` |
 | Worker health    | `http://localhost:3002/health`        |
-| Local OIDC       | `http://127.0.0.1:4100`               |
 | PostgreSQL       | `localhost:55432`                     |
 | Redis            | `localhost:6379`                      |
 | SeaweedFS S3 API | `http://localhost:8333`               |
@@ -99,13 +101,16 @@ docker compose -f infrastructure/compose.yaml up -d --wait
 pnpm db:migrate
 ```
 
+In a linked worktree, run `bash scripts/setup-worktree.sh` instead of these
+commands; see [Parallel worktrees](#parallel-worktrees).
+
 If `.env` does not exist, create it from `.env.example`. If it already exists,
 copy only newly added keys without overwriting local values. Then check that no
 old LingkodHR process owns the normal development ports before starting a new
 stack:
 
 ```bash
-ss -ltnp | grep -E ':(3000|3001|3002|4100)([^0-9]|$)' || true
+ss -ltnp | grep -E ':(3000|3001|3002)([^0-9]|$)' || true
 ```
 
 Stop only identified LingkodHR processes from an older run. Leave unrelated
@@ -115,7 +120,6 @@ services alone. Start development and verify the service boundaries:
 pnpm run dev
 curl -fsS http://localhost:3001/api/v1/health
 curl -fsS http://localhost:3002/health
-curl -fsS http://127.0.0.1:4100/health
 ```
 
 For protected browser or admin work, seed the local protected shell before
@@ -125,10 +129,72 @@ opening `/dashboard`:
 pnpm --filter @lingkod-hr/database e2e:seed:shell
 ```
 
+The seed gives every seeded User local-only credentials. Every seeded User,
+such as `marisol.santos@example.test`, has the passphrase
+`local-only seed passphrase`. Users whose roles require MFA also get a TOTP
+factor with the secret `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`, and the Recovery
+Codes `seedc-ode22`, `seedc-ode23`, `seedc-ode24`, `seedc-ode25`,
+`seedc-ode26`, `seedc-ode27`, `seedc-ode32`, `seedc-ode33`, `seedc-ode34`, and
+`seedc-ode35`. Each Recovery Code works once, and every seed run restores all
+ten. The exception is `enrollment.candidate@example.test`, which requires MFA
+but has no factor, so signing in walks through authenticator setup. Each seed
+run removes its factor and Recovery Codes again. For Factor Reset,
+`security.officer@example.test` is a Security Administrator and
+`factor.reset.candidate@example.test` is an HRMO Administrator whose factor
+the officer can reset; each seed run restores the candidate's factor. For
+Global User Lock, the officer can lock and unlock
+`user.lock.candidate@example.test`; each seed run unlocks the candidate. The seed
+refuses to run in production.
+
+To sign in locally:
+
+1. Open `http://localhost:3000/dashboard`. Without a session, the web sends you
+   to `/sign-in`.
+2. Enter the seeded User's email and the passphrase.
+3. When asked for an authentication code, print the current one:
+
+   ```bash
+   pnpm --filter @lingkod-hr/database dev:totp marisol.santos@example.test
+   ```
+
+   An authenticator app with the seeded secret shows the same code. The API
+   accepts each 30-second code once, so `dev:totp` waits for the next code when
+   the current one was already used.
+
 The gate is complete when migrations report no pending work, each health check
-responds successfully, and `/dashboard` completes local OIDC login. Diagnose
-setup failures before changing application code; do not delete the local
-database or migration history as a shortcut.
+responds successfully, and a seeded User can sign in at `/sign-in` and reach
+`/dashboard`. Diagnose setup failures before changing application code; do not
+delete the local database or migration history as a shortcut.
+
+### Parallel worktrees
+
+Each linked worktree gets its own `.env` and its own `hris_<worktree>`
+database, so migrations, integration tests, and E2E seeds stay isolated.
+Docker containers stay shared and owned by the main checkout. Set this up from
+inside a new worktree:
+
+```bash
+bash scripts/setup-worktree.sh
+```
+
+In T3 Code, add that command as a project script with "Run on worktree
+creation" enabled. The script is safe to rerun and refuses to run in the main
+checkout.
+
+Only one dev stack can own ports `3000`–`3002` at a time. E2E runs do not
+share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT` and
+`PLAYWRIGHT_API_PORT` values to `.env`, and `playwright.config.ts` reads them.
+The script picks ports no other worktree has claimed, prints them, and
+`grep PLAYWRIGHT .env` shows them; rerun it in older worktrees to add them. Two worktrees can run Playwright at the same time, but
+Mailpit is still shared, and each run's global setup clears its messages.
+
+Removing a worktree leaves its database behind. List the `hris_*` databases no
+current worktree uses, then drop them once the list looks right:
+
+```bash
+pnpm db:prune-worktrees
+pnpm db:prune-worktrees --drop
+```
 
 ### Validation
 
@@ -136,6 +202,16 @@ Run the full repository validation suite with:
 
 ```bash
 pnpm validate
+```
+
+`pnpm test` and `pnpm validate` skip the DB-backed integration tests. Run them
+against this checkout's `.env` database with:
+
+```bash
+pnpm test:db
+# One package, or one file
+pnpm test:db --filter @lingkod-hr/api
+pnpm test:db --filter @lingkod-hr/api -- src/auth/global-user-lock.test.ts
 ```
 
 ## Playwright E2E testing
@@ -175,7 +251,9 @@ protected shell, and starts or reuses these dedicated services:
 | --- | ---: |
 | E2E web server | `3100` |
 | E2E API | `3101` |
-| Local OIDC | `4100` |
+
+Linked worktrees use their own ports instead; see
+[Parallel worktrees](#parallel-worktrees).
 
 The normal development web server uses port `3000`; it is separate from the
 E2E web server.
@@ -211,11 +289,12 @@ pnpm exec playwright test e2e/audit.spec.ts --headed --project=chromium
 
 #### Playwright port hotspot
 
-When another worktree owns the E2E ports, change only these values before the
-Playwright command:
+Linked worktrees get their own E2E ports from `scripts/setup-worktree.sh`. If
+another process still owns the ports, set these values before the Playwright
+command:
 
 ```bash
-PLAYWRIGHT_OIDC_PORT=4200 PLAYWRIGHT_API_PORT=3201 PLAYWRIGHT_APP_PORT=3200
+PLAYWRIGHT_API_PORT=3201 PLAYWRIGHT_APP_PORT=3200
 ```
 
 To inspect the running application without the E2E test runner, use Playwright

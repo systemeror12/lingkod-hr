@@ -1,6 +1,10 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { cn } from '../lib/class-names';
+import { RecordReturn, useRecordNavigation } from './record-navigation';
+import { StateSurface } from './state-surface';
+import { Button } from './ui/button';
 import {
   Dialog,
   DialogBody,
@@ -12,6 +16,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
+import { Field, FormError, inputClass } from './ui/field';
+import { PageHeader } from './ui/page-header';
+import { Panel } from './ui/panel';
+import { StatusTag, type StatusTone } from './ui/status-tag';
+import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 import { manilaToday } from '../lib/manila-date';
 
 type OrganizationUnitType =
@@ -133,6 +142,24 @@ const unitTypes: readonly { value: OrganizationUnitType; label: string }[] = [
   { value: 'OTHER', label: 'Other' },
 ];
 
+const lifecycleTone: Record<OrganizationUnit['lifecycleStatus'], StatusTone> = {
+  ACTIVE: 'success',
+  INACTIVE: 'neutral',
+  ABOLISHED: 'danger',
+};
+
+const statusTone: Record<OrganizationUnitStatus, StatusTone> = {
+  DRAFT: 'warning',
+  ...lifecycleTone,
+};
+
+const versionTone: Record<OrganizationUnitVersion['versionState'], StatusTone> = {
+  DRAFT: 'warning',
+  ACTIVE: 'success',
+  SUPERSEDED: 'neutral',
+  VOIDED: 'danger',
+};
+
 function emptyDraft(): DraftValues {
   return {
     officialName: '',
@@ -165,6 +192,36 @@ function dateLabel(value: string): string {
 
 function targetValue(event: { currentTarget: EventTarget }): string {
   return (event.currentTarget as unknown as { value: string }).value;
+}
+
+function withoutField(errors: Record<string, string>, field: string): Record<string, string> {
+  if (!errors[field]) return errors;
+  const next = { ...errors };
+  delete next[field];
+  return next;
+}
+
+function CloseButton({ label, disabled }: { label: string; disabled: boolean }) {
+  return (
+    <DialogClose asChild>
+      <Button
+        className="min-w-9 shrink-0 px-0 text-xl"
+        type="button"
+        aria-label={label}
+        disabled={disabled}
+      >
+        ×
+      </Button>
+    </DialogClose>
+  );
+}
+
+function OptionalLabel({ children }: { children: string }) {
+  return (
+    <>
+      {children} <span className="font-normal text-ink-muted">(optional)</span>
+    </>
+  );
 }
 
 function auditField(data: Record<string, unknown> | null, key: string): string | null {
@@ -269,6 +326,7 @@ export function OrganizationWorkspace({
   canUpdate,
   initial,
   initialHierarchy,
+  tabs,
 }: {
   agencyId: string;
   canActivate: boolean;
@@ -278,14 +336,28 @@ export function OrganizationWorkspace({
   canUpdate: boolean;
   initial: OrganizationUnitListResponse;
   initialHierarchy: OrganizationHierarchyResponse;
+  /** Workspace tabs for the page header band. */
+  tabs: ReactNode;
 }) {
   const [units, setUnits] = useState(initial.units);
   const [successorDrafts, setSuccessorDrafts] = useState(initial.drafts ?? []);
   const [hierarchy, setHierarchy] = useState(initialHierarchy);
   const [asOf, setAsOf] = useState(initialHierarchy.asOf);
-  const [selectedId, setSelectedId] = useState(
-    initialHierarchy.units[0]?.id ?? initial.units[0]?.id ?? null,
-  );
+  const navigation = useRecordNavigation();
+  const selectedId = navigation.search.get('unit');
+  const showHistory = navigation.search.get('section') === 'history';
+  function setSelectedId(id: string) {
+    navigation.navigate({ unit: id, view: 'form', section: null });
+  }
+  const historyRequest = useRef(0);
+  useEffect(() => {
+    setHistory(null);
+    setHistoryError('');
+    if (selectedId) void loadHistory(selectedId);
+    return () => {
+      historyRequest.current += 1;
+    };
+  }, [selectedId, showHistory, asOf]);
   const [hierarchyLoading, setHierarchyLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(emptyDraft);
@@ -305,7 +377,47 @@ export function OrganizationWorkspace({
   const [parentOptions, setParentOptions] = useState<OrganizationHierarchyUnit[]>([]);
   const [successor, setSuccessor] = useState<OrganizationUnitSuccessor | null>(null);
   const [successorValues, setSuccessorValues] = useState<SuccessorValues | null>(null);
-  const [successorOpen, setSuccessorOpen] = useState(false);
+  const successorCloseAfterSave = useRef(false);
+  const showSuccessor = navigation.search.get('section') === 'successor';
+  useEffect(() => {
+    if (!selectedId || !showSuccessor) return;
+    setSuccessor(null);
+    let active = true;
+    void (async () => {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/organization-units/${encodeURIComponent(selectedId)}/history?asOf=${asOf}`,
+        { credentials: 'include' },
+      );
+      const value: unknown = await response.json();
+      if (!response.ok || !isOrganizationUnitHistory(value) || !value.current || !value.draft)
+        throw new Error('The successor draft is unavailable.');
+      if (!active) return;
+      setSuccessor({ current: value.current, draft: value.draft });
+      setSuccessorValues(successorValuesFromVersion(value.draft));
+      try {
+        const parents = await requestHierarchy(value.draft.effectiveFrom, selectedId);
+        if (active)
+          setSuccessorParentOptions(
+            parents.units.filter((unit) => parents.eligibleParentIds.includes(unit.id)),
+          );
+      } catch {
+        if (!active) return;
+        setSuccessorParentOptions([]);
+        setSuccessorError(
+          'Eligible parent units could not be loaded. You can still review the draft.',
+        );
+      }
+    })().catch((cause: unknown) => {
+      if (!active) return;
+      setFormError(cause instanceof Error ? cause.message : 'The successor could not be loaded.');
+      // Leave the section so reviewing again retries the load.
+      navigation.show({ section: null });
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedId, showSuccessor, asOf]);
+
   const [successorReason, setSuccessorReason] = useState('');
   const [successorAuthority, setSuccessorAuthority] = useState('');
   const [successorMigrationPlan, setSuccessorMigrationPlan] = useState('');
@@ -340,23 +452,41 @@ export function OrganizationWorkspace({
   const transitionDateRef = useRef<{ focus(): void } | null>(null);
   const transitionReasonRef = useRef<{ focus(): void } | null>(null);
 
-  const drafts = units.filter((unit) => unit.status === 'DRAFT');
+  const drafts = units.filter(
+    (unit) => unit.status === 'DRAFT' && (!selectedId || unit.id === selectedId),
+  );
   const selectedListUnit = units.find((unit) => unit.id === selectedId) ?? null;
+  const selectedVersion =
+    history?.asOf === asOf && history.effective?.organizationUnitId === selectedId
+      ? history.effective
+      : null;
   const selected =
     hierarchy.units.find((unit) => unit.id === selectedId) ??
-    (selectedListUnit
+    (selectedVersion
       ? {
-          id: selectedListUnit.id,
-          code: selectedListUnit.code,
-          officialName: selectedListUnit.officialName,
-          unitType: selectedListUnit.unitType,
-          parentUnitId: selectedListUnit.parentUnitId,
-          effectiveFrom: selectedListUnit.effectiveDate,
-          effectiveTo: selectedListUnit.effectiveTo,
-          lifecycleStatus: selectedListUnit.lifecycleStatus,
+          id: selectedVersion.organizationUnitId,
+          code: selectedVersion.code,
+          officialName: selectedVersion.officialName,
+          unitType: selectedVersion.unitType,
+          parentUnitId: selectedVersion.parentUnitId,
+          effectiveFrom: selectedVersion.effectiveFrom,
+          effectiveTo: selectedVersion.effectiveTo,
+          lifecycleStatus: selectedVersion.lifecycleStatus,
           childCount: 0,
         }
-      : null);
+      : selectedListUnit?.status === 'DRAFT'
+        ? {
+            id: selectedListUnit.id,
+            code: selectedListUnit.code,
+            officialName: selectedListUnit.officialName,
+            unitType: selectedListUnit.unitType,
+            parentUnitId: selectedListUnit.parentUnitId,
+            effectiveFrom: selectedListUnit.effectiveDate,
+            effectiveTo: selectedListUnit.effectiveTo,
+            lifecycleStatus: selectedListUnit.lifecycleStatus,
+            childCount: 0,
+          }
+        : null);
   const parentNames = new Map(hierarchy.units.map((unit) => [unit.id, unit.officialName]));
 
   function handleOpenChange(nextOpen: boolean): void {
@@ -390,12 +520,7 @@ export function OrganizationWorkspace({
 
   function updateDraft(field: keyof DraftValues, value: string): void {
     setDraft((current) => ({ ...current, [field]: value }) as DraftValues);
-    setFieldErrors((current) => {
-      if (!current[field]) return current;
-      const next = { ...current };
-      delete next[field];
-      return next;
-    });
+    setFieldErrors((current) => withoutField(current, field));
   }
 
   function validateDraft(): Record<string, string> {
@@ -446,6 +571,7 @@ export function OrganizationWorkspace({
       }
       setUnits((current) => [value, ...current.filter((unit) => unit.id !== value.id)]);
       setHighlightedId(value.id);
+      setSelectedId(value.id);
       setSuccess(`Draft Organization Unit “${value.officialName}” was created.`);
       setOpen(false);
       setDraft(emptyDraft());
@@ -480,11 +606,7 @@ export function OrganizationWorkspace({
     try {
       const value = await requestHierarchy(date);
       setHierarchy(value);
-      setSelectedId((current) =>
-        value.units.some((unit) => unit.id === (preferredId ?? current))
-          ? (preferredId ?? current)
-          : (value.units[0]?.id ?? null),
-      );
+      if (preferredId) setSelectedId(preferredId);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The hierarchy could not be loaded.');
     } finally {
@@ -591,15 +713,11 @@ export function OrganizationWorkspace({
 
   function updateSuccessorValue(field: keyof SuccessorValues, value: string): void {
     setSuccessorValues((current) => (current ? { ...current, [field]: value } : current));
-    setSuccessorFieldErrors((current) => {
-      if (!current[field]) return current;
-      const next = { ...current };
-      delete next[field];
-      return next;
-    });
+    setSuccessorFieldErrors((current) => withoutField(current, field));
   }
 
   async function loadHistory(unitId: string, date = asOf): Promise<void> {
+    const requestId = ++historyRequest.current;
     setHistoryLoading(true);
     setHistoryError('');
     try {
@@ -611,12 +729,14 @@ export function OrganizationWorkspace({
       if (!response.ok || !isOrganizationUnitHistory(value)) {
         throw new Error('The Organization Unit history could not be loaded.');
       }
+      if (requestId !== historyRequest.current) return;
       setHistory(value);
     } catch (error) {
+      if (requestId !== historyRequest.current) return;
       setHistory(null);
       setHistoryError(error instanceof Error ? error.message : 'The history could not be loaded.');
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequest.current) setHistoryLoading(false);
     }
   }
 
@@ -647,25 +767,11 @@ export function OrganizationWorkspace({
         setSuccessorError('The proposed successor was not confirmed. Refresh and try again.');
         return;
       }
-      setSuccessor(value);
-      setSuccessorValues(successorValuesFromVersion(value.draft));
       setSuccessorDrafts((current) => [
         value.draft,
         ...current.filter((draft) => draft.organizationUnitId !== unitId),
       ]);
-      setSuccessorOpen(true);
-      try {
-        const eligibleHierarchy = await requestHierarchy(value.draft.effectiveFrom, unitId);
-        const eligibleIds = new Set(eligibleHierarchy.eligibleParentIds);
-        setSuccessorParentOptions(
-          eligibleHierarchy.units.filter((candidate) => eligibleIds.has(candidate.id)),
-        );
-      } catch {
-        setSuccessorParentOptions([]);
-        setSuccessorError(
-          'Eligible parent units could not be loaded. You can still review the draft.',
-        );
-      }
+      navigation.show({ unit: unitId, view: 'form', section: 'successor' });
     } catch {
       setSuccessorError(
         'The Organization Unit successor could not be prepared. Check the connection and try again.',
@@ -764,7 +870,7 @@ export function OrganizationWorkspace({
       setSuccess(
         `${value.officialName} is scheduled as the new Organization Unit version effective ${dateLabel(value.effectiveDate)}.`,
       );
-      setSuccessorOpen(false);
+      navigation.show({ section: null });
       await loadHierarchy(asOf, value.id);
       await loadHistory(value.id);
     } catch {
@@ -781,7 +887,12 @@ export function OrganizationWorkspace({
     setSuccessorError('');
     try {
       const saved = await saveSuccessor();
-      if (saved) setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+      const closeAfterSave = successorCloseAfterSave.current;
+      successorCloseAfterSave.current = false;
+      if (saved) {
+        setSuccess(`Draft successor saved for ${dateLabel(saved.effectiveFrom)}.`);
+        if (closeAfterSave) navigation.show({ section: null });
+      }
     } finally {
       setSuccessorSubmitting(false);
     }
@@ -863,403 +974,345 @@ export function OrganizationWorkspace({
   }
 
   const rows = hierarchyRows(hierarchy.units);
-  const draftCount = drafts.length + successorDrafts.length;
+  const visibleSuccessorDrafts = successorDrafts.filter(
+    (draft) => !selectedId || draft.organizationUnitId === selectedId,
+  );
+  const draftCount = drafts.length + visibleSuccessorDrafts.length;
   const registeredUnits = units.filter((unit) => unit.status !== 'DRAFT');
 
   return (
     <>
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <div className="grid min-w-0 gap-7">
-          <header className="flex flex-wrap items-start justify-between gap-4">
-            <div className="grid max-w-[680px] gap-2">
-              <p className="m-0 text-[11px] font-bold tracking-[0.09em] text-cobalt uppercase">
-                Organization
-              </p>
-              <h1 className="m-0 text-[clamp(28px,3vw,38px)] leading-[1.08] font-[680] tracking-[-0.035em] text-midnight">
-                Organization Units
-              </h1>
-              <p className="m-0 text-sm leading-[1.65] text-muted">
-                Review the effective reporting structure and activate prepared Organization Units.
-              </p>
-            </div>
-            {canCreate ? (
-              <DialogTrigger asChild>
-                <button
-                  className="inline-flex min-h-11 items-center justify-center rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96]"
-                  type="button"
-                >
-                  Create Organization Unit
-                </button>
-              </DialogTrigger>
-            ) : null}
-          </header>
+        <div className="grid min-w-0 gap-5">
+          <PageHeader
+            breadcrumbs={[{ label: 'Structure' }, { label: 'Organization' }]}
+            title="Organization Units"
+            actions={
+              canCreate ? (
+                <DialogTrigger asChild>
+                  <Button variant="primary" type="button">
+                    Create Organization Unit
+                  </Button>
+                </DialogTrigger>
+              ) : null
+            }
+            tabs={tabs}
+          />
 
           {success ? (
-            <p
-              className="m-0 rounded-[4px] border border-[#b8cbe4] bg-pale-blue px-4 py-3 text-sm text-ink"
-              role="status"
-            >
+            <p className="m-0 text-small text-success" role="status">
               {success}
             </p>
           ) : null}
-          {formError && !open ? (
-            <p
-              className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-              role="alert"
-            >
-              {formError}
-            </p>
-          ) : null}
+          {!open ? <FormError message={formError} /> : null}
 
-          <section
-            className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
-            aria-labelledby="effective-hierarchy-heading"
-          >
-            <header className="flex min-h-[68px] flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-3">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="effective-hierarchy-heading"
-                >
-                  Effective hierarchy
-                </h2>
-                <span className="text-xs text-muted">
+          <Panel
+            title="Effective hierarchy"
+            flush
+            actions={
+              <>
+                <span className="text-caption text-ink-muted tabular-nums">
                   {hierarchy.units.length === 1
                     ? '1 active unit'
                     : `${hierarchy.units.length} active units`}
                 </span>
-              </div>
-              <label className="flex items-center gap-2 text-xs font-[650] text-ink">
-                Hierarchy as of
-                <input
-                  className="min-h-10 rounded-[3px] border border-line bg-paper px-3 text-sm font-normal text-ink"
-                  type="date"
-                  value={asOf}
-                  onChange={(event) => {
-                    const date = (event.currentTarget as unknown as { value: string }).value;
-                    setAsOf(date);
-                    if (date) {
-                      const browser = globalThis as unknown as {
-                        location: { href: string };
-                        history: { replaceState(data: null, unused: string, url: URL): void };
-                      };
-                      const url = new URL(browser.location.href);
-                      url.searchParams.set('asOf', date);
-                      browser.history.replaceState(null, '', url);
-                      void loadHierarchy(date);
-                    }
-                  }}
-                />
-              </label>
-            </header>
-
-            {rows.length === 0 ? (
-              <div className="grid min-h-[240px] place-content-center gap-2 px-6 py-12">
-                <strong className="text-[15px] font-[650] text-midnight">
+                <label className="flex items-center gap-2 text-caption font-[650] text-ink">
+                  Hierarchy as of
+                  <input
+                    className={cn(inputClass, 'w-auto')}
+                    type="date"
+                    value={asOf}
+                    onChange={(event) => {
+                      const date = targetValue(event);
+                      setAsOf(date);
+                      if (date) {
+                        setHierarchyLoading(true);
+                        navigation.navigate({ asOf: date });
+                      }
+                    }}
+                  />
+                </label>
+              </>
+            }
+          >
+            {hierarchyLoading ? (
+              <StateSurface label="Effective hierarchy status" compact busy>
+                <p className="m-0" role="status">
+                  Loading effective hierarchy…
+                </p>
+              </StateSurface>
+            ) : rows.length === 0 && !selectedId ? (
+              <StateSurface label="Effective hierarchy status" compact>
+                <strong className="font-[650] text-ink">
                   No active Organization Units on this date.
                 </strong>
-                <p className="m-0 max-w-[520px] text-[13px] leading-[1.6] text-muted">
+                <p className="m-0">
                   Activate a Draft Organization Unit effective on or before this date.
                 </p>
-              </div>
-            ) : (
-              <div className="grid min-w-0 md:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)]">
-                <nav
-                  className="min-w-0 overflow-x-auto border-b border-line bg-[#fafbfd] md:border-r md:border-b-0"
-                  aria-label="Organization hierarchy"
-                >
-                  <div className="min-w-[280px] py-2">
-                    {rows.map(({ unit, depth }) => (
-                      <button
-                        className={`group relative grid w-full grid-cols-[18px_1fr_auto] items-center gap-2 border-l-[3px] bg-paper py-2.5 pr-4 text-left ${
-                          depth === 0
-                            ? 'border-midnight bg-midnight text-paper hover:bg-[#273650] aria-pressed:border-midnight aria-pressed:bg-midnight'
-                            : 'border-transparent hover:bg-pale-blue aria-pressed:border-cobalt aria-pressed:bg-pale-blue'
-                        }`}
-                        style={{ paddingLeft: `${12 + depth * 22}px` }}
-                        type="button"
-                        key={unit.id}
-                        aria-pressed={selectedId === unit.id}
-                        onClick={() => setSelectedId(unit.id)}
-                      >
-                        <span
-                          className={`h-px ${depth === 0 ? 'bg-[#aebbd0]' : 'bg-[#9aaabd]'}`}
-                          aria-hidden="true"
-                        />
-                        <span className="min-w-0">
-                          <strong
-                            className={`block truncate text-[13px] font-[660] ${depth === 0 ? 'text-paper' : 'text-midnight'}`}
-                          >
-                            {unit.officialName}
-                          </strong>
-                          <span
-                            className={`block truncate font-mono text-[10px] tracking-[0.04em] uppercase ${depth === 0 ? 'text-[#b7c3d5]' : 'text-muted'}`}
-                          >
-                            {unit.code} · {unitTypeLabel(unit.unitType)}
-                          </span>
-                        </span>
-                        <span
-                          className={`text-[10px] font-[650] ${depth === 0 ? 'text-[#dbe4f1]' : 'text-muted'}`}
-                        >
-                          {unit.childCount}
-                        </span>
-                        {Array.from({ length: depth }, (_, connectorDepth) => (
-                          <span
-                            aria-hidden="true"
-                            className="pointer-events-none absolute top-0 bottom-0 z-10 w-px bg-[#aeb8c7]"
-                            data-tree-connector="vertical"
-                            key={connectorDepth}
-                            style={{ left: `${12 + (connectorDepth + 1) * 22}px` }}
-                          />
-                        ))}
-                      </button>
-                    ))}
-                  </div>
-                </nav>
-
-                <div
-                  className="grid min-h-[300px] content-start gap-6 p-5 sm:p-6"
-                  aria-label="Selected Organization Unit"
-                  aria-busy={hierarchyLoading}
-                  role="region"
-                >
-                  {selected ? (
-                    <>
-                      <div className="grid gap-2 border-b border-line pb-5">
-                        <span className="font-mono text-[10px] font-bold tracking-[0.09em] text-cobalt uppercase">
-                          Selected unit / {selected.code}
-                        </span>
-                        <h3 className="m-0 text-xl font-[680] tracking-[-0.02em] text-midnight">
-                          {selected.officialName}
-                        </h3>
-                        <span className="w-fit rounded-full bg-[#e8f3ed] px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] text-[#316647] uppercase">
-                          {selected.lifecycleStatus}
-                        </span>
-                      </div>
-                      <dl className="m-0 grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Type
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {unitTypeLabel(selected.unitType)}
-                          </dd>
-                        </div>
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Parent
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {selected.parentUnitId
-                              ? parentNames.get(selected.parentUnitId)
-                              : 'No parent · Agency root'}
-                          </dd>
-                        </div>
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Direct reports
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {selected.childCount === 1
-                              ? '1 child'
-                              : `${selected.childCount} children`}
-                          </dd>
-                        </div>
-                        <div className="grid gap-1">
-                          <dt className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                            Effective period
-                          </dt>
-                          <dd className="m-0 font-[620] text-ink">
-                            {dateLabel(selected.effectiveFrom)} –{' '}
-                            {selected.effectiveTo ? dateLabel(selected.effectiveTo) : 'Present'}
-                          </dd>
-                        </div>
-                      </dl>
-                      {selectedListUnit ? (
-                        <div className="flex flex-wrap gap-2 border-t border-line pt-5">
-                          {canUpdate && selected.lifecycleStatus !== 'ABOLISHED' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-cobalt px-3 text-xs font-[670] text-white hover:bg-[#365f96]"
-                              type="button"
-                              onClick={() => void prepareSuccessor(selected.id)}
-                            >
-                              Prepare change
-                            </button>
-                          ) : null}
-                          {canInactivate && selected.lifecycleStatus === 'ACTIVE' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={() => openTransition('INACTIVE')}
-                            >
-                              Inactivate
-                            </button>
-                          ) : null}
-                          {canActivate && selected.lifecycleStatus === 'INACTIVE' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={() => openTransition('ACTIVE')}
-                            >
-                              Reactivate
-                            </button>
-                          ) : null}
-                          {canAbolish && selected.lifecycleStatus !== 'ABOLISHED' ? (
-                            <button
-                              className="min-h-10 rounded-[3px] bg-[#f5dfe0] px-3 text-xs font-[670] text-[#7a3036] hover:bg-[#ebcfd1]"
-                              type="button"
-                              onClick={() => openTransition('ABOLISHED')}
-                            >
-                              Abolish
-                            </button>
-                          ) : null}
-                          <button
-                            className="min-h-10 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
-                            type="button"
-                            onClick={() => void loadHistory(selected.id)}
-                          >
-                            View history
-                          </button>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            )}
-          </section>
-
-          {history || historyLoading || historyError ? (
-            <section
-              className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
-              aria-labelledby="organization-unit-history-heading"
-            >
-              <header className="flex min-h-[60px] flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
-                <div className="grid gap-1">
-                  <h2
-                    className="m-0 text-sm font-[670] text-midnight"
-                    id="organization-unit-history-heading"
-                  >
-                    Organization Unit history
-                  </h2>
-                  <span className="text-xs text-muted">
-                    Version and transition evidence as of {asOf}
-                  </span>
+              </StateSurface>
+            ) : selectedId ? (
+              <div
+                className="grid content-start gap-5 p-4"
+                aria-label="Selected Organization Unit"
+                role="region"
+              >
+                <div>
+                  <RecordReturn href={navigation.href({ unit: null, view: null, section: null })}>
+                    ← Organization Units
+                  </RecordReturn>
                 </div>
                 {selected ? (
-                  <button
-                    className="min-h-9 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
-                    type="button"
-                    onClick={() => void loadHistory(selected.id)}
-                  >
+                  <>
+                    <div className="grid gap-1">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h3 className="m-0 text-page-title text-ink">{selected.officialName}</h3>
+                        <StatusTag tone={lifecycleTone[selected.lifecycleStatus]}>
+                          {selected.lifecycleStatus}
+                        </StatusTag>
+                      </div>
+                      <p className="m-0 text-caption text-ink-muted">
+                        {selected.code} · {selectedListUnit?.versionState ?? 'ACTIVE'}
+                      </p>
+                    </div>
+                    <dl className="m-0 grid gap-x-10 gap-y-4 min-[620px]:grid-cols-2">
+                      {[
+                        ['Type', unitTypeLabel(selected.unitType)],
+                        [
+                          'Parent',
+                          selected.parentUnitId
+                            ? parentNames.get(selected.parentUnitId)
+                            : 'No parent · Agency root',
+                        ],
+                        [
+                          'Direct reports',
+                          selected.childCount === 1 ? '1 child' : `${selected.childCount} children`,
+                        ],
+                        [
+                          'Effective period',
+                          `${dateLabel(selected.effectiveFrom)} – ${
+                            selected.effectiveTo ? dateLabel(selected.effectiveTo) : 'Present'
+                          }`,
+                        ],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="text-caption text-ink-muted">{label}</dt>
+                          <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    {selectedListUnit && selectedListUnit.status !== 'DRAFT' ? (
+                      <div className="flex flex-wrap gap-2 border-t border-border-subtle pt-4">
+                        {canUpdate && selected.lifecycleStatus !== 'ABOLISHED' ? (
+                          <Button
+                            variant="primary"
+                            type="button"
+                            onClick={() => void prepareSuccessor(selected.id)}
+                          >
+                            Prepare change
+                          </Button>
+                        ) : null}
+                        {canInactivate && selected.lifecycleStatus === 'ACTIVE' ? (
+                          <Button
+                            variant="secondary"
+                            type="button"
+                            onClick={() => openTransition('INACTIVE')}
+                          >
+                            Inactivate
+                          </Button>
+                        ) : null}
+                        {canActivate && selected.lifecycleStatus === 'INACTIVE' ? (
+                          <Button
+                            variant="secondary"
+                            type="button"
+                            onClick={() => openTransition('ACTIVE')}
+                          >
+                            Reactivate
+                          </Button>
+                        ) : null}
+                        {canAbolish && selected.lifecycleStatus !== 'ABOLISHED' ? (
+                          <Button
+                            variant="secondary"
+                            className="border-danger text-danger"
+                            type="button"
+                            onClick={() => openTransition('ABOLISHED')}
+                          >
+                            Abolish
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          onClick={() => navigation.navigate({ section: 'history' })}
+                        >
+                          View history
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
+                ) : historyLoading ? (
+                  <p className="m-0 text-small text-ink-muted" role="status">
+                    Loading Organization Unit…
+                  </p>
+                ) : (
+                  <p className="m-0 text-small text-danger" role="alert">
+                    This Organization Unit is unavailable. It may be missing or outside your
+                    permitted scope.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <nav className="min-w-0 overflow-x-auto py-1" aria-label="Organization hierarchy">
+                <div className="min-w-[280px]">
+                  {rows.map(({ unit, depth }) => (
+                    <button
+                      className="relative grid w-full cursor-pointer grid-cols-[18px_1fr_auto] items-center gap-2 border-0 bg-surface py-2 pr-4 text-left hover:bg-canvas aria-pressed:bg-primary/8 aria-pressed:shadow-[inset_3px_0_0_var(--color-primary)]"
+                      style={{ paddingLeft: `${12 + depth * 22}px` }}
+                      type="button"
+                      key={unit.id}
+                      aria-pressed={selectedId === unit.id}
+                      onClick={() => setSelectedId(unit.id)}
+                    >
+                      <span className="h-px bg-border" aria-hidden="true" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-small font-[600] text-ink">
+                          {unit.officialName}
+                        </span>
+                        <span className="block truncate text-caption text-ink-muted">
+                          {unit.code} · {unitTypeLabel(unit.unitType)}
+                        </span>
+                      </span>
+                      <span className="text-caption text-ink-muted tabular-nums">
+                        {unit.childCount}
+                      </span>
+                      {Array.from({ length: depth }, (_, connectorDepth) => (
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute top-0 bottom-0 w-px bg-border"
+                          data-tree-connector="vertical"
+                          key={connectorDepth}
+                          style={{ left: `${12 + (connectorDepth + 1) * 22}px` }}
+                        />
+                      ))}
+                    </button>
+                  ))}
+                </div>
+              </nav>
+            )}
+          </Panel>
+
+          {selectedId && showHistory ? (
+            <Panel
+              title="Organization Unit history"
+              flush
+              actions={
+                selected ? (
+                  <Button type="button" onClick={() => void loadHistory(selected.id)}>
                     Refresh history
-                  </button>
-                ) : null}
-              </header>
+                  </Button>
+                ) : null
+              }
+            >
+              <p className="m-0 border-b border-border-subtle px-4 py-2 text-caption text-ink-muted">
+                Version and transition evidence as of {dateLabel(asOf)}
+              </p>
               {historyLoading ? (
-                <p className="m-0 px-5 py-8 text-sm text-muted" role="status">
-                  Loading history…
-                </p>
+                <StateSurface label="Organization Unit history status" compact busy>
+                  <p className="m-0" role="status">
+                    Loading history…
+                  </p>
+                </StateSurface>
               ) : historyError ? (
-                <p className="m-0 px-5 py-8 text-sm text-[#7a3036]" role="alert">
-                  {historyError}
-                </p>
+                <StateSurface label="Organization Unit history status" compact>
+                  <p className="m-0 text-danger" role="alert">
+                    {historyError}
+                  </p>
+                </StateSurface>
               ) : history ? (
-                <div className="grid gap-6 p-5 sm:p-6">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3">
-                      <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                        Effective on date
-                      </span>
-                      <strong className="text-sm font-[680] text-midnight">
-                        {history.effective?.officialName ?? 'No published version'}
-                      </strong>
-                      <span className="text-xs text-muted">
-                        {history.effective?.lifecycleStatus ?? '—'}
-                      </span>
-                    </div>
-                    <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3">
-                      <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                        Current projection
-                      </span>
-                      <strong className="text-sm font-[680] text-midnight">
-                        {history.current?.officialName ?? 'No current version'}
-                      </strong>
-                      <span className="text-xs text-muted">
-                        {history.current?.lifecycleStatus ?? '—'}
-                      </span>
-                    </div>
-                    <div className="grid gap-1 rounded-[4px] border border-[#9eb6d1] bg-pale-blue px-4 py-3">
-                      <span className="text-[10px] font-bold tracking-[0.08em] text-cobalt uppercase">
-                        Draft successor
-                      </span>
-                      <strong className="text-sm font-[680] text-midnight">
-                        {history.draft?.officialName ?? 'None'}
-                      </strong>
-                      <span className="text-xs text-muted">
-                        {history.draft
+                <>
+                  <dl className="m-0 grid gap-x-10 gap-y-4 p-4 min-[620px]:grid-cols-3">
+                    {[
+                      {
+                        label: 'Effective on date',
+                        name: history.effective?.officialName ?? 'No published version',
+                        detail: history.effective?.lifecycleStatus ?? '—',
+                      },
+                      {
+                        label: 'Current projection',
+                        name: history.current?.officialName ?? 'No current version',
+                        detail: history.current?.lifecycleStatus ?? '—',
+                      },
+                      {
+                        label: 'Draft successor',
+                        name: history.draft?.officialName ?? 'None',
+                        detail: history.draft
                           ? `Effective ${dateLabel(history.draft.effectiveFrom)}`
-                          : 'No pending draft'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1000px] border-collapse text-left text-xs">
-                      <thead className="bg-[#fafbfd] font-bold tracking-[0.08em] text-muted uppercase">
-                        <tr>
-                          <th className="border-b border-line px-4 py-3">Version</th>
-                          <th className="border-b border-line px-4 py-3">Official name</th>
-                          <th className="border-b border-line px-4 py-3">Parent</th>
-                          <th className="border-b border-line px-4 py-3">Centers</th>
-                          <th className="border-b border-line px-4 py-3">Period</th>
-                          <th className="border-b border-line px-4 py-3">State</th>
-                          <th className="border-b border-line px-4 py-3">Lifecycle</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {history.versions.map((version) => (
-                          <tr className="border-b border-line last:border-b-0" key={version.id}>
-                            <td className="px-4 py-3 font-mono">v{version.versionNo}</td>
-                            <th
-                              className="px-4 py-3 text-left font-[650] text-midnight"
-                              scope="row"
-                            >
-                              {version.officialName}
-                            </th>
-                            <td className="px-4 py-3 text-muted">
-                              {version.parentUnitId
-                                ? (parentNames.get(version.parentUnitId) ?? version.parentUnitId)
-                                : 'Agency root'}
-                            </td>
-                            <td className="px-4 py-3 text-muted">
-                              {version.costCenterCode ?? '—'} ·{' '}
-                              {version.responsibilityCenterCode ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 text-muted">
-                              {dateLabel(version.effectiveFrom)} –{' '}
-                              {version.effectiveTo ? dateLabel(version.effectiveTo) : 'Present'}
-                            </td>
-                            <td className="px-4 py-3">{version.versionState}</td>
-                            <td className="px-4 py-3">{version.lifecycleStatus}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                          : 'No pending draft',
+                      },
+                    ].map((fact) => (
+                      <div key={fact.label}>
+                        <dt className="text-caption text-ink-muted">{fact.label}</dt>
+                        <dd className="m-0 text-body font-[600] text-ink">{fact.name}</dd>
+                        <dd className="m-0 text-caption text-ink-muted">{fact.detail}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <Table className="min-w-[900px] border-t border-border">
+                    <thead>
+                      <tr>
+                        <Th>Version</Th>
+                        <Th>Official name</Th>
+                        <Th>Parent</Th>
+                        <Th>Centers</Th>
+                        <Th kind="date">Period</Th>
+                        <Th>State</Th>
+                        <Th>Lifecycle</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {history.versions.map((version) => (
+                        <Tr key={version.id}>
+                          <Td className="tabular-nums">v{version.versionNo}</Td>
+                          <RowHeader>{version.officialName}</RowHeader>
+                          <Td>
+                            {version.parentUnitId
+                              ? (parentNames.get(version.parentUnitId) ?? version.parentUnitId)
+                              : 'Agency root'}
+                          </Td>
+                          <Td>
+                            {version.costCenterCode ?? '—'} ·{' '}
+                            {version.responsibilityCenterCode ?? '—'}
+                          </Td>
+                          <Td kind="date">
+                            {dateLabel(version.effectiveFrom)} –{' '}
+                            {version.effectiveTo ? dateLabel(version.effectiveTo) : 'Present'}
+                          </Td>
+                          <Td>
+                            <StatusTag tone={versionTone[version.versionState]}>
+                              {version.versionState}
+                            </StatusTag>
+                          </Td>
+                          <Td>
+                            <StatusTag tone={lifecycleTone[version.lifecycleStatus]}>
+                              {version.lifecycleStatus}
+                            </StatusTag>
+                          </Td>
+                        </Tr>
+                      ))}
+                    </tbody>
+                  </Table>
                   {history.transitions.length > 0 ? (
-                    <div className="grid gap-3">
-                      <h3 className="m-0 text-xs font-bold tracking-[0.08em] text-muted uppercase">
+                    <div className="grid gap-3 p-4">
+                      <h3 className="m-0 text-caption font-[650] text-ink-muted">
                         Transition evidence
                       </h3>
                       {history.transitions.map((transition) => (
                         <div
-                          className="grid gap-1 border-l-2 border-[#9eb6d1] pl-3 text-xs"
+                          className="grid gap-0.5 border-l-2 border-border pl-3 text-caption text-ink-muted"
                           key={transition.id}
                         >
-                          <strong className="font-[680] text-midnight">
+                          <strong className="text-small font-[650] text-ink">
                             {transition.action.replaceAll('_', ' ')}
                           </strong>
-                          <span className="text-muted">
+                          <span>
                             {transition.actorDisplayName
                               ? `Actor ${transition.actorDisplayName} · `
                               : ''}
@@ -1270,17 +1323,13 @@ export function OrganizationWorkspace({
                             {transition.reason ?? 'No reason recorded'}
                           </span>
                           {transition.authorityReference ? (
-                            <span className="text-muted">
-                              Authority: {transition.authorityReference}
-                            </span>
+                            <span>Authority: {transition.authorityReference}</span>
                           ) : null}
                           {transition.migrationPlan ? (
-                            <span className="text-muted">
-                              Migration plan: {transition.migrationPlan}
-                            </span>
+                            <span>Migration plan: {transition.migrationPlan}</span>
                           ) : null}
                           {transition.before || transition.after ? (
-                            <span className="text-muted">
+                            <span>
                               Before: {auditField(transition.before, 'officialName') ?? '—'} ·{' '}
                               {auditField(transition.before, 'parentUnitId') ?? 'Agency root'} →
                               After: {auditField(transition.after, 'officialName') ?? '—'} ·{' '}
@@ -1291,190 +1340,164 @@ export function OrganizationWorkspace({
                       ))}
                     </div>
                   ) : null}
-                </div>
+                </>
               ) : null}
-            </section>
+            </Panel>
           ) : null}
 
-          <section
-            className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
-            aria-labelledby="organization-unit-register-heading"
-          >
-            <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="organization-unit-register-heading"
-                >
-                  Organization Unit register
-                </h2>
-                <span className="text-xs text-muted">
-                  All current lifecycle states in this Agency
+          {!selectedId ? (
+            <Panel
+              title="Organization Unit register"
+              flush
+              actions={
+                <span className="text-caption text-ink-muted tabular-nums">
+                  {registeredUnits.length === 1 ? '1 record' : `${registeredUnits.length} records`}
                 </span>
-              </div>
-              <span className="font-mono text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                {registeredUnits.length} records
-              </span>
-            </header>
-            {registeredUnits.length === 0 ? (
-              <div className="px-5 py-8 text-sm text-muted">
-                No activated Organization Units yet.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[700px] border-collapse text-left">
-                  <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
+              }
+            >
+              {registeredUnits.length === 0 ? (
+                <StateSurface label="Organization Unit register status" compact>
+                  <p className="m-0">No activated Organization Units yet.</p>
+                </StateSurface>
+              ) : (
+                <Table className="min-w-[700px]">
+                  <thead>
                     <tr>
-                      <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Code</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Lifecycle</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
-                      <th className="border-b border-line px-5 py-3 text-right font-bold">
-                        Action
-                      </th>
+                      <Th>Official name</Th>
+                      <Th>Code</Th>
+                      <Th>Lifecycle</Th>
+                      <Th kind="date">Effective</Th>
+                      <Th className="text-right">Action</Th>
                     </tr>
                   </thead>
-                  <tbody className="text-[13px] text-ink">
+                  <tbody>
                     {registeredUnits.map((unit) => (
-                      <tr className="border-b border-line last:border-b-0" key={unit.id}>
-                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
-                          {unit.officialName}
-                        </th>
-                        <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-[#e8f3ed] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#316647] uppercase">
-                            {unit.status}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
-                        <td className="px-5 py-4 text-right">
-                          <button
-                            className="min-h-9 rounded-[3px] bg-canvas px-3 text-xs font-[670] text-ink hover:bg-[#e8edf3]"
+                      <Tr key={unit.id}>
+                        <RowHeader>{unit.officialName}</RowHeader>
+                        <Td className="whitespace-nowrap">{unit.code}</Td>
+                        <Td>
+                          <StatusTag tone={statusTone[unit.status]}>{unit.status}</StatusTag>
+                        </Td>
+                        <Td kind="date">{dateLabel(unit.effectiveDate)}</Td>
+                        <Td className="text-right">
+                          <Button
+                            className="-my-2"
                             type="button"
                             onClick={() => setSelectedId(unit.id)}
                           >
                             Inspect record
-                          </button>
-                        </td>
-                      </tr>
+                          </Button>
+                        </Td>
+                      </Tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+                </Table>
+              )}
+            </Panel>
+          ) : null}
 
-          <section
-            className="min-w-0 overflow-hidden rounded-[5px] border border-line bg-paper"
-            aria-labelledby="draft-organization-units-heading"
-          >
-            <header className="flex min-h-[60px] items-center justify-between gap-4 border-b border-line px-5">
-              <div className="grid gap-1">
-                <h2
-                  className="m-0 text-sm font-[670] text-midnight"
-                  id="draft-organization-units-heading"
-                >
-                  Draft Organization Units
-                </h2>
-                <span className="text-xs text-muted">
-                  {draftCount === 1
-                    ? '1 draft awaiting placement'
-                    : `${draftCount} drafts awaiting placement`}
-                </span>
-              </div>
-              <span className="rounded-full bg-[#fff3d6] px-2.5 py-1 text-[10px] font-bold tracking-[0.07em] text-[#79531c] uppercase">
-                Preparation queue
+          <Panel
+            title="Draft Organization Units"
+            flush
+            actions={
+              <span className="text-caption text-ink-muted tabular-nums">
+                {draftCount === 1
+                  ? '1 draft awaiting placement'
+                  : `${draftCount} drafts awaiting placement`}
               </span>
-            </header>
+            }
+          >
             {draftCount === 0 ? (
-              <div className="grid min-h-[150px] place-content-center px-6 py-10">
-                <strong className="text-[14px] font-[650] text-midnight">
-                  No Draft Organization Units.
-                </strong>
-              </div>
+              <StateSurface label="Draft Organization Units status" compact>
+                <p className="m-0">No Draft Organization Units.</p>
+              </StateSurface>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px] border-collapse text-left">
-                  <thead className="bg-[#fafbfd] text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                    <tr>
-                      <th className="border-b border-line px-5 py-3 font-bold">Official name</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Code</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Type</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">Effective</th>
-                      <th className="border-b border-line px-5 py-3 font-bold">State</th>
-                      <th className="border-b border-line px-5 py-3 text-right font-bold">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-[13px] text-ink">
-                    {drafts.map((unit) => (
-                      <tr
-                        className="border-b border-line last:border-b-0 data-[highlighted=true]:bg-pale-blue"
-                        data-highlighted={highlightedId === unit.id}
-                        key={unit.id}
-                      >
-                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
+              <Table className="min-w-[760px]">
+                <thead>
+                  <tr>
+                    <Th>Official name</Th>
+                    <Th>Code</Th>
+                    <Th>Type</Th>
+                    <Th kind="date">Effective</Th>
+                    <Th>State</Th>
+                    <Th className="text-right">Action</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {drafts.map((unit) => (
+                    <Tr
+                      className="data-[highlighted=true]:bg-primary/8"
+                      data-highlighted={highlightedId === unit.id}
+                      key={unit.id}
+                    >
+                      <RowHeader>
+                        <button
+                          type="button"
+                          className="cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline"
+                          onClick={() => setSelectedId(unit.id)}
+                        >
                           {unit.officialName}
-                        </th>
-                        <td className="px-5 py-4 font-mono text-xs">{unit.code}</td>
-                        <td className="px-5 py-4">{unitTypeLabel(unit.unitType)}</td>
-                        <td className="px-5 py-4 text-muted">{dateLabel(unit.effectiveDate)}</td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-[#fff3d6] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#79531c] uppercase">
-                            DRAFT
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          {canActivate ? (
-                            <button
-                              className="min-h-9 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={(event) => {
-                                activationTriggerRef.current = event.currentTarget as unknown as {
-                                  focus(): void;
-                                };
-                                setActivationOpen(true);
-                                void prepareActivation(unit);
-                              }}
-                            >
-                              Place and activate {unit.officialName}
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                    {successorDrafts.map((draft) => (
-                      <tr className="border-b border-line last:border-b-0" key={draft.id}>
-                        <th className="px-5 py-4 text-left font-[650] text-midnight" scope="row">
-                          {draft.officialName}
-                        </th>
-                        <td className="px-5 py-4 font-mono text-xs">{draft.code}</td>
-                        <td className="px-5 py-4">{unitTypeLabel(draft.unitType)}</td>
-                        <td className="px-5 py-4 text-muted">{dateLabel(draft.effectiveFrom)}</td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-[#fff3d6] px-2 py-1 text-[10px] font-bold tracking-[0.06em] text-[#79531c] uppercase">
-                            DRAFT SUCCESSOR
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          {canUpdate || canActivate ? (
-                            <button
-                              className="min-h-9 rounded-[3px] bg-pale-blue px-3 text-xs font-[670] text-cobalt hover:bg-[#d7e3f4]"
-                              type="button"
-                              onClick={() => void prepareSuccessor(draft.organizationUnitId)}
-                            >
-                              Review successor
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </button>
+                      </RowHeader>
+                      <Td className="whitespace-nowrap">{unit.code}</Td>
+                      <Td>{unitTypeLabel(unit.unitType)}</Td>
+                      <Td kind="date">{dateLabel(unit.effectiveDate)}</Td>
+                      <Td>
+                        <StatusTag tone="warning">DRAFT</StatusTag>
+                      </Td>
+                      <Td className="text-right">
+                        {canActivate ? (
+                          <Button
+                            className="-my-2"
+                            variant="secondary"
+                            type="button"
+                            onClick={(event) => {
+                              activationTriggerRef.current = event.currentTarget as unknown as {
+                                focus(): void;
+                              };
+                              setActivationOpen(true);
+                              void prepareActivation(unit);
+                            }}
+                          >
+                            Place and activate {unit.officialName}
+                          </Button>
+                        ) : null}
+                      </Td>
+                    </Tr>
+                  ))}
+                  {visibleSuccessorDrafts.map((draft) => (
+                    <Tr key={draft.id}>
+                      <RowHeader>{draft.officialName}</RowHeader>
+                      <Td className="whitespace-nowrap">{draft.code}</Td>
+                      <Td>{unitTypeLabel(draft.unitType)}</Td>
+                      <Td kind="date">{dateLabel(draft.effectiveFrom)}</Td>
+                      <Td>
+                        <StatusTag tone="warning">DRAFT SUCCESSOR</StatusTag>
+                      </Td>
+                      <Td className="text-right">
+                        {canUpdate || canActivate ? (
+                          <Button
+                            className="-my-2"
+                            variant="secondary"
+                            type="button"
+                            onClick={() =>
+                              navigation.show({
+                                unit: draft.organizationUnitId,
+                                view: 'form',
+                                section: 'successor',
+                              })
+                            }
+                          >
+                            Review successor
+                          </Button>
+                        ) : null}
+                      </Td>
+                    </Tr>
+                  ))}
+                </tbody>
+              </Table>
             )}
-          </section>
+          </Panel>
 
           <DialogContent
             aria-busy={submitting}
@@ -1485,121 +1508,47 @@ export function OrganizationWorkspace({
           >
             <DialogHeader>
               <div className="grid min-w-0 gap-1.5">
-                <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
-                  Organization registry / New record
-                </p>
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div className="grid gap-1.5">
-                    <DialogTitle>Create Organization Unit</DialogTitle>
-                    <DialogDescription>
-                      Register the unit as a Draft, then place and activate it from the preparation
-                      queue.
-                    </DialogDescription>
-                  </div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-[#fff3d6] px-2.5 py-1 text-[10px] font-[760] tracking-[0.08em] text-[#79531c] uppercase">
-                    <span className="size-1.5 rounded-full bg-[#b27625]" aria-hidden="true" />
-                    DRAFT
-                  </span>
-                </div>
+                <DialogTitle>Create Organization Unit</DialogTitle>
+                <DialogDescription>
+                  Register the unit as a Draft, then place and activate it from the preparation
+                  queue.
+                </DialogDescription>
               </div>
-              <DialogClose asChild>
-                <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  aria-label="Close Organization Unit dialog"
-                  disabled={submitting}
-                >
-                  ×
-                </button>
-              </DialogClose>
+              <CloseButton label="Close Organization Unit dialog" disabled={submitting} />
             </DialogHeader>
 
             <DialogBody>
-              <form className="grid gap-5" id="create-organization-unit-form" onSubmit={submit}>
-                <div className="grid gap-2">
-                  <label
-                    className="text-sm font-[650] text-ink"
-                    htmlFor="organization-official-name"
-                  >
-                    Official name
-                  </label>
+              <form className="grid gap-4" id="create-organization-unit-form" onSubmit={submit}>
+                <Field label="Official name" error={fieldErrors.officialName}>
                   <input
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                    id="organization-official-name"
+                    className={inputClass}
                     ref={firstFieldRef}
                     type="text"
                     autoComplete="organization"
                     value={draft.officialName}
-                    aria-invalid={Boolean(fieldErrors.officialName)}
-                    aria-describedby={
-                      fieldErrors.officialName ? 'organization-name-error' : undefined
-                    }
-                    onChange={(event) =>
-                      updateDraft(
-                        'officialName',
-                        (event.target as unknown as { value: string }).value,
-                      )
-                    }
+                    onChange={(event) => updateDraft('officialName', targetValue(event))}
                   />
-                  {fieldErrors.officialName ? (
-                    <span
-                      className="text-xs leading-[1.5] text-[#7a3036]"
-                      id="organization-name-error"
-                      role="alert"
-                    >
-                      {fieldErrors.officialName}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="organization-code">
-                    Agency-unique code
-                  </label>
+                </Field>
+                <Field label="Agency-unique code" error={fieldErrors.code}>
                   <input
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink uppercase"
-                    id="organization-code"
+                    className={cn(inputClass, 'uppercase')}
                     ref={codeFieldRef}
                     type="text"
                     autoComplete="off"
                     maxLength={50}
                     value={draft.code}
-                    aria-invalid={Boolean(fieldErrors.code)}
-                    aria-describedby={
-                      fieldErrors.code ? 'organization-code-error' : 'organization-code-help'
-                    }
-                    onChange={(event) =>
-                      updateDraft('code', (event.target as unknown as { value: string }).value)
-                    }
+                    aria-describedby="organization-code-help"
+                    onChange={(event) => updateDraft('code', targetValue(event))}
                   />
-                  <span className="text-xs leading-[1.5] text-muted" id="organization-code-help">
-                    The same code may be used by another Agency, but not twice here.
-                  </span>
-                  {fieldErrors.code ? (
-                    <span
-                      className="text-xs leading-[1.5] text-[#7a3036]"
-                      id="organization-code-error"
-                      role="alert"
-                    >
-                      {fieldErrors.code}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="organization-unit-type">
-                    Unit type
-                  </label>
+                </Field>
+                <p className="-mt-2 mb-0 text-caption text-ink-muted" id="organization-code-help">
+                  The same code may be used by another Agency, but not twice here.
+                </p>
+                <Field label="Unit type">
                   <select
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                    id="organization-unit-type"
+                    className={inputClass}
                     value={draft.unitType}
-                    onChange={(event) =>
-                      updateDraft(
-                        'unitType',
-                        (event.target as unknown as { value: OrganizationUnitType }).value,
-                      )
-                    }
+                    onChange={(event) => updateDraft('unitType', targetValue(event))}
                   >
                     {unitTypes.map((type) => (
                       <option key={type.value} value={type.value}>
@@ -1607,90 +1556,37 @@ export function OrganizationWorkspace({
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div className="grid gap-2">
-                  <label
-                    className="text-sm font-[650] text-ink"
-                    htmlFor="organization-effective-date"
-                  >
-                    Effective date
-                  </label>
+                </Field>
+                <Field label="Effective date" error={fieldErrors.effectiveDate}>
                   <input
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                    id="organization-effective-date"
+                    className={inputClass}
                     ref={effectiveDateFieldRef}
                     type="date"
                     value={draft.effectiveDate}
-                    aria-invalid={Boolean(fieldErrors.effectiveDate)}
-                    aria-describedby={
-                      fieldErrors.effectiveDate ? 'organization-date-error' : undefined
-                    }
-                    onChange={(event) =>
-                      updateDraft(
-                        'effectiveDate',
-                        (event.target as unknown as { value: string }).value,
-                      )
-                    }
+                    onChange={(event) => updateDraft('effectiveDate', targetValue(event))}
                   />
-                  {fieldErrors.effectiveDate ? (
-                    <span
-                      className="text-xs leading-[1.5] text-[#7a3036]"
-                      id="organization-date-error"
-                      role="alert"
-                    >
-                      {fieldErrors.effectiveDate}
-                    </span>
-                  ) : null}
-                </div>
-
-                {formError ? (
-                  <p
-                    className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-                    role="alert"
-                  >
-                    {formError}
-                  </p>
-                ) : null}
-
-                <div className="grid grid-cols-[72px_1fr] overflow-hidden rounded-[4px] border border-line bg-[#fafbfd] text-xs">
-                  <span className="grid place-items-center border-r border-line bg-pale-blue font-mono font-bold text-cobalt">
-                    DRAFT
-                  </span>
-                  <span className="grid gap-1 px-4 py-3 text-muted">
-                    <strong className="font-[680] text-ink">
-                      {draft.officialName || 'Untitled Organization Unit'}
-                    </strong>
-                    <span>
-                      {draft.code || 'No code yet'} · {unitTypeLabel(draft.unitType).toLowerCase()}{' '}
-                      · effective {draft.effectiveDate || '—'}
-                    </span>
-                  </span>
-                </div>
+                </Field>
+                <FormError message={formError} />
               </form>
             </DialogBody>
 
             <DialogFooter>
-              <span className="mr-auto hidden text-[11px] text-muted min-[621px]:block">
+              <span className="mr-auto hidden self-center text-caption text-ink-muted min-[621px]:block">
                 Agency scoped · Four required fields
               </span>
               <DialogClose asChild>
-                <button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  disabled={submitting}
-                >
+                <Button variant="secondary" type="button" disabled={submitting}>
                   Cancel
-                </button>
+                </Button>
               </DialogClose>
-              <button
-                className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+              <Button
+                variant="primary"
                 type="submit"
                 form="create-organization-unit-form"
                 disabled={submitting}
               >
                 {submitting ? 'Creating…' : 'Create Draft'}
-              </button>
+              </Button>
             </DialogFooter>
           </DialogContent>
         </div>
@@ -1709,66 +1605,40 @@ export function OrganizationWorkspace({
           >
             <DialogHeader>
               <div className="grid min-w-0 gap-1.5">
-                <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
-                  Organization hierarchy / Activation
-                </p>
                 <DialogTitle>Activate {activationUnit.officialName}</DialogTitle>
                 <DialogDescription>
                   Choose where this unit reports, then activate its effective-dated version.
                 </DialogDescription>
               </div>
-              <DialogClose asChild>
-                <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  aria-label="Close activation dialog"
-                  disabled={activationSubmitting}
-                >
-                  ×
-                </button>
-              </DialogClose>
+              <CloseButton label="Close activation dialog" disabled={activationSubmitting} />
             </DialogHeader>
 
             <DialogBody>
               <form
-                className="grid gap-5"
+                className="grid gap-4"
                 id="activate-organization-unit-form"
                 onSubmit={submitActivation}
               >
-                <div className="grid min-w-0 grid-cols-[minmax(112px,0.4fr)_minmax(0,1fr)] overflow-hidden rounded-[4px] border border-line bg-[#fafbfd] text-xs">
-                  <span className="grid min-w-0 place-items-center break-all border-r border-line bg-pale-blue px-2 text-center font-mono font-bold text-cobalt">
-                    {activationUnit.code}
-                  </span>
-                  <span className="grid min-w-0 gap-1 px-4 py-3 text-muted">
-                    <strong className="font-[680] text-ink">{activationUnit.officialName}</strong>
-                    <span>
-                      {unitTypeLabel(activationUnit.unitType)} · effective{' '}
-                      {dateLabel(activationUnit.effectiveDate)}
-                    </span>
-                  </span>
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="activation-parent-unit">
-                    Parent Organization Unit
-                  </label>
+                <dl className="m-0 grid gap-x-8 gap-y-3 rounded-control border border-border bg-canvas px-3 py-2.5 min-[621px]:grid-cols-3">
+                  {[
+                    ['Code', activationUnit.code],
+                    ['Type', unitTypeLabel(activationUnit.unitType)],
+                    ['Effective', dateLabel(activationUnit.effectiveDate)],
+                  ].map(([label, value]) => (
+                    <div className="min-w-0" key={label}>
+                      <dt className="text-caption text-ink-muted">{label}</dt>
+                      <dd className="m-0 text-small font-[600] break-all text-ink">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <Field label="Parent Organization Unit" error={activationFieldErrors.parentUnitId}>
                   <select
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                    id="activation-parent-unit"
+                    className={inputClass}
                     ref={parentFieldRef}
                     value={parentUnitId}
-                    aria-invalid={Boolean(activationFieldErrors.parentUnitId)}
-                    aria-describedby={
-                      activationFieldErrors.parentUnitId ? 'activation-parent-error' : undefined
-                    }
                     onChange={(event) => {
-                      setParentUnitId((event.currentTarget as unknown as { value: string }).value);
-                      setActivationFieldErrors((current) => {
-                        if (!current.parentUnitId) return current;
-                        const next = { ...current };
-                        delete next.parentUnitId;
-                        return next;
-                      });
+                      setParentUnitId(targetValue(event));
+                      setActivationFieldErrors((current) => withoutField(current, 'parentUnitId'));
                     }}
                   >
                     <option value="">No parent · Agency root</option>
@@ -1778,80 +1648,34 @@ export function OrganizationWorkspace({
                       </option>
                     ))}
                   </select>
-                  {activationFieldErrors.parentUnitId ? (
-                    <span
-                      className="text-xs leading-[1.5] text-[#7a3036]"
-                      id="activation-parent-error"
-                      role="alert"
-                    >
-                      {activationFieldErrors.parentUnitId}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="activation-reason">
-                    Activation reason
-                  </label>
+                </Field>
+                <Field label="Activation reason" error={activationFieldErrors.reason}>
                   <textarea
-                    className="min-h-[96px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
-                    id="activation-reason"
+                    className={cn(inputClass, 'min-h-24 resize-y py-2')}
                     ref={reasonFieldRef}
                     maxLength={500}
                     value={activationReason}
-                    aria-invalid={Boolean(activationFieldErrors.reason)}
-                    aria-describedby={
-                      activationFieldErrors.reason ? 'activation-reason-error' : undefined
-                    }
                     onChange={(event) => {
-                      setActivationReason(
-                        (event.currentTarget as unknown as { value: string }).value,
-                      );
-                      setActivationFieldErrors((current) => {
-                        if (!current.reason) return current;
-                        const next = { ...current };
-                        delete next.reason;
-                        return next;
-                      });
+                      setActivationReason(targetValue(event));
+                      setActivationFieldErrors((current) => withoutField(current, 'reason'));
                     }}
                   />
-                  {activationFieldErrors.reason ? (
-                    <span
-                      className="text-xs leading-[1.5] text-[#7a3036]"
-                      id="activation-reason-error"
-                      role="alert"
-                    >
-                      {activationFieldErrors.reason}
-                    </span>
-                  ) : null}
-                </div>
-
-                {activationError ? (
-                  <p
-                    className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-                    role="alert"
-                  >
-                    {activationError}
-                  </p>
-                ) : null}
+                </Field>
+                <FormError message={activationError} />
               </form>
             </DialogBody>
 
             <DialogFooter>
-              <span className="mr-auto hidden text-[11px] text-muted min-[621px]:block">
+              <span className="mr-auto hidden self-center text-caption text-ink-muted min-[621px]:block">
                 Activation is recorded in the audit trail.
               </span>
               <DialogClose asChild>
-                <button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  disabled={activationSubmitting}
-                >
+                <Button variant="secondary" type="button" disabled={activationSubmitting}>
                   Cancel
-                </button>
+                </Button>
               </DialogClose>
-              <button
-                className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+              <Button
+                variant="primary"
                 type="submit"
                 form="activate-organization-unit-form"
                 disabled={
@@ -1859,23 +1683,27 @@ export function OrganizationWorkspace({
                 }
               >
                 {activationSubmitting ? 'Activating…' : 'Activate Organization Unit'}
-              </button>
+              </Button>
             </DialogFooter>
           </DialogContent>
         ) : null}
       </Dialog>
       <Dialog
-        open={successorOpen}
+        presentation="form"
+        open={showSuccessor && successor !== null}
         onOpenChange={(nextOpen) => {
-          if (!nextOpen && successorSubmitting) return;
-          setSuccessorOpen(nextOpen);
+          if (!nextOpen && !successorSubmitting) navigation.show({ section: null });
         }}
       >
         {successor && successorValues ? (
           <DialogContent
             aria-busy={successorSubmitting}
+            aria-describedby="organization-successor-description"
             onEscapeKeyDown={(event) => {
-              if (successorSubmitting) event.preventDefault();
+              if (successorSubmitting) {
+                successorCloseAfterSave.current = true;
+                event.preventDefault();
+              }
             }}
             onOpenAutoFocus={(event) => {
               event.preventDefault();
@@ -1884,118 +1712,73 @@ export function OrganizationWorkspace({
           >
             <DialogHeader>
               <div className="grid min-w-0 gap-1.5">
-                <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
-                  Organization change / Successor draft
-                </p>
                 <DialogTitle>Review Organization Unit successor</DialogTitle>
-                <DialogDescription>
+                <DialogDescription id="organization-successor-description">
                   Edit the proposed values and effective date. The current version remains unchanged
                   until activation.
                 </DialogDescription>
               </div>
-              <DialogClose asChild>
-                <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  aria-label="Close successor dialog"
-                  disabled={successorSubmitting}
-                >
-                  ×
-                </button>
-              </DialogClose>
+              <CloseButton label="Close successor dialog" disabled={successorSubmitting} />
             </DialogHeader>
 
             <DialogBody>
               <form
-                className="grid gap-5"
+                className="grid gap-4"
                 id="organization-successor-form"
                 onSubmit={submitSuccessor}
               >
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-muted uppercase">
-                      Current version
-                    </span>
-                    <strong className="text-sm font-[680] text-midnight">
-                      {successor.current.officialName}
-                    </strong>
-                    <span className="text-xs text-muted">
-                      Effective {dateLabel(successor.current.effectiveFrom)} ·{' '}
-                      {successor.current.lifecycleStatus}
-                    </span>
-                    <span className="text-xs text-muted">
-                      Parent:{' '}
-                      {successor.current.parentUnitId
-                        ? (parentNames.get(successor.current.parentUnitId) ??
-                          successor.current.parentUnitId)
-                        : 'Agency root'}
-                    </span>
-                    <span className="text-xs text-muted">
-                      Cost center: {successor.current.costCenterCode ?? '—'} · Responsibility:{' '}
-                      {successor.current.responsibilityCenterCode ?? '—'}
-                    </span>
-                  </div>
-                  <div className="grid gap-1 rounded-[4px] border border-[#9eb6d1] bg-pale-blue px-4 py-3">
-                    <span className="text-[10px] font-bold tracking-[0.08em] text-cobalt uppercase">
-                      Proposed successor
-                    </span>
-                    <strong className="text-sm font-[680] text-midnight">
-                      {successorValues.officialName || 'Untitled Organization Unit'}
-                    </strong>
-                    <span className="text-xs text-muted">
-                      Effective {dateLabel(successorValues.effectiveDate)} · successor draft
-                    </span>
-                    <span className="text-xs text-muted">
-                      Parent:{' '}
-                      {successorValues.parentUnitId
-                        ? (parentNames.get(successorValues.parentUnitId) ??
-                          successorValues.parentUnitId)
-                        : 'Agency root'}
-                    </span>
-                    <span className="text-xs text-muted">
-                      Cost center: {successorValues.costCenterCode || '—'} · Responsibility:{' '}
-                      {successorValues.responsibilityCenterCode || '—'}
-                    </span>
-                  </div>
+                <div className="grid gap-3 min-[621px]:grid-cols-2">
+                  {[
+                    {
+                      label: 'Current version',
+                      name: successor.current.officialName,
+                      period: `Effective ${dateLabel(successor.current.effectiveFrom)} · ${successor.current.lifecycleStatus}`,
+                      parentUnitId: successor.current.parentUnitId,
+                      costCenterCode: successor.current.costCenterCode,
+                      responsibilityCenterCode: successor.current.responsibilityCenterCode,
+                    },
+                    {
+                      label: 'Proposed successor',
+                      name: successorValues.officialName || 'Untitled Organization Unit',
+                      period: `Effective ${dateLabel(successorValues.effectiveDate)} · successor draft`,
+                      parentUnitId: successorValues.parentUnitId || null,
+                      costCenterCode: successorValues.costCenterCode || null,
+                      responsibilityCenterCode: successorValues.responsibilityCenterCode || null,
+                    },
+                  ].map((version) => (
+                    <div
+                      className="grid gap-0.5 rounded-control border border-border bg-canvas px-3 py-2.5 text-caption text-ink-muted"
+                      key={version.label}
+                    >
+                      <span className="font-[650]">{version.label}</span>
+                      <strong className="text-small font-[650] text-ink">{version.name}</strong>
+                      <span>{version.period}</span>
+                      <span>
+                        Parent:{' '}
+                        {version.parentUnitId
+                          ? (parentNames.get(version.parentUnitId) ?? version.parentUnitId)
+                          : 'Agency root'}
+                      </span>
+                      <span>
+                        Cost center: {version.costCenterCode ?? '—'} · Responsibility:{' '}
+                        {version.responsibilityCenterCode ?? '—'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="successor-official-name">
-                    Proposed official name
-                  </label>
+                <Field label="Proposed official name" error={successorFieldErrors.officialName}>
                   <input
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
-                    id="successor-official-name"
+                    className={cn(inputClass, 'disabled:bg-canvas')}
                     ref={successorNameRef}
                     type="text"
                     value={successorValues.officialName}
                     disabled={!canUpdate || successorSubmitting}
-                    aria-invalid={Boolean(successorFieldErrors.officialName)}
-                    aria-describedby={
-                      successorFieldErrors.officialName
-                        ? 'successor-official-name-error'
-                        : undefined
-                    }
                     onChange={(event) => updateSuccessorValue('officialName', targetValue(event))}
                   />
-                  {successorFieldErrors.officialName ? (
-                    <span
-                      className="text-xs text-[#7a3036]"
-                      id="successor-official-name-error"
-                      role="alert"
-                    >
-                      {successorFieldErrors.officialName}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="successor-parent-unit">
-                    Proposed parent Organization Unit
-                  </label>
+                </Field>
+                <Field label="Proposed parent Organization Unit">
                   <select
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
-                    id="successor-parent-unit"
+                    className={cn(inputClass, 'disabled:bg-canvas')}
                     value={successorValues.parentUnitId}
                     disabled={!canUpdate || successorSubmitting}
                     onChange={(event) => updateSuccessorValue('parentUnitId', targetValue(event))}
@@ -2007,16 +1790,11 @@ export function OrganizationWorkspace({
                       </option>
                     ))}
                   </select>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid gap-2">
-                    <label className="text-sm font-[650] text-ink" htmlFor="successor-cost-center">
-                      Cost center
-                    </label>
+                </Field>
+                <div className="grid gap-4 min-[621px]:grid-cols-2">
+                  <Field label="Cost center">
                     <input
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
-                      id="successor-cost-center"
+                      className={cn(inputClass, 'disabled:bg-canvas')}
                       type="text"
                       value={successorValues.costCenterCode}
                       disabled={!canUpdate || successorSubmitting}
@@ -2024,17 +1802,10 @@ export function OrganizationWorkspace({
                         updateSuccessorValue('costCenterCode', targetValue(event))
                       }
                     />
-                  </div>
-                  <div className="grid gap-2">
-                    <label
-                      className="text-sm font-[650] text-ink"
-                      htmlFor="successor-responsibility-center"
-                    >
-                      Responsibility center
-                    </label>
+                  </Field>
+                  <Field label="Responsibility center">
                     <input
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
-                      id="successor-responsibility-center"
+                      className={cn(inputClass, 'disabled:bg-canvas')}
                       type="text"
                       value={successorValues.responsibilityCenterCode}
                       disabled={!canUpdate || successorSubmitting}
@@ -2042,139 +1813,77 @@ export function OrganizationWorkspace({
                         updateSuccessorValue('responsibilityCenterCode', targetValue(event))
                       }
                     />
-                  </div>
+                  </Field>
                 </div>
-
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="successor-effective-date">
-                    Successor effective date
-                  </label>
+                <Field label="Successor effective date" error={successorFieldErrors.effectiveDate}>
                   <input
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink disabled:bg-canvas"
-                    id="successor-effective-date"
+                    className={cn(inputClass, 'disabled:bg-canvas')}
                     ref={successorDateRef}
                     type="date"
                     value={successorValues.effectiveDate}
                     disabled={!canUpdate || successorSubmitting}
-                    aria-invalid={Boolean(successorFieldErrors.effectiveDate)}
-                    aria-describedby={
-                      successorFieldErrors.effectiveDate
-                        ? 'successor-effective-date-error'
-                        : undefined
-                    }
                     onChange={(event) => updateSuccessorValue('effectiveDate', targetValue(event))}
                   />
-                  {successorFieldErrors.effectiveDate ? (
-                    <span
-                      className="text-xs text-[#7a3036]"
-                      id="successor-effective-date-error"
-                      role="alert"
-                    >
-                      {successorFieldErrors.effectiveDate}
-                    </span>
-                  ) : null}
-                </div>
-
+                </Field>
                 {canActivate ? (
                   <>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-[650] text-ink" htmlFor="successor-reason">
-                        Change reason
-                      </label>
+                    <Field label="Change reason" error={successorFieldErrors.reason}>
                       <textarea
-                        className="min-h-[88px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
-                        id="successor-reason"
+                        className={cn(inputClass, 'min-h-22 resize-y py-2')}
                         ref={successorReasonRef}
                         maxLength={500}
                         value={successorReason}
-                        aria-invalid={Boolean(successorFieldErrors.reason)}
-                        aria-describedby={
-                          successorFieldErrors.reason ? 'successor-reason-error' : undefined
-                        }
                         onChange={(event) => setSuccessorReason(targetValue(event))}
                       />
-                      {successorFieldErrors.reason ? (
-                        <span
-                          className="text-xs text-[#7a3036]"
-                          id="successor-reason-error"
-                          role="alert"
-                        >
-                          {successorFieldErrors.reason}
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-2">
-                      <label className="text-sm font-[650] text-ink" htmlFor="successor-authority">
-                        Authority reference{' '}
-                        <span className="font-normal text-muted">(optional)</span>
-                      </label>
+                    </Field>
+                    <Field label={<OptionalLabel>Authority reference</OptionalLabel>}>
                       <input
-                        className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                        id="successor-authority"
+                        className={inputClass}
                         type="text"
                         value={successorAuthority}
                         disabled={successorSubmitting}
                         onChange={(event) => setSuccessorAuthority(targetValue(event))}
                       />
-                    </div>
-                    <div className="grid gap-2">
-                      <label
-                        className="text-sm font-[650] text-ink"
-                        htmlFor="successor-migration-plan"
-                      >
-                        Migration plan <span className="font-normal text-muted">(optional)</span>
-                      </label>
+                    </Field>
+                    <Field label={<OptionalLabel>Migration plan</OptionalLabel>}>
                       <textarea
-                        className="min-h-[72px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
-                        id="successor-migration-plan"
+                        className={cn(inputClass, 'min-h-18 resize-y py-2')}
                         value={successorMigrationPlan}
                         disabled={successorSubmitting}
                         onChange={(event) => setSuccessorMigrationPlan(targetValue(event))}
                       />
-                    </div>
+                    </Field>
                   </>
                 ) : null}
-
-                {successorError ? (
-                  <p
-                    className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-                    role="alert"
-                  >
-                    {successorError}
-                  </p>
-                ) : null}
+                <FormError message={successorError} />
               </form>
             </DialogBody>
 
             <DialogFooter>
               <DialogClose asChild>
-                <button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  disabled={successorSubmitting}
-                >
+                <Button variant="quiet" type="button" disabled={successorSubmitting}>
                   Cancel
-                </button>
+                </Button>
               </DialogClose>
               {canUpdate ? (
-                <button
-                  className="min-h-11 rounded-[3px] bg-pale-blue px-4 text-sm font-[650] text-cobalt hover:bg-[#d7e3f4] disabled:pointer-events-none disabled:opacity-50"
+                <Button
+                  variant="secondary"
                   type="button"
                   disabled={successorSubmitting}
                   onClick={() => void submitSavedSuccessor()}
                 >
                   {successorSubmitting ? 'Saving…' : 'Save Draft'}
-                </button>
+                </Button>
               ) : null}
               {canActivate ? (
-                <button
-                  className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+                <Button
+                  variant="primary"
                   type="submit"
                   form="organization-successor-form"
                   disabled={successorSubmitting}
                 >
                   {successorSubmitting ? 'Activating…' : 'Activate successor'}
-                </button>
+                </Button>
               ) : null}
             </DialogFooter>
           </DialogContent>
@@ -2200,9 +1909,6 @@ export function OrganizationWorkspace({
           >
             <DialogHeader>
               <div className="grid min-w-0 gap-1.5">
-                <p className="m-0 font-mono text-[10px] font-bold tracking-[0.1em] text-cobalt uppercase">
-                  Organization lifecycle / {transitionTarget}
-                </p>
                 <DialogTitle>
                   {transitionTarget === 'ACTIVE'
                     ? 'Reactivate'
@@ -2216,164 +1922,89 @@ export function OrganizationWorkspace({
                   rewritten.
                 </DialogDescription>
               </div>
-              <DialogClose asChild>
-                <button
-                  className="min-h-9 min-w-9 shrink-0 rounded-[3px] bg-canvas text-xl text-muted hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  aria-label="Close lifecycle dialog"
-                  disabled={transitionSubmitting}
-                >
-                  ×
-                </button>
-              </DialogClose>
+              <CloseButton label="Close lifecycle dialog" disabled={transitionSubmitting} />
             </DialogHeader>
             <DialogBody>
               <form
-                className="grid gap-5"
+                className="grid gap-4"
                 id="organization-transition-form"
                 onSubmit={submitTransition}
               >
-                <div className="grid gap-1 rounded-[4px] border border-line bg-[#fafbfd] px-4 py-3 text-xs text-muted">
-                  <strong className="text-sm font-[680] text-midnight">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control border border-border bg-canvas px-3 py-2.5 text-caption text-ink-muted">
+                  <strong className="text-small font-[650] text-ink">
                     {transitionUnit.officialName}
                   </strong>
-                  <span>
-                    {transitionUnit.code} · current lifecycle {transitionUnit.lifecycleStatus}
-                  </span>
+                  <span>{transitionUnit.code}</span>
+                  <StatusTag tone={lifecycleTone[transitionUnit.lifecycleStatus]}>
+                    {transitionUnit.lifecycleStatus}
+                  </StatusTag>
                 </div>
-                <div className="grid gap-2">
-                  <label
-                    className="text-sm font-[650] text-ink"
-                    htmlFor="transition-effective-date"
-                  >
-                    Effective date
-                  </label>
+                <Field label="Effective date" error={transitionFieldErrors.effectiveDate}>
                   <input
-                    className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                    id="transition-effective-date"
+                    className={inputClass}
                     ref={transitionDateRef}
                     type="date"
                     value={transitionDate}
-                    aria-invalid={Boolean(transitionFieldErrors.effectiveDate)}
-                    aria-describedby={
-                      transitionFieldErrors.effectiveDate
-                        ? 'transition-effective-date-error'
-                        : undefined
-                    }
                     onChange={(event) => setTransitionDate(targetValue(event))}
                   />
-                  {transitionFieldErrors.effectiveDate ? (
-                    <span
-                      className="text-xs text-[#7a3036]"
-                      id="transition-effective-date-error"
-                      role="alert"
-                    >
-                      {transitionFieldErrors.effectiveDate}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-sm font-[650] text-ink" htmlFor="transition-reason">
-                    Reason
-                  </label>
+                </Field>
+                <Field label="Reason" error={transitionFieldErrors.reason}>
                   <textarea
-                    className="min-h-[88px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
-                    id="transition-reason"
+                    className={cn(inputClass, 'min-h-22 resize-y py-2')}
                     ref={transitionReasonRef}
                     maxLength={500}
                     value={transitionReason}
-                    aria-invalid={Boolean(transitionFieldErrors.reason)}
-                    aria-describedby={
-                      transitionFieldErrors.reason ? 'transition-reason-error' : undefined
-                    }
                     onChange={(event) => setTransitionReason(targetValue(event))}
                   />
-                  {transitionFieldErrors.reason ? (
-                    <span
-                      className="text-xs text-[#7a3036]"
-                      id="transition-reason-error"
-                      role="alert"
-                    >
-                      {transitionFieldErrors.reason}
-                    </span>
-                  ) : null}
-                </div>
+                </Field>
                 {transitionTarget !== 'INACTIVE' ? (
-                  <div className="grid gap-2">
-                    <label className="text-sm font-[650] text-ink" htmlFor="transition-authority">
-                      Authority reference
-                    </label>
+                  <Field
+                    label="Authority reference"
+                    error={transitionFieldErrors.authorityReference}
+                  >
                     <input
-                      className="min-h-11 rounded-[3px] border border-line bg-paper px-3 text-sm text-ink"
-                      id="transition-authority"
+                      className={inputClass}
                       type="text"
                       value={transitionAuthority}
-                      aria-invalid={Boolean(transitionFieldErrors.authorityReference)}
-                      aria-describedby={
-                        transitionFieldErrors.authorityReference
-                          ? 'transition-authority-error'
-                          : undefined
-                      }
                       onChange={(event) => setTransitionAuthority(targetValue(event))}
                     />
-                    {transitionFieldErrors.authorityReference ? (
-                      <span
-                        className="text-xs text-[#7a3036]"
-                        id="transition-authority-error"
-                        role="alert"
-                      >
-                        {transitionFieldErrors.authorityReference}
-                      </span>
-                    ) : null}
-                  </div>
+                  </Field>
                 ) : null}
                 {transitionTarget !== 'ACTIVE' ? (
-                  <div className="grid gap-2">
-                    <label
-                      className="text-sm font-[650] text-ink"
-                      htmlFor="transition-migration-plan"
-                    >
-                      Migration plan{' '}
-                      <span className="font-normal text-muted">
-                        (required when dependencies remain)
-                      </span>
-                    </label>
+                  <Field
+                    label={
+                      <>
+                        Migration plan{' '}
+                        <span className="font-normal text-ink-muted">
+                          (required when dependencies remain)
+                        </span>
+                      </>
+                    }
+                  >
                     <textarea
-                      className="min-h-[88px] resize-y rounded-[3px] border border-line bg-paper px-3 py-2 text-sm text-ink"
-                      id="transition-migration-plan"
+                      className={cn(inputClass, 'min-h-22 resize-y py-2')}
                       value={transitionMigrationPlan}
                       onChange={(event) => setTransitionMigrationPlan(targetValue(event))}
                     />
-                  </div>
+                  </Field>
                 ) : null}
-                {transitionError ? (
-                  <p
-                    className="m-0 rounded-[4px] border border-[#d6aeb0] bg-[#fff7f7] px-4 py-3 text-sm text-[#7a3036]"
-                    role="alert"
-                  >
-                    {transitionError}
-                  </p>
-                ) : null}
+                <FormError message={transitionError} />
               </form>
             </DialogBody>
             <DialogFooter>
               <DialogClose asChild>
-                <button
-                  className="min-h-11 rounded-[3px] bg-canvas px-4 text-sm font-[650] text-ink hover:bg-[#e8edf3] disabled:pointer-events-none disabled:opacity-50"
-                  type="button"
-                  disabled={transitionSubmitting}
-                >
+                <Button variant="secondary" type="button" disabled={transitionSubmitting}>
                   Cancel
-                </button>
+                </Button>
               </DialogClose>
-              <button
-                className="min-h-11 rounded-[3px] bg-cobalt px-4 text-sm font-[650] text-white hover:bg-[#365f96] disabled:pointer-events-none disabled:opacity-50"
+              <Button
+                variant="primary"
                 type="submit"
                 form="organization-transition-form"
                 disabled={transitionSubmitting}
               >
                 {transitionSubmitting ? 'Saving…' : `Record ${transitionTarget.toLowerCase()}`}
-              </button>
+              </Button>
             </DialogFooter>
           </DialogContent>
         ) : null}

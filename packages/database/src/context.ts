@@ -17,7 +17,18 @@ export type DatabaseCapability =
   | 'payroll-bank-account-transition'
   | 'saln-compliance-transition'
   | 'service-record-transition'
-  | 'organization-unit-correction';
+  | 'organization-unit-correction'
+  | 'approval-transition'
+  | 'recruitment-transition'
+  | 'appointment-transition'
+  | 'work-schedule-transition'
+  | 'work-arrangement-transition'
+  | 'holiday-calendar-transition'
+  | 'schedule-assignment-transition'
+  | 'leave-transition'
+  | 'leave-policy-transition'
+  | 'leave-posting-transition'
+  | 'attendance-transition';
 
 export interface DatabaseContext {
   agencyId?: string;
@@ -25,7 +36,8 @@ export interface DatabaseContext {
   membershipId?: string;
   sessionTokenHash?: string;
   invitationTokenHash?: string;
-  providerSid?: string;
+  pendingTokenHash?: string;
+  passwordResetTokenHash?: string;
   capabilities?: readonly DatabaseCapability[];
 }
 
@@ -54,7 +66,8 @@ export async function setDatabaseContext(
       set_config('app.membership_id', ${context.membershipId ?? ''}, true),
       set_config('app.session_token_hash', ${context.sessionTokenHash ?? ''}, true),
       set_config('app.invitation_token_hash', ${context.invitationTokenHash ?? ''}, true),
-      set_config('app.provider_sid', ${context.providerSid ?? ''}, true),
+      set_config('app.pending_token_hash', ${context.pendingTokenHash ?? ''}, true),
+      set_config('app.password_reset_token_hash', ${context.passwordResetTokenHash ?? ''}, true),
       set_config('app.platform_security', ${hasCapability(context, 'platform-security') ? 'true' : ''}, true),
       set_config(
         'app.operational_provisioning',
@@ -129,6 +142,57 @@ export async function setDatabaseContext(
       set_config(
         'app.service_record_transition',
         ${hasCapability(context, 'service-record-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.approval_transition',
+        ${hasCapability(context, 'approval-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.recruitment_transition',
+        ${hasCapability(context, 'recruitment-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.appointment_transition',
+        ${hasCapability(context, 'appointment-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.work_schedule_transition',
+        ${hasCapability(context, 'work-schedule-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.work_arrangement_transition',
+        ${hasCapability(context, 'work-arrangement-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.holiday_calendar_transition',
+        ${hasCapability(context, 'holiday-calendar-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.schedule_assignment_transition',
+        ${hasCapability(context, 'schedule-assignment-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.leave_transition',
+        ${hasCapability(context, 'leave-transition') ? 'on' : ''},
+        true
+      ),
+      set_config(
+        'app.leave_policy_transition',
+        ${hasCapability(context, 'leave-policy-transition') ? 'on' : ''},
+        true
+      ),
+      set_config('app.leave_posting_transition', ${hasCapability(context, 'leave-posting-transition') ? 'on' : ''}, true),
+      set_config(
+        'app.attendance_transition',
+        ${hasCapability(context, 'attendance-transition') ? 'on' : ''},
         true
       )
   `;

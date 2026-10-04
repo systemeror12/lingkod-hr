@@ -7,6 +7,7 @@ import {
 } from '../../../components/agency-profile-workspace';
 import { OrganizationWorkspace } from '../../../components/organization-workspace';
 import { ShellState } from '../../../components/shell-state';
+import { SectionTabLinks } from '../../../components/ui/section-tabs';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 import { manilaToday } from '../../../lib/manila-date';
 
@@ -67,7 +68,7 @@ export const dynamic = 'force-dynamic';
 export default async function OrganizationPage({
   searchParams,
 }: {
-  searchParams: Promise<{ asOf?: string | string[] }>;
+  searchParams: Promise<{ asOf?: string | string[]; workspace?: string }>;
 }) {
   const session = await getActiveSession();
   const canReadProfile = hasPermission(session, 'organization.agency.read');
@@ -82,6 +83,8 @@ export default async function OrganizationPage({
     );
   }
 
+  const showProfile =
+    canReadProfile && ((await searchParams).workspace === 'agency' || !canReadUnits);
   const config = getConfig();
   const cookieStore = await cookies();
   const requestOptions = {
@@ -165,29 +168,50 @@ export default async function OrganizationPage({
     initialHierarchy = (await hierarchyResponse.json()) as OrganizationHierarchyResponse;
   }
 
-  return (
-    <div className="grid min-w-0 gap-12">
-      {profile ? (
-        <AgencyProfileWorkspace
-          agencyId={session.agencyId}
-          canUpdate={hasPermission(session, 'organization.agency.update')}
-          initial={profile}
-        />
-      ) : null}
-      {initial && initialHierarchy ? (
-        <section className="grid min-w-0 gap-7 border-t border-line pt-10">
-          <OrganizationWorkspace
-            agencyId={session.agencyId}
-            canAbolish={hasPermission(session, 'organization.units.abolish')}
-            canActivate={hasPermission(session, 'organization.units.activate')}
-            canCreate={hasPermission(session, 'organization.units.create')}
-            canInactivate={hasPermission(session, 'organization.units.inactivate')}
-            canUpdate={hasPermission(session, 'organization.units.update')}
-            initial={initial}
-            initialHierarchy={initialHierarchy}
-          />
-        </section>
-      ) : null}
-    </div>
+  const tabs = (
+    <SectionTabLinks
+      label="Organization workspace"
+      tabs={[
+        ...(canReadUnits
+          ? [{ href: '/organization', label: 'Organization Units', current: !showProfile }]
+          : []),
+        ...(canReadProfile
+          ? [
+              {
+                href: '/organization?workspace=agency',
+                label: 'Agency Profile',
+                current: showProfile,
+              },
+              {
+                href: '/organization/agency-branding',
+                label: 'Seal and building photo',
+                current: false,
+              },
+            ]
+          : []),
+      ]}
+    />
   );
+
+  return profile && showProfile ? (
+    <AgencyProfileWorkspace
+      agencyId={session.agencyId}
+      canUpdate={hasPermission(session, 'organization.agency.update')}
+      initial={profile}
+      tabs={tabs}
+    />
+  ) : initial && initialHierarchy ? (
+    <OrganizationWorkspace
+      key={initialHierarchy.asOf}
+      agencyId={session.agencyId}
+      canAbolish={hasPermission(session, 'organization.units.abolish')}
+      canActivate={hasPermission(session, 'organization.units.activate')}
+      canCreate={hasPermission(session, 'organization.units.create')}
+      canInactivate={hasPermission(session, 'organization.units.inactivate')}
+      canUpdate={hasPermission(session, 'organization.units.update')}
+      initial={initial}
+      initialHierarchy={initialHierarchy}
+      tabs={tabs}
+    />
+  ) : null;
 }

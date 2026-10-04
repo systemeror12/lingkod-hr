@@ -222,8 +222,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'documents-e2e',
-        externalSubject: `documents-${suffix}`,
         emailNormalized: `documents-${suffix}@example.test`,
         displayName: 'Evidence Officer',
         globalStatus: 'ACTIVE',

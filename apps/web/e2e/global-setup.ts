@@ -10,10 +10,6 @@ async function clearMailpit(): Promise<void> {
 
 export default async function globalSetup(): Promise<void> {
   const repositoryRoot = resolve(__dirname, '../../..');
-  const environment = {
-    ...process.env,
-    OIDC_ISSUER: process.env.OIDC_ISSUER ?? 'http://127.0.0.1:4100',
-  };
 
   execFileSync(
     'docker',
@@ -23,22 +19,21 @@ export default async function globalSetup(): Promise<void> {
       'infrastructure/compose.yaml',
       'up',
       '-d',
+      '--no-recreate',
       'postgres',
       'seaweedfs',
       'mailpit',
       '--wait',
     ],
-    { cwd: repositoryRoot, env: environment, stdio: 'inherit' },
+    { cwd: repositoryRoot, stdio: 'inherit' },
   );
   execFileSync('pnpm', ['db:migrate'], {
     cwd: repositoryRoot,
-    env: environment,
     stdio: 'inherit',
   });
   await clearMailpit();
   execFileSync('pnpm', ['--filter', '@lingkod-hr/database', 'e2e:seed:shell'], {
     cwd: repositoryRoot,
-    env: environment,
     stdio: 'inherit',
   });
 }

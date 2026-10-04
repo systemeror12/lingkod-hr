@@ -379,8 +379,6 @@ it.skipIf(!enabled)('isolates PDS sections and enforces draft-only mutations', a
   });
   const user = await admin.user.create({
     data: {
-      identityProvider: 'pds-rls-e2e',
-      externalSubject: `pds-${suffix}`,
       emailNormalized: `pds-${suffix}@example.test`,
       displayName: 'PDS RLS User',
       globalStatus: 'ACTIVE',
@@ -686,8 +684,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'pds-workflow-e2e',
-        externalSubject: `pds-workflow-${suffix}`,
         emailNormalized: `pds-workflow-${suffix}@example.test`,
         displayName: 'PDS Workflow User',
         globalStatus: 'ACTIVE',
@@ -999,8 +995,6 @@ it.skipIf(!enabled)(
     });
     const user = await admin.user.create({
       data: {
-        identityProvider: 'pds-work-rls-e2e',
-        externalSubject: `pds-work-${suffix}`,
         emailNormalized: `pds-work-${suffix}@example.test`,
         displayName: 'PDS Work RLS User',
         globalStatus: 'ACTIVE',

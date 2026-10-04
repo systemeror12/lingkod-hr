@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
-const apiUrl = 'http://localhost:3101';
-const appOrigin = 'http://localhost:3100';
+const apiUrl = `http://localhost:${process.env.PLAYWRIGHT_API_PORT ?? '3101'}`;
+const appOrigin = `http://localhost:${process.env.PLAYWRIGHT_APP_PORT ?? '3100'}`;
 const foreignUnitId = '22222222-2222-4222-8222-222222222222';
 const foreignAuditEventId = '44444444-4444-4444-8444-444444444444';
 
@@ -64,6 +65,7 @@ test.describe('Phase 3 acceptance gate', () => {
     const unitName = 'Phase 3 Records Management Division';
     const originHeaders = { origin: appOrigin };
 
+    await signIn(page, MARISOL_EMAIL, { fresh: true });
     await page.goto('/dashboard');
     await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
     await expect(
@@ -76,11 +78,12 @@ test.describe('Phase 3 acceptance gate', () => {
     });
 
     const navigation = page.getByRole('navigation', { name: 'Primary' });
-    const rail = page.getByRole('complementary', { name: 'Application' });
     await page.getByRole('button', { name: 'Collapse navigation' }).click();
     await expect(page.getByRole('button', { name: 'Expand navigation' })).toBeFocused();
-    await navigation.getByRole('link', { name: 'Dashboard' }).hover();
-    await expect(rail.getByRole('tooltip', { name: 'Dashboard' })).toBeVisible();
+    await expect(navigation.getByRole('link', { name: 'Work queue' })).toHaveAttribute(
+      'title',
+      'Work queue',
+    );
     await page.screenshot({
       path: testInfo.outputPath('phase3-collapsed-rail.png'),
       fullPage: true,
@@ -138,10 +141,7 @@ test.describe('Phase 3 acceptance gate', () => {
       recipient,
       'LingkodHR invitation for National Archives Coordination Office',
     );
-    const activationUrl =
-      /https?:\/\/[^\s]+\/api\/v1\/auth\/invitations\/[A-Za-z0-9_-]{43}\/activate/.exec(
-        mailText,
-      )?.[0];
+    const activationUrl = new RegExp(`${appOrigin}/invite/[A-Za-z0-9_-]{43}`).exec(mailText)?.[0];
     if (!activationUrl) throw new Error('The Phase 3 invitation email had no activation URL.');
     expect(mailText).toContain('National Archives Coordination Office');
     expect(mailText).toContain('HRMO Administrator');
@@ -149,44 +149,9 @@ test.describe('Phase 3 acceptance gate', () => {
     const hrmoContext = await browser.newContext();
     const hrmoPage = await hrmoContext.newPage();
     try {
-      await hrmoPage.goto(activationUrl);
-      await expect(
-        hrmoPage.getByRole('heading', { name: 'You’re about to continue to secure sign-in' }),
-      ).toBeVisible();
-      const continueLink = hrmoPage.getByRole('link', { name: 'Continue to secure sign-in' });
-      const contrastRatio = await continueLink.evaluate((element) => {
-        const channels = (value: string): [number, number, number] | null => {
-          const parts = value.match(/\d+(?:\.\d+)?/g)?.map(Number);
-          return parts && parts.length >= 3 ? [parts[0]!, parts[1]!, parts[2]!] : null;
-        };
-        const foreground = channels(getComputedStyle(element).color);
-        const background = channels(getComputedStyle(element).backgroundColor);
-        if (!foreground || !background) return 0;
-        const luminance = (rgb: [number, number, number]): number =>
-          rgb
-            .map((channel) => channel / 255)
-            .map((channel) =>
-              channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
-            )
-            .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index]!, 0);
-        const lighter = Math.max(luminance(foreground), luminance(background));
-        const darker = Math.min(luminance(foreground), luminance(background));
-        return (lighter + 0.05) / (darker + 0.05);
-      });
-      expect(contrastRatio).toBeGreaterThanOrEqual(4.5);
-      await hrmoPage.screenshot({
-        path: testInfo.outputPath('phase3-invitation-handoff.png'),
-        fullPage: true,
-      });
-      await continueLink.click();
-      await expect(hrmoPage).toHaveURL(/\/dashboard$/);
+      await activateInvitation(hrmoPage, activationUrl, { name: 'Phase Three Administrator' });
       await expect(hrmoPage.getByRole('heading', { name: 'Work queue' })).toBeVisible();
       await expect(hrmoPage.getByText('HRMO Administrator', { exact: true }).first()).toBeVisible();
-      await expect(
-        hrmoPage.getByRole('navigation', { name: 'Primary' }).getByRole('link', {
-          name: 'Users & Access',
-        }),
-      ).toHaveCount(0);
       await expect(hrmoPage.getByRole('button', { name: 'Invite user' })).toHaveCount(0);
       await hrmoPage.screenshot({
         path: testInfo.outputPath('phase3-hrmo-dashboard.png'),
@@ -307,11 +272,12 @@ test.describe('Phase 3 acceptance gate', () => {
       expect(JSON.stringify(detailBody)).not.toMatch(/password|secret|session|token/i);
 
       await hrmoPage.goto('/audit');
-      const event = hrmoPage.getByRole('button').filter({ hasText: unitId });
-      await expect(event).toContainText('ORGANIZATION_UNIT_CREATED');
-      await expect(event).toContainText('None → DRAFT');
+      const eventRow = hrmoPage.getByRole('row').filter({ hasText: unitId });
+      await expect(eventRow).toContainText('ORGANIZATION_UNIT_CREATED');
+      await expect(eventRow).toContainText('None → DRAFT');
+      const event = eventRow.getByRole('button', { name: 'ORGANIZATION_UNIT_CREATED' });
       await event.click();
-      const auditDialog = hrmoPage.getByRole('dialog', { name: 'Audit Event detail' });
+      const auditDialog = hrmoPage.getByRole('region', { name: 'Audit Event detail' });
       await expect(auditDialog).toBeVisible();
       await expect(auditDialog).toContainText(unitName);
       await expect(auditDialog).toContainText('None → DRAFT');
