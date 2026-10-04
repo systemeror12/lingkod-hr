@@ -172,6 +172,7 @@ it.skipIf(!enabled)(
     const fundingUser = await createUser('funding');
     const approverUser = await createUser('approver');
     const posterUser = await createUser('poster');
+    const secondRecorderUser = await createUser('second-recorder');
     const foreignUser = await createUser('foreign');
     const createMembership = (userId: string, targetAgencyId = agency.id) =>
       admin.agencyMembership.create({
@@ -183,6 +184,7 @@ it.skipIf(!enabled)(
     const fundingMembership = await createMembership(fundingUser.id);
     const approverMembership = await createMembership(approverUser.id);
     const posterMembership = await createMembership(posterUser.id);
+    const secondRecorderMembership = await createMembership(secondRecorderUser.id);
     const foreignMembership = await createMembership(foreignUser.id, foreignAgency.id);
     const employee = await createEmployee(
       admin,
@@ -231,6 +233,7 @@ it.skipIf(!enabled)(
       { code: 'leave.monetization.submit', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.withdraw', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.cancel', scopePolicy: 'AGENCY' },
+      { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
       { code: 'approvals.routes.create', scopePolicy: 'AGENCY' },
       { code: 'approvals.routes.activate', scopePolicy: 'AGENCY' },
       { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
@@ -270,6 +273,18 @@ it.skipIf(!enabled)(
       { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
       { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
     ]);
+    const secondRecorderContext = context(
+      agency.id,
+      secondRecorderUser.id,
+      secondRecorderMembership.id,
+      [
+        { code: 'leave.monetization.submit', scopePolicy: 'AGENCY' },
+        { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
+        { code: 'leave.monetization.withdraw', scopePolicy: 'AGENCY' },
+        { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
+        { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
+      ],
+    );
     const foreignContext = context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
       { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
@@ -355,6 +370,12 @@ it.skipIf(!enabled)(
         agency.id,
         custodianMembership.id,
         `${suffix}-fiscal`,
+      );
+      const signedAttestation = await createDocumentVersion(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-signed-attestation`,
       );
 
       const vacation = await policies.create(adminContext, { catalogueCode: 'VACATION_LEAVE' });
@@ -578,6 +599,8 @@ it.skipIf(!enabled)(
 
       const subjectList = await service.list(subjectContext);
       expect(subjectList.items.map(({ id }) => id)).toContain(created.id);
+      expect(subjectList.actorEmployeeId).toBe(employee.id);
+      expect((await service.list(adminContext)).actorEmployeeId).toBeNull();
       const foreignList = await service.list(
         context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
           { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
@@ -589,15 +612,109 @@ it.skipIf(!enabled)(
         service.certify(foreignContext, created.id, { allocations: [{ allocationId }] }),
       ).rejects.toMatchObject({ code: 'MONETIZATION_REQUEST_NOT_FOUND', statusCode: 404 });
 
+      const recordedSubmitInput = {
+        ...submitInput,
+        attestationType: 'SIGNED_DOCUMENT' as const,
+        attestationDocumentVersionId: signedAttestation.versionId,
+      };
+      const recordedRequest = await service.create(adminContext, { employeeId: employee.id });
+      await expect(
+        service.submit(adminContext, recordedRequest.id, submitInput),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      const recordedSubmitted = await service.submit(
+        adminContext,
+        recordedRequest.id,
+        recordedSubmitInput,
+      );
+      expect(
+        await admin.leaveMonetizationRequestVersion.findFirstOrThrow({
+          where: { agencyId: agency.id, id: recordedSubmitted.request.currentVersionId! },
+        }),
+      ).toMatchObject({
+        attestationType: 'SIGNED_DOCUMENT',
+        attestationDocumentVersionId: signedAttestation.versionId,
+        submittedByMembershipId: custodianMembership.id,
+        employeeAttestedAt: null,
+      });
+      await expect(
+        service.certify(adminContext, recordedRequest.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The recording actor cannot perform this Monetization step.',
+      });
+      await service.withdraw(adminContext, recordedRequest.id, {
+        reason: 'The recorded request is no longer needed.',
+      });
+
+      const draftedForSubject = await service.create(adminContext, { employeeId: employee.id });
+      const subjectSubmitted = await service.submit(
+        subjectContext,
+        draftedForSubject.id,
+        submitInput,
+        'monetization-submit-subject',
+      );
+      expect(
+        await admin.leaveMonetizationRequestVersion.findFirstOrThrow({
+          where: { agencyId: agency.id, id: subjectSubmitted.request.currentVersionId! },
+        }),
+      ).toMatchObject({
+        attestationType: 'AUTHENTICATED_SUBMISSION',
+        submittedByMembershipId: subjectMembership.id,
+        employeeAttestedAt: expect.any(Date),
+      });
+      await expect(
+        service.submit(
+          adminContext,
+          draftedForSubject.id,
+          submitInput,
+          'monetization-submit-subject',
+        ),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      await expect(
+        service.certify(subjectContext, draftedForSubject.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The subject Employee cannot perform this Monetization step.',
+      });
+      await expect(
+        service.certify(adminContext, draftedForSubject.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The recording actor cannot perform this Monetization step.',
+      });
+      await service.withdraw(adminContext, draftedForSubject.id, {
+        reason: 'The drafted request is no longer needed.',
+      });
+
+      const submittedByOther = await service.create(adminContext, { employeeId: employee.id });
+      await service.submit(secondRecorderContext, submittedByOther.id, recordedSubmitInput);
+      await expect(
+        service.certify(secondRecorderContext, submittedByOther.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The submitting actor cannot perform this Monetization step.',
+      });
+      await service.withdraw(adminContext, submittedByOther.id, {
+        reason: 'The request submitted by another recorder is no longer needed.',
+      });
+
       const withdrawRequest = await service.create(adminContext, { employeeId: employee.id });
-      await service.submit(adminContext, withdrawRequest.id, submitInput);
+      await service.submit(adminContext, withdrawRequest.id, recordedSubmitInput);
       const withdrawn = await service.withdraw(adminContext, withdrawRequest.id, {
         reason: 'The employee withdrew the request.',
       });
       expect(withdrawn.request.status).toBe('WITHDRAWN');
 
       const blockedRequest = await service.create(adminContext, { employeeId: employee.id });
-      const blockedSubmitted = await service.submit(adminContext, blockedRequest.id, submitInput);
+      const blockedSubmitted = await service.submit(
+        adminContext,
+        blockedRequest.id,
+        recordedSubmitInput,
+      );
       expect(blockedSubmitted.request.status).toBe('SUBMITTED');
       const blockedAssessed = await service.assess(certifierContext, blockedRequest.id, {});
       expect(blockedAssessed.assessment).toMatchObject({ result: 'ELIGIBLE' });
@@ -642,7 +759,8 @@ it.skipIf(!enabled)(
         kind: 'SPECIAL',
         reason: 'Medical hardship grounded on the cited authority.',
         formTemplateDocumentVersionId: formTemplate.versionId,
-        attestationType: 'AUTHENTICATED_SUBMISSION',
+        attestationType: 'SIGNED_DOCUMENT',
+        attestationDocumentVersionId: signedAttestation.versionId,
         authoritySnapshot: {
           citations: ['CSC MC No. 5, s. 2021'],
           valuationDate: manilaDate(),
