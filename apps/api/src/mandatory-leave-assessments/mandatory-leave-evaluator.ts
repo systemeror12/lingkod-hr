@@ -56,8 +56,6 @@ export interface MandatoryLeaveLedgerFact {
   leaveAccountId: string;
   effectiveDate: string;
   quantity: string;
-  /** Posting order within one effective date. */
-  postedAt: string;
   reversesEntryId: string | null;
 }
 
@@ -87,6 +85,7 @@ export interface MandatoryLeaveEvaluationInput {
   policy: MandatoryLeavePolicyFact | null;
   /** Vacation Leave Accounts whose open period overlaps the year up to the as-of date. */
   vacationAccounts: readonly MandatoryLeaveAccountFact[];
+  /** Ledger entries in posting order; the evaluator orders them by effective date. */
   ledgerEntries: readonly MandatoryLeaveLedgerFact[];
   allocations: readonly MandatoryLeaveAllocationFact[];
 }
@@ -248,23 +247,30 @@ export function evaluateMandatoryLeave(
     const entries = input.ledgerEntries.filter(
       (item) => item.leaveAccountId === account.id && item.effectiveDate <= input.asOf,
     );
-    // A reversal of a reversal stays counted: it reinstates the first original.
-    const byId = new Map(entries.map((item) => [item.id, item]));
-    const reversalPairs = entries.filter((item) => {
-      const original = item.reversesEntryId ? byId.get(item.reversesEntryId) : undefined;
-      return original !== undefined && original.reversesEntryId === null;
-    });
-    const excluded = reversalPairs.flatMap((item) => [item.id, item.reversesEntryId!]).sort();
+    // Each reversal chain cancels in pairs. An odd chain, where a reversal was
+    // itself reversed, keeps only its first entry: the original is reinstated.
+    const ids = new Set(entries.map((item) => item.id));
+    const reversalOf = new Map(
+      entries.flatMap((item) => (item.reversesEntryId ? [[item.reversesEntryId, item]] : [])),
+    );
+    const excluded: string[] = [];
+    let pairs = 0;
+    for (const root of entries) {
+      if (root.reversesEntryId && ids.has(root.reversesEntryId)) continue;
+      const chain = [root];
+      for (let next = reversalOf.get(root.id); next; next = reversalOf.get(next.id)) {
+        chain.push(next);
+      }
+      pairs += Math.floor(chain.length / 2);
+      excluded.push(...chain.slice(chain.length % 2).map((item) => item.id));
+    }
+    excluded.sort();
     const counted = entries.filter((item) => !excluded.includes(item.id));
     const opening = sum(counted.filter((item) => item.effectiveDate < yearStart));
+    // Array sort is stable, so posting order holds within one effective date.
     const running = counted
       .filter((item) => item.effectiveDate >= yearStart)
-      .sort(
-        (a, b) =>
-          a.effectiveDate.localeCompare(b.effectiveDate) ||
-          a.postedAt.localeCompare(b.postedAt) ||
-          a.id.localeCompare(b.id),
-      );
+      .sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
     let balance = opening;
     let peak = { balance: opening, date: yearStart };
     let reached = opening.gte(thresholds.minimum)
@@ -292,11 +298,12 @@ export function evaluateMandatoryLeave(
       balanceAsOf: formatQuantity(balance),
       ledgerEntryIds: entries.map((item) => item.id).sort(),
     };
-    const pairs = reversalPairs.length;
+    const order =
+      'The running balance takes posted entries in effective-date order, then posting order';
     const method =
       pairs > 0
-        ? `The running balance takes posted entries in effective-date order, then posting order, and leaves out ${pairs} reversed ${pairs === 1 ? 'entry and its reversal' : 'entries and their reversals'}.`
-        : 'The running balance takes posted entries in effective-date order, then posting order.';
+        ? `${order}, and leaves out ${pairs} reversed ${pairs === 1 ? 'entry and its reversal' : 'entries and their reversals'}.`
+        : `${order}.`;
     rule(
       'BALANCE_THRESHOLD',
       reached ? 'PASS' : 'FAIL',
