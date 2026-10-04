@@ -95,9 +95,18 @@ it.skipIf(!enabled)(
     const inHome = <T>(
       run: (transaction: Parameters<Parameters<typeof withDatabaseContext>[1]>[0]) => Promise<T>,
     ) => withDatabaseContext(homeScope, run);
+    // These dates are weekdays; Attendance Day tests cover the schedule-aware count.
+    const everyDateWorks = async (dateFrom: string, dateTo: string) =>
+      (Date.parse(dateTo) - Date.parse(dateFrom)) / 86_400_000 + 1;
     const coverage = (workDate: string) =>
       inHome((transaction) =>
-        service.coverageInTransaction(transaction, home.agency.id, employee.id, workDate),
+        service.coverageInTransaction(
+          transaction,
+          home.agency.id,
+          employee.id,
+          workDate,
+          everyDateWorks,
+        ),
       );
 
     try {
@@ -188,6 +197,27 @@ it.skipIf(!enabled)(
            ${otherEmployee.id}::uuid, '2026-03-02', '2026-03-02', 'WORKING_DAY', 1,
            'NON_CREDIT', ${successor.id}::uuid)`,
       ).rejects.toThrow();
+
+      // Quantities combine only within one source: separate postings of 2 and
+      // 1 working days over the same three dates are each unplaceable.
+      for (const [line, quantity] of [
+        ['a', 2],
+        ['b', 1],
+      ] as const) {
+        await inHome((transaction) =>
+          service.createInTransaction(transaction, home.agency.id, {
+            ...base,
+            sourceKey: `${suffix}-separate-${line}`,
+            sourceId: line === 'a' ? employee.id : otherEmployee.id,
+            dateFrom: '2026-03-09',
+            dateTo: '2026-03-11',
+            quantity,
+          }),
+        );
+      }
+      const separate = await coverage('2026-03-10');
+      expect(separate).toHaveLength(2);
+      for (const entry of separate) expect(entry.ambiguousReason).toMatch(/working dates/);
 
       // Cross-Agency: another Agency cannot read, reference, or create into this one.
       expect(

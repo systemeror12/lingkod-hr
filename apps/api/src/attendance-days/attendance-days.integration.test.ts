@@ -679,6 +679,29 @@ it.skipIf(!enabled)(
       expect(ambiguous.days[0]?.outcome).toBe('RECALCULATED');
       expect(ambiguous.days[0]?.status).toBe('EXCEPTION');
       expect(ambiguous.days[0]?.exceptionTypes).toContain('AMBIGUOUS_LEAVE_QUANTITY');
+
+      // Leave counts no working day on the fixture's Christmas Day holiday, so
+      // one working day over Thursday–Friday covers Thursday alone.
+      await createInput({
+        sourceKey: `${suffix}-holiday`,
+        employeeId: employee.id,
+        sourceType: 'LeavePosting',
+        sourceId,
+        dateFrom: '2026-12-24',
+        dateTo: '2026-12-25',
+        unitCode: 'WORKING_DAY',
+        quantity: 1,
+        allocationKind: 'LEAVE_ACCOUNT',
+      });
+      for (const [workDate, postedLeaveMinutes] of [
+        ['2026-12-24', 480],
+        ['2026-12-25', 0],
+      ] as const) {
+        const result = await calculate(workDate);
+        expect(result.days[0]?.exceptionTypes).not.toContain('AMBIGUOUS_LEAVE_QUANTITY');
+        const detail = await setup.days.findById(context, result.days[0]!.attendanceDayId!);
+        expect(detail.day.totals).toMatchObject({ postedLeaveMinutes });
+      }
     } finally {
       await cleanupAgency(admin, agency.id, suffix);
       await admin.$disconnect();

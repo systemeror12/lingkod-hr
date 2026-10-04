@@ -94,13 +94,6 @@ export interface LeaveEligibilityOutcome {
   requestedUnit: string;
 }
 
-export const NON_WORKING_HOLIDAY_DAY_TYPES = [
-  'REGULAR_HOLIDAY',
-  'SPECIAL_NON_WORKING',
-  'LOCAL_HOLIDAY',
-  'WORK_SUSPENSION',
-] as const;
-
 function rule(
   name: string,
   outcome: LeaveRuleOutcome,
