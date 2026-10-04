@@ -65,6 +65,28 @@ function manilaDate(offsetDays = 0): string {
   return date.toISOString().slice(0, 10);
 }
 
+/**
+ * The first leave period from December 31 to January 4, from `year` on, with
+ * working dates on both sides of the boundary after the January 1 holiday and
+ * at least two in January so a partial cancellation of the last one leaves one.
+ */
+function yearCrossing(year: number) {
+  for (let firstYear = year; ; firstYear += 1) {
+    const secondYear = firstYear + 1;
+    const dateFrom = `${firstYear}-12-31`;
+    const dateTo = `${secondYear}-01-04`;
+    const holiday = `${secondYear}-01-01`;
+    const workingDates: string[] = [];
+    for (let date = dateFrom; date <= dateTo; date = addDays(date, 1)) {
+      const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+      if (weekday !== 0 && weekday !== 6 && date !== holiday) workingDates.push(date);
+    }
+    if (workingDates[0] === dateFrom && workingDates.length >= 3) {
+      return { firstYear, secondYear, dateFrom, dateTo, holiday, workingDates };
+    }
+  }
+}
+
 function addDays(value: string, days: number): string {
   const date = new Date(`${value}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -507,6 +529,7 @@ it.skipIf(!enabled)(
       );
 
       const effectiveFrom = manilaDate(-30);
+      const crossing = yearCrossing(Number(manilaDate(0).slice(0, 4)) + 1);
       const calendar = await calendars.create(agencyContext, {
         code: `PH-${suffix}`,
         name: 'Agency Holiday Calendar',
@@ -525,6 +548,12 @@ it.skipIf(!enabled)(
             name: 'Special Non-Working Day',
             dayType: 'SPECIAL_NON_WORKING',
             sourceReference: 'Proclamation No. 45',
+          },
+          {
+            holidayDate: crossing.holiday,
+            name: "New Year's Day",
+            dayType: 'REGULAR_HOLIDAY',
+            sourceReference: 'Proclamation No. 90',
           },
         ],
       });
@@ -3765,17 +3794,15 @@ it.skipIf(!enabled)(
         ).resolves.toBe(ledgerBeforeVacation + 5);
 
         // Leave crossing December 31 counts each working date in its own year,
-        // and an applied cancellation removes its exact dates. Next year's
-        // boundary keeps clear of the other postings, which follow today's date.
-        const firstYear = assessmentYear + 1;
-        const secondYear = assessmentYear + 2;
-        const crossingFrom = `${firstYear}-12-31`;
-        const crossingTo = `${secondYear}-01-04`;
-        const crossingDates: string[] = [];
-        for (let date = crossingFrom; date <= crossingTo; date = addDays(date, 1)) {
-          const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-          if (weekday !== 0 && weekday !== 6) crossingDates.push(date);
-        }
+        // skips the January 1 holiday, and an applied cancellation removes its
+        // exact dates.
+        const {
+          firstYear,
+          secondYear,
+          dateFrom: crossingFrom,
+          dateTo: crossingTo,
+          workingDates: crossingDates,
+        } = crossing;
         const inYear = (year: number) =>
           crossingDates.filter((date) => date.startsWith(`${year}-`));
         const assessYear = async (year: number) => {
@@ -3802,8 +3829,8 @@ it.skipIf(!enabled)(
             countedDates: facts.fulfillmentFacts?.allocations.map((line) => line.countedDates),
           };
         };
-        const crossing = await postLeave(crossingFrom, crossingTo);
-        const crossingLine = crossing.versions.at(-1)!.approvalAllocation!.lines[0]!;
+        const crossingLeave = await postLeave(crossingFrom, crossingTo);
+        const crossingLine = crossingLeave.versions.at(-1)!.approvalAllocation!.lines[0]!;
         expect(crossingLine).toMatchObject({
           dateFrom: crossingFrom,
           dateTo: crossingTo,
@@ -3825,7 +3852,7 @@ it.skipIf(!enabled)(
 
         const lastDate = crossingDates.at(-1)!;
         const crossingCancellationId = await requestApprovedCancellation(
-          crossing.application.id,
+          crossingLeave.application.id,
           {
             scopeType: 'PARTIAL',
             reason: 'Returning to duty on the last date.',
@@ -3842,7 +3869,7 @@ it.skipIf(!enabled)(
         );
         await applications.applyCancellation(
           applyContext,
-          crossing.application.id,
+          crossingLeave.application.id,
           crossingCancellationId,
           `apply-crossing-partial-${suffix}`,
         );
