@@ -369,6 +369,40 @@ export class AttendanceDaysService {
   }
 
   /**
+   * Internal contract: recompute each Attendance Day's input fingerprint from
+   * its current sources without writing, and return the ids of the days whose
+   * stored fingerprint no longer matches. Attendance Period Reconciliation
+   * uses it to refuse a lock over sources that changed after approval.
+   */
+  async changedInputDayIdsInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    attendanceDayIds: readonly string[],
+  ): Promise<string[]> {
+    if (attendanceDayIds.length === 0) return [];
+    const days = await transaction.attendanceDay.findMany({
+      where: { agencyId: context.agencyId, id: { in: [...attendanceDayIds] } },
+      orderBy: [{ workDate: 'asc' }, { id: 'asc' }],
+      select: { id: true, employeeId: true, workDate: true, ruleSnapshot: true },
+    });
+    const now = new Date();
+    const changed: string[] = [];
+    for (const day of days) {
+      const calculation = await this.calculationOf(
+        transaction,
+        context,
+        day.employeeId,
+        formatDate(day.workDate),
+        now,
+      );
+      if (metadataString(day.ruleSnapshot, 'fingerprint') !== calculation.fingerprint) {
+        changed.push(day.id);
+      }
+    }
+    return changed;
+  }
+
+  /**
    * Internal contract: Employee Attendance Submission approval marks only the
    * exact bound Attendance Day versions APPROVED. A concurrent recalculation
    * changes the current pointer instead, so the caller sees a short count.
@@ -393,10 +427,9 @@ export class AttendanceDaysService {
 
   /**
    * Recalculate the affected Work Dates of one applied Attendance Correction
-   * inside the caller-owned transaction. An applied correction, or Leave's
-   * posted-leave supersession on unlocked Work Dates, are the only authorized
-   * paths that may supersede an APPROVED Attendance Day while the original
-   * version and its segments stay retained.
+   * inside the caller-owned transaction. Unlike an ordinary calculation, it
+   * also recalculates Work Dates of a finalized Attendance Period. A superseded
+   * APPROVED version and its segments stay retained.
    */
   async recalculateCorrectedWorkDates(
     transaction: Prisma.TransactionClient,
@@ -418,9 +451,7 @@ export class AttendanceDaysService {
     const results: AttendanceDayCalculationResultSummary[] = [];
     for (const workDate of input.workDates) {
       results.push(
-        await this.calculateOne(transaction, context, period, input.employeeId, workDate, now, {
-          correctionRecalculation: true,
-        }),
+        await this.calculateOne(transaction, context, period, input.employeeId, workDate, now),
       );
     }
     return results;
@@ -503,7 +534,6 @@ export class AttendanceDaysService {
         input.employeeId,
         formatDate(day.workDate),
         now,
-        { correctionRecalculation: true },
       );
     }
     return {
@@ -638,6 +668,11 @@ export class AttendanceDaysService {
     context: RequestContext,
     input: CalculateAttendanceDaysInput,
   ): Promise<AttendancePeriodRecord> {
+    // Hold the period so a concurrent lock either waits for this calculation,
+    // then fails reconciliation, or finalizes first and refuses it below.
+    await transaction.$queryRaw`SELECT "id" FROM "attendance_periods"
+      WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "code" = ${input.periodCode}
+      FOR SHARE`;
     const existing = await transaction.attendancePeriod.findUnique({
       where: { agencyId_code: { agencyId: context.agencyId, code: input.periodCode } },
       select: periodSelect,
@@ -681,7 +716,6 @@ export class AttendanceDaysService {
     employeeId: string,
     workDate: string,
     now: Date,
-    options: { correctionRecalculation?: boolean } = {},
   ): Promise<AttendanceDayCalculationResultSummary> {
     const current = await transaction.attendanceDay.findFirst({
       where: {
@@ -706,31 +740,7 @@ export class AttendanceDaysService {
       );
     }
 
-    let resolution: AttendanceResolution | null = null;
-    let resolutionException: AttendanceExceptionError | null = null;
-    try {
-      resolution = await this.assignments.resolveForWorkDateInTransaction(
-        transaction,
-        context.agencyId,
-        employeeId,
-        workDate,
-      );
-    } catch (error: unknown) {
-      if (error instanceof AttendanceExceptionError) {
-        resolutionException = error;
-      } else {
-        throw error;
-      }
-    }
-
-    const overlays = await this.appliedCorrectionOverlays(
-      transaction,
-      context.agencyId,
-      employeeId,
-    );
-    const calculation = resolution
-      ? await this.calculateResolved(transaction, context, resolution, workDate, overlays)
-      : this.unresolvedCalculation(resolutionException!, employeeId, workDate, now);
+    const calculation = await this.calculationOf(transaction, context, employeeId, workDate, now);
     const fingerprint = calculation.fingerprint;
     const exceptionTypes = calculation.exceptions.map((exception) => exception.type);
 
@@ -754,14 +764,6 @@ export class AttendanceDaysService {
         exceptionTypes,
       };
     }
-    if (current && current.status === 'APPROVED' && !options.correctionRecalculation) {
-      throw new AttendanceDayServiceError(
-        'An approved Attendance Day cannot be recalculated.',
-        409,
-        'ATTENDANCE_DAY_APPROVED',
-      );
-    }
-
     const maxVersion = await transaction.attendanceDay.aggregate({
       where: {
         agencyId: context.agencyId,
@@ -870,6 +872,45 @@ export class AttendanceDaysService {
       exceptionTypes,
       staleSubmissionIds,
     };
+  }
+
+  /**
+   * Reads the current sources of one Work Date and calculates it without
+   * writing. The fingerprint identifies those sources, so it changes whenever
+   * an Attendance Event, Attendance Context, posted-leave input, applied
+   * correction, or schedule binding the Day depends on changes.
+   */
+  private async calculationOf(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    workDate: string,
+    now: Date,
+  ) {
+    let resolution: AttendanceResolution | null = null;
+    let resolutionException: AttendanceExceptionError | null = null;
+    try {
+      resolution = await this.assignments.resolveForWorkDateInTransaction(
+        transaction,
+        context.agencyId,
+        employeeId,
+        workDate,
+      );
+    } catch (error: unknown) {
+      if (error instanceof AttendanceExceptionError) {
+        resolutionException = error;
+      } else {
+        throw error;
+      }
+    }
+    const overlays = await this.appliedCorrectionOverlays(
+      transaction,
+      context.agencyId,
+      employeeId,
+    );
+    return resolution
+      ? this.calculateResolved(transaction, context, resolution, workDate, overlays)
+      : this.unresolvedCalculation(resolutionException!, employeeId, workDate, now);
   }
 
   /**
@@ -1028,6 +1069,9 @@ export class AttendanceDaysService {
         workArrangementVersionId: resolution.workArrangementVersion.id,
         holidayCalendarVersionId: resolution.holidayCalendarVersion.id,
       },
+      unplacedSources: postedLeave
+        .filter((entry) => entry.ambiguousReason !== null)
+        .map((entry) => ({ sourceType: 'POSTED_LEAVE', sourceId: entry.inputId })),
     });
     return {
       fingerprint,

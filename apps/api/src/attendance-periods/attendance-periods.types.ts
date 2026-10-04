@@ -126,6 +126,8 @@ export interface AttendancePeriodVersionSummary {
   coveredEmployeeCount: number;
   coveredWorkDateCount: number;
   dtrCount: number;
+  /** Bound Attendance Days since recalculated; such a version can never lock. */
+  supersededDayCount: number;
   publication: AttendancePayrollPublicationSummary | null;
 }
 

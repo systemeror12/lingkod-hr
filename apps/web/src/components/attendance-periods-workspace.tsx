@@ -39,6 +39,7 @@ interface AttendancePeriodVersion {
   coveredEmployeeCount: number;
   coveredWorkDateCount: number;
   dtrCount: number;
+  supersededDayCount: number;
   publication: AttendancePayrollPublication | null;
 }
 
@@ -287,8 +288,11 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
     );
   }
 
+  // An APPROVED version whose bound Attendance Days were recalculated can never lock.
   const hasPendingVersion = (versions ?? []).some(
-    (version) => version.status === 'FOR_REVIEW' || version.status === 'APPROVED',
+    (version) =>
+      version.status === 'FOR_REVIEW' ||
+      (version.status === 'APPROVED' && version.supersededDayCount === 0),
   );
   const selectedPeriod = periods.find((period) => period.id === selectedPeriodId);
 
@@ -407,6 +411,11 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
                     {version.coveredEmployeeCount} covered Employee(s) ·{' '}
                     {version.coveredWorkDateCount} Work Date(s) · {version.dtrCount} Finalized Daily
                     Time Record(s)
+                    {version.supersededDayCount > 0 ? (
+                      <span className="block text-caption text-danger">
+                        {version.supersededDayCount} Attendance Day(s) recalculated since submission
+                      </span>
+                    ) : null}
                   </Td>
                   <Td>
                     {version.publication ? (
@@ -440,7 +449,9 @@ export function AttendancePeriodsWorkspace(props: AttendancePeriodsWorkspaceProp
                           Approve
                         </Button>
                       ) : null}
-                      {props.canLock && version.status === 'APPROVED' ? (
+                      {props.canLock &&
+                      version.status === 'APPROVED' &&
+                      version.supersededDayCount === 0 ? (
                         <Button
                           type="button"
                           variant="primary"

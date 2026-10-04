@@ -212,7 +212,7 @@ export function attendanceWorkflowServices() {
   );
   const dtrs = new DtrsService(dtrAuditWriter, documents);
   const approvals = new ApprovalsService(approvalAuditWriter, new ApprovalCompletionRegistry());
-  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs);
+  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs, days);
   return {
     documents,
     schedules,
