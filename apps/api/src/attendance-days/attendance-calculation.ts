@@ -89,6 +89,11 @@ export interface AttendanceDayCalculationInput {
   /** Authority-backed effect per holiday classification of the Work Schedule Version. */
   holidayEffectRules: Record<string, unknown>;
   governingVersions?: AttendanceDayGoverningVersions | undefined;
+  /**
+   * Sources the calculation could not place, such as an ambiguous posted-leave
+   * quantity. They contribute no coverage but still change the Day's inputs.
+   */
+  unplacedSources?: readonly { sourceType: string; sourceId: string }[] | undefined;
 }
 
 export interface AttendanceCalculationSegment {
@@ -849,6 +854,14 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
     ),
     holidayEffectRules: input.holidayEffectRules,
     governingVersions: input.governingVersions,
+    // Omitted when empty so fingerprints of Days without such sources stay stable.
+    ...(input.unplacedSources?.length
+      ? {
+          unplacedSources: [...input.unplacedSources]
+            .map(({ sourceType, sourceId }) => ({ sourceType, sourceId }))
+            .sort((left, right) => left.sourceId.localeCompare(right.sourceId)),
+        }
+      : {}),
   });
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }

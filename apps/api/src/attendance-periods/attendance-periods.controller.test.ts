@@ -117,6 +117,7 @@ describe('AttendancePeriodsController', () => {
         coveredEmployeeCount: 1,
         coveredWorkDateCount: 1,
         dtrCount: 0,
+        supersededDayCount: 0,
         publication: null,
       },
       reconciliation: null,

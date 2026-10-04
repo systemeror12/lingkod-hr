@@ -364,6 +364,7 @@ it.skipIf(!enabled)(
       attendancePeriodAuditWriter,
       approvals,
       dtrs,
+      attendanceDays,
     );
     const attendanceCorrections = new AttendanceCorrectionsService(
       attendanceCorrectionAuditWriter,

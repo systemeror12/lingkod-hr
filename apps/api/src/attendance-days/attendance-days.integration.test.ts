@@ -656,7 +656,10 @@ it.skipIf(!enabled)(
         absenceMinutes: 480,
       });
 
-      // A half-day quantity has no clock placement, so the day blocks.
+      // A half-day quantity has no clock placement, so the day blocks. The
+      // unplaceable input still changes the Day's sources, so it recalculates.
+      const beforeLeave = await calculate(ambiguousDate);
+      expect(beforeLeave.days[0]?.outcome).toBe('CREATED');
       await createInput({
         sourceKey: `${suffix}-half-day`,
         employeeId: employee.id,
@@ -669,6 +672,7 @@ it.skipIf(!enabled)(
         allocationKind: 'LEAVE_ACCOUNT',
       });
       const ambiguous = await calculate(ambiguousDate);
+      expect(ambiguous.days[0]?.outcome).toBe('RECALCULATED');
       expect(ambiguous.days[0]?.status).toBe('EXCEPTION');
       expect(ambiguous.days[0]?.exceptionTypes).toContain('AMBIGUOUS_LEAVE_QUANTITY');
     } finally {

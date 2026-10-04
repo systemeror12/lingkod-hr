@@ -373,7 +373,7 @@ function services() {
   const registry = new ApprovalCompletionRegistry();
   const approvals = new ApprovalsService(approvalAuditWriter, registry);
   const dtrs = new DtrsService(dtrAuditWriter, documentsService);
-  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs);
+  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs, days);
   const corrections = new AttendanceCorrectionsService(
     attendanceCorrectionAuditWriter,
     approvals,
