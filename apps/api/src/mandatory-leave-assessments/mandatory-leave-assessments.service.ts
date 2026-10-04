@@ -640,7 +640,15 @@ export class MandatoryLeaveAssessmentsService {
     const ledgerEntries = accountIds.length
       ? await transaction.leaveLedgerEntry.findMany({
           where: { agencyId, leaveAccountId: { in: accountIds }, effectiveDate: { lte: asOfDate } },
-          select: { id: true, leaveAccountId: true, effectiveDate: true, quantity: true },
+          // Posting order at PostgreSQL's microsecond precision, which Date would truncate.
+          orderBy: [{ postedAt: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            leaveAccountId: true,
+            effectiveDate: true,
+            quantity: true,
+            reversesEntryId: true,
+          },
         })
       : [];
     const lines = accountIds.length
@@ -702,6 +710,7 @@ export class MandatoryLeaveAssessmentsService {
         leaveAccountId: entry.leaveAccountId,
         effectiveDate: formatDate(entry.effectiveDate),
         quantity: entry.quantity.toFixed(4),
+        reversesEntryId: entry.reversesEntryId,
       })),
       allocations: lines.map((line) => ({
         lineId: line.id,
