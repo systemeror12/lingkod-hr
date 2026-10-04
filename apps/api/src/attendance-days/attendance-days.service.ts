@@ -1014,6 +1014,14 @@ export class AttendanceDaysService {
       context.agencyId,
       resolution.employeeId,
       workDate,
+      (dateFrom, dateTo) =>
+        this.assignments.workingDatesInTransaction(
+          transaction,
+          context.agencyId,
+          resolution.employeeId,
+          dateFrom,
+          dateTo,
+        ),
     );
     const leaveExceptions: AttendanceCalculationException[] = [];
     for (const entry of postedLeave) {

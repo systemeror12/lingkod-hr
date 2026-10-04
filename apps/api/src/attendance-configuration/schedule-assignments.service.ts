@@ -11,8 +11,10 @@ import {
 import {
   AttendanceConfigurationServiceError,
   AttendanceExceptionError,
+  addDays,
   formatDate,
   manilaToday,
+  NON_WORKING_HOLIDAY_DAY_TYPES,
   toDatabaseDate,
   WORK_SCHEDULE_TYPES,
   type AttendanceExceptionType,
@@ -617,6 +619,46 @@ export class ScheduleAssignmentsService {
         (entry) => entry.holidayDate === holidayDate,
       ),
     };
+  }
+
+  /**
+   * Count the working dates from `dateFromValue` through `dateToValue` under
+   * the Employee's resolved schedule, the way Leave counts working days: a
+   * REST Day Rule or a non-working holiday is not a working date. Returns
+   * null when any date in the range cannot be resolved, so callers fail closed.
+   */
+  async workingDatesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    dateFromValue: string,
+    dateToValue: string,
+  ): Promise<number | null> {
+    let workingDates = 0;
+    const dateTo = toDatabaseDate(dateToValue);
+    for (
+      let date = toDatabaseDate(dateFromValue);
+      date.getTime() <= dateTo.getTime();
+      date = addDays(date, 1)
+    ) {
+      let resolution: AttendanceResolution;
+      try {
+        resolution = await this.resolveForWorkDateInTransaction(
+          transaction,
+          agencyId,
+          employeeId,
+          formatDate(date),
+        );
+      } catch (error: unknown) {
+        if (error instanceof AttendanceExceptionError) return null;
+        throw error;
+      }
+      const nonWorkingHoliday = resolution.holidayEntries.some((entry) =>
+        (NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType),
+      );
+      if (resolution.dayRule.ruleType !== 'REST' && !nonWorkingHoliday) workingDates += 1;
+    }
+    return workingDates;
   }
 
   private async assertApplicable(

@@ -14,6 +14,8 @@ import { attendanceCorrectionAuditWriter } from '../attendance-corrections/atten
 import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
 import { ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE } from '../attendance-corrections/attendance-corrections.types';
 import { attendancePeriodAuditWriter } from '../attendance-periods/attendance-periods.audit';
+import { attendanceSubmissionAuditWriter } from '../attendance-submissions/attendance-submissions.audit';
+import { AttendanceSubmissionsService } from '../attendance-submissions/attendance-submissions.service';
 import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
 import { dtrAuditWriter } from '../dtrs/dtrs.audit';
 import { DtrsService } from '../dtrs/dtrs.service';
@@ -361,6 +363,11 @@ it.skipIf(!enabled)(
       postedLeaveInputs,
     );
     const dtrs = new DtrsService(dtrAuditWriter, documents);
+    const attendanceSubmissions = new AttendanceSubmissionsService(
+      attendanceSubmissionAuditWriter,
+      documents,
+      attendanceDays,
+    );
     const attendancePeriods = new AttendancePeriodsService(
       attendancePeriodAuditWriter,
       approvals,
@@ -3695,6 +3702,95 @@ it.skipIf(!enabled)(
           admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } }),
         ).resolves.toBe(ledgerBeforeVacation + 5);
       }
+
+      // A partial approval of two working days over three working dates has no
+      // placement Attendance may assume, so every affected Day blocks instead of
+      // excusing three dates, and the Employee's attendance cannot be approved.
+      await admin.leaveLedgerEntry.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: specialAccount.id,
+          quantity: 3,
+          effectiveDate: new Date(`${manilaDate(-5)}T00:00:00.000Z`),
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'narrowed-approval-credits',
+          policyVersionId: reviewPolicyVersion.id,
+        },
+      });
+      const narrowedMonday = nextMonday(98);
+      const narrowedDates = [0, 1, 2].map((offset) => addDays(narrowedMonday, offset));
+      const narrowedDraft = await applications.create(agencyContext, {
+        employeeId: employee.id,
+        leaveTypeId: specialLeave.id,
+      });
+      const narrowedId = narrowedDraft.application.id;
+      await applications.update(agencyContext, narrowedId, {
+        reason: 'Three days requested; two approved.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: narrowedDates[0]!, dateTo: narrowedDates[2]! }],
+        documents: [
+          { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await applications.submit(employeeContext, narrowedId, submitInput);
+      await applications.route(recorderContext, narrowedId);
+      await applications.certify(recorderContext, narrowedId, {});
+      const narrowedRecommended = await applications.recommend(supervisorContext, narrowedId, {
+        outcome: 'RECOMMEND_APPROVAL',
+      });
+      await applications.decide(approverContext, narrowedId, {
+        decision: 'APPROVE',
+        allocations: [
+          {
+            segmentId: narrowedRecommended.versions.at(-1)!.calculationSegments[0]!.id,
+            quantity: '2',
+          },
+        ],
+      });
+      const narrowedPosting = await applications.post(
+        postingContext,
+        narrowedId,
+        `post-narrowed-${suffix}`,
+      );
+      expect(narrowedPosting.versions.at(-1)!.approvalAllocation!.lines).toMatchObject([
+        { quantity: '2.0000', unitCode: 'WORKING_DAY' },
+      ]);
+      const narrowedPeriod = await attendanceDays.calculate(attendanceContext, {
+        periodCode: `LEAVE-NARROWED-${suffix}`,
+        dateFrom: narrowedDates[0]!,
+        dateTo: narrowedDates[2]!,
+        employeeIds: [employee.id],
+      });
+      expect(
+        narrowedPeriod.days.map(({ workDate, status, exceptionTypes }) => ({
+          workDate,
+          status,
+          ambiguous: exceptionTypes.includes('AMBIGUOUS_LEAVE_QUANTITY'),
+        })),
+      ).toEqual(
+        narrowedDates.map((workDate) => ({ workDate, status: 'EXCEPTION', ambiguous: true })),
+      );
+      for (const workDate of narrowedDates) {
+        expect(await postedDayTotals(workDate)).toMatchObject({ postedLeaveMinutes: 0 });
+      }
+      const submitterContext = context(agency.id, user.id, membership.id, [
+        { code: 'attendance.submissions.create', scopePolicy: 'OWN' },
+        { code: 'attendance.submissions.submit', scopePolicy: 'OWN' },
+      ]);
+      const reviewerContext = context(agency.id, supervisorUser.id, supervisorMembership.id, [
+        { code: 'attendance.submissions.approve', scopePolicy: 'AGENCY' },
+      ]);
+      const narrowedSubmission = await attendanceSubmissions.create(submitterContext, {
+        attendancePeriodId: narrowedPeriod.period.id,
+      });
+      await attendanceSubmissions.submit(submitterContext, narrowedSubmission.submission.id);
+      await expect(
+        attendanceSubmissions.approve(reviewerContext, narrowedSubmission.submission.id, {}),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_SUBMISSION_NOT_APPROVABLE',
+        statusCode: 409,
+      });
 
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {

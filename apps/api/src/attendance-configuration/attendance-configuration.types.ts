@@ -39,6 +39,14 @@ export const HOLIDAY_DAY_TYPES = [
 ] as const;
 export type HolidayDayType = (typeof HOLIDAY_DAY_TYPES)[number];
 
+/** Holiday classifications on which a working-day count excludes the date. */
+export const NON_WORKING_HOLIDAY_DAY_TYPES = [
+  'REGULAR_HOLIDAY',
+  'SPECIAL_NON_WORKING',
+  'LOCAL_HOLIDAY',
+  'WORK_SUSPENSION',
+] as const satisfies readonly HolidayDayType[];
+
 /** Blocking Attendance Exception causes raised when the calculation inputs cannot be resolved. */
 export const ATTENDANCE_EXCEPTION_TYPES = [
   'MISSING_SERVICE',

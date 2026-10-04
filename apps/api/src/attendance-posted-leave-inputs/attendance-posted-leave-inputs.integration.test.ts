@@ -95,9 +95,18 @@ it.skipIf(!enabled)(
     const inHome = <T>(
       run: (transaction: Parameters<Parameters<typeof withDatabaseContext>[1]>[0]) => Promise<T>,
     ) => withDatabaseContext(homeScope, run);
+    // These dates are weekdays; Attendance Day tests cover the schedule-aware count.
+    const everyDateWorks = async (dateFrom: string, dateTo: string) =>
+      (Date.parse(dateTo) - Date.parse(dateFrom)) / 86_400_000 + 1;
     const coverage = (workDate: string) =>
       inHome((transaction) =>
-        service.coverageInTransaction(transaction, home.agency.id, employee.id, workDate),
+        service.coverageInTransaction(
+          transaction,
+          home.agency.id,
+          employee.id,
+          workDate,
+          everyDateWorks,
+        ),
       );
 
     try {

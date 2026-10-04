@@ -10,6 +10,7 @@ import {
   ApprovalsService,
   type ApprovalCompletionRequest,
 } from '../approvals/approval.service';
+import { NON_WORKING_HOLIDAY_DAY_TYPES } from '../attendance-configuration/attendance-configuration.types';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
@@ -40,7 +41,6 @@ import {
 } from '../leave-policies/leave-catalogue';
 import {
   evaluateLeaveEligibility,
-  NON_WORKING_HOLIDAY_DAY_TYPES,
   type LeaveEligibilityDateFact,
   type LeaveEligibilityOutcome,
 } from './leave-eligibility';

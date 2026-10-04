@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { postedLeaveAmbiguity } from './attendance-posted-leave-inputs.types';
+import { postedLeaveAmbiguity, workingDayAmbiguity } from './attendance-posted-leave-inputs.types';
 
 const range = { dateFrom: '2026-01-05', dateTo: '2026-01-07' };
 
 describe('postedLeaveAmbiguity', () => {
-  it('places whole working days inside the date range', () => {
-    expect(postedLeaveAmbiguity({ ...range, unitCode: 'WORKING_DAY', quantity: 3 })).toBeNull();
+  it('leaves whole working days to the schedule-aware working-day check', () => {
     expect(postedLeaveAmbiguity({ ...range, unitCode: 'WORKING_DAY', quantity: 2 })).toBeNull();
   });
 
@@ -27,16 +26,28 @@ describe('postedLeaveAmbiguity', () => {
     ).toMatch(/fraction/i);
   });
 
-  it('rejects a working-day quantity larger than the range', () => {
-    expect(postedLeaveAmbiguity({ ...range, unitCode: 'WORKING_DAY', quantity: 4 })).toMatch(
-      /exceeds/i,
-    );
-  });
-
   it.each(['SCHEDULED_MINUTE', 'SOURCE_DEFINED'] as const)(
     'rejects the %s unit because it carries no whole-day placement',
     (unitCode) => {
       expect(postedLeaveAmbiguity({ ...range, unitCode, quantity: 3 })).toMatch(/clock placement/i);
     },
   );
+});
+
+describe('workingDayAmbiguity', () => {
+  it('places working days only when the quantity equals the working dates of the range', () => {
+    expect(workingDayAmbiguity(3, 3)).toBeNull();
+  });
+
+  it('rejects two approved working days over three working dates', () => {
+    expect(workingDayAmbiguity(2, 3)).toMatch(/working dates/i);
+  });
+
+  it('rejects a quantity larger than the working dates of the range', () => {
+    expect(workingDayAmbiguity(4, 3)).toMatch(/working dates/i);
+  });
+
+  it('fails closed when the schedule of the range cannot be resolved', () => {
+    expect(workingDayAmbiguity(3, null)).toMatch(/schedule/i);
+  });
 });

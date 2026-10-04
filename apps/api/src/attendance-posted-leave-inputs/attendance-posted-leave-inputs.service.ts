@@ -8,6 +8,7 @@ import {
   invalid,
   postedLeaveAmbiguity,
   toDatabaseDate,
+  workingDayAmbiguity,
   type CreatePostedLeaveInput,
   type PostedLeaveAllocationKind,
   type PostedLeaveDayCoverage,
@@ -117,13 +118,16 @@ export class AttendancePostedLeaveInputsService {
    * Current posted leave covering one Work Date. A zero-quantity successor
    * withdraws coverage, so it never appears here. An input whose quantity
    * Attendance cannot place as whole-day coverage returns an ambiguity instead
-   * of an assumed interval, so the calculation can fail closed.
+   * of an assumed interval, so the calculation can fail closed. Working-day
+   * inputs sharing a date range must together equal the working dates
+   * `workingDates` counts for that range under the Employee's schedule.
    */
   async coverageInTransaction(
     transaction: Prisma.TransactionClient,
     agencyId: string,
     employeeId: string,
     workDateValue: string,
+    workingDates: (dateFrom: string, dateTo: string) => Promise<number | null>,
   ): Promise<PostedLeaveDayCoverage[]> {
     const workDate = toDatabaseDate(workDateValue);
     const inputs = await transaction.attendancePostedLeaveInput.findMany({
@@ -137,23 +141,57 @@ export class AttendancePostedLeaveInputsService {
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    return inputs.map((input) => {
+    // Every input sharing a range covers this Work Date, so each range's
+    // combined quantity is the same on every date it covers.
+    const rangeQuantities = new Map<string, Prisma.Decimal>();
+    for (const input of inputs) {
+      if (input.unitCode !== 'WORKING_DAY') continue;
+      const range = rangeKey(input);
+      rangeQuantities.set(
+        range,
+        (rangeQuantities.get(range) ?? new Prisma.Decimal(0)).plus(input.quantity),
+      );
+    }
+    const rangeAmbiguities = new Map<string, string | null>();
+    const coverage: PostedLeaveDayCoverage[] = [];
+    for (const input of inputs) {
       const quantity = input.quantity.toNumber();
-      return {
+      const dateFrom = formatDate(input.dateFrom);
+      const dateTo = formatDate(input.dateTo);
+      let ambiguousReason = postedLeaveAmbiguity({
+        dateFrom,
+        dateTo,
+        unitCode: input.unitCode as CreatePostedLeaveInput['unitCode'],
+        quantity,
+      });
+      if (ambiguousReason === null && input.unitCode === 'WORKING_DAY') {
+        const range = rangeKey(input);
+        if (!rangeAmbiguities.has(range)) {
+          rangeAmbiguities.set(
+            range,
+            workingDayAmbiguity(
+              rangeQuantities.get(range)!.toNumber(),
+              await workingDates(dateFrom, dateTo),
+            ),
+          );
+        }
+        ambiguousReason = rangeAmbiguities.get(range)!;
+      }
+      coverage.push({
         inputId: input.id,
         sourceType: input.sourceType,
         sourceId: input.sourceId,
         allocationKind: input.allocationKind as PostedLeaveAllocationKind,
         quantity,
-        ambiguousReason: postedLeaveAmbiguity({
-          dateFrom: formatDate(input.dateFrom),
-          dateTo: formatDate(input.dateTo),
-          unitCode: input.unitCode as CreatePostedLeaveInput['unitCode'],
-          quantity,
-        }),
-      };
-    });
+        ambiguousReason,
+      });
+    }
+    return coverage;
   }
+}
+
+function rangeKey(input: { dateFrom: Date; dateTo: Date }): string {
+  return `${formatDate(input.dateFrom)}/${formatDate(input.dateTo)}`;
 }
 
 interface PostedLeaveInputFacts {
