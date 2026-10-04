@@ -19,9 +19,11 @@ are effective-dated.
 An Employee's Supervisor is the current incumbent of the head Plantilla
 Position of the Organization Unit the Employee serves in. The head of a unit
 reports to the head of its parent unit. The relationship is resolved from
-records in effect on the date of the read: an `ACTIVE` Organization Unit
-Version with an `ACTIVE` domain status, an `ACTIVE` Position Incumbency, and
-an `ACTIVE` Service Segment, each covering that date.
+records in effect on the date of the read: the Organization Unit Version with
+an `ACTIVE` domain status, the Position Incumbency, and the Service Segment
+whose effective period covers that date. A record closed early by an approved
+future-dated change stays in effect until its end date; voided records never
+count.
 
 "Direct reports" means one level only. A Supervisor's direct reports are:
 
@@ -33,9 +35,10 @@ Supervisor above. If the child unit's head position is vacant, its Employees
 have no direct-report Supervisor until it is filled. A Supervisor is never
 their own direct report.
 
-The decision was made by the developer on issue #445 after no CSC or BRD
-source defined the relationship. Depth was left unstated, so the literal,
-narrowest reading applies.
+The developer chose the Organization Unit head as the source on issue #445
+after no CSC or BRD source defined the relationship. Depth was not answered.
+One level is provisional, taken as the literal reading of "direct reports",
+until the developer confirms it.
 
 ## Consequences
 

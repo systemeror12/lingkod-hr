@@ -459,7 +459,7 @@ export class MandatoryLeaveAssessmentsService {
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.year ? { assessmentYear: filters.year } : {}),
           ...(filters.result ? { result: filters.result } : {}),
-          ...(readable ? { employee: { id: { in: readable } } } : {}),
+          ...(readable ? { employeeId: { in: readable } } : {}),
           ...(cursor ? { AND: [afterCursor(cursor)] } : {}),
         },
         orderBy: [
@@ -850,18 +850,17 @@ function hasScope(context: RequestContext, code: string, scopePolicy: string): b
   );
 }
 
-type ReadScope = 'AGENCY' | 'OWN' | 'DIRECT_REPORTS';
-const READ_SCOPES: readonly string[] = ['AGENCY', 'OWN', 'DIRECT_REPORTS'] satisfies ReadScope[];
+const READ_SCOPES = ['AGENCY', 'OWN', 'DIRECT_REPORTS'] as const;
+type ReadScope = (typeof READ_SCOPES)[number];
+const isReadScope = (scope: string): scope is ReadScope =>
+  (READ_SCOPES as readonly string[]).includes(scope);
 
 function requireReadScopes(context: RequestContext): ReadonlySet<ReadScope> {
   const scopes = new Set(
     context.permissions
-      .filter(
-        (grant) =>
-          grant.code === 'leave.mandatory_assessments.read' &&
-          READ_SCOPES.includes(grant.scopePolicy),
-      )
-      .map((grant) => grant.scopePolicy as ReadScope),
+      .filter((grant) => grant.code === 'leave.mandatory_assessments.read')
+      .map((grant) => grant.scopePolicy)
+      .filter(isReadScope),
   );
   if (scopes.size === 0) {
     throw new MandatoryLeaveAssessmentServiceError(

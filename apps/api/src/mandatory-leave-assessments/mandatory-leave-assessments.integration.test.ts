@@ -1006,7 +1006,13 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
     data: { agencyId: agency.id, userId: unlinkedUser.id, status: 'ACTIVE' },
   });
   try {
-    const unit = async (code: string, parentUnitId: string | null, headPositionId: string) => {
+    // A record closed on a future date stays in effect until then.
+    const unit = async (
+      code: string,
+      parentUnitId: string | null,
+      headPositionId: string,
+      effectiveTo: string | null = null,
+    ) => {
       const record = await admin.organizationUnit.create({
         data: {
           agencyId: agency.id,
@@ -1024,7 +1030,8 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
           parentUnitId,
           headPositionId,
           effectiveFrom: new Date('2020-01-01'),
-          status: 'ACTIVE',
+          effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+          status: effectiveTo ? 'SUPERSEDED' : 'ACTIVE',
           domainStatus: 'ACTIVE',
         },
       });
@@ -1070,7 +1077,7 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
               appointmentStatus: 'PERMANENT',
               effectiveFrom: new Date('2020-01-01'),
               effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
-              status: 'ACTIVE',
+              status: effectiveTo ? 'CLOSED' : 'ACTIVE',
               createdByMembershipId: membership.id,
             },
           });
@@ -1082,7 +1089,8 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
                 employeeId,
                 serviceSegmentId: segment.id,
                 effectiveFrom: new Date('2020-01-01'),
-                status: 'ACTIVE',
+                effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+                status: effectiveTo ? 'ENDED' : 'ACTIVE',
                 createdByMembershipId: membership.id,
               },
             });
@@ -1093,7 +1101,7 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
     const chiefPosition = await position('CHIEF');
     const sectionHeadPosition = await position('SECTION-HEAD');
     const otherChiefPosition = await position('OTHER-CHIEF');
-    const division = await unit('DIV', null, chiefPosition.id);
+    const division = await unit('DIV', null, chiefPosition.id, manilaDate(1));
     const section = await unit('SEC', division.id, sectionHeadPosition.id);
     const otherDivision = await unit('OTHER', null, otherChiefPosition.id);
 
@@ -1139,8 +1147,8 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
       `${suffix}-6`,
       'Fay Former',
     );
-    await assign(chief.id, division.id, chiefPosition.id);
-    await assign(member.id, division.id, null);
+    await assign(chief.id, division.id, chiefPosition.id, manilaDate(1));
+    await assign(member.id, division.id, null, manilaDate(1));
     await assign(sectionHead.id, section.id, sectionHeadPosition.id);
     await assign(sectionMember.id, section.id, null);
     await assign(outsider.id, otherDivision.id, null);

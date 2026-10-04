@@ -225,7 +225,7 @@ An agency-scoped role responsible for broad human-resource management without un
 _Avoid_: Agency Administrator, HRMO Administrator, Attendance Administrator
 
 **Supervisor**:
-An agency-scoped role for the incumbent of an Organization Unit's head Plantilla Position. It acts only on that person's Direct Reports and on approval tasks routed to them.
+An agency-scoped role for the incumbent of an Organization Unit's head Plantilla Position. It acts only on that person's Direct Reports.
 _Avoid_: Manager, Approving Official
 
 **Direct Report**:

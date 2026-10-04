@@ -21,26 +21,34 @@ export async function findDirectReportEmployeeIds(
     effectiveFrom: { lte: day },
     OR: [{ effectiveTo: null }, { effectiveTo: { gte: day } }],
   };
-  const activeUnit = { agencyId, status: 'ACTIVE', domainStatus: 'ACTIVE', ...inEffect };
+  // Approving a future-dated change closes the current record early, so a
+  // closed record still counts until its effective end.
+  const unitInEffect = {
+    agencyId,
+    status: { in: ['ACTIVE', 'SUPERSEDED'] },
+    domainStatus: 'ACTIVE',
+    ...inEffect,
+  };
+  const notVoided = { not: 'VOIDED' };
 
   const heldPositions = await transaction.positionIncumbency.findMany({
-    where: { agencyId, employeeId: supervisorEmployeeId, status: 'ACTIVE', ...inEffect },
+    where: { agencyId, employeeId: supervisorEmployeeId, status: notVoided, ...inEffect },
     select: { positionId: true },
   });
   if (heldPositions.length === 0) return [];
   const headedUnits = await transaction.organizationUnitVersion.findMany({
-    where: { ...activeUnit, headPositionId: { in: heldPositions.map((row) => row.positionId) } },
+    where: { ...unitInEffect, headPositionId: { in: heldPositions.map((row) => row.positionId) } },
     select: { organizationUnitId: true },
   });
   if (headedUnits.length === 0) return [];
   const unitIds = headedUnits.map((row) => row.organizationUnitId);
 
   const members = await transaction.serviceSegment.findMany({
-    where: { agencyId, status: 'ACTIVE', organizationUnitId: { in: unitIds }, ...inEffect },
+    where: { agencyId, status: notVoided, organizationUnitId: { in: unitIds }, ...inEffect },
     select: { employeeId: true },
   });
   const childUnits = await transaction.organizationUnitVersion.findMany({
-    where: { ...activeUnit, parentUnitId: { in: unitIds }, headPositionId: { not: null } },
+    where: { ...unitInEffect, parentUnitId: { in: unitIds }, headPositionId: { not: null } },
     select: { headPositionId: true },
   });
   const childHeadPositionIds = childUnits.flatMap((row) =>
@@ -52,7 +60,7 @@ export async function findDirectReportEmployeeIds(
       : await transaction.positionIncumbency.findMany({
           where: {
             agencyId,
-            status: 'ACTIVE',
+            status: notVoided,
             positionId: { in: childHeadPositionIds },
             ...inEffect,
           },
