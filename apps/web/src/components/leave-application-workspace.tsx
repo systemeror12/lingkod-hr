@@ -616,7 +616,8 @@ export function LeaveApplicationWorkspace({
       .then((value) => {
         const employee = value as EmployeeOption;
         setEmployeeOptions((current) => [employee, ...current]);
-        setEmployeeId(employee.id);
+        // Keep a choice the user made while the lookup was pending.
+        setEmployeeId((current) => current || employee.id);
       })
       .catch(() => undefined);
   }, [employeeOptions, leaveTypeOptions]);

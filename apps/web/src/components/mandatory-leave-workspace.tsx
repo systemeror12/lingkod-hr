@@ -64,6 +64,19 @@ interface MandatoryLeaveAssessmentDetail extends MandatoryLeaveAssessment {
       reached: boolean;
       reachedOn: string | null;
     } | null;
+    vacationAccount: { id: string; status: string; openedAt: string } | null;
+    balanceFacts: { openingBalance: string; balanceAsOf: string; ledgerEntryIds: string[] } | null;
+    fulfillmentFacts: {
+      allocations: {
+        lineId: string;
+        leavePostingId: string;
+        leaveApplicationVersionId: string;
+        dateFrom: string;
+        dateTo: string;
+        netQuantity: string;
+      }[];
+      unattributableLineIds: string[];
+    } | null;
     indeterminateReasons: string[];
   };
   ruleResults: {
@@ -127,6 +140,83 @@ function Fact({ label, value }: { label: string; value: string }) {
       <dt className="text-caption text-ink-muted">{label}</dt>
       <dd className="m-0 text-body font-[600] text-ink">{value}</dd>
     </div>
+  );
+}
+
+const sourceIdClass = 'font-mono text-caption text-ink-muted [overflow-wrap:anywhere]';
+
+/** The account, ledger entries, and postings the assessment read, as recorded in its input facts. */
+function Sources({ facts }: { facts: MandatoryLeaveAssessmentDetail['inputFacts'] }) {
+  const { vacationAccount, balanceFacts, fulfillmentFacts } = facts;
+  if (!vacationAccount && !balanceFacts && !fulfillmentFacts) return null;
+  return (
+    <section className="grid gap-3" aria-labelledby="mandatory-leave-sources-heading">
+      <h3 className={sectionTitleClass} id="mandatory-leave-sources-heading">
+        Sources
+      </h3>
+      <dl className="m-0 grid gap-3">
+        {vacationAccount ? (
+          <div>
+            <dt className="text-caption text-ink-muted">Vacation Leave Account</dt>
+            <dd className={cn('m-0', sourceIdClass)}>
+              {vacationAccount.id} · {vacationAccount.status} · opened{' '}
+              {dateLabel(vacationAccount.openedAt)}
+            </dd>
+          </div>
+        ) : null}
+        {balanceFacts ? (
+          <div>
+            <dt className="text-caption text-ink-muted">
+              Ledger entries through {dateLabel(balanceFacts.balanceAsOf)} (opening balance{' '}
+              {quantityLabel(balanceFacts.openingBalance)})
+            </dt>
+            <dd className="m-0">
+              {balanceFacts.ledgerEntryIds.length === 0 ? (
+                <span className="text-caption text-ink-muted">None</span>
+              ) : (
+                <ul className="m-0 grid gap-0.5 p-0 [list-style:none]">
+                  {balanceFacts.ledgerEntryIds.map((id) => (
+                    <li className={sourceIdClass} key={id}>
+                      {id}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </dd>
+          </div>
+        ) : null}
+        {fulfillmentFacts ? (
+          <div>
+            <dt className="text-caption text-ink-muted">Posted leave counted</dt>
+            <dd className="m-0">
+              {fulfillmentFacts.allocations.length === 0 ? (
+                <span className="text-caption text-ink-muted">None</span>
+              ) : (
+                <ul className="m-0 grid gap-1 p-0 [list-style:none]">
+                  {fulfillmentFacts.allocations.map((line) => (
+                    <li className="grid gap-0.5" key={line.lineId}>
+                      <span className="text-small text-ink">
+                        {dateLabel(line.dateFrom)} – {dateLabel(line.dateTo)}:{' '}
+                        {quantityLabel(line.netQuantity)} working days
+                      </span>
+                      <span className={sourceIdClass}>
+                        Posting {line.leavePostingId} · Application version{' '}
+                        {line.leaveApplicationVersionId}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {fulfillmentFacts.unattributableLineIds.length > 0 ? (
+                <p className={cn('m-0 mt-1', sourceIdClass)}>
+                  Not counted: {fulfillmentFacts.unattributableLineIds.join(', ')}
+                </p>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
   );
 }
 
@@ -272,7 +362,7 @@ export function MandatoryLeaveWorkspace({
           actions={
             canEvaluate ? (
               <Button
-                disabled={busy}
+                disabled={busy || loadingMore}
                 hidden={recordId !== null}
                 onClick={() => void evaluate()}
                 type="button"
@@ -405,7 +495,7 @@ export function MandatoryLeaveWorkspace({
                 {nextCursor ? (
                   <div className="px-4 py-3">
                     <Button
-                      disabled={loadingMore}
+                      disabled={loadingMore || busy}
                       onClick={() => void loadMore()}
                       type="button"
                       variant="secondary"
@@ -509,7 +599,7 @@ export function MandatoryLeaveWorkspace({
                 {canFile && remaining !== null && remaining !== '0' ? (
                   <p className="m-0 text-small text-ink-muted">
                     File ordinary leave to fulfill the obligation. Mandatory Leave and Vacation
-                    Leave both charge the Vacation Leave Account, and approved days of either count
+                    Leave both charge the Vacation Leave Account, and posted days of either count
                     once the year is evaluated again.
                   </p>
                 ) : null}
@@ -530,6 +620,8 @@ export function MandatoryLeaveWorkspace({
                   </ul>
                 </section>
               ) : null}
+
+              <Sources facts={detail.inputFacts} />
 
               <section className="grid gap-3" aria-labelledby="mandatory-leave-rules-heading">
                 <h3 className={sectionTitleClass} id="mandatory-leave-rules-heading">

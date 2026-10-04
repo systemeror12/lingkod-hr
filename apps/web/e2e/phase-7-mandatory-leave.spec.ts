@@ -94,6 +94,54 @@ async function ensureLeavePolicy(
   return { id: leaveType.id, effectiveFrom };
 }
 
+/** Reuse an active approval route for the code, or create and activate the next version. */
+async function ensureApprovalRoute(
+  page: Page,
+  agencyBase: string,
+  headers: Record<string, string>,
+  routeCode: string,
+  membershipId: string,
+): Promise<void> {
+  const { routes } = await apiBody<{ routes: { status: string; versionNo: number }[] }>(
+    await page.request.get(
+      `${agencyBase}/approval-routes?routeCode=${encodeURIComponent(routeCode)}&limit=50`,
+      { headers },
+    ),
+  );
+  if (routes.some(({ status }) => status === 'ACTIVE')) return;
+  const route = await apiBody<{ id: string }>(
+    await page.request.post(`${agencyBase}/approval-routes`, {
+      headers,
+      data: {
+        routeCode,
+        domain: 'leave',
+        versionNo: Math.max(0, ...routes.map(({ versionNo }) => versionNo)) + 1,
+        effectiveFrom: '2026-01-01',
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'approvals.requests.approve',
+              approvePermission: 'approvals.requests.approve',
+              returnPermission: 'approvals.requests.return',
+              rejectPermission: 'approvals.requests.reject',
+              assignment: { kind: 'MEMBERSHIP', membershipId },
+              requiresSeparateReview: false,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await apiBody(
+    await page.request.post(`${agencyBase}/approval-routes/${route.id}/activate`, {
+      headers,
+      data: { reason: 'Approval route verified for Mandatory Leave coverage.' },
+    }),
+  );
+}
+
 /** The register pages by Employee name; load pages until the row appears. */
 async function findRow(page: Page, employeeNumber: string): Promise<Locator> {
   const row = page.getByRole('row').filter({ hasText: employeeNumber });
@@ -117,12 +165,20 @@ test('evaluates a reached vacation balance, starts fulfillment as an ordinary ap
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 
   const headers = { origin: new URL(page.url()).origin };
-  const session = await apiBody<{ agencyId: string }>(
+  const session = await apiBody<{ agencyId: string; membershipId: string }>(
     await page.request.get('/api/v1/auth/me', { headers }),
   );
   const agencyBase = `/api/v1/agencies/${session.agencyId}`;
   const vacation = await ensureLeavePolicy(page, agencyBase, headers, 'VACATION_LEAVE');
   await ensureLeavePolicy(page, agencyBase, headers, 'MANDATORY_LEAVE');
+  await ensureApprovalRoute(page, agencyBase, headers, 'LEAVE-VL-ROUTE', session.membershipId);
+  const documentVersions = await apiBody<{
+    documents: Array<{ documentId: string; version: { id: string } }>;
+  }>(await page.request.get(`${agencyBase}/documents/versions`, { headers }));
+  const formTemplate = documentVersions.documents.find(
+    ({ documentId }) => documentId === nationalRuleDocumentId,
+  );
+  if (!formTemplate) throw new Error('The national rule Document Version fixture is missing.');
 
   const stamp = Date.now();
   const employeeNumber = `E2E-ML-${stamp}`;
@@ -138,6 +194,58 @@ test('evaluates a reached vacation balance, starts fulfillment as an ordinary ap
         civilStatus: 'SINGLE',
         contactEmail: `mandatory-leave-${stamp}@example.test`,
       },
+    }),
+  );
+  // Filing needs service and a schedule on the leave dates. Appointment is out of this journey's
+  // scope, so give the Employee the seeded E2E-0001 service and schedule terms.
+  await withAdmin((admin) =>
+    admin.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        "SELECT set_config('app.personnel_baseline_transition', 'on', true)",
+      );
+      const seeded = await tx.employee.findFirstOrThrow({
+        where: { agencyId: session.agencyId, employeeNumber: 'E2E-0001' },
+        select: { id: true, currentServiceSegmentId: true },
+      });
+      const segment = await tx.serviceSegment.findUniqueOrThrow({
+        where: { id: seeded.currentServiceSegmentId! },
+      });
+      const service = await tx.serviceSegment.create({
+        data: {
+          agencyId: segment.agencyId,
+          employeeId: employee.id,
+          positionId: segment.positionId,
+          organizationUnitId: segment.organizationUnitId,
+          appointmentStatus: segment.appointmentStatus,
+          salaryGrade: segment.salaryGrade,
+          salaryStep: segment.salaryStep,
+          effectiveFrom: new Date('2026-01-01'),
+          status: 'ACTIVE',
+          createdByMembershipId: segment.createdByMembershipId,
+        },
+      });
+      await tx.employee.update({
+        where: { id: employee.id },
+        data: { currentServiceSegmentId: service.id },
+      });
+      await tx.$executeRawUnsafe(
+        "SELECT set_config('app.schedule_assignment_transition', 'on', true)",
+      );
+      const assignment = await tx.scheduleAssignment.findFirstOrThrow({
+        where: { agencyId: session.agencyId, employeeId: seeded.id },
+        orderBy: { effectiveFrom: 'desc' },
+      });
+      await tx.scheduleAssignment.create({
+        data: {
+          agencyId: assignment.agencyId,
+          employeeId: employee.id,
+          workScheduleVersionId: assignment.workScheduleVersionId,
+          workArrangementVersionId: assignment.workArrangementVersionId,
+          authorityDocumentVersionId: assignment.authorityDocumentVersionId,
+          effectiveFrom: new Date('2026-01-01'),
+          assignedByMembershipId: assignment.assignedByMembershipId,
+        },
+      });
     }),
   );
   await apiBody(
@@ -173,6 +281,8 @@ test('evaluates a reached vacation balance, starts fulfillment as an ordinary ap
     'The recorded assessment and its reasons. It is not a leave approval, a certification, or a forfeiture.',
   );
   await expect(detail.getByText('BALANCE_THRESHOLD', { exact: true })).toBeVisible();
+  await expect(detail.getByRole('heading', { name: 'Sources' })).toBeVisible();
+  await expect(detail).toContainText('Vacation Leave Account');
   await expect(detail).not.toContainText(/forfeited/i);
 
   await detail.getByRole('link', { name: 'File leave' }).click();
@@ -183,9 +293,30 @@ test('evaluates a reached vacation balance, starts fulfillment as an ordinary ap
     'MANDATORY_LEAVE',
   );
   await prepare.getByRole('button', { name: 'Prepare Leave Application' }).click();
-  await expect(page.getByRole('status').first()).toContainText(
-    'The Leave Application draft was prepared.',
-  );
+  const application = page.getByRole('region', { name: employeeName, exact: true });
+  await expect(application).toContainText('The Leave Application draft was prepared.');
+  await application.getByLabel('Reason').fill('Mandatory leave for the E2E fixture.');
+  await application.getByLabel('Commutation').selectOption('NOT_REQUESTED');
+  await application.getByLabel('Period start').fill('2026-06-01');
+  await application.getByLabel('Period end').fill('2026-06-03');
+  await application.getByRole('button', { name: 'Add evidence' }).click();
+  await application.getByLabel('Evidence Document ID').fill(nationalRuleDocumentId);
+  await application.getByLabel('Evidence purpose').selectOption('SIGNED_LEAVE_APPLICATION_FORM');
+  await application.getByRole('button', { name: 'Add evidence' }).click();
+  await application.getByLabel('Evidence Document ID').last().fill(nationalRuleDocumentId);
+  await application
+    .getByLabel('Evidence purpose')
+    .last()
+    .selectOption('SCHEDULE_OR_CLEARANCE_EVIDENCE');
+  await application.getByRole('button', { name: 'Save draft' }).click();
+  await expect(application).toContainText('The Leave Application draft was saved.');
+  await application.getByLabel('Form template Document Version ID').fill(formTemplate.version.id);
+  await application.getByLabel('Attestation').selectOption('SIGNED_DOCUMENT');
+  await application.getByLabel('Signed document ID').fill(nationalRuleDocumentId);
+  await application.getByLabel('Received at').fill('2026-06-01T09:00');
+  await application.getByRole('button', { name: 'Submit application' }).click();
+  await expect(application).toContainText('The Leave Application was submitted.');
+  await expect(application).toContainText('SUBMITTED');
 
   const invitation = await apiBody<{ activationUrl: string }>(
     await page.request.post(`${agencyBase}/invitations`, {
