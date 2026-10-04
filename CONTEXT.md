@@ -563,8 +563,8 @@ A certified claim against a Leave Account for an unposted request. It reduces cu
 _Avoid_: Pending ledger entry, posted deduction, submitted request hold
 
 **Mandatory Leave Assessment**:
-An explainable, as-of evaluation of whether an Employee is subject to a mandatory or forced leave obligation under an applicable Leave Policy Version. Any resulting obligation is fulfilled through an ordinary Leave Application rather than a separate leave balance or application type.
-_Avoid_: Mandatory leave account, mandatory leave application
+An explainable, as-of evaluation of whether an Employee is subject to a mandatory or forced leave obligation in a calendar year under an applicable Leave Policy Version, and how much of it has been fulfilled. Vacation leave taken in that year through ordinary Leave Applications fulfills the obligation, rather than a separate leave balance or workflow. An assessment reports the obligation; it does not forfeit unused days.
+_Avoid_: Mandatory leave account, mandatory leave application, forfeiture assessment
 
 **Leave Calculation Segment**:
 An immutable portion of a Leave Application Version calculated under one combination of Leave Policy Version, schedule, holiday calendar, and source-prescribed unit.

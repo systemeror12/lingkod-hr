@@ -732,6 +732,30 @@ POSTED
   recertification, unless an authoritative policy provides a different result.
 - A Mandatory Leave Assessment is explainable and policy-derived. It may prompt
   an ordinary Leave Application but cannot approve leave or post a forfeiture.
+- A Mandatory Leave Assessment covers one Employee and calendar year. The
+  Employee is `SUBJECT` when the posted vacation Leave Account balance reached
+  ten or more at any point in that year up to the as-of date, and
+  `NOT_SUBJECT` when it did not. MC41 section 25 states no measurement point;
+  this reading keeps an Employee who already took leave, or who monetized under
+  section 25(d), subject. This is a Project Decision (#439).
+- Fulfillment counts the working dates in that year of posted Leave
+  Application allocations charged to the vacation Leave Account, net of
+  applied cancellations, including posted dates later in the year. Leave
+  without pay, monetization, and ledger adjustments are not leave taken. A met
+  obligation stays `SUBJECT` with fulfilled quantity at least the required
+  quantity.
+- A missing applicable Leave Policy Version or vacation Leave Account produces
+  a persisted `INDETERMINATE` assessment.
+- Leave posting, applied cancellation, Leave Policy Version activation, and
+  every vacation Leave Account ledger entry re-evaluate the affected Employee
+  in the same transaction, for every year from the effective date's year
+  through the current year. An evaluation writes a new assessment only when
+  its result, quantities, threshold basis, or governing Leave Policy Version
+  changed. An explicit Agency and year evaluation covers new years; an
+  Employee with no assessment for a year is shown as not yet evaluated.
+- Phase 7 does not post mandatory-leave forfeiture, so the section 25
+  consultation, schedule, exigency cancellation, and retirement or resignation
+  facts are not recorded. They only prevent forfeiture.
 
 ---
 
@@ -1367,6 +1391,8 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `leave.applications.cancel`             |           — |        C |            — |          — |        — |              — |                  A |                — |       — |
 | `leave.applications.reject_cancel`      |           — |        C |            — |          — |        — |              — |                  A |                — |       — |
 | `leave.applications.apply_cancellation` |           A |        C |            — |          — |        — |              — |                  — |                C |       — |
+| `leave.mandatory_assessments.read`      |           A |        A |            — |          S |        O |              — |                  — |                — |       R |
+| `leave.mandatory_assessments.evaluate`  |           A |        C |            — |          — |        — |              — |                  — |                — |       — |
 | `leave.monetization.create`             |           A |        C |            — |          S |        O |              — |                  — |                — |       — |
 | `leave.monetization.submit`             |           A |        C |            — |          S |        O |              — |                  — |                — |       — |
 | `leave.monetization.certify`            |           C |        C |            A |          — |        — |              — |                  — |                — |       R |

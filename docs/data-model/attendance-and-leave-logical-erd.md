@@ -1029,27 +1029,42 @@ Owner-issued reversal, replacement, or adjustment handoff
 
 ## `mandatory_leave_assessments`
 
-Explainable as-of evaluation of a mandatory or forced leave obligation
+Explainable as-of evaluation of one Employee's mandatory or forced leave
+obligation for one calendar year
 
-| Column             | Logical type | Null? | Key / rule               | Description                                    |
-| ------------------ | ------------ | ----- | ------------------------ | ---------------------------------------------- |
-| id                 | uuid         | No    | PK                       | Assessment                                     |
-| agency_id          | uuid         | No    | FK agencies              | Tenant                                         |
-| employee_id        | uuid         | No    | FK employees             | Employee                                       |
-| policy_version_id  | uuid         | No    | FK leave_policy_versions | Governing rule                                 |
-| leave_account_id   | uuid         | No    | FK leave_accounts        | Vacation Leave Account                         |
-| assessment_date    | date         | No    |                          | As-of date                                     |
-| result             | enum         | No    |                          | SUBJECT, NOT_SUBJECT, INDETERMINATE            |
-| required_quantity  | decimal      | Yes   |                          | Policy-derived annual obligation               |
-| fulfilled_quantity | decimal      | Yes   |                          | Posted qualifying leave as of assessment       |
-| input_facts        | json         | No    |                          | Balance, annual facts, exceptions, and sources |
-| rule_results       | json         | No    |                          | Per-rule explanation                           |
-| assessed_at        | datetime     | No    |                          | Evaluation time                                |
+| Column                 | Logical type | Null? | Key / rule                      | Description                                                        |
+| ---------------------- | ------------ | ----- | ------------------------------- | ------------------------------------------------------------------ |
+| id                     | uuid         | No    | PK                              | Assessment                                                         |
+| agency_id              | uuid         | No    | FK agencies                     | Tenant                                                             |
+| employee_id            | uuid         | No    | FK employees                    | Employee                                                           |
+| assessment_year        | integer      | No    |                                 | Calendar year, January 1 to December 31 in Agency local dates      |
+| policy_version_id      | uuid         | Yes   | FK leave_policy_versions        | Governing `MANDATORY_LEAVE` rule; required unless `INDETERMINATE`  |
+| leave_account_id       | uuid         | Yes   | FK leave_accounts               | Vacation Leave Account; required unless `INDETERMINATE`            |
+| previous_assessment_id | uuid         | Yes   | FK mandatory_leave_assessments  | Assessment for the same Employee and year that this one supersedes |
+| assessment_date        | date         | No    |                                 | As-of date                                                         |
+| result                 | enum         | No    |                                 | SUBJECT, NOT_SUBJECT, INDETERMINATE                                |
+| required_quantity      | decimal      | Yes   | Required when `SUBJECT`         | Policy-derived annual obligation in working days                   |
+| fulfilled_quantity     | decimal      | Yes   | Required unless `INDETERMINATE` | Working dates in the year of posted qualifying leave               |
+| material_fingerprint   | text         | No    |                                 | Hash of result, quantities, threshold basis, and policy version    |
+| input_facts            | json         | No    |                                 | Threshold basis, contributing allocations, missing inputs, sources |
+| rule_results           | json         | No    |                                 | Per-rule explanation                                               |
+| assessed_at            | datetime     | No    |                                 | Evaluation time                                                    |
 
 **Constraints and indexes**
 
-- Material results are retained; repeated identical scheduled evaluations need
-  not create duplicate history.
+- `SUBJECT` means the posted vacation balance reached ten or more at any point
+  in the year up to the as-of date; `NOT_SUBJECT` means it did not. A met
+  obligation stays `SUBJECT` with `fulfilled_quantity >= required_quantity`.
+- Qualifying leave is posted Leave Application allocations charged to the
+  vacation Leave Account, counted by working date within the year and net of
+  applied cancellations. Leave without pay, monetization, and ledger
+  adjustments do not qualify.
+- The as-of date falls inside the assessment year; re-evaluating a past year
+  uses December 31.
+- A new assessment is recorded only when its `material_fingerprint` differs
+  from the latest assessment for the same Employee and year.
+- `previous_assessment_id` is unique, and only one assessment per Employee and
+  year may have none, so concurrent evaluations cannot both append.
 - An assessment may prompt an ordinary Leave Application but cannot approve or
   post leave or forfeiture.
 
@@ -1385,8 +1400,9 @@ One preserved Leave Account balance
   commitments affect availability without changing the posted balance.
 - The source record owns a ledger posting's business meaning.
 - Historical eligibility assessments and credit certifications are immutable.
-- Mandatory leave uses a policy-derived assessment and the ordinary leave
-  application and posting path.
+- Mandatory leave uses a policy-derived assessment per Employee and calendar
+  year and the ordinary leave application and posting path. Phase 7 posts no
+  mandatory-leave forfeiture.
 - Monetization approval, posting, and Payroll acceptance are separate facts;
   rejected or retryable handoffs create no ledger deduction.
 - Terminal Leave Input Snapshots preserve future calculation inputs without

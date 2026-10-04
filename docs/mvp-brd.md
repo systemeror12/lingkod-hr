@@ -872,15 +872,17 @@ Accepted downstream adjustments may remain pending and shall be shown as such.
 ## LEA-006 Mandatory leave
 
 For the ordinary civilian NGA profile, the system shall apply the authoritative
-five-working-day mandatory or forced leave rule to Employees with at least ten
-vacation leave credits, including its cancellation and partial-year exceptions.
-The system shall preserve a material Mandatory Leave Assessment containing its
-as-of policy, balance, qualifying facts, exceptions, result, and explanation.
+five-working-day mandatory or forced leave rule to Employees whose vacation
+leave credits reached ten during the calendar year. The system shall preserve a
+material Mandatory Leave Assessment containing its as-of policy, balance basis,
+qualifying leave, result, and explanation.
 
-A resulting obligation shall use the ordinary Leave Application and vacation
-Leave Account. It shall not create a separate balance, application type, or
-workflow. Any forfeiture shall require its own authoritative source posting and
-shall never be inferred from an alert alone.
+A resulting obligation shall be fulfilled by ordinary vacation leave posted
+against the vacation Leave Account, whether filed as vacation leave or as
+mandatory or forced leave. It shall not create a separate balance or workflow.
+Phase 7 does not post forfeiture of unused mandatory days; any later forfeiture
+shall require its own authoritative source posting and shall never be inferred
+from an assessment or alert.
 
 ## LEA-007 Monetization
 

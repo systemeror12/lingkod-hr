@@ -1432,24 +1432,41 @@ CREATE TABLE mandatory_leave_assessments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
-  policy_version_id uuid NOT NULL,
-  leave_account_id uuid NOT NULL,
+  assessment_year integer NOT NULL CHECK (assessment_year BETWEEN 1900 AND 9999),
+  policy_version_id uuid,
+  leave_account_id uuid,
+  previous_assessment_id uuid,
   assessment_date date NOT NULL,
   result text NOT NULL
     CHECK (result IN ('SUBJECT','NOT_SUBJECT','INDETERMINATE')),
-  required_quantity numeric(12,4),
-  fulfilled_quantity numeric(12,4),
+  required_quantity numeric(12,4) CHECK (required_quantity > 0),
+  fulfilled_quantity numeric(12,4) CHECK (fulfilled_quantity >= 0),
+  material_fingerprint text NOT NULL CHECK (btrim(material_fingerprint) <> ''),
   input_facts jsonb NOT NULL,
   rule_results jsonb NOT NULL,
   assessed_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (extract(year FROM assessment_date) = assessment_year),
+  CHECK (
+    result = 'INDETERMINATE'
+    OR (policy_version_id IS NOT NULL AND leave_account_id IS NOT NULL
+        AND fulfilled_quantity IS NOT NULL)
+  ),
+  CHECK ((result = 'SUBJECT') = (required_quantity IS NOT NULL)),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, policy_version_id)
     REFERENCES leave_policy_versions (agency_id, id),
   FOREIGN KEY (agency_id, leave_account_id)
     REFERENCES leave_accounts (agency_id, id),
+  FOREIGN KEY (agency_id, previous_assessment_id)
+    REFERENCES mandatory_leave_assessments (agency_id, id),
+  UNIQUE (previous_assessment_id),
   UNIQUE (agency_id, id)
 );
+
+CREATE UNIQUE INDEX mandatory_leave_assessments_first_per_year
+  ON mandatory_leave_assessments (agency_id, employee_id, assessment_year)
+  WHERE previous_assessment_id IS NULL;
 ```
 
 Application validation must prove that current versions, assessments, routes,
