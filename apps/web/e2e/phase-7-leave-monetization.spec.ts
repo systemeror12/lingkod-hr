@@ -9,7 +9,7 @@ async function apiBody<T>(response: APIResponse): Promise<T> {
   return JSON.parse(text) as T;
 }
 
-test('processes a Leave Monetization Request from draft through certification and blocks separated funding review', async ({
+test('records a Leave Monetization Request with signed attestation and keeps the recorder from certifying', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -140,6 +140,12 @@ test('processes a Leave Monetization Request from draft through certification an
   await detail.getByRole('button', { name: 'Submit version' }).click();
   const submit = page.getByRole('region', { name: 'Submit Monetization Version' });
   await submit.getByLabel('Form template Document Version ID').fill(formTemplateDocumentVersionId);
+  const attestation = submit.getByRole('combobox', { name: 'Attestation' });
+  await expect(attestation).toHaveValue('SIGNED_DOCUMENT');
+  await expect(attestation.getByRole('option')).toHaveText(['Signed document']);
+  await submit
+    .getByLabel('Signed attestation Document Version ID')
+    .fill(formTemplateDocumentVersionId);
   await submit.getByLabel('Citations (one per line)').fill('CSC MC No. 41, s. 1998, s. 22');
   await submit.getByLabel('Valuation date').fill(accountEffectiveDate);
   await submit.getByLabel('Leave Account 1').selectOption(account.id);
@@ -159,24 +165,15 @@ test('processes a Leave Monetization Request from draft through certification an
   await detail.getByRole('button', { name: 'Certify credits' }).click();
   const certify = page.getByRole('region', { name: 'Certify monetization credits' });
   await certify.getByRole('button', { name: 'Certify credits' }).click();
-  await expect(detail).toContainText('Credits were certified and committed per allocation.');
-  await expect(detail).toContainText('CREDIT CERTIFIED');
-
-  await detail.getByRole('button', { name: 'Determine funding' }).click();
-  const funding = page.getByRole('region', { name: 'Record funding determination' });
-  await funding
-    .getByLabel('Fiscal authority Document Version ID')
-    .fill(formTemplateDocumentVersionId);
-  await funding.getByRole('button', { name: 'Record determination' }).click();
-  await expect(funding.getByRole('alert')).toContainText(
-    'The submitting actor cannot perform this Monetization step.',
+  await expect(certify.getByRole('alert')).toContainText(
+    'The recording actor cannot perform this Monetization step.',
   );
-  await funding.getByRole('button', { name: 'Cancel' }).click();
-  await expect(registerRow).toContainText('CREDIT CERTIFIED');
-  const afterFunding = await apiBody<{
+  await certify.getByRole('button', { name: 'Cancel' }).click();
+  await expect(registerRow).toContainText('SUBMITTED');
+  const afterCertify = await apiBody<{
     items: Array<{ employeeNumber: string; status: string }>;
   }>(await page.request.get(`${agencyBase}/leave-monetization`, { headers }));
   expect(
-    afterFunding.items.find(({ employeeNumber }) => employeeNumber === 'E2E-0001')?.status,
-  ).toBe('CREDIT_CERTIFIED');
+    afterCertify.items.find(({ employeeNumber }) => employeeNumber === 'E2E-0001')?.status,
+  ).toBe('SUBMITTED');
 });

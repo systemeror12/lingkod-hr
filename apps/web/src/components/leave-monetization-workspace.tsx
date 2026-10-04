@@ -146,6 +146,7 @@ export interface MonetizationPage {
   items: MonetizationRequestSummary[];
   hasMore: boolean;
   nextOffset: number | null;
+  actorEmployeeId: string | null;
 }
 
 export interface MonetizationPermissions {
@@ -389,6 +390,9 @@ export function LeaveMonetizationWorkspace({
     'AUTHENTICATED_SUBMISSION' | 'SIGNED_DOCUMENT'
   >('AUTHENTICATED_SUBMISSION');
   const [attestationDocumentVersionId, setAttestationDocumentVersionId] = useState('');
+  // Only the subject Employee may attest by authenticated submission; a recorder needs the signed form.
+  const attestsAsEmployee =
+    initial.actorEmployeeId !== null && detail?.request.employeeId === initial.actorEmployeeId;
   const [citations, setCitations] = useState('');
   const [valuationDate, setValuationDate] = useState('');
   const [fiscalPeriod, setFiscalPeriod] = useState('');
@@ -596,7 +600,7 @@ export function LeaveMonetizationWorkspace({
     setKind((detail.request.kind as MonetizationKind) ?? 'REGULAR');
     setSubmitReason(detail.request.reason ?? '');
     setFormTemplateDocumentVersionId('');
-    setAttestationType('AUTHENTICATED_SUBMISSION');
+    setAttestationType(attestsAsEmployee ? 'AUTHENTICATED_SUBMISSION' : 'SIGNED_DOCUMENT');
     setAttestationDocumentVersionId('');
     setCitations('');
     setValuationDate('');
@@ -1240,6 +1244,12 @@ export function LeaveMonetizationWorkspace({
                   value={submitReason}
                 />
               </Field>
+              {attestsAsEmployee ? null : (
+                <p className="m-0 text-caption text-ink-muted">
+                  You are recording this request for another Employee, so attach their signed
+                  attestation.
+                </p>
+              )}
               <div className="grid gap-4 min-[621px]:grid-cols-2">
                 <Field htmlFor="monetization-attestation" label="Attestation">
                   <select
@@ -1254,7 +1264,9 @@ export function LeaveMonetizationWorkspace({
                     }
                     value={attestationType}
                   >
-                    <option value="AUTHENTICATED_SUBMISSION">Authenticated submission</option>
+                    {attestsAsEmployee ? (
+                      <option value="AUTHENTICATED_SUBMISSION">Authenticated submission</option>
+                    ) : null}
                     <option value="SIGNED_DOCUMENT">Signed document</option>
                   </select>
                 </Field>

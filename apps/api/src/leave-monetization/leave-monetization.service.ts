@@ -166,6 +166,8 @@ export interface MonetizationPage {
   items: MonetizationRequestSummary[];
   hasMore: boolean;
   nextOffset: number | null;
+  /** The acting Membership's own Employee; only that Employee may attest by authenticated submission. */
+  actorEmployeeId: string | null;
 }
 
 export interface MonetizationPostResult {
@@ -343,17 +345,21 @@ export class LeaveMonetizationService implements OnModuleInit {
     const offset = Math.max(filter.offset ?? 0, 0);
     const employeeId =
       scope === 'OWN' ? await this.requireMembershipEmployeeId(context) : filter.employeeId;
-    const records = await withDatabaseContext(this.databaseContext(context), (transaction) =>
-      transaction.leaveMonetizationRequest.findMany({
-        where: {
-          agencyId: context.agencyId,
-          ...(employeeId ? { employeeId } : {}),
-          ...(filter.status ? { status: filter.status } : {}),
-        },
-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-        skip: offset,
-        take: limit + 1,
-        include: this.requestInclude(),
+    const { records, actorEmployeeId } = await withDatabaseContext(
+      this.databaseContext(context),
+      async (transaction) => ({
+        records: await transaction.leaveMonetizationRequest.findMany({
+          where: {
+            agencyId: context.agencyId,
+            ...(employeeId ? { employeeId } : {}),
+            ...(filter.status ? { status: filter.status } : {}),
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: offset,
+          take: limit + 1,
+          include: this.requestInclude(),
+        }),
+        actorEmployeeId: await this.actorEmployeeId(transaction, context),
       }),
     );
     const hasMore = records.length > limit;
@@ -361,6 +367,7 @@ export class LeaveMonetizationService implements OnModuleInit {
       items: records.slice(0, limit).map((record) => this.requestSummary(record)),
       hasMore,
       nextOffset: hasMore ? offset + limit : null,
+      actorEmployeeId,
     };
   }
 
@@ -455,6 +462,12 @@ export class LeaveMonetizationService implements OnModuleInit {
     return withDatabaseContext(this.databaseContext(context), async (transaction) => {
       const request = await this.lockRequest(transaction, context.agencyId, requestId);
       await this.assertRequestScope(transaction, context, request, 'leave.monetization.submit');
+      if (
+        input.attestationType === 'AUTHENTICATED_SUBMISSION' &&
+        (await this.actorEmployeeId(transaction, context)) !== request.employeeId
+      ) {
+        throw attestationForbidden();
+      }
       if (idempotencyKey) {
         const completed = await this.completedWrite(transaction, context, {
           action: 'LEAVE_MONETIZATION_REQUEST_SUBMITTED',
@@ -718,6 +731,8 @@ export class LeaveMonetizationService implements OnModuleInit {
       if (request.status !== 'SUBMITTED') throw statusInvalid('SUBMITTED', request.status);
       await this.assertActorSeparation(transaction, context, request, {
         prohibitSubject: true,
+        prohibitSubmitter: true,
+        prohibitRecorder: true,
       });
       if (idempotencyKey) {
         const completed = await this.completedWrite(transaction, context, {
@@ -2182,23 +2197,29 @@ export class LeaveMonetizationService implements OnModuleInit {
   private async assertActorSeparation(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
-    request: { id: string; employeeId: string; currentVersionId: string | null },
+    request: {
+      id: string;
+      employeeId: string;
+      createdByMembershipId: string;
+      currentVersionId: string | null;
+    },
     options: {
       prohibitSubject?: boolean;
+      prohibitRecorder?: boolean;
       prohibitSubmitter?: boolean;
       prohibitCertifier?: boolean;
       prohibitFunding?: boolean;
       prohibitApprover?: boolean;
     },
   ): Promise<void> {
-    if (options.prohibitSubject) {
-      const actor = await transaction.agencyMembership.findFirst({
-        where: { agencyId: context.agencyId, id: context.membershipId },
-        select: { employeeId: true },
-      });
-      if (actor?.employeeId && actor.employeeId === request.employeeId) {
-        throw actorSeparation('The subject Employee cannot perform this Monetization step.');
-      }
+    if (
+      options.prohibitSubject &&
+      (await this.actorEmployeeId(transaction, context)) === request.employeeId
+    ) {
+      throw actorSeparation('The subject Employee cannot perform this Monetization step.');
+    }
+    if (options.prohibitRecorder && request.createdByMembershipId === context.membershipId) {
+      throw actorSeparation('The recording actor cannot perform this Monetization step.');
     }
     if (!request.currentVersionId) return;
     const version = await transaction.leaveMonetizationRequestVersion.findFirst({
@@ -2706,6 +2727,18 @@ export class LeaveMonetizationService implements OnModuleInit {
     }
   }
 
+  /** The Employee linked to the acting Membership, or null when none is linked. */
+  private async actorEmployeeId(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+  ): Promise<string | null> {
+    const actor = await transaction.agencyMembership.findFirst({
+      where: { agencyId: context.agencyId, id: context.membershipId },
+      select: { employeeId: true },
+    });
+    return actor?.employeeId ?? null;
+  }
+
   private async requireMembershipEmployeeId(
     context: RequestContext,
     transaction?: Prisma.TransactionClient,
@@ -2874,6 +2907,14 @@ function policyNotEffective(): LeaveMonetizationServiceError {
     'No published Leave Policy Version governs the effective date for an allocated account.',
     409,
     'MONETIZATION_POLICY_NOT_EFFECTIVE',
+  );
+}
+
+function attestationForbidden(): LeaveMonetizationServiceError {
+  return new LeaveMonetizationServiceError(
+    "An authenticated submission must be made by the Employee themself; record another Employee's request with the exact signed Document Version.",
+    403,
+    'MONETIZATION_ATTESTATION_FORBIDDEN',
   );
 }
 
