@@ -4,6 +4,7 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
   findLeaveCatalogueEntry,
   type LeaveEntitlementBasis,
@@ -431,6 +432,8 @@ export class LeaveAccountsService {
     @Inject(LEAVE_ACCOUNT_AUDIT_WRITER)
     private readonly auditWriter: LeaveAccountAuditWriter,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
+    @Inject(MandatoryLeaveAssessmentsService)
+    private readonly mandatoryLeave: MandatoryLeaveAssessmentsService,
   ) {}
 
   async list(
@@ -658,6 +661,9 @@ export class LeaveAccountsService {
           });
           ledgerEntryId = entry.id;
         }
+        await this.mandatoryLeave.reevaluateLeaveAccounts(transaction, context, [
+          { leaveAccountId: account.id, effectiveDate },
+        ]);
         await this.auditWriter.write(transaction, {
           agencyId: context.agencyId,
           actorUserId: context.userId,
@@ -857,6 +863,9 @@ export class LeaveAccountsService {
         sourceId: adjustment.id,
         sourcePostingKey: 'ADJUSTMENT',
       });
+      await this.mandatoryLeave.reevaluateLeaveAccounts(transaction, context, [
+        { leaveAccountId: accountId, effectiveDate },
+      ]);
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,
@@ -985,6 +994,9 @@ export class LeaveAccountsService {
         sourcePostingKey: 'REVERSAL',
         reversesEntryId: entryId,
       });
+      await this.mandatoryLeave.reevaluateLeaveAccounts(transaction, context, [
+        { leaveAccountId: accountId, effectiveDate: original.effectiveDate },
+      ]);
       await this.auditWriter.write(transaction, {
         agencyId: context.agencyId,
         actorUserId: context.userId,
@@ -1100,14 +1112,18 @@ export class LeaveAccountsService {
     });
   }
 
-  /** Locks the account row so balance-sensitive posting recomputes under one writer. */
+  /**
+   * Locks the account row so balance-sensitive posting recomputes under one writer.
+   * NO KEY leaves foreign-key checks, such as a mandatory-leave assessment's,
+   * free to proceed, so they cannot deadlock with the writer's re-evaluation.
+   */
   private async lockAccount(
     transaction: Prisma.TransactionClient,
     agencyId: string,
     accountId: string,
   ): Promise<LeaveAccountRecord> {
     const rows = await transaction.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${accountId} AS uuid) FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${accountId} AS uuid) FOR NO KEY UPDATE`,
     );
     if (rows.length !== 1) throw accountNotFound();
     const account = await this.accountRecord(transaction, agencyId, accountId);

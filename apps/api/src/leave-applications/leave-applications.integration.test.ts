@@ -42,6 +42,10 @@ import {
   leaveApplicationAuditWriter,
   LeaveApplicationsService,
 } from './leave-applications.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -336,8 +340,16 @@ it.skipIf(!enabled)(
       calendars,
     );
     const approvals = new ApprovalsService(approvalAuditWriter, completionRegistry);
-    const policies = new LeavePoliciesService(leavePolicyAuditWriter, documents);
-    const accounts = new LeaveAccountsService(leaveAccountAuditWriter, documents);
+    const policies = new LeavePoliciesService(
+      leavePolicyAuditWriter,
+      documents,
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+    );
+    const accounts = new LeaveAccountsService(
+      leaveAccountAuditWriter,
+      documents,
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+    );
     const postedLeaveInputs = new AttendancePostedLeaveInputsService();
     const attendance = new AttendanceService(attendanceAuditWriter, assignments);
     const attendanceDays = new AttendanceDaysService(
@@ -375,6 +387,7 @@ it.skipIf(!enabled)(
       calendars,
       postedLeaveInputs,
       attendanceCorrections,
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     applications.onModuleInit();
     const applicationApi = new LeaveApplicationsController(applications);
@@ -1775,6 +1788,7 @@ it.skipIf(!enabled)(
         calendars,
         postedLeaveInputs,
         attendanceCorrections,
+        new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
       );
       await expect(
         failingApplications.applyCancellation(
@@ -1822,6 +1836,7 @@ it.skipIf(!enabled)(
         calendars,
         postedLeaveInputs,
         attendanceCorrections,
+        new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
       );
       await expect(
         blockingApplications.applyCancellation(
@@ -1869,6 +1884,7 @@ it.skipIf(!enabled)(
         calendars,
         postedLeaveInputs,
         attendanceCorrections,
+        new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
       );
       await expect(
         expiringApplications.applyCancellation(
@@ -3508,6 +3524,180 @@ it.skipIf(!enabled)(
       expect(await postedDayTotals(sharedMonday)).toMatchObject({ postedLeaveMinutes: 0 });
       expect(await postedDayTotals(sharedTuesday)).toMatchObject({ postedLeaveMinutes: 0 });
 
+      // Mandatory leave: posting and applied cancellation re-evaluate the
+      // Employee's assessment inline. A posting dated next year cannot change
+      // this year's assessment, so the block runs while the dates stay in-year.
+      const vacationThursday = addDays(monday, 3);
+      const vacationFriday = addDays(monday, 4);
+      const assessmentYear = Number(manilaDate(0).slice(0, 4));
+      if (vacationFriday.startsWith(`${assessmentYear}-`)) {
+        const vacationReview = await policies.createPolicyVersion(agencyContext, vacation.id, {
+          effectiveDate: manilaDate(0),
+          approvalRouteCode: reviewRouteCode,
+          applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
+          documentRequirements: {},
+          reason: 'Route vacation leave through the three-step review.',
+        });
+        await policies.linkAuthority(agencyContext, vacation.id, vacationReview.id, {
+          authorityClass: 'NATIONAL_RULE',
+          documentId: nationalEvidence.documentId,
+          citation: 'Rule XVI, sections 1-3',
+        });
+        await policies.activate(
+          agencyContext,
+          vacation.id,
+          vacationReview.id,
+          'Route vacation leave through review.',
+        );
+        const mandatoryType = await policies.create(agencyContext, {
+          catalogueCode: 'MANDATORY_LEAVE',
+        });
+        const mandatoryVersion = await policies.createPolicyVersion(
+          agencyContext,
+          mandatoryType.id,
+          {
+            effectiveDate: manilaDate(-10),
+            approvalRouteCode: reviewRouteCode,
+            applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
+            documentRequirements: {},
+            reason: 'Adopt mandatory leave for the integration test.',
+          },
+        );
+        await policies.linkAuthority(agencyContext, mandatoryType.id, mandatoryVersion.id, {
+          authorityClass: 'NATIONAL_RULE',
+          documentId: nationalEvidence.documentId,
+          citation: 'Section 25',
+        });
+        await policies.linkAuthority(agencyContext, mandatoryType.id, mandatoryVersion.id, {
+          authorityClass: 'AGENCY_CONFIGURATION',
+          documentId: accountEvidence.documentId,
+          citation: 'Agency mandatory-leave configuration for the integration test.',
+        });
+        await policies.activate(
+          agencyContext,
+          mandatoryType.id,
+          mandatoryVersion.id,
+          'Activate mandatory leave.',
+        );
+        const mandatoryLeave = new MandatoryLeaveAssessmentsService(
+          mandatoryLeaveAssessmentAuditWriter,
+        );
+        await mandatoryLeave.evaluateAgencyYear(
+          {
+            ...agencyContext,
+            permissions: [
+              ...agencyContext.permissions,
+              { code: 'leave.mandatory_assessments.evaluate', scopePolicy: 'AGENCY' as const },
+            ],
+          },
+          assessmentYear,
+        );
+        const assessmentChain = () =>
+          admin.mandatoryLeaveAssessment.findMany({
+            where: { agencyId: agency.id, employeeId: employee.id, assessmentYear },
+            orderBy: { assessedAt: 'asc' },
+          });
+        const fulfilledQuantities = async () =>
+          (await assessmentChain()).map((row) => row.fulfilledQuantity?.toFixed(4) ?? null);
+        const seeded = (await assessmentChain()).at(-1)!;
+        expect(seeded).toMatchObject({ result: 'SUBJECT', leaveAccountId: account.id });
+        expect(seeded.fulfilledQuantity?.toFixed(4)).toBe('0.0000');
+        const ledgerBeforeVacation = await admin.leaveLedgerEntry.count({
+          where: { agencyId: agency.id },
+        });
+
+        async function postLeave(dateFrom: string, dateTo: string, leaveTypeId = vacation.id) {
+          const draft = await applications.create(agencyContext, {
+            employeeId: employee.id,
+            leaveTypeId,
+          });
+          const id = draft.application.id;
+          await applications.update(agencyContext, id, {
+            reason: 'Vacation leave toward the mandatory leave obligation.',
+            commutationChoice: 'NOT_REQUESTED',
+            periods: [{ dateFrom, dateTo }],
+            documents: [
+              { documentId: formEvidence.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+              ...(leaveTypeId === mandatoryType.id
+                ? [
+                    {
+                      documentId: signedEvidence.documentId,
+                      purposeCode: 'SCHEDULE_OR_CLEARANCE_EVIDENCE' as const,
+                    },
+                  ]
+                : []),
+            ],
+          });
+          await applications.submit(employeeContext, id, submitInput);
+          await applications.route(recorderContext, id);
+          await applications.certify(recorderContext, id, {});
+          await applications.recommend(supervisorContext, id, { outcome: 'RECOMMEND_APPROVAL' });
+          await applications.decide(approverContext, id, { decision: 'APPROVE' });
+          return applications.post(postingContext, id, `post-vacation-${id}`);
+        }
+
+        // Posting raises fulfillment; a partial cancellation lowers it.
+        const twoDays = await postLeave(vacationThursday, vacationFriday);
+        expect(await fulfilledQuantities()).toEqual(['0.0000', '2.0000']);
+        const twoDaysId = twoDays.application.id;
+        const twoDaysCancellationId = await requestApprovedCancellation(twoDaysId, {
+          scopeType: 'PARTIAL',
+          reason: 'Returning to duty on Friday.',
+          evidenceDocumentId: signedEvidence.documentId,
+          scopes: [
+            {
+              allocationLineId: twoDays.versions.at(-1)!.approvalAllocation!.lines[0]!.id,
+              dateFrom: vacationFriday,
+              dateTo: vacationFriday,
+              quantity: '1',
+            },
+          ],
+        });
+        await applications.applyCancellation(
+          applyContext,
+          twoDaysId,
+          twoDaysCancellationId,
+          `apply-vacation-partial-${suffix}`,
+        );
+        expect(await fulfilledQuantities()).toEqual(['0.0000', '2.0000', '1.0000']);
+
+        // A Mandatory Leave posting charges the vacation account and raises it; a
+        // whole cancellation lowers it again; a retried apply writes no row.
+        const oneDay = await postLeave(vacationFriday, vacationFriday, mandatoryType.id);
+        expect(await fulfilledQuantities()).toEqual(['0.0000', '2.0000', '1.0000', '2.0000']);
+        const oneDayId = oneDay.application.id;
+        const oneDayCancellationId = await requestApprovedCancellation(oneDayId, {
+          scopeType: 'WHOLE',
+          reason: 'Recalled to duty on Friday.',
+          evidenceDocumentId: signedEvidence.documentId,
+        });
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await applications.applyCancellation(
+            applyContext,
+            oneDayId,
+            oneDayCancellationId,
+            `apply-vacation-whole-${suffix}`,
+          );
+        }
+        const chain = await assessmentChain();
+        expect(chain.map((row) => row.fulfilledQuantity?.toFixed(4))).toEqual([
+          '0.0000',
+          '2.0000',
+          '1.0000',
+          '2.0000',
+          '1.0000',
+        ]);
+        expect(chain.map((row) => row.previousAssessmentId)).toEqual([
+          null,
+          ...chain.slice(0, -1).map((row) => row.id),
+        ]);
+        // Re-evaluation writes no ledger entry of its own: two postings, one
+        // reversal and replacement, and one reversal.
+        await expect(
+          admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } }),
+        ).resolves.toBe(ledgerBeforeVacation + 5);
+      }
+
       await expect(applications.findById(agencyContext, randomUUID())).resolves.toBeNull();
     } finally {
       await admin.$transaction(async (transaction) => {
@@ -3625,6 +3815,9 @@ it.skipIf(!enabled)(
         });
         await transaction.leaveLedgerEntry.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.leaveAccountOpening.deleteMany({
+          where: { agencyId: { in: agencyIds } },
+        });
+        await transaction.mandatoryLeaveAssessment.deleteMany({
           where: { agencyId: { in: agencyIds } },
         });
         await transaction.leaveAccount.deleteMany({ where: { agencyId: { in: agencyIds } } });

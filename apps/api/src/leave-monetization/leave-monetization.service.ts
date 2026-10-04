@@ -10,6 +10,7 @@ import {
 } from '../approvals/approval.service';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
   MONETIZATION_CALCULATOR_KIND,
   MONETIZATION_FACTOR,
@@ -310,6 +311,8 @@ export class LeaveMonetizationService implements OnModuleInit {
     @Inject(PAYROLL_MONETIZATION_PORT)
     private readonly payroll: PayrollMonetizationPort,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
+    @Inject(MandatoryLeaveAssessmentsService)
+    private readonly mandatoryLeave: MandatoryLeaveAssessmentsService,
   ) {}
 
   onModuleInit(): void {
@@ -1309,6 +1312,14 @@ export class LeaveMonetizationService implements OnModuleInit {
           data: { status: 'CONSUMED', endedAt: now },
         });
       }
+      await this.mandatoryLeave.reevaluateLeaveAccounts(
+        transaction,
+        context,
+        preparation.allocationLines.map(({ leaveAccountId }) => ({
+          leaveAccountId,
+          effectiveDate: toDatabaseDate(preparation.valuationDate),
+        })),
+      );
       await transaction.monetizationPosting.create({
         data: {
           agencyId: context.agencyId,
@@ -1790,6 +1801,14 @@ export class LeaveMonetizationService implements OnModuleInit {
             data: { reversalLedgerEntryId: reversal.id, replacementLedgerEntryId: replacementId },
           });
         }
+        await this.mandatoryLeave.reevaluateLeaveAccounts(
+          transaction,
+          context,
+          preparation.lines.map(({ leaveAccountId }) => ({
+            leaveAccountId,
+            effectiveDate: toDatabaseDate(manilaToday()),
+          })),
+        );
         const updated = await transaction.monetizationAdjustment.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: adjustmentId } },
           data: {
@@ -2388,7 +2407,7 @@ export class LeaveMonetizationService implements OnModuleInit {
     accountId: string,
   ): Promise<void> {
     const rows = await transaction.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${accountId} AS uuid) FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${accountId} AS uuid) FOR NO KEY UPDATE`,
     );
     if (rows.length !== 1) throw allocationInvalid('The Leave Account could not be locked.');
   }

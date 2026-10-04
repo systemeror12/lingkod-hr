@@ -26,6 +26,10 @@ import {
   LEAVE_MONETIZATION_ROUTE_CODE,
   LeaveMonetizationService,
 } from './leave-monetization.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -204,10 +208,12 @@ it.skipIf(!enabled)(
     const policies = new LeavePoliciesService(
       leavePolicyAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     const accounts = new LeaveAccountsService(
       leaveAccountAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     const registry = new ApprovalCompletionRegistry();
     const approvals = new ApprovalsService(approvalAuditWriter, registry);
@@ -216,6 +222,7 @@ it.skipIf(!enabled)(
       registry,
       new LocalPayrollMonetizationAdapter(salarySource),
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     service.onModuleInit();
 
@@ -625,6 +632,7 @@ it.skipIf(!enabled)(
         registry,
         new FailClosedPayrollMonetizationProvider(),
         new DocumentsService({} as never, documentAuditWriter),
+        new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
       );
       failClosedService.onModuleInit();
       const specialRequest = await failClosedService.create(adminContext, {
