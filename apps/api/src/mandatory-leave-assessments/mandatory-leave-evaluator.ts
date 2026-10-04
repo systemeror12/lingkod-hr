@@ -56,6 +56,9 @@ export interface MandatoryLeaveLedgerFact {
   leaveAccountId: string;
   effectiveDate: string;
   quantity: string;
+  /** Posting order within one effective date. */
+  postedAt: string;
+  reversesEntryId: string | null;
 }
 
 /** One posted LEAVE_ACCOUNT approval allocation line and its applied cancellations. */
@@ -93,8 +96,12 @@ export interface MandatoryLeaveThresholdBasis {
   reached: boolean;
   reachedOn: string | null;
   balanceOnReachedDate: string | null;
+  /** The ledger entry whose posting first brought the running balance to the minimum. */
+  reachedByEntryId: string | null;
   peakBalance: string;
   peakOn: string;
+  /** Reversed entries and their reversals, left out of the running balance. */
+  excludedReversalEntryIds: string[];
 }
 
 export interface MandatoryLeaveInputFacts {
@@ -231,44 +238,71 @@ export function evaluateMandatoryLeave(
     rule('VACATION_LEAVE_ACCOUNT', 'PASS', `Vacation Leave Account ${account.id} is used.`);
   }
 
-  // Threshold: the highest end-of-day posted balance from January 1 to the as-of date.
+  // Threshold: the posted balance reached the minimum at any point from January 1
+  // to the as-of date. The running balance takes entries in effective-date order,
+  // then posting order, so a reached threshold stays reached. A reversal exactly
+  // negates its original, so both leave the running balance.
   let thresholdBasis: MandatoryLeaveThresholdBasis | null = null;
   let balanceFacts: MandatoryLeaveInputFacts['balanceFacts'] = null;
   if (account && thresholds && profileAdmitted) {
     const entries = input.ledgerEntries.filter(
       (item) => item.leaveAccountId === account.id && item.effectiveDate <= input.asOf,
     );
-    const opening = sum(entries.filter((item) => item.effectiveDate <= yearStart));
-    const dates = [
-      ...new Set(entries.map((item) => item.effectiveDate).filter((date) => date > yearStart)),
-    ].sort();
+    // A reversal of a reversal stays counted: it reinstates the first original.
+    const byId = new Map(entries.map((item) => [item.id, item]));
+    const reversalPairs = entries.filter((item) => {
+      const original = item.reversesEntryId ? byId.get(item.reversesEntryId) : undefined;
+      return original !== undefined && original.reversesEntryId === null;
+    });
+    const excluded = reversalPairs.flatMap((item) => [item.id, item.reversesEntryId!]).sort();
+    const counted = entries.filter((item) => !excluded.includes(item.id));
+    const opening = sum(counted.filter((item) => item.effectiveDate < yearStart));
+    const running = counted
+      .filter((item) => item.effectiveDate >= yearStart)
+      .sort(
+        (a, b) =>
+          a.effectiveDate.localeCompare(b.effectiveDate) ||
+          a.postedAt.localeCompare(b.postedAt) ||
+          a.id.localeCompare(b.id),
+      );
     let balance = opening;
     let peak = { balance: opening, date: yearStart };
-    let reached = opening.gte(thresholds.minimum) ? { balance: opening, date: yearStart } : null;
-    for (const date of dates) {
-      balance = balance.plus(sum(entries.filter((item) => item.effectiveDate === date)));
-      if (balance.gt(peak.balance)) peak = { balance, date };
-      if (!reached && balance.gte(thresholds.minimum)) reached = { balance, date };
+    let reached = opening.gte(thresholds.minimum)
+      ? { balance: opening, date: yearStart, entryId: null as string | null }
+      : null;
+    for (const item of running) {
+      balance = balance.plus(item.quantity);
+      if (balance.gt(peak.balance)) peak = { balance, date: item.effectiveDate };
+      if (!reached && balance.gte(thresholds.minimum)) {
+        reached = { balance, date: item.effectiveDate, entryId: item.id };
+      }
     }
     thresholdBasis = {
       minimumAccountCredits: formatQuantity(thresholds.minimum),
       reached: reached !== null,
       reachedOn: reached?.date ?? null,
       balanceOnReachedDate: reached ? formatQuantity(reached.balance) : null,
+      reachedByEntryId: reached?.entryId ?? null,
       peakBalance: formatQuantity(peak.balance),
       peakOn: peak.date,
+      excludedReversalEntryIds: excluded,
     };
     balanceFacts = {
       openingBalance: formatQuantity(opening),
       balanceAsOf: formatQuantity(balance),
       ledgerEntryIds: entries.map((item) => item.id).sort(),
     };
+    const pairs = reversalPairs.length;
+    const method =
+      pairs > 0
+        ? `The running balance takes posted entries in effective-date order, then posting order, and leaves out ${pairs} reversed ${pairs === 1 ? 'entry and its reversal' : 'entries and their reversals'}.`
+        : 'The running balance takes posted entries in effective-date order, then posting order.';
     rule(
       'BALANCE_THRESHOLD',
       reached ? 'PASS' : 'FAIL',
       reached
-        ? `The posted vacation balance reached ${formatQuantity(reached.balance)} on ${reached.date}, at least ${formatQuantity(thresholds.minimum)}.`
-        : `The posted vacation balance peaked at ${formatQuantity(peak.balance)} on ${peak.date}, below ${formatQuantity(thresholds.minimum)}.`,
+        ? `The posted vacation balance reached ${formatQuantity(reached.balance)} on ${reached.date}${reached.entryId ? ` with ledger entry ${reached.entryId}` : ''}, at least ${formatQuantity(thresholds.minimum)}. ${method}`
+        : `The posted vacation balance peaked at ${formatQuantity(peak.balance)} on ${peak.date}, below ${formatQuantity(thresholds.minimum)}. ${method}`,
       citations,
     );
   } else {

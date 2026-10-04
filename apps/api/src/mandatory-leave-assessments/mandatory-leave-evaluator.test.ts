@@ -10,8 +10,17 @@ function entry(
   effectiveDate: string,
   quantity: string,
   id = effectiveDate,
+  overrides: Partial<MandatoryLeaveLedgerFact> = {},
 ): MandatoryLeaveLedgerFact {
-  return { id: `entry-${id}`, leaveAccountId: 'account-1', effectiveDate, quantity };
+  return {
+    id: `entry-${id}`,
+    leaveAccountId: 'account-1',
+    effectiveDate,
+    quantity,
+    postedAt: `${effectiveDate}T08:00:00.000Z`,
+    reversesEntryId: null,
+    ...overrides,
+  };
 }
 
 function allocation(
@@ -130,6 +139,83 @@ describe('evaluateMandatoryLeave', () => {
     });
     expect(result.inputFacts.balanceFacts).toMatchObject({ balanceAsOf: '6.0000' });
     expect(result.fulfilledQuantity).toBe('4.0000');
+  });
+
+  it('stays SUBJECT when a later posting on the same effective date drops the balance', () => {
+    const result = evaluateMandatoryLeave(
+      input({
+        ledgerEntries: [
+          entry('2026-02-02', '-6.0000', 'debit', { postedAt: '2026-02-03T09:00:00.000Z' }),
+          entry('2026-02-02', '10.0000', 'credit', { postedAt: '2026-02-02T09:00:00.000Z' }),
+        ],
+      }),
+    );
+
+    expect(result.result).toBe('SUBJECT');
+    expect(result.inputFacts.thresholdBasis).toMatchObject({
+      reached: true,
+      reachedOn: '2026-02-02',
+      balanceOnReachedDate: '10.0000',
+      reachedByEntryId: 'entry-credit',
+      peakBalance: '10.0000',
+      excludedReversalEntryIds: [],
+    });
+    expect(result.inputFacts.balanceFacts).toMatchObject({ balanceAsOf: '4.0000' });
+    expect(result.ruleResults.find((item) => item.rule === 'BALANCE_THRESHOLD')?.detail).toBe(
+      'The posted vacation balance reached 10.0000 on 2026-02-02 with ledger entry entry-credit, at least 10.0000. The running balance takes posted entries in effective-date order, then posting order.',
+    );
+  });
+
+  it('writes the same fingerprint before and after a same-day debit', () => {
+    const credit = entry('2026-02-02', '10.0000', 'credit');
+    const debit = entry('2026-02-02', '-6.0000', 'debit', { postedAt: '2026-02-03T09:00:00.000Z' });
+
+    expect(evaluateMandatoryLeave(input({ ledgerEntries: [credit, debit] })).materialFingerprint).toBe(
+      evaluateMandatoryLeave(input({ ledgerEntries: [credit] })).materialFingerprint,
+    );
+  });
+
+  it('leaves a reversed credit and its reversal out of the running balance', () => {
+    const result = evaluateMandatoryLeave(
+      input({
+        ledgerEntries: [
+          entry('2025-12-31', '4.0000'),
+          entry('2026-02-02', '10.0000', 'credit'),
+          entry('2026-03-02', '-10.0000', 'reversal', { reversesEntryId: 'entry-credit' }),
+        ],
+      }),
+    );
+
+    expect(result.result).toBe('NOT_SUBJECT');
+    expect(result.inputFacts.thresholdBasis).toMatchObject({
+      reached: false,
+      reachedByEntryId: null,
+      peakBalance: '4.0000',
+      excludedReversalEntryIds: ['entry-credit', 'entry-reversal'],
+    });
+    expect(result.inputFacts.balanceFacts).toMatchObject({ balanceAsOf: '4.0000' });
+    expect(result.ruleResults.find((item) => item.rule === 'BALANCE_THRESHOLD')?.detail).toBe(
+      'The posted vacation balance peaked at 4.0000 on 2026-01-01, below 10.0000. The running balance takes posted entries in effective-date order, then posting order, and leaves out 1 reversed entry and its reversal.',
+    );
+  });
+
+  it('counts a reversal of a reversal as reinstating the original credit', () => {
+    const result = evaluateMandatoryLeave(
+      input({
+        ledgerEntries: [
+          entry('2026-02-02', '10.0000', 'credit'),
+          entry('2026-03-02', '-10.0000', 'reversal', { reversesEntryId: 'entry-credit' }),
+          entry('2026-04-01', '10.0000', 'reinstatement', { reversesEntryId: 'entry-reversal' }),
+        ],
+      }),
+    );
+
+    expect(result.result).toBe('SUBJECT');
+    expect(result.inputFacts.thresholdBasis).toMatchObject({
+      reachedOn: '2026-04-01',
+      reachedByEntryId: 'entry-reinstatement',
+      excludedReversalEntryIds: ['entry-credit', 'entry-reversal'],
+    });
   });
 
   it('ignores ledger entries after the as-of date when testing the threshold', () => {

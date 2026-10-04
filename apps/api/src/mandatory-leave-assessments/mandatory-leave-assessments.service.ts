@@ -640,7 +640,14 @@ export class MandatoryLeaveAssessmentsService {
     const ledgerEntries = accountIds.length
       ? await transaction.leaveLedgerEntry.findMany({
           where: { agencyId, leaveAccountId: { in: accountIds }, effectiveDate: { lte: asOfDate } },
-          select: { id: true, leaveAccountId: true, effectiveDate: true, quantity: true },
+          select: {
+            id: true,
+            leaveAccountId: true,
+            effectiveDate: true,
+            quantity: true,
+            postedAt: true,
+            reversesEntryId: true,
+          },
         })
       : [];
     const lines = accountIds.length
@@ -702,6 +709,8 @@ export class MandatoryLeaveAssessmentsService {
         leaveAccountId: entry.leaveAccountId,
         effectiveDate: formatDate(entry.effectiveDate),
         quantity: entry.quantity.toFixed(4),
+        postedAt: entry.postedAt.toISOString(),
+        reversesEntryId: entry.reversesEntryId,
       })),
       allocations: lines.map((line) => ({
         lineId: line.id,

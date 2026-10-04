@@ -343,8 +343,32 @@ it.skipIf(!enabled)(
       // Each vacation ledger entry re-evaluates the Employee inline.
       await adjust(5, 'mandatory-leave-credit');
       expect((await chainFor(employee.id)).at(-1)?.result).toBe('SUBJECT');
-      await adjust(-5, 'mandatory-leave-debit');
-      expect((await chainFor(employee.id)).at(-1)?.result).toBe('NOT_SUBJECT');
+
+      // A credit and its reversal both leave the running balance.
+      const credit = await admin.leaveLedgerEntry.findFirstOrThrow({
+        where: { agencyId: agency.id, leaveAccountId: account.id },
+        orderBy: { postedAt: 'desc' },
+      });
+      await accounts.reverseEntry(
+        creditContext,
+        account.id,
+        credit.id,
+        {
+          authorityDocumentId: evidenceId,
+          evidenceDocumentId: evidenceId,
+          reason: 'Reverse the credit for the integration test.',
+        },
+        'mandatory-leave-reversal',
+      );
+      const afterReversal = (await chainFor(employee.id)).at(-1);
+      expect(afterReversal?.result).toBe('NOT_SUBJECT');
+      expect(afterReversal?.inputFacts).toMatchObject({
+        thresholdBasis: { reached: false, peakBalance: '5.0000' },
+      });
+      expect(
+        (afterReversal?.inputFacts as { thresholdBasis: { excludedReversalEntryIds: string[] } })
+          .thresholdBasis.excludedReversalEntryIds,
+      ).toContain(credit.id);
 
       // A -> B -> A history: the return to A appends rather than reusing the old row.
       const chain = await chainFor(employee.id);
@@ -390,6 +414,20 @@ it.skipIf(!enabled)(
       const afterConcurrency = await chainFor(employee.id);
       expect(afterConcurrency).toHaveLength(5);
       expect(afterConcurrency[4]?.previousAssessmentId).toBe(afterConcurrency[3]?.id);
+      expect(afterConcurrency[4]?.result).toBe('SUBJECT');
+
+      // A reached threshold stays reached: a later debit on the same effective
+      // date re-evaluates inline but changes nothing material.
+      await adjust(-5, 'mandatory-leave-debit');
+      const afterDebit = await chainFor(employee.id);
+      expect(afterDebit).toHaveLength(5);
+      expect(afterDebit[4]?.inputFacts).toMatchObject({
+        thresholdBasis: {
+          reached: true,
+          reachedOn: manilaDate(0),
+          balanceOnReachedDate: '10.0000',
+        },
+      });
 
       // A ledger writer re-evaluates under the Employee-year lock before it
       // commits, so an evaluation waits for it instead of reading a torn state.
@@ -407,7 +445,7 @@ it.skipIf(!enabled)(
 
       // Evaluation never writes the ledger beyond the test's own adjustments.
       await expect(admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } })).resolves.toBe(
-        ledgerCountBefore + 3,
+        ledgerCountBefore + 4,
       );
 
       // A past year is assessed as of December 31.
@@ -711,10 +749,12 @@ it.skipIf(!enabled)(
       });
       expect(await chainLengths()).toEqual([2, 2]);
 
-      // Concurrent triggers of one change yield one successor per year.
+      // Concurrent triggers of one change yield one successor per year. Credits
+      // dated before the threshold was reached raise the balance it was reached at.
+      const beforeThreshold = `${year - 1}-06-15`;
       await Promise.all([
-        adjust(account.id, 1, backdated, 'concurrent-credit'),
-        adjust(account.id, 1, backdated, 'concurrent-credit'),
+        adjust(account.id, 1, beforeThreshold, 'concurrent-credit'),
+        adjust(account.id, 1, beforeThreshold, 'concurrent-credit'),
         service.evaluateAgencyYear(actor, year),
         service.evaluateAgencyYear(actor, year - 1),
       ]);
@@ -755,8 +795,8 @@ it.skipIf(!enabled)(
       expect((await chainFor(year)).at(-1)?.policyVersionId).toBe(secondMandatory.id);
       expect((await chainFor(year - 1)).at(-1)?.policyVersionId).toBe(firstMandatory.id);
 
-      // A failed re-evaluation rolls back the source command. The backdated
-      // credit changes the balance on the date the threshold was reached.
+      // A failed re-evaluation rolls back the source command. The credit
+      // changes the balance the threshold was reached at.
       const ledgerCount = await admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } });
       const failure = `fail_assessment_${randomUUID().replaceAll('-', '')}`;
       await admin.$executeRawUnsafe(
@@ -766,7 +806,7 @@ it.skipIf(!enabled)(
         `CREATE TRIGGER ${failure} BEFORE INSERT ON mandatory_leave_assessments FOR EACH ROW WHEN (NEW.agency_id = '${agency.id}'::uuid) EXECUTE FUNCTION ${failure}()`,
       );
       try {
-        await expect(adjust(account.id, 1, backdated, 'failed-credit')).rejects.toThrow(
+        await expect(adjust(account.id, 1, beforeThreshold, 'failed-credit')).rejects.toThrow(
           /intentional assessment failure/,
         );
       } finally {
