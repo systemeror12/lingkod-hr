@@ -356,7 +356,7 @@ it.skipIf(!enabled)(
       attendanceDayAuditWriter,
       assignments,
       attendance,
-      new AttendanceContextsService(attendanceContextAuditWriter, documents),
+      new AttendanceContextsService(attendanceContextAuditWriter, documents, attendance),
       postedLeaveInputs,
     );
     const dtrs = new DtrsService(dtrAuditWriter, documents);
@@ -372,7 +372,6 @@ it.skipIf(!enabled)(
       completionRegistry,
       attendanceDays,
       attendance,
-      assignments,
       documents,
       dtrs,
       attendancePeriods,

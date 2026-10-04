@@ -196,7 +196,11 @@ export function attendanceWorkflowServices() {
     calendars,
   );
   const attendance = new AttendanceService(attendanceAuditWriter, assignments);
-  const contexts = new AttendanceContextsService(attendanceContextAuditWriter, documents);
+  const contexts = new AttendanceContextsService(
+    attendanceContextAuditWriter,
+    documents,
+    attendance,
+  );
   const postedLeaveInputs = new AttendancePostedLeaveInputsService();
   const days = new AttendanceDaysService(
     attendanceDayAuditWriter,

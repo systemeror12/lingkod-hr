@@ -20,7 +20,7 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 function service() {
-  return new AttendanceContextsService(attendanceContextAuditWriter, documentsService);
+  return new AttendanceContextsService(attendanceContextAuditWriter, documentsService, {} as never);
 }
 
 const read = [{ code: 'attendance.contexts.read', scopePolicy: 'AGENCY' }] as const;

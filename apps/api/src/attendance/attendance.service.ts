@@ -4,6 +4,11 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import {
+  ATTENDANCE_WORK_DATE_LOCKED,
+  findLockedWorkDate,
+  lockedWorkDateMessage,
+} from '../attendance-work-date-lock';
+import {
   AttendanceExceptionError,
   formatDate,
   manilaToday,
@@ -48,6 +53,9 @@ import {
   type CreateManualAttendanceEventInput,
   type SetWebClockEnablementInput,
 } from './attendance.types';
+
+/** Upper bound on the Work Dates one timed Attendance Context interval is resolved against. */
+export const MAX_TIMED_CONTEXT_WORK_DATES = 66;
 
 const eventSelect = {
   id: true,
@@ -640,6 +648,28 @@ export class AttendanceService {
       }
     }
     const match = matchAttendanceEvent(input.eventTime, eventLocalDate, candidates);
+    // Attendance Day calculation reads every window holding the event, wider
+    // than capture matching; an event no window holds fails closed to its date.
+    const touched = await this.coveredWorkDatesInTransaction(
+      transaction,
+      context.agencyId,
+      input.employeeId,
+      input.eventTime,
+      input.eventTime,
+    );
+    const touchedDates = touched ? [...touched.covered, ...touched.unresolved] : [];
+    const locked = await findLockedWorkDate(
+      transaction,
+      context.agencyId,
+      touchedDates.length > 0 ? touchedDates : [eventLocalDate],
+    );
+    if (locked) {
+      throw new AttendanceServiceError(
+        lockedWorkDateMessage(locked),
+        409,
+        ATTENDANCE_WORK_DATE_LOCKED,
+      );
+    }
     const created = await transaction.attendanceEvent.create({
       data: {
         agencyId: context.agencyId,
@@ -897,6 +927,64 @@ export class AttendanceService {
   }
 
   /**
+   * Resolve which Work Dates an interval touches inside a caller-owned
+   * transaction: a timed Attendance Context, or one Attendance Event when
+   * startsAt equals endsAt. A Work Date is covered when the interval meets its
+   * Event Collection Window, or its local calendar day when its day rule has
+   * none. A collection window may open the day before its Work Date and close
+   * two days after it, so the search runs three dates before and two after the
+   * interval's local dates. A date without complete applicability has no
+   * window; it is reported as unresolved when the interval meets its agency
+   * calendar day. Returns null when the search spans more than
+   * MAX_TIMED_CONTEXT_WORK_DATES dates; the caller decides how to bound it.
+   */
+  async coveredWorkDatesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    startsAt: Date,
+    endsAt: Date,
+  ): Promise<{ covered: string[]; unresolved: string[] } | null> {
+    const timezone = await this.agencyTimezone(transaction, agencyId);
+    const firstDate = addDateValueDays(localDateValue(startsAt, timezone), -3);
+    const lastDate = addDateValueDays(localDateValue(endsAt, timezone), 2);
+    const meets = (window: { start: Date; end: Date }) =>
+      startsAt.getTime() === endsAt.getTime()
+        ? startsAt.getTime() >= window.start.getTime() && startsAt.getTime() <= window.end.getTime()
+        : startsAt.getTime() < window.end.getTime() && endsAt.getTime() > window.start.getTime();
+    const calendarDay = (date: string, zone: string) => ({
+      start: zonedTimeToInstant(date, '00:00', zone),
+      end: zonedTimeToInstant(addDateValueDays(date, 1), '00:00', zone),
+    });
+    const covered: string[] = [];
+    const unresolved: string[] = [];
+    let cursor = firstDate;
+    let count = 0;
+    while (cursor <= lastDate) {
+      count += 1;
+      if (count > MAX_TIMED_CONTEXT_WORK_DATES) return null;
+      try {
+        const resolution = await this.assignments.resolveForWorkDateInTransaction(
+          transaction,
+          agencyId,
+          employeeId,
+          cursor,
+        );
+        const scheduleTimezone = resolution.workScheduleVersion.timezone;
+        const window =
+          eventCollectionWindow(resolution.dayRule, cursor, scheduleTimezone) ??
+          calendarDay(cursor, scheduleTimezone);
+        if (meets(window)) covered.push(cursor);
+      } catch (error: unknown) {
+        if (!attendanceExceptionDetails(error)) throw error;
+        if (meets(calendarDay(cursor, timezone))) unresolved.push(cursor);
+      }
+      cursor = addDateValueDays(cursor, 1);
+    }
+    return { covered, unresolved };
+  }
+
+  /**
    * Expose the exact Attendance Events of one resolved Work Date inside a
    * caller-owned transaction. Attendance Day calculation consumes the same
    * collection window the capture path uses, so both agree on what belongs to
@@ -1125,7 +1213,7 @@ export class AttendanceService {
     employeeId: string,
   ): Promise<void> {
     await transaction.$queryRaw<Array<{ id: string }>>(
-      Prisma.sql`SELECT "id" FROM "employees" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${employeeId} AS uuid) FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "employees" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${employeeId} AS uuid) FOR NO KEY UPDATE`,
     );
   }
 

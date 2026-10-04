@@ -361,7 +361,11 @@ function services() {
     calendars,
   );
   const attendance = new AttendanceService(attendanceAuditWriter, assignments);
-  const contexts = new AttendanceContextsService(attendanceContextAuditWriter, documentsService);
+  const contexts = new AttendanceContextsService(
+    attendanceContextAuditWriter,
+    documentsService,
+    attendance,
+  );
   const postedLeaveInputs = new AttendancePostedLeaveInputsService();
   const days = new AttendanceDaysService(
     attendanceDayAuditWriter,
@@ -380,7 +384,6 @@ function services() {
     registry,
     days,
     attendance,
-    assignments,
     documentsService,
     dtrs,
     periods,

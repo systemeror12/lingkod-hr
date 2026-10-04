@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AttendanceModule } from '../attendance/attendance.module';
 import { AuthModule } from '../auth/auth.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { AttendanceContextsController } from './attendance-contexts.controller';
@@ -9,7 +10,7 @@ import {
 import { AttendanceContextsService } from './attendance-contexts.service';
 
 @Module({
-  imports: [AuthModule, DocumentsModule],
+  imports: [AuthModule, AttendanceModule, DocumentsModule],
   controllers: [AttendanceContextsController],
   providers: [
     AttendanceContextsService,
