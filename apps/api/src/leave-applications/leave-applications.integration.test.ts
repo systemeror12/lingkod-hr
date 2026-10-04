@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { requestDatabaseContext } from '../database-context';
 import { finalizeAttendancePeriod } from '../attendance-test-fixtures';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import { attendanceContextAuditWriter } from '../attendance-contexts/attendance-contexts.audit';
@@ -62,6 +63,28 @@ function manilaDate(offsetDays = 0): string {
   const date = new Date(`${today}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + offsetDays);
   return date.toISOString().slice(0, 10);
+}
+
+/**
+ * The first leave period from December 31 to January 4, from `year` on, with
+ * working dates on both sides of the boundary after the January 1 holiday and
+ * at least two in January so a partial cancellation of the last one leaves one.
+ */
+function yearCrossing(year: number) {
+  for (let firstYear = year; ; firstYear += 1) {
+    const secondYear = firstYear + 1;
+    const dateFrom = `${firstYear}-12-31`;
+    const dateTo = `${secondYear}-01-04`;
+    const holiday = `${secondYear}-01-01`;
+    const workingDates: string[] = [];
+    for (let date = dateFrom; date <= dateTo; date = addDays(date, 1)) {
+      const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+      if (weekday !== 0 && weekday !== 6 && date !== holiday) workingDates.push(date);
+    }
+    if (workingDates[0] === dateFrom && workingDates.length >= 3) {
+      return { firstYear, secondYear, dateFrom, dateTo, holiday, workingDates };
+    }
+  }
 }
 
 function addDays(value: string, days: number): string {
@@ -506,6 +529,7 @@ it.skipIf(!enabled)(
       );
 
       const effectiveFrom = manilaDate(-30);
+      const crossing = yearCrossing(Number(manilaDate(0).slice(0, 4)) + 1);
       const calendar = await calendars.create(agencyContext, {
         code: `PH-${suffix}`,
         name: 'Agency Holiday Calendar',
@@ -524,6 +548,12 @@ it.skipIf(!enabled)(
             name: 'Special Non-Working Day',
             dayType: 'SPECIAL_NON_WORKING',
             sourceReference: 'Proclamation No. 45',
+          },
+          {
+            holidayDate: crossing.holiday,
+            name: "New Year's Day",
+            dayType: 'REGULAR_HOLIDAY',
+            sourceReference: 'Proclamation No. 90',
           },
         ],
       });
@@ -3762,6 +3792,105 @@ it.skipIf(!enabled)(
         await expect(
           admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } }),
         ).resolves.toBe(ledgerBeforeVacation + 5);
+
+        // Leave crossing December 31 counts each working date in its own year,
+        // skips the January 1 holiday, and an applied cancellation removes its
+        // exact dates.
+        const {
+          firstYear,
+          secondYear,
+          dateFrom: crossingFrom,
+          dateTo: crossingTo,
+          workingDates: crossingDates,
+        } = crossing;
+        const inYear = (year: number) =>
+          crossingDates.filter((date) => date.startsWith(`${year}-`));
+        const assessYear = async (year: number) => {
+          const { assessmentId } = await withDatabaseContext(
+            requestDatabaseContext(agencyContext),
+            (transaction) =>
+              mandatoryLeave.evaluateEmployeeYear(
+                transaction,
+                agency.id,
+                employee.id,
+                year,
+                `${year}-12-31`,
+              ),
+          );
+          const row = await admin.mandatoryLeaveAssessment.findUniqueOrThrow({
+            where: { id: assessmentId },
+          });
+          const facts = row.inputFacts as {
+            fulfillmentFacts: { allocations: { countedDates: string[] | null }[] } | null;
+          };
+          return {
+            result: row.result,
+            fulfilledQuantity: row.fulfilledQuantity?.toFixed(4) ?? null,
+            countedDates: facts.fulfillmentFacts?.allocations.map((line) => line.countedDates),
+          };
+        };
+        const crossingLeave = await postLeave(crossingFrom, crossingTo);
+        const crossingLine = crossingLeave.versions.at(-1)!.approvalAllocation!.lines[0]!;
+        expect(crossingLine).toMatchObject({
+          dateFrom: crossingFrom,
+          dateTo: crossingTo,
+          quantity: `${crossingDates.length}.0000`,
+        });
+        const ledgerBeforeCrossing = await admin.leaveLedgerEntry.count({
+          where: { agencyId: agency.id },
+        });
+        await expect(assessYear(firstYear)).resolves.toEqual({
+          result: expect.not.stringMatching('INDETERMINATE'),
+          fulfilledQuantity: `${inYear(firstYear).length}.0000`,
+          countedDates: [inYear(firstYear)],
+        });
+        await expect(assessYear(secondYear)).resolves.toEqual({
+          result: expect.not.stringMatching('INDETERMINATE'),
+          fulfilledQuantity: `${inYear(secondYear).length}.0000`,
+          countedDates: [inYear(secondYear)],
+        });
+
+        const lastDate = crossingDates.at(-1)!;
+        const crossingCancellationId = await requestApprovedCancellation(
+          crossingLeave.application.id,
+          {
+            scopeType: 'PARTIAL',
+            reason: 'Returning to duty on the last date.',
+            evidenceDocumentId: signedEvidence.documentId,
+            scopes: [
+              {
+                allocationLineId: crossingLine.id,
+                dateFrom: lastDate,
+                dateTo: crossingTo,
+                quantity: '1',
+              },
+            ],
+          },
+        );
+        await applications.applyCancellation(
+          applyContext,
+          crossingLeave.application.id,
+          crossingCancellationId,
+          `apply-crossing-partial-${suffix}`,
+        );
+        const ledgerAfterCancellation = await admin.leaveLedgerEntry.count({
+          where: { agencyId: agency.id },
+        });
+        await expect(assessYear(firstYear)).resolves.toMatchObject({
+          fulfilledQuantity: `${inYear(firstYear).length}.0000`,
+          countedDates: [inYear(firstYear)],
+        });
+        const remaining = inYear(secondYear).filter((date) => date !== lastDate);
+        await expect(assessYear(secondYear)).resolves.toMatchObject({
+          fulfilledQuantity: `${remaining.length}.0000`,
+          countedDates: [remaining],
+        });
+        // Assessments write no ledger entry: only the posting and the
+        // cancellation's reversal and replacement changed the ledger.
+        expect(ledgerAfterCancellation).toBe(ledgerBeforeCrossing + 2);
+        await expect(
+          admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } }),
+        ).resolves.toBe(ledgerAfterCancellation);
       }
 
       // A partial approval of two working days over three working dates has no
