@@ -4,6 +4,8 @@
 -- referring to the interval it was built from. Status moves only from OPEN to
 -- FINALIZED, and only through the Attendance application service's lock
 -- transition. A finalized period never reopens.
+--
+-- Rollback/correction: drop the trigger and the function.
 
 CREATE OR REPLACE FUNCTION guard_attendance_period_update()
 RETURNS TRIGGER

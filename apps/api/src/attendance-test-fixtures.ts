@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
-import { withDatabaseContext } from '@lingkod-hr/database';
+import { setDatabaseContext, withDatabaseContext } from '@lingkod-hr/database';
 import {
   approvalAuditWriter,
   ApprovalCompletionRegistry,
@@ -66,7 +66,7 @@ export async function finalizeAttendancePeriod(
   attendancePeriodId: string,
 ): Promise<void> {
   await admin.$transaction(async (transaction) => {
-    await transaction.$queryRaw`SELECT set_config('app.attendance_transition', 'on', true)`;
+    await setDatabaseContext(transaction, { capabilities: ['attendance-transition'] });
     await transaction.attendancePeriod.update({
       where: { id: attendancePeriodId },
       data: { status: 'FINALIZED' },
