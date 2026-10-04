@@ -161,6 +161,7 @@ model Agency {
   terminalLeaveInputAssessments TerminalLeaveInputAssessment[]
   terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
   terminalLeaveInputLines       TerminalLeaveInputSnapshotLine[]
+  mandatoryLeaveAssessments     MandatoryLeaveAssessment[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -2053,6 +2054,7 @@ model Employee {
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
+  mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -4127,6 +4129,7 @@ model LeavePolicyVersion {
   approvalAllocationLines LeaveApprovalAllocationLine[] @relation("LeaveApprovalAllocationLinePolicyVersion")
   monetizationAllocations LeaveMonetizationAllocation[] @relation("LeaveMonetizationAllocationPolicyVersion")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLinePolicyVersion")
+  mandatoryLeaveAssessments       MandatoryLeaveAssessment[]       @relation("MandatoryLeaveAssessmentPolicyVersion")
   createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy            AgencyMembership       @relation("LeavePolicyVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
@@ -4183,6 +4186,7 @@ model LeaveAccount {
   creditCertificationLines       LeaveCreditCertificationLine[]         @relation("LeaveCreditCertificationLineAccount")
   approvalAllocationLines        LeaveApprovalAllocationLine[]          @relation("LeaveApprovalAllocationLineAccount")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLines")
+  mandatoryLeaveAssessments       MandatoryLeaveAssessment[]       @relation("MandatoryLeaveAssessmentAccount")
 
   @@unique([agencyId, id])
   @@index([agencyId, status, employeeId])
@@ -5147,4 +5151,36 @@ model AgencyBuildingPhoto {
   changedByMembership   AgencyMembership @relation(fields: [agencyId, changedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@map("agency_building_photos")
+}
+
+/// The partial unique index mandatory_leave_assessments_first_per_year on
+/// (agency_id, employee_id, assessment_year) WHERE previous_assessment_id IS
+/// NULL lives in migration 0118; Prisma cannot express it.
+model MandatoryLeaveAssessment {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String   @map("agency_id") @db.Uuid
+  employeeId           String   @map("employee_id") @db.Uuid
+  assessmentYear       Int      @map("assessment_year")
+  policyVersionId      String?  @map("policy_version_id") @db.Uuid
+  leaveAccountId       String?  @map("leave_account_id") @db.Uuid
+  previousAssessmentId String?  @unique @map("previous_assessment_id") @db.Uuid
+  assessmentDate       DateTime @map("assessment_date") @db.Date
+  result               String
+  requiredQuantity     Decimal? @map("required_quantity") @db.Decimal(12, 4)
+  fulfilledQuantity    Decimal? @map("fulfilled_quantity") @db.Decimal(12, 4)
+  materialFingerprint  String   @map("material_fingerprint")
+  inputFacts           Json     @map("input_facts")
+  ruleResults          Json     @map("rule_results")
+  assessedAt           DateTime @default(now()) @map("assessed_at") @db.Timestamptz(6)
+
+  agency        Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee      Employee                   @relation("MandatoryLeaveAssessmentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion LeavePolicyVersion?        @relation("MandatoryLeaveAssessmentPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  leaveAccount  LeaveAccount?              @relation("MandatoryLeaveAssessmentAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  previous      MandatoryLeaveAssessment?  @relation("MandatoryLeaveAssessmentChain", fields: [agencyId, previousAssessmentId], references: [agencyId, id], onDelete: Restrict)
+  successors    MandatoryLeaveAssessment[] @relation("MandatoryLeaveAssessmentChain")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, assessmentYear, assessedAt(sort: Desc)])
+  @@map("mandatory_leave_assessments")
 }
