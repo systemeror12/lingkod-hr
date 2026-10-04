@@ -15,6 +15,7 @@ import {
 } from '../attendance-configuration/attendance-configuration.types';
 import {
   ScheduleAssignmentsService,
+  isWorkingDate,
   type AttendanceResolution,
 } from '../attendance-configuration/schedule-assignments.service';
 import {
@@ -140,6 +141,11 @@ type AttendanceExceptionRecord = Prisma.AttendanceExceptionGetPayload<{
   select: typeof exceptionSelect;
 }>;
 type AttendancePeriodRecord = Prisma.AttendancePeriodGetPayload<{ select: typeof periodSelect }>;
+type WorkingDateCounter = (
+  employeeId: string,
+  dateFrom: string,
+  dateTo: string,
+) => Promise<number | null>;
 
 function databaseContext(context: RequestContext) {
   return requestDatabaseContext(context);
@@ -349,12 +355,21 @@ export class AttendanceDaysService {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const now = new Date();
       const period = await this.findOrCreatePeriod(transaction, context, input);
+      const workingDates = this.workingDateCounter(transaction, context.agencyId);
       const days: AttendanceDayCalculationResultSummary[] = [];
       for (const employeeId of input.employeeIds) {
         for (let offset = 0; offset < dateCount; offset += 1) {
           const workDate = formatDate(addDays(toDatabaseDate(input.dateFrom), offset));
           days.push(
-            await this.calculateOne(transaction, context, period, employeeId, workDate, now),
+            await this.calculateOne(
+              transaction,
+              context,
+              period,
+              employeeId,
+              workDate,
+              now,
+              workingDates,
+            ),
           );
         }
       }
@@ -386,6 +401,7 @@ export class AttendanceDaysService {
       select: { id: true, employeeId: true, workDate: true, ruleSnapshot: true },
     });
     const now = new Date();
+    const workingDates = this.workingDateCounter(transaction, context.agencyId);
     const changed: string[] = [];
     for (const day of days) {
       const calculation = await this.calculationOf(
@@ -394,6 +410,7 @@ export class AttendanceDaysService {
         day.employeeId,
         formatDate(day.workDate),
         now,
+        workingDates,
       );
       if (metadataString(day.ruleSnapshot, 'fingerprint') !== calculation.fingerprint) {
         changed.push(day.id);
@@ -448,10 +465,19 @@ export class AttendanceDaysService {
       );
     }
     const now = new Date();
+    const workingDates = this.workingDateCounter(transaction, context.agencyId);
     const results: AttendanceDayCalculationResultSummary[] = [];
     for (const workDate of input.workDates) {
       results.push(
-        await this.calculateOne(transaction, context, period, input.employeeId, workDate, now),
+        await this.calculateOne(
+          transaction,
+          context,
+          period,
+          input.employeeId,
+          workDate,
+          now,
+          workingDates,
+        ),
       );
     }
     return results;
@@ -526,6 +552,7 @@ export class AttendanceDaysService {
       select: { workDate: true, attendancePeriod: { select: periodSelect } },
     });
     const now = new Date();
+    const workingDates = this.workingDateCounter(transaction, context.agencyId);
     for (const day of days) {
       await this.calculateOne(
         transaction,
@@ -534,6 +561,7 @@ export class AttendanceDaysService {
         input.employeeId,
         formatDate(day.workDate),
         now,
+        workingDates,
       );
     }
     return {
@@ -709,6 +737,32 @@ export class AttendanceDaysService {
     });
   }
 
+  /**
+   * Working-date counts for one operation's transaction, memoized per
+   * Employee and range so each Work Date of a long leave range reuses one count.
+   */
+  private workingDateCounter(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+  ): WorkingDateCounter {
+    const counts = new Map<string, Promise<number | null>>();
+    return (employeeId, dateFrom, dateTo) => {
+      const key = `${employeeId}/${dateFrom}/${dateTo}`;
+      let count = counts.get(key);
+      if (!count) {
+        count = this.assignments.workingDatesInTransaction(
+          transaction,
+          agencyId,
+          employeeId,
+          dateFrom,
+          dateTo,
+        );
+        counts.set(key, count);
+      }
+      return count;
+    };
+  }
+
   private async calculateOne(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -716,6 +770,7 @@ export class AttendanceDaysService {
     employeeId: string,
     workDate: string,
     now: Date,
+    workingDates: WorkingDateCounter,
   ): Promise<AttendanceDayCalculationResultSummary> {
     const current = await transaction.attendanceDay.findFirst({
       where: {
@@ -740,7 +795,14 @@ export class AttendanceDaysService {
       );
     }
 
-    const calculation = await this.calculationOf(transaction, context, employeeId, workDate, now);
+    const calculation = await this.calculationOf(
+      transaction,
+      context,
+      employeeId,
+      workDate,
+      now,
+      workingDates,
+    );
     const fingerprint = calculation.fingerprint;
     const exceptionTypes = calculation.exceptions.map((exception) => exception.type);
 
@@ -886,6 +948,7 @@ export class AttendanceDaysService {
     employeeId: string,
     workDate: string,
     now: Date,
+    workingDates: WorkingDateCounter,
   ) {
     let resolution: AttendanceResolution | null = null;
     let resolutionException: AttendanceExceptionError | null = null;
@@ -909,7 +972,7 @@ export class AttendanceDaysService {
       employeeId,
     );
     return resolution
-      ? this.calculateResolved(transaction, context, resolution, workDate, overlays)
+      ? this.calculateResolved(transaction, context, resolution, workDate, overlays, workingDates)
       : this.unresolvedCalculation(resolutionException!, employeeId, workDate, now);
   }
 
@@ -947,6 +1010,7 @@ export class AttendanceDaysService {
     resolution: AttendanceResolution,
     workDate: string,
     overlays: AppliedAttendanceCorrectionOverlays,
+    workingDates: WorkingDateCounter,
   ): Promise<{
     fingerprint: string;
     snapshot: AttendanceDayRuleSnapshot;
@@ -1014,15 +1078,10 @@ export class AttendanceDaysService {
       context.agencyId,
       resolution.employeeId,
       workDate,
-      (dateFrom, dateTo) =>
-        this.assignments.workingDatesInTransaction(
-          transaction,
-          context.agencyId,
-          resolution.employeeId,
-          dateFrom,
-          dateTo,
-        ),
+      (dateFrom, dateTo) => workingDates(resolution.employeeId, dateFrom, dateTo),
     );
+    // Leave counts no working day here, so placed leave covers nothing.
+    const placesLeave = isWorkingDate(resolution);
     const leaveExceptions: AttendanceCalculationException[] = [];
     for (const entry of postedLeave) {
       if (entry.ambiguousReason !== null) {
@@ -1038,6 +1097,7 @@ export class AttendanceDaysService {
         });
         continue;
       }
+      if (!placesLeave) continue;
       const wholeIntervals = wholeWorkDateCoverageIntervals(dayRule, workDate, timezone);
       for (const whole of wholeIntervals) {
         coverage.push({

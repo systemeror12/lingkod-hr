@@ -119,7 +119,8 @@ export class AttendancePostedLeaveInputsService {
    * withdraws coverage, so it never appears here. An input whose quantity
    * Attendance cannot place as whole-day coverage returns an ambiguity instead
    * of an assumed interval, so the calculation can fail closed. Working-day
-   * inputs sharing a date range must together equal the working dates
+   * inputs from one source sharing a date range, such as the allocation lines
+   * of one Leave Posting, must together equal the working dates
    * `workingDates` counts for that range under the Employee's schedule.
    */
   async coverageInTransaction(
@@ -141,8 +142,8 @@ export class AttendancePostedLeaveInputsService {
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    // Every input sharing a range covers this Work Date, so each range's
-    // combined quantity is the same on every date it covers.
+    // Every input sharing a source and range covers this Work Date, so their
+    // combined quantity is the same on every date they cover.
     const rangeQuantities = new Map<string, Prisma.Decimal>();
     for (const input of inputs) {
       if (input.unitCode !== 'WORKING_DAY') continue;
@@ -190,8 +191,13 @@ export class AttendancePostedLeaveInputsService {
   }
 }
 
-function rangeKey(input: { dateFrom: Date; dateTo: Date }): string {
-  return `${formatDate(input.dateFrom)}/${formatDate(input.dateTo)}`;
+function rangeKey(input: {
+  sourceType: string;
+  sourceId: string;
+  dateFrom: Date;
+  dateTo: Date;
+}): string {
+  return `${input.sourceType}/${input.sourceId}/${formatDate(input.dateFrom)}/${formatDate(input.dateTo)}`;
 }
 
 interface PostedLeaveInputFacts {

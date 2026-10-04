@@ -78,6 +78,19 @@ export interface AttendanceResolution {
   holidayEntries: HolidayCalendarEntrySummary[];
 }
 
+/**
+ * Whether a resolved Work Date counts as a working date the way Leave counts
+ * working days: neither a REST Day Rule nor a non-working holiday.
+ */
+export function isWorkingDate(resolution: AttendanceResolution): boolean {
+  return (
+    resolution.dayRule.ruleType !== 'REST' &&
+    !resolution.holidayEntries.some((entry) =>
+      (NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType),
+    )
+  );
+}
+
 export interface ScheduleAssignmentListFilter {
   employeeId?: string | undefined;
   asOf?: string | undefined;
@@ -623,8 +636,7 @@ export class ScheduleAssignmentsService {
 
   /**
    * Count the working dates from `dateFromValue` through `dateToValue` under
-   * the Employee's resolved schedule, the way Leave counts working days: a
-   * REST Day Rule or a non-working holiday is not a working date. Returns
+   * the Employee's resolved schedule; see `isWorkingDate`. Returns
    * null when any date in the range cannot be resolved, so callers fail closed.
    */
   async workingDatesInTransaction(
@@ -653,10 +665,7 @@ export class ScheduleAssignmentsService {
         if (error instanceof AttendanceExceptionError) return null;
         throw error;
       }
-      const nonWorkingHoliday = resolution.holidayEntries.some((entry) =>
-        (NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType),
-      );
-      if (resolution.dayRule.ruleType !== 'REST' && !nonWorkingHoliday) workingDates += 1;
+      if (isWorkingDate(resolution)) workingDates += 1;
     }
     return workingDates;
   }
