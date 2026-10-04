@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import {
   cleanupAttendanceWorkflowAgency,
   createAttendanceWorkflowFixture,
+  finalizeAttendancePeriod,
   manilaDate,
   type AttendanceWorkflowFixture,
 } from '../attendance-test-fixtures';
@@ -42,10 +43,7 @@ async function lockPeriodVersion(
       attendanceDayId: fixture.attendanceDayId,
     },
   });
-  await fixture.admin.attendancePeriod.update({
-    where: { id: fixture.periodId },
-    data: { status: 'FINALIZED' },
-  });
+  await finalizeAttendancePeriod(fixture.admin, fixture.periodId);
   return { id: version.id, dtrId: submission.submission.id };
 }
 

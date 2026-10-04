@@ -333,6 +333,8 @@ CREATE TABLE attendance_period_versions (
 );
 ```
 
+An Attendance Period is the stable interval every Attendance Period Version, Finalized Daily Time Record, and Attendance Payroll Publication refers to. `hris_app` holds `SELECT, INSERT, UPDATE` under the Agency policy, and the `attendance_periods_update_trigger` (`guard_attendance_period_update`) narrows UPDATE: `id`, `agency_id`, `code`, `date_from`, `date_to`, and `created_at` never change; status moves only from `OPEN` to `FINALIZED`, and only under the Attendance transition capability (`app.attendance_transition`) that Attendance Period Lock sets. A finalized period never reopens.
+
 ```sql
 CREATE TABLE attendance_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

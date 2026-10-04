@@ -7,6 +7,7 @@ import {
   ApprovalCompletionRegistry,
   ApprovalsService,
 } from '../approvals/approval.service';
+import { finalizeAttendancePeriod } from '../attendance-test-fixtures';
 import { attendanceConfigurationAuditWriter } from '../attendance-configuration/attendance-configuration.audit';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
 import { ScheduleAssignmentsService } from '../attendance-configuration/schedule-assignments.service';
@@ -1165,10 +1166,7 @@ it.skipIf(!enabled)(
           },
         ],
       });
-      await admin.attendancePeriod.update({
-        where: { id: fixture.periodId },
-        data: { status: 'FINALIZED' },
-      });
+      await finalizeAttendancePeriod(admin, fixture.periodId);
       const predecessorDtrs = await services.dtrs.materializeForLockedVersionInTransaction(
         admin,
         fixture.authorizerContext,
@@ -1395,10 +1393,7 @@ it.skipIf(!enabled)(
           },
         ],
       });
-      await admin.attendancePeriod.update({
-        where: { id: fixture.periodId },
-        data: { status: 'FINALIZED' },
-      });
+      await finalizeAttendancePeriod(admin, fixture.periodId);
       await services.dtrs.materializeForLockedVersionInTransaction(
         admin,
         fixture.authorizerContext,
