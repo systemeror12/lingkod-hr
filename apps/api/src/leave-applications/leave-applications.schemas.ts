@@ -69,7 +69,20 @@ export const leaveApplicationDraftSchema = z
     reason: leaveApplicationReasonSchema.optional(),
     policyDetails: leaveApplicationPolicyDetailsSchema.optional(),
     commutationChoice: z.enum(['REQUESTED', 'NOT_REQUESTED']).optional(),
-    periods: z.array(leaveApplicationPeriodSchema).min(1).max(20).optional(),
+    periods: z
+      .array(leaveApplicationPeriodSchema)
+      .min(1)
+      .max(20)
+      .refine(
+        (periods) =>
+          periods.every((period, index) =>
+            periods
+              .slice(index + 1)
+              .every((other) => other.dateFrom > period.dateTo || other.dateTo < period.dateFrom),
+          ),
+        { message: 'Requested periods cannot overlap.' },
+      )
+      .optional(),
     documents: z
       .array(
         z

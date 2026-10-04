@@ -47,6 +47,14 @@ it('validates draft facts and period ranges', () => {
   expect(leaveApplicationDraftSchema.safeParse({ periods: [] }).success).toBe(false);
   expect(
     leaveApplicationDraftSchema.safeParse({
+      periods: [
+        { dateFrom: '2026-03-02', dateTo: '2026-03-04' },
+        { dateFrom: '2026-03-04', dateTo: '2026-03-05' },
+      ],
+    }).success,
+  ).toBe(false);
+  expect(
+    leaveApplicationDraftSchema.safeParse({
       documents: [{ documentId, purposeCode: 'RENDERED_FORM' }],
     }).success,
   ).toBe(false);
