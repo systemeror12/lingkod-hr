@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
+import { setDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import {
   createAttendanceWorkflowFixture,
@@ -573,6 +574,7 @@ it.skipIf(!enabled)(
       // The admin transaction stands in for a lock holding the period row.
       await admin.$transaction(
         async (transaction) => {
+          await setDatabaseContext(transaction, { capabilities: ['attendance-transition'] });
           await transaction.$queryRaw`SELECT "id" FROM "attendance_periods"
             WHERE "id" = CAST(${fixture.periodId} AS uuid) FOR UPDATE`;
           recalculation = services.days

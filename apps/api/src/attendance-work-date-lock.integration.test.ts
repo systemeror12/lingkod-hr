@@ -3,6 +3,7 @@ import { expect, it } from 'vitest';
 import {
   cleanupAttendanceWorkflowAgency,
   createAttendanceWorkflowFixture,
+  finalizeAttendancePeriod,
   manilaDate,
   manilaInstant,
   type AttendanceWorkflowFixture,
@@ -28,10 +29,7 @@ function recorder(fixture: AttendanceWorkflowFixture): RequestContext {
 }
 
 async function lockPeriod(fixture: AttendanceWorkflowFixture): Promise<void> {
-  await fixture.admin.attendancePeriod.update({
-    where: { id: fixture.periodId },
-    data: { status: 'FINALIZED' },
-  });
+  await finalizeAttendancePeriod(fixture.admin, fixture.periodId);
 }
 
 it.skipIf(!enabled)(
@@ -123,10 +121,7 @@ it.skipIf(!enabled)('refuses a web clock event on a locked Work Date', async () 
       effectiveFrom: today,
       reason: 'Approved web clock.',
     });
-    await fixture.admin.attendancePeriod.update({
-      where: { id: period.period.id },
-      data: { status: 'FINALIZED' },
-    });
+    await finalizeAttendancePeriod(fixture.admin, period.period.id);
     const employee: RequestContext = {
       ...fixture.employeeContext,
       permissions: [
