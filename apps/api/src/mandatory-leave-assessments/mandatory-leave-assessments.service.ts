@@ -145,6 +145,8 @@ type AssessmentRecord = Prisma.MandatoryLeaveAssessmentGetPayload<{
 }>;
 
 const MANDATORY_LEAVE_CODE = 'MANDATORY_LEAVE';
+const VACATION_LEAVE_CODE =
+  findLeaveCatalogueEntry(MANDATORY_LEAVE_CODE)?.chargedLeaveTypeCode ?? '';
 const PROFILE = 'ORDINARY_CIVILIAN_NGA';
 
 @Injectable()
@@ -189,6 +191,7 @@ export class MandatoryLeaveAssessmentsService {
     };
     for (const employee of employees) {
       const outcome = await withDatabaseContext(databaseContext, async (transaction) => {
+        await lockAgencyYear(transaction, context.agencyId, assessmentYear, 'SHARED');
         const evaluated = await this.evaluateEmployeeYear(
           transaction,
           context.agencyId,
@@ -197,22 +200,14 @@ export class MandatoryLeaveAssessmentsService {
           assessmentDate,
         );
         if (evaluated.recorded) {
-          await this.auditWriter.write(transaction, {
-            agencyId: context.agencyId,
-            actorUserId: context.userId,
-            actorMembershipId: context.membershipId,
-            actorType: 'USER',
-            action: 'leave.mandatory_assessment.recorded',
-            entityType: 'MandatoryLeaveAssessment',
-            entityId: evaluated.assessmentId,
-            requestId: context.requestId,
-            metadata: {
-              employeeId: employee.id,
-              assessmentYear,
-              assessmentDate,
-              result: evaluated.result,
-            },
-          });
+          await this.auditRecorded(
+            transaction,
+            context,
+            employee.id,
+            assessmentYear,
+            assessmentDate,
+            evaluated,
+          );
         }
         return evaluated;
       });
@@ -237,6 +232,134 @@ export class MandatoryLeaveAssessmentsService {
   }
 
   /**
+   * Re-evaluates the owners of vacation Leave Accounts touched by ledger
+   * entries, inside the source command's transaction. Call it after the
+   * command's ledger, posting, and cancellation writes; a failure must roll the
+   * command back so an assessment never lags a committed source. Entries on
+   * other Leave Accounts are ignored.
+   */
+  async reevaluateLeaveAccounts(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    entries: readonly { leaveAccountId: string; effectiveDate: Date }[],
+  ): Promise<void> {
+    if (!entries.length) return;
+    const accounts = await transaction.leaveAccount.findMany({
+      where: {
+        agencyId: context.agencyId,
+        id: { in: [...new Set(entries.map((entry) => entry.leaveAccountId))] },
+        leaveType: { code: VACATION_LEAVE_CODE },
+      },
+      select: { id: true, employeeId: true },
+    });
+    const fromYearByEmployee = new Map<string, number>();
+    for (const entry of entries) {
+      const account = accounts.find(({ id }) => id === entry.leaveAccountId);
+      if (!account) continue;
+      const year = entry.effectiveDate.getUTCFullYear();
+      const current = fromYearByEmployee.get(account.employeeId);
+      if (current === undefined || year < current) fromYearByEmployee.set(account.employeeId, year);
+    }
+    for (const [employeeId, fromYear] of [...fromYearByEmployee].sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      await this.reevaluate(transaction, context, fromYear, employeeId);
+    }
+  }
+
+  /**
+   * Re-evaluates every assessed Employee in the Agency from the activated
+   * Mandatory Leave policy version's effective year, inside the activation's
+   * transaction.
+   */
+  async reevaluateAgency(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    effectiveFrom: Date,
+  ): Promise<void> {
+    await this.reevaluate(transaction, context, effectiveFrom.getUTCFullYear());
+  }
+
+  /**
+   * Re-evaluates each already-assessed Employee and year from `fromYear` through
+   * the current year; a past year uses December 31. Years without an assessment
+   * are left to the Agency/year evaluation, which covers new years and backfill.
+   */
+  private async reevaluate(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    fromYear: number,
+    employeeId?: string,
+  ): Promise<void> {
+    const currentYear = Number(manilaToday().slice(0, 4));
+    let pairs: { employeeId: string; assessmentYear: number }[] = [];
+    if (employeeId) {
+      // Whether a year is assessed is read under that year's Employee lock, so
+      // a first assessment still being written is waited for, not skipped.
+      for (let year = fromYear; year <= currentYear; year += 1) {
+        pairs.push({ employeeId, assessmentYear: year });
+      }
+    } else {
+      // The exclusive Agency-year locks wait out in-flight Agency/year
+      // evaluations, so the first assessments they write are listed here.
+      for (let year = fromYear; year <= currentYear; year += 1) {
+        await lockAgencyYear(transaction, context.agencyId, year, 'EXCLUSIVE');
+      }
+      pairs = await transaction.mandatoryLeaveAssessment.findMany({
+        where: {
+          agencyId: context.agencyId,
+          assessmentYear: { gte: fromYear },
+          previousAssessmentId: null,
+        },
+        orderBy: [{ employeeId: 'asc' }, { assessmentYear: 'asc' }],
+        select: { employeeId: true, assessmentYear: true },
+      });
+    }
+    for (const pair of pairs) {
+      const assessmentDate = assessmentDateFor(pair.assessmentYear);
+      const evaluated = await this.evaluateUnderLock(
+        transaction,
+        context.agencyId,
+        pair.employeeId,
+        pair.assessmentYear,
+        assessmentDate,
+        true,
+      );
+      if (evaluated?.recorded) {
+        await this.auditRecorded(
+          transaction,
+          context,
+          pair.employeeId,
+          pair.assessmentYear,
+          assessmentDate,
+          evaluated,
+        );
+      }
+    }
+  }
+
+  private async auditRecorded(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    assessmentYear: number,
+    assessmentDate: string,
+    evaluated: MandatoryLeaveEmployeeEvaluation,
+  ): Promise<void> {
+    await this.auditWriter.write(transaction, {
+      agencyId: context.agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'leave.mandatory_assessment.recorded',
+      entityType: 'MandatoryLeaveAssessment',
+      entityId: evaluated.assessmentId,
+      requestId: context.requestId,
+      metadata: { employeeId, assessmentYear, assessmentDate, result: evaluated.result },
+    });
+  }
+
+  /**
    * Evaluates one Employee and year inside the caller's transaction and appends
    * a successor only when the material fingerprint changed. A transaction-level
    * advisory lock serializes evaluators of the same Employee and year so they
@@ -250,7 +373,36 @@ export class MandatoryLeaveAssessmentsService {
     assessmentYear: number,
     assessmentDate: string,
   ): Promise<MandatoryLeaveEmployeeEvaluation> {
+    return (await this.evaluateUnderLock(
+      transaction,
+      agencyId,
+      employeeId,
+      assessmentYear,
+      assessmentDate,
+      false,
+    ))!;
+  }
+
+  /**
+   * Every source writer re-evaluates after its own writes, under this lock, so
+   * an evaluator that reads before a writer commits is followed by that
+   * writer's re-evaluation. With `onlyIfAssessed`, an unassessed year is left
+   * alone and returns null.
+   */
+  private async evaluateUnderLock(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    assessmentYear: number,
+    assessmentDate: string,
+    onlyIfAssessed: boolean,
+  ): Promise<MandatoryLeaveEmployeeEvaluation | null> {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`mandatory_leave_assessment:${agencyId}:${employeeId}:${assessmentYear}`}, 0))`;
+    const latest = await transaction.mandatoryLeaveAssessment.findFirst({
+      where: { agencyId, employeeId, assessmentYear, successors: { none: {} } },
+      select: { id: true, result: true, materialFingerprint: true },
+    });
+    if (!latest && onlyIfAssessed) return null;
     const evaluation = await this.evaluate(
       transaction,
       agencyId,
@@ -258,10 +410,6 @@ export class MandatoryLeaveAssessmentsService {
       assessmentYear,
       assessmentDate,
     );
-    const latest = await transaction.mandatoryLeaveAssessment.findFirst({
-      where: { agencyId, employeeId, assessmentYear, successors: { none: {} } },
-      select: { id: true, result: true, materialFingerprint: true },
-    });
     if (latest && latest.materialFingerprint === evaluation.materialFingerprint) {
       return {
         assessmentId: latest.id,
@@ -466,7 +614,7 @@ export class MandatoryLeaveAssessmentsService {
         await transaction.leaveType.findFirst({
           where: {
             agencyId,
-            code: findLeaveCatalogueEntry(MANDATORY_LEAVE_CODE)?.chargedLeaveTypeCode ?? '',
+            code: VACATION_LEAVE_CODE,
           },
           select: { id: true },
         })
@@ -479,22 +627,11 @@ export class MandatoryLeaveAssessmentsService {
       openedAt: { lte: asOfDate },
       OR: [{ closedAt: null }, { closedAt: { gte: yearStart } }],
     } satisfies Prisma.LeaveAccountWhereInput;
-    const candidateIds = vacationLeaveTypeId
-      ? (
-          await transaction.leaveAccount.findMany({ where: accountWhere, select: { id: true } })
-        ).map(({ id }) => id)
-      : [];
-    // Ledger posting and cancellation reversal lock these rows FOR UPDATE. Sharing
-    // that lock, in the writers' id order, keeps the account, ledger, and
-    // cancellation reads below on one committed state.
-    if (candidateIds.length) {
-      await transaction.$queryRaw(
-        Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" IN (${Prisma.join(candidateIds.map((id) => Prisma.sql`CAST(${id} AS uuid)`))}) ORDER BY "id" FOR SHARE`,
-      );
-    }
-    const accounts = candidateIds.length
+    // Every ledger writer re-evaluates under this Employee-year lock before it
+    // commits, so these reads cannot interleave with a writer's commit.
+    const accounts = vacationLeaveTypeId
       ? await transaction.leaveAccount.findMany({
-          where: { ...accountWhere, id: { in: candidateIds } },
+          where: accountWhere,
           orderBy: { openedAt: 'asc' },
           select: { id: true, status: true, openedAt: true, closedAt: true },
         })
@@ -629,6 +766,21 @@ function afterCursor(cursor: AssessmentCursor): Prisma.MandatoryLeaveAssessmentW
  * The as-of date for a year: today for the current year and December 31 for a
  * past year. Future years cannot be assessed.
  */
+/** Serializes Agency/year evaluations (shared) with policy activation (exclusive). */
+async function lockAgencyYear(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  assessmentYear: number,
+  mode: 'SHARED' | 'EXCLUSIVE',
+): Promise<void> {
+  const key = `mandatory_leave_assessment_agency:${agencyId}:${assessmentYear}`;
+  if (mode === 'SHARED') {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`;
+  } else {
+    await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  }
+}
+
 export function assessmentDateFor(assessmentYear: number, today = manilaToday()): string {
   const currentYear = Number(today.slice(0, 4));
   if (!Number.isInteger(assessmentYear) || assessmentYear < 1900 || assessmentYear > currentYear) {

@@ -8,6 +8,10 @@ import {
   leaveApplicationAuditWriter,
   permittedAllocationKinds,
 } from './leave-applications.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const documentsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[1];
 const approvalsService = {} as ConstructorParameters<typeof LeaveApplicationsService>[2];
@@ -43,6 +47,7 @@ function service() {
     holidayCalendars,
     new AttendancePostedLeaveInputsService(),
     {} as never,
+    new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
   );
 }
 

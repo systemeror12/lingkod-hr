@@ -9,6 +9,10 @@ import {
   LeavePoliciesService,
 } from '../leave-policies/leave-policies.service';
 import { LeaveAccountsService, leaveAccountAuditWriter } from './leave-accounts.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -197,10 +201,12 @@ it.skipIf(!enabled)(
     const policies = new LeavePoliciesService(
       leavePolicyAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     const service = new LeaveAccountsService(
       leaveAccountAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
 
     try {

@@ -6,6 +6,10 @@ import {
   isCreditBearingLeaveType,
   leaveAccountAuditWriter,
 } from './leave-accounts.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const documentsService = {} as ConstructorParameters<typeof LeaveAccountsService>[1];
 const agencyId = '00000000-0000-4000-8000-000000000001';
@@ -30,7 +34,11 @@ const adjust = { code: 'leave.credits.adjust', scopePolicy: 'AGENCY' } as const;
 const evidence = { code: 'documents.evidence.read', scopePolicy: 'AGENCY' } as const;
 
 function service() {
-  return new LeaveAccountsService(leaveAccountAuditWriter, documentsService);
+  return new LeaveAccountsService(
+    leaveAccountAuditWriter,
+    documentsService,
+    new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+  );
 }
 
 it('requires leave.accounts.read before exposing accounts', async () => {

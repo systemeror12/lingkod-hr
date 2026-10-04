@@ -25,6 +25,7 @@ import {
   type CreatePostedLeaveInput,
 } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import { DocumentsService } from '../documents/documents.service';
+import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
   findLeaveCatalogueEntry,
   parseLeaveRuleParameters,
@@ -1278,6 +1279,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     private readonly postedLeaveInputs: AttendancePostedLeaveInputsService,
     @Inject(AttendanceCorrectionsService)
     private readonly attendanceCorrections: AttendanceCorrectionsService,
+    @Inject(MandatoryLeaveAssessmentsService)
+    private readonly mandatoryLeave: MandatoryLeaveAssessmentsService,
   ) {}
 
   onModuleInit(): void {
@@ -2457,6 +2460,19 @@ export class LeaveApplicationsService implements OnModuleInit {
             where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
             data: { status: 'CANCELLED' },
           });
+          await this.mandatoryLeave.reevaluateLeaveAccounts(
+            transaction,
+            context,
+            allocation.lines.flatMap(({ id, leaveAccountId, dateFrom }) =>
+              cancellation.priorStatus === 'POSTED' &&
+              leaveAccountId &&
+              cancellation.scopes.some(
+                ({ approvalAllocationLineId }) => approvalAllocationLineId === id,
+              )
+                ? [{ leaveAccountId, effectiveDate: dateFrom }]
+                : [],
+            ),
+          );
           await this.auditWriter.write(transaction, {
             agencyId: context.agencyId,
             actorUserId: context.userId,
@@ -3298,6 +3314,13 @@ export class LeaveApplicationsService implements OnModuleInit {
             where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
             data: { status: 'POSTED' },
           });
+          await this.mandatoryLeave.reevaluateLeaveAccounts(
+            transaction,
+            context,
+            allocation.lines.flatMap(({ leaveAccountId, dateFrom }) =>
+              leaveAccountId ? [{ leaveAccountId, effectiveDate: dateFrom }] : [],
+            ),
+          );
           await this.auditWriter.write(transaction, {
             agencyId: context.agencyId,
             actorUserId: context.userId,
@@ -4861,7 +4884,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     leaveAccountId: string,
   ): Promise<void> {
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${leaveAccountId} AS uuid) FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${leaveAccountId} AS uuid) FOR NO KEY UPDATE`,
     );
   }
 

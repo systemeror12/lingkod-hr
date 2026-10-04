@@ -14,6 +14,10 @@ import {
   terminalLeaveInputAuditWriter,
   type SeparationQualification,
 } from './terminal-leave-inputs.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -343,7 +347,11 @@ it.skipIf(!enabled)(
 
     const documents = new DocumentsService({} as never, documentAuditWriter);
     const separationsService = new SeparationsService(separationAuditWriter);
-    const accountsService = new LeaveAccountsService(leaveAccountAuditWriter, documents);
+    const accountsService = new LeaveAccountsService(
+      leaveAccountAuditWriter,
+      documents,
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+    );
     const service = new TerminalLeaveInputsService(
       terminalLeaveInputAuditWriter,
       documents,

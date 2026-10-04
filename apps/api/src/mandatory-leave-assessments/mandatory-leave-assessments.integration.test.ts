@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
@@ -189,8 +190,16 @@ it.skipIf(!enabled)(
     );
 
     const documents = new DocumentsService({} as never, documentAuditWriter);
-    const policies = new LeavePoliciesService(leavePolicyAuditWriter, documents);
-    const accounts = new LeaveAccountsService(leaveAccountAuditWriter, documents);
+    const policies = new LeavePoliciesService(
+      leavePolicyAuditWriter,
+      documents,
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+    );
+    const accounts = new LeaveAccountsService(
+      leaveAccountAuditWriter,
+      documents,
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+    );
     const service = new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter);
     const controller = new MandatoryLeaveAssessmentsController(service);
 
@@ -315,12 +324,12 @@ it.skipIf(!enabled)(
         where: { agencyId: agency.id },
       });
 
-      // Below the 10-credit threshold: NOT_SUBJECT. No account: still INDETERMINATE, new reason.
-      const notSubject = await service.evaluateAgencyYear(adminContext, year);
-      expect(notSubject).toMatchObject({
-        recordedCount: 2,
-        results: { SUBJECT: 0, NOT_SUBJECT: 1, INDETERMINATE: 1 },
-      });
+      // Activation re-evaluated both Employees inline. Below the 10-credit
+      // threshold: NOT_SUBJECT. No account: still INDETERMINATE, new reason.
+      expect((await chainFor(employee.id)).map((row) => row.result)).toEqual([
+        'INDETERMINATE',
+        'NOT_SUBJECT',
+      ]);
       const [noAccount] = (await chainFor(noAccountEmployee.id)).slice(-1);
       expect(noAccount?.result).toBe('INDETERMINATE');
       expect(reasonsOf(noAccount?.inputFacts)).toEqual(['MISSING_VACATION_ACCOUNT']);
@@ -331,16 +340,11 @@ it.skipIf(!enabled)(
         unchangedCount: 2,
       });
 
+      // Each vacation ledger entry re-evaluates the Employee inline.
       await adjust(5, 'mandatory-leave-credit');
-      await expect(service.evaluateAgencyYear(adminContext, year)).resolves.toMatchObject({
-        recordedCount: 1,
-        results: { SUBJECT: 1 },
-      });
+      expect((await chainFor(employee.id)).at(-1)?.result).toBe('SUBJECT');
       await adjust(-5, 'mandatory-leave-debit');
-      await expect(service.evaluateAgencyYear(adminContext, year)).resolves.toMatchObject({
-        recordedCount: 1,
-        results: { NOT_SUBJECT: 1 },
-      });
+      expect((await chainFor(employee.id)).at(-1)?.result).toBe('NOT_SUBJECT');
 
       // A -> B -> A history: the return to A appends rather than reusing the old row.
       const chain = await chainFor(employee.id);
@@ -364,8 +368,20 @@ it.skipIf(!enabled)(
       expect(chain[2]?.requiredQuantity?.toFixed(4)).toBe('5.0000');
       expect(chain[2]?.fulfilledQuantity?.toFixed(4)).toBe('0.0000');
 
-      // Concurrent evaluations of the same change produce one successor.
-      await adjust(5, 'mandatory-leave-credit-again');
+      // Concurrent evaluations of the same change produce one successor. The
+      // entry is written directly so no inline re-evaluation records it first.
+      await admin.leaveLedgerEntry.create({
+        data: {
+          agencyId: agency.id,
+          leaveAccountId: account.id,
+          quantity: 5,
+          effectiveDate: new Date(`${manilaDate(0)}T00:00:00.000Z`),
+          sourceType: 'IntegrationFixture',
+          sourceId: randomUUID(),
+          sourcePostingKey: 'mandatory-leave-credit-again',
+          policyVersionId: vacation.version.id,
+        },
+      });
       const concurrent = await Promise.all([
         service.evaluateAgencyYear(adminContext, year),
         service.evaluateAgencyYear(adminContext, year),
@@ -375,12 +391,12 @@ it.skipIf(!enabled)(
       expect(afterConcurrency).toHaveLength(5);
       expect(afterConcurrency[4]?.previousAssessmentId).toBe(afterConcurrency[3]?.id);
 
-      // Evaluation shares the account lock that ledger writers hold, so it waits
-      // for an in-flight writer instead of reading a torn ledger state.
+      // A ledger writer re-evaluates under the Employee-year lock before it
+      // commits, so an evaluation waits for it instead of reading a torn state.
       let writerCommitted = false;
       let evaluatedAfterWriter!: Promise<boolean>;
       await admin.$transaction(async (transaction) => {
-        await transaction.$queryRaw`SELECT "id" FROM "leave_accounts" WHERE "id" = CAST(${account.id} AS uuid) FOR UPDATE`;
+        await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`mandatory_leave_assessment:${agency.id}:${employee.id}:${year}`}, 0))`;
         evaluatedAfterWriter = withDatabaseContext(requestDatabaseContext(adminContext), (tx) =>
           service.evaluateEmployeeYear(tx, agency.id, employee.id, year, manilaDate(0)),
         ).then(() => writerCommitted);
@@ -495,7 +511,7 @@ it.skipIf(!enabled)(
         admin.auditEvent.count({
           where: { agencyId: agency.id, action: 'leave.mandatory_assessments.evaluated' },
         }),
-      ).resolves.toBe(8);
+      ).resolves.toBe(5);
 
       // Assessments are immutable.
       await expect(
@@ -538,6 +554,259 @@ it.skipIf(!enabled)(
         await transaction.employee.deleteMany({ where: { agencyId: { in: agencyIds } } });
         await transaction.agency.deleteMany({ where: { id: { in: agencyIds } } });
         await transaction.user.deleteMany({ where: { id: { in: [user.id, foreignUser.id] } } });
+      });
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  're-evaluates assessed years inline after ledger entries and policy activation',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-mandatory-leave-reevaluation`;
+    const year = Number(manilaDate(0).slice(0, 4));
+    const agency = await admin.agency.create({
+      data: {
+        code: `MLR-${suffix}`,
+        name: 'Mandatory Leave Re-evaluation Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const user = await admin.user.create({
+      data: {
+        emailNormalized: `mandatory-leave-reevaluation-${suffix}@example.test`,
+        displayName: 'Mandatory Leave Re-evaluation Administrator',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const membership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const employee = await createEmployee(admin, agency.id, membership.id, suffix, 'Ana Reyes');
+    const documents = new DocumentsService({} as never, documentAuditWriter);
+    const service = new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter);
+    const policies = new LeavePoliciesService(leavePolicyAuditWriter, documents, service);
+    const accounts = new LeaveAccountsService(leaveAccountAuditWriter, documents, service);
+    const actor = context(agency.id, user.id, membership.id, [
+      { code: 'leave.types.read', scopePolicy: 'AGENCY' },
+      { code: 'leave.types.manage', scopePolicy: 'AGENCY' },
+      { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
+      { code: 'leave.credits.adjust', scopePolicy: 'AGENCY' },
+      { code: 'documents.evidence.read', scopePolicy: 'AGENCY' },
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'AGENCY' },
+      { code: 'leave.mandatory_assessments.evaluate', scopePolicy: 'AGENCY' },
+    ]);
+    const chainFor = (assessmentYear: number) =>
+      admin.mandatoryLeaveAssessment.findMany({
+        where: { agencyId: agency.id, employeeId: employee.id, assessmentYear },
+        orderBy: { assessedAt: 'asc' },
+      });
+    const chainLengths = async () => [
+      (await chainFor(year - 1)).length,
+      (await chainFor(year)).length,
+    ];
+
+    try {
+      const evidenceId = await createEvidence(admin, agency.id, membership.id, `${suffix}-1`);
+      const configurationId = await createEvidence(admin, agency.id, membership.id, `${suffix}-2`);
+      async function adoptVersion(
+        leaveTypeId: string,
+        effectiveDate: string,
+        configurationEvidenceId?: string,
+      ) {
+        const version = await policies.createPolicyVersion(actor, leaveTypeId, {
+          effectiveDate,
+          approvalRouteCode: 'LEAVE-ROUTE-1',
+          applicability: { profiles: ['ORDINARY_CIVILIAN_NGA'] },
+          documentRequirements: {},
+          reason: 'Adopt the policy for the re-evaluation test.',
+        });
+        await policies.linkAuthority(actor, leaveTypeId, version.id, {
+          authorityClass: 'NATIONAL_RULE',
+          documentId: evidenceId,
+          citation: 'Rule XVI',
+        });
+        if (configurationEvidenceId) {
+          await policies.linkAuthority(actor, leaveTypeId, version.id, {
+            authorityClass: 'AGENCY_CONFIGURATION',
+            documentId: configurationEvidenceId,
+            citation: 'Agency mandatory-leave configuration for the re-evaluation test.',
+          });
+        }
+        await policies.activate(actor, leaveTypeId, version.id, 'Activate the policy.');
+        return version;
+      }
+      const vacation = await policies.create(actor, { catalogueCode: 'VACATION_LEAVE' });
+      await adoptVersion(vacation.id, `${year - 1}-01-01`);
+      const sick = await policies.create(actor, { catalogueCode: 'SICK_LEAVE' });
+      await adoptVersion(sick.id, `${year - 1}-01-01`);
+      const mandatory = await policies.create(actor, { catalogueCode: 'MANDATORY_LEAVE' });
+      const firstMandatory = await adoptVersion(mandatory.id, `${year - 1}-01-01`, configurationId);
+      const openAccount = (leaveTypeId: string) =>
+        accounts.open(actor, {
+          employeeId: employee.id,
+          leaveTypeId,
+          effectiveDate: `${year - 1}-06-01`,
+          openingQuantity: 5,
+          evidenceDocumentId: evidenceId,
+          reason: 'Opening balance carried from the service record.',
+        });
+      const account = await openAccount(vacation.id);
+      const sickAccount = await openAccount(sick.id);
+      const adjust = (accountId: string, quantity: number, effectiveDate: string, key: string) =>
+        accounts.recordAdjustment(
+          actor,
+          accountId,
+          {
+            quantity,
+            effectiveDate,
+            authorityDocumentId: evidenceId,
+            evidenceDocumentId: evidenceId,
+            reason: 'Adjust the balance for the re-evaluation test.',
+          },
+          key,
+        );
+
+      // Years not yet assessed are left to the Agency/year evaluation.
+      expect(await chainLengths()).toEqual([0, 0]);
+      await service.evaluateAgencyYear(actor, year - 1);
+      // A first assessment references the account a paused writer holds, so its
+      // foreign-key check must not wait on that writer's account lock.
+      let pausedWriter!: ReturnType<typeof adjust>;
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe('LOCK TABLE leave_ledger_adjustments IN SHARE MODE');
+        pausedWriter = adjust(account.id, 1, manilaDate(0), 'paused-credit');
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await service.evaluateAgencyYear(actor, year);
+      });
+      await pausedWriter;
+      expect((await chainFor(year - 1)).map((row) => row.result)).toEqual(['NOT_SUBJECT']);
+      expect((await chainFor(year)).map((row) => row.result)).toEqual(['NOT_SUBJECT']);
+
+      // A backdated vacation entry re-evaluates every year through the current one.
+      const backdated = `${year - 1}-07-01`;
+      await adjust(account.id, 5, backdated, 'backdated-credit');
+      const pastChain = await chainFor(year - 1);
+      const currentChain = await chainFor(year);
+      expect(pastChain.map((row) => row.result)).toEqual(['NOT_SUBJECT', 'SUBJECT']);
+      expect(currentChain.map((row) => row.result)).toEqual(['NOT_SUBJECT', 'SUBJECT']);
+      expect(pastChain[1]).toMatchObject({
+        previousAssessmentId: pastChain[0]!.id,
+        assessmentDate: new Date(`${year - 1}-12-31T00:00:00.000Z`),
+      });
+      expect(currentChain[1]?.previousAssessmentId).toBe(currentChain[0]!.id);
+      await expect(
+        admin.auditEvent.count({
+          where: { agencyId: agency.id, action: 'leave.mandatory_assessment.recorded' },
+        }),
+      ).resolves.toBe(4);
+
+      // A retried command, a non-vacation entry, and an unchanged evaluation write no row.
+      await adjust(account.id, 5, backdated, 'backdated-credit');
+      await adjust(sickAccount.id, 1, manilaDate(0), 'sick-credit');
+      await expect(service.evaluateAgencyYear(actor, year)).resolves.toMatchObject({
+        recordedCount: 0,
+      });
+      expect(await chainLengths()).toEqual([2, 2]);
+
+      // Concurrent triggers of one change yield one successor per year.
+      await Promise.all([
+        adjust(account.id, 1, backdated, 'concurrent-credit'),
+        adjust(account.id, 1, backdated, 'concurrent-credit'),
+        service.evaluateAgencyYear(actor, year),
+        service.evaluateAgencyYear(actor, year - 1),
+      ]);
+      const [pastAfterRace, currentAfterRace] = [await chainFor(year - 1), await chainFor(year)];
+      expect([pastAfterRace.length, currentAfterRace.length]).toEqual([3, 3]);
+      expect(pastAfterRace[2]?.previousAssessmentId).toBe(pastAfterRace[1]!.id);
+      expect(currentAfterRace[2]?.previousAssessmentId).toBe(currentAfterRace[1]!.id);
+
+      // Activating a MANDATORY_LEAVE version re-evaluates from its effective year,
+      // including a first assessment an in-flight Agency/year evaluation is
+      // writing under the old version. A table lock holds that insert open.
+      const newcomer = await createEmployee(
+        admin,
+        agency.id,
+        membership.id,
+        `${suffix}-newcomer`,
+        'Ben Cruz',
+      );
+      let evaluation!: Promise<unknown>;
+      let activation!: ReturnType<typeof adoptVersion>;
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe('LOCK TABLE mandatory_leave_assessments IN SHARE MODE');
+        evaluation = service.evaluateAgencyYear(actor, year);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        activation = adoptVersion(mandatory.id, manilaDate(0), configurationId);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      });
+      const [, secondMandatory] = await Promise.all([evaluation, activation]);
+      const newcomerChain = await admin.mandatoryLeaveAssessment.findMany({
+        where: { agencyId: agency.id, employeeId: newcomer.id, assessmentYear: year },
+        orderBy: { assessedAt: 'asc' },
+      });
+      expect(newcomerChain.map((row) => row.policyVersionId)).toEqual([
+        firstMandatory.id,
+        secondMandatory.id,
+      ]);
+      expect(await chainLengths()).toEqual([3, 4]);
+      expect((await chainFor(year)).at(-1)?.policyVersionId).toBe(secondMandatory.id);
+      expect((await chainFor(year - 1)).at(-1)?.policyVersionId).toBe(firstMandatory.id);
+
+      // A failed re-evaluation rolls back the source command. The backdated
+      // credit changes the balance on the date the threshold was reached.
+      const ledgerCount = await admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } });
+      const failure = `fail_assessment_${randomUUID().replaceAll('-', '')}`;
+      await admin.$executeRawUnsafe(
+        `CREATE FUNCTION ${failure}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'intentional assessment failure'; END; $$`,
+      );
+      await admin.$executeRawUnsafe(
+        `CREATE TRIGGER ${failure} BEFORE INSERT ON mandatory_leave_assessments FOR EACH ROW WHEN (NEW.agency_id = '${agency.id}'::uuid) EXECUTE FUNCTION ${failure}()`,
+      );
+      try {
+        await expect(adjust(account.id, 1, backdated, 'failed-credit')).rejects.toThrow(
+          /intentional assessment failure/,
+        );
+      } finally {
+        await admin.$executeRawUnsafe(`DROP TRIGGER ${failure} ON mandatory_leave_assessments`);
+        await admin.$executeRawUnsafe(`DROP FUNCTION ${failure}()`);
+      }
+      await expect(admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } })).resolves.toBe(
+        ledgerCount,
+      );
+      expect(await chainLengths()).toEqual([3, 4]);
+
+      // Re-evaluation never writes the ledger: two openings and four adjustments.
+      expect(ledgerCount).toBe(6);
+      await expect(
+        admin.leaveLedgerEntry.count({
+          where: {
+            agencyId: agency.id,
+            NOT: { sourceType: { in: ['LeaveAccountOpening', 'LeaveLedgerAdjustment'] } },
+          },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.auditEvent.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.mandatoryLeaveAssessment.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leaveLedgerAdjustment.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leaveLedgerEntry.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leaveCreditCommitment.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leaveAccountOpening.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leaveAccount.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leavePolicyAuthority.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leavePolicyVersion.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.leaveType.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.documentVersion.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.document.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.agencyMembership.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.employee.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.agency.deleteMany({ where: { id: agency.id } });
+        await transaction.user.deleteMany({ where: { id: user.id } });
       });
       await admin.$disconnect();
     }
