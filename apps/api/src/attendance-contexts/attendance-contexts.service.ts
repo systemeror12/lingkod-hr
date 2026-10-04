@@ -4,6 +4,13 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { AttendanceService } from '../attendance/attendance.service';
+import { addDateValueDays, localDateValue } from '../attendance/attendance.types';
+import {
+  ATTENDANCE_WORK_DATE_LOCKED,
+  findLockedWorkDate,
+  lockedWorkDateMessage,
+} from '../attendance-work-date-lock';
 import {
   contextOverlayCoversWindow,
   type AttendanceCorrectionContextOverlay,
@@ -28,6 +35,7 @@ import {
   type AttendanceContextSummary,
   type AttendanceContextType,
   type AttendanceContextWorkDateWindow,
+  type NormalizedAttendanceContextInput,
   type RecordAttendanceContextInput,
 } from './attendance-contexts.types';
 
@@ -216,6 +224,7 @@ export class AttendanceContextsService {
     @Inject(ATTENDANCE_CONTEXT_AUDIT_WRITER)
     private readonly auditWriter: AttendanceContextAuditWriter,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
+    @Inject(AttendanceService) private readonly attendance: AttendanceService,
   ) {}
 
   async list(
@@ -283,6 +292,18 @@ export class AttendanceContextsService {
         select: { id: true },
       });
       if (!employee) throw this.employeeNotFound();
+      const locked = await findLockedWorkDate(
+        transaction,
+        context.agencyId,
+        await this.coveredWorkDates(transaction, context.agencyId, normalized),
+      );
+      if (locked) {
+        throw new AttendanceContextServiceError(
+          lockedWorkDateMessage(locked),
+          409,
+          ATTENDANCE_WORK_DATE_LOCKED,
+        );
+      }
       let evidenceDocumentVersionId: string | null = null;
       if (normalized.evidenceDocumentVersionId) {
         const evidence = await this.documentsService.resolveFinalizedVersionInTransaction(
@@ -493,6 +514,45 @@ export class AttendanceContextsService {
       intervals: coverage,
       conflicts: detectConflicts(intervals),
     };
+  }
+
+  /**
+   * Work Dates a new Context would add a source to. A timed interval too long
+   * to resolve against schedules fails closed to every local date it could
+   * touch, including Work Dates whose collection windows reach into it.
+   */
+  private async coveredWorkDates(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    input: NormalizedAttendanceContextInput,
+  ): Promise<string[]> {
+    if (input.workDate) return [input.workDate];
+    const startsAt = toDatabaseInstant(input.startsAt!);
+    const endsAt = toDatabaseInstant(input.endsAt!);
+    const resolved = await this.attendance.coveredWorkDatesInTransaction(
+      transaction,
+      agencyId,
+      input.employeeId,
+      startsAt,
+      endsAt,
+    );
+    // A date without a schedule may still hold a locked Attendance Day.
+    if (resolved) return [...resolved.covered, ...resolved.unresolved];
+    const agency = await transaction.agency.findFirst({
+      where: { id: agencyId },
+      select: { defaultTimezone: true },
+    });
+    const timezone = agency?.defaultTimezone ?? 'Asia/Manila';
+    const lastDate = addDateValueDays(localDateValue(endsAt, timezone), 2);
+    const dates: string[] = [];
+    for (
+      let cursor = addDateValueDays(localDateValue(startsAt, timezone), -3);
+      cursor <= lastDate;
+      cursor = addDateValueDays(cursor, 1)
+    ) {
+      dates.push(cursor);
+    }
+    return dates;
   }
 
   private requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {

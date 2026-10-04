@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { attendanceAuditWriter } from './attendance.audit';
+import { AttendanceExceptionError } from '../attendance-configuration/attendance-configuration.types';
 import { AttendanceService } from './attendance.service';
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
@@ -125,4 +126,49 @@ it('rejects malformed web clock enablement before touching the database', async 
     code: 'ATTENDANCE_CONFIGURATION_DATE_INVALID',
     statusCode: 400,
   });
+});
+
+it('finds every Work Date whose collection window or calendar day holds an instant', async () => {
+  const unscheduled = '2026-02-02';
+  const assignments = {
+    resolveForWorkDateInTransaction: async (
+      _transaction: unknown,
+      _agencyId: string,
+      _employeeId: string,
+      workDate: string,
+    ) => {
+      if (workDate === unscheduled) {
+        throw new AttendanceExceptionError(
+          'MISSING_SCHEDULE_ASSIGNMENT',
+          'No Schedule Assignment.',
+        );
+      }
+      return {
+        workDate,
+        workScheduleVersion: { timezone: 'Asia/Manila' },
+        // 22:00 to 06:00 next day, collected for a further 24 hours.
+        dayRule: {
+          ruleType: 'FIXED',
+          dutyStartTime: '22:00',
+          dutyEndTime: '06:00',
+          endNextCalendarDay: true,
+          collectionBeforeMinutes: 0,
+          collectionAfterMinutes: 1440,
+        },
+      };
+    },
+  };
+  const attendance = new AttendanceService(attendanceAuditWriter, assignments as never);
+  const transaction = { agency: { findFirst: async () => ({ defaultTimezone: 'Asia/Manila' }) } };
+  const instant = new Date('2026-02-02T04:00:00+08:00');
+
+  await expect(
+    attendance.coveredWorkDatesInTransaction(
+      transaction as never,
+      agencyId,
+      employeeId,
+      instant,
+      instant,
+    ),
+  ).resolves.toEqual({ covered: ['2026-01-31', '2026-02-01'], unresolved: [unscheduled] });
 });

@@ -2,9 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
-import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
-import { attendanceContextAuditWriter } from './attendance-contexts.audit';
-import { AttendanceContextsService } from './attendance-contexts.service';
+import { attendanceWorkflowServices } from '../attendance-test-fixtures';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -166,10 +164,7 @@ it.skipIf(!enabled)(
       'Cara Diaz',
     );
 
-    const service = new AttendanceContextsService(
-      attendanceContextAuditWriter,
-      new DocumentsService({} as never, documentAuditWriter),
-    );
+    const service = attendanceWorkflowServices().contexts;
     const hrContext = context(agency.id, user.id, membership.id, [
       { code: 'attendance.contexts.read', scopePolicy: 'AGENCY' },
       { code: 'attendance.contexts.create', scopePolicy: 'AGENCY' },
