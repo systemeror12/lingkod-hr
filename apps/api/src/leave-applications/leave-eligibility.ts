@@ -331,27 +331,6 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
         ),
       );
     }
-    const requiredWorkingDays = input.ruleParameters.requiredWorkingDays;
-    if (requiredWorkingDays !== undefined) {
-      if (requestedQuantity !== requiredWorkingDays) {
-        rules.push(
-          rule(
-            'REQUIRED_WORKING_DAYS',
-            'FAIL',
-            `This Leave Type must be exactly ${requiredWorkingDays} working day(s).`,
-            input.authorityCitations,
-          ),
-        );
-      } else {
-        rules.push(
-          rule(
-            'REQUIRED_WORKING_DAYS',
-            'PASS',
-            `The request covers ${requiredWorkingDays} working day(s).`,
-          ),
-        );
-      }
-    }
   }
 
   const minimumCredits = input.ruleParameters.minimumAccountCredits;
@@ -472,7 +451,6 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
     requestedQuantity,
     grantedDays: grantedDaysFor(input) ?? null,
     grantedMonths: grantedMonthsFor(input) ?? null,
-    requiredWorkingDays: input.ruleParameters.requiredWorkingDays ?? null,
     minimumAccountCredits: input.ruleParameters.minimumAccountCredits ?? null,
     accountAvailableQuantity: input.accountAvailableQuantity,
     approvalRouteCodes: routeCodes,

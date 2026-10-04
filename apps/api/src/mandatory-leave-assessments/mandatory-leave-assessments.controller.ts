@@ -19,6 +19,7 @@ import {
   MandatoryLeaveAgencyEvaluationDto,
   MandatoryLeaveAssessmentDetailDto,
   MandatoryLeaveAssessmentListResponseDto,
+  MandatoryLeaveEmployeeLatestResponseDto,
 } from './mandatory-leave-assessments.dto';
 import {
   mandatoryLeaveAssessmentCursorParamSchema,
@@ -86,6 +87,31 @@ export class MandatoryLeaveAssessmentsController {
     try {
       return new MandatoryLeaveAssessmentListResponseDto(
         await this.service.list(context, filters, page),
+      );
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  /** Declared before `:assessmentId` so `latest` is not read as an assessment id. */
+  @Get(':agencyId/mandatory-leave-assessments/latest')
+  @RequirePermission('leave.mandatory_assessments.read')
+  async latest(
+    @Param('agencyId') agencyId: string,
+    @Query('year') year: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Query('cursor') cursor: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<MandatoryLeaveEmployeeLatestResponseDto> {
+    this.assertReadAgency(agencyId, context);
+    const parsedYear = mandatoryLeaveAssessmentYearSchema.safeParse(year);
+    if (year === undefined || !parsedYear.success) {
+      throw this.invalidInput(parsedYear.error?.issues ?? [], context, 'year');
+    }
+    const page = this.parsePage({ limit, cursor }, context);
+    try {
+      return new MandatoryLeaveEmployeeLatestResponseDto(
+        await this.service.latestByEmployee(context, parsedYear.data, page),
       );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);

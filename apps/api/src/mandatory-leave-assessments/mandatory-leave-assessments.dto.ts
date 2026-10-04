@@ -4,6 +4,7 @@ import type {
   MandatoryLeaveAssessmentDetail,
   MandatoryLeaveAssessmentPage,
   MandatoryLeaveAssessmentSummary,
+  MandatoryLeaveEmployeeLatestPage,
 } from './mandatory-leave-assessments.service';
 
 export class MandatoryLeaveAssessmentDto {
@@ -62,6 +63,34 @@ export class MandatoryLeaveAssessmentListResponseDto {
 
   constructor(page: MandatoryLeaveAssessmentPage) {
     this.assessments = page.items.map((assessment) => new MandatoryLeaveAssessmentDto(assessment));
+    this.nextCursor = page.nextCursor;
+    this.hasMore = page.hasMore;
+  }
+}
+
+export class MandatoryLeaveEmployeeLatestDto {
+  readonly employeeId: string;
+  readonly employeeNumber: string;
+  readonly employeeName: string;
+  readonly assessment: MandatoryLeaveAssessmentDto | null;
+
+  constructor(row: MandatoryLeaveEmployeeLatestPage['items'][number]) {
+    this.employeeId = row.employeeId;
+    this.employeeNumber = row.employeeNumber;
+    this.employeeName = row.employeeName;
+    this.assessment = row.assessment ? new MandatoryLeaveAssessmentDto(row.assessment) : null;
+  }
+}
+
+export class MandatoryLeaveEmployeeLatestResponseDto {
+  readonly assessmentYear: number;
+  readonly employees: MandatoryLeaveEmployeeLatestDto[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
+
+  constructor(page: MandatoryLeaveEmployeeLatestPage) {
+    this.assessmentYear = page.assessmentYear;
+    this.employees = page.items.map((row) => new MandatoryLeaveEmployeeLatestDto(row));
     this.nextCursor = page.nextCursor;
     this.hasMore = page.hasMore;
   }

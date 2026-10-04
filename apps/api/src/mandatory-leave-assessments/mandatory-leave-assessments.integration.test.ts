@@ -543,3 +543,123 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)(
+  'lists the latest assessment per Employee for a year, including Employees not yet evaluated',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-mandatory-leave-latest`;
+    const year = Number(manilaDate(0).slice(0, 4));
+    const agency = await admin.agency.create({
+      data: {
+        code: `MLL-${suffix}`,
+        name: 'Mandatory Leave Latest Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const user = await admin.user.create({
+      data: {
+        emailNormalized: `mandatory-leave-latest-${suffix}@example.test`,
+        displayName: 'Mandatory Leave Reader',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const membership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+    });
+    const service = new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter);
+    const controller = new MandatoryLeaveAssessmentsController(service);
+    const agencyContext = context(agency.id, user.id, membership.id, [
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'AGENCY' },
+    ]);
+    const ownContext = context(agency.id, user.id, membership.id, [
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'OWN' },
+    ]);
+
+    try {
+      const ana = await createEmployee(admin, agency.id, membership.id, `${suffix}-1`, 'Ana Reyes');
+      const ben = await createEmployee(admin, agency.id, membership.id, `${suffix}-2`, 'Ben Cruz');
+      const carla = await createEmployee(
+        admin,
+        agency.id,
+        membership.id,
+        `${suffix}-3`,
+        'Carla Diaz',
+      );
+      await withDatabaseContext(
+        {
+          agencyId: agency.id,
+          userId: user.id,
+          membershipId: membership.id,
+          capabilities: ['employee-membership-link'],
+        },
+        (transaction) =>
+          transaction.agencyMembership.update({
+            where: { agencyId_id: { agencyId: agency.id, id: membership.id } },
+            data: { employeeId: ana.id },
+          }),
+      );
+      const record = (employeeId: string, assessmentYear: number, previous: string | null) =>
+        admin.mandatoryLeaveAssessment.create({
+          data: {
+            agencyId: agency.id,
+            employeeId,
+            assessmentYear,
+            assessmentDate: new Date(`${assessmentYear}-06-30T00:00:00.000Z`),
+            previousAssessmentId: previous,
+            result: 'INDETERMINATE',
+            materialFingerprint: `fingerprint-${previous ?? 'first'}`,
+            inputFacts: { indeterminateReasons: ['MISSING_POLICY'] },
+            ruleResults: [],
+          },
+        });
+      const anaFirst = await record(ana.id, year, null);
+      const anaLatest = await record(ana.id, year, anaFirst.id);
+      const benLatest = await record(ben.id, year, null);
+      // Another year's assessment does not count for this year.
+      await record(carla.id, year - 1, null);
+
+      const page = await service.latestByEmployee(agencyContext, year);
+      expect(page).toMatchObject({ assessmentYear: year, hasMore: false, nextCursor: null });
+      expect(page.items.map((row) => [row.employeeName, row.assessment?.id ?? null])).toEqual([
+        ['Ana Reyes', anaLatest.id],
+        ['Ben Cruz', benLatest.id],
+        ['Carla Diaz', null],
+      ]);
+      expect(page.items[0]?.assessment).toMatchObject({ isLatest: true, result: 'INDETERMINATE' });
+
+      // Pages walk every Employee once.
+      const first = await service.latestByEmployee(agencyContext, year, { limit: 2 });
+      expect(first.items.map((row) => row.employeeId)).toEqual([ana.id, ben.id]);
+      expect(first.hasMore).toBe(true);
+      const second = await service.latestByEmployee(agencyContext, year, {
+        limit: 2,
+        cursor: first.nextCursor!,
+      });
+      expect(second).toMatchObject({ hasMore: false, nextCursor: null });
+      expect(second.items.map((row) => row.employeeId)).toEqual([carla.id]);
+
+      // OWN scope sees only the linked Employee.
+      const own = await service.latestByEmployee(ownContext, year);
+      expect(own.items.map((row) => row.employeeId)).toEqual([ana.id]);
+
+      await expect(
+        controller.latest(agency.id, undefined, undefined, undefined, agencyContext),
+      ).rejects.toMatchObject({ status: 400 });
+      await expect(
+        controller.latest(agency.id, String(year), undefined, undefined, agencyContext),
+      ).resolves.toMatchObject({ assessmentYear: year, hasMore: false });
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.mandatoryLeaveAssessment.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.agencyMembership.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.employee.deleteMany({ where: { agencyId: agency.id } });
+        await transaction.agency.deleteMany({ where: { id: agency.id } });
+        await transaction.user.deleteMany({ where: { id: user.id } });
+      });
+      await admin.$disconnect();
+    }
+  },
+);

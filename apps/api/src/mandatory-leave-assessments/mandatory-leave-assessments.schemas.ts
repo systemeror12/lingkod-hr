@@ -10,7 +10,8 @@ export const mandatoryLeaveAssessmentEvaluateSchema = z
   .strict();
 
 export const mandatoryLeaveAssessmentLimitSchema = z.coerce.number().int().min(1).max(50);
-export const mandatoryLeaveAssessmentCursorParamSchema = z.string().trim().min(1).max(512);
+// Cursors carry a legal name of up to 300 characters, base64url-encoded from UTF-8.
+export const mandatoryLeaveAssessmentCursorParamSchema = z.string().trim().min(1).max(2048);
 
 export const mandatoryLeaveAssessmentCursorSchema = z
   .object({
@@ -19,4 +20,8 @@ export const mandatoryLeaveAssessmentCursorSchema = z
     assessedAt: z.string().datetime(),
     id: z.string().uuid(),
   })
+  .strict();
+
+export const mandatoryLeaveEmployeeCursorSchema = z
+  .object({ legalName: z.string(), id: z.string().uuid() })
   .strict();

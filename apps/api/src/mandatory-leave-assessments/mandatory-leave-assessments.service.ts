@@ -4,7 +4,10 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
-import { mandatoryLeaveAssessmentCursorSchema } from './mandatory-leave-assessments.schemas';
+import {
+  mandatoryLeaveAssessmentCursorSchema,
+  mandatoryLeaveEmployeeCursorSchema,
+} from './mandatory-leave-assessments.schemas';
 import {
   evaluateMandatoryLeave,
   type MandatoryLeaveEvaluation,
@@ -73,6 +76,21 @@ export interface MandatoryLeaveAssessmentSummary {
   previousAssessmentId: string | null;
   isLatest: boolean;
   assessedAt: string;
+}
+
+/** One in-scope Employee and its latest assessment for a year, or null when not yet evaluated. */
+export interface MandatoryLeaveEmployeeLatest {
+  employeeId: string;
+  employeeNumber: string;
+  employeeName: string;
+  assessment: MandatoryLeaveAssessmentSummary | null;
+}
+
+export interface MandatoryLeaveEmployeeLatestPage {
+  assessmentYear: number;
+  items: MandatoryLeaveEmployeeLatest[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export interface MandatoryLeaveAssessmentDetail extends MandatoryLeaveAssessmentSummary {
@@ -324,6 +342,67 @@ export class MandatoryLeaveAssessmentsService {
     });
   }
 
+  /**
+   * Lists every in-scope Employee by name with its latest assessment for the
+   * year. An Employee the Agency/year evaluation has not reached yet has a null
+   * assessment. Pages continue from an opaque keyset cursor.
+   */
+  async latestByEmployee(
+    context: RequestContext,
+    assessmentYear: number,
+    page: MandatoryLeaveAssessmentPageRequest = {},
+  ): Promise<MandatoryLeaveEmployeeLatestPage> {
+    const scope = requireReadScope(context);
+    const limit = page.limit ?? 25;
+    const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const employees = await transaction.employee.findMany({
+        where: {
+          agencyId: context.agencyId,
+          ...(scope === 'OWN' ? { memberships: { some: { id: context.membershipId } } } : {}),
+          ...(cursor
+            ? {
+                OR: [
+                  { legalName: { gt: cursor.legalName } },
+                  { legalName: cursor.legalName, id: { gt: cursor.id } },
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ legalName: 'asc' }, { id: 'asc' }],
+        take: limit + 1,
+        select: {
+          id: true,
+          employeeNumber: true,
+          legalName: true,
+          mandatoryLeaveAssessments: {
+            where: { assessmentYear, successors: { none: {} } },
+            select: assessmentSelect,
+            take: 1,
+          },
+        },
+      });
+      const hasMore = employees.length > limit;
+      const items = employees.slice(0, limit);
+      const last = items.at(-1);
+      return {
+        assessmentYear,
+        items: items.map((employee) => {
+          const latest = employee.mandatoryLeaveAssessments[0];
+          return {
+            employeeId: employee.id,
+            employeeNumber: employee.employeeNumber,
+            employeeName: employee.legalName,
+            assessment: latest ? summaryOf(latest) : null,
+          };
+        }),
+        hasMore,
+        nextCursor:
+          hasMore && last ? encodeCursor({ legalName: last.legalName, id: last.id }) : null,
+      };
+    });
+  }
+
   async findById(
     context: RequestContext,
     assessmentId: string,
@@ -505,16 +584,23 @@ export class MandatoryLeaveAssessmentsService {
 }
 
 type AssessmentCursor = ReturnType<typeof mandatoryLeaveAssessmentCursorSchema.parse>;
+type EmployeeCursor = ReturnType<typeof mandatoryLeaveEmployeeCursorSchema.parse>;
 
-function encodeCursor(cursor: AssessmentCursor): string {
+function encodeCursor(cursor: AssessmentCursor | EmployeeCursor): string {
   return Buffer.from(JSON.stringify(cursor)).toString('base64url');
 }
 
 function decodeCursor(value: string): AssessmentCursor {
+  return parseCursor(value, mandatoryLeaveAssessmentCursorSchema);
+}
+
+function decodeEmployeeCursor(value: string): EmployeeCursor {
+  return parseCursor(value, mandatoryLeaveEmployeeCursorSchema);
+}
+
+function parseCursor<T>(value: string, schema: { parse(input: unknown): T }): T {
   try {
-    return mandatoryLeaveAssessmentCursorSchema.parse(
-      JSON.parse(Buffer.from(value, 'base64url').toString('utf8')),
-    );
+    return schema.parse(JSON.parse(Buffer.from(value, 'base64url').toString('utf8')));
   } catch {
     throw new MandatoryLeaveAssessmentServiceError(
       'The Mandatory Leave Assessment list cursor is invalid.',

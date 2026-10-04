@@ -174,11 +174,11 @@ it('rejects a request longer than the granted entitlement', () => {
   });
 });
 
-it('requires an exact working-day count when the policy configures one', () => {
+it('leaves the annual mandatory-leave obligation to the assessment, not each application', () => {
   const outcome = evaluateLeaveEligibility(input({ ruleParameters: { requiredWorkingDays: 5 } }));
 
-  expect(outcome.result).toBe('INELIGIBLE');
-  expect(ruleResult(outcome.ruleResults, 'REQUIRED_WORKING_DAYS').outcome).toBe('FAIL');
+  expect(outcome.result).toBe('ELIGIBLE');
+  expect(outcome.ruleResults.map(({ rule }) => rule)).not.toContain('REQUIRED_WORKING_DAYS');
 });
 
 it('resolves minimum account credits against the charged account', () => {
