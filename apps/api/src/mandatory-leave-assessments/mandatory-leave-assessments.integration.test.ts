@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
+import { requestDatabaseContext } from '../database-context';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import {
   LeaveAccountsService,
@@ -374,6 +375,20 @@ it.skipIf(!enabled)(
       expect(afterConcurrency).toHaveLength(5);
       expect(afterConcurrency[4]?.previousAssessmentId).toBe(afterConcurrency[3]?.id);
 
+      // Evaluation shares the account lock that ledger writers hold, so it waits
+      // for an in-flight writer instead of reading a torn ledger state.
+      let writerCommitted = false;
+      let evaluatedAfterWriter!: Promise<boolean>;
+      await admin.$transaction(async (transaction) => {
+        await transaction.$queryRaw`SELECT "id" FROM "leave_accounts" WHERE "id" = CAST(${account.id} AS uuid) FOR UPDATE`;
+        evaluatedAfterWriter = withDatabaseContext(requestDatabaseContext(adminContext), (tx) =>
+          service.evaluateEmployeeYear(tx, agency.id, employee.id, year, manilaDate(0)),
+        ).then(() => writerCommitted);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        writerCommitted = true;
+      });
+      await expect(evaluatedAfterWriter).resolves.toBe(true);
+
       // Evaluation never writes the ledger beyond the test's own adjustments.
       await expect(admin.leaveLedgerEntry.count({ where: { agencyId: agency.id } })).resolves.toBe(
         ledgerCountBefore + 3,
@@ -388,14 +403,39 @@ it.skipIf(!enabled)(
       });
 
       // Reads: Agency scope sees both Employees; OWN sees only the linked Employee.
-      const agencyRows = await service.list(adminContext, { year });
+      const { items: agencyRows } = await service.list(adminContext, { year });
       expect(new Set(agencyRows.map((row) => row.employeeId))).toEqual(
         new Set([employee.id, noAccountEmployee.id]),
       );
       expect(agencyRows.filter((row) => row.isLatest)).toHaveLength(2);
-      const ownRows = await service.list(ownContext, { year });
+      const { items: ownRows } = await service.list(ownContext, { year });
       expect(ownRows.length).toBeGreaterThan(0);
       expect(ownRows.every((row) => row.employeeId === employee.id)).toBe(true);
+
+      // Pages walk the full list once, in order, without gaps or repeats.
+      const everything = await service.list(adminContext, {}, { limit: 50 });
+      expect(everything).toMatchObject({ hasMore: false, nextCursor: null });
+      expect(everything.items.length).toBeGreaterThan(3);
+      const paged: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await service.list(adminContext, {}, { limit: 2, cursor });
+        expect(page.items.length).toBeLessThanOrEqual(2);
+        paged.push(...page.items.map((row) => row.id));
+        expect(page.hasMore).toBe(page.nextCursor !== null);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      expect(paged).toEqual(everything.items.map((row) => row.id));
+      await expect(
+        service.list(adminContext, {}, { cursor: 'not-a-cursor' }),
+      ).rejects.toMatchObject({
+        code: 'MANDATORY_LEAVE_ASSESSMENT_CURSOR_INVALID',
+        statusCode: 400,
+      });
+      await expect(
+        controller.list(agency.id, undefined, undefined, undefined, '51', undefined, adminContext),
+      ).rejects.toMatchObject({ status: 400 });
+
       await expect(service.findById(ownContext, noAccount!.id)).resolves.toBeNull();
       await expect(service.findById(adminContext, chain[2]!.id)).resolves.toMatchObject({
         result: 'SUBJECT',
@@ -406,7 +446,7 @@ it.skipIf(!enabled)(
       });
 
       // Agency isolation: RLS hides the rows and Cross-Agency requests are rejected.
-      await expect(service.list(foreignContext, {})).resolves.toEqual([]);
+      await expect(service.list(foreignContext, {})).resolves.toMatchObject({ items: [] });
       await expect(service.findById(foreignContext, chain[0]!.id)).resolves.toBeNull();
       await expect(
         withDatabaseContext(
@@ -423,7 +463,15 @@ it.skipIf(!enabled)(
         status: 403,
       });
       await expect(
-        controller.list(agency.id, undefined, undefined, undefined, foreignContext),
+        controller.list(
+          agency.id,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          foreignContext,
+        ),
       ).rejects.toMatchObject({ status: 404 });
       await expect(service.evaluateAgencyYear(foreignContext, year)).resolves.toMatchObject({
         employeeCount: 0,

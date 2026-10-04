@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type {
   MandatoryLeaveAgencyEvaluation,
   MandatoryLeaveAssessmentDetail,
+  MandatoryLeaveAssessmentPage,
   MandatoryLeaveAssessmentSummary,
 } from './mandatory-leave-assessments.service';
 
@@ -56,9 +57,13 @@ export class MandatoryLeaveAssessmentDetailDto extends MandatoryLeaveAssessmentD
 
 export class MandatoryLeaveAssessmentListResponseDto {
   readonly assessments: MandatoryLeaveAssessmentDto[];
+  readonly nextCursor: string | null;
+  readonly hasMore: boolean;
 
-  constructor(assessments: MandatoryLeaveAssessmentSummary[]) {
-    this.assessments = assessments.map((assessment) => new MandatoryLeaveAssessmentDto(assessment));
+  constructor(page: MandatoryLeaveAssessmentPage) {
+    this.assessments = page.items.map((assessment) => new MandatoryLeaveAssessmentDto(assessment));
+    this.nextCursor = page.nextCursor;
+    this.hasMore = page.hasMore;
   }
 }
 

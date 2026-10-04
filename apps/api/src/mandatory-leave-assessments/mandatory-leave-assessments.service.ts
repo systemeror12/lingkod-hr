@@ -4,6 +4,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
+import { mandatoryLeaveAssessmentCursorSchema } from './mandatory-leave-assessments.schemas';
 import {
   evaluateMandatoryLeave,
   type MandatoryLeaveEvaluation,
@@ -43,6 +44,17 @@ export interface MandatoryLeaveAssessmentFilters {
   employeeId?: string | undefined;
   year?: number | undefined;
   result?: MandatoryLeaveResult | undefined;
+}
+
+export interface MandatoryLeaveAssessmentPageRequest {
+  limit?: number | undefined;
+  cursor?: string | undefined;
+}
+
+export interface MandatoryLeaveAssessmentPage {
+  items: MandatoryLeaveAssessmentSummary[];
+  nextCursor: string | null;
+  hasMore: boolean;
 }
 
 export interface MandatoryLeaveAssessmentSummary {
@@ -260,11 +272,18 @@ export class MandatoryLeaveAssessmentsService {
     return { assessmentId: created.id, result: evaluation.result, recorded: true };
   }
 
+  /**
+   * Lists assessments by year (newest first), Employee name, and assessment time
+   * (newest first). Pages continue from an opaque keyset cursor.
+   */
   async list(
     context: RequestContext,
     filters: MandatoryLeaveAssessmentFilters = {},
-  ): Promise<MandatoryLeaveAssessmentSummary[]> {
+    page: MandatoryLeaveAssessmentPageRequest = {},
+  ): Promise<MandatoryLeaveAssessmentPage> {
     const scope = requireReadScope(context);
+    const limit = page.limit ?? 25;
+    const cursor = page.cursor ? decodeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const records = await transaction.mandatoryLeaveAssessment.findMany({
         where: {
@@ -275,16 +294,33 @@ export class MandatoryLeaveAssessmentsService {
           ...(scope === 'OWN'
             ? { employee: { memberships: { some: { id: context.membershipId } } } }
             : {}),
+          ...(cursor ? { AND: [afterCursor(cursor)] } : {}),
         },
         orderBy: [
           { assessmentYear: 'desc' },
           { employee: { legalName: 'asc' } },
           { assessedAt: 'desc' },
+          { id: 'asc' },
         ],
-        take: 500,
+        take: limit + 1,
         select: assessmentSelect,
       });
-      return records.map(summaryOf);
+      const hasMore = records.length > limit;
+      const items = records.slice(0, limit);
+      const last = items.at(-1);
+      return {
+        items: items.map(summaryOf),
+        hasMore,
+        nextCursor:
+          hasMore && last
+            ? encodeCursor({
+                assessmentYear: last.assessmentYear,
+                legalName: last.employee.legalName,
+                assessedAt: last.assessedAt.toISOString(),
+                id: last.id,
+              })
+            : null,
+      };
     });
   }
 
@@ -357,15 +393,29 @@ export class MandatoryLeaveAssessmentsService {
         })
       )?.id ??
       null;
-    const accounts = vacationLeaveTypeId
+    const accountWhere = {
+      agencyId,
+      employeeId,
+      leaveTypeId: vacationLeaveTypeId ?? '',
+      openedAt: { lte: asOfDate },
+      OR: [{ closedAt: null }, { closedAt: { gte: yearStart } }],
+    } satisfies Prisma.LeaveAccountWhereInput;
+    const candidateIds = vacationLeaveTypeId
+      ? (
+          await transaction.leaveAccount.findMany({ where: accountWhere, select: { id: true } })
+        ).map(({ id }) => id)
+      : [];
+    // Ledger posting and cancellation reversal lock these rows FOR UPDATE. Sharing
+    // that lock, in the writers' id order, keeps the account, ledger, and
+    // cancellation reads below on one committed state.
+    if (candidateIds.length) {
+      await transaction.$queryRaw(
+        Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" IN (${Prisma.join(candidateIds.map((id) => Prisma.sql`CAST(${id} AS uuid)`))}) ORDER BY "id" FOR SHARE`,
+      );
+    }
+    const accounts = candidateIds.length
       ? await transaction.leaveAccount.findMany({
-          where: {
-            agencyId,
-            employeeId,
-            leaveTypeId: vacationLeaveTypeId,
-            openedAt: { lte: asOfDate },
-            OR: [{ closedAt: null }, { closedAt: { gte: yearStart } }],
-          },
+          where: { ...accountWhere, id: { in: candidateIds } },
           orderBy: { openedAt: 'asc' },
           select: { id: true, status: true, openedAt: true, closedAt: true },
         })
@@ -452,6 +502,41 @@ export class MandatoryLeaveAssessmentsService {
       })),
     });
   }
+}
+
+type AssessmentCursor = ReturnType<typeof mandatoryLeaveAssessmentCursorSchema.parse>;
+
+function encodeCursor(cursor: AssessmentCursor): string {
+  return Buffer.from(JSON.stringify(cursor)).toString('base64url');
+}
+
+function decodeCursor(value: string): AssessmentCursor {
+  try {
+    return mandatoryLeaveAssessmentCursorSchema.parse(
+      JSON.parse(Buffer.from(value, 'base64url').toString('utf8')),
+    );
+  } catch {
+    throw new MandatoryLeaveAssessmentServiceError(
+      'The Mandatory Leave Assessment list cursor is invalid.',
+      400,
+      'MANDATORY_LEAVE_ASSESSMENT_CURSOR_INVALID',
+    );
+  }
+}
+
+/** Rows strictly after the cursor in the list's sort order. */
+function afterCursor(cursor: AssessmentCursor): Prisma.MandatoryLeaveAssessmentWhereInput {
+  const assessedAt = new Date(cursor.assessedAt);
+  const sameYear = { assessmentYear: cursor.assessmentYear };
+  const sameName = { ...sameYear, employee: { legalName: cursor.legalName } };
+  return {
+    OR: [
+      { assessmentYear: { lt: cursor.assessmentYear } },
+      { ...sameYear, employee: { legalName: { gt: cursor.legalName } } },
+      { ...sameName, assessedAt: { lt: assessedAt } },
+      { ...sameName, assessedAt, id: { gt: cursor.id } },
+    ],
+  };
 }
 
 /**

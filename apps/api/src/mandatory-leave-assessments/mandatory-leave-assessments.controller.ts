@@ -21,8 +21,10 @@ import {
   MandatoryLeaveAssessmentListResponseDto,
 } from './mandatory-leave-assessments.dto';
 import {
+  mandatoryLeaveAssessmentCursorParamSchema,
   mandatoryLeaveAssessmentEvaluateSchema,
   mandatoryLeaveAssessmentIdSchema,
+  mandatoryLeaveAssessmentLimitSchema,
   mandatoryLeaveAssessmentResultSchema,
   mandatoryLeaveAssessmentYearSchema,
 } from './mandatory-leave-assessments.schemas';
@@ -30,6 +32,7 @@ import {
   MandatoryLeaveAssessmentsService,
   MandatoryLeaveAssessmentServiceError,
   type MandatoryLeaveAssessmentFilters,
+  type MandatoryLeaveAssessmentPageRequest,
 } from './mandatory-leave-assessments.service';
 
 function validationFields(issues: readonly { path: PropertyKey[]; message: string }[]) {
@@ -73,12 +76,17 @@ export class MandatoryLeaveAssessmentsController {
     @Query('employeeId') employeeId: string | undefined,
     @Query('year') year: string | undefined,
     @Query('result') result: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Query('cursor') cursor: string | undefined,
     @CurrentContext() context: RequestContext,
   ): Promise<MandatoryLeaveAssessmentListResponseDto> {
     this.assertReadAgency(agencyId, context);
     const filters = this.parseFilters({ employeeId, year, result }, context);
+    const page = this.parsePage({ limit, cursor }, context);
     try {
-      return new MandatoryLeaveAssessmentListResponseDto(await this.service.list(context, filters));
+      return new MandatoryLeaveAssessmentListResponseDto(
+        await this.service.list(context, filters, page),
+      );
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
@@ -146,6 +154,24 @@ export class MandatoryLeaveAssessmentsController {
       const result = mandatoryLeaveAssessmentResultSchema.safeParse(filters.result);
       if (!result.success) throw this.invalidInput(result.error.issues, context, 'result');
       parsed.result = result.data;
+    }
+    return parsed;
+  }
+
+  private parsePage(
+    page: { limit: string | undefined; cursor: string | undefined },
+    context: RequestContext,
+  ): MandatoryLeaveAssessmentPageRequest {
+    const parsed: MandatoryLeaveAssessmentPageRequest = {};
+    if (page.limit !== undefined) {
+      const limit = mandatoryLeaveAssessmentLimitSchema.safeParse(page.limit);
+      if (!limit.success) throw this.invalidInput(limit.error.issues, context, 'limit');
+      parsed.limit = limit.data;
+    }
+    if (page.cursor !== undefined) {
+      const cursor = mandatoryLeaveAssessmentCursorParamSchema.safeParse(page.cursor);
+      if (!cursor.success) throw this.invalidInput(cursor.error.issues, context, 'cursor');
+      parsed.cursor = cursor.data;
     }
     return parsed;
   }
