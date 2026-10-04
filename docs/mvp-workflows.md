@@ -443,20 +443,32 @@ with its original posting effective if the atomic application command fails.
 
 ```mermaid
 flowchart TD
-    A[Evaluate Employee under applicable mandatory-leave policy] --> B[Load as-of vacation balance and annual leave facts]
-    B --> C[Create explainable Mandatory Leave Assessment]
-    C --> D{Subject to obligation?}
-    D -- No --> E[Retain material non-obligation result when required]
-    D -- Yes --> F[Notify Employee and Leave Administrator]
-    F --> G[Use ordinary Leave Application for mandatory or forced leave]
-    G --> H[Post against vacation Leave Account when approved]
-    H --> I[Re-evaluate annual obligation]
+    A[Leave command or Agency and year evaluation] --> B[Load policy, vacation balance history, and posted vacation leave for the calendar year]
+    B --> C{Balance reached ten during the year?}
+    C -- No --> D[NOT_SUBJECT]
+    C -- Yes --> E[SUBJECT with required and fulfilled quantities]
+    B -- Missing policy or account --> F[INDETERMINATE]
+    D --> G{Result, quantities, basis, or policy changed?}
+    E --> G
+    F --> G
+    G -- Yes --> H[Record Mandatory Leave Assessment]
+    G -- No --> I[Keep latest assessment]
+    H --> J[Show remaining days in the Leave workspace]
+    J --> K[Employee files ordinary VL or Mandatory/Forced Leave application]
+    K --> L[Post against vacation Leave Account when approved]
+    L --> A
 ```
 
-The ordinary civilian NGA baseline is five working days for an Employee with at
-least ten vacation leave credits. The assessment applies the source-defined
-cancellation and partial-year exceptions. An alert alone never authorizes a
-forfeiture posting.
+The ordinary civilian NGA baseline is five working days for an Employee whose
+vacation balance reached ten during the calendar year (MC41 section 25). Any
+posted vacation leave dated in that year counts, whether filed as vacation
+leave or as mandatory or forced leave, and may be continuous or intermittent.
+Leave posting, applied cancellation, policy activation, and vacation ledger
+entries re-evaluate in the same transaction; a Leave Administrator evaluates
+the Agency for a new year. The Leave workspace prompts the Employee; Phase 7
+sends no notification. An assessment never posts forfeiture, and Phase 7 does
+not post forfeiture at all, so the section 25 exigency cancellation and
+retirement or resignation exceptions are not evaluated.
 
 ### Leave monetization
 
