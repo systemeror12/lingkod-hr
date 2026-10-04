@@ -138,9 +138,12 @@ async function lockAttendancePeriod(input: {
         },
       });
     }
-    await admin.attendancePeriod.update({
-      where: { id: period.id },
-      data: { status: 'FINALIZED' },
+    await admin.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT set_config('app.attendance_transition', 'on', true)`;
+      await transaction.attendancePeriod.update({
+        where: { id: period.id },
+        data: { status: 'FINALIZED' },
+      });
     });
   });
 }

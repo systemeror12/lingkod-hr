@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { finalizeAttendancePeriod } from '../attendance-test-fixtures';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import { attendanceContextAuditWriter } from '../attendance-contexts/attendance-contexts.audit';
 import { AttendanceContextsService } from '../attendance-contexts/attendance-contexts.service';
@@ -3090,10 +3091,7 @@ it.skipIf(!enabled)(
             publishedAt: new Date(),
           },
         });
-        await admin.attendancePeriod.update({
-          where: { id: periodId },
-          data: { status: 'FINALIZED' },
-        });
+        await finalizeAttendancePeriod(admin, periodId);
         const originalDtrs = await dtrs.materializeForLockedVersionInTransaction(
           admin,
           agencyContext,

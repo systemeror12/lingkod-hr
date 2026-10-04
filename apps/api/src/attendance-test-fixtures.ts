@@ -57,6 +57,23 @@ export async function createAdminClient(): Promise<PrismaClient> {
   return new PrismaClient({ datasources: { db: { url: databaseUrl } } });
 }
 
+/**
+ * Finalizes a seeded stable Attendance Period through the Attendance
+ * transition capability, the only path the database lets status move.
+ */
+export async function finalizeAttendancePeriod(
+  admin: PrismaClient,
+  attendancePeriodId: string,
+): Promise<void> {
+  await admin.$transaction(async (transaction) => {
+    await transaction.$queryRaw`SELECT set_config('app.attendance_transition', 'on', true)`;
+    await transaction.attendancePeriod.update({
+      where: { id: attendancePeriodId },
+      data: { status: 'FINALIZED' },
+    });
+  });
+}
+
 export const attendanceAdministratorPermissions: RequestContext['permissions'] = [
   { code: 'attendance.configuration.read', scopePolicy: 'AGENCY' },
   { code: 'attendance.configuration.manage', scopePolicy: 'AGENCY' },

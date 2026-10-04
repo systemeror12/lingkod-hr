@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Prints the live grants, row-level security flags, and RLS policies for the
-# tables matching a psql pattern, as the migrations have built them so far.
+# Prints the live grants, row-level security flags, RLS policies, and guard
+# triggers for the tables matching a psql pattern, as the migrations have built
+# them so far.
 # Usage: pnpm db:policies <table-or-pattern>   e.g. agency_profile_versions, 'leave_*'
 set -euo pipefail
 
@@ -20,4 +21,9 @@ docker compose -f "$main/infrastructure/compose.yaml" exec -T postgres \
 SELECT relname AS table, relrowsecurity AS rls_enabled, relforcerowsecurity AS rls_forced
 FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace
 AND relname LIKE :'like' ORDER BY relname;
+SELECT c.relname AS table, t.tgname AS trigger, t.tgfoid::regproc AS function,
+  regexp_replace(pg_get_triggerdef(t.oid), '^.* (BEFORE|AFTER|INSTEAD OF) (.*) ON .*$', '\\1 \\2') AS fires
+FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace
+AND c.relname LIKE :'like' ORDER BY c.relname, t.tgname;
 SQL
