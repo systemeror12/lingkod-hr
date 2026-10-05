@@ -717,6 +717,7 @@ export class AuthController {
         'ACTIVATION_EXPIRED',
         'INVITATION_INVALID',
         'INVITATION_EXPIRED',
+        'INVITATION_ROLE_UNAVAILABLE',
         'MEMBERSHIP_EXISTS',
         'PASSWORD_RESET_REQUIRED',
         'USER_LOCKED',

@@ -509,6 +509,14 @@ function invitationExpired(): AuthServiceError {
   );
 }
 
+function invitationRoleUnavailable(): AuthServiceError {
+  return new AuthServiceError(
+    'A role in this invitation is no longer available. Ask your Agency Administrator for a new invitation.',
+    409,
+    'INVITATION_ROLE_UNAVAILABLE',
+  );
+}
+
 function activationExpired(): AuthServiceError {
   return new AuthServiceError('Your setup timed out. Start again.', 401, 'ACTIVATION_EXPIRED');
 }
@@ -2613,7 +2621,8 @@ export class AuthService {
     const scope = this.activationScope(token);
     const result = await withDatabaseContext(scope, async (transaction) => {
       const invitation = await this.readActivationInvitation(transaction, scope, new Date());
-      if (typeof invitation === 'string') return { status: invitation };
+      if (invitation === 'EXPIRED') return { status: invitation };
+      if (typeof invitation === 'string') return { status: 'INVALID' as const };
       const existingUser = await transaction.user.findUnique({
         where: { emailNormalized: invitation.emailNormalized },
         select: { id: true },
@@ -3142,7 +3151,7 @@ export class AuthService {
     transaction: Prisma.TransactionClient,
     scope: ActivationScope,
     now: Date,
-  ): Promise<ActivationInvitation | 'EXPIRED' | 'INVALID'> {
+  ): Promise<ActivationInvitation | 'EXPIRED' | 'INVALID' | 'ROLE_UNAVAILABLE'> {
     const invitation = await transaction.invitation.findFirst({
       where: {
         tokenHash: prismaBytes(Buffer.from(scope.invitationTokenHash, 'hex')),
@@ -3175,9 +3184,8 @@ export class AuthService {
       invitation.requestedRoleCodes,
       invitation.agencyId,
     );
-    if (agency.status !== 'ACTIVE' || roles.length !== invitation.requestedRoleCodes.length) {
-      return 'INVALID';
-    }
+    if (agency.status !== 'ACTIVE') return 'INVALID';
+    if (roles.length !== invitation.requestedRoleCodes.length) return 'ROLE_UNAVAILABLE';
     return {
       id: invitation.id,
       agencyId: invitation.agencyId,
@@ -3199,6 +3207,7 @@ export class AuthService {
     const invitation = await this.readActivationInvitation(transaction, scope, now);
     if (invitation === 'EXPIRED') throw invitationExpired();
     if (invitation === 'INVALID') throw invitationInvalid();
+    if (invitation === 'ROLE_UNAVAILABLE') throw invitationRoleUnavailable();
     return invitation;
   }
 
@@ -3452,7 +3461,8 @@ export class AuthService {
    * pending activation and the invitation; writes a first-time User with their password, any
    * enrolled factor and Recovery Codes, and the Agency Membership with the invited roles; and opens
    * a session in the inviting Agency. The invitation is accepted first with a conditional update,
-   * so of two saves exactly one wins, and a refusal after it rolls everything back.
+   * so of two saves exactly one wins, and a refusal after it rolls everything back. The invited
+   * roles are checked again here, since a step may have read them before its password work.
    */
   private async finishActivation(
     transaction: Prisma.TransactionClient,
@@ -3474,6 +3484,10 @@ export class AuthService {
     const now = new Date();
     const context = { ...scope, agencyId: invitation.agencyId, userId };
     await setDatabaseContext(transaction, context);
+    const activeRoles = await transaction.role.count({
+      where: { id: { in: invitation.roles.map(({ id }) => id) }, status: 'ACTIVE' },
+    });
+    if (activeRoles !== invitation.roles.length) throw invitationRoleUnavailable();
     if (pending) {
       const consumed = await transaction.pendingAuthentication.deleteMany({
         where: { id: pending.id, stage: pending.stage, expiresAt: { gt: now } },

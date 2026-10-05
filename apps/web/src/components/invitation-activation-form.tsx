@@ -113,6 +113,13 @@ function outcomeFor(code: string): Outcome | null {
       return invitationOutcome('EXPIRED');
     case 'INVITATION_INVALID':
       return invitationOutcome('INVALID');
+    case 'INVITATION_ROLE_UNAVAILABLE':
+      return {
+        tone: 'danger',
+        kicker: 'Nothing was saved',
+        title: 'A role in this invitation is no longer available',
+        body: 'Ask your Agency Administrator to send a new invitation. No access was granted.',
+      };
     case 'USER_LOCKED':
       return {
         tone: 'danger',

@@ -313,3 +313,66 @@ test('guards every invitation dismissal path during submission', async ({ page }
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 });
+
+test('shows the refusal when an invited role is no longer available at the final save', async ({
+  page,
+  browser,
+}, testInfo) => {
+  const recipient = `role-gone-${Date.now()}@example.test`;
+  await signIn(page, MARISOL_EMAIL);
+  const me = await page.request.get(`${apiUrl}/api/v1/auth/me`, {
+    headers: { origin: appOrigin },
+  });
+  const { agencyId } = (await me.json()) as { agencyId: string };
+  const invited = await page.request.post(`${apiUrl}/api/v1/agencies/${agencyId}/invitations`, {
+    headers: { origin: appOrigin },
+    data: { email: recipient, roleCodes: ['hrmo_administrator'] },
+  });
+  expect(invited.ok()).toBe(true);
+  const mailText = await readMailpitMessage(
+    recipient,
+    'LingkodHR invitation for National Archives Coordination Office',
+  );
+  const activationUrl = new RegExp(`${appOrigin}/invite/[A-Za-z0-9_-]{43}`).exec(mailText)?.[0];
+  if (!activationUrl) throw new Error('The invitation email did not contain an activation link.');
+
+  const inviteeContext = await browser.newContext();
+  const inviteePage = await inviteeContext.newPage();
+  try {
+    // The API refuses this at the final save when the role was disabled after the first read;
+    // the database test covers that ordering, so the answer is stubbed here.
+    await inviteePage.route('**/api/v1/auth/invitations/*/activation', (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: {
+            code: 'INVITATION_ROLE_UNAVAILABLE',
+            message:
+              'A role in this invitation is no longer available. Ask your Agency Administrator for a new invitation.',
+          },
+        }),
+      }),
+    );
+    await inviteePage.goto(activationUrl);
+    await inviteePage.getByLabel('Full name').fill('Apolinario Mabini');
+    await inviteePage.getByLabel('New password').fill('amber ledger quietly ferments');
+    await inviteePage.getByRole('button', { name: 'Continue' }).click();
+    await expect(
+      inviteePage.getByRole('heading', {
+        name: 'A role in this invitation is no longer available',
+      }),
+    ).toBeVisible();
+    await expect(
+      inviteePage.getByText(
+        'Ask your Agency Administrator to send a new invitation. No access was granted.',
+      ),
+    ).toBeVisible();
+    await inviteePage.screenshot({
+      path: testInfo.outputPath('invitation-role-unavailable.png'),
+      fullPage: true,
+    });
+  } finally {
+    await inviteeContext.close();
+  }
+});
