@@ -68,6 +68,7 @@ import {
   signInCooldown,
   type ThrottleRow,
   throttleState,
+  lockUserPassword,
   writeGuessFailure,
   writeSignInFailure,
 } from './credential-proof';
@@ -664,6 +665,19 @@ export class AuthService {
       return await withDatabaseContext(
         { userId, capabilities: ['platform-security'] },
         async (transaction): Promise<PasswordSignInResult> => {
+          // Held to commit, as a Password Reset or change holds it: a password replaced since it
+          // was verified refuses the sign-in, and a later replacement ends what this one writes.
+          // A hash changed meanwhile is checked again, so a concurrent rehash doesn't refuse.
+          await lockUserPassword(transaction, userId);
+          const current = await transaction.userPassword.findUnique({
+            where: { userId },
+            select: { passwordHash: true, resetRequiredAt: true },
+          });
+          const stillVerified =
+            current?.passwordHash === account.passwordHash ||
+            (!!current && (await verifyPassword(current.passwordHash, password)));
+          if (!current || !stillVerified) throw invalidCredentials();
+          if (current.resetRequiredAt) throw passwordResetRequired();
           if (rehashed) {
             await transaction.userPassword.updateMany({
               where: { userId, passwordHash: account.passwordHash },
@@ -800,9 +814,10 @@ export class AuthService {
         },
         onProved: async (transaction) => {
           const consumed = await transaction.pendingAuthentication.deleteMany({
-            where: { id: pending.id },
+            where: { id: pending.id, expiresAt: { gt: new Date() } },
           });
-          // Another step consumed it meanwhile: the code stays spent and the refusal is recorded.
+          // Another step consumed it or it expired meanwhile: the code stays spent and the refusal
+          // is recorded.
           if (consumed.count !== 1) return { refusal: await expired(transaction) };
 
           verified.userId = userId;
@@ -900,6 +915,7 @@ export class AuthService {
     await this.refundGuess(emailHash, guess);
     try {
       return await withDatabaseContext({ ...scope, userId }, async (transaction) => {
+        await lockUserPassword(transaction, userId);
         const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (spent.count !== 1) {
           throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
@@ -1055,8 +1071,9 @@ export class AuthService {
         const { userId, emailHash } = pending;
         opened.userId = userId;
         opened.emailHash = emailHash;
+        await lockUserPassword(transaction, userId);
         const consumed = await transaction.pendingAuthentication.deleteMany({
-          where: { id: pending.id, stage: ENROLL_CODES_STAGE },
+          where: { id: pending.id, stage: ENROLL_CODES_STAGE, expiresAt: { gt: new Date() } },
         });
         if (consumed.count !== 1) throw signInExpired();
         if (pending.user.globalStatus !== 'ACTIVE') {
@@ -1540,6 +1557,7 @@ export class AuthService {
     const spent =
       used &&
       (await withDatabaseContext(scope, async (transaction) => {
+        await lockUserPassword(transaction, userId);
         const deleted = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (deleted.count !== 1) return null;
         await this.clearGuesses(transaction, proved);
@@ -2750,6 +2768,7 @@ export class AuthService {
           scope,
           new Date(),
         );
+        await lockUserPassword(transaction, userId);
         const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (spent.count !== 1) {
           throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');

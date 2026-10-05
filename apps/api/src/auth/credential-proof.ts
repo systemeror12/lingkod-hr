@@ -141,8 +141,7 @@ export class CredentialProof {
   }: TotpAttempt<T>): Promise<T> {
     const outcome = await withDatabaseContext(scope, async (transaction) => {
       const now = new Date();
-      await transaction.$queryRaw`
-        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${user.id}::uuid FOR UPDATE`;
+      await lockUserPassword(transaction, user.id);
       if (!passwordReset) {
         const cooldownUntil = await readCooldown(transaction, user.emailHash, now);
         if (cooldownUntil) {
@@ -288,6 +287,19 @@ export async function writeGuessFailure(
     },
   });
   return passwordResetRequiredNotice(secondFactor.email);
+}
+
+/**
+ * Locks the User's password row to commit. Take it before writing any other row of the User, as
+ * Password Reset and password change do, so a sign-in or proof queues behind them instead of
+ * deadlocking.
+ */
+export async function lockUserPassword(
+  transaction: Prisma.TransactionClient,
+  userId: string,
+): Promise<void> {
+  await transaction.$queryRaw`
+    SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
 }
 
 /** A sign-in LOGIN_FAILURE event; it never holds the password, code, token, or raw email. */
