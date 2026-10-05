@@ -22,6 +22,7 @@ import { AuthController } from './auth.controller';
 import { AgencyController } from './agency.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService, AuthServiceError } from './auth.service';
+import { CredentialProof } from './credential-proof';
 import { ReauthenticationGuard } from './reauthentication.guard';
 import type { MailDelivery, MailMessage } from '../invitations/mail';
 
@@ -569,25 +570,29 @@ it.skipIf(!enabled)(
   },
 );
 
+/** An Argon2id hash of `password` with the old parameters, which sign-in rehashes. */
+function legacyHash(password: string): string {
+  const salt = Buffer.alloc(16, 5);
+  const tag = argon2Sync('argon2id', {
+    message: password,
+    nonce: salt,
+    memory: 19456,
+    passes: 2,
+    parallelism: 1,
+    tagLength: 32,
+  });
+  const unpadded = (value: Buffer) => value.toString('base64').replace(/=+$/, '');
+  return `$argon2id$v=19$m=19456,t=2,p=1$${unpadded(salt)}$${unpadded(tag)}`;
+}
+
 it.skipIf(!enabled)(
   'signs a User without a factor straight in and rehashes a password with old parameters',
   async () => {
-    const salt = Buffer.alloc(16, 5);
     const password = `legacy passphrase ${randomUUID()}`;
-    const legacyTag = argon2Sync('argon2id', {
-      message: password,
-      nonce: salt,
-      memory: 19456,
-      passes: 2,
-      parallelism: 1,
-      tagLength: 32,
-    });
-    const unpadded = (value: Buffer) => value.toString('base64').replace(/=+$/, '');
-    const legacyHash = `$argon2id$v=19$m=19456,t=2,p=1$${unpadded(salt)}$${unpadded(legacyTag)}`;
     const fixture = await ownedLoginFixture({
       withTotp: false,
       mfaRequired: false,
-      passwordHash: legacyHash,
+      passwordHash: legacyHash(password),
     });
     try {
       const result = await new AuthService().signInWithPassword(
@@ -604,6 +609,40 @@ it.skipIf(!enabled)(
       });
       expect(stored.passwordHash).toMatch(/^\$argon2id\$v=19\$m=65536,t=3,p=1\$/);
       await expect(verifyPassword(stored.passwordHash, password)).resolves.toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'signs in a password whose old hash a concurrent sign-in rehashed after it verified',
+  async () => {
+    const password = `legacy passphrase ${randomUUID()}`;
+    const fixture = await ownedLoginFixture({
+      withTotp: false,
+      mfaRequired: false,
+      passwordHash: legacyHash(password),
+    });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const actual = await vi.importActual<typeof import('@lingkod-hr/auth')>('@lingkod-hr/auth');
+      // The old hash verifies, then another sign-in rehashes it before this one saves.
+      vi.mocked(verifyPassword).mockImplementationOnce(async (hash, candidate) => {
+        const verified = await actual.verifyPassword(hash, candidate);
+        await service.signInWithPassword(user.email, password, null, signInRequest('rehash-first'));
+        return verified;
+      });
+
+      const result = await service.signInWithPassword(
+        user.email,
+        password,
+        null,
+        signInRequest('rehash-second'),
+      );
+      expect(result.status).toBe('SIGNED_IN');
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(2);
     } finally {
       await fixture.cleanup();
     }
@@ -647,6 +686,94 @@ it.skipIf(!enabled)(
         service.completeTotpSignIn(again.pendingToken, code, signInRequest('replay-code')),
       ).rejects.toMatchObject({ code: 'INVALID_CODE', statusCode: 401 });
     } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses a password sign-in whose password a Password Reset replaced after it verified',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false, mfaRequired: false });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const mail = await service.requestPasswordReset(user.email, signInRequest('reset-request'));
+      const resetToken = /\/reset-password\/([A-Za-z0-9_-]{43})/.exec(mail?.text ?? '')?.[1];
+      if (!resetToken) throw new Error('Expected a reset link.');
+      const actual = await vi.importActual<typeof import('@lingkod-hr/auth')>('@lingkod-hr/auth');
+      // The old password verifies, then a reset completes before the sign-in saves.
+      vi.mocked(verifyPassword).mockImplementationOnce(async (hash, password) => {
+        const verified = await actual.verifyPassword(hash, password);
+        await service.completePasswordReset(
+          resetToken,
+          { password: 'bagong passphrase pagkatapos ng reset' },
+          signInRequest('reset'),
+        );
+        return verified;
+      });
+
+      const request = signInRequest('stale-password');
+      await expect(
+        service.signInWithPassword(user.email, user.password, null, request),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS', statusCode: 401 });
+      await expect(admin.pendingAuthentication.count({ where: { userId: user.id } })).resolves.toBe(
+        0,
+      );
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: request.requestId },
+          select: { eventType: true, details: true },
+        }),
+      ).resolves.toEqual([
+        { eventType: 'LOGIN_FAILURE', details: { reason: 'INVALID_CREDENTIALS' } },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses a TOTP sign-in whose pending sign-in expired after it was read',
+  async () => {
+    const fixture = await ownedLoginFixture();
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService();
+      const pendingToken = await passwordVerified(service, fixture, 'totp-expiry');
+      const proveTotp = CredentialProof.prototype.proveTotp;
+      // The pending sign-in is read while current, then expires before it is consumed.
+      vi.spyOn(CredentialProof.prototype, 'proveTotp').mockImplementationOnce(async function (
+        this: CredentialProof,
+        attempt,
+      ) {
+        await admin.pendingAuthentication.updateMany({
+          where: { userId: user.id },
+          data: {
+            createdAt: new Date(Date.now() - 6 * 60_000),
+            expiresAt: new Date(Date.now() - 60_000),
+          },
+        });
+        return proveTotp.call(this, attempt);
+      });
+
+      const request = signInRequest('totp-expiry-code');
+      await expect(
+        service.completeTotpSignIn(pendingToken, totpCode(user.totpSecret ?? ''), request),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED', statusCode: 401 });
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: request.requestId },
+          select: { eventType: true, details: true },
+        }),
+      ).resolves.toEqual([
+        { eventType: 'LOGIN_FAILURE', details: { reason: 'SIGN_IN_EXPIRED', method: 'totp' } },
+      ]);
+    } finally {
+      vi.restoreAllMocks();
       await fixture.cleanup();
     }
   },
@@ -1193,6 +1320,66 @@ it.skipIf(!enabled)(
       expect(JSON.stringify(warn.mock.calls)).not.toContain(user.email);
     } finally {
       warn.mockRestore();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses an enrollment that expired while it waited on the password row',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService({ send: vi.fn().mockResolvedValue(undefined) });
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('enroll-wait'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      await service.confirmTotpEnrollment(
+        started.pendingToken,
+        totpCode(enrollmentSecret(started.enrollment.otpauthUri)),
+        signInRequest('enroll-wait-code'),
+      );
+
+      const request = signInRequest('enroll-wait-finish');
+      let completion: Promise<unknown> = Promise.resolve();
+      // Holds the password row until the completion waits on it, then expires the enrollment.
+      await admin.$transaction(
+        async (transaction) => {
+          await transaction.$queryRaw`
+            SELECT 1 FROM "user_passwords" WHERE "user_id" = ${user.id}::uuid FOR UPDATE`;
+          const [{ pid }] = await transaction.$queryRaw<[{ pid: number }]>`
+            SELECT pg_backend_pid() AS pid`;
+          completion = service.completeTotpEnrollment(started.pendingToken, request);
+          completion.catch(() => undefined);
+          for (let waited = 0; ; waited += 1) {
+            const [{ waiting }] = await admin.$queryRaw<[{ waiting: boolean }]>`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity WHERE ${pid}::int = ANY (pg_blocking_pids(pid))
+              ) AS waiting`;
+            if (waiting) break;
+            if (waited > 200) throw new Error('The completion never waited on the password row.');
+            await new Promise((resolve) => setTimeout(resolve, 25));
+          }
+          await admin.pendingAuthentication.updateMany({
+            where: { userId: user.id },
+            data: {
+              createdAt: new Date(Date.now() - 6 * 60_000),
+              expiresAt: new Date(Date.now() - 60_000),
+            },
+          });
+        },
+        { timeout: 20_000 },
+      );
+
+      await expect(completion).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED' });
+      await expect(admin.userSession.count({ where: { userId: user.id } })).resolves.toBe(0);
+      await expect(admin.userTotpFactor.count({ where: { userId: user.id } })).resolves.toBe(0);
+    } finally {
       await fixture.cleanup();
     }
   },
