@@ -1,3 +1,6 @@
+import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '@lingkod-hr/auth';
+import { getConfig } from '@lingkod-hr/config';
 import { expect, test } from '@playwright/test';
 import { LOCAL_SEED_PASSPHRASE, MARISOL_EMAIL, nextTotpCode, signIn } from './sign-in';
 
@@ -23,6 +26,26 @@ async function newestMailText(subject: string, since: number): Promise<string | 
   const detail = await fetch(`http://localhost:8025/api/v1/message/${summary.ID}`);
   if (!detail.ok) throw new Error('Mailpit message lookup failed.');
   return ((await detail.json()) as { Text: string }).Text;
+}
+
+/** Gives Marisol the seed passphrase again, which the other specs sign in with. */
+async function restoreSeedPassphrase(): Promise<void> {
+  getConfig();
+  const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
+  if (!adminUrl) throw new Error('A worktree database owner URL is required to restore it.');
+  const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+  try {
+    const { id } = await admin.user.findUniqueOrThrow({
+      where: { emailNormalized: MARISOL_EMAIL },
+      select: { id: true },
+    });
+    await admin.userPassword.update({
+      where: { userId: id },
+      data: { passwordHash: await hashPassword(LOCAL_SEED_PASSPHRASE) },
+    });
+  } finally {
+    await admin.$disconnect();
+  }
 }
 
 // A cold dev server compiles the reset pages, and the TOTP step may wait for the next code.
@@ -58,33 +81,44 @@ test('resets a forgotten password from the emailed link', async ({ page }) => {
 
   const passwordField = page.getByRole('textbox', { name: 'New password' });
   const codeField = page.getByRole('textbox', { name: 'Authentication code' });
-  await passwordField.fill('too short');
-  await codeField.fill('000000');
-  await page.getByRole('button', { name: 'Reset password' }).click();
-  await expect(page.getByText('Use 15 to 128 characters. This one has 9.')).toBeVisible();
+  try {
+    await passwordField.fill('too short');
+    await codeField.fill('000000');
+    await page.getByRole('button', { name: 'Reset password' }).click();
+    await expect(page.getByText('Use 15 to 128 characters. This one has 9.')).toBeVisible();
 
-  // The seed passphrase passes the password rules, so the other specs still sign in with it.
-  await passwordField.fill(LOCAL_SEED_PASSPHRASE);
-  await codeField.fill('000000');
-  await page.getByRole('button', { name: 'Reset password' }).click();
-  await expect(page.getByText('That code didn’t work. Your link still works.')).toBeVisible();
-  await expect(codeField).toHaveValue('');
+    // A wrong code answers as one, even with the current password.
+    await passwordField.fill(LOCAL_SEED_PASSPHRASE);
+    await codeField.fill('000000');
+    await page.getByRole('button', { name: 'Reset password' }).click();
+    await expect(page.getByText('That code didn’t work. Your link still works.')).toBeVisible();
+    await expect(codeField).toHaveValue('');
 
-  await codeField.fill(await nextTotpCode());
-  await page.getByRole('button', { name: 'Reset password' }).click();
-  await expect(page.getByRole('heading', { name: 'Your password was reset' })).toBeVisible();
-  await expect
-    .poll(() => newestMailText('Your LingkodHR password was reset', startedAt), {
-      intervals: [100],
-      timeout: 5_000,
-    })
-    .not.toBeNull();
+    await codeField.fill(await nextTotpCode());
+    await page.getByRole('button', { name: 'Reset password' }).click();
+    await expect(
+      page.getByText('Choose a password that’s different from your current one.'),
+    ).toBeVisible();
 
-  // The link works once.
-  await page.goto(resetPath);
-  await expect(
-    page.getByRole('heading', { name: 'This reset link is invalid or has expired.' }),
-  ).toBeVisible();
+    await passwordField.fill('tahimik na umaga sa bundok 42');
+    await codeField.fill(await nextTotpCode());
+    await page.getByRole('button', { name: 'Reset password' }).click();
+    await expect(page.getByRole('heading', { name: 'Your password was reset' })).toBeVisible();
+    await expect
+      .poll(() => newestMailText('Your LingkodHR password was reset', startedAt), {
+        intervals: [100],
+        timeout: 5_000,
+      })
+      .not.toBeNull();
+
+    // The link works once.
+    await page.goto(resetPath);
+    await expect(
+      page.getByRole('heading', { name: 'This reset link is invalid or has expired.' }),
+    ).toBeVisible();
+  } finally {
+    await restoreSeedPassphrase();
+  }
 
   await signIn(page, MARISOL_EMAIL);
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
