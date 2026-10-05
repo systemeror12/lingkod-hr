@@ -484,6 +484,14 @@ function resetMethod(
   return answer.code ? 'totp' : 'missing';
 }
 
+function samePasswordRejected(): AuthServiceError {
+  return new AuthServiceError(
+    'Choose a password that’s different from your current one.',
+    400,
+    'PASSWORD_REJECTED',
+  );
+}
+
 function invitationInvalid(): AuthServiceError {
   return new AuthServiceError(
     'This invitation can’t be used. Ask your Agency Administrator for a new one.',
@@ -1145,11 +1153,7 @@ export class AuthService {
     // Passwords are hashed NFKC-normalized, so once the current one verifies this is the same as
     // the new one verifying against its hash.
     if (answer.newPassword.normalize('NFKC') === answer.currentPassword.normalize('NFKC')) {
-      throw new AuthServiceError(
-        'Choose a password that’s different from your current one.',
-        400,
-        'PASSWORD_REJECTED',
-      );
+      throw samePasswordRejected();
     }
     // Refuse a throttled caller before the slow hash; the proof below counts the guess.
     const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
@@ -1758,7 +1762,9 @@ export class AuthService {
 
   /**
    * Sets a new password from a reset link. An IP address over the per-IP limit is refused before
-   * the link is opened. A User with a TOTP factor also gives a code or a Recovery Code; a wrong
+   * the link is opened. The new password must differ from the current one; that refusal comes
+   * after any second factor is proved and before a Recovery Code is spent, and leaves the link
+   * usable. A User with a TOTP factor also gives a code or a Recovery Code; a wrong
    * one counts toward the email's Sign-in Cool-down, not the second-factor ceiling, and leaves
    * the link usable. Recovery Codes are matched outside a transaction, as at sign-in.
    * The last transaction holds the User's password row. Credential Proof checks a TOTP code in
@@ -1797,6 +1803,10 @@ export class AuthService {
       if (rejected) return { status: 'REJECTED' as const, message: rejected.message };
       const method = resetMethod(link, answer);
       if (method === 'missing') return { status: 'CODE_REQUIRED' as const };
+      const { passwordHash: currentHash } = await transaction.userPassword.findUniqueOrThrow({
+        where: { userId: link.user.id },
+        select: { passwordHash: true },
+      });
       const failure = { userId: link.user.id, emailHash: link.emailHash };
       if (!method) {
         const cooldownUntil = await readCooldown(transaction, link.emailHash, now);
@@ -1807,7 +1817,7 @@ export class AuthService {
           });
           return { status: 'COOLDOWN' as const, cooldownUntil, now };
         }
-        return { status: 'OPEN' as const, link, method, guess: null, codes: [] };
+        return { status: 'OPEN' as const, link, method, currentHash, guess: null, codes: [] };
       }
       const guess = await countGuess(transaction, link.emailHash, now);
       if (guess.cooldownUntil) {
@@ -1824,7 +1834,7 @@ export class AuthService {
               select: { id: true, codeHash: true },
             })
           : [];
-      return { status: 'OPEN' as const, link, method, guess, codes };
+      return { status: 'OPEN' as const, link, method, currentHash, guess, codes };
     });
     if (opened.status === 'INVALID') throw resetLinkInvalid();
     if (opened.status === 'REJECTED') {
@@ -1866,7 +1876,12 @@ export class AuthService {
         throw resetCodeInvalid(method);
       }
     }
-    const passwordHash = await hashPassword(answer.password);
+    // A password change since the link opened supersedes it, so `finish` never acts on a stale
+    // answer; a rehash keeps the same password.
+    const [passwordHash, reusesCurrent] = await Promise.all([
+      hashPassword(answer.password),
+      verifyPassword(opened.currentHash, answer.password),
+    ]);
 
     // Runs holding the User's password row: the second of two completions finds the link consumed,
     // or its TOTP code already spent.
@@ -1883,14 +1898,18 @@ export class AuthService {
       if (recheck !== method) return { status: 'INVALID_CODE' as const };
 
       if (recoveryCodeId) {
-        const spent = await transaction.userRecoveryCode.deleteMany({
-          where: { id: recoveryCodeId },
-        });
-        if (spent.count !== 1) {
+        // A refused password leaves the code unspent for the next try.
+        const where = { id: recoveryCodeId };
+        const proved = reusesCurrent
+          ? await transaction.userRecoveryCode.count({ where })
+          : (await transaction.userRecoveryCode.deleteMany({ where })).count;
+        if (proved !== 1) {
           await this.writeResetFailure(transaction, request, wrongCode);
           return { status: 'INVALID_CODE' as const };
         }
       }
+      // Refused once any second factor is proved, so a link can't test a guarded User's password.
+      if (reusesCurrent) return { status: 'REUSED' as const };
 
       // Consumed before the password changes, so the change voids no link but this one.
       await transaction.passwordResetToken.update({
@@ -1971,6 +1990,7 @@ export class AuthService {
       );
     }
     if (outcome.status === 'INVALID_CODE') throw resetCodeInvalid(method);
+    if (outcome.status === 'REUSED') throw samePasswordRejected();
     return { notices: outcome.notices };
   }
 
