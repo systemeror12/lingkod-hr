@@ -567,3 +567,222 @@ it.skipIf(!enabled)('offers no replacement to a User without an authenticator', 
     await fixture.cleanup();
   }
 });
+
+/** The session context a REAUTHENTICATION_FAILURE carries, and its sanitized details. */
+function reauthenticationFailure(fixture: Fixture, details: Record<string, string>) {
+  const { context, sessionId } = fixture.session;
+  return {
+    eventType: 'REAUTHENTICATION_FAILURE',
+    agencyId: context.agencyId,
+    userId: fixture.userId,
+    membershipId: context.membershipId,
+    details: { ...details, sessionId },
+  };
+}
+
+/** Fails if any Security Event of the User holds one of `secrets` or the raw email. */
+async function expectNoSecrets(fixture: Fixture, secrets: string[]) {
+  const events = await fixture.admin.securityEvent.findMany({
+    where: { OR: [{ userId: fixture.userId }, { emailHash: fixture.emailHash }] },
+  });
+  const stored = JSON.stringify(events).toLowerCase();
+  for (const secret of [...secrets, fixture.email]) {
+    expect(stored).not.toContain(secret.toLowerCase());
+  }
+}
+
+it.skipIf(!enabled)(
+  'records a wrong password, TOTP code, or Recovery Code on reauthentication with the session',
+  async () => {
+    const fixture = await signedInFixture({ authAgeMs: 10 * 60_000 });
+    try {
+      const service = new AuthService(new RecordingMailDelivery());
+      const refused = { code: 'INVALID_CREDENTIALS', statusCode: 401 };
+      const wrongPassword = 'not the right passphrase';
+      const wrongRecoveryCode = 'aaaaa-bbbbb';
+      await expect(
+        service.reauthenticate(
+          fixture.session,
+          { password: wrongPassword, code: nextCode(fixture.totpSecret) },
+          fixture.request('reauth-password'),
+        ),
+      ).rejects.toMatchObject(refused);
+      await expect(
+        service.reauthenticate(
+          fixture.session,
+          { password: fixture.password, code: '000000' },
+          fixture.request('reauth-code'),
+        ),
+      ).rejects.toMatchObject(refused);
+      await expect(
+        service.reauthenticate(
+          fixture.session,
+          { password: fixture.password, recoveryCode: wrongRecoveryCode },
+          fixture.request('reauth-recovery'),
+        ),
+      ).rejects.toMatchObject(refused);
+
+      await expect(fixture.events('REAUTHENTICATION_FAILURE')).resolves.toMatchObject([
+        reauthenticationFailure(fixture, { reason: 'INVALID_CREDENTIALS' }),
+        reauthenticationFailure(fixture, { reason: 'INVALID_CODE', method: 'totp' }),
+        reauthenticationFailure(fixture, { reason: 'INVALID_CODE', method: 'recovery_code' }),
+      ]);
+      await expect(fixture.events('LOGIN_FAILURE')).resolves.toEqual([]);
+      // The guesses count as before: toward the cool-down, and the codes toward the ceiling.
+      await expect(fixture.throttle()).resolves.toMatchObject({ failureCount: 3 });
+      await expect(fixture.storedPassword()).resolves.toMatchObject({ secondFactorFailures: 2 });
+      await expectNoSecrets(fixture, [
+        wrongPassword,
+        fixture.password,
+        '000000',
+        wrongRecoveryCode,
+        ...fixture.recoveryCodes,
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'records a wrong current password on password change with the session, and a sign-in’s as before',
+  async () => {
+    const fixture = await signedInFixture();
+    try {
+      const service = new AuthService(new RecordingMailDelivery());
+      const wrongPassword = 'not the right passphrase';
+      await expect(
+        service.changePassword(
+          fixture.session,
+          {
+            currentPassword: wrongPassword,
+            newPassword: NEW_PASSWORD,
+            code: nextCode(fixture.totpSecret),
+          },
+          fixture.request('change-wrong'),
+        ),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+      await expect(fixture.events('REAUTHENTICATION_FAILURE')).resolves.toMatchObject([
+        reauthenticationFailure(fixture, { reason: 'INVALID_CREDENTIALS' }),
+      ]);
+
+      await expect(
+        service.signInWithPassword(fixture.email, wrongPassword, null, fixture.request('sign-in')),
+      ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+      await expect(fixture.events('LOGIN_FAILURE')).resolves.toMatchObject([
+        {
+          agencyId: null,
+          membershipId: null,
+          userId: fixture.userId,
+          details: { reason: 'INVALID_CREDENTIALS' },
+        },
+      ]);
+      await expectNoSecrets(fixture, [wrongPassword, fixture.password, NEW_PASSWORD]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'starts the Sign-in Cool-down after 5 wrong reauthentications and records the refusal',
+  async () => {
+    const fixture = await signedInFixture({ authAgeMs: 10 * 60_000 });
+    try {
+      const service = new AuthService(new RecordingMailDelivery());
+      for (let attempt = 0; attempt < 5; attempt++) {
+        await expect(
+          service.reauthenticate(
+            fixture.session,
+            { password: 'not the right passphrase' },
+            fixture.request(`wrong-${attempt}`),
+          ),
+        ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+      }
+      await expect(
+        service.reauthenticate(
+          fixture.session,
+          { password: fixture.password, code: nextCode(fixture.totpSecret) },
+          fixture.request('cooling'),
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_COOLDOWN', statusCode: 429 });
+      await expect(fixture.events('SIGN_IN_COOLDOWN_STARTED')).resolves.toHaveLength(1);
+      const failures = await fixture.events('REAUTHENTICATION_FAILURE');
+      expect(failures).toHaveLength(6);
+      expect(failures.at(-1)).toMatchObject(
+        reauthenticationFailure(fixture, { reason: 'COOLDOWN_ACTIVE' }),
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'disables the password when a wrong reauthentication code reaches the Second-factor Ceiling',
+  async () => {
+    const fixture = await signedInFixture({ authAgeMs: 10 * 60_000 });
+    try {
+      await fixture.admin.userPassword.update({
+        where: { userId: fixture.userId },
+        data: { secondFactorFailures: 9 },
+      });
+      await expect(
+        new AuthService(new RecordingMailDelivery()).reauthenticate(
+          fixture.session,
+          { password: fixture.password, code: '000000' },
+          fixture.request('ceiling'),
+        ),
+      ).rejects.toMatchObject({ code: 'PASSWORD_RESET_REQUIRED' });
+      const stored = await fixture.storedPassword();
+      expect(stored.secondFactorFailures).toBe(10);
+      expect(stored.resetRequiredAt).not.toBeNull();
+      await expect(fixture.events('PASSWORD_RESET_REQUIRED')).resolves.toHaveLength(1);
+      await expect(fixture.events('REAUTHENTICATION_FAILURE')).resolves.toMatchObject([
+        reauthenticationFailure(fixture, { reason: 'INVALID_CODE', method: 'totp' }),
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'counts reauthentication failures in every Agency toward the per-IP limit',
+  async () => {
+    const fixture = await signedInFixture({ authAgeMs: 10 * 60_000 });
+    try {
+      const { context } = fixture.session;
+      const { ipAddress } = fixture.request();
+      await fixture.admin.securityEvent.createMany({
+        data: Array.from({ length: 100 }, () => ({
+          agencyId: context.agencyId,
+          userId: fixture.userId,
+          membershipId: context.membershipId,
+          eventType: 'REAUTHENTICATION_FAILURE',
+          ipAddress,
+          details: { reason: 'INVALID_CREDENTIALS' },
+        })),
+      });
+      const service = new AuthService(new RecordingMailDelivery());
+      const limited = { code: 'IP_RATE_LIMITED', statusCode: 429 };
+
+      await expect(service.assertIpAllowed(fixture.request('sign-in'))).rejects.toMatchObject(
+        limited,
+      );
+      await expect(
+        service.reauthenticate(
+          fixture.session,
+          { password: fixture.password, code: nextCode(fixture.totpSecret) },
+          fixture.request('reauth'),
+        ),
+      ).rejects.toMatchObject(limited);
+      const failures = await fixture.events('REAUTHENTICATION_FAILURE');
+      expect(failures.at(-1)).toMatchObject(
+        reauthenticationFailure(fixture, { reason: 'IP_RATE_LIMITED' }),
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);

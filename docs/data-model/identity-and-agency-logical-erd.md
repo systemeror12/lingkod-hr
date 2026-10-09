@@ -389,7 +389,7 @@ Append-only authentication and authorization security events.
 | agency_id | uuid | Yes | FK agencies | Agency context when applicable |
 | user_id | uuid | Yes | FK users | Known user |
 | membership_id | uuid | Yes | FK agency_memberships | Known membership |
-| event_type | enum | No |  | LOGIN_SUCCESS, LOGIN_FAILURE, LOCK, ROLE_CHANGE, SESSION_REVOKED, etc. |
+| event_type | enum | No |  | LOGIN_SUCCESS, LOGIN_FAILURE, REAUTHENTICATION_FAILURE, LOCK, ROLE_CHANGE, SESSION_REVOKED, etc. |
 | occurred_at | datetime | No |  | Event time |
 | request_id | string | Yes |  | Request correlation |
 | ip_address | string | Yes |  | Protected network metadata |
@@ -400,6 +400,7 @@ Append-only authentication and authorization security events.
 **Constraints and indexes**
 
 - Append-only; no secrets or full sensitive payloads. Sign-in events never hold a password, code, token, or raw email.
+- A failed proof inside a signed-in session (reauthentication, or the current password on password change) is a `REAUTHENTICATION_FAILURE` with the session's Agency, User, and Agency Membership; `details.sessionId` names the session. A sign-in failure is a `LOGIN_FAILURE`, which has no Agency.
 - Indexes on `(email_hash, event_type, occurred_at)` and `(ip_address, event_type, occurred_at)` for sign-in attempt counts.
 
 **Deletion behavior:** Retention-controlled purge only.
