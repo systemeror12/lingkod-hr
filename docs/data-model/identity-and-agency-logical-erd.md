@@ -286,6 +286,7 @@ The User's LingkodHR-owned password. Carries no `agency_id`; visible only in the
 | changed_at | datetime | No |  | Last change |
 | second_factor_failures | integer | No | ≥ 0 | Consecutive second-factor failures |
 | reset_required_at | datetime | Yes |  | When a reset became required |
+| recovery_code_prompt_owed_at | datetime | Yes |  | When a Password Reset spent a Recovery Code; the next sign-in shows the remaining-codes prompt and clears it |
 
 **Constraints and indexes**
 

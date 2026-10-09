@@ -72,6 +72,7 @@ import {
   writeGuessFailure,
   writeSignInFailure,
 } from './credential-proof';
+import { oweRecoveryCodePrompt, takeRecoveryCodePrompt } from './recovery-code-prompt';
 
 export { AuthServiceError };
 
@@ -128,6 +129,15 @@ export type PasswordSignInResult =
   | { status: 'TOTP_REQUIRED'; pendingToken: string }
   | { status: 'ENROLLMENT_REQUIRED'; pendingToken: string; enrollment: TotpEnrollmentStart }
   | { status: 'SIGNED_IN'; session: AuthenticatedSession & { token: string } };
+
+/**
+ * A session a sign-in opened. `recoveryCodesRemaining` is the count for the remaining-codes prompt
+ * a Password Reset owed, or null when none was owed.
+ */
+export type OpenedSession = AuthenticatedSession & {
+  token: string;
+  recoveryCodesRemaining: number | null;
+};
 
 export interface RecoveryCodeSignIn {
   session: AuthenticatedSession & { token: string };
@@ -248,6 +258,8 @@ export type InvitationLookup =
 export interface ActivationDone {
   session: AuthenticatedSession & { token: string };
   notices: MailMessage[];
+  /** For the remaining-codes prompt: set when a Recovery Code proved it, or a reset owed one. */
+  recoveryCodesRemaining: number | null;
 }
 
 export type ActivationStart =
@@ -798,7 +810,7 @@ export class AuthService {
     pendingToken: string,
     code: string,
     request: SignInRequest,
-  ): Promise<AuthenticatedSession & { token: string }> {
+  ): Promise<OpenedSession> {
     const pendingTokenHash = hashSessionToken(pendingToken).toString('hex');
     const scope = { pendingTokenHash, capabilities: ['platform-security'] as const };
     // Set once both factors verify, so a later refusal can still be recorded.
@@ -1946,6 +1958,7 @@ export class AuthService {
         where: { userId },
         data: { passwordHash, changedAt: now, secondFactorFailures: 0, resetRequiredAt: null },
       });
+      if (recoveryCodeId) await oweRecoveryCodePrompt(transaction, userId, now);
       await transaction.pendingAuthentication.deleteMany({ where: { userId } });
       await transaction.signInThrottle.deleteMany({
         where: { emailHash: prismaBytes(current.emailHash) },
@@ -3668,8 +3681,9 @@ export class AuthService {
         },
       });
       notices.push(recoveryCodeNotice(email, remaining, now));
+      return { session, notices, recoveryCodesRemaining: remaining };
     }
-    return { session, notices };
+    return { session, notices, recoveryCodesRemaining: session.recoveryCodesRemaining };
   }
 
   private async openOwnedSession(
@@ -3679,7 +3693,7 @@ export class AuthService {
     methods: readonly string[],
     request: SignInRequest,
     emailHash: Buffer,
-  ): Promise<AuthenticatedSession & { token: string }> {
+  ): Promise<OpenedSession> {
     const now = new Date();
     // Holds the User row through session creation, so a Global User Lock either commits first and
     // refuses this sign-in, or waits and then revokes the new session.
@@ -3697,13 +3711,15 @@ export class AuthService {
       data: { secondFactorFailures: 0 },
     });
     if (usable.count !== 1) throw passwordResetRequired();
+    // Every sign-in takes an owed remaining-codes prompt, so a second one shows nothing.
+    const recoveryCodesRemaining = await takeRecoveryCodePrompt(transaction, userId);
     await transaction.signInThrottle.deleteMany({ where: { emailHash: prismaBytes(emailHash) } });
     const membership = await this.selectSignInMembership(
       transaction,
       userId,
       requestedMembershipId,
     );
-    return this.createSession(
+    const session = await this.createSession(
       transaction,
       userId,
       membership.id,
@@ -3716,6 +3732,7 @@ export class AuthService {
       },
       request.requestId,
     );
+    return { ...session, recoveryCodesRemaining };
   }
 
   /**

@@ -631,11 +631,13 @@ model SecurityEvent {
 
 /// The User's password as an Argon2id PHC string, kept apart from routine `users` reads.
 model UserPassword {
-  userId               String    @id @map("user_id") @db.Uuid
-  passwordHash         String    @map("password_hash")
-  changedAt            DateTime  @default(now()) @map("changed_at") @db.Timestamptz(6)
-  secondFactorFailures Int       @default(0) @map("second_factor_failures")
-  resetRequiredAt      DateTime? @map("reset_required_at") @db.Timestamptz(6)
+  userId                   String    @id @map("user_id") @db.Uuid
+  passwordHash             String    @map("password_hash")
+  changedAt                DateTime  @default(now()) @map("changed_at") @db.Timestamptz(6)
+  secondFactorFailures     Int       @default(0) @map("second_factor_failures")
+  resetRequiredAt          DateTime? @map("reset_required_at") @db.Timestamptz(6)
+  /// Set by a Password Reset that spent a Recovery Code; cleared by the next sign-in.
+  recoveryCodePromptOwedAt DateTime? @map("recovery_code_prompt_owed_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
