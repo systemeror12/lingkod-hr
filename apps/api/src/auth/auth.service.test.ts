@@ -1070,6 +1070,45 @@ async function enrollmentWrites(admin: PrismaClient, userId: string) {
 }
 
 it.skipIf(!enabled)(
+  "gives the enrolled session its TOTP confirmation's time as authTime, however late the acknowledgment",
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false });
+    const { admin, user } = fixture;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const service = new AuthService({ send: vi.fn().mockResolvedValue(undefined) });
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('enroll-time-password'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      const confirmedAt = new Date();
+      await service.confirmTotpEnrollment(
+        started.pendingToken,
+        totpCode(enrollmentSecret(started.enrollment.otpauthUri)),
+        signInRequest('enroll-time-code'),
+      );
+
+      vi.setSystemTime(confirmedAt.getTime() + 2 * 60_000);
+      const session = await service.completeTotpEnrollment(
+        started.pendingToken,
+        signInRequest('enroll-time-finish'),
+      );
+      expect(session.authTime).toEqual(confirmedAt);
+      const stored = await admin.userSession.findUniqueOrThrow({
+        where: { id: session.sessionId },
+      });
+      expect(stored.authTime).toEqual(confirmedAt);
+    } finally {
+      vi.useRealTimers();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'enrolls an MFA-Required User without a factor, writing the factor, codes, and session only at the end',
   async () => {
     const fixture = await ownedLoginFixture({ withTotp: false });

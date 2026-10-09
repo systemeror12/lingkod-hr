@@ -235,6 +235,41 @@ it.skipIf(!enabled)('opens an invitation without writing anything', async () => 
 });
 
 it.skipIf(!enabled)(
+  "gives the activated session its TOTP confirmation's time as authTime, however late the acknowledgment",
+  async () => {
+    const fixture = await activationFixture({ roleCodes: ['hrmo_administrator'] });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const service = new AuthService();
+      const started = await service.startActivation(
+        fixture.token,
+        { name: 'Maria Clara Santos', password: STRONG_PASSWORD },
+        activationRequest('time-start'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      const confirmedAt = new Date();
+      await service.confirmActivationEnrollment(
+        fixture.token,
+        started.pendingToken,
+        totpCode(secretFromUri(started.enrollment.otpauthUri)),
+        activationRequest('time-confirm'),
+      );
+
+      vi.setSystemTime(confirmedAt.getTime() + 2 * 60_000);
+      const done = await service.finishActivationEnrollment(
+        fixture.token,
+        started.pendingToken,
+        activationRequest('time-finish'),
+      );
+      expect(done.session.authTime).toEqual(confirmedAt);
+    } finally {
+      vi.useRealTimers();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'activates a first-time MFA-Required invitee only once enrollment is acknowledged',
   async () => {
     const fixture = await activationFixture({ roleCodes: ['hrmo_administrator'] });
