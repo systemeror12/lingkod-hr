@@ -346,6 +346,7 @@ Short-lived state between sign-in or activation steps, referenced by an HTTP-onl
 | enrollment_secret_envelope | bytes | Yes |  | TOTP secret being enrolled, encrypted like a factor's and bound to the User and the pending row, whose id becomes the factor id |
 | recovery_code_hashes | string[] | No |  | Hashes of the Recovery Codes shown once at enrollment |
 | enrollment_accepted_step | integer | Yes |  | Step of the code that confirmed enrollment; the factor's first `last_accepted_step` |
+| enrollment_confirmed_at | datetime | Yes |  | When the code that confirmed enrollment was accepted; the new session's `auth_time` |
 | expires_at | datetime | No | After `created_at` | Sign-in and TOTP replacement expire after 5 minutes |
 | created_at | datetime | No |  | Started |
 

@@ -51,6 +51,7 @@ import {
   acceptEnrollmentCode,
   beginTotpEnrollment,
   confirmTotpEnrollment,
+  enrollmentAuthTime,
   ENROLL_CODES_STAGE,
   ENROLL_SCAN_STAGE,
   writeTotpEnrollment,
@@ -150,6 +151,7 @@ interface PendingSignIn {
   verifiedMethods: string[];
   enrollmentSecretEnvelope: Uint8Array | null;
   enrollmentAcceptedStep: bigint | null;
+  enrollmentConfirmedAt: Date | null;
   recoveryCodeHashes: string[];
   user: { emailNormalized: string; globalStatus: string };
   emailHash: Buffer;
@@ -1045,6 +1047,7 @@ export class AuthService {
           stage: ENROLL_CODES_STAGE,
           verifiedMethods: [...pending.verifiedMethods, 'totp'],
           enrollmentAcceptedStep: confirmed.step,
+          enrollmentConfirmedAt: confirmed.confirmedAt,
           recoveryCodeHashes: confirmed.recoveryCodeHashes,
         },
       }),
@@ -1114,6 +1117,7 @@ export class AuthService {
           pending.verifiedMethods,
           request,
           emailHash,
+          enrollmentAuthTime(pending, signInExpired),
         );
         return { ...owned, notice: totpEnrolledNotice(pending.user.emailNormalized) };
       });
@@ -2842,6 +2846,7 @@ export class AuthService {
             stage: ENROLL_CODES_STAGE,
             verifiedMethods: [...pending.verifiedMethods, 'totp'],
             enrollmentAcceptedStep: confirmed.step,
+            enrollmentConfirmedAt: confirmed.confirmedAt,
             recoveryCodeHashes: confirmed.recoveryCodeHashes,
           },
         }),
@@ -2871,6 +2876,7 @@ export class AuthService {
           pending,
           userId: pending.userId ?? pending.id,
           methods: pending.verifiedMethods,
+          authTime: enrollmentAuthTime(pending, activationExpired),
           ...(pending.userId ? {} : { newUser: firstTimeUser(pending) }),
         });
       });
@@ -3472,6 +3478,7 @@ export class AuthService {
       invitation: ActivationInvitation;
       userId: string;
       methods: readonly string[];
+      authTime?: Date;
       pending?: PendingActivation;
       newUser?: { displayName: string; passwordHash: string };
       recoveryCodeUsed?: boolean;
@@ -3651,6 +3658,7 @@ export class AuthService {
       finish.methods,
       request,
       emailHash,
+      finish.authTime,
     );
     if (finish.recoveryCodeUsed) {
       const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
@@ -3679,6 +3687,7 @@ export class AuthService {
     methods: readonly string[],
     request: SignInRequest,
     emailHash: Buffer,
+    authTime?: Date,
   ): Promise<AuthenticatedSession & { token: string }> {
     const now = new Date();
     // Holds the User row through session creation, so a Global User Lock either commits first and
@@ -3708,7 +3717,7 @@ export class AuthService {
       userId,
       membership.id,
       {
-        authTime: now,
+        authTime: authTime ?? now,
         authenticationMethods: methods,
         emailHash,
         ipAddress: request.ipAddress,
@@ -3768,6 +3777,7 @@ export class AuthService {
       verifiedMethods: pending.verifiedMethods,
       enrollmentSecretEnvelope: pending.enrollmentSecretEnvelope,
       enrollmentAcceptedStep: pending.enrollmentAcceptedStep,
+      enrollmentConfirmedAt: pending.enrollmentConfirmedAt,
       recoveryCodeHashes: pending.recoveryCodeHashes,
       user,
       emailHash,

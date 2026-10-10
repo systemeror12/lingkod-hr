@@ -44,8 +44,9 @@ export function acceptEnrollmentCode(
 }
 
 /**
- * Checks the code that confirms a pending secret. When it matches, returns its step and a new set
- * of Recovery Codes with their hashes; the codes are shown once and only the hashes are kept.
+ * Checks the code that confirms a pending secret. When it matches, returns its step, when it was
+ * accepted, and a new set of Recovery Codes with their hashes; the codes are shown once and only
+ * the hashes are kept.
  */
 export async function confirmTotpEnrollment(
   key: ProtectedValueKey,
@@ -53,15 +54,35 @@ export async function confirmTotpEnrollment(
   envelope: Buffer,
   code: string,
   at: Date = new Date(),
-): Promise<{ step: number; recoveryCodes: string[]; recoveryCodeHashes: string[] } | null> {
+): Promise<{
+  step: number;
+  confirmedAt: Date;
+  recoveryCodes: string[];
+  recoveryCodeHashes: string[];
+} | null> {
   const step = acceptEnrollmentCode(key, owner, envelope, code, at);
   if (step === null) return null;
   const recoveryCodes = generateRecoveryCodes();
   return {
     step,
+    confirmedAt: at,
     recoveryCodes,
     recoveryCodeHashes: await Promise.all(recoveryCodes.map(hashRecoveryCode)),
   };
+}
+
+/**
+ * The `authTime` of the session a confirmed enrollment opens: when its code was accepted, the
+ * latest factor verification, however long the User took to acknowledge the Recovery Codes. A
+ * pending row without a confirmation time throws `refusal()`, the flow's expiry, so the User starts
+ * again.
+ */
+export function enrollmentAuthTime(
+  pending: { enrollmentConfirmedAt: Date | null },
+  refusal: () => Error,
+): Date {
+  if (!pending.enrollmentConfirmedAt) throw refusal();
+  return pending.enrollmentConfirmedAt;
 }
 
 /**
