@@ -51,6 +51,7 @@ import {
   acceptEnrollmentCode,
   beginTotpEnrollment,
   confirmTotpEnrollment,
+  enrollmentAuthTime,
   ENROLL_CODES_STAGE,
   ENROLL_SCAN_STAGE,
   writeTotpEnrollment,
@@ -59,16 +60,21 @@ import {
 import { AuthServiceError } from './auth-error';
 import {
   countGuess,
+  countIpFailures,
   CredentialProof,
+  type FailureEvent,
+  failureScope,
   type GuessCount,
   type GuessFailure,
+  lockUserPassword,
+  LOGIN_FAILURE,
   passwordResetRequired,
   readCooldown,
+  reauthenticationFailure,
   type SecondFactorMethod,
   signInCooldown,
   type ThrottleRow,
   throttleState,
-  lockUserPassword,
   writeGuessFailure,
   writeSignInFailure,
 } from './credential-proof';
@@ -164,6 +170,7 @@ interface PendingSignIn {
   verifiedMethods: string[];
   enrollmentSecretEnvelope: Uint8Array | null;
   enrollmentAcceptedStep: bigint | null;
+  enrollmentConfirmedAt: Date | null;
   recoveryCodeHashes: string[];
   user: { emailNormalized: string; globalStatus: string };
   emailHash: Buffer;
@@ -588,22 +595,28 @@ export class AuthService {
     this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.APP_URL);
   }
 
-  /** The per-IP limit for a sign-in step; a refusal is a LOGIN_FAILURE. */
-  async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
-    await this.refuseOverIpLimit(request, (transaction) =>
-      writeSignInFailure(transaction, request, {
+  /** The per-IP limit for a sign-in step; a refusal records `event`. */
+  async assertIpAllowed(
+    request: SignInRequest,
+    emailHash: Buffer | null = null,
+    event: FailureEvent = LOGIN_FAILURE,
+  ): Promise<void> {
+    await this.refuseOverIpLimit(request, async (transaction) => {
+      await setDatabaseContext(transaction, failureScope(event, null));
+      await writeSignInFailure(transaction, request, {
         userId: null,
         emailHash,
         reason: 'IP_RATE_LIMITED',
-      }),
-    );
+        event,
+      });
+    });
   }
 
   /**
-   * The per-IP limit: 100 sign-in or Password Reset failures in 15 minutes, counted from Security
-   * Events. The flow records its own refusal, which is a failure too, so a client that keeps trying
-   * stays refused. Failures are written after the attempt's slow work, so a burst of parallel
-   * attempts can each find the count under the limit and overshoot it once.
+   * The per-IP limit: 100 sign-in, Password Reset, or reauthentication failures in 15 minutes,
+   * counted from Security Events. The flow records its own refusal, which is a failure too, so a
+   * client that keeps trying stays refused. Failures are written after the attempt's slow work, so
+   * a burst of parallel attempts can each find the count under the limit and overshoot it once.
    */
   private async refuseOverIpLimit(
     { ipAddress }: SignInRequest,
@@ -613,13 +626,11 @@ export class AuthService {
     const refused = await withDatabaseContext(
       { capabilities: ['platform-security'] },
       async (transaction) => {
-        const failures = await transaction.securityEvent.count({
-          where: {
-            eventType: { in: ['LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE'] },
-            ipAddress,
-            occurredAt: { gte: new Date(Date.now() - IP_WINDOW_MS) },
-          },
-        });
+        const failures = await countIpFailures(
+          transaction,
+          ipAddress,
+          new Date(Date.now() - IP_WINDOW_MS),
+        );
         if (failures < IP_FAILURE_LIMIT) return false;
         await recordRefusal(transaction);
         return true;
@@ -1061,6 +1072,7 @@ export class AuthService {
           stage: ENROLL_CODES_STAGE,
           verifiedMethods: [...pending.verifiedMethods, 'totp'],
           enrollmentAcceptedStep: confirmed.step,
+          enrollmentConfirmedAt: confirmed.confirmedAt,
           recoveryCodeHashes: confirmed.recoveryCodeHashes,
         },
       }),
@@ -1130,6 +1142,7 @@ export class AuthService {
           pending.verifiedMethods,
           request,
           emailHash,
+          enrollmentAuthTime(pending, signInExpired),
         );
         return { ...owned, notice: totpEnrolledNotice(pending.user.emailNormalized) };
       });
@@ -1198,13 +1211,21 @@ export class AuthService {
     }
     // Refuse a throttled caller before the slow hash; the proof below counts the guess.
     const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
-    await this.assertIpAllowed(request, emailHash);
+    const failure = reauthenticationFailure(session);
+    await this.assertIpAllowed(request, emailHash, failure);
     const now = new Date();
     const cooldownUntil = await withDatabaseContext(scope, (transaction) =>
       readCooldown(transaction, emailHash, now),
     );
     if (cooldownUntil) {
-      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'COOLDOWN_ACTIVE',
+        undefined,
+        failure,
+      );
       throw signInCooldown(cooldownUntil, now);
     }
     // Hashing takes too long to hold a transaction open.
@@ -1422,7 +1443,8 @@ export class AuthService {
       }),
     );
     const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
-    await this.assertIpAllowed(request, emailHash);
+    const failure = reauthenticationFailure(session);
+    await this.assertIpAllowed(request, emailHash, failure);
     const now = new Date();
     const { guess, stored, hasFactor } = await withDatabaseContext(scope, async (transaction) => ({
       guess: await countGuess(transaction, emailHash, now),
@@ -1433,7 +1455,14 @@ export class AuthService {
       hasFactor: (await transaction.userTotpFactor.count({ where: { userId } })) === 1,
     }));
     if (guess.cooldownUntil) {
-      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'COOLDOWN_ACTIVE',
+        undefined,
+        failure,
+      );
       throw signInCooldown(guess.cooldownUntil, now);
     }
     const verified = stored
@@ -1445,12 +1474,20 @@ export class AuthService {
         userId,
         reason: 'INVALID_CREDENTIALS',
         cooldown: guess.counted.cooldown,
+        event: failure,
       });
       throw reauthenticationRefused();
     }
     await this.refundGuess(emailHash, guess);
     if (stored.resetRequiredAt) {
-      await this.recordSignInFailure(request, emailHash, userId, 'PASSWORD_RESET_REQUIRED');
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'PASSWORD_RESET_REQUIRED',
+        undefined,
+        failure,
+      );
       throw passwordResetRequired();
     }
 
@@ -1471,6 +1508,7 @@ export class AuthService {
       request,
       wrongCode: reauthenticationRefused,
       noFactor: async () => reauthenticationRefused(),
+      failureEvent: failure,
       onProved: async (transaction) => {
         await this.clearGuesses(transaction, proved);
         return onProved(transaction, proved, ['pwd', 'totp']);
@@ -1559,6 +1597,7 @@ export class AuthService {
   ): Promise<{ result: T; notice: MailMessage }> {
     const { session, request, emailHash, email } = proved;
     const { userId } = session.context;
+    const failure = reauthenticationFailure(session);
     const now = new Date();
     const { guess, codes } = await withDatabaseContext(scope, async (transaction) => ({
       guess: await countGuess(transaction, emailHash, now),
@@ -1574,6 +1613,7 @@ export class AuthService {
         userId,
         'COOLDOWN_ACTIVE',
         'recovery_code',
+        failure,
       );
       throw signInCooldown(guess.cooldownUntil, now);
     }
@@ -1610,6 +1650,7 @@ export class AuthService {
       reason: 'INVALID_CODE',
       cooldown: guess.counted.cooldown,
       secondFactor: { method: 'recovery_code', email },
+      event: failure,
     });
     throw reauthenticationRefused();
   }
@@ -2860,6 +2901,7 @@ export class AuthService {
             stage: ENROLL_CODES_STAGE,
             verifiedMethods: [...pending.verifiedMethods, 'totp'],
             enrollmentAcceptedStep: confirmed.step,
+            enrollmentConfirmedAt: confirmed.confirmedAt,
             recoveryCodeHashes: confirmed.recoveryCodeHashes,
           },
         }),
@@ -2889,6 +2931,7 @@ export class AuthService {
           pending,
           userId: pending.userId ?? pending.id,
           methods: pending.verifiedMethods,
+          authTime: enrollmentAuthTime(pending, activationExpired),
           ...(pending.userId ? {} : { newUser: firstTimeUser(pending) }),
         });
       });
@@ -3490,6 +3533,7 @@ export class AuthService {
       invitation: ActivationInvitation;
       userId: string;
       methods: readonly string[];
+      authTime?: Date;
       pending?: PendingActivation;
       newUser?: { displayName: string; passwordHash: string };
       recoveryCodeUsed?: boolean;
@@ -3669,6 +3713,7 @@ export class AuthService {
       finish.methods,
       request,
       emailHash,
+      finish.authTime,
     );
     if (finish.recoveryCodeUsed) {
       const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
@@ -3698,6 +3743,7 @@ export class AuthService {
     methods: readonly string[],
     request: SignInRequest,
     emailHash: Buffer,
+    authTime?: Date,
   ): Promise<OpenedSession> {
     const now = new Date();
     // Holds the User row through session creation, so a Global User Lock either commits first and
@@ -3729,7 +3775,7 @@ export class AuthService {
       userId,
       membership.id,
       {
-        authTime: now,
+        authTime: authTime ?? now,
         authenticationMethods: methods,
         emailHash,
         ipAddress: request.ipAddress,
@@ -3790,6 +3836,7 @@ export class AuthService {
       verifiedMethods: pending.verifiedMethods,
       enrollmentSecretEnvelope: pending.enrollmentSecretEnvelope,
       enrollmentAcceptedStep: pending.enrollmentAcceptedStep,
+      enrollmentConfirmedAt: pending.enrollmentConfirmedAt,
       recoveryCodeHashes: pending.recoveryCodeHashes,
       user,
       emailHash,
@@ -3826,10 +3873,7 @@ export class AuthService {
   /** `writeGuessFailure` in a transaction of its own; throws at the second-factor ceiling. */
   private async recordGuessFailure(request: SignInRequest, failure: GuessFailure): Promise<void> {
     const ceiling = await withDatabaseContext(
-      {
-        ...(failure.userId ? { userId: failure.userId } : {}),
-        capabilities: ['platform-security'],
-      },
+      failureScope(failure.event ?? LOGIN_FAILURE, failure.userId),
       (transaction) => writeGuessFailure(transaction, request, failure),
     );
     if (ceiling) throw passwordResetRequired(ceiling);
@@ -3926,9 +3970,10 @@ export class AuthService {
     userId: string | null,
     reason: string,
     method?: SecondFactorMethod,
+    event: FailureEvent = LOGIN_FAILURE,
   ): Promise<void> {
-    await withDatabaseContext({ capabilities: ['platform-security'] }, (transaction) =>
-      writeSignInFailure(transaction, request, { userId, emailHash, reason, method }),
+    await withDatabaseContext(failureScope(event, null), (transaction) =>
+      writeSignInFailure(transaction, request, { userId, emailHash, reason, method, event }),
     );
   }
 

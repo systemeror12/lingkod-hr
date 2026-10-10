@@ -673,21 +673,22 @@ model UserRecoveryCode {
 /// whose token is stored only as `tokenHash`; or a signed-in User's TOTP replacement (5 minutes),
 /// which has no token and is found by its User.
 model PendingAuthentication {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tokenHash                Bytes?   @unique @map("token_hash")
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash                Bytes?    @unique @map("token_hash")
   purpose                  String
-  userId                   String?  @map("user_id") @db.Uuid
-  invitationId             String?  @map("invitation_id") @db.Uuid
-  requestedMembershipId    String?  @map("requested_membership_id") @db.Uuid
+  userId                   String?   @map("user_id") @db.Uuid
+  invitationId             String?   @map("invitation_id") @db.Uuid
+  requestedMembershipId    String?   @map("requested_membership_id") @db.Uuid
   stage                    String
-  verifiedMethods          String[] @default([]) @map("verified_methods")
-  displayName              String?  @map("display_name")
-  passwordHash             String?  @map("password_hash")
-  enrollmentSecretEnvelope Bytes?   @map("enrollment_secret_envelope")
-  recoveryCodeHashes       String[] @default([]) @map("recovery_code_hashes")
-  enrollmentAcceptedStep   BigInt?  @map("enrollment_accepted_step")
-  expiresAt                DateTime @map("expires_at") @db.Timestamptz(6)
-  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  verifiedMethods          String[]  @default([]) @map("verified_methods")
+  displayName              String?   @map("display_name")
+  passwordHash             String?   @map("password_hash")
+  enrollmentSecretEnvelope Bytes?    @map("enrollment_secret_envelope")
+  recoveryCodeHashes       String[]  @default([]) @map("recovery_code_hashes")
+  enrollmentAcceptedStep   BigInt?   @map("enrollment_accepted_step")
+  enrollmentConfirmedAt    DateTime? @map("enrollment_confirmed_at") @db.Timestamptz(6)
+  expiresAt                DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user       User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
   invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
