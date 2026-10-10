@@ -398,7 +398,7 @@ The Sign-in Cool-down ladder, one row per keyed email hash. It carries the failu
 - 5 failures start a cool-down; each later one for the same email doubles: 5, 10, 20, 40, then 60 minutes.
 - A row whose `last_failure_at` is more than 24 hours old counts as reset.
 
-**Deletion behavior:** Deleted by a full sign-in for the email; otherwise kept, and treated as reset after 24 hours without a failure.
+**Deletion behavior:** Deleted for the email by a full sign-in, a successful reauthentication or password change by the signed-in User, or a completed Password Reset; otherwise kept, and treated as reset after 24 hours without a failure.
 ## `security_events`
 
 Append-only authentication and authorization security events.

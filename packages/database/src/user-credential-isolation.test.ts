@@ -1,27 +1,17 @@
 import { createHash } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { expect, it } from 'vitest';
+import { setDatabaseContext, type DatabaseContext } from './context';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
 async function withContext<T>(
   client: PrismaClient,
-  values: {
-    userId?: string;
-    pendingTokenHash?: string;
-    passwordResetTokenHash?: string;
-    platformSecurity?: boolean;
-  },
+  context: DatabaseContext,
   work: (transaction: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   return client.$transaction(async (transaction) => {
-    await transaction.$queryRaw`
-      SELECT
-        set_config('app.user_id', ${values.userId ?? ''}, true),
-        set_config('app.pending_token_hash', ${values.pendingTokenHash ?? ''}, true),
-        set_config('app.password_reset_token_hash', ${values.passwordResetTokenHash ?? ''}, true),
-        set_config('app.platform_security', ${values.platformSecurity ? 'true' : ''}, true)
-    `;
+    await setDatabaseContext(transaction, context);
     return work(transaction);
   });
 }
@@ -241,7 +231,7 @@ it.skipIf(!enabled)(
       await expect(withContext(app, {}, visibleResetOwners)).resolves.toEqual([]);
       // Platform security opens throttle rows, not reset links.
       await expect(
-        withContext(app, { platformSecurity: true }, visibleResetOwners),
+        withContext(app, { capabilities: ['platform-security'] }, visibleResetOwners),
       ).resolves.toEqual([]);
 
       await expect(
@@ -270,7 +260,9 @@ it.skipIf(!enabled)(
         }),
       ).resolves.toEqual([{ consumedAt: null }]);
 
-      await expect(withContext(app, { platformSecurity: true }, visibleThrottles)).resolves.toBe(1);
+      await expect(
+        withContext(app, { capabilities: ['platform-security'] }, visibleThrottles),
+      ).resolves.toBe(1);
       // A User's context, or one with only a reset token, has no capability.
       for (const context of [
         { userId: userA.id },
