@@ -405,6 +405,21 @@ SECURITY DEFINER AS $$
   WHERE m.agency_id = app_agency_id();
 $$;
 
+-- The per-IP sign-in limit counts LOGIN_FAILURE, PASSWORD_RESET_FAILURE, and
+-- REAUTHENTICATION_FAILURE. A reauthentication failure carries its Agency, so
+-- RLS hides it from platform security; a SECURITY DEFINER function answers
+-- only the count, and the table owner it runs as gets the read.
+CREATE POLICY security_events_owner_reauthentication_failure_select ON security_events
+FOR SELECT TO CURRENT_USER
+USING (app_platform_security() AND event_type = 'REAUTHENTICATION_FAILURE');
+
+CREATE FUNCTION app_ip_failure_count(ip inet, since timestamptz) RETURNS bigint
+SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT count(*) FROM public.security_events
+  WHERE ip_address = ip AND occurred_at >= since
+    AND event_type IN ('LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE', 'REAUTHENTICATION_FAILURE');
+$$;
+
 CREATE POLICY pending_authentications_owner ON pending_authentications
 USING (
   user_id = app_user_id()
