@@ -46,6 +46,12 @@ cp .env.example .env
 Keep `.env` local; it is ignored by Git and contains development-only values.
 Review it before starting if the default ports conflict with other projects.
 
+`DATA_ENCRYPTION_KEY` and `BLIND_INDEX_KEY` are required in every environment,
+including development and test. The API, worker, and seed scripts refuse to
+start and name the missing key when either is missing or blank; there is no
+built-in default. `.env.example` has local-only values. Unit and DB-backed
+tests supply their own test-only keys.
+
 Do not manually run `source .env`. Project commands load the root `.env`
 directly, so the same commands work in Fish, Bash, and Zsh.
 
@@ -179,7 +185,9 @@ bash scripts/setup-worktree.sh
 
 In T3 Code, add that command as a project script with "Run on worktree
 creation" enabled. The script is safe to rerun and refuses to run in the main
-checkout.
+checkout. It never writes `DATA_ENCRYPTION_KEY` or `BLIND_INDEX_KEY`; if
+either is missing or blank in the worktree's `.env`, it names the key and
+exits before printing `Worktree ready`. Add the keys to `.env` and rerun.
 
 Only one dev stack can own ports `3000`–`3002` at a time. E2E runs do not
 share ports: the script writes worktree-specific `PLAYWRIGHT_APP_PORT` and

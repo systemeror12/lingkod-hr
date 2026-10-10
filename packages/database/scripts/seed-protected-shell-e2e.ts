@@ -12,6 +12,8 @@ import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 if (process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production') {
   throw new Error('The protected-shell seed holds local-only credentials and refuses production.');
 }
+// Validated before any database write, so a missing key fails the run without a partial seed.
+const config = getConfig();
 
 const databaseUrl =
   process.env.DATABASE_E2E_ADMIN_URL ??
@@ -2917,7 +2919,7 @@ async function seed(): Promise<void> {
  * enrolls again.
  */
 async function seedLocalCredentials(): Promise<void> {
-  const dataEncryptionKey = parseProtectedValueKey(getConfig().DATA_ENCRYPTION_KEY);
+  const dataEncryptionKey = parseProtectedValueKey(config.DATA_ENCRYPTION_KEY);
   const passwordHash = await hashPassword(LOCAL_SEED_PASSPHRASE);
   const recoveryCodeHashes = await Promise.all(
     LOCAL_SEED_RECOVERY_CODES.map((code) => hashPassword(normalizeRecoveryCode(code) ?? '')),
@@ -2934,7 +2936,7 @@ async function seedLocalCredentials(): Promise<void> {
       create: { userId: user.id, passwordHash },
     });
     await prisma.pendingAuthentication.deleteMany({ where: { userId: user.id } });
-    const emailHash = hashEmail(user.emailNormalized, getConfig().BLIND_INDEX_KEY);
+    const emailHash = hashEmail(user.emailNormalized, config.BLIND_INDEX_KEY);
     await prisma.signInThrottle.deleteMany({ where: { emailHash: new Uint8Array(emailHash) } });
     const assignments = await prisma.membershipRole.findMany({
       where: {

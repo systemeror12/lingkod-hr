@@ -88,6 +88,9 @@ jobs:
       DATABASE_MIGRATION_OWNER_URL: postgresql://hris_local:local_only@localhost:55432/hris
       DATABASE_E2E: 'true'
       DATABASE_E2E_ADMIN_URL: postgresql://hris_local:local_only@localhost:55432/hris
+      # CI-only keys; config has no defaults. Unit tests set theirs in apps/api/vitest.config.mts.
+      DATA_ENCRYPTION_KEY: '0707070707070707070707070707070707070707070707070707070707070707'
+      BLIND_INDEX_KEY: ci-only-blind-index-key-not-for-real-data
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/setup@v2

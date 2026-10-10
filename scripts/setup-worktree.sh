@@ -22,10 +22,28 @@ slug=$(basename "$worktree" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '_')
 database="hris_${slug:0:50}"
 
 [[ -f .env ]] || cp "$main/.env" .env
-# Add keys that are new in .env.example without touching existing local values.
-grep -E '^[A-Z_]+=' .env.example | while IFS= read -r line; do
-  grep -q "^${line%%=*}=" .env || echo "$line" >>.env
+# Prints the value dotenv would read for key $1 in file $2: an optional `export `, a quoted
+# value, or an unquoted value that ends at `#`.
+env_value() {
+  sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=[[:space:]]*//p" "$2" | tail -n 1 |
+    sed -E "s/^\"([^\"]*)\".*/\1/; t; s/^'([^']*)'.*/\1/; t; s/#.*//; s/[[:space:]]+\$//"
+}
+missing=()
+for key in DATA_ENCRYPTION_KEY BLIND_INDEX_KEY; do
+  [[ "$(env_value "$key" .env)" =~ [^[:space:]] ]] || missing+=("$key")
 done
+if ((${#missing[@]})); then
+  echo "Missing or blank in $worktree/.env: ${missing[*]}." >&2
+  echo "Startup requires both in every environment. Add them to .env (.env.example has" \
+    "local-only values) and rerun; this script does not write secrets." >&2
+  exit 1
+fi
+# Add keys that are new in .env.example without touching existing local values.
+# Encryption keys are secrets, so they are only reported missing, never written.
+grep -E '^[A-Z_]+=' .env.example | grep -vE '^(DATA_ENCRYPTION_KEY|BLIND_INDEX_KEY)=' |
+  while IFS= read -r line; do
+    grep -q "^${line%%=*}=" .env || echo "$line" >>.env
+  done
 sed -i -E "s#^(DATABASE_[A-Z_]*URL=.*/)hris\$#\1${database}#" .env
 database=$(sed -nE 's#^DATABASE_MIGRATION_OWNER_URL=.*/([^/?]+).*$#\1#p' .env)
 
