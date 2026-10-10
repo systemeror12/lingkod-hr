@@ -13,10 +13,10 @@ RETURNS BIGINT
 LANGUAGE SQL
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
   SELECT count(*)
-  FROM "security_events"
+  FROM public."security_events"
   WHERE "ip_address" = ip
     AND "event_type" IN ('LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE', 'REAUTHENTICATION_FAILURE')
     AND "occurred_at" >= since;

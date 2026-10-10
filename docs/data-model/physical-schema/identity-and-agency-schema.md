@@ -413,8 +413,8 @@ FOR SELECT TO CURRENT_USER
 USING (app_platform_security() AND event_type = 'REAUTHENTICATION_FAILURE');
 
 CREATE FUNCTION app_ip_failure_count(ip inet, since timestamptz) RETURNS bigint
-SECURITY DEFINER AS $$
-  SELECT count(*) FROM security_events
+SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT count(*) FROM public.security_events
   WHERE ip_address = ip AND occurred_at >= since
     AND event_type IN ('LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE', 'REAUTHENTICATION_FAILURE');
 $$;

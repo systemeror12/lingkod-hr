@@ -55,6 +55,12 @@ function nextCode(secret: string, offsetSteps = 1) {
   return totpCode(secret, new Date(Date.now() + offsetSteps * 30_000));
 }
 
+/** A code outside the accepted previous, current, and next steps, so it is always refused. */
+function wrongCode(secret: string) {
+  const accepted = [-1, 0, 1].map((offsetSteps) => nextCode(secret, offsetSteps));
+  return ['000000', '000001', '000002', '000003'].find((code) => !accepted.includes(code)) ?? '';
+}
+
 /**
  * A User with a password, a TOTP factor, Recovery Codes, and an Agency Membership, signed in on
  * three sessions. `session` is the one acting, signed in `authAgeMs` ago.
@@ -600,6 +606,7 @@ it.skipIf(!enabled)(
       const refused = { code: 'INVALID_CREDENTIALS', statusCode: 401 };
       const wrongPassword = 'not the right passphrase';
       const wrongRecoveryCode = 'aaaaa-bbbbb';
+      const wrongTotpCode = wrongCode(fixture.totpSecret);
       await expect(
         service.reauthenticate(
           fixture.session,
@@ -610,7 +617,7 @@ it.skipIf(!enabled)(
       await expect(
         service.reauthenticate(
           fixture.session,
-          { password: fixture.password, code: '000000' },
+          { password: fixture.password, code: wrongTotpCode },
           fixture.request('reauth-code'),
         ),
       ).rejects.toMatchObject(refused);
@@ -634,7 +641,7 @@ it.skipIf(!enabled)(
       await expectNoSecrets(fixture, [
         wrongPassword,
         fixture.password,
-        '000000',
+        wrongTotpCode,
         wrongRecoveryCode,
         ...fixture.recoveryCodes,
       ]);
@@ -730,7 +737,7 @@ it.skipIf(!enabled)(
       await expect(
         new AuthService(new RecordingMailDelivery()).reauthenticate(
           fixture.session,
-          { password: fixture.password, code: '000000' },
+          { password: fixture.password, code: wrongCode(fixture.totpSecret) },
           fixture.request('ceiling'),
         ),
       ).rejects.toMatchObject({ code: 'PASSWORD_RESET_REQUIRED' });
