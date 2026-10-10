@@ -7,7 +7,6 @@ import {
   LOCAL_SEED_RECOVERY_CODES,
   MARISOL_EMAIL,
   nextTotpCode,
-  signIn,
 } from './sign-in';
 
 interface MailpitMessageSummary {
@@ -153,14 +152,22 @@ test('resets a forgotten password from the emailed link', async ({ page }) => {
     await expect(
       page.getByRole('heading', { name: 'This reset link is invalid or has expired.' }),
     ).toBeVisible();
+
+    // Check the reset's prompt state before restoring the seed credentials clears it.
+    await page.goto('/sign-in');
+    await page.getByLabel('Email').fill(MARISOL_EMAIL);
+    await page.getByLabel('Password').fill('tahimik na umaga sa bundok 42');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByLabel('Authentication code').fill(await nextTotpCode());
+    await page.getByRole('button', { name: 'Verify' }).click();
+    await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'You reset your password with a Recovery Code' }),
+    ).not.toBeVisible();
   } finally {
     await restoreSeedCredentials(MARISOL_EMAIL);
   }
-
-  // A reset proved with the authenticator owes no remaining-codes prompt: the code step opens the
-  // workspace directly.
-  await signIn(page, MARISOL_EMAIL);
-  await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
 });
 
 test('shows the Recovery Codes left at the first sign-in after a reset proved with one', async ({
