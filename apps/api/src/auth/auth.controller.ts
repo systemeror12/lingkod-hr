@@ -17,6 +17,7 @@ import {
 import type { Request, Response } from 'express';
 import { getConfig } from '@lingkod-hr/config';
 import { AuthGuard, cookieValue } from './auth.guard';
+import { SkipIdleRenewal } from './auth.decorators';
 import { AuthMeResponseDto } from './auth.dto';
 import {
   AuthService,
@@ -544,10 +545,11 @@ export class AuthController {
 
   /**
    * Proves again who the signed-in User is, with the same proof as sign-in, and opens the
-   * Reauthentication Window for 5 minutes.
+   * Reauthentication Window for 5 minutes. It isn't activity: the idle timer and `expiresAt` stay.
    */
   @Post('reauthenticate')
   @UseGuards(AuthGuard)
+  @SkipIdleRenewal()
   async reauthenticate(
     @Body() body: unknown,
     @Req() request: AuthenticatedRequest,
@@ -712,11 +714,13 @@ export class AuthController {
       ...cookieOptions(secure),
       maxAge: 8 * 60 * 60 * 1000,
     });
-    response.status(HttpStatus.OK).json(
-      done.recoveryCodesRemaining === null
-        ? { status: 'ACTIVATED' }
-        : { status: 'ACTIVATED', recoveryCodesRemaining: done.recoveryCodesRemaining },
-    );
+    response
+      .status(HttpStatus.OK)
+      .json(
+        done.recoveryCodesRemaining === null
+          ? { status: 'ACTIVATED' }
+          : { status: 'ACTIVATED', recoveryCodesRemaining: done.recoveryCodesRemaining },
+      );
     for (const notice of done.notices) this.noticeAfterResponse(response, notice);
   }
 

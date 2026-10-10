@@ -2077,9 +2077,14 @@ export class AuthService {
     }
   }
 
+  /**
+   * The active session behind a token, or null. Unless `renewIdleTimer` is false, the request
+   * counts as activity and moves the session's last-seen time.
+   */
   async authenticateSession(
     rawToken: string,
     requestId: string,
+    { renewIdleTimer = true } = {},
   ): Promise<AuthenticatedSession | null> {
     if (!rawToken) return null;
     const tokenHash = hashSessionToken(rawToken);
@@ -2154,11 +2159,13 @@ export class AuthService {
           return null;
         }
 
-        const refreshed = await transaction.userSession.updateMany({
-          where: { id: session.id, revokedAt: null },
-          data: { lastSeenAt: new Date() },
-        });
-        if (refreshed.count !== 1) return null;
+        if (renewIdleTimer) {
+          const refreshed = await transaction.userSession.updateMany({
+            where: { id: session.id, revokedAt: null },
+            data: { lastSeenAt: new Date() },
+          });
+          if (refreshed.count !== 1) return null;
+        }
         return {
           sessionId: session.id,
           authenticationMethods: session.authenticationMethods,
