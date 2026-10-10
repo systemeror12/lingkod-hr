@@ -9,13 +9,14 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { type AgencyMember, AgencyMemberListService } from './agency-member-list.service';
 import {
-  type AgencyMember,
   AuthService,
   AuthServiceError,
   type InvitationResult,
@@ -32,6 +33,7 @@ import {
   agencyIdSchema,
   factorResetSchema,
   hrmoInvitationSchema,
+  memberListSchema,
   membershipIdSchema,
   userLockSchema,
 } from './auth.schemas';
@@ -41,7 +43,10 @@ import {
 export class AgencyController {
   private readonly config = getConfig();
 
-  constructor(@Inject(AuthService) private readonly authService: AuthService) {}
+  constructor(
+    @Inject(AuthService) private readonly authService: AuthService,
+    @Inject(AgencyMemberListService) private readonly memberList: AgencyMemberListService,
+  ) {}
 
   @Get(':agencyId/invitations')
   @RequirePermission('security.users.invite', 'security.users.update_roles')
@@ -107,9 +112,13 @@ export class AgencyController {
   async members(
     @Param('agencyId') agencyId: string,
     @CurrentContext() context: RequestContext,
-  ): Promise<{ members: AgencyMember[] }> {
+    @Query() query?: unknown,
+  ): Promise<{ members: AgencyMember[]; nextCursor: string | null }> {
     this.assertAgencyContext(agencyId, context);
-    return { members: await this.authService.listAgencyMembers(context) };
+    const input = memberListSchema.safeParse(query ?? {});
+    if (!input.success)
+      throw new HttpException({ error: { code: 'INVALID_INPUT', message: 'Invalid page.' } }, 400);
+    return this.memberList.list(context, input.data);
   }
 
   /** Factor Reset (#370). The notice goes out once the response is out. */

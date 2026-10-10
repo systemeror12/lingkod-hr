@@ -57,6 +57,7 @@ import {
   writeTotpEnrollment,
   writeTotpFactor,
 } from './totp-enrollment';
+import { liftedLockUserIds } from './agency-member-list.service';
 import { AuthServiceError } from './auth-error';
 import {
   countGuess,
@@ -224,22 +225,6 @@ export interface PendingInvitation {
   roleCode: string | null;
   expiresAt: Date;
   status: 'PENDING';
-}
-
-/** A row of the Users & Access member list. */
-export interface AgencyMember {
-  membershipId: string;
-  userId: string;
-  displayName: string | null;
-  email: string;
-  membershipStatus: string;
-  globalStatus: string;
-  /**
-   * A Global User Lock as this Agency may see it: whether this Agency placed it and whether this
-   * Agency may lift it. Never which other Agency placed it, or why.
-   */
-  lock: { byThisAgency: boolean; unlockable: boolean } | null;
-  hasAuthenticator: boolean;
 }
 
 /** How a Security Administrator verified the User before a Factor Reset (#370). */
@@ -2307,66 +2292,6 @@ export class AuthService {
     });
   }
 
-  /** The Users & Access member list: everyone with a membership in the acting Agency. */
-  async listAgencyMembers(context: RequestContext): Promise<AgencyMember[]> {
-    return withDatabaseContext(context, async (transaction) => {
-      const memberships = await transaction.agencyMembership.findMany({
-        where: { agencyId: context.agencyId },
-        select: {
-          id: true,
-          status: true,
-          user: {
-            select: {
-              id: true,
-              displayName: true,
-              emailNormalized: true,
-              globalStatus: true,
-              lockedByAgencyId: true,
-            },
-          },
-        },
-        orderBy: [{ user: { displayName: 'asc' } }, { user: { emailNormalized: 'asc' } }],
-      });
-      // Unlock authority belongs to the User; whether a row offers it depends on that membership.
-      const authority = new Map<string, boolean>();
-      for (const { user } of memberships) {
-        if (!user.lockedByAgencyId || authority.has(user.id)) continue;
-        authority.set(
-          user.id,
-          user.lockedByAgencyId === context.agencyId ||
-            !(await this.lockingAgencyHasUser(
-              transaction,
-              context,
-              user.id,
-              user.lockedByAgencyId,
-            )),
-        );
-      }
-      // Factor rows hold secrets, so the Agency Context learns only which members have one.
-      const withFactor = new Set(
-        (
-          await transaction.$queryRaw<{ user_id: string }[]>`
-            SELECT "user_id" FROM app_agency_member_factor_user_ids() AS "user_id"`
-        ).map(({ user_id }) => user_id),
-      );
-      return memberships.map(({ id, status, user }) => ({
-        membershipId: id,
-        userId: user.id,
-        displayName: user.displayName,
-        email: user.emailNormalized,
-        membershipStatus: status,
-        globalStatus: user.globalStatus,
-        lock: user.lockedByAgencyId
-          ? {
-              byThisAgency: user.lockedByAgencyId === context.agencyId,
-              unlockable: status === 'ACTIVE' && authority.get(user.id) === true,
-            }
-          : null,
-        hasAuthenticator: withFactor.has(user.id),
-      }));
-    });
-  }
-
   /**
    * Factor Reset (#370): removes the User's factor and every Recovery Code, ends their sessions and
    * pending sign-ins, and records it in the acting Agency only. The password and `globalStatus`
@@ -2544,7 +2469,7 @@ export class AuthService {
       }
       const lockingAgencyGone =
         lockedByAgencyId !== context.agencyId &&
-        !(await this.lockingAgencyHasUser(transaction, context, userId, lockedByAgencyId));
+        (await liftedLockUserIds(transaction, [userId])).has(userId);
       if (lockedByAgencyId !== context.agencyId && !lockingAgencyGone) {
         throw new AuthServiceError(
           'Only a Security Administrator of the Agency that locked this User can unlock them.',
@@ -2651,25 +2576,6 @@ export class AuthService {
     }
     await setDatabaseContext(transaction, context);
     return revoked.length;
-  }
-
-  /**
-   * Whether the locking Agency still has the User as an ACTIVE member, which decides who may unlock.
-   * Read in the User's own context, since the membership is in another Agency. Leaves the
-   * transaction in `context`.
-   */
-  private async lockingAgencyHasUser(
-    transaction: Prisma.TransactionClient,
-    context: RequestContext,
-    userId: string,
-    lockedByAgencyId: string,
-  ): Promise<boolean> {
-    await setDatabaseContext(transaction, { agencyId: context.agencyId, userId });
-    const memberships = await transaction.agencyMembership.count({
-      where: { userId, agencyId: lockedByAgencyId, status: 'ACTIVE' },
-    });
-    await setDatabaseContext(transaction, context);
-    return memberships > 0;
   }
 
   /**
