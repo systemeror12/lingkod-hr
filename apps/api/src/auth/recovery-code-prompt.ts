@@ -17,6 +17,17 @@ export async function oweRecoveryCodePrompt(
   });
 }
 
+/** Discharges an owed prompt, in the transaction of a Factor Reset: the codes it counted are gone. */
+export async function dischargeRecoveryCodePrompt(
+  transaction: Prisma.TransactionClient,
+  userId: string,
+): Promise<void> {
+  await transaction.userPassword.updateMany({
+    where: { userId },
+    data: { recoveryCodePromptOwedAt: null },
+  });
+}
+
 /**
  * Clears an owed prompt, in the transaction that opens a session, and answers the Recovery Codes
  * left for it to show; null when none was owed. Of two sign-ins, only the first to commit gets it.

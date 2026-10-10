@@ -72,7 +72,11 @@ import {
   writeGuessFailure,
   writeSignInFailure,
 } from './credential-proof';
-import { oweRecoveryCodePrompt, takeRecoveryCodePrompt } from './recovery-code-prompt';
+import {
+  dischargeRecoveryCodePrompt,
+  oweRecoveryCodePrompt,
+  takeRecoveryCodePrompt,
+} from './recovery-code-prompt';
 
 export { AuthServiceError };
 
@@ -2370,6 +2374,7 @@ export class AuthService {
         );
       }
       await transaction.userRecoveryCode.deleteMany({ where: { userId } });
+      await dischargeRecoveryCodePrompt(transaction, userId);
       await transaction.pendingAuthentication.deleteMany({ where: { userId } });
       const now = new Date();
       const revokedSessions = await this.revokeMemberSessions(

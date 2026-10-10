@@ -102,6 +102,7 @@ async function promptFixture() {
       status: 'PENDING',
     },
   });
+  const userIds = [user.id, inviter.id];
   const emailHash = databaseBytes(hashEmail(email, getConfig().BLIND_INDEX_KEY));
   const request = (label: string) => ({
     requestId: `codes-prompt-${label}-${randomUUID()}`,
@@ -148,8 +149,60 @@ async function promptFixture() {
       if (started.status !== 'TOTP_REQUIRED') throw new Error('Expected a TOTP challenge.');
       return started.pendingToken;
     },
+    /** A signed-in Security Administrator of the User's Agency. */
+    securityAdministrator: async (service: AuthService) => {
+      const administrator = await admin.user.create({
+        data: {
+          emailNormalized: `codes-prompt-security-${suffix}@example.test`,
+          displayName: 'Security Administrator',
+          globalStatus: 'ACTIVE',
+        },
+      });
+      userIds.push(administrator.id);
+      const membership = await admin.agencyMembership.create({
+        data: {
+          agencyId: agency.id,
+          userId: administrator.id,
+          status: 'ACTIVE',
+          activatedAt: new Date(),
+        },
+      });
+      const role = await admin.role.findFirstOrThrow({
+        where: { code: 'security_administrator', agencyId: null },
+      });
+      await admin.membershipRole.create({
+        data: {
+          agencyId: agency.id,
+          membershipId: membership.id,
+          roleId: role.id,
+          effectiveFrom: new Date(Date.now() - 60_000),
+          reason: 'Codes prompt fixture',
+        },
+      });
+      const token = randomBytes(32).toString('base64url');
+      await admin.userSession.create({
+        data: {
+          userId: administrator.id,
+          agencyId: agency.id,
+          agencyMembershipId: membership.id,
+          sessionTokenHash: databaseBytes(hashSessionToken(token)),
+          authTime: new Date(Date.now() - 60_000),
+          authenticationMethods: ['pwd', 'totp'],
+          lastSeenAt: new Date(),
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      });
+      const session = await service.authenticateSession(token, 'codes-prompt-security');
+      if (!session) throw new Error('Expected an active Security Administrator session.');
+      return session.context;
+    },
+    membershipId: async () =>
+      (
+        await admin.agencyMembership.findFirstOrThrow({
+          where: { userId: user.id, agencyId: agency.id },
+        })
+      ).id,
     cleanup: async () => {
-      const userIds = [user.id, inviter.id];
       const agencyIds = [agency.id, invitingAgency.id];
       await admin.signInThrottle.deleteMany({ where: { emailHash } });
       await admin.$transaction(async (transaction) => {
@@ -253,6 +306,39 @@ it.skipIf(!enabled)(
         fixture.request('second-sign-in'),
       );
       expect(again.recoveryCodesRemaining).toBeNull();
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'discharges the owed prompt at a Factor Reset, since the codes it counted are gone',
+  async () => {
+    const fixture = await promptFixture();
+    try {
+      const service = new AuthService();
+      await fixture.reset(service, { recoveryCode: fixture.recoveryCodes[0] ?? '' });
+      expect(await fixture.owedAt()).toBeInstanceOf(Date);
+
+      await service.resetFactor(
+        await fixture.securityAdministrator(service),
+        await fixture.membershipId(),
+        { method: 'IN_PERSON_GOVERNMENT_ID', note: 'Checked the UMID at the HR counter.' },
+        fixture.request('factor-reset'),
+      );
+      expect(await fixture.owedAt()).toBeNull();
+
+      // Without a factor or an MFA-Required role, the next sign-in is password-only.
+      const signedIn = await service.signInWithPassword(
+        fixture.email,
+        NEW_PASSWORD,
+        null,
+        fixture.request('sign-in'),
+      );
+      if (signedIn.status !== 'SIGNED_IN') throw new Error('Expected a password-only sign-in.');
+      // The password-only response doesn't carry the count, so this reads what the session took.
+      expect(signedIn.session).toMatchObject({ recoveryCodesRemaining: null });
     } finally {
       await fixture.cleanup();
     }
