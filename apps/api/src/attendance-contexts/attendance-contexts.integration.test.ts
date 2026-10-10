@@ -35,12 +35,14 @@ async function createEvidence(
   membershipId: string,
   suffix: string,
   finalized = true,
+  classification: 'INTERNAL' | 'HIGHLY_SENSITIVE' = 'INTERNAL',
 ) {
   const document = await admin.document.create({
     data: {
       agencyId,
+      documentNo: `ACE-${suffix}`,
       documentType: 'ATTENDANCE_CONTEXT_EVIDENCE',
-      classification: 'INTERNAL',
+      classification,
       status: finalized ? 'APPROVED' : 'DRAFT',
       createdByMembershipId: membershipId,
     },
@@ -205,7 +207,7 @@ it.skipIf(!enabled)(
         workDate: '2026-01-05',
         startsAt: null,
         endsAt: null,
-        evidence: { documentVersionId: evidenceId },
+        evidence: { access: 'FULL', documentVersionId: evidenceId },
         recordedBy: { membershipId: membership.id, legalName: 'Ana Reyes' },
       });
 
@@ -352,6 +354,182 @@ it.skipIf(!enabled)(
           endsAt: '2026-01-05T08:00:00.000Z',
         }),
       ).rejects.toMatchObject({ code: 'ATTENDANCE_CONTEXT_READ_FORBIDDEN' });
+    } finally {
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'hides HIGHLY_SENSITIVE Context evidence from readers without read_sensitive',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-attendance-context-sensitive`;
+    const agency = await admin.agency.create({
+      data: {
+        code: `ACS-${suffix}`,
+        name: 'Attendance Context Sensitive Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const foreignAgency = await admin.agency.create({
+      data: {
+        code: `ACS-F-${suffix}`,
+        name: 'Foreign Attendance Context Sensitive Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const recorderUser = await admin.user.create({
+      data: {
+        emailNormalized: `attendance-context-recorder-${suffix}@example.test`,
+        displayName: 'Attendance Context Recorder',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const employeeUser = await admin.user.create({
+      data: {
+        emailNormalized: `attendance-context-employee-${suffix}@example.test`,
+        displayName: 'Attendance Context Employee',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const foreignUser = await admin.user.create({
+      data: {
+        emailNormalized: `attendance-context-foreign-${suffix}@example.test`,
+        displayName: 'Foreign Attendance Context Custodian',
+        globalStatus: 'ACTIVE',
+      },
+    });
+    const recorderMembership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: recorderUser.id, status: 'ACTIVE' },
+    });
+    const employeeMembership = await admin.agencyMembership.create({
+      data: { agencyId: agency.id, userId: employeeUser.id, status: 'ACTIVE' },
+    });
+    const foreignMembership = await admin.agencyMembership.create({
+      data: { agencyId: foreignAgency.id, userId: foreignUser.id, status: 'ACTIVE' },
+    });
+    const employee = await createEmployee(
+      admin,
+      agency.id,
+      recorderMembership.id,
+      `${suffix}-1`,
+      'Dina Santos',
+    );
+    await withDatabaseContext(
+      {
+        agencyId: agency.id,
+        userId: recorderUser.id,
+        membershipId: recorderMembership.id,
+        capabilities: ['employee-membership-link'],
+      },
+      (transaction) =>
+        transaction.agencyMembership.update({
+          where: { agencyId_id: { agencyId: agency.id, id: employeeMembership.id } },
+          data: { employeeId: employee.id },
+        }),
+    );
+
+    const service = attendanceWorkflowServices().contexts;
+    const createOnly = context(agency.id, recorderUser.id, recorderMembership.id, [
+      { code: 'attendance.contexts.create', scopePolicy: 'AGENCY' },
+    ]);
+    const createSensitive = context(agency.id, recorderUser.id, recorderMembership.id, [
+      { code: 'attendance.contexts.create', scopePolicy: 'AGENCY' },
+      { code: 'documents.evidence.read_sensitive', scopePolicy: 'AGENCY' },
+    ]);
+    const ownReader = context(agency.id, employeeUser.id, employeeMembership.id, [
+      { code: 'attendance.contexts.read', scopePolicy: 'OWN' },
+    ]);
+    const ownSensitiveReader = context(agency.id, employeeUser.id, employeeMembership.id, [
+      { code: 'attendance.contexts.read', scopePolicy: 'OWN' },
+      { code: 'documents.evidence.read_sensitive', scopePolicy: 'AGENCY' },
+    ]);
+    const input = {
+      employeeId: employee.id,
+      contextType: 'OFFICIAL_TRAVEL' as const,
+      coverageMode: 'WHOLE_WORK_DATE' as const,
+      workDate: '2026-02-02',
+      reason: 'Travel covered by a sensitive order.',
+    };
+
+    try {
+      const sensitiveId = await createEvidence(
+        admin,
+        agency.id,
+        recorderMembership.id,
+        `${suffix}-s`,
+        true,
+        'HIGHLY_SENSITIVE',
+      );
+      const foreignSensitiveId = await createEvidence(
+        admin,
+        foreignAgency.id,
+        foreignMembership.id,
+        `${suffix}-f`,
+        true,
+        'HIGHLY_SENSITIVE',
+      );
+
+      await expect(
+        service.record(createOnly, { ...input, evidenceDocumentVersionId: sensitiveId }),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_CONTEXT_EVIDENCE_FORBIDDEN', statusCode: 403 });
+      await expect(
+        service.record(createSensitive, {
+          ...input,
+          evidenceDocumentVersionId: foreignSensitiveId,
+        }),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_CONTEXT_EVIDENCE_INVALID', statusCode: 409 });
+
+      const recorded = await service.record(
+        createSensitive,
+        { ...input, evidenceDocumentVersionId: sensitiveId },
+        'attendance-context-sensitive-1',
+      );
+      expect(recorded.evidence).toMatchObject({
+        access: 'FULL',
+        documentVersionId: sensitiveId,
+        documentNo: `ACE-${suffix}-s`,
+        documentType: 'ATTENDANCE_CONTEXT_EVIDENCE',
+        versionNo: 1,
+      });
+      // A replay by a recorder without read_sensitive must not reveal the evidence.
+      const replay = await service.record(
+        createOnly,
+        { ...input, evidenceDocumentVersionId: sensitiveId },
+        'attendance-context-sensitive-1',
+      );
+      expect(replay.id).toBe(recorded.id);
+      expect(replay.evidence).toEqual({ access: 'RESTRICTED' });
+
+      const ownList = await service.list(ownReader);
+      expect(ownList.map((item) => item.id)).toEqual([recorded.id]);
+      expect(ownList[0]?.evidence).toEqual({ access: 'RESTRICTED' });
+      expect(JSON.stringify(ownList)).not.toContain(sensitiveId);
+      expect(JSON.stringify(ownList)).not.toContain(`ACE-${suffix}-s`);
+      const ownCoverage = await service.resolveCoverage(ownReader, employee.id, '2026-02-02', {
+        startsAt: '2026-02-02T00:00:00.000Z',
+        endsAt: '2026-02-02T08:00:00.000Z',
+      });
+      expect(ownCoverage.intervals[0]?.context.evidence).toEqual({ access: 'RESTRICTED' });
+
+      const sensitiveList = await service.list(ownSensitiveReader);
+      expect(sensitiveList[0]?.evidence).toMatchObject({
+        access: 'FULL',
+        documentVersionId: sensitiveId,
+      });
+
+      const audits = await admin.auditEvent.findMany({
+        where: { agencyId: agency.id, action: 'ATTENDANCE_CONTEXT_RECORDED' },
+      });
+      expect(audits).toHaveLength(1);
+      const metadata = JSON.stringify(audits[0]?.metadata);
+      expect(metadata).not.toContain(`ACE-${suffix}-s`);
+      expect(metadata).not.toContain('ATTENDANCE_CONTEXT_EVIDENCE');
+      expect(metadata).not.toContain('HIGHLY_SENSITIVE');
+      expect(metadata).not.toContain('versionNo');
     } finally {
       await admin.$disconnect();
     }

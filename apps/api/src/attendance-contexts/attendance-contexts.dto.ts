@@ -1,5 +1,6 @@
 import type {
   AttendanceContextCoverageMode,
+  AttendanceContextEvidenceSummary,
   AttendanceContextSummary,
   AttendanceContextType,
 } from './attendance-contexts.types';
@@ -13,22 +14,6 @@ export class AttendanceContextEmployeeDto {
     this.id = employee.id;
     this.employeeNumber = employee.employeeNumber;
     this.legalName = employee.legalName;
-  }
-}
-
-export class AttendanceContextEvidenceDto {
-  readonly documentVersionId: string;
-  readonly documentId: string;
-  readonly documentNo: string | null;
-  readonly documentType: string;
-  readonly versionNo: number;
-
-  constructor(evidence: NonNullable<AttendanceContextSummary['evidence']>) {
-    this.documentVersionId = evidence.documentVersionId;
-    this.documentId = evidence.documentId;
-    this.documentNo = evidence.documentNo;
-    this.documentType = evidence.documentType;
-    this.versionNo = evidence.versionNo;
   }
 }
 
@@ -54,7 +39,7 @@ export class AttendanceContextDto {
   readonly reason: string;
   readonly sourceType: string | null;
   readonly sourceId: string | null;
-  readonly evidence: AttendanceContextEvidenceDto | null;
+  readonly evidence: AttendanceContextEvidenceSummary | null;
   readonly recordedBy: AttendanceContextRecorderDto;
   readonly recordedAt: string;
 
@@ -70,7 +55,7 @@ export class AttendanceContextDto {
     this.reason = record.reason;
     this.sourceType = record.sourceType;
     this.sourceId = record.sourceId;
-    this.evidence = record.evidence ? new AttendanceContextEvidenceDto(record.evidence) : null;
+    this.evidence = record.evidence ? { ...record.evidence } : null;
     this.recordedBy = new AttendanceContextRecorderDto(record.recordedBy);
     this.recordedAt = record.recordedAt;
   }

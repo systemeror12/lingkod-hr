@@ -69,13 +69,21 @@ export interface AttendanceContextEmployeeSummary {
   legalName: string;
 }
 
-export interface AttendanceContextEvidenceSummary {
-  documentVersionId: string;
-  documentId: string;
-  documentNo: string | null;
-  documentType: string;
-  versionNo: number;
-}
+/**
+ * Evidence linked to a Context. Readers without
+ * `documents.evidence.read_sensitive` learn only that `HIGHLY_SENSITIVE`
+ * evidence exists, never which Document Version it is.
+ */
+export type AttendanceContextEvidenceSummary =
+  | {
+      access: 'FULL';
+      documentVersionId: string;
+      documentId: string;
+      documentNo: string | null;
+      documentType: string;
+      versionNo: number;
+    }
+  | { access: 'RESTRICTED' };
 
 export interface AttendanceContextRecorderSummary {
   membershipId: string;

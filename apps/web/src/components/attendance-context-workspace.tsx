@@ -27,13 +27,17 @@ export interface AttendanceContextItem {
   reason: string;
   sourceType: string | null;
   sourceId: string | null;
-  evidence: {
-    documentVersionId: string;
-    documentId: string;
-    documentNo: string | null;
-    documentType: string;
-    versionNo: number;
-  } | null;
+  evidence:
+    | {
+        access: 'FULL';
+        documentVersionId: string;
+        documentId: string;
+        documentNo: string | null;
+        documentType: string;
+        versionNo: number;
+      }
+    | { access: 'RESTRICTED' }
+    | null;
   recordedBy: { membershipId: string; legalName: string | null };
   recordedAt: string;
 }
@@ -123,7 +127,7 @@ function basisLabel(record: AttendanceContextItem): string {
   if (record.sourceType !== null) {
     return record.sourceId ? `${record.sourceType} · ${record.sourceId}` : record.sourceType;
   }
-  if (record.evidence) {
+  if (record.evidence?.access === 'FULL') {
     return `${record.evidence.documentNo ?? record.evidence.documentType} · v${record.evidence.versionNo}`;
   }
   return '—';
