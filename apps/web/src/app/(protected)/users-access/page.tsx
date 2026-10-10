@@ -6,7 +6,7 @@ import { getActiveSession } from '../../../lib/session';
 import { getConfig } from '@lingkod-hr/config';
 import { cookies } from 'next/headers';
 import { InvitationPanel } from './invitation-panel';
-import { type AgencyMember, MemberList } from './member-list';
+import { type AgencyMemberPage, MemberList } from './member-list';
 
 export const metadata: Metadata = { title: 'Users & Access' };
 
@@ -54,7 +54,7 @@ export default async function UsersAccessPage() {
   if (!membersResponse.ok || (invitationsResponse && !invitationsResponse.ok)) {
     throw new Error('Users & Access could not be loaded.');
   }
-  const { members } = (await membersResponse.json()) as { members: AgencyMember[] };
+  const memberPage = (await membersResponse.json()) as AgencyMemberPage;
   const invitations = invitationsResponse
     ? ((await invitationsResponse.json()) as PendingInvitationResponse)
     : null;
@@ -75,7 +75,7 @@ export default async function UsersAccessPage() {
         canResetFactor={hasPermission(session, 'security.mfa.reset_factor')}
         canLock={hasPermission(session, 'security.users.lock')}
         canUnlock={hasPermission(session, 'security.users.unlock')}
-        initial={members}
+        initial={memberPage}
       />
     </div>
   );
