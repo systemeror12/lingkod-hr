@@ -148,7 +148,14 @@ export class AuthController {
         ...cookieOptions(secure),
         maxAge: 8 * 60 * 60 * 1000,
       });
-      response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
+      // A Password Reset that spent a Recovery Code owes this sign-in the remaining-codes prompt.
+      response
+        .status(HttpStatus.OK)
+        .json(
+          session.recoveryCodesRemaining === null
+            ? { status: 'SIGNED_IN' }
+            : { status: 'SIGNED_IN', recoveryCodesRemaining: session.recoveryCodesRemaining },
+        );
     } catch (error: unknown) {
       this.clearEndedPendingSignIn(error, response);
       translateError(error);
@@ -705,7 +712,11 @@ export class AuthController {
       ...cookieOptions(secure),
       maxAge: 8 * 60 * 60 * 1000,
     });
-    response.status(HttpStatus.OK).json({ status: 'ACTIVATED' });
+    response.status(HttpStatus.OK).json(
+      done.recoveryCodesRemaining === null
+        ? { status: 'ACTIVATED' }
+        : { status: 'ACTIVATED', recoveryCodesRemaining: done.recoveryCodesRemaining },
+    );
     for (const notice of done.notices) this.noticeAfterResponse(response, notice);
   }
 

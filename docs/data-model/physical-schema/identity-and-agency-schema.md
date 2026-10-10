@@ -271,7 +271,8 @@ CREATE TABLE user_passwords (
   password_hash text NOT NULL,    -- Argon2id PHC string
   changed_at timestamptz NOT NULL DEFAULT now(),
   second_factor_failures integer NOT NULL DEFAULT 0 CHECK (second_factor_failures >= 0),
-  reset_required_at timestamptz
+  reset_required_at timestamptz,
+  recovery_code_prompt_owed_at timestamptz -- set by a reset that spends a Recovery Code
 );
 
 CREATE TABLE user_totp_factors (
