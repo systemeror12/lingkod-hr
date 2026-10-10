@@ -30,6 +30,7 @@ import {
   type AttendanceContextConflict,
   type AttendanceContextCoverageInterval,
   type AttendanceContextCoverageMode,
+  type AttendanceContextEvidenceSummary,
   type AttendanceContextListFilters,
   type AttendanceContextResolution,
   type AttendanceContextSummary,
@@ -59,7 +60,9 @@ const contextSelect = {
     select: {
       id: true,
       versionNo: true,
-      document: { select: { id: true, documentNo: true, documentType: true } },
+      document: {
+        select: { id: true, documentNo: true, documentType: true, classification: true },
+      },
     },
   },
   enteredBy: {
@@ -96,7 +99,35 @@ function metadataString(metadata: Prisma.JsonValue, key: string): string | null 
   return typeof value === 'string' ? value : null;
 }
 
-function contextSummary(record: AttendanceContextRecord): AttendanceContextSummary {
+function canReadSensitiveEvidence(context: RequestContext): boolean {
+  return hasPermission(context, 'documents.evidence.read_sensitive', {
+    agencyId: context.agencyId,
+  });
+}
+
+function evidenceSummary(
+  record: AttendanceContextRecord,
+  canReadSensitive: boolean,
+): AttendanceContextEvidenceSummary | null {
+  const version = record.evidenceVersion;
+  if (!version) return null;
+  if (version.document.classification === 'HIGHLY_SENSITIVE' && !canReadSensitive) {
+    return { access: 'RESTRICTED' };
+  }
+  return {
+    access: 'FULL',
+    documentVersionId: version.id,
+    documentId: version.document.id,
+    documentNo: version.document.documentNo,
+    documentType: version.document.documentType,
+    versionNo: version.versionNo,
+  };
+}
+
+function contextSummary(
+  record: AttendanceContextRecord,
+  canReadSensitive: boolean,
+): AttendanceContextSummary {
   return {
     id: record.id,
     agencyId: record.agencyId,
@@ -113,15 +144,7 @@ function contextSummary(record: AttendanceContextRecord): AttendanceContextSumma
     reason: record.reason,
     sourceType: record.sourceType,
     sourceId: record.sourceId,
-    evidence: record.evidenceVersion
-      ? {
-          documentVersionId: record.evidenceVersion.id,
-          documentId: record.evidenceVersion.document.id,
-          documentNo: record.evidenceVersion.document.documentNo,
-          documentType: record.evidenceVersion.document.documentType,
-          versionNo: record.evidenceVersion.versionNo,
-        }
-      : null,
+    evidence: evidenceSummary(record, canReadSensitive),
     recordedBy: {
       membershipId: record.enteredBy.id,
       legalName: record.enteredBy.employee?.legalName ?? null,
@@ -247,7 +270,8 @@ export class AttendanceContextsService {
         take: 500,
         select: contextSelect,
       });
-      return records.map(contextSummary);
+      const canReadSensitive = canReadSensitiveEvidence(context);
+      return records.map((record) => contextSummary(record, canReadSensitive));
     });
   }
 
@@ -264,6 +288,7 @@ export class AttendanceContextsService {
     const normalized = normalizeAttendanceContextInput(input);
     const fingerprint = canonicalJson(normalized);
     const idempotencyKey = rawIdempotencyKey?.trim() || null;
+    const canReadSensitive = canReadSensitiveEvidence(context);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       if (idempotencyKey) {
         const completed = await transaction.auditEvent.findFirst({
@@ -284,7 +309,7 @@ export class AttendanceContextsService {
             select: contextSelect,
           });
           if (!existing) throw this.idempotencyConflict();
-          return contextSummary(existing);
+          return contextSummary(existing, canReadSensitive);
         }
       }
       const employee = await transaction.employee.findFirst({
@@ -304,16 +329,14 @@ export class AttendanceContextsService {
           ATTENDANCE_WORK_DATE_LOCKED,
         );
       }
-      let evidenceDocumentVersionId: string | null = null;
-      if (normalized.evidenceDocumentVersionId) {
-        const evidence = await this.documentsService.resolveFinalizedVersionInTransaction(
-          transaction,
-          { agencyId: context.agencyId },
-          normalized.evidenceDocumentVersionId,
-        );
-        if (!evidence) throw this.evidenceInvalid();
-        evidenceDocumentVersionId = evidence.id;
-      }
+      const evidenceDocumentVersionId = normalized.evidenceDocumentVersionId
+        ? await this.resolveEvidence(
+            transaction,
+            context,
+            normalized.evidenceDocumentVersionId,
+            canReadSensitive,
+          )
+        : null;
       const created = await transaction.attendanceContext.create({
         data: {
           agencyId: context.agencyId,
@@ -362,7 +385,7 @@ export class AttendanceContextsService {
           evidenceDocumentVersionId,
         },
       });
-      return contextSummary(record);
+      return contextSummary(record, canReadSensitive);
     });
   }
 
@@ -409,6 +432,8 @@ export class AttendanceContextsService {
         workDate,
         windowStartsAt,
         windowEndsAt,
+        [],
+        canReadSensitiveEvidence(context),
       );
     });
   }
@@ -417,7 +442,8 @@ export class AttendanceContextsService {
    * Resolve the Attendance Context coverage of one Work Date inside a
    * caller-owned transaction. Attendance Day calculation uses this seam so its
    * already-authorized caller can reuse the exact same overlap and conflict
-   * semantics without holding the read permission itself.
+   * semantics without holding the read permission itself. Sensitive evidence
+   * stays restricted because this seam has no reader to authorize.
    */
   async resolveCoverageInTransaction(
     transaction: Prisma.TransactionClient,
@@ -461,6 +487,7 @@ export class AttendanceContextsService {
     windowStartsAt: Date,
     windowEndsAt: Date,
     correctionOverlays: readonly AttendanceCorrectionContextOverlay[] = [],
+    canReadSensitive = false,
   ): Promise<AttendanceContextResolution> {
     const records = await transaction.attendanceContext.findMany({
       where: {
@@ -485,7 +512,7 @@ export class AttendanceContextsService {
     );
     const effectiveSummaries: AttendanceContextSummary[] = records
       .filter((record) => !replacedTargetIds.has(record.id))
-      .map(contextSummary);
+      .map((record) => contextSummary(record, canReadSensitive));
     const workDateValue = formatDate(workDate);
     for (const overlay of correctionOverlays) {
       if (overlay.effectAction === 'VOID') continue;
@@ -553,6 +580,43 @@ export class AttendanceContextsService {
       dates.push(cursor);
     }
     return dates;
+  }
+
+  /**
+   * Applies the shared External Evidence rule to a supporting Document Version:
+   * same Agency, finalized, and `HIGHLY_SENSITIVE` only with
+   * `documents.evidence.read_sensitive`.
+   */
+  private async resolveEvidence(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    versionId: string,
+    canReadSensitive: boolean,
+  ): Promise<string> {
+    const version = await transaction.documentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: versionId },
+      select: { documentId: true },
+    });
+    if (!version) throw this.evidenceInvalid();
+    const evidence = await this.documentsService.resolveExternalEvidenceInTransaction(
+      transaction,
+      context,
+      {
+        documentId: version.documentId,
+        versionId,
+        allowSensitive: canReadSensitive,
+        requirement: 'FINALIZED_VERSION',
+      },
+    );
+    if (evidence.ok === false && evidence.reason === 'SENSITIVE_FORBIDDEN') {
+      throw new AttendanceContextServiceError(
+        'The documents.evidence.read_sensitive permission is required to link this evidence.',
+        403,
+        'ATTENDANCE_CONTEXT_EVIDENCE_FORBIDDEN',
+      );
+    }
+    if (!evidence.ok) throw this.evidenceInvalid();
+    return evidence.document.currentVersion.id;
   }
 
   private requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {
