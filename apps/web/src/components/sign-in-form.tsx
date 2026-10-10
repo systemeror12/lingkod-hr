@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'rea
 import { cn } from '../lib/class-names';
 import { manilaTime, RecoveryCodeSlip, SetupKey } from './authenticator-setup';
 import { BusyBar, CivicSunriseLayout, StepFooter } from './civic-sunrise';
+import { RecoveryCodePrompt } from './recovery-code-prompt';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 
@@ -104,7 +105,8 @@ function Lead({ children }: { children: ReactNode }) {
  * Email and password, then the authenticator code or a Recovery Code when the User has a TOTP
  * factor. An MFA-Required User without one sets up an authenticator and saves Recovery Codes
  * first. Calls the relative sign-in routes and opens the workspace once a session exists; after
- * a Recovery Code or a new authenticator it first says what changed.
+ * a Recovery Code, a Password Reset proved with one, or a new authenticator it first says what
+ * changed.
  */
 export function SignInForm({ membershipId }: { membershipId: string | null }) {
   const router = useRouter();
@@ -112,7 +114,8 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
-  const [codesLeft, setCodesLeft] = useState(0);
+  // The remaining-codes prompt: after a Recovery Code sign-in, or one a Password Reset owed.
+  const [codesLeft, setCodesLeft] = useState<{ remaining: number; title: string } | null>(null);
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
@@ -192,15 +195,23 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
     setBusy(true);
     setError('');
     try {
-      if (step === 'recovery') {
-        const result = await post('/api/v1/auth/sign-in/recovery-code', { code });
-        setCodesLeft(result.recoveryCodesRemaining ?? 0);
-        goTo('recovery-used');
-        setBusy(false);
+      const result = await post(
+        step === 'recovery' ? '/api/v1/auth/sign-in/recovery-code' : '/api/v1/auth/sign-in/totp',
+        { code },
+      );
+      if (typeof result.recoveryCodesRemaining !== 'number') {
+        router.replace('/dashboard');
         return;
       }
-      await post('/api/v1/auth/sign-in/totp', { code });
-      router.replace('/dashboard');
+      setCodesLeft({
+        remaining: result.recoveryCodesRemaining,
+        title:
+          step === 'recovery'
+            ? 'You signed in with a Recovery Code'
+            : 'You reset your password with a Recovery Code',
+      });
+      goTo('recovery-used');
+      setBusy(false);
     } catch (failure: unknown) {
       const signInFailure = failureFrom(failure);
       setCode('');
@@ -436,33 +447,14 @@ export function SignInForm({ membershipId }: { membershipId: string | null }) {
               </button>
             </div>
           </>
-        ) : step === 'recovery-used' ? (
-          <>
-            <div className="grid gap-2">
-              <Title>You signed in with a Recovery Code</Title>
-              <Lead>
-                {codesLeft > 0
-                  ? 'We signed you out of your other sessions and emailed you a notice. If you lost your authenticator, replace it and generate new Recovery Codes.'
-                  : 'We signed you out of your other sessions and emailed you a notice. That was your last code: replace your authenticator and generate new Recovery Codes, because without them only a Security Administrator can reset it.'}
-              </Lead>
-              {account}
-            </div>
-            <p className="m-0 text-body">
-              You have{' '}
-              <strong className={cn('font-[700]', codesLeft === 0 && 'text-danger')}>
-                {codesLeft === 0 ? 'no' : codesLeft} Recovery Code{codesLeft === 1 ? '' : 's'}
-              </strong>{' '}
-              left.
-            </p>
-            <Button
-              variant="primary"
-              className="min-h-11 justify-self-start px-6"
-              type="button"
-              onClick={() => router.replace('/dashboard')}
-            >
-              Continue to workspace
-            </Button>
-          </>
+        ) : step === 'recovery-used' && codesLeft ? (
+          <RecoveryCodePrompt
+            title={<Title>{codesLeft.title}</Title>}
+            email={email}
+            remaining={codesLeft.remaining}
+            continueLabel="Continue to workspace"
+            onContinue={() => router.replace('/dashboard')}
+          />
         ) : (
           <>
             <div className="grid gap-2">
