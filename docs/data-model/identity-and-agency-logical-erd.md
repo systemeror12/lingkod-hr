@@ -381,6 +381,24 @@ Emailed password reset links. Carries no `agency_id`; visible in the owning User
 - Changing `user_passwords.changed_at`, by any route, supersedes the User's outstanding link. A completing reset consumes its link first.
 
 **Deletion behavior:** Kept while the User exists, so a failed reset can tell a used, superseded, or expired link from an unknown one; cascades with the User.
+## `sign_in_throttles`
+
+The Sign-in Cool-down ladder, one row per keyed email hash. It carries the failure count between attempts and is updated under a row lock, so it isn't derived from Security Events. Unknown and real emails get rows alike, so a row says nothing about whether an account exists. Carries no `agency_id` or `user_id`; sign-in runs before any User or Agency context exists, so RLS is enabled and forced, and only the `platform-security` capability reads or writes rows.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| email_hash | bytes | No | PK | Keyed hash (`BLIND_INDEX_KEY`) of the submitted email; the raw email is not stored |
+| failure_count | integer | No | ≥ 0, default 0 | Failures since the last cool-down started |
+| cooldown_level | integer | No | ≥ 0, default 0 | Cool-downs started so far; the next uses the following step of the ladder |
+| cooldown_until | datetime | Yes |  | When the running cool-down ends |
+| last_failure_at | datetime | No |  | Latest counted failure |
+
+**Constraints and indexes**
+
+- 5 failures start a cool-down; each later one for the same email doubles: 5, 10, 20, 40, then 60 minutes.
+- A row whose `last_failure_at` is more than 24 hours old counts as reset.
+
+**Deletion behavior:** Deleted by a full sign-in for the email; otherwise kept, and treated as reset after 24 hours without a failure.
 ## `security_events`
 
 Append-only authentication and authorization security events.
