@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
@@ -44,6 +44,20 @@ export class AgencyMemberListService {
     input: { cursor?: string | undefined; limit: number } = { limit: 50 },
   ): Promise<{ members: AgencyMember[]; nextCursor: string | null }> {
     return withDatabaseContext(context, async (transaction) => {
+      // The caller may see their own memberships in other Agencies, and Prisma resolves a cursor
+      // without the Agency filter, so a cursor from elsewhere would silently drop a row.
+      if (
+        input.cursor &&
+        !(await transaction.agencyMembership.findFirst({
+          where: { id: input.cursor, agencyId: context.agencyId },
+          select: { id: true },
+        }))
+      ) {
+        throw new HttpException(
+          { error: { code: 'INVALID_INPUT', message: 'Invalid page.' } },
+          400,
+        );
+      }
       const rows = await transaction.agencyMembership.findMany({
         where: { agencyId: context.agencyId },
         select: {
@@ -77,11 +91,13 @@ export class AgencyMemberListService {
       );
       // Factor rows hold secrets, so the Agency Context learns only which members have one.
       const withFactor = new Set(
-        (
-          await transaction.$queryRaw<{ user_id: string }[]>`
-            SELECT "user_id" FROM app_agency_member_factor_user_ids() AS "user_id"
-            WHERE "user_id" = ANY(${userIds}::uuid[])`
-        ).map(({ user_id }) => user_id),
+        userIds.length === 0
+          ? []
+          : (
+              await transaction.$queryRaw<{ user_id: string }[]>`
+                SELECT "user_id"
+                FROM app_agency_member_factor_user_ids(${userIds}::uuid[]) AS "user_id"`
+            ).map(({ user_id }) => user_id),
       );
       return {
         members: page.map(({ id, status, user }) => {

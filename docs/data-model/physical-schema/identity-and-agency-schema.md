@@ -428,6 +428,18 @@ SECURITY DEFINER AS $$
   WHERE m.agency_id = app_agency_id();
 $$;
 
+-- The paged member list asks only about its page: each given User at most
+-- once, if they have a factor and a membership in the Agency Context.
+CREATE FUNCTION app_agency_member_factor_user_ids(user_ids uuid[])
+RETURNS SETOF uuid SECURITY DEFINER SET search_path = public AS $$
+  SELECT DISTINCT u.id FROM unnest(user_ids) AS u(id)
+  WHERE EXISTS (SELECT 1 FROM user_totp_factors f WHERE f.user_id = u.id)
+    AND EXISTS (
+      SELECT 1 FROM agency_memberships m
+      WHERE m.user_id = u.id AND m.agency_id = app_agency_id()
+    );
+$$;
+
 -- The per-IP sign-in limit counts LOGIN_FAILURE, PASSWORD_RESET_FAILURE, and
 -- REAUTHENTICATION_FAILURE. A reauthentication failure carries its Agency, so
 -- RLS hides it from platform security; a SECURITY DEFINER function answers

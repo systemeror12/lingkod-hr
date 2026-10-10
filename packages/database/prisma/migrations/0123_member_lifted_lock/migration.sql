@@ -50,4 +50,30 @@ AS $$
     );
 $$;
 
--- Rollback/correction: drop the function and the policy.
+-- The same page read for factor presence (#468). The zero-argument function
+-- from 0115 reads the whole Agency, and its JOIN repeats a User once per
+-- membership; this one checks only the given Users, each at most once. The
+-- owner policy from 0115 already covers the factor read.
+CREATE OR REPLACE FUNCTION app_agency_member_factor_user_ids(user_ids UUID[])
+RETURNS SETOF UUID
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT DISTINCT u."id"
+  FROM unnest(user_ids) AS u("id")
+  WHERE EXISTS (
+      SELECT 1
+      FROM "user_totp_factors" f
+      WHERE f."user_id" = u."id"
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM "agency_memberships" m
+      WHERE m."user_id" = u."id"
+        AND m."agency_id" = app_agency_id()
+    );
+$$;
+
+-- Rollback/correction: drop both functions and the policy.

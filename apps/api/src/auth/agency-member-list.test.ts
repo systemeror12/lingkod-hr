@@ -1,7 +1,13 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { ForbiddenException, HttpException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { hashSessionToken, type RequestContext } from '@lingkod-hr/auth';
+import {
+  generateTotpSecret,
+  hashSessionToken,
+  sealTotpSecret,
+  type RequestContext,
+} from '@lingkod-hr/auth';
+import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { AgencyController } from './agency.controller';
@@ -78,6 +84,22 @@ async function memberListFixture() {
       data: { globalStatus: 'LOCKED', lockedAt: new Date(), lockedByAgencyId: agencyId },
     });
   }
+  async function factor(userId: string) {
+    const factorId = randomUUID();
+    await admin.userTotpFactor.create({
+      data: {
+        id: factorId,
+        userId,
+        secretEnvelope: databaseBytes(
+          sealTotpSecret(
+            generateTotpSecret(),
+            parseProtectedValueKey(getConfig().DATA_ENCRYPTION_KEY),
+            { userId, factorId },
+          ),
+        ),
+      },
+    });
+  }
   async function securityAdministrator(label: string, agencyId: string) {
     const userId = await user(label, `Member List ${label}`);
     const membershipId = await membership(agencyId, userId);
@@ -143,6 +165,9 @@ async function memberListFixture() {
     securityB,
     membershipIds,
     lockedByB,
+    user,
+    membership,
+    factor,
     cleanup: async () => {
       const agencyIds = agencies.map(({ id }) => id);
       await admin.$transaction(async (transaction) => {
@@ -153,6 +178,7 @@ async function memberListFixture() {
         await transaction.auditEvent.deleteMany({ where: { agencyId: { in: agencyIds } } });
       });
       await admin.userSession.deleteMany({ where: { userId: { in: userIds } } });
+      await admin.userTotpFactor.deleteMany({ where: { userId: { in: userIds } } });
       await admin.membershipRole.deleteMany({ where: { agencyId: { in: agencyIds } } });
       await admin.agencyMembership.deleteMany({ where: { userId: { in: userIds } } });
       await admin.user.deleteMany({ where: { id: { in: userIds } } });
@@ -160,6 +186,15 @@ async function memberListFixture() {
       await admin.$disconnect();
     },
   };
+}
+
+async function expectInvalidPage(listing: Promise<unknown>) {
+  const refused = await listing.catch((error: unknown) => error);
+  expect(refused).toBeInstanceOf(HttpException);
+  expect((refused as HttpException).getStatus()).toBe(400);
+  expect((refused as HttpException).getResponse()).toMatchObject({
+    error: { code: 'INVALID_INPUT' },
+  });
 }
 
 /** Every page, `limit` members at a time, following `nextCursor` to the end. */
@@ -261,7 +296,7 @@ it.skipIf(!enabled)(
         controller.members(fixture.agencyA.id, securityB.context, {}),
       ).rejects.toBeInstanceOf(ForbiddenException);
 
-      // B's own list holds only B's members, and a cursor from A's list opens nothing of A's.
+      // B's own list holds only B's members, and a cursor from A's list is refused.
       const service = new AgencyMemberListService();
       const inB = await service.list(securityB.context, { limit: 100 });
       expect(inB.members.map(({ userId }) => userId).sort()).toEqual(
@@ -269,14 +304,10 @@ it.skipIf(!enabled)(
       );
       const { nextCursor } = await service.list(securityA.context, { limit: 1 });
       expect(nextCursor).not.toBeNull();
-      const crossed = await service.list(securityB.context, {
-        cursor: nextCursor ?? undefined,
-        limit: 100,
-      });
-      const aOnly = Object.values(membershipIds);
-      expect(crossed.members.filter(({ membershipId }) => aOnly.includes(membershipId))).toEqual(
-        [],
+      await expectInvalidPage(
+        service.list(securityB.context, { cursor: nextCursor ?? undefined, limit: 100 }),
       );
+      expect(Object.values(membershipIds)).toContain(nextCursor);
 
       // The runtime role still can't read another Agency's memberships directly.
       await expect(
@@ -291,6 +322,69 @@ it.skipIf(!enabled)(
           }),
         ),
       ).resolves.toBe(0);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  "refuses the caller's own membership in another Agency as a cursor instead of dropping a row",
+  async () => {
+    const fixture = await memberListFixture();
+    try {
+      const { securityA } = fixture;
+      // The caller can read this row, since it is their own, but it isn't a member of A's list.
+      const elsewhere = await fixture.membership(
+        fixture.agencyB.id,
+        securityA.userId,
+        'DEACTIVATED',
+      );
+      await expect(
+        withDatabaseContext(securityA.context, (transaction) =>
+          transaction.agencyMembership.count({ where: { id: elsewhere } }),
+        ),
+      ).resolves.toBe(1);
+      await expectInvalidPage(
+        new AgencyMemberListService().list(securityA.context, { cursor: elsewhere, limit: 100 }),
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'reads factor presence for the page only, once per member, and never outside the Agency',
+  async () => {
+    const fixture = await memberListFixture();
+    try {
+      const { securityA, agencyA, agencyB } = fixture;
+      const returning = await fixture.user('returning', 'Member List returning');
+      await fixture.membership(agencyA.id, returning, 'DEACTIVATED');
+      const activeMembership = await fixture.membership(agencyA.id, returning);
+      await fixture.factor(returning);
+      const outsider = await fixture.user('outsider', 'Member List outsider');
+      await fixture.membership(agencyB.id, outsider);
+      await fixture.factor(outsider);
+
+      const members = (await allPages(securityA.context, 100)).flat();
+      // The list keeps a row per membership; each shows the factor.
+      const rows = members.filter(({ userId }) => userId === returning);
+      expect(rows).toHaveLength(2);
+      expect(rows.every(({ hasAuthenticator }) => hasAuthenticator)).toBe(true);
+      expect(rows.map(({ membershipId }) => membershipId)).toContain(activeMembership);
+      expect(members.some(({ userId }) => userId === outsider)).toBe(false);
+
+      const ids = await withDatabaseContext(
+        securityA.context,
+        (transaction) =>
+          transaction.$queryRaw<{ user_id: string }[]>`
+          SELECT "user_id"
+          FROM app_agency_member_factor_user_ids(${[returning, outsider, securityA.userId]}::uuid[])
+            AS "user_id"`,
+      );
+      expect(ids.map(({ user_id }) => user_id)).toEqual([returning]);
     } finally {
       await fixture.cleanup();
     }
