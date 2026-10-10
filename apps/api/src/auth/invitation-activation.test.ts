@@ -270,6 +270,56 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
+  'refuses an acknowledgment whose pending activation has no confirmation time',
+  async () => {
+    const fixture = await activationFixture({ roleCodes: ['hrmo_administrator'] });
+    const { admin } = fixture;
+    try {
+      const service = new AuthService();
+      const started = await service.startActivation(
+        fixture.token,
+        { name: 'Maria Clara Santos', password: STRONG_PASSWORD },
+        activationRequest('unconfirmed-start'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      await service.confirmActivationEnrollment(
+        fixture.token,
+        started.pendingToken,
+        totpCode(secretFromUri(started.enrollment.otpauthUri)),
+        activationRequest('unconfirmed-confirm'),
+      );
+      // A row confirmed before enrollment_confirmed_at existed.
+      await admin.pendingAuthentication.updateMany({
+        where: { invitationId: fixture.invitation.id },
+        data: { enrollmentConfirmedAt: null },
+      });
+
+      const request = activationRequest('unconfirmed-finish');
+      await expect(
+        service.finishActivationEnrollment(fixture.token, started.pendingToken, request),
+      ).rejects.toMatchObject({ code: 'ACTIVATION_EXPIRED' });
+      await expect(fixture.written()).resolves.toMatchObject({
+        user: null,
+        invitation: { status: 'PENDING' },
+      });
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: request.requestId },
+          select: { eventType: true, details: true },
+        }),
+      ).resolves.toEqual([
+        {
+          eventType: 'INVITATION_ACTIVATION_FAILED',
+          details: { invitationId: fixture.invitation.id, reason: 'ACTIVATION_EXPIRED' },
+        },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'activates a first-time MFA-Required invitee only once enrollment is acknowledged',
   async () => {
     const fixture = await activationFixture({ roleCodes: ['hrmo_administrator'] });

@@ -1109,6 +1109,57 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
+  'refuses an acknowledgment whose pending enrollment has no confirmation time',
+  async () => {
+    const fixture = await ownedLoginFixture({ withTotp: false });
+    const { admin, user } = fixture;
+    try {
+      const service = new AuthService({ send: vi.fn().mockResolvedValue(undefined) });
+      const started = await service.signInWithPassword(
+        user.email,
+        user.password,
+        null,
+        signInRequest('enroll-unconfirmed-password'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      await service.confirmTotpEnrollment(
+        started.pendingToken,
+        totpCode(enrollmentSecret(started.enrollment.otpauthUri)),
+        signInRequest('enroll-unconfirmed-code'),
+      );
+      // A row confirmed before enrollment_confirmed_at existed.
+      await admin.pendingAuthentication.updateMany({
+        where: { userId: user.id },
+        data: { enrollmentConfirmedAt: null },
+      });
+
+      const request = signInRequest('enroll-unconfirmed-finish');
+      await expect(
+        service.completeTotpEnrollment(started.pendingToken, request),
+      ).rejects.toMatchObject({ code: 'SIGN_IN_EXPIRED', statusCode: 401 });
+      await expect(enrollmentWrites(admin, user.id)).resolves.toEqual({
+        factors: 0,
+        codes: 0,
+        sessions: 0,
+      });
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: request.requestId },
+          select: { eventType: true, details: true },
+        }),
+      ).resolves.toEqual([
+        {
+          eventType: 'LOGIN_FAILURE',
+          details: expect.objectContaining({ reason: 'SIGN_IN_EXPIRED' }),
+        },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'enrolls an MFA-Required User without a factor, writing the factor, codes, and session only at the end',
   async () => {
     const fixture = await ownedLoginFixture({ withTotp: false });

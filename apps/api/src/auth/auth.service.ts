@@ -1117,7 +1117,7 @@ export class AuthService {
           pending.verifiedMethods,
           request,
           emailHash,
-          enrollmentAuthTime(pending),
+          enrollmentAuthTime(pending, signInExpired),
         );
         return { ...owned, notice: totpEnrolledNotice(pending.user.emailNormalized) };
       });
@@ -2876,7 +2876,7 @@ export class AuthService {
           pending,
           userId: pending.userId ?? pending.id,
           methods: pending.verifiedMethods,
-          authTime: enrollmentAuthTime(pending),
+          authTime: enrollmentAuthTime(pending, activationExpired),
           ...(pending.userId ? {} : { newUser: firstTimeUser(pending) }),
         });
       });
