@@ -6,7 +6,7 @@ import { signIn } from './sign-in';
 // Seeded in the National Archives Coordination Office.
 const securityOfficer = 'security.officer@example.test';
 const pageSize = 50;
-// Named to sort after every seeded member, so the Factor Reset and lock journeys stay on page one.
+// Sort after the protected-shell fixtures; members from other journeys can add earlier pages.
 const pagingMembers = Array.from({ length: pageSize }, (_, index) => {
   const number = String(index + 1).padStart(2, '0');
   return {
@@ -65,7 +65,7 @@ async function seedPagingMembers(): Promise<void> {
 // A cold dev server compiles the pages.
 test.describe.configure({ timeout: 120_000 });
 
-test('a Security Administrator pages through the members and locks one on the second page', async ({
+test('a Security Administrator pages through the members and locks one on a later page', async ({
   page,
 }) => {
   await seedPagingMembers();
@@ -94,14 +94,26 @@ test('a Security Administrator pages through the members and locks one on the se
   await expect(loading).toBeDisabled();
   release();
 
+  await expect(loading).toHaveCount(0);
+  await expect(rows).not.toHaveCount(pageSize);
+  expect(pageRequests).toHaveLength(1);
+
+  // Reused databases can put the target beyond page two or have members after it.
+  while (await loadMore.isVisible()) {
+    const previousRowCount = await rows.count();
+    const previousRequestCount = pageRequests.length;
+    await loadMore.click();
+    await expect(rows).not.toHaveCount(previousRowCount);
+    await expect(loading).toHaveCount(0);
+    expect(pageRequests).toHaveLength(previousRequestCount + 1);
+  }
+
   const row = page.getByRole('row', { name: new RegExp(lastPagingMember) });
   await expect(row).toBeVisible();
-  expect(pageRequests).toHaveLength(1);
-  await expect(rows).not.toHaveCount(pageSize);
   const loaded = await rows.count();
   await expect(page.getByRole('button', { name: /Load more members|Loading…/ })).toHaveCount(0);
 
-  // Lock and unlock refresh the row in place and keep both pages loaded.
+  // Lock and unlock refresh the row in place and keep every loaded page.
   await row.getByRole('button', { name: 'Lock account' }).click();
   const lock = page.getByRole('dialog', { name: 'Lock account' });
   await lock.getByLabel('Reason').fill('Paging journey: sign-ins from an unrecognized device.');
