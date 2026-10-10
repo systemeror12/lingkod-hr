@@ -1,20 +1,17 @@
 import { createHash } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { expect, it } from 'vitest';
+import { setDatabaseContext, type DatabaseContext } from './context';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
 async function withContext<T>(
   client: PrismaClient,
-  values: { userId?: string; pendingTokenHash?: string },
+  context: DatabaseContext,
   work: (transaction: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   return client.$transaction(async (transaction) => {
-    await transaction.$queryRaw`
-      SELECT
-        set_config('app.user_id', ${values.userId ?? ''}, true),
-        set_config('app.pending_token_hash', ${values.pendingTokenHash ?? ''}, true)
-    `;
+    await setDatabaseContext(transaction, context);
     return work(transaction);
   });
 }
@@ -161,6 +158,149 @@ it.skipIf(!enabled)(
       ).resolves.toBe(1);
     } finally {
       await admin.user.deleteMany({ where: { id: { in: users.map(({ id }) => id) } } });
+      await app.$disconnect();
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'keeps reset links with their User or token and throttle rows with platform security',
+  async () => {
+    const runtimeUrl = process.env.DATABASE_URL;
+    const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
+    if (!runtimeUrl || !adminUrl)
+      throw new Error('Runtime and administrative database URLs are required.');
+
+    const app = new PrismaClient({ datasources: { db: { url: runtimeUrl } } });
+    const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const users = await Promise.all(
+      ['a', 'b'].map((label) =>
+        admin.user.create({
+          data: {
+            emailNormalized: `reset-rls-${label}-${suffix}@example.test`,
+            displayName: `Reset RLS ${label}`,
+            globalStatus: 'ACTIVE',
+          },
+        }),
+      ),
+    );
+    const [userA, userB] = users;
+    if (!userA || !userB) throw new Error('Reset RLS fixtures were not created.');
+    const userIds = [userA.id, userB.id];
+    const resetHash = (label: string) =>
+      createHash('sha256').update(`reset-${suffix}-${label}`).digest();
+    for (const [user, label] of [
+      [userA, 'a'],
+      [userB, 'b'],
+    ] as const) {
+      await admin.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: resetHash(label),
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        },
+      });
+    }
+    const emailHash = createHash('sha256').update(`throttle-${suffix}`).digest();
+    const plantedHash = createHash('sha256').update(`throttle-${suffix}-planted`).digest();
+    const throttleKeys = [emailHash, plantedHash];
+    await admin.signInThrottle.create({
+      data: { emailHash, failureCount: 3, lastFailureAt: new Date() },
+    });
+
+    const visibleResetOwners = (transaction: Prisma.TransactionClient) =>
+      transaction.passwordResetToken
+        .findMany({ where: { userId: { in: userIds } }, select: { userId: true } })
+        .then((rows) => rows.map(({ userId }) => userId));
+    const visibleThrottles = (transaction: Prisma.TransactionClient) =>
+      transaction.signInThrottle.count({ where: { emailHash: { in: throttleKeys } } });
+
+    try {
+      await expect(withContext(app, { userId: userA.id }, visibleResetOwners)).resolves.toEqual([
+        userA.id,
+      ]);
+      await expect(
+        withContext(
+          app,
+          { passwordResetTokenHash: resetHash('b').toString('hex') },
+          visibleResetOwners,
+        ),
+      ).resolves.toEqual([userB.id]);
+      await expect(withContext(app, {}, visibleResetOwners)).resolves.toEqual([]);
+      // Platform security opens throttle rows, not reset links.
+      await expect(
+        withContext(app, { capabilities: ['platform-security'] }, visibleResetOwners),
+      ).resolves.toEqual([]);
+
+      await expect(
+        withContext(app, { userId: userA.id }, (transaction) =>
+          transaction.passwordResetToken.updateMany({
+            where: { userId: userB.id },
+            data: { consumedAt: new Date() },
+          }),
+        ),
+      ).resolves.toEqual({ count: 0 });
+      await expect(
+        withContext(app, { userId: userA.id }, (transaction) =>
+          transaction.passwordResetToken.create({
+            data: {
+              userId: userB.id,
+              tokenHash: resetHash('planted'),
+              expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+            },
+          }),
+        ),
+      ).rejects.toThrow(/row-level security/i);
+      await expect(
+        admin.passwordResetToken.findMany({
+          where: { userId: userB.id },
+          select: { consumedAt: true },
+        }),
+      ).resolves.toEqual([{ consumedAt: null }]);
+
+      await expect(
+        withContext(app, { capabilities: ['platform-security'] }, visibleThrottles),
+      ).resolves.toBe(1);
+      // A User's context, or one with only a reset token, has no capability.
+      for (const context of [
+        { userId: userA.id },
+        { userId: userB.id },
+        { passwordResetTokenHash: resetHash('a').toString('hex') },
+        {},
+      ]) {
+        await expect(withContext(app, context, visibleThrottles)).resolves.toBe(0);
+        await expect(
+          withContext(app, context, (transaction) =>
+            transaction.signInThrottle.updateMany({
+              where: { emailHash },
+              data: { failureCount: 0 },
+            }),
+          ),
+        ).resolves.toEqual({ count: 0 });
+        await expect(
+          withContext(app, context, (transaction) =>
+            transaction.signInThrottle.deleteMany({ where: { emailHash } }),
+          ),
+        ).resolves.toEqual({ count: 0 });
+        await expect(
+          withContext(app, context, (transaction) =>
+            transaction.signInThrottle.create({
+              data: { emailHash: plantedHash, lastFailureAt: new Date() },
+            }),
+          ),
+        ).rejects.toThrow(/row-level security/i);
+      }
+      await expect(
+        admin.signInThrottle.findMany({
+          where: { emailHash: { in: throttleKeys } },
+          select: { failureCount: true },
+        }),
+      ).resolves.toEqual([{ failureCount: 3 }]);
+    } finally {
+      await admin.signInThrottle.deleteMany({ where: { emailHash: { in: throttleKeys } } });
+      await admin.user.deleteMany({ where: { id: { in: userIds } } });
       await app.$disconnect();
       await admin.$disconnect();
     }

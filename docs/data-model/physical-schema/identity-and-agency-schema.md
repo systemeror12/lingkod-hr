@@ -344,7 +344,22 @@ CREATE TRIGGER user_passwords_supersede_reset_tokens_trigger
   AFTER UPDATE OF changed_at ON user_passwords
   FOR EACH ROW WHEN (OLD.changed_at IS DISTINCT FROM NEW.changed_at)
   EXECUTE FUNCTION supersede_password_reset_tokens();
+
+-- The Sign-in Cool-down ladder, one row per keyed email hash, for unknown and
+-- real emails alike. A row whose last failure is more than 24 hours old counts
+-- as reset. A full sign-in, a successful reauthentication or password change,
+-- or a completed Password Reset deletes it.
+CREATE TABLE sign_in_throttles (
+  email_hash bytea PRIMARY KEY, -- keyed hash (BLIND_INDEX_KEY) of the email
+  failure_count integer NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+  cooldown_level integer NOT NULL DEFAULT 0 CHECK (cooldown_level >= 0),
+  cooldown_until timestamptz,
+  last_failure_at timestamptz NOT NULL
+);
 ```
+
+The runtime role may select, insert, update, and delete `sign_in_throttles`
+rows, within the policy in section 2.
 
 The runtime role may update only `consumed_at` and `superseded_at` on
 `password_reset_tokens`.
@@ -474,6 +489,12 @@ WITH CHECK (
   user_id = app_user_id()
   OR encode(token_hash, 'hex') = current_setting('app.password_reset_token_hash', true)
 );
+
+-- Sign-in runs before any User or Agency context exists, so only the
+-- platform-security capability reaches throttle rows. RLS is enabled and forced.
+CREATE POLICY sign_in_throttles_platform_security ON sign_in_throttles
+USING (app_platform_security())
+WITH CHECK (app_platform_security());
 ```
 
 ---
