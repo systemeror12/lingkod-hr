@@ -1,8 +1,14 @@
 import { PrismaClient } from '@prisma/client';
-import { hashPassword } from '@lingkod-hr/auth';
+import { hashPassword, normalizeRecoveryCode } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
-import { expect, test } from '@playwright/test';
-import { LOCAL_SEED_PASSPHRASE, MARISOL_EMAIL, nextTotpCode, signIn } from './sign-in';
+import { expect, test, type Page } from '@playwright/test';
+import {
+  LOCAL_SEED_PASSPHRASE,
+  LOCAL_SEED_RECOVERY_CODES,
+  MARISOL_EMAIL,
+  nextTotpCode,
+  signIn,
+} from './sign-in';
 
 interface MailpitMessageSummary {
   ID: string;
@@ -11,8 +17,12 @@ interface MailpitMessageSummary {
   To: Array<{ Address: string }>;
 }
 
-/** The text of the newest mail with `subject` Mailpit received for the User since `since`. */
-async function newestMailText(subject: string, since: number): Promise<string | null> {
+/** The text of the newest mail with `subject` Mailpit received for `email` since `since`. */
+async function newestMailText(
+  email: string,
+  subject: string,
+  since: number,
+): Promise<string | null> {
   const response = await fetch('http://localhost:8025/api/v1/messages');
   if (!response.ok) throw new Error('Mailpit message listing failed.');
   const { messages } = (await response.json()) as { messages: MailpitMessageSummary[] };
@@ -20,7 +30,7 @@ async function newestMailText(subject: string, since: number): Promise<string | 
     (message) =>
       message.Subject === subject &&
       Date.parse(message.Created) >= since &&
-      message.To.some(({ Address }) => Address === MARISOL_EMAIL),
+      message.To.some(({ Address }) => Address === email),
   );
   if (!summary) return null;
   const detail = await fetch(`http://localhost:8025/api/v1/message/${summary.ID}`);
@@ -28,36 +38,50 @@ async function newestMailText(subject: string, since: number): Promise<string | 
   return ((await detail.json()) as { Text: string }).Text;
 }
 
-/** Gives Marisol the seed passphrase again, which the other specs sign in with. */
-async function restoreSeedPassphrase(): Promise<void> {
+/**
+ * Gives a seeded User the seed passphrase and all ten seed Recovery Codes again, which the other
+ * specs sign in with, and drops a remaining-codes prompt a reset left owed.
+ */
+async function restoreSeedCredentials(email: string): Promise<void> {
   getConfig();
   const adminUrl = process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
   if (!adminUrl) throw new Error('A worktree database owner URL is required to restore it.');
   const admin = new PrismaClient({ datasources: { db: { url: adminUrl } } });
   try {
     const { id } = await admin.user.findUniqueOrThrow({
-      where: { emailNormalized: MARISOL_EMAIL },
+      where: { emailNormalized: email },
       select: { id: true },
     });
     await admin.userPassword.update({
       where: { userId: id },
-      data: { passwordHash: await hashPassword(LOCAL_SEED_PASSPHRASE) },
+      data: {
+        passwordHash: await hashPassword(LOCAL_SEED_PASSPHRASE),
+        recoveryCodePromptOwedAt: null,
+      },
     });
+    const codeHashes = await Promise.all(
+      LOCAL_SEED_RECOVERY_CODES.map((code) => hashPassword(normalizeRecoveryCode(code) ?? '')),
+    );
+    await admin.$transaction([
+      admin.userRecoveryCode.deleteMany({ where: { userId: id } }),
+      admin.userRecoveryCode.createMany({
+        data: codeHashes.map((codeHash) => ({ userId: id, codeHash })),
+      }),
+    ]);
   } finally {
     await admin.$disconnect();
   }
 }
 
-// A cold dev server compiles the reset pages, and the TOTP step may wait for the next code.
-test.describe.configure({ timeout: 120_000 });
-
-test('resets a forgotten password from the emailed link', async ({ page }) => {
-  // Mailpit stamps messages to the millisecond; allow for the clocks rounding apart.
-  const startedAt = Date.now() - 1_000;
+/**
+ * Asks for a reset link for `email` from the sign-in page and answers its path from the mail. The
+ * API sends an email 3 links an hour, so each test resets a different User.
+ */
+async function requestResetLink(page: Page, email: string, startedAt: number): Promise<string> {
   await page.goto('/sign-in');
   await page.getByRole('link', { name: 'Forgot password?' }).click();
   await expect(page.getByRole('heading', { name: 'Reset your password' })).toBeVisible();
-  await page.getByLabel('Email').fill(MARISOL_EMAIL);
+  await page.getByLabel('Email').fill(email);
   await page.getByRole('button', { name: 'Send reset link' }).click();
   await expect(
     page.getByRole('heading', {
@@ -67,13 +91,26 @@ test('resets a forgotten password from the emailed link', async ({ page }) => {
 
   let mail: string | null = null;
   await expect
-    .poll(async () => (mail = await newestMailText('Reset your LingkodHR password', startedAt)), {
-      intervals: [100],
-      timeout: 5_000,
-    })
+    .poll(
+      async () => (mail = await newestMailText(email, 'Reset your LingkodHR password', startedAt)),
+      {
+        intervals: [100],
+        timeout: 5_000,
+      },
+    )
     .not.toBeNull();
   const resetPath = /\/reset-password\/[A-Za-z0-9_-]{43}/.exec(mail ?? '')?.[0];
   if (!resetPath) throw new Error('The reset mail held no reset link.');
+  return resetPath;
+}
+
+// A cold dev server compiles the reset pages, and the TOTP step may wait for the next code.
+test.describe.configure({ timeout: 120_000 });
+
+test('resets a forgotten password from the emailed link', async ({ page }) => {
+  // Mailpit stamps messages to the millisecond; allow for the clocks rounding apart.
+  const startedAt = Date.now() - 1_000;
+  const resetPath = await requestResetLink(page, MARISOL_EMAIL, startedAt);
 
   await page.goto(resetPath);
   await expect(page.getByRole('heading', { name: 'Choose a new password' })).toBeVisible();
@@ -105,7 +142,7 @@ test('resets a forgotten password from the emailed link', async ({ page }) => {
     await page.getByRole('button', { name: 'Reset password' }).click();
     await expect(page.getByRole('heading', { name: 'Your password was reset' })).toBeVisible();
     await expect
-      .poll(() => newestMailText('Your LingkodHR password was reset', startedAt), {
+      .poll(() => newestMailText(MARISOL_EMAIL, 'Your LingkodHR password was reset', startedAt), {
         intervals: [100],
         timeout: 5_000,
       })
@@ -117,9 +154,50 @@ test('resets a forgotten password from the emailed link', async ({ page }) => {
       page.getByRole('heading', { name: 'This reset link is invalid or has expired.' }),
     ).toBeVisible();
   } finally {
-    await restoreSeedPassphrase();
+    await restoreSeedCredentials(MARISOL_EMAIL);
   }
 
+  // A reset proved with the authenticator owes no remaining-codes prompt: the code step opens the
+  // workspace directly.
   await signIn(page, MARISOL_EMAIL);
   await expect(page.getByRole('heading', { name: 'Work queue' })).toBeVisible();
+});
+
+test('shows the Recovery Codes left at the first sign-in after a reset proved with one', async ({
+  page,
+}) => {
+  // A seeded Security Administrator, so this reset leaves Marisol's link limit to the test above.
+  const email = 'security.officer@example.test';
+  const startedAt = Date.now() - 1_000;
+  const newPassword = 'hapon sa tabing dagat 17';
+  try {
+    // Ten codes before the reset, so the prompt's count is known.
+    await restoreSeedCredentials(email);
+    const resetPath = await requestResetLink(page, email, startedAt);
+    await page.goto(resetPath);
+    await page.getByRole('textbox', { name: 'New password' }).fill(newPassword);
+    await page.getByRole('button', { name: 'No phone? Use a Recovery Code' }).click();
+    await page
+      .getByRole('textbox', { name: 'Recovery Code' })
+      .fill(LOCAL_SEED_RECOVERY_CODES.at(-1) ?? '');
+    await page.getByRole('button', { name: 'Reset password' }).click();
+    await expect(page.getByRole('heading', { name: 'Your password was reset' })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Sign in' }).click();
+    await page.getByLabel('Email').fill(email);
+    await page.getByLabel('Password').fill(newPassword);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByLabel('Authentication code').fill(await nextTotpCode());
+    await page.getByRole('button', { name: 'Verify' }).click();
+    await expect(
+      page.getByRole('heading', { name: 'You reset your password with a Recovery Code' }),
+    ).toBeVisible();
+    await expect(page.getByText('9 Recovery Codes')).toBeVisible();
+    await expect(page.getByText('If you lost your authenticator, replace it')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Continue to workspace' }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+  } finally {
+    await restoreSeedCredentials(email);
+  }
 });
