@@ -16,6 +16,7 @@ import {
 import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 import { EventEmitter } from 'node:events';
 import { type ExecutionContext, Logger } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { expect, it, vi } from 'vitest';
 import { AuthController } from './auth.controller';
@@ -83,7 +84,9 @@ it('rejects an untrusted cookie origin before refreshing the session', async () 
   } as unknown as ExecutionContext;
 
   await expect(
-    new AuthGuard({ authenticateSession } as unknown as AuthService).canActivate(executionContext),
+    new AuthGuard({ authenticateSession } as unknown as AuthService, new Reflector()).canActivate(
+      executionContext,
+    ),
   ).rejects.toMatchObject({ status: 403 });
   expect(authenticateSession).not.toHaveBeenCalled();
 });
