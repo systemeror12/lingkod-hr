@@ -4,6 +4,7 @@ import { hashPassword, hashSessionToken } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { AgencyController } from './agency.controller';
+import { AgencyMemberListService } from './agency-member-list.service';
 import { REQUIRED_PERMISSIONS } from './auth.decorators';
 import { AuthService } from './auth.service';
 import { ReauthenticationGuard } from './reauthentication.guard';
@@ -253,13 +254,13 @@ it.skipIf(!enabled)(
         }),
       ).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS', statusCode: 401 });
 
-      const inA = await service.listAgencyMembers(securityA.context);
+      const { members: inA } = await new AgencyMemberListService().list(securityA.context);
       expect(inA.find(({ userId }) => userId === target.userId)).toMatchObject({
         globalStatus: 'LOCKED',
         lock: { byThisAgency: true, unlockable: true },
       });
       const securityB = await fixture.signedIn('security-b');
-      const inB = await service.listAgencyMembers(securityB.context);
+      const { members: inB } = await new AgencyMemberListService().list(securityB.context);
       const seenFromB = inB.find(({ userId }) => userId === target.userId);
       expect(seenFromB).toMatchObject({
         globalStatus: 'LOCKED',
@@ -385,7 +386,7 @@ it.skipIf(!enabled)(
         data: { status: 'DEACTIVATED', deactivatedAt: new Date(), deactivationReason: 'Separated' },
       });
 
-      const inB = await service.listAgencyMembers(securityB.context);
+      const { members: inB } = await new AgencyMemberListService().list(securityB.context);
       expect(inB.find(({ userId }) => userId === target.userId)).toMatchObject({
         lock: { byThisAgency: false, unlockable: true },
       });

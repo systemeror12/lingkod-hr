@@ -376,6 +376,28 @@ USING (agency_id = current_setting('app.agency_id', true)::uuid)
 WITH CHECK (agency_id = current_setting('app.agency_id', true)::uuid);
 ```
 
+A member page shows whether its Agency may lift a Global User Lock that
+another Agency placed: only once that Agency no longer has the User as an
+ACTIVE member. The runtime role never reads another Agency's memberships; a
+SECURITY DEFINER function answers only User ids, and the table owner it runs
+as gets the read. The owner policy goes through `users`, because a policy on
+`agency_memberships` that reads `agency_memberships` recurses (42P17):
+
+```sql
+CREATE POLICY agency_memberships_owner_locking_agency_select ON agency_memberships
+FOR SELECT TO CURRENT_USER
+USING (EXISTS (
+  SELECT 1 FROM users u
+  WHERE u.id = agency_memberships.user_id
+    AND u.locked_by_agency_id = agency_memberships.agency_id
+));
+
+-- Of the given Users with a membership in the Agency Context, those locked by
+-- another Agency that has no ACTIVE membership for them.
+CREATE FUNCTION app_agency_member_lifted_lock_user_ids(user_ids uuid[])
+RETURNS SETOF uuid SECURITY DEFINER SET search_path = public AS $$ ... $$;
+```
+
 `users` is global and should be accessed only through identity services, not ordinary tenant repositories.
 
 The owned sign-in tables follow the `user_sessions` pattern: RLS is enabled and

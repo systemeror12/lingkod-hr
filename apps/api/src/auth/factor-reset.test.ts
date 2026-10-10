@@ -14,6 +14,7 @@ import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it, vi } from 'vitest';
 import { AgencyController } from './agency.controller';
+import { AgencyMemberListService } from './agency-member-list.service';
 import { REQUIRED_PERMISSIONS } from './auth.decorators';
 import { AuthService } from './auth.service';
 import { ReauthenticationGuard } from './reauthentication.guard';
@@ -256,7 +257,7 @@ it.skipIf(!enabled)('lists the Agency members with whether each has an authentic
   const fixture = await resetFixture();
   try {
     const security = await fixture.signedIn('security-a');
-    const members = await fixture.service.listAgencyMembers(security.context);
+    const { members } = await new AgencyMemberListService().list(security.context);
     expect(members.map(({ membershipId }) => membershipId).sort()).toEqual(
       [
         fixture.target.membershipId,
@@ -289,7 +290,7 @@ it.skipIf(!enabled)(
     const fixture = await resetFixture();
     try {
       const security = await fixture.signedIn('security-a');
-      const controller = new AgencyController(fixture.service);
+      const controller = new AgencyController(fixture.service, new AgencyMemberListService());
       const response = fakeResponse();
       await controller.resetFactor(
         fixture.agencyA.id,
