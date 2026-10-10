@@ -71,6 +71,7 @@ describe.each(['development', 'test', 'production'])('in %s', (environment) => {
     expect(() => parseConfig(withoutField)).toThrow(new RegExp(field));
     expect(() => parseConfig({ ...complete, [field]: '' })).toThrow(new RegExp(field));
     expect(() => parseConfig({ ...complete, [field]: '   ' })).toThrow(new RegExp(field));
+    expect(() => parseConfig({ ...complete, [field]: ' '.repeat(32) })).toThrow(new RegExp(field));
     expect(() => parseConfig({ ...complete, [field]: 'too-short' })).toThrow(new RegExp(field));
   });
 });
