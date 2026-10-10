@@ -1,17 +1,22 @@
-import { expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { parseConfig } from './env';
 
+const keys = {
+  DATA_ENCRYPTION_KEY: '07'.repeat(32),
+  BLIND_INDEX_KEY: 'test-only-blind-index-key-0123456789',
+};
+
 it('provides safe local defaults and rejects incomplete production configuration', () => {
-  const local = parseConfig({ NODE_ENV: 'development' });
+  const local = parseConfig({ NODE_ENV: 'development', ...keys });
   expect(local.API_PORT).toBe(3001);
   expect(local.DATABASE_URL).toContain('@localhost:55432/');
   expect(local.DATABASE_DIRECT_URL).toContain('@localhost:55432/');
   expect(local.DATABASE_OPERATIONAL_URL).toContain('@localhost:55432/');
   expect(local.EMAIL_PORT).toBe(1025);
-  expect(parseConfig({ APP_ENV: 'test' }).NODE_ENV).toBe('test');
-  expect(parseConfig({ NODE_ENV: 'test' }).APP_ENV).toBe('test');
-  expect(() => parseConfig({ NODE_ENV: 'production' })).toThrow(/DATABASE_URL/);
-  expect(() => parseConfig({ APP_ENV: 'production' })).toThrow(/DATABASE_URL/);
+  expect(parseConfig({ APP_ENV: 'test', ...keys }).NODE_ENV).toBe('test');
+  expect(parseConfig({ NODE_ENV: 'test', ...keys }).APP_ENV).toBe('test');
+  expect(() => parseConfig({ NODE_ENV: 'production', ...keys })).toThrow(/DATABASE_URL/);
+  expect(() => parseConfig({ APP_ENV: 'production', ...keys })).toThrow(/DATABASE_URL/);
   const production = {
     ...Object.fromEntries(Object.entries(local).map(([key, value]) => [key, String(value)])),
     NODE_ENV: 'production',
@@ -29,6 +34,7 @@ it('provides safe local defaults and rejects incomplete production configuration
 it('treats blank optional environment values as unset', () => {
   const config = parseConfig({
     NODE_ENV: 'development',
+    ...keys,
     OPENAI_API_KEY: '',
     AI_DEFAULT_MODEL: '',
     AI_EMBEDDING_MODEL: '',
@@ -43,34 +49,28 @@ it('treats blank optional environment values as unset', () => {
   expect(config.ERROR_TRACKING_DSN).toBeUndefined();
 });
 
-it('requires the data-encryption and blind-index keys, with local-only defaults outside production', () => {
-  const local = parseConfig({
-    NODE_ENV: 'development',
-    DATA_ENCRYPTION_KEY: '',
-    BLIND_INDEX_KEY: '',
-  });
-  expect(local.DATA_ENCRYPTION_KEY).toBe('07'.repeat(32));
-  expect(local.BLIND_INDEX_KEY.length).toBeGreaterThanOrEqual(32);
-
-  const production = {
-    ...Object.fromEntries(Object.entries(local).map(([key, value]) => [key, String(value)])),
-    NODE_ENV: 'production',
-    APP_ENV: 'production',
-    APP_URL: 'https://app.example',
-    API_URL: 'https://api.example',
+describe.each(['development', 'test', 'production'])('in %s', (environment) => {
+  const complete = {
+    ...Object.fromEntries(
+      Object.entries(parseConfig({ NODE_ENV: 'development', ...keys })).map(([key, value]) => [
+        key,
+        String(value),
+      ]),
+    ),
+    NODE_ENV: environment,
+    APP_ENV: environment,
   };
-  expect(parseConfig(production).DATA_ENCRYPTION_KEY).toBe('07'.repeat(32));
-  for (const field of ['DATA_ENCRYPTION_KEY', 'BLIND_INDEX_KEY'] as const) {
-    expect(() => parseConfig({ ...production, [field]: '' })).toThrow(new RegExp(field));
+
+  it.each(['DATA_ENCRYPTION_KEY', 'BLIND_INDEX_KEY'])('requires %s', (field) => {
+    expect(parseConfig(complete)[field as keyof typeof keys]).toBe(
+      keys[field as keyof typeof keys],
+    );
     const withoutField = Object.fromEntries(
-      Object.entries(production).filter(([key]) => key !== field),
+      Object.entries(complete).filter(([key]) => key !== field),
     );
     expect(() => parseConfig(withoutField)).toThrow(new RegExp(field));
-  }
-  expect(() => parseConfig({ ...production, DATA_ENCRYPTION_KEY: 'too-short' })).toThrow(
-    /DATA_ENCRYPTION_KEY/,
-  );
-  expect(() => parseConfig({ ...production, BLIND_INDEX_KEY: 'too-short' })).toThrow(
-    /BLIND_INDEX_KEY/,
-  );
+    expect(() => parseConfig({ ...complete, [field]: '' })).toThrow(new RegExp(field));
+    expect(() => parseConfig({ ...complete, [field]: '   ' })).toThrow(new RegExp(field));
+    expect(() => parseConfig({ ...complete, [field]: 'too-short' })).toThrow(new RegExp(field));
+  });
 });

@@ -27,8 +27,6 @@ const localDefaults = {
   EMAIL_PORT: '1025',
   EMAIL_SECURE: 'false',
   EMAIL_PROVIDER_API_KEY: 'local-only',
-  DATA_ENCRYPTION_KEY: '07'.repeat(32),
-  BLIND_INDEX_KEY: 'local-development-blind-index-key-change-me',
 };
 
 const emptyStringAsUndefined = (value: unknown): unknown =>

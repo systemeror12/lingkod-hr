@@ -897,14 +897,18 @@ Recommended repository pattern:
 
 # 21. Local Encryption Keys
 
-Development will eventually require keys for encrypted HR data and blind indexes.
-
-Examples:
+Every environment, including development and test, requires keys for
+encrypted HR data and blind indexes:
 
 ```text
-DATA_ENCRYPTION_KEY
-BLIND_INDEX_KEY
+DATA_ENCRYPTION_KEY   32 bytes as 64 hex characters or canonical base64
+BLIND_INDEX_KEY       at least 32 characters
 ```
+
+Startup fails and names the key when either is missing or blank. The config
+package has no built-in default. `.env.example` has local-only values, the API
+Vitest config supplies test-only keys, and CI sets its own for the browser
+suite.
 
 Generate development-only random values rather than using memorable strings.
 
