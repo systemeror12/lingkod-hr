@@ -10,8 +10,8 @@ import {
   ApprovalsService,
   type ApprovalCompletionRequest,
 } from '../approvals/approval.service';
-import { NON_WORKING_HOLIDAY_DAY_TYPES } from '../attendance-configuration/attendance-configuration.types';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
+import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
 import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
@@ -3912,9 +3912,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         holidayEntries = calendar.entries
           .filter((entry) => entry.holidayDate === dateString)
           .map((entry) => ({ holidayDate: entry.holidayDate, dayType: entry.dayType }));
-        nonWorkingHoliday = holidayEntries.some((entry) =>
-          (NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType),
-        );
+        nonWorkingHoliday = holidayEntries.some((entry) => isNonWorkingHoliday(entry.dayType));
       }
       const matched = workScheduleVersion.dayRules.find(
         (candidate) => candidate.weekday === isoWeekday(date),

@@ -36,6 +36,7 @@ import {
 } from '../attendance-corrections/attendance-corrections.effects';
 import {
   calculateAttendanceDay,
+  ATTENDANCE_MINUTE_RULE,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
   type AttendanceCalculationCoverage,
@@ -157,11 +158,6 @@ function metadataString(metadata: Prisma.JsonValue, key: string): string | null 
   return typeof value === 'string' ? value : null;
 }
 
-function holidayEffectRulesOf(value: Prisma.JsonValue): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
-}
-
 function employeeSummary(record: AttendanceDayRecord): AttendanceDayEmployeeSummary {
   return {
     id: record.employee.id,
@@ -174,6 +170,7 @@ function ruleSnapshotOf(value: Prisma.JsonValue): AttendanceDayRuleSnapshot {
   const snapshot = (value ?? {}) as Record<string, unknown>;
   return {
     fingerprint: typeof snapshot.fingerprint === 'string' ? snapshot.fingerprint : '',
+    minuteRule: snapshot.minuteRule === ATTENDANCE_MINUTE_RULE ? ATTENDANCE_MINUTE_RULE : undefined,
     timezone: typeof snapshot.timezone === 'string' ? snapshot.timezone : '',
     assignmentId: typeof snapshot.assignmentId === 'string' ? snapshot.assignmentId : null,
     workScheduleVersionId:
@@ -1112,7 +1109,6 @@ export class AttendanceDaysService {
     const holidayClassifications = new Map(
       resolution.holidayEntries.map((entry) => [entry.holidayDate, entry.dayType]),
     );
-    const holidayEffectRules = holidayEffectRulesOf(workScheduleVersion.holidayEffectRules);
     const result = calculateAttendanceDay({
       timezone,
       workDate,
@@ -1120,7 +1116,6 @@ export class AttendanceDaysService {
       events,
       coverage,
       holidayClassifications,
-      holidayEffectRules,
     });
     const exceptions = [...result.exceptions, ...leaveExceptions];
     const fingerprint = fingerprintAttendanceDayInput({
@@ -1130,7 +1125,6 @@ export class AttendanceDaysService {
       events,
       coverage,
       holidayClassifications,
-      holidayEffectRules,
       governingVersions: {
         assignmentId: resolution.assignment.id,
         workScheduleVersionId: resolution.workScheduleVersion.id,
@@ -1145,6 +1139,7 @@ export class AttendanceDaysService {
       fingerprint,
       snapshot: {
         fingerprint,
+        minuteRule: ATTENDANCE_MINUTE_RULE,
         timezone,
         assignmentId: resolution.assignment.id,
         workScheduleVersionId: resolution.workScheduleVersion.id,
@@ -1160,8 +1155,9 @@ export class AttendanceDaysService {
         })),
         capturedAt: new Date().toISOString(),
       },
+      // Service on a rest day or a Non-Working Holiday is outside any expected duty.
       dayClassification:
-        dayRule.ruleType === 'REST' && result.totals.workedMinutes > 0
+        result.totals.expectedMinutes === 0 && result.totals.workedMinutes > 0
           ? 'UNSCHEDULED_SERVICE'
           : 'SCHEDULED',
       totals: result.totals,

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, test, type APIResponse } from '@playwright/test';
 import { MARISOL_EMAIL, signIn } from './sign-in';
 
 function resetFixture(): void {
@@ -20,6 +20,12 @@ function recentWeekday(): string {
   return date.toISOString().slice(0, 10);
 }
 
+async function apiBody<T>(response: APIResponse): Promise<T> {
+  const text = await response.text();
+  expect(response.ok(), text).toBe(true);
+  return JSON.parse(text) as T;
+}
+
 test('calculates an Attendance Day from captured events and inspects its record', async ({
   page,
 }) => {
@@ -32,19 +38,33 @@ test('calculates an Attendance Day from captured events and inspects its record'
 
   const workDate = recentWeekday();
 
-  await page.goto('/attendance');
-  const manual = page.getByRole('region', { name: 'Record manual Attendance Event' });
-  for (const [eventType, time] of [
-    ['TIME_IN', '08:00'],
-    ['TIME_OUT', '17:00'],
+  // The review case of ADR 0005: sub-minute events count only Fully Covered Minutes. The
+  // manual form records whole minutes, so the seconds go through the API.
+  const headers = { origin: new URL(page.url()).origin };
+  const session = await apiBody<{ agencyId: string }>(
+    await page.request.get('/api/v1/auth/me', { headers }),
+  );
+  const agencyBase = `/api/v1/agencies/${session.agencyId}`;
+  const employees = await apiBody<{ employees: Array<{ id: string; employeeNumber: string }> }>(
+    await page.request.get(`${agencyBase}/employees`, { headers }),
+  );
+  const employee = employees.employees.find(({ employeeNumber }) => employeeNumber === 'E2E-0001');
+  if (!employee) throw new Error('The E2E-0001 Employee fixture is missing.');
+  for (const [eventType, timeValue] of [
+    ['TIME_IN', '08:00:59'],
+    ['TIME_OUT', '17:00:01'],
   ] as const) {
-    await manual.getByLabel('Employee').selectOption({ label: 'E2E-0001 · Alex Rivera' });
-    await manual.getByLabel('Event type').selectOption(eventType);
-    await manual.getByLabel('Event date').fill(workDate);
-    await manual.getByLabel('Event time').fill(time);
-    await manual.getByLabel('Reason').fill(`E2E ${eventType} for the Attendance Day spec.`);
-    await manual.getByRole('button', { name: 'Record Event' }).click();
-    await expect(manual).toContainText('Matched');
+    await apiBody(
+      await page.request.post(`${agencyBase}/attendance/events`, {
+        headers,
+        data: {
+          employeeId: employee.id,
+          eventType,
+          eventTime: `${workDate}T${timeValue}+08:00`,
+          reason: `E2E ${eventType} for the Attendance Day spec.`,
+        },
+      }),
+    );
   }
 
   await page.goto('/attendance-days');
@@ -70,8 +90,19 @@ test('calculates an Attendance Day from captured events and inspects its record'
   await expect(record).toBeVisible();
   await expect(record).toContainText('Alex Rivera');
   await expect(record).toContainText('Calculated');
-  await expect(record).toContainText('Expected');
-  await expect(record).toContainText('8h');
+  const total = (label: string) =>
+    record.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) });
+  await expect(total('Expected')).toContainText('8h');
+  await expect(total('Worked')).toContainText('7h 59m');
+  await expect(total('Coverage')).toContainText('7h 59m');
+  await expect(total('Late')).toContainText('1m');
+  await expect(total('Undertime')).toContainText('0m');
+  await expect(total('Absence')).toContainText('0m');
+  const segments = record.getByRole('table', { name: 'Segments' }).locator('tbody tr');
+  await expect(segments).toHaveCount(3);
+  await expect(segments.nth(0)).toContainText(/8:00\s?AM – 8:01\s?AM.*Tardiness/i);
+  await expect(segments.nth(1)).toContainText(/8:01\s?AM – 12:00\s?PM.*Worked/i);
+  await expect(segments.nth(2)).toContainText(/1:00\s?PM – 5:00\s?PM.*Worked/i);
   await expect(record).toContainText('No exceptions were recorded for this version.');
 
   await page.getByRole('button', { name: 'Tree', exact: true }).click();

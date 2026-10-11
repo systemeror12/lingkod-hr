@@ -5,6 +5,7 @@ import {
   type DayRuleType,
   type EventPattern,
 } from '../attendance-configuration/attendance-configuration.types';
+import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import {
   evaluateAttendanceSequence,
   ATTENDANCE_SEQUENCE_ISSUE_TYPES,
@@ -19,13 +20,12 @@ import {
 /**
  * Blocking Attendance Exception causes an Attendance Day calculation can carry.
  * Resolution failures raised by Schedule Assignments keep their own vocabulary;
- * the calculation adds sequence, coverage, and holiday-effect causes.
+ * the calculation adds sequence and coverage causes.
  */
 export const ATTENDANCE_DAY_EXCEPTION_TYPES = [
   ...ATTENDANCE_EXCEPTION_TYPES,
   ...ATTENDANCE_SEQUENCE_ISSUE_TYPES,
   'INCOMPLETE_WORK_SCHEDULE_VERSION',
-  'UNSUPPORTED_HOLIDAY_EFFECT',
   'CONFLICTING_COVERAGE',
   'INCOMPLETE_COVERAGE_INPUT',
   'AMBIGUOUS_LEAVE_QUANTITY',
@@ -86,8 +86,6 @@ export interface AttendanceDayCalculationInput {
   coverage: readonly AttendanceCalculationCoverage[];
   /** Holiday classification by actual local calendar date. */
   holidayClassifications: ReadonlyMap<string, string>;
-  /** Authority-backed effect per holiday classification of the Work Schedule Version. */
-  holidayEffectRules: Record<string, unknown>;
   governingVersions?: AttendanceDayGoverningVersions | undefined;
   /**
    * Sources the calculation could not place, such as an ambiguous posted-leave
@@ -160,9 +158,23 @@ const COVERAGE_TOTAL_KEYS: Partial<
   POSTED_LEAVE: 'postedLeaveMinutes',
 };
 
+/**
+ * The minute convention of ADR 0005, recorded in the rule snapshot and the
+ * input fingerprint so a Day calculated under another convention reads stale.
+ */
+export const ATTENDANCE_MINUTE_RULE = 'FULLY_COVERED_MINUTE';
+
 /** The whole minute a boundary falls in; minutes are the ledger's unit of account. */
 function minuteOf(value: Date): number {
   return Math.floor(value.getTime() / 60_000);
+}
+
+/**
+ * The Fully Covered Minutes of a timed interval: its start moves up to the next
+ * whole minute and its end moves down, so a partial minute stays uncovered.
+ */
+function fullyCoveredInterval(startsAt: Date, endsAt: Date): Interval {
+  return { start: Math.ceil(startsAt.getTime() / 60_000), end: minuteOf(endsAt) };
 }
 
 function instantOf(minute: number): Date {
@@ -320,7 +332,7 @@ function workedIntervals(
   const timeIn = ordered.find((event) => event.eventType === 'TIME_IN');
   const timeOut = [...ordered].reverse().find((event) => event.eventType === 'TIME_OUT');
   if (!timeIn || !timeOut) return [];
-  const span: Interval = { start: minuteOf(timeIn.eventTime), end: minuteOf(timeOut.eventTime) };
+  const span = fullyCoveredInterval(timeIn.eventTime, timeOut.eventTime);
   if (span.end <= span.start) return [];
   if (rule.eventPattern === 'IN_OUT') return subtractIntervals(span, rule.breaks);
   const breakOuts = ordered.filter((event) => event.eventType === 'BREAK_OUT');
@@ -330,7 +342,12 @@ function workedIntervals(
     const breakOut = breakOuts[index]!;
     const breakIn = breakIns[index];
     if (!breakIn) continue;
-    breaks.push({ start: minuteOf(breakOut.eventTime), end: minuteOf(breakIn.eventTime) });
+    // A recorded break removes every minute it touches, so worked time stays
+    // within the raw events on either side of it.
+    breaks.push({
+      start: minuteOf(breakOut.eventTime),
+      end: Math.ceil(breakIn.eventTime.getTime() / 60_000),
+    });
   }
   return subtractIntervals(span, breaks);
 }
@@ -455,35 +472,20 @@ function sequenceException(issue: {
   };
 }
 
-function unsupportedHolidayExceptions(
-  segments: readonly { holidayClassification: string | null }[],
-  holidayEffectRules: Record<string, unknown>,
-): AttendanceCalculationException[] {
-  const classifications = [
-    ...new Set(segments.map((segment) => segment.holidayClassification)),
-  ].filter((value): value is string => value !== null);
-  return classifications
-    .filter(
-      (classification) => !Object.prototype.hasOwnProperty.call(holidayEffectRules, classification),
-    )
-    .map((classification) => ({
-      type: 'UNSUPPORTED_HOLIDAY_EFFECT' as const,
-      message: `The Work Schedule Version defines no authority-backed effect for holiday classification ${classification}.`,
-      details: { holidayClassification: classification },
-    }));
-}
-
 /**
  * Calculate one Attendance Day from its resolved inputs. The function is pure
  * and deterministic: every minute is derived from the exact Work Date, Day
  * Rule, events, Attendance Context, and Leave-owned coverage it receives, and it
- * never invents a timestamp, rounds a boundary, or assumes a grace period.
+ * never invents a timestamp or assumes a grace period. Timed inputs count only
+ * their Fully Covered Minutes (ADR 0005).
  *
  * Totals semantics: `expectedMinutes` is the union of expected duty intervals;
  * `coverageMinutes` counts covered minutes inside expected duty; each coverage
  * type totals the minutes of that type anywhere in the day, while
  * `workedMinutes` and `outsideScheduleMinutes` also include worked time outside
- * expected duty. Deficits only classify uncovered expected duty.
+ * expected duty. Deficits only classify uncovered expected duty. Minutes on a
+ * Non-Working Holiday date are never expected duty, so service on them is
+ * outside the schedule.
  */
 export function calculateAttendanceDay(
   input: AttendanceDayCalculationInput,
@@ -529,7 +531,7 @@ export function calculateAttendanceDay(
     }
   > = [];
   for (const item of input.coverage) {
-    const interval = { start: minuteOf(item.startsAt), end: minuteOf(item.endsAt) };
+    const interval = fullyCoveredInterval(item.startsAt, item.endsAt);
     if (interval.end <= interval.start) {
       exceptions.push({
         type: 'INCOMPLETE_COVERAGE_INPUT',
@@ -584,7 +586,10 @@ export function calculateAttendanceDay(
       });
       return { segments: [], totals, exceptions };
     }
-    expected = expectedIntervals(rule, anchor);
+    expected = expectedIntervals(rule, anchor)
+      .flatMap((interval) => splitByCalendarDate(interval, timezone))
+      .filter((piece) => !isNonWorkingHoliday(input.holidayClassifications.get(piece.dateValue)))
+      .map(({ start, end }) => ({ start, end }));
   }
   totals.expectedMinutes = totalMinutes(expected);
 
@@ -743,9 +748,7 @@ export function calculateAttendanceDay(
     }
   }
 
-  const merged = coalesceSegments(outputSegments);
-  exceptions.push(...unsupportedHolidayExceptions(merged, input.holidayEffectRules));
-  return { segments: merged, totals, exceptions };
+  return { segments: coalesceSegments(outputSegments), totals, exceptions };
 }
 
 /**
@@ -810,6 +813,7 @@ function canonicalize(value: unknown): unknown {
  */
 export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInput): string {
   const canonical = canonicalize({
+    minuteRule: ATTENDANCE_MINUTE_RULE,
     timezone: input.timezone,
     workDate: input.workDate,
     dayRule: {
@@ -849,10 +853,12 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
           ? left.sourceId.localeCompare(right.sourceId)
           : left.startsAt.getTime() - right.startsAt.getTime(),
       ),
-    holidays: [...input.holidayClassifications.entries()].sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
-    holidayEffectRules: input.holidayEffectRules,
+    // Each holiday carries its national effect, so Days calculated before ADR 0006 recalculate.
+    holidays: [...input.holidayClassifications.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, classification]) => [date, classification, isNonWorkingHoliday(classification)]),
+    // Always empty before ADR 0006; kept so fingerprints of Days without a holiday stay stable.
+    holidayEffectRules: {},
     governingVersions: input.governingVersions,
     // Omitted when empty so fingerprints of Days without such sources stay stable.
     ...(input.unplacedSources?.length

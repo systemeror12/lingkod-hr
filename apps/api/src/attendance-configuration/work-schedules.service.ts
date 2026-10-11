@@ -62,7 +62,6 @@ export interface WorkScheduleVersionSummary {
   versionNo: number;
   scheduleType: WorkScheduleType;
   timezone: string;
-  holidayEffectRules: Prisma.JsonValue;
   authorityDocumentVersionId: string | null;
   approvingAuthority: string | null;
   versionState: WorkScheduleVersionState;
@@ -140,7 +139,6 @@ const versionSelect = {
   versionNo: true,
   scheduleType: true,
   timezone: true,
-  holidayEffectRules: true,
   authorityDocumentVersionId: true,
   approvingAuthority: true,
   status: true,
@@ -230,7 +228,6 @@ function versionSummary(record: WorkScheduleVersionRecord): WorkScheduleVersionS
     versionNo: record.versionNo,
     scheduleType: record.scheduleType as WorkScheduleType,
     timezone: record.timezone,
-    holidayEffectRules: record.holidayEffectRules,
     authorityDocumentVersionId: record.authorityDocumentVersionId,
     approvingAuthority: record.approvingAuthority,
     versionState: record.status as WorkScheduleVersionState,
@@ -517,7 +514,6 @@ export class WorkSchedulesService {
           versionNo: (latest?.versionNo ?? current.versionNo) + 1,
           scheduleType: current.scheduleType,
           timezone: current.timezone,
-          holidayEffectRules: current.holidayEffectRules as Prisma.InputJsonValue,
           effectiveFrom,
           status: 'DRAFT',
         },
