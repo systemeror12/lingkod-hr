@@ -108,7 +108,6 @@ interface AttendanceSubmissionSummary {
   status: string;
   submittedAt: string | null;
   onBehalfReason: string | null;
-  evidenceDocumentVersionId: string | null;
   reviewedAt: string | null;
   reviewReason: string | null;
   dayCount: number;

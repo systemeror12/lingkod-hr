@@ -195,7 +195,10 @@ it.skipIf(!enabled)(
       });
       expect(onBehalf.submission.status).toBe('DRAFT');
       expect(onBehalf.submission.onBehalfReason).toBe('Employee is on field assignment.');
-      expect(onBehalf.submission.evidenceDocumentVersionId).toBe(fixture.evidenceDocumentVersionId);
+      expect(onBehalf.submission.evidence).toEqual({
+        access: 'FULL',
+        documentVersionId: fixture.evidenceDocumentVersionId,
+      });
       expect(onBehalf.submission.submittedByMembershipId).toBe(fixture.memberships.administrator);
 
       const submitted = await services.submissions.submit(
@@ -230,6 +233,74 @@ it.skipIf(!enabled)(
       await expect(
         services.submissions.findById(foreignContext, onBehalf.submission.id),
       ).rejects.toMatchObject({ code: 'ATTENDANCE_SUBMISSION_NOT_FOUND' });
+    } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'requires read_sensitive for HIGHLY_SENSITIVE on-behalf evidence and hides it from other readers',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services } = fixture;
+    try {
+      const version = await admin.documentVersion.findUniqueOrThrow({
+        where: { id: fixture.evidenceDocumentVersionId },
+      });
+      await admin.document.update({
+        where: { id: version.documentId },
+        data: { classification: 'HIGHLY_SENSITIVE' },
+      });
+      const input = {
+        attendancePeriodId: fixture.periodId,
+        employeeId: fixture.employeeId,
+        onBehalfReason: 'Employee is on field assignment.',
+        evidenceDocumentVersionId: fixture.evidenceDocumentVersionId,
+      };
+      const sensitiveContext = {
+        ...fixture.administratorContext,
+        permissions: [
+          ...fixture.administratorContext.permissions,
+          { code: 'documents.evidence.read_sensitive', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+
+      await expect(
+        services.submissions.create(fixture.administratorContext, input),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_SUBMISSION_EVIDENCE_FORBIDDEN',
+        statusCode: 403,
+      });
+      await expect(
+        services.submissions.create(
+          { ...sensitiveContext, requestId: 'foreign-agency', agencyId: randomUUID() },
+          input,
+        ),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_SUBMISSION_EVIDENCE_INVALID', statusCode: 409 });
+
+      const created = await services.submissions.create(sensitiveContext, input);
+      expect(created.submission.evidence).toEqual({
+        access: 'FULL',
+        documentVersionId: fixture.evidenceDocumentVersionId,
+      });
+
+      const restricted = await services.submissions.findById(
+        fixture.administratorContext,
+        created.submission.id,
+      );
+      expect(restricted.submission.evidence).toEqual({ access: 'RESTRICTED' });
+      const ownList = await services.submissions.list(fixture.employeeContext, {});
+      expect(ownList.map((item) => item.id)).toEqual([created.submission.id]);
+      expect(ownList[0]?.evidence).toEqual({ access: 'RESTRICTED' });
+      expect(JSON.stringify(ownList)).not.toContain(fixture.evidenceDocumentVersionId);
+
+      const full = await services.submissions.list(sensitiveContext, {});
+      expect(full[0]?.evidence).toEqual({
+        access: 'FULL',
+        documentVersionId: fixture.evidenceDocumentVersionId,
+      });
     } finally {
       await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
       await admin.$disconnect();

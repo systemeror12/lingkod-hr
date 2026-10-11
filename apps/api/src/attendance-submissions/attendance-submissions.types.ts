@@ -43,6 +43,14 @@ export interface AttendanceSubmissionDaySummary {
   openExceptionCount: number;
 }
 
+/**
+ * On-behalf evidence on a Submission. Readers without
+ * `documents.evidence.read_sensitive` learn only that `HIGHLY_SENSITIVE`
+ * evidence exists, never which Document Version it is.
+ */
+export type AttendanceSubmissionEvidenceSummary =
+  { access: 'FULL'; documentVersionId: string } | { access: 'RESTRICTED' };
+
 export interface AttendanceSubmissionSummary {
   id: string;
   agencyId: string;
@@ -53,7 +61,7 @@ export interface AttendanceSubmissionSummary {
   submittedByMembershipId: string;
   submittedAt: string | null;
   onBehalfReason: string | null;
-  evidenceDocumentVersionId: string | null;
+  evidence: AttendanceSubmissionEvidenceSummary | null;
   reviewedByMembershipId: string | null;
   reviewedAt: string | null;
   reviewReason: string | null;
