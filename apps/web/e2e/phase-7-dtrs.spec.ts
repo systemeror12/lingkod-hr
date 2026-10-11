@@ -126,6 +126,66 @@ test('prepares, submits, reviews, returns, and resubmits an Employee Attendance 
   await expect(own).toContainText('SUBMITTED');
 });
 
+test('shows the Fully Covered Minutes of sub-minute events in the Unfinalized DTR Preview', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  resetFixture();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await loginDtrWorkspace(page);
+
+  const headers = { origin: new URL(page.url()).origin };
+  const session = await apiBody<{ agencyId: string }>(
+    await page.request.get('/api/v1/auth/me', { headers }),
+  );
+  const agencyBase = `/api/v1/agencies/${session.agencyId}`;
+  const employees = await apiBody<{ employees: Array<{ id: string; employeeNumber: string }> }>(
+    await page.request.get(`${agencyBase}/employees`, { headers }),
+  );
+  const employee = employees.employees.find(
+    ({ employeeNumber }) => employeeNumber === 'E2E-DTR-0001',
+  );
+  if (!employee) throw new Error('The E2E-DTR-0001 Employee fixture is missing.');
+  const workDate = recentWeekday();
+  for (const [eventType, timeValue] of [
+    ['TIME_IN', '08:00:59'],
+    ['TIME_OUT', '17:00:01'],
+  ] as const) {
+    await apiBody(
+      await page.request.post(`${agencyBase}/attendance/events`, {
+        headers,
+        data: {
+          employeeId: employee.id,
+          eventType,
+          eventTime: `${workDate}T${timeValue}+08:00`,
+          reason: 'Protected Daily Time Record review case.',
+        },
+      }),
+    );
+  }
+  await apiBody(
+    await page.request.post(`${agencyBase}/attendance-days/calculate`, {
+      headers,
+      data: {
+        periodCode: `E2E-DTR-${workDate}`,
+        dateFrom: workDate,
+        dateTo: workDate,
+        employeeIds: [employee.id],
+      },
+    }),
+  );
+
+  await page.goto('/attendance-dtrs');
+  const preview = page.getByRole('region', { name: 'Unfinalized Daily Time Record Preview' });
+  const day = preview.getByRole('row').filter({ hasText: workDate });
+  await expect(day.getByRole('cell')).toHaveText([
+    /AM In 08:00:59.*PM Out 17:00:01/,
+    '8:00',
+    '7:59',
+    '0:01',
+  ]);
+});
+
 test('reviews, returns, approves, refuses a changed-source lock, and locks an Attendance Period Version from the protected workspace', async ({
   page,
   browser,

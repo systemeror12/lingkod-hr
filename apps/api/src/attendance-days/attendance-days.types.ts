@@ -75,6 +75,8 @@ export interface AttendanceDayTotalsSummary {
 
 export interface AttendanceDayRuleSnapshot {
   fingerprint: string;
+  /** Absent on Days calculated before ADR 0005 and on unresolved Days. */
+  minuteRule?: 'FULLY_COVERED_MINUTE' | undefined;
   timezone: string;
   assignmentId?: string | null | undefined;
   workScheduleVersionId?: string | null | undefined;
