@@ -97,10 +97,14 @@ export function correctionEvidenceSummary(
   };
 }
 
+/**
+ * Lowercased because records keep the submitted uuid spelling, while
+ * PostgreSQL matches uuids case-insensitively and returns them lowercase.
+ */
 function recordEvidenceId(record: Prisma.JsonValue): string | null {
   if (record === null || typeof record !== 'object' || Array.isArray(record)) return null;
   const value = record.evidenceDocumentVersionId;
-  return typeof value === 'string' ? value : null;
+  return typeof value === 'string' ? value.toLowerCase() : null;
 }
 
 /**
