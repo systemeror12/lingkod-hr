@@ -460,6 +460,10 @@ _Avoid_: Attendance Event, leave copy, attendance approval
 The union of worked time, Attendance Context, and posted leave that covers expected duty without counting overlapping minutes twice. Conflicting Attendance Context or leave classifications require an Attendance Exception instead of an assumed precedence.
 _Avoid_: Credited hours, summed attendance inputs
 
+**Fully Covered Minute**:
+A whole minute that counts as worked or covered only when a raw timed interval covers all of it; a partial minute at either end stays uncovered, so no Attendance Day Segment extends past its raw source. It is a LingkodHR calculation convention, not a national rule.
+_Avoid_: Minute rounding, grace period, truncated time
+
 **Attendance Day Segment**:
 An immutable interval-level result belonging to one Attendance Day calculation version, carrying its expected-duty relation, coverage or deficit classification, holiday classification, and source references. Attendance Day totals are derived from non-overlapping segments.
 _Avoid_: Raw event, editable calculation line
