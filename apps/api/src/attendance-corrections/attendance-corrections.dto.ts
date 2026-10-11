@@ -78,28 +78,6 @@ export class AttendanceCorrectionDto {
   }
 }
 
-export class AttendanceCorrectionEvidenceDto {
-  readonly id: string;
-  readonly documentVersionId: string | null;
-  readonly documentId: string | null;
-  readonly documentNo: string | null;
-  readonly documentType: string | null;
-  readonly sourceType: string | null;
-  readonly sourceId: string | null;
-  readonly createdAt: string;
-
-  constructor(record: AttendanceCorrectionEvidenceSummary) {
-    this.id = record.id;
-    this.documentVersionId = record.documentVersionId;
-    this.documentId = record.documentId;
-    this.documentNo = record.documentNo;
-    this.documentType = record.documentType;
-    this.sourceType = record.sourceType;
-    this.sourceId = record.sourceId;
-    this.createdAt = record.createdAt;
-  }
-}
-
 export class AttendanceCorrectionEffectDto {
   readonly id: string;
   readonly effectAction: AttendanceCorrectionEffectSummary['effectAction'];
@@ -229,7 +207,7 @@ export class AttendanceCorrectionImpactPreviewDto {
 export class AttendanceCorrectionDetailDto {
   readonly correction: AttendanceCorrectionDto;
   readonly impactPreview: AttendanceCorrectionImpactPreviewDto;
-  readonly evidence: AttendanceCorrectionEvidenceDto[];
+  readonly evidence: AttendanceCorrectionEvidenceSummary[];
   readonly effect: AttendanceCorrectionEffectDto | null;
   readonly lockedAdjustment: AttendanceCorrectionLockedAdjustmentDto | null;
   readonly approval: AttendanceCorrectionApprovalDto | null;
@@ -237,7 +215,7 @@ export class AttendanceCorrectionDetailDto {
   constructor(record: AttendanceCorrectionDetail) {
     this.correction = new AttendanceCorrectionDto(record.correction);
     this.impactPreview = new AttendanceCorrectionImpactPreviewDto(record.impactPreview);
-    this.evidence = record.evidence.map((row) => new AttendanceCorrectionEvidenceDto(row));
+    this.evidence = record.evidence.map((row) => ({ ...row }));
     this.effect = record.effect ? new AttendanceCorrectionEffectDto(record.effect) : null;
     this.lockedAdjustment = record.lockedAdjustment
       ? new AttendanceCorrectionLockedAdjustmentDto(record.lockedAdjustment)

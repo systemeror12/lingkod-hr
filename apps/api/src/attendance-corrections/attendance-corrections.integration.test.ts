@@ -142,12 +142,14 @@ async function createEvidence(
   membershipId: string,
   suffix: string,
   documentType: string,
+  classification: 'INTERNAL' | 'HIGHLY_SENSITIVE' = 'INTERNAL',
 ) {
   const document = await admin.document.create({
     data: {
       agencyId,
+      documentNo: `ACOR-${suffix}`,
       documentType,
-      classification: 'INTERNAL',
+      classification,
       status: 'APPROVED',
       createdByMembershipId: membershipId,
     },
@@ -1649,6 +1651,161 @@ it.skipIf(!enabled)(
       expect(secondCurrent.ruleSnapshot).toBeTruthy();
     } finally {
       await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'hides HIGHLY_SENSITIVE Correction evidence and rejects Cross-Agency evidence',
+  async () => {
+    const fixture = await createFixture();
+    const { admin, services } = fixture;
+    const foreignAgency = await createAgency(admin, `${fixture.suffix}-foreign`);
+    try {
+      const sensitive = await createEvidence(
+        admin,
+        fixture.agencyId,
+        fixture.membershipId,
+        `${fixture.suffix}-sensitive`,
+        'ATTENDANCE_CORRECTION_EVIDENCE',
+        'HIGHLY_SENSITIVE',
+      );
+      const foreign = await createEvidence(
+        admin,
+        foreignAgency.agency.id,
+        foreignAgency.membership.id,
+        `${fixture.suffix}-foreign`,
+        'ATTENDANCE_CORRECTION_EVIDENCE',
+      );
+      const sensitivePermission = {
+        code: 'documents.evidence.read_sensitive',
+        scopePolicy: 'AGENCY' as const,
+      };
+      const employeeSensitive = {
+        ...fixture.employeeContext,
+        permissions: [...fixture.employeeContext.permissions, sensitivePermission],
+      };
+      const adminSensitive = {
+        ...fixture.context,
+        permissions: [...fixture.context.permissions, sensitivePermission],
+      };
+      const input = (documentVersionId: string) => ({
+        targetType: 'ATTENDANCE_EVENT' as const,
+        requestedAction: 'VOID' as const,
+        targetId: fixture.eventIds.BREAK_OUT,
+        reason: 'Duplicate break event backed by a sensitive record.',
+        evidence: [{ documentVersionId }],
+      });
+
+      await expect(
+        services.corrections.create(fixture.employeeContext, input(sensitive.id)),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_CORRECTION_EVIDENCE_FORBIDDEN',
+        statusCode: 403,
+      });
+      await expect(
+        services.corrections.create(employeeSensitive, input(foreign.id)),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_CORRECTION_EVIDENCE_INVALID', statusCode: 409 });
+      expect(
+        await admin.attendanceCorrection.count({ where: { agencyId: fixture.agencyId } }),
+      ).toBe(0);
+
+      const created = await services.corrections.create(employeeSensitive, input(sensitive.id));
+      expect(created.evidence).toMatchObject([
+        {
+          access: 'FULL',
+          documentVersionId: sensitive.id,
+          documentId: sensitive.documentId,
+          documentNo: `ACOR-${fixture.suffix}-sensitive`,
+          documentType: 'ATTENDANCE_CORRECTION_EVIDENCE',
+        },
+      ]);
+
+      const restricted = await services.corrections.findById(
+        fixture.context,
+        created.correction.id,
+      );
+      expect(restricted.evidence).toEqual([
+        {
+          access: 'RESTRICTED',
+          id: created.evidence[0]!.id,
+          createdAt: created.evidence[0]!.createdAt,
+        },
+      ]);
+      expect(JSON.stringify(restricted)).not.toContain(sensitive.id);
+      expect(JSON.stringify(restricted)).not.toContain(sensitive.documentId);
+      expect(JSON.stringify(restricted)).not.toContain(`ACOR-${fixture.suffix}-sensitive`);
+
+      const full = await services.corrections.findById(adminSensitive, created.correction.id);
+      expect(full.evidence).toMatchObject([{ access: 'FULL', documentVersionId: sensitive.id }]);
+
+      const rowEvidence = await evidence(admin, fixture, 'context-row');
+      const contextInput = (evidenceDocumentVersionId: string) => ({
+        targetType: 'ATTENDANCE_CONTEXT' as const,
+        requestedAction: 'ADD' as const,
+        requestedRecord: {
+          contextType: 'OFFICIAL_BUSINESS' as const,
+          coverageMode: 'WHOLE_WORK_DATE' as const,
+          workDate: fixture.workDate,
+          reason: 'Official business backed by a sensitive order.',
+          evidenceDocumentVersionId,
+        },
+        reason: 'The Official Business was not recorded.',
+        evidence: [{ documentVersionId: rowEvidence }],
+      });
+      await expect(
+        services.corrections.create(fixture.employeeContext, contextInput(sensitive.id)),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_CORRECTION_EVIDENCE_FORBIDDEN',
+        statusCode: 403,
+      });
+      await expect(
+        services.corrections.create(employeeSensitive, contextInput(foreign.id)),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_CORRECTION_EVIDENCE_INVALID', statusCode: 409 });
+
+      const contextCreated = await services.corrections.create(
+        employeeSensitive,
+        contextInput(sensitive.id),
+      );
+      expect(contextCreated.correction.requestedRecord).toMatchObject({
+        evidenceDocumentVersionId: sensitive.id,
+      });
+      await services.corrections.submit(employeeSensitive, contextCreated.correction.id);
+      const applied = await services.corrections.approve(
+        fixture.approverContext,
+        contextCreated.correction.id,
+        'Official Business verified.',
+      );
+      expect(applied.correction.status).toBe('APPLIED');
+
+      const contextRestricted = await services.corrections.findById(
+        fixture.context,
+        contextCreated.correction.id,
+      );
+      expect(contextRestricted.correction.requestedRecord).toMatchObject({
+        evidence: { access: 'RESTRICTED' },
+      });
+      expect(contextRestricted.effect?.replacementRecord).toMatchObject({
+        evidence: { access: 'RESTRICTED' },
+      });
+      expect(JSON.stringify(contextRestricted)).not.toContain(sensitive.id);
+      const restrictedList = await services.corrections.list(fixture.context);
+      expect(JSON.stringify(restrictedList)).not.toContain(sensitive.id);
+
+      const contextFull = await services.corrections.findById(
+        adminSensitive,
+        contextCreated.correction.id,
+      );
+      expect(contextFull.correction.requestedRecord).toMatchObject({
+        evidenceDocumentVersionId: sensitive.id,
+      });
+      expect(contextFull.effect?.replacementRecord).toMatchObject({
+        evidenceDocumentVersionId: sensitive.id,
+      });
+    } finally {
+      await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
+      await cleanupAgency(admin, foreignAgency.agency.id, `${fixture.suffix}-foreign`);
       await admin.$disconnect();
     }
   },
