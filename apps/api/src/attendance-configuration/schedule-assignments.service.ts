@@ -14,7 +14,6 @@ import {
   addDays,
   formatDate,
   manilaToday,
-  NON_WORKING_HOLIDAY_DAY_TYPES,
   toDatabaseDate,
   WORK_SCHEDULE_TYPES,
   type AttendanceExceptionType,
@@ -23,6 +22,7 @@ import {
   type WorkArrangementType,
   type WorkScheduleType,
 } from './attendance-configuration.types';
+import { isNonWorkingHoliday } from './holiday-effect-rules';
 import {
   HolidayCalendarsService,
   type HolidayCalendarEntrySummary,
@@ -85,9 +85,7 @@ export interface AttendanceResolution {
 export function isWorkingDate(resolution: AttendanceResolution): boolean {
   return (
     resolution.dayRule.ruleType !== 'REST' &&
-    !resolution.holidayEntries.some((entry) =>
-      (NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType),
-    )
+    !resolution.holidayEntries.some((entry) => isNonWorkingHoliday(entry.dayType))
   );
 }
 

@@ -5,6 +5,7 @@ import {
   type DayRuleType,
   type EventPattern,
 } from '../attendance-configuration/attendance-configuration.types';
+import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import {
   evaluateAttendanceSequence,
   ATTENDANCE_SEQUENCE_ISSUE_TYPES,
@@ -19,13 +20,12 @@ import {
 /**
  * Blocking Attendance Exception causes an Attendance Day calculation can carry.
  * Resolution failures raised by Schedule Assignments keep their own vocabulary;
- * the calculation adds sequence, coverage, and holiday-effect causes.
+ * the calculation adds sequence and coverage causes.
  */
 export const ATTENDANCE_DAY_EXCEPTION_TYPES = [
   ...ATTENDANCE_EXCEPTION_TYPES,
   ...ATTENDANCE_SEQUENCE_ISSUE_TYPES,
   'INCOMPLETE_WORK_SCHEDULE_VERSION',
-  'UNSUPPORTED_HOLIDAY_EFFECT',
   'CONFLICTING_COVERAGE',
   'INCOMPLETE_COVERAGE_INPUT',
   'AMBIGUOUS_LEAVE_QUANTITY',
@@ -86,8 +86,6 @@ export interface AttendanceDayCalculationInput {
   coverage: readonly AttendanceCalculationCoverage[];
   /** Holiday classification by actual local calendar date. */
   holidayClassifications: ReadonlyMap<string, string>;
-  /** Authority-backed effect per holiday classification of the Work Schedule Version. */
-  holidayEffectRules: Record<string, unknown>;
   governingVersions?: AttendanceDayGoverningVersions | undefined;
   /**
    * Sources the calculation could not place, such as an ambiguous posted-leave
@@ -455,24 +453,6 @@ function sequenceException(issue: {
   };
 }
 
-function unsupportedHolidayExceptions(
-  segments: readonly { holidayClassification: string | null }[],
-  holidayEffectRules: Record<string, unknown>,
-): AttendanceCalculationException[] {
-  const classifications = [
-    ...new Set(segments.map((segment) => segment.holidayClassification)),
-  ].filter((value): value is string => value !== null);
-  return classifications
-    .filter(
-      (classification) => !Object.prototype.hasOwnProperty.call(holidayEffectRules, classification),
-    )
-    .map((classification) => ({
-      type: 'UNSUPPORTED_HOLIDAY_EFFECT' as const,
-      message: `The Work Schedule Version defines no authority-backed effect for holiday classification ${classification}.`,
-      details: { holidayClassification: classification },
-    }));
-}
-
 /**
  * Calculate one Attendance Day from its resolved inputs. The function is pure
  * and deterministic: every minute is derived from the exact Work Date, Day
@@ -483,7 +463,9 @@ function unsupportedHolidayExceptions(
  * `coverageMinutes` counts covered minutes inside expected duty; each coverage
  * type totals the minutes of that type anywhere in the day, while
  * `workedMinutes` and `outsideScheduleMinutes` also include worked time outside
- * expected duty. Deficits only classify uncovered expected duty.
+ * expected duty. Deficits only classify uncovered expected duty. Minutes on a
+ * Non-Working Holiday date are never expected duty, so service on them is
+ * outside the schedule.
  */
 export function calculateAttendanceDay(
   input: AttendanceDayCalculationInput,
@@ -584,7 +566,10 @@ export function calculateAttendanceDay(
       });
       return { segments: [], totals, exceptions };
     }
-    expected = expectedIntervals(rule, anchor);
+    expected = expectedIntervals(rule, anchor)
+      .flatMap((interval) => splitByCalendarDate(interval, timezone))
+      .filter((piece) => !isNonWorkingHoliday(input.holidayClassifications.get(piece.dateValue)))
+      .map(({ start, end }) => ({ start, end }));
   }
   totals.expectedMinutes = totalMinutes(expected);
 
@@ -743,9 +728,7 @@ export function calculateAttendanceDay(
     }
   }
 
-  const merged = coalesceSegments(outputSegments);
-  exceptions.push(...unsupportedHolidayExceptions(merged, input.holidayEffectRules));
-  return { segments: merged, totals, exceptions };
+  return { segments: coalesceSegments(outputSegments), totals, exceptions };
 }
 
 /**
@@ -849,10 +832,12 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
           ? left.sourceId.localeCompare(right.sourceId)
           : left.startsAt.getTime() - right.startsAt.getTime(),
       ),
-    holidays: [...input.holidayClassifications.entries()].sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
-    holidayEffectRules: input.holidayEffectRules,
+    // Each holiday carries its national effect, so Days calculated before ADR 0006 recalculate.
+    holidays: [...input.holidayClassifications.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([date, classification]) => [date, classification, isNonWorkingHoliday(classification)]),
+    // Always empty before ADR 0006; kept so fingerprints of Days without a holiday stay stable.
+    holidayEffectRules: {},
     governingVersions: input.governingVersions,
     // Omitted when empty so fingerprints of Days without such sources stay stable.
     ...(input.unplacedSources?.length

@@ -39,14 +39,6 @@ export const HOLIDAY_DAY_TYPES = [
 ] as const;
 export type HolidayDayType = (typeof HOLIDAY_DAY_TYPES)[number];
 
-/** Holiday classifications on which a working-day count excludes the date. */
-export const NON_WORKING_HOLIDAY_DAY_TYPES = [
-  'REGULAR_HOLIDAY',
-  'SPECIAL_NON_WORKING',
-  'LOCAL_HOLIDAY',
-  'WORK_SUSPENSION',
-] as const satisfies readonly HolidayDayType[];
-
 /** Blocking Attendance Exception causes raised when the calculation inputs cannot be resolved. */
 export const ATTENDANCE_EXCEPTION_TYPES = [
   'MISSING_SERVICE',
@@ -673,18 +665,15 @@ export function normalizeHolidayCalendarDefinition(
     if (!sourceReference) {
       throw invalid('Every Holiday Calendar entry requires its source reference.');
     }
-    const key = `${holidayDate}:${entry.dayType}`;
-    if (seen.has(key)) {
-      throw invalid('A Holiday Calendar Version cannot repeat one day type on the same date.');
+    if (seen.has(holidayDate)) {
+      throw invalid(
+        `A Holiday Calendar Version holds one classification per date; ${holidayDate} is repeated.`,
+      );
     }
-    seen.add(key);
+    seen.add(holidayDate);
     return { holidayDate, name, dayType: entry.dayType, sourceReference };
   });
-  entries.sort(
-    (left, right) =>
-      left.holidayDate.localeCompare(right.holidayDate) ||
-      left.dayType.localeCompare(right.dayType),
-  );
+  entries.sort((left, right) => left.holidayDate.localeCompare(right.holidayDate));
   return { effectiveDate, entries };
 }
 
