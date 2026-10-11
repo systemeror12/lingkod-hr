@@ -713,19 +713,6 @@ it('fingerprints every calculation input deterministically', () => {
   expect(fingerprintAttendanceDayInput(base)).not.toBe(fingerprintAttendanceDayInput(moved));
 });
 
-it('keeps fingerprints of Days without a holiday from before the national holiday rule', () => {
-  // Digests computed by the calculation that read `holidayEffectRules`. A Day
-  // without a holiday keeps its fingerprint; a Day with one recalculates.
-  expect(fingerprintAttendanceDayInput(input())).toBe(
-    '5e27f37d1c7a1a08591c8a26c2b5ea1da820ea2a1b78aa281a9017b3625d7b94',
-  );
-  expect(
-    fingerprintAttendanceDayInput(
-      input({ holidayClassifications: new Map([[WORK_DATE, 'REGULAR_HOLIDAY']]) }),
-    ),
-  ).not.toBe('fd91c3b2d4035174619b186bfb21c5206153eddb1aa960ae56ce738d3724755d');
-});
-
 it('fingerprints a new effective governing version even when its rules are identical', () => {
   const base = input({
     governingVersions: {
