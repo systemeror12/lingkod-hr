@@ -533,7 +533,7 @@ SUPERSEDED
 | DRAFT   | Activate       | ACTIVE     | HR Administrator | `attendance.configuration.activate` | Exact authority Document Version, approving authority, effectivity, complete Day Rules or calendar entries, and no conflicting active period | Freeze version for new assignments or date resolution      |
 | ACTIVE  | Supersede      | SUPERSEDED | HR Administrator | `attendance.configuration.activate` | Complete successor and prospective effectivity                                                                                               | Activate successor without rewriting prior Attendance Days |
 
-Activation records an already-approved agency configuration and does not start another approval workflow. A Schedule Assignment separately records its assignment authority and may reference only active configuration versions. Schedule Assignments cannot overlap for the same Appointed Personnel.
+Activation records an already-approved agency configuration and does not start another approval workflow. A Holiday Calendar Version holds at most one classification per date. Whether a classification is a Non-Working Holiday is one fixed national rule shared by Attendance and Leave, not a Work Schedule Version setting (ADR 0006). A Schedule Assignment separately records its assignment authority and may reference only active configuration versions. Schedule Assignments cannot overlap for the same Appointed Personnel.
 
 ---
 

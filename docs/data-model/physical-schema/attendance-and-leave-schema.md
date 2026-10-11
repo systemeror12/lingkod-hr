@@ -33,7 +33,6 @@ CREATE TABLE work_schedule_versions (
   schedule_type text NOT NULL
     CHECK (schedule_type IN ('REGULAR','FLEXIBLE','SHIFT','COMPRESSED')),
   timezone text NOT NULL DEFAULT 'Asia/Manila',
-  holiday_effect_rules jsonb NOT NULL DEFAULT '{}'::jsonb,
   authority_document_version_id uuid,
   approving_authority text,
   status text NOT NULL CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED')),
@@ -204,7 +203,7 @@ CREATE TABLE holiday_calendar_entries (
   source_reference text NOT NULL,
   FOREIGN KEY (agency_id, holiday_calendar_version_id)
     REFERENCES holiday_calendar_versions (agency_id, id),
-  UNIQUE (holiday_calendar_version_id, holiday_date, day_type),
+  UNIQUE (holiday_calendar_version_id, holiday_date),
   UNIQUE (agency_id, id)
 );
 
@@ -553,7 +552,9 @@ Add a no-overlap exclusion constraint for Attendance Day Segments within one cal
 
 Segment boundaries are whole minutes, while Attendance Event and Attendance Context timestamps keep their seconds. Calculation counts Fully Covered Minutes (ADR 0005): a timed interval starts at the first whole minute at or after its raw start and ends at the last whole minute at or before its raw end, so no segment starts before or ends after its raw source. `rule_snapshot.minuteRule` records `FULLY_COVERED_MINUTE`, and the input fingerprint includes it.
 
-An overnight calculation remains one Attendance Day under the beginning-local-date Work Date, while each segment keeps the holiday classification of its actual local calendar date. Complete events on a rest day create `UNSCHEDULED_SERVICE` with no deficit minutes. Outside-schedule and statutory-night-window totals remain factual candidates, not compensation decisions.
+An overnight calculation remains one Attendance Day under the beginning-local-date Work Date, while each segment keeps the holiday classification of its actual local calendar date. Complete events on a rest day create `UNSCHEDULED_SERVICE` with no deficit minutes.
+
+A Non-Working Holiday (`REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, `LOCAL_HOLIDAY`, or `WORK_SUSPENSION`) removes expected duty for the minutes on its actual calendar date, so an overnight shift loses only the portion after midnight on the holiday. Service rendered there is recorded like rest-day service: `OUTSIDE_SCHEDULE` worked minutes and `UNSCHEDULED_SERVICE`, with no deficit, premium, overtime, or credit. `SPECIAL_WORKING` keeps ordinary duty. The rule is fixed and shared with Leave's working-day count; Work Schedule Versions carry no holiday setting (ADR 0006). A partial-day work suspension is recorded as Attendance Context, not as a `WORK_SUSPENSION` entry. Outside-schedule and statutory-night-window totals remain factual candidates, not compensation decisions.
 
 ---
 

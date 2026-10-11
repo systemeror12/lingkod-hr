@@ -429,8 +429,12 @@ The local date on which an assigned duty interval begins in the governing Work S
 _Avoid_: Event date, clock-in date
 
 **Holiday Calendar Version**:
-An immutable, effective-dated calendar used with a Schedule Assignment to classify holidays that may affect expected duty. A classification does not by itself erase scheduled duty, and attendance calculation requires exactly one applicable version rather than silently selecting a current or default calendar.
+An immutable, effective-dated calendar used with a Schedule Assignment to classify each listed date exactly once, citing its issuance. Attendance calculation requires exactly one applicable version rather than silently selecting a current or default calendar.
 _Avoid_: Current holiday list, hard-coded holidays
+
+**Non-Working Holiday**:
+A Holiday Calendar classification (regular holiday, special non-working day, local holiday, or whole-day work suspension) on which no duty is expected for that calendar date. Service rendered on it is recorded only as fact.
+_Avoid_: Holiday effect, holiday effect rule, day off
 
 **Day Rule**:
 One weekday within a Work Schedule Version, defined as a rest day or as fixed or flexible duty with required minutes, zero or more unpaid breaks, and an Event Collection Window. Compressed, daytime, overnight, and shifting schedules combine the same Day Rules.
