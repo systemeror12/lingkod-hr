@@ -356,6 +356,44 @@ it.skipIf(!enabled)(
       });
       expect(updated.entries).toHaveLength(1);
 
+      // A Holiday Calendar Version holds one classification per date.
+      const repeatedDate = [
+        {
+          holidayDate: '2026-12-25',
+          name: 'Christmas Day',
+          dayType: 'REGULAR_HOLIDAY' as const,
+          sourceReference: 'Proclamation No. 123',
+        },
+        {
+          holidayDate: '2026-12-25',
+          name: 'Christmas Day',
+          dayType: 'SPECIAL_WORKING' as const,
+          sourceReference: 'Proclamation No. 124',
+        },
+      ];
+      const refusal = {
+        statusCode: 400,
+        code: 'ATTENDANCE_CONFIGURATION_INVALID_INPUT',
+        message: expect.stringContaining('2026-12-25 is repeated'),
+      };
+      await expect(
+        calendars.create(context, {
+          code: 'PH-REPEATED',
+          name: 'Repeated Holidays',
+          scopeType: 'AGENCY',
+          scopeReference: 'Agency-wide',
+          effectiveDate: manilaDate(-30),
+          entries: repeatedDate,
+        }),
+      ).rejects.toMatchObject(refusal);
+      await expect(
+        calendars.updateDraft(context, created.id, created.draft!.id, {
+          effectiveDate: manilaDate(-30),
+          entries: repeatedDate,
+          rowVersion: updated.rowVersion,
+        }),
+      ).rejects.toMatchObject(refusal);
+
       const active = await calendars.activate(
         context,
         created.id,

@@ -1057,6 +1057,42 @@ it.skipIf(!enabled)(
         absenceMinutes: 0,
         undertimeMinutes: 0,
       });
+
+      // The fixture's Christmas Day falls on a Friday: a Non-Working Holiday
+      // expects no duty, so service on it is unscheduled and absence is no deficit.
+      for (const [eventType, time] of [
+        ['TIME_IN', '08:00'],
+        ['BREAK_OUT', '12:00'],
+        ['BREAK_IN', '13:00'],
+        ['TIME_OUT', '15:00'],
+      ] as const) {
+        await admin.attendanceEvent.create({
+          data: {
+            agencyId: agency.id,
+            employeeId: employee.id,
+            eventTime: manilaInstant('2026-12-25', time),
+            eventType,
+            source: 'MANUAL',
+            enteredByMembershipId: membership.id,
+            reason: 'Holiday duty.',
+          },
+        });
+      }
+      const holidays = await setup.days.calculate(context, {
+        periodCode: '2026-12',
+        dateFrom: '2026-12-25',
+        dateTo: '2026-12-25',
+        employeeIds: [employee.id],
+      });
+      expect(holidays.days[0]).toMatchObject({ status: 'CALCULATED', exceptionTypes: [] });
+      const holiday = await setup.days.findById(context, holidays.days[0]!.attendanceDayId!);
+      expect(holiday.day.dayClassification).toBe('UNSCHEDULED_SERVICE');
+      expect(holiday.day.totals).toMatchObject({
+        expectedMinutes: 0,
+        workedMinutes: 360,
+        outsideScheduleMinutes: 360,
+        absenceMinutes: 0,
+      });
     } finally {
       await cleanupAgency(admin, agency.id, suffix);
       await admin.$disconnect();

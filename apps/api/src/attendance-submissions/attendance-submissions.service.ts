@@ -15,6 +15,7 @@ import {
   AttendanceSubmissionServiceError,
   type AttendanceSubmissionDetail,
   type AttendanceSubmissionDaySummary,
+  type AttendanceSubmissionEvidenceSummary,
   type AttendanceSubmissionListFilters,
   type AttendanceSubmissionState,
   type AttendanceSubmissionSummary,
@@ -34,7 +35,9 @@ const submissionSelect = {
   submittedByMembershipId: true,
   submittedAt: true,
   onBehalfReason: true,
-  evidenceDocumentVersionId: true,
+  evidenceVersion: {
+    select: { id: true, document: { select: { classification: true } } },
+  },
   reviewedByMembershipId: true,
   reviewedAt: true,
   reviewReason: true,
@@ -70,7 +73,28 @@ function metadataString(metadata: Prisma.JsonValue, key: string): string | null 
   return typeof value === 'string' ? value : null;
 }
 
-function submissionSummary(record: SubmissionRecord): AttendanceSubmissionSummary {
+function canReadSensitiveEvidence(context: RequestContext): boolean {
+  return hasPermission(context, 'documents.evidence.read_sensitive', {
+    agencyId: context.agencyId,
+  });
+}
+
+function evidenceSummary(
+  record: SubmissionRecord,
+  canReadSensitive: boolean,
+): AttendanceSubmissionEvidenceSummary | null {
+  const version = record.evidenceVersion;
+  if (!version) return null;
+  if (version.document.classification === 'HIGHLY_SENSITIVE' && !canReadSensitive) {
+    return { access: 'RESTRICTED' };
+  }
+  return { access: 'FULL', documentVersionId: version.id };
+}
+
+function submissionSummary(
+  record: SubmissionRecord,
+  canReadSensitive: boolean,
+): AttendanceSubmissionSummary {
   return {
     id: record.id,
     agencyId: record.agencyId,
@@ -91,7 +115,7 @@ function submissionSummary(record: SubmissionRecord): AttendanceSubmissionSummar
     submittedByMembershipId: record.submittedByMembershipId,
     submittedAt: record.submittedAt ? record.submittedAt.toISOString() : null,
     onBehalfReason: record.onBehalfReason,
-    evidenceDocumentVersionId: record.evidenceDocumentVersionId,
+    evidence: evidenceSummary(record, canReadSensitive),
     reviewedByMembershipId: record.reviewedByMembershipId,
     reviewedAt: record.reviewedAt ? record.reviewedAt.toISOString() : null,
     reviewReason: record.reviewReason,
@@ -113,9 +137,12 @@ function submissionDaySummary(
   };
 }
 
-function submissionDetail(record: SubmissionRecord): AttendanceSubmissionDetail {
+function submissionDetail(
+  record: SubmissionRecord,
+  canReadSensitive: boolean,
+): AttendanceSubmissionDetail {
   return {
-    submission: submissionSummary(record),
+    submission: submissionSummary(record, canReadSensitive),
     days: [...record.days]
       .sort((left, right) =>
         formatDate(left.attendanceDay.workDate).localeCompare(
@@ -180,18 +207,7 @@ export class AttendanceSubmissionsService {
             'ATTENDANCE_SUBMISSION_ON_BEHALF_FACT_REQUIRED',
           );
         }
-        const evidence = await this.documents.resolveFinalizedVersionInTransaction(
-          transaction,
-          { agencyId: context.agencyId },
-          input.evidenceDocumentVersionId,
-        );
-        if (!evidence) {
-          throw new AttendanceSubmissionServiceError(
-            'The on-behalf evidence Document Version could not be found in this Agency.',
-            409,
-            'ATTENDANCE_SUBMISSION_EVIDENCE_INVALID',
-          );
-        }
+        await this.resolveEvidence(transaction, context, input.evidenceDocumentVersionId);
       } else if (input.onBehalfReason || input.evidenceDocumentVersionId) {
         throw new AttendanceSubmissionServiceError(
           'An on-behalf reason and evidence belong only to a submission for another Employee.',
@@ -594,7 +610,8 @@ export class AttendanceSubmissionsService {
         take: limit,
         select: submissionSelect,
       });
-      return records.map(submissionSummary);
+      const canReadSensitive = canReadSensitiveEvidence(context);
+      return records.map((record) => submissionSummary(record, canReadSensitive));
     });
   }
 
@@ -608,7 +625,7 @@ export class AttendanceSubmissionsService {
       if (scope.kind === 'SCOPED' && !scope.employeeIds.includes(record.employeeId)) {
         throw this.notFound();
       }
-      return submissionDetail(record);
+      return submissionDetail(record, canReadSensitiveEvidence(context));
     });
   }
 
@@ -630,7 +647,50 @@ export class AttendanceSubmissionsService {
     submissionId: string,
   ): Promise<AttendanceSubmissionDetail> {
     const record = await this.requireSubmission(transaction, context, submissionId);
-    return submissionDetail(record);
+    return submissionDetail(record, canReadSensitiveEvidence(context));
+  }
+
+  /**
+   * Applies the shared External Evidence rule to on-behalf evidence: same
+   * Agency, finalized, and `HIGHLY_SENSITIVE` only with
+   * `documents.evidence.read_sensitive`.
+   */
+  private async resolveEvidence(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    versionId: string,
+  ): Promise<void> {
+    const version = await transaction.documentVersion.findFirst({
+      where: { agencyId: context.agencyId, id: versionId },
+      select: { documentId: true },
+    });
+    if (!version) throw this.evidenceInvalid();
+    const evidence = await this.documents.resolveExternalEvidenceInTransaction(
+      transaction,
+      context,
+      {
+        documentId: version.documentId,
+        versionId,
+        allowSensitive: canReadSensitiveEvidence(context),
+        requirement: 'FINALIZED_VERSION',
+      },
+    );
+    if (evidence.ok === false && evidence.reason === 'SENSITIVE_FORBIDDEN') {
+      throw new AttendanceSubmissionServiceError(
+        'The documents.evidence.read_sensitive permission is required to link this evidence.',
+        403,
+        'ATTENDANCE_SUBMISSION_EVIDENCE_FORBIDDEN',
+      );
+    }
+    if (!evidence.ok) throw this.evidenceInvalid();
+  }
+
+  private evidenceInvalid(): AttendanceSubmissionServiceError {
+    return new AttendanceSubmissionServiceError(
+      'The on-behalf evidence Document Version could not be found in this Agency.',
+      409,
+      'ATTENDANCE_SUBMISSION_EVIDENCE_INVALID',
+    );
   }
 
   private async requireSubmission(

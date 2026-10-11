@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { WorkScheduleDayRuleSummary } from '../attendance-configuration/work-schedules.service';
 import {
   calculateAttendanceDay,
@@ -8,6 +8,25 @@ import {
   type AttendanceCalculationCoverage,
   type AttendanceDayCalculationInput,
 } from './attendance-calculation';
+
+/** Every canonical payload the fingerprint hashes, captured through a pass-through hash. */
+const hashedPayloads = vi.hoisted(() => [] as string[]);
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    createHash: (algorithm: string) => {
+      const hash = actual.createHash(algorithm);
+      return {
+        update: (data: string) => {
+          hashedPayloads.push(data);
+          hash.update(data);
+          return { digest: (encoding: 'hex') => hash.digest(encoding) };
+        },
+      };
+    },
+  };
+});
 
 const WORK_DATE = '2026-01-02';
 const TIMEZONE = 'Asia/Manila';
@@ -33,11 +52,18 @@ function dayRule(overrides: Partial<WorkScheduleDayRuleSummary> = {}): WorkSched
   };
 }
 
-/** Manila wall-clock time on a day offset from the Work Date as an instant. */
+/** Manila wall-clock `HH:MM[:SS]` on a day offset from the Work Date as an instant. */
 function manila(timeValue: string, dayOffset = 0): Date {
   const base = Date.UTC(2026, 0, 2 + dayOffset, 0, 0);
-  const [hour, minute] = timeValue.split(':').map(Number);
-  return new Date(base + (hour! * 60 + minute! - 8 * 60) * 60_000);
+  const [hour, minute, second = 0] = timeValue.split(':').map(Number);
+  return new Date(base + (hour! * 60 + minute! - 8 * 60) * 60_000 + second * 1000);
+}
+
+/** Segment boundaries as Manila wall-clock `HH:MM` pairs. */
+function wallSegments(result: { segments: { startsAt: Date; endsAt: Date }[] }): string[][] {
+  const wall = (value: Date) =>
+    new Date(value.getTime() + 8 * 3_600_000).toISOString().slice(11, 16);
+  return result.segments.map((segment) => [wall(segment.startsAt), wall(segment.endsAt)]);
 }
 
 function at(
@@ -59,7 +85,6 @@ function input(
     events: [],
     coverage: [],
     holidayClassifications: new Map(),
-    holidayEffectRules: {},
     ...overrides,
   };
 }
@@ -250,43 +275,110 @@ it('raises a blocking exception when coverage types overlap', () => {
   expect(result.totals.officialBusinessMinutes).toBe(0);
 });
 
-it('keeps holiday classification per actual local date and fails closed without an effect rule', () => {
+it.each(['REGULAR_HOLIDAY', 'SPECIAL_NON_WORKING', 'LOCAL_HOLIDAY', 'WORK_SUSPENSION'])(
+  'expects no duty and no absence on a %s weekday without events',
+  (classification) => {
+    const result = calculateAttendanceDay(
+      input({ holidayClassifications: new Map([[WORK_DATE, classification]]) }),
+    );
+
+    expect(result.exceptions).toEqual([]);
+    expect(result.totals).toMatchObject({ expectedMinutes: 0, absenceMinutes: 0 });
+    expect(result.segments).toEqual([]);
+  },
+);
+
+it('records service on a Non-Working Holiday outside the schedule without deficits', () => {
   const result = calculateAttendanceDay(
     input({
-      dayRule: dayRule({
-        dutyStartTime: '22:00',
-        dutyEndTime: '06:00',
-        endNextCalendarDay: true,
-        requiredMinutes: 480,
-      }),
-      events: [at('22:00', 'TIME_IN'), at('06:00', 'TIME_OUT', 'TIME_OUT-next', 1)],
-      holidayClassifications: new Map([['2026-01-03', 'SPECIAL_NON_WORKING']]),
-    }),
-  );
-
-  expect(result.totals.expectedMinutes).toBe(480);
-  expect(result.totals.workedMinutes).toBe(480);
-  expect(result.totals.statutoryNightWindowMinutes).toBe(480);
-  expect(result.segments.map((segment) => segment.holidayClassification)).toEqual([
-    null,
-    'SPECIAL_NON_WORKING',
-  ]);
-  expect(
-    result.exceptions.filter((exception) => exception.type === 'UNSUPPORTED_HOLIDAY_EFFECT'),
-  ).toHaveLength(1);
-});
-
-it('accepts a holiday classification once the Work Schedule Version defines its effect', () => {
-  const result = calculateAttendanceDay(
-    input({
-      events: [at('08:00', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+      events: [at('09:00', 'TIME_IN'), at('15:00', 'TIME_OUT')],
       holidayClassifications: new Map([[WORK_DATE, 'REGULAR_HOLIDAY']]),
-      holidayEffectRules: { REGULAR_HOLIDAY: { expectedDuty: false } },
     }),
   );
 
   expect(result.exceptions).toEqual([]);
-  expect(result.segments[0]!.holidayClassification).toBe('REGULAR_HOLIDAY');
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 0,
+    workedMinutes: 360,
+    coverageMinutes: 0,
+    outsideScheduleMinutes: 360,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+  expect(result.segments).toHaveLength(1);
+  expect(result.segments[0]).toMatchObject({
+    dutyRelation: 'OUTSIDE_SCHEDULE',
+    coverageType: 'WORKED',
+    deficitType: null,
+    holidayClassification: 'REGULAR_HOLIDAY',
+  });
+});
+
+it('removes expected duty only for the overnight minutes on the holiday date', () => {
+  const overnight = dayRule({
+    dutyStartTime: '22:00',
+    dutyEndTime: '06:00',
+    endNextCalendarDay: true,
+    requiredMinutes: 480,
+  });
+  const intoHoliday = new Map([['2026-01-03', 'SPECIAL_NON_WORKING']]);
+
+  const absent = calculateAttendanceDay(
+    input({ dayRule: overnight, holidayClassifications: intoHoliday }),
+  );
+  expect(absent.exceptions).toEqual([]);
+  expect(absent.totals).toMatchObject({ expectedMinutes: 120, absenceMinutes: 120 });
+
+  const worked = calculateAttendanceDay(
+    input({
+      dayRule: overnight,
+      events: [at('22:00', 'TIME_IN'), at('06:00', 'TIME_OUT', 'TIME_OUT-next', 1)],
+      holidayClassifications: intoHoliday,
+    }),
+  );
+  expect(worked.exceptions).toEqual([]);
+  expect(worked.totals).toMatchObject({
+    expectedMinutes: 120,
+    workedMinutes: 480,
+    coverageMinutes: 120,
+    outsideScheduleMinutes: 360,
+    absenceMinutes: 0,
+    undertimeMinutes: 0,
+    statutoryNightWindowMinutes: 480,
+  });
+  expect(
+    worked.segments.map((segment) => [segment.dutyRelation, segment.holidayClassification]),
+  ).toEqual([
+    ['EXPECTED', null],
+    ['OUTSIDE_SCHEDULE', 'SPECIAL_NON_WORKING'],
+  ]);
+
+  const fromHoliday = calculateAttendanceDay(
+    input({
+      dayRule: overnight,
+      holidayClassifications: new Map([[WORK_DATE, 'REGULAR_HOLIDAY']]),
+    }),
+  );
+  expect(fromHoliday.totals).toMatchObject({ expectedMinutes: 360, absenceMinutes: 360 });
+});
+
+it('keeps ordinary duty on a SPECIAL_WORKING day', () => {
+  for (const events of [[], [at('08:30', 'TIME_IN'), at('16:00', 'TIME_OUT')]]) {
+    const ordinary = calculateAttendanceDay(input({ events }));
+    const specialWorking = calculateAttendanceDay(
+      input({ events, holidayClassifications: new Map([[WORK_DATE, 'SPECIAL_WORKING']]) }),
+    );
+
+    expect(specialWorking.exceptions).toEqual([]);
+    expect(specialWorking.totals).toEqual(ordinary.totals);
+    expect(specialWorking.segments).toEqual(
+      ordinary.segments.map((segment) => ({
+        ...segment,
+        holidayClassification: 'SPECIAL_WORKING',
+      })),
+    );
+  }
 });
 
 it('anchors a flexible day on the first qualifying minute and clamps to the permitted window', () => {
@@ -495,6 +587,122 @@ it('fails closed when the Day Rule has no complete duty interval', () => {
   ]);
 });
 
+it('counts only Fully Covered Minutes of a sub-minute time-in and time-out', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({ breaks: [lunchBreak] }),
+      events: [at('08:00:59', 'TIME_IN'), at('17:00:01', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.exceptions).toEqual([]);
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    workedMinutes: 479,
+    coverageMinutes: 479,
+    lateMinutes: 1,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+  expect(wallSegments(result)).toEqual([
+    ['08:00', '08:01'],
+    ['08:01', '12:00'],
+    ['13:00', '17:00'],
+  ]);
+  expect(result.segments.map((segment) => segment.deficitType)).toEqual(['TARDINESS', null, null]);
+});
+
+it('counts a time-in one second past the duty start as one tardiness minute', () => {
+  const result = calculateAttendanceDay(
+    input({ events: [at('08:00:01', 'TIME_IN'), at('17:00', 'TIME_OUT')] }),
+  );
+
+  expect(result.totals).toMatchObject({ workedMinutes: 539, lateMinutes: 1 });
+});
+
+it('keeps worked time inside sub-minute recorded break boundaries', () => {
+  const rule = dayRule({ breaks: [lunchBreak], eventPattern: 'WITH_BREAK_EVENTS' });
+  const inside = calculateAttendanceDay(
+    input({
+      dayRule: rule,
+      events: [
+        at('08:00', 'TIME_IN'),
+        at('12:00:30', 'BREAK_OUT'),
+        at('12:59:30', 'BREAK_IN'),
+        at('17:00', 'TIME_OUT'),
+      ],
+    }),
+  );
+  expect(inside.totals).toMatchObject({ workedMinutes: 480, absenceMinutes: 0 });
+
+  const outside = calculateAttendanceDay(
+    input({
+      dayRule: rule,
+      events: [
+        at('08:00', 'TIME_IN'),
+        at('11:59:30', 'BREAK_OUT'),
+        at('13:00:30', 'BREAK_IN'),
+        at('17:00', 'TIME_OUT'),
+      ],
+    }),
+  );
+  expect(outside.totals).toMatchObject({ workedMinutes: 478, absenceMinutes: 2 });
+  expect(wallSegments(outside)).toEqual([
+    ['08:00', '11:59'],
+    ['11:59', '12:00'],
+    ['13:00', '13:01'],
+    ['13:01', '17:00'],
+  ]);
+});
+
+it('counts only Fully Covered Minutes of a sub-minute Attendance Context', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({ breaks: [lunchBreak] }),
+      events: [at('13:00', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+      coverage: [coverage({ startsAt: manila('08:00:30'), endsAt: manila('11:59:30') })],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    officialBusinessMinutes: 238,
+    workedMinutes: 240,
+    lateMinutes: 1,
+    absenceMinutes: 1,
+  });
+  expect(wallSegments(result).slice(0, 3)).toEqual([
+    ['08:00', '08:01'],
+    ['08:01', '11:59'],
+    ['11:59', '12:00'],
+  ]);
+});
+
+it('anchors a flexible day on the first fully covered minute of a sub-minute time-in', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        ruleType: 'FLEXIBLE',
+        dutyStartTime: null,
+        earliestStartTime: '07:00',
+        latestStartTime: '09:00',
+        dutyEndTime: '17:00',
+        breaks: [lunchBreak],
+      }),
+      events: [at('08:30:20', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({ expectedMinutes: 449, workedMinutes: 449, lateMinutes: 0 });
+  expect(wallSegments(result)[0]).toEqual(['08:31', '12:00']);
+});
+
+it('fingerprints the Fully Covered Minute convention', () => {
+  hashedPayloads.length = 0;
+  fingerprintAttendanceDayInput(input());
+
+  expect(JSON.parse(hashedPayloads[0]!)).toMatchObject({ minuteRule: 'FULLY_COVERED_MINUTE' });
+});
+
 it('fingerprints every calculation input deterministically', () => {
   const base = input({ events: [at('08:00', 'TIME_IN'), at('17:00', 'TIME_OUT')] });
   const same = input({ events: [at('08:00', 'TIME_IN'), at('17:00', 'TIME_OUT')] });
@@ -503,6 +711,19 @@ it('fingerprints every calculation input deterministically', () => {
   expect(fingerprintAttendanceDayInput(base)).toMatch(/^[0-9a-f]{64}$/);
   expect(fingerprintAttendanceDayInput(base)).toBe(fingerprintAttendanceDayInput(same));
   expect(fingerprintAttendanceDayInput(base)).not.toBe(fingerprintAttendanceDayInput(moved));
+});
+
+it('keeps fingerprints of Days without a holiday from before the national holiday rule', () => {
+  // Digests computed by the calculation that read `holidayEffectRules`. A Day
+  // without a holiday keeps its fingerprint; a Day with one recalculates.
+  expect(fingerprintAttendanceDayInput(input())).toBe(
+    '5e27f37d1c7a1a08591c8a26c2b5ea1da820ea2a1b78aa281a9017b3625d7b94',
+  );
+  expect(
+    fingerprintAttendanceDayInput(
+      input({ holidayClassifications: new Map([[WORK_DATE, 'REGULAR_HOLIDAY']]) }),
+    ),
+  ).not.toBe('fd91c3b2d4035174619b186bfb21c5206153eddb1aa960ae56ce738d3724755d');
 });
 
 it('fingerprints a new effective governing version even when its rules are identical', () => {

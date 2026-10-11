@@ -322,7 +322,7 @@ it('keeps date and time conversions stable', () => {
   expect(() => toDatabaseDate('2026-02-30')).toThrow(/effective date is invalid/);
 });
 
-it('normalizes Holiday Calendar versions in date and day type order', () => {
+it('normalizes Holiday Calendar versions in date order', () => {
   const normalized = normalizeHolidayCalendarDefinition({
     effectiveDate: '2026-01-01',
     entries: [
@@ -331,12 +331,6 @@ it('normalizes Holiday Calendar versions in date and day type order', () => {
         name: ' Christmas Day ',
         dayType: 'REGULAR_HOLIDAY',
         sourceReference: ' Proclamation No. 123 ',
-      },
-      {
-        holidayDate: '2026-01-01',
-        name: 'New Year',
-        dayType: 'SPECIAL_NON_WORKING',
-        sourceReference: 'Proclamation No. 123',
       },
       {
         holidayDate: '2026-01-01',
@@ -350,33 +344,42 @@ it('normalizes Holiday Calendar versions in date and day type order', () => {
   expect(normalized.effectiveDate).toBe('2026-01-01');
   expect(normalized.entries.map((entry) => `${entry.holidayDate}:${entry.dayType}`)).toEqual([
     '2026-01-01:REGULAR_HOLIDAY',
-    '2026-01-01:SPECIAL_NON_WORKING',
     '2026-12-25:REGULAR_HOLIDAY',
   ]);
-  expect(normalized.entries[2]).toMatchObject({
+  expect(normalized.entries[1]).toMatchObject({
     name: 'Christmas Day',
     sourceReference: 'Proclamation No. 123',
   });
 
-  expect(() =>
-    normalizeHolidayCalendarDefinition({
-      effectiveDate: '2026-01-01',
-      entries: [
-        {
-          holidayDate: '2026-12-25',
-          name: 'Christmas Day',
-          dayType: 'REGULAR_HOLIDAY',
-          sourceReference: 'Proclamation No. 123',
-        },
-        {
-          holidayDate: '2026-12-25',
-          name: 'Christmas Day',
-          dayType: 'REGULAR_HOLIDAY',
-          sourceReference: 'Proclamation No. 123',
-        },
-      ],
-    }),
-  ).toThrow(/cannot repeat one day type/);
+  for (const repeated of ['REGULAR_HOLIDAY', 'SPECIAL_NON_WORKING'] as const) {
+    let error: unknown;
+    try {
+      normalizeHolidayCalendarDefinition({
+        effectiveDate: '2026-01-01',
+        entries: [
+          {
+            holidayDate: '2026-12-25',
+            name: 'Christmas Day',
+            dayType: 'REGULAR_HOLIDAY',
+            sourceReference: 'Proclamation No. 123',
+          },
+          {
+            holidayDate: '2026-12-25',
+            name: 'Christmas Day',
+            dayType: repeated,
+            sourceReference: 'Proclamation No. 123',
+          },
+        ],
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({
+      statusCode: 400,
+      code: 'ATTENDANCE_CONFIGURATION_INVALID_INPUT',
+      message: expect.stringMatching(/one classification per date; 2026-12-25 is repeated/),
+    });
+  }
   expect(() =>
     normalizeHolidayCalendarDefinition({
       effectiveDate: '2026-01-01',
