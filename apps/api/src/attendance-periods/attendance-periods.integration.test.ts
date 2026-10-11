@@ -610,3 +610,99 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)(
+  'refuses to lock over a Day calculated before the Fully Covered Minute convention until a successor is recalculated',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services } = fixture;
+    try {
+      await activateLockRoute(fixture);
+      await approveSubmission(fixture);
+      const first = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      await services.periods.approve(fixture.officerContext, first.version.id, {});
+
+      // Stand in for a Day version written before ADR 0005: its snapshot has no
+      // minute rule and its fingerprint was computed without one.
+      const current = await admin.attendanceDay.findUniqueOrThrow({
+        where: { id: fixture.attendanceDayId },
+        select: { ruleSnapshot: true },
+      });
+      const { minuteRule, ...legacySnapshot } = current.ruleSnapshot as Record<string, unknown>;
+      expect(minuteRule).toBe('FULLY_COVERED_MINUTE');
+      const legacy = { ...legacySnapshot, fingerprint: 'f'.repeat(64) };
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceDay.update({
+          where: { id: fixture.attendanceDayId },
+          data: { ruleSnapshot: legacy as Prisma.InputJsonValue },
+        });
+      });
+
+      const reconciliation = await services.periods.reconcile(
+        fixture.administratorContext,
+        first.version.id,
+      );
+      expect(reconciliation.ok).toBe(false);
+      expect(
+        reconciliation.failures.find((failure) => failure.code === 'DAY_INPUTS_CHANGED')?.details,
+      ).toEqual({
+        days: [
+          {
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: fixture.workDate,
+          },
+        ],
+      });
+      await expect(
+        services.periods.lock(fixture.administratorContext, first.version.id),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_PERIOD_RECONCILIATION_FAILED',
+        reasons: ['DAY_INPUTS_CHANGED'],
+      });
+
+      const period = await admin.attendancePeriod.findUniqueOrThrow({
+        where: { id: fixture.periodId },
+      });
+      const recalculated = await services.days.calculate(fixture.administratorContext, {
+        periodCode: period.code,
+        dateFrom: fixture.workDate,
+        dateTo: fixture.workDate,
+        employeeIds: [fixture.employeeId],
+      });
+      expect(recalculated.recalculatedCount).toBe(1);
+      const successorId = recalculated.days[0]!.attendanceDayId!;
+      expect(successorId).not.toBe(fixture.attendanceDayId);
+
+      const versions = await admin.attendanceDay.findMany({
+        where: { id: { in: [fixture.attendanceDayId, successorId] } },
+        select: { id: true, isCurrent: true, status: true, ruleSnapshot: true },
+      });
+      const original = versions.find((version) => version.id === fixture.attendanceDayId);
+      const successor = versions.find((version) => version.id === successorId);
+      expect(original).toMatchObject({
+        isCurrent: false,
+        status: 'APPROVED',
+        ruleSnapshot: legacy,
+      });
+      expect(successor?.isCurrent).toBe(true);
+      expect(successor?.ruleSnapshot).toMatchObject({ minuteRule: 'FULLY_COVERED_MINUTE' });
+
+      await approveSubmission(fixture);
+      const second = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      await services.periods.approve(fixture.officerContext, second.version.id, {});
+      const locked = await services.periods.lock(fixture.administratorContext, second.version.id);
+      expect(locked.replay).toBe(false);
+    } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);

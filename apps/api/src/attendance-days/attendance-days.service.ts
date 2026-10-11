@@ -36,6 +36,7 @@ import {
 } from '../attendance-corrections/attendance-corrections.effects';
 import {
   calculateAttendanceDay,
+  ATTENDANCE_MINUTE_RULE,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
   type AttendanceCalculationCoverage,
@@ -169,6 +170,7 @@ function ruleSnapshotOf(value: Prisma.JsonValue): AttendanceDayRuleSnapshot {
   const snapshot = (value ?? {}) as Record<string, unknown>;
   return {
     fingerprint: typeof snapshot.fingerprint === 'string' ? snapshot.fingerprint : '',
+    minuteRule: snapshot.minuteRule === ATTENDANCE_MINUTE_RULE ? ATTENDANCE_MINUTE_RULE : undefined,
     timezone: typeof snapshot.timezone === 'string' ? snapshot.timezone : '',
     assignmentId: typeof snapshot.assignmentId === 'string' ? snapshot.assignmentId : null,
     workScheduleVersionId:
@@ -1137,6 +1139,7 @@ export class AttendanceDaysService {
       fingerprint,
       snapshot: {
         fingerprint,
+        minuteRule: ATTENDANCE_MINUTE_RULE,
         timezone,
         assignmentId: resolution.assignment.id,
         workScheduleVersionId: resolution.workScheduleVersion.id,
