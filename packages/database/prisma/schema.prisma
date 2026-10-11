@@ -3336,7 +3336,6 @@ model WorkScheduleVersion {
   versionNo                  Int       @map("version_no")
   scheduleType               String    @map("schedule_type")
   timezone                   String    @default("Asia/Manila")
-  holidayEffectRules         Json      @default("{}") @map("holiday_effect_rules")
   authorityDocumentVersionId String?   @map("authority_document_version_id") @db.Uuid
   approvingAuthority         String?   @map("approving_authority")
   status                     String
@@ -3505,7 +3504,7 @@ model HolidayCalendarEntry {
 
   holidayCalendarVersion HolidayCalendarVersion @relation(fields: [agencyId, holidayCalendarVersionId], references: [agencyId, id], onDelete: Restrict)
 
-  @@unique([holidayCalendarVersionId, holidayDate, dayType])
+  @@unique([holidayCalendarVersionId, holidayDate])
   @@unique([agencyId, id])
   @@map("holiday_calendar_entries")
 }

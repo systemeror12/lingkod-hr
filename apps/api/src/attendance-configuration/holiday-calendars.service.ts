@@ -108,10 +108,7 @@ const versionSelect = {
   createdAt: true,
   updatedAt: true,
   entries: {
-    orderBy: [
-      { holidayDate: 'asc' },
-      { dayType: 'asc' },
-    ] as Prisma.HolidayCalendarEntryOrderByWithRelationInput[],
+    orderBy: { holidayDate: 'asc' } as const,
     select: entrySelect,
   },
 } as const;

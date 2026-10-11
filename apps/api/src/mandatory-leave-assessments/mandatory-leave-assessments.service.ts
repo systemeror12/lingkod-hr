@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import { NON_WORKING_HOLIDAY_DAY_TYPES } from '../attendance-configuration/attendance-configuration.types';
+import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { requestDatabaseContext } from '../database-context';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
 import {
@@ -947,7 +947,7 @@ function nonWorkingHolidayDates(holidayFacts: Prisma.JsonValue): Set<string> | n
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
     const { holidayDate, dayType } = entry;
     if (typeof holidayDate !== 'string' || typeof dayType !== 'string') return null;
-    if ((NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(dayType)) {
+    if (isNonWorkingHoliday(dayType)) {
       dates.add(holidayDate);
     }
   }

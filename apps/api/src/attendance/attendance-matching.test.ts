@@ -66,7 +66,6 @@ function resolution(workDate: string, rule: WorkScheduleDayRuleSummary): Attenda
       versionNo: 1,
       scheduleType: 'REGULAR',
       timezone: 'Asia/Manila',
-      holidayEffectRules: {},
       authorityDocumentVersionId: 'd1',
       approvingAuthority: 'Office of the President',
       versionState: 'ACTIVE',
