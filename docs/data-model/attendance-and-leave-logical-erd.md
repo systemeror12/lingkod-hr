@@ -114,20 +114,19 @@ Reusable schedule definition
 
 Effective-dated schedule rules
 
-| Column                        | Logical type | Null? | Key / rule           | Description                                        |
-| ----------------------------- | ------------ | ----- | -------------------- | -------------------------------------------------- |
-| id                            | uuid         | No    | PK                   | Version                                            |
-| agency_id                     | uuid         | No    | FK agencies          | Tenant                                             |
-| work_schedule_id              | uuid         | No    | FK work_schedules    | Schedule                                           |
-| version_no                    | integer      | No    |                      | Version                                            |
-| schedule_type                 | enum         | No    |                      | REGULAR, FLEXIBLE, SHIFT, COMPRESSED               |
-| timezone                      | string       | No    |                      | Governing local timezone                           |
-| holiday_effect_rules          | json         | No    |                      | Authority-backed effect by calendar classification |
-| authority_document_version_id | uuid         | Yes   | FK document_versions | Required authority evidence at activation          |
-| approving_authority           | string       | Yes   |                      | Required authority named at activation             |
-| status                        | enum         | No    |                      | DRAFT, ACTIVE, SUPERSEDED                          |
-| effective_from                | date         | No    |                      | Start                                              |
-| effective_to                  | date         | Yes   |                      | End                                                |
+| Column                        | Logical type | Null? | Key / rule           | Description                               |
+| ----------------------------- | ------------ | ----- | -------------------- | ----------------------------------------- |
+| id                            | uuid         | No    | PK                   | Version                                   |
+| agency_id                     | uuid         | No    | FK agencies          | Tenant                                    |
+| work_schedule_id              | uuid         | No    | FK work_schedules    | Schedule                                  |
+| version_no                    | integer      | No    |                      | Version                                   |
+| schedule_type                 | enum         | No    |                      | REGULAR, FLEXIBLE, SHIFT, COMPRESSED      |
+| timezone                      | string       | No    |                      | Governing local timezone                  |
+| authority_document_version_id | uuid         | Yes   | FK document_versions | Required authority evidence at activation |
+| approving_authority           | string       | Yes   |                      | Required authority named at activation    |
+| status                        | enum         | No    |                      | DRAFT, ACTIVE, SUPERSEDED                 |
+| effective_from                | date         | No    |                      | Start                                     |
+| effective_to                  | date         | Yes   |                      | End                                       |
 
 **Constraints and indexes**
 
@@ -228,7 +227,8 @@ Effective holiday/day classification
 
 **Constraints and indexes**
 
-- Unique `(holiday_calendar_version_id, holiday_date, day_type)`.
+- Unique `(holiday_calendar_version_id, holiday_date)`: one classification per date.
+- `REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, `LOCAL_HOLIDAY`, and `WORK_SUSPENSION` are Non-Working Holidays with no expected duty for the date; `SPECIAL_WORKING` keeps ordinary duty (ADR 0006).
 
 **Deletion behavior:** Correct through version/replacement.
 
