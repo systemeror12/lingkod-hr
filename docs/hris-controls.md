@@ -561,6 +561,8 @@ APPROVED
 
 Attendance Day versions never enter period review, lock, or adjustment states. Those states belong to Employee Attendance Submissions, Attendance Period Versions, and correction records.
 
+Calculation counts Fully Covered Minutes from raw timestamps and applies no implicit grace or rounding (ADR 0005). A partial minute at a time-in, break, time-out, or Attendance Context boundary stays uncovered, and inside expected duty it becomes a deficit. The rule snapshot names the convention, and the input fingerprint includes it, so Attendance Period Reconciliation refuses a lock over a Day calculated under a different convention until it is recalculated as a successor.
+
 ### Employee Attendance Submission
 
 ```text
