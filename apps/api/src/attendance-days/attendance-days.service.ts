@@ -19,6 +19,7 @@ import {
   type AttendanceResolution,
 } from '../attendance-configuration/schedule-assignments.service';
 import {
+  addDateValueDays,
   eventCollectionWindow,
   localDateValue,
   zonedTimeToInstant,
@@ -1106,8 +1107,16 @@ export class AttendanceDaysService {
         });
       }
     }
+    // Every calendar date the Day's expected duty reaches, so an overnight shift
+    // sees a holiday on its second date. `holidayEntries` keeps the Work Date
+    // alone because Leave counts working days from it.
+    const dutyDates = dayRule.endNextCalendarDay
+      ? [workDate, addDateValueDays(workDate, 1)]
+      : [workDate];
     const holidayClassifications = new Map(
-      resolution.holidayEntries.map((entry) => [entry.holidayDate, entry.dayType]),
+      resolution.holidayCalendarVersion.entries
+        .filter((entry) => dutyDates.includes(entry.holidayDate))
+        .map((entry) => [entry.holidayDate, entry.dayType]),
     );
     const result = calculateAttendanceDay({
       timezone,

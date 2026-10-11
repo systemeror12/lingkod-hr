@@ -857,8 +857,6 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
     holidays: [...input.holidayClassifications.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([date, classification]) => [date, classification, isNonWorkingHoliday(classification)]),
-    // Always empty before ADR 0006; kept so fingerprints of Days without a holiday stay stable.
-    holidayEffectRules: {},
     governingVersions: input.governingVersions,
     // Omitted when empty so fingerprints of Days without such sources stay stable.
     ...(input.unplacedSources?.length
