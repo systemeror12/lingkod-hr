@@ -1764,12 +1764,15 @@ it.skipIf(!enabled)(
         services.corrections.create(employeeSensitive, contextInput(foreign.id)),
       ).rejects.toMatchObject({ code: 'ATTENDANCE_CORRECTION_EVIDENCE_INVALID', statusCode: 409 });
 
+      // PostgreSQL matches uuids case-insensitively, so an uppercase spelling
+      // links the same evidence and must still be redacted.
+      const sensitiveUpper = sensitive.id.toUpperCase();
       const contextCreated = await services.corrections.create(
         employeeSensitive,
-        contextInput(sensitive.id),
+        contextInput(sensitiveUpper),
       );
       expect(contextCreated.correction.requestedRecord).toMatchObject({
-        evidenceDocumentVersionId: sensitive.id,
+        evidenceDocumentVersionId: sensitiveUpper,
       });
       await services.corrections.submit(employeeSensitive, contextCreated.correction.id);
       const applied = await services.corrections.approve(
@@ -1789,19 +1792,19 @@ it.skipIf(!enabled)(
       expect(contextRestricted.effect?.replacementRecord).toMatchObject({
         evidence: { access: 'RESTRICTED' },
       });
-      expect(JSON.stringify(contextRestricted)).not.toContain(sensitive.id);
+      expect(JSON.stringify(contextRestricted).toLowerCase()).not.toContain(sensitive.id);
       const restrictedList = await services.corrections.list(fixture.context);
-      expect(JSON.stringify(restrictedList)).not.toContain(sensitive.id);
+      expect(JSON.stringify(restrictedList).toLowerCase()).not.toContain(sensitive.id);
 
       const contextFull = await services.corrections.findById(
         adminSensitive,
         contextCreated.correction.id,
       );
       expect(contextFull.correction.requestedRecord).toMatchObject({
-        evidenceDocumentVersionId: sensitive.id,
+        evidenceDocumentVersionId: sensitiveUpper,
       });
       expect(contextFull.effect?.replacementRecord).toMatchObject({
-        evidenceDocumentVersionId: sensitive.id,
+        evidenceDocumentVersionId: sensitiveUpper,
       });
     } finally {
       await cleanupAgency(admin, fixture.agencyId, fixture.suffix);
