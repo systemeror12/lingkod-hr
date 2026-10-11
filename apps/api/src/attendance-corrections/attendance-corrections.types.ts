@@ -114,16 +114,24 @@ export interface PostedLeaveHandoffStatus {
   blockedAt: string | null;
 }
 
-export interface AttendanceCorrectionEvidenceSummary {
-  id: string;
-  documentVersionId: string | null;
-  documentId: string | null;
-  documentNo: string | null;
-  documentType: string | null;
-  sourceType: string | null;
-  sourceId: string | null;
-  createdAt: string;
-}
+/**
+ * Evidence linked to a Correction. Readers without
+ * `documents.evidence.read_sensitive` learn only that `HIGHLY_SENSITIVE`
+ * evidence exists, never which Document Version it is.
+ */
+export type AttendanceCorrectionEvidenceSummary =
+  | {
+      access: 'FULL';
+      id: string;
+      documentVersionId: string | null;
+      documentId: string | null;
+      documentNo: string | null;
+      documentType: string | null;
+      sourceType: string | null;
+      sourceId: string | null;
+      createdAt: string;
+    }
+  | { access: 'RESTRICTED'; id: string; createdAt: string };
 
 export interface AttendanceCorrectionEffectSummary {
   id: string;
