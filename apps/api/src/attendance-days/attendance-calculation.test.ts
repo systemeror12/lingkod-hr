@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { WorkScheduleDayRuleSummary } from '../attendance-configuration/work-schedules.service';
 import {
   calculateAttendanceDay,
@@ -8,6 +8,25 @@ import {
   type AttendanceCalculationCoverage,
   type AttendanceDayCalculationInput,
 } from './attendance-calculation';
+
+/** Every canonical payload the fingerprint hashes, captured through a pass-through hash. */
+const hashedPayloads = vi.hoisted(() => [] as string[]);
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return {
+    ...actual,
+    createHash: (algorithm: string) => {
+      const hash = actual.createHash(algorithm);
+      return {
+        update: (data: string) => {
+          hashedPayloads.push(data);
+          hash.update(data);
+          return { digest: (encoding: 'hex') => hash.digest(encoding) };
+        },
+      };
+    },
+  };
+});
 
 const WORK_DATE = '2026-01-02';
 const TIMEZONE = 'Asia/Manila';
@@ -33,11 +52,18 @@ function dayRule(overrides: Partial<WorkScheduleDayRuleSummary> = {}): WorkSched
   };
 }
 
-/** Manila wall-clock time on a day offset from the Work Date as an instant. */
+/** Manila wall-clock `HH:MM[:SS]` on a day offset from the Work Date as an instant. */
 function manila(timeValue: string, dayOffset = 0): Date {
   const base = Date.UTC(2026, 0, 2 + dayOffset, 0, 0);
-  const [hour, minute] = timeValue.split(':').map(Number);
-  return new Date(base + (hour! * 60 + minute! - 8 * 60) * 60_000);
+  const [hour, minute, second = 0] = timeValue.split(':').map(Number);
+  return new Date(base + (hour! * 60 + minute! - 8 * 60) * 60_000 + second * 1000);
+}
+
+/** Segment boundaries as Manila wall-clock `HH:MM` pairs. */
+function wallSegments(result: { segments: { startsAt: Date; endsAt: Date }[] }): string[][] {
+  const wall = (value: Date) =>
+    new Date(value.getTime() + 8 * 3_600_000).toISOString().slice(11, 16);
+  return result.segments.map((segment) => [wall(segment.startsAt), wall(segment.endsAt)]);
 }
 
 function at(
@@ -559,6 +585,122 @@ it('fails closed when the Day Rule has no complete duty interval', () => {
   expect(result.exceptions.map((exception) => exception.type)).toEqual([
     'INCOMPLETE_WORK_SCHEDULE_VERSION',
   ]);
+});
+
+it('counts only Fully Covered Minutes of a sub-minute time-in and time-out', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({ breaks: [lunchBreak] }),
+      events: [at('08:00:59', 'TIME_IN'), at('17:00:01', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.exceptions).toEqual([]);
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    workedMinutes: 479,
+    coverageMinutes: 479,
+    lateMinutes: 1,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+  expect(wallSegments(result)).toEqual([
+    ['08:00', '08:01'],
+    ['08:01', '12:00'],
+    ['13:00', '17:00'],
+  ]);
+  expect(result.segments.map((segment) => segment.deficitType)).toEqual(['TARDINESS', null, null]);
+});
+
+it('counts a time-in one second past the duty start as one tardiness minute', () => {
+  const result = calculateAttendanceDay(
+    input({ events: [at('08:00:01', 'TIME_IN'), at('17:00', 'TIME_OUT')] }),
+  );
+
+  expect(result.totals).toMatchObject({ workedMinutes: 539, lateMinutes: 1 });
+});
+
+it('keeps worked time inside sub-minute recorded break boundaries', () => {
+  const rule = dayRule({ breaks: [lunchBreak], eventPattern: 'WITH_BREAK_EVENTS' });
+  const inside = calculateAttendanceDay(
+    input({
+      dayRule: rule,
+      events: [
+        at('08:00', 'TIME_IN'),
+        at('12:00:30', 'BREAK_OUT'),
+        at('12:59:30', 'BREAK_IN'),
+        at('17:00', 'TIME_OUT'),
+      ],
+    }),
+  );
+  expect(inside.totals).toMatchObject({ workedMinutes: 480, absenceMinutes: 0 });
+
+  const outside = calculateAttendanceDay(
+    input({
+      dayRule: rule,
+      events: [
+        at('08:00', 'TIME_IN'),
+        at('11:59:30', 'BREAK_OUT'),
+        at('13:00:30', 'BREAK_IN'),
+        at('17:00', 'TIME_OUT'),
+      ],
+    }),
+  );
+  expect(outside.totals).toMatchObject({ workedMinutes: 478, absenceMinutes: 2 });
+  expect(wallSegments(outside)).toEqual([
+    ['08:00', '11:59'],
+    ['11:59', '12:00'],
+    ['13:00', '13:01'],
+    ['13:01', '17:00'],
+  ]);
+});
+
+it('counts only Fully Covered Minutes of a sub-minute Attendance Context', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({ breaks: [lunchBreak] }),
+      events: [at('13:00', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+      coverage: [coverage({ startsAt: manila('08:00:30'), endsAt: manila('11:59:30') })],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    officialBusinessMinutes: 238,
+    workedMinutes: 240,
+    lateMinutes: 1,
+    absenceMinutes: 1,
+  });
+  expect(wallSegments(result).slice(0, 3)).toEqual([
+    ['08:00', '08:01'],
+    ['08:01', '11:59'],
+    ['11:59', '12:00'],
+  ]);
+});
+
+it('anchors a flexible day on the first fully covered minute of a sub-minute time-in', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        ruleType: 'FLEXIBLE',
+        dutyStartTime: null,
+        earliestStartTime: '07:00',
+        latestStartTime: '09:00',
+        dutyEndTime: '17:00',
+        breaks: [lunchBreak],
+      }),
+      events: [at('08:30:20', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({ expectedMinutes: 449, workedMinutes: 449, lateMinutes: 0 });
+  expect(wallSegments(result)[0]).toEqual(['08:31', '12:00']);
+});
+
+it('fingerprints the Fully Covered Minute convention', () => {
+  hashedPayloads.length = 0;
+  fingerprintAttendanceDayInput(input());
+
+  expect(JSON.parse(hashedPayloads[0]!)).toMatchObject({ minuteRule: 'FULLY_COVERED_MINUTE' });
 });
 
 it('fingerprints every calculation input deterministically', () => {

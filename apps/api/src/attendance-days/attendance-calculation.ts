@@ -158,9 +158,23 @@ const COVERAGE_TOTAL_KEYS: Partial<
   POSTED_LEAVE: 'postedLeaveMinutes',
 };
 
+/**
+ * The minute convention of ADR 0005, recorded in the rule snapshot and the
+ * input fingerprint so a Day calculated under another convention reads stale.
+ */
+export const ATTENDANCE_MINUTE_RULE = 'FULLY_COVERED_MINUTE';
+
 /** The whole minute a boundary falls in; minutes are the ledger's unit of account. */
 function minuteOf(value: Date): number {
   return Math.floor(value.getTime() / 60_000);
+}
+
+/**
+ * The Fully Covered Minutes of a timed interval: its start moves up to the next
+ * whole minute and its end moves down, so a partial minute stays uncovered.
+ */
+function fullyCoveredInterval(startsAt: Date, endsAt: Date): Interval {
+  return { start: Math.ceil(startsAt.getTime() / 60_000), end: minuteOf(endsAt) };
 }
 
 function instantOf(minute: number): Date {
@@ -318,7 +332,7 @@ function workedIntervals(
   const timeIn = ordered.find((event) => event.eventType === 'TIME_IN');
   const timeOut = [...ordered].reverse().find((event) => event.eventType === 'TIME_OUT');
   if (!timeIn || !timeOut) return [];
-  const span: Interval = { start: minuteOf(timeIn.eventTime), end: minuteOf(timeOut.eventTime) };
+  const span = fullyCoveredInterval(timeIn.eventTime, timeOut.eventTime);
   if (span.end <= span.start) return [];
   if (rule.eventPattern === 'IN_OUT') return subtractIntervals(span, rule.breaks);
   const breakOuts = ordered.filter((event) => event.eventType === 'BREAK_OUT');
@@ -328,7 +342,12 @@ function workedIntervals(
     const breakOut = breakOuts[index]!;
     const breakIn = breakIns[index];
     if (!breakIn) continue;
-    breaks.push({ start: minuteOf(breakOut.eventTime), end: minuteOf(breakIn.eventTime) });
+    // A recorded break removes every minute it touches, so worked time stays
+    // within the raw events on either side of it.
+    breaks.push({
+      start: minuteOf(breakOut.eventTime),
+      end: Math.ceil(breakIn.eventTime.getTime() / 60_000),
+    });
   }
   return subtractIntervals(span, breaks);
 }
@@ -457,7 +476,8 @@ function sequenceException(issue: {
  * Calculate one Attendance Day from its resolved inputs. The function is pure
  * and deterministic: every minute is derived from the exact Work Date, Day
  * Rule, events, Attendance Context, and Leave-owned coverage it receives, and it
- * never invents a timestamp, rounds a boundary, or assumes a grace period.
+ * never invents a timestamp or assumes a grace period. Timed inputs count only
+ * their Fully Covered Minutes (ADR 0005).
  *
  * Totals semantics: `expectedMinutes` is the union of expected duty intervals;
  * `coverageMinutes` counts covered minutes inside expected duty; each coverage
@@ -511,7 +531,7 @@ export function calculateAttendanceDay(
     }
   > = [];
   for (const item of input.coverage) {
-    const interval = { start: minuteOf(item.startsAt), end: minuteOf(item.endsAt) };
+    const interval = fullyCoveredInterval(item.startsAt, item.endsAt);
     if (interval.end <= interval.start) {
       exceptions.push({
         type: 'INCOMPLETE_COVERAGE_INPUT',
@@ -793,6 +813,7 @@ function canonicalize(value: unknown): unknown {
  */
 export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInput): string {
   const canonical = canonicalize({
+    minuteRule: ATTENDANCE_MINUTE_RULE,
     timezone: input.timezone,
     workDate: input.workDate,
     dayRule: {

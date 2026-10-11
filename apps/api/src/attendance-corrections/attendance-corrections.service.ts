@@ -27,6 +27,13 @@ import {
   type AttendanceCorrectionAuditWriter,
 } from './attendance-corrections.audit';
 import {
+  assertCorrectionEvidenceLinkable,
+  canReadSensitiveEvidence,
+  correctionEvidenceSelect,
+  correctionEvidenceSummary,
+  redactRecordEvidence,
+} from './attendance-corrections.evidence';
+import {
   ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND,
   ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
   ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE,
@@ -336,6 +343,17 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         input.targetId,
       );
       this.validateRequestedFact(input);
+      if (
+        input.targetType === 'ATTENDANCE_CONTEXT' &&
+        input.requestedRecord?.evidenceDocumentVersionId
+      ) {
+        await assertCorrectionEvidenceLinkable(
+          this.documents,
+          transaction,
+          context,
+          input.requestedRecord.evidenceDocumentVersionId,
+        );
+      }
       const preview = await this.computePreview(
         transaction,
         context,
@@ -374,12 +392,12 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         const documentVersionId =
           'documentVersionId' in evidence ? evidence.documentVersionId : null;
         if (documentVersionId) {
-          const resolved = await this.documents.resolveFinalizedVersionInTransaction(
+          await assertCorrectionEvidenceLinkable(
+            this.documents,
             transaction,
-            { agencyId: context.agencyId },
+            context,
             documentVersionId,
           );
-          if (!resolved) throw this.evidenceInvalid();
         }
         await transaction.attendanceCorrectionEvidence.create({
           data: {
@@ -1127,7 +1145,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         take: limit,
         select: correctionSelect,
       });
-      return records.map(correctionSummary);
+      const requested = await redactRecordEvidence(
+        transaction,
+        context,
+        records.map((record) => record.requestedRecord),
+      );
+      return records.map((record, index) => ({
+        ...correctionSummary(record),
+        requestedRecord: requested[index] ?? null,
+      }));
     });
   }
 
@@ -1522,20 +1548,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       transaction.attendanceCorrectionEvidence.findMany({
         where: { agencyId: context.agencyId, attendanceCorrectionId: record.id },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        select: {
-          id: true,
-          documentVersionId: true,
-          sourceType: true,
-          sourceId: true,
-          createdAt: true,
-          documentVersion: {
-            select: {
-              id: true,
-              versionNo: true,
-              document: { select: { id: true, documentNo: true, documentType: true } },
-            },
-          },
-        },
+        select: correctionEvidenceSelect,
       }),
       transaction.attendanceCorrectionEffect.findUnique({
         where: { attendanceCorrectionId: record.id },
@@ -1573,26 +1586,23 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         select: { id: true, routeVersionId: true, status: true, currentStepNo: true },
       }),
     ]);
+    const canReadSensitive = canReadSensitiveEvidence(context);
+    const [requestedRecord = null, replacementRecord = null] = await redactRecordEvidence(
+      transaction,
+      context,
+      [record.requestedRecord, effect?.replacementRecord ?? null],
+    );
     return {
-      correction: correctionSummary(record),
+      correction: { ...correctionSummary(record), requestedRecord },
       impactPreview: parseImpactPreview(record.impactPreview),
-      evidence: evidence.map((row) => ({
-        id: row.id,
-        documentVersionId: row.documentVersionId,
-        documentId: row.documentVersion?.document.id ?? null,
-        documentNo: row.documentVersion?.document.documentNo ?? null,
-        documentType: row.documentVersion?.document.documentType ?? null,
-        sourceType: row.sourceType,
-        sourceId: row.sourceId,
-        createdAt: row.createdAt.toISOString(),
-      })),
+      evidence: evidence.map((row) => correctionEvidenceSummary(row, canReadSensitive)),
       effect: effect
         ? {
             id: effect.id,
             effectAction: effect.effectAction as AttendanceCorrectionAction,
             targetType: effect.targetType as AttendanceCorrectionTargetType,
             originalTargetId: effect.originalTargetId,
-            replacementRecord: effect.replacementRecord,
+            replacementRecord,
             appliedByMembershipId: effect.appliedByMembershipId,
             appliedAt: effect.appliedAt.toISOString(),
           }
@@ -2266,14 +2276,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       'The corrected Attendance Event or Attendance Context could not be found for this Employee.',
       404,
       'ATTENDANCE_CORRECTION_TARGET_NOT_FOUND',
-    );
-  }
-
-  private evidenceInvalid(): AttendanceCorrectionServiceError {
-    return new AttendanceCorrectionServiceError(
-      'Attendance Correction evidence must reference a finalized Document Version.',
-      409,
-      'ATTENDANCE_CORRECTION_EVIDENCE_INVALID',
     );
   }
 

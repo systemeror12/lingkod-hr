@@ -462,7 +462,7 @@ async function seedDtrFixture(): Promise<void> {
           requiredMinutes: 480,
           eventPattern: 'IN_OUT',
           collectionBeforeMinutes: 0,
-          collectionAfterMinutes: 0,
+          collectionAfterMinutes: 60,
           breaks: {
             create: [
               {
@@ -1405,7 +1405,7 @@ async function seed(): Promise<void> {
           requiredMinutes: 480,
           eventPattern: 'IN_OUT',
           collectionBeforeMinutes: 0,
-          collectionAfterMinutes: 0,
+          collectionAfterMinutes: 60,
           breaks: {
             create: [
               {
