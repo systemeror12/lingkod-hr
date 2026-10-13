@@ -28,6 +28,9 @@ const foreignEmployeeId = '55555555-5555-4555-8555-555555555555';
 const foreignIdentifierId = '66666666-6666-4666-8666-666666666666';
 const leaveNationalRuleDocumentId = '77777777-7777-4777-8777-777777777777';
 const leaveAgencyConfigurationDocumentId = '88888888-8888-4888-8888-888888888888';
+const sensitiveEvidenceDocumentId = '99999999-9999-4999-8999-999999999999';
+/** Reads Attendance Contexts across the Agency but lacks `documents.evidence.read_sensitive`. */
+const contextReaderEmail = 'context.reader@example.test';
 const phase5OwnerEmail = 'phase5.owner@example.test';
 const phase5OwnerToken = 'phase5-owner-invitation-token-0000000000000';
 const phase5RestrictedEmail = 'phase5.restricted@example.test';
@@ -68,6 +71,7 @@ const seededUserEmails = [
   phase5RestrictedEmail,
   'foreign.personnel@example.test',
   'dtr.reviewer@example.test',
+  contextReaderEmail,
   enrollmentCandidateEmail,
   securityOfficerEmail,
   factorResetCandidateEmail,
@@ -1143,6 +1147,7 @@ async function seed(): Promise<void> {
               'E2E-MOVE-AUTHORITY',
               'E2E-LEAVE-NATIONAL-RULE',
               'E2E-LEAVE-AGENCY-CONFIG',
+              'E2E-SENSITIVE-EVIDENCE',
             ],
           },
         },
@@ -1183,6 +1188,7 @@ async function seed(): Promise<void> {
             'E2E-MOVE-AUTHORITY',
             'E2E-LEAVE-NATIONAL-RULE',
             'E2E-LEAVE-AGENCY-CONFIG',
+            'E2E-SENSITIVE-EVIDENCE',
           ],
         },
       },
@@ -1212,14 +1218,19 @@ async function seed(): Promise<void> {
       data: { currentVersionId: unitVersion.id },
     });
 
-    async function evidence(documentNo: string, documentType: string, id?: string) {
+    async function evidence(
+      documentNo: string,
+      documentType: string,
+      id?: string,
+      classification = 'CONFIDENTIAL',
+    ) {
       const document = await transaction.document.create({
         data: {
           id,
           agencyId: agency.id,
           documentNo,
           documentType,
-          classification: 'CONFIDENTIAL',
+          classification,
           status: 'DRAFT',
           createdByMembershipId: membership.id,
         },
@@ -1250,6 +1261,12 @@ async function seed(): Promise<void> {
     await evidence('E2E-LEAVE-NATIONAL-RULE', 'LEAVE_POLICY', leaveNationalRuleDocumentId);
     await evidence('E2E-LEAVE-AGENCY-CONFIG', 'LEAVE_POLICY', leaveAgencyConfigurationDocumentId);
     await evidence('E2E-PDS-EVIDENCE', 'PDS');
+    await evidence(
+      'E2E-SENSITIVE-EVIDENCE',
+      'MEDICAL_CERTIFICATE',
+      sensitiveEvidenceDocumentId,
+      'HIGHLY_SENSITIVE',
+    );
     const standard = await transaction.qualificationStandard.create({
       data: {
         agencyId: agency.id,
@@ -2763,6 +2780,57 @@ async function seed(): Promise<void> {
         data: { effectiveFrom: new Date('2026-01-01') },
       });
     }
+  }
+
+  const contextReader = await prisma.user.upsert({
+    where: { emailNormalized: contextReaderEmail },
+    update: {
+      displayName: 'Context Reader',
+      globalStatus: 'ACTIVE',
+      lockedAt: null,
+      lockedByAgencyId: null,
+    },
+    create: {
+      emailNormalized: contextReaderEmail,
+      displayName: 'Context Reader',
+      globalStatus: 'ACTIVE',
+      emailVerifiedAt: new Date(),
+    },
+  });
+  const contextReaderMembership =
+    (await prisma.agencyMembership.findFirst({
+      where: { agencyId: agency.id, userId: contextReader.id },
+    })) ??
+    (await prisma.agencyMembership.create({
+      data: {
+        agencyId: agency.id,
+        userId: contextReader.id,
+        status: 'ACTIVE',
+        activatedAt: new Date(),
+      },
+    }));
+  const payrollPreparer = await prisma.role.findFirstOrThrow({
+    where: { agencyId: null, code: 'payroll_preparer', status: 'ACTIVE' },
+  });
+  if (
+    !(await prisma.membershipRole.findFirst({
+      where: {
+        agencyId: agency.id,
+        membershipId: contextReaderMembership.id,
+        roleId: payrollPreparer.id,
+      },
+    }))
+  ) {
+    await prisma.membershipRole.create({
+      data: {
+        agencyId: agency.id,
+        membershipId: contextReaderMembership.id,
+        roleId: payrollPreparer.id,
+        effectiveFrom: new Date('2026-01-01'),
+        assignedByMembershipId: membership.id,
+        reason: 'Protected shell E2E fixture',
+      },
+    });
   }
 
   const foreignAgency = await prisma.agency.upsert({
