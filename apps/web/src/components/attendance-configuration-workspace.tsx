@@ -2,7 +2,7 @@
 
 import { Field, inputClass, labelClass, FormError } from './ui/field';
 import { useRecordNavigation } from './record-navigation';
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Dialog,
   DialogBody,
@@ -18,392 +18,77 @@ import { Button } from './ui/button';
 import { PageHeader, type Breadcrumb } from './ui/page-header';
 import { Panel } from './ui/panel';
 import { SectionTabList, SectionTabPanel, SectionTabs } from './ui/section-tabs';
-import { StatusTag, type StatusTone } from './ui/status-tag';
 import { RowHeader, Table, Td, Th, Tr } from './ui/table';
 import { StateSurface } from './state-surface';
 import { manilaToday } from '../lib/manila-date';
-
-type VersionState = 'DRAFT' | 'ACTIVE' | 'SUPERSEDED';
-type ScheduleType = 'REGULAR' | 'FLEXIBLE' | 'SHIFT' | 'COMPRESSED';
-type DayRuleType = 'REST' | 'FIXED' | 'FLEXIBLE';
-type EventPattern = 'IN_OUT' | 'WITH_BREAK_EVENTS';
-type ArrangementType = 'ONSITE' | 'WORK_FROM_HOME' | 'HYBRID' | 'FIELD' | 'OTHER';
-type HolidayCalendarScopeType = 'AGENCY' | 'OFFICE' | 'WORKSITE';
-type HolidayDayType =
-  | 'REGULAR_HOLIDAY'
-  | 'SPECIAL_NON_WORKING'
-  | 'SPECIAL_WORKING'
-  | 'LOCAL_HOLIDAY'
-  | 'WORK_SUSPENSION';
-
-const holidayCalendarScopeTypes: readonly HolidayCalendarScopeType[] = [
-  'AGENCY',
-  'OFFICE',
-  'WORKSITE',
-];
-const holidayDayTypes: readonly HolidayDayType[] = [
-  'REGULAR_HOLIDAY',
-  'SPECIAL_NON_WORKING',
-  'SPECIAL_WORKING',
-  'LOCAL_HOLIDAY',
-  'WORK_SUSPENSION',
-];
-
-const scheduleTypes: readonly ScheduleType[] = ['REGULAR', 'FLEXIBLE', 'SHIFT', 'COMPRESSED'];
-const arrangementTypes: readonly ArrangementType[] = [
-  'ONSITE',
-  'WORK_FROM_HOME',
-  'HYBRID',
-  'FIELD',
-  'OTHER',
-];
-const ruleTypes: readonly DayRuleType[] = ['FIXED', 'FLEXIBLE', 'REST'];
-const eventPatterns: readonly EventPattern[] = ['IN_OUT', 'WITH_BREAK_EVENTS'];
-
-const weekdayLabels: Record<number, string> = {
-  1: 'Monday',
-  2: 'Tuesday',
-  3: 'Wednesday',
-  4: 'Thursday',
-  5: 'Friday',
-  6: 'Saturday',
-  7: 'Sunday',
-};
-
-export interface WorkScheduleBreak {
-  id: string;
-  sequenceNo: number;
-  breakStartTime: string;
-  breakEndTime: string;
-  endNextCalendarDay: boolean;
-}
-
-export interface WorkScheduleDayRule {
-  id: string;
-  weekday: number;
-  ruleType: DayRuleType;
-  dutyStartTime: string | null;
-  earliestStartTime: string | null;
-  latestStartTime: string | null;
-  dutyEndTime: string | null;
-  endNextCalendarDay: boolean;
-  requiredMinutes: number;
-  coreStartTime: string | null;
-  coreEndTime: string | null;
-  eventPattern: EventPattern;
-  collectionBeforeMinutes: number;
-  collectionAfterMinutes: number;
-  breaks: WorkScheduleBreak[];
-}
-
-export interface WorkScheduleVersion {
-  id: string;
-  workScheduleId: string;
-  versionNo: number;
-  scheduleType: ScheduleType;
-  timezone: string;
-  authorityDocumentVersionId: string | null;
-  approvingAuthority: string | null;
-  versionState: VersionState;
-  effectiveFrom: string;
-  effectiveTo: string | null;
-  activatedAt: string | null;
-  dayRules: WorkScheduleDayRule[];
-  rowVersion: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkSchedule {
-  id: string;
-  code: string;
-  name: string;
-  currentVersion: WorkScheduleVersion | null;
-  draft: WorkScheduleVersion | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkScheduleListResponse {
-  items: WorkSchedule[];
-}
-
-interface WorkScheduleDetail {
-  schedule: WorkSchedule;
-  asOf: string;
-  effective: WorkScheduleVersion | null;
-  versions: WorkScheduleVersion[];
-  history: Array<{
-    id: string;
-    action: string;
-    previousStatus: string | null;
-    newStatus: string | null;
-    reason: string | null;
-    effectiveDate: string | null;
-    occurredAt: string;
-  }>;
-}
-
-export interface WorkArrangementVersion {
-  id: string;
-  workArrangementId: string;
-  versionNo: number;
-  arrangementType: ArrangementType;
-  permittedScheduleTypes: ScheduleType[];
-  holidayCalendarId: string;
-  authorityDocumentVersionId: string | null;
-  approvingAuthority: string | null;
-  versionState: VersionState;
-  effectiveFrom: string;
-  effectiveTo: string | null;
-  activatedAt: string | null;
-  rowVersion: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkArrangement {
-  id: string;
-  code: string;
-  name: string;
-  currentVersion: WorkArrangementVersion | null;
-  draft: WorkArrangementVersion | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface WorkArrangementListResponse {
-  items: WorkArrangement[];
-}
-
-interface WorkArrangementDetail {
-  arrangement: WorkArrangement;
-  asOf: string;
-  effective: WorkArrangementVersion | null;
-  versions: WorkArrangementVersion[];
-  history: Array<{
-    id: string;
-    action: string;
-    previousStatus: string | null;
-    newStatus: string | null;
-    reason: string | null;
-    effectiveDate: string | null;
-    occurredAt: string;
-  }>;
-}
-
-export interface HolidayCalendarEntry {
-  id: string;
-  holidayDate: string;
-  name: string;
-  dayType: HolidayDayType;
-  sourceReference: string;
-  rowVersion: number;
-}
-
-export interface HolidayCalendarVersion {
-  id: string;
-  holidayCalendarId: string;
-  versionNo: number;
-  authorityDocumentVersionId: string | null;
-  approvingAuthority: string | null;
-  versionState: VersionState;
-  effectiveFrom: string;
-  effectiveTo: string | null;
-  activatedAt: string | null;
-  entries: HolidayCalendarEntry[];
-  rowVersion: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface HolidayCalendar {
-  id: string;
-  code: string;
-  name: string;
-  scopeType: HolidayCalendarScopeType;
-  scopeReference: string;
-  currentVersion: HolidayCalendarVersion | null;
-  draft: HolidayCalendarVersion | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface HolidayCalendarListResponse {
-  items: HolidayCalendar[];
-}
-
-interface HolidayCalendarDetail {
-  calendar: HolidayCalendar;
-  asOf: string;
-  effective: HolidayCalendarVersion | null;
-  versions: HolidayCalendarVersion[];
-  history: WorkScheduleDetail['history'];
-}
-
-export interface ScheduleAssignmentEmployee {
-  id: string;
-  employeeNumber: string;
-  legalName: string;
-}
-
-export interface ScheduleAssignment {
-  id: string;
-  employee: ScheduleAssignmentEmployee;
-  workScheduleVersionId: string;
-  workScheduleVersionNo: number;
-  scheduleType: ScheduleType;
-  workScheduleCode: string;
-  workScheduleName: string;
-  workArrangementVersionId: string;
-  workArrangementVersionNo: number;
-  arrangementType: ArrangementType;
-  workArrangementCode: string;
-  workArrangementName: string;
-  holidayCalendarId: string;
-  authorityDocumentVersionId: string;
-  effectiveFrom: string;
-  effectiveTo: string | null;
-  assignedByMembershipId: string;
-  createdAt: string;
-  updatedAt: string;
-  rowVersion: number;
-}
-
-interface ScheduleAssignmentListResponse {
-  items: ScheduleAssignment[];
-}
-
-interface AttendanceResolution {
-  employeeId: string;
-  workDate: string;
-  assignment: ScheduleAssignment;
-  workScheduleVersion: WorkScheduleVersion;
-  workArrangementVersion: WorkArrangementVersion;
-  holidayCalendarVersion: HolidayCalendarVersion;
-  dayRule: WorkScheduleDayRule;
-  holidayEntries: HolidayCalendarEntry[];
-}
-
-interface EmployeeOption {
-  id: string;
-  employeeNumber: string;
-  legalName: string;
-}
-
-interface EvidenceOption {
-  documentId: string;
-  documentNo: string | null;
-  documentType: string;
-  version: { id: string; versionNo: number };
-}
-
-interface BreakForm {
-  breakStartTime: string;
-  breakEndTime: string;
-  endNextCalendarDay: boolean;
-}
-
-interface DayRuleForm {
-  weekday: number;
-  ruleType: DayRuleType;
-  dutyStartTime: string;
-  earliestStartTime: string;
-  latestStartTime: string;
-  dutyEndTime: string;
-  endNextCalendarDay: boolean;
-  requiredMinutes: string;
-  coreStartTime: string;
-  coreEndTime: string;
-  eventPattern: EventPattern;
-  collectionBeforeMinutes: string;
-  collectionAfterMinutes: string;
-  breaks: BreakForm[];
-}
-
-interface ScheduleFormValues {
-  code: string;
-  name: string;
-  scheduleType: ScheduleType;
-  timezone: string;
-  effectiveDate: string;
-  dayRules: DayRuleForm[];
-  rowVersion?: number;
-}
-
-interface ArrangementFormValues {
-  code: string;
-  name: string;
-  arrangementType: ArrangementType;
-  permittedScheduleTypes: ScheduleType[];
-  holidayCalendarId: string;
-  effectiveDate: string;
-  rowVersion?: number;
-}
-
-interface ActivationValues {
-  authorityDocumentVersionId: string;
-  approvingAuthority: string;
-  reason: string;
-}
-
-interface HolidayEntryForm {
-  holidayDate: string;
-  name: string;
-  dayType: HolidayDayType;
-  sourceReference: string;
-}
-
-interface HolidayCalendarFormValues {
-  code: string;
-  name: string;
-  scopeType: HolidayCalendarScopeType;
-  scopeReference: string;
-  effectiveDate: string;
-  entries: HolidayEntryForm[];
-  rowVersion?: number;
-}
-
-interface AssignmentFormValues {
-  employeeId: string;
-  workScheduleVersionId: string;
-  workArrangementVersionId: string;
-  authorityDocumentVersionId: string;
-  effectiveFrom: string;
-}
-
-interface AssignmentEndValues {
-  effectiveTo: string;
-  reason: string;
-}
-
-class AttendanceRequestError extends Error {
-  readonly exceptionType: string | null;
-
-  constructor(message: string, exceptionType: string | null) {
-    super(message);
-    this.exceptionType = exceptionType;
-  }
-}
-
-type DialogKind =
-  | 'schedule-create'
-  | 'schedule-edit'
-  | 'schedule-detail'
-  | 'schedule-successor'
-  | 'schedule-activate'
-  | 'arrangement-create'
-  | 'arrangement-edit'
-  | 'arrangement-detail'
-  | 'arrangement-successor'
-  | 'arrangement-activate'
-  | 'calendar-create'
-  | 'calendar-edit'
-  | 'calendar-detail'
-  | 'calendar-successor'
-  | 'calendar-activate'
-  | 'assignment-create'
-  | 'assignment-end';
+import {
+  ActivationForm,
+  DetailFooter,
+  DetailLoading,
+  TransitionHistory,
+  VersionCard,
+  VersionEffectivity,
+  VersionMeta,
+} from './attendance-configuration/shared';
+import {
+  countLabel,
+  dateLabel,
+  describeRequestError,
+  errorMessage,
+  label,
+  noteClass,
+  parseEvidenceOptions,
+  recordLinkClass,
+  rowBoxClass,
+  sectionTitleClass,
+  targetChecked,
+  targetValue,
+  validForm,
+} from './attendance-configuration/helpers';
+import {
+  type ScheduleType,
+  type DayRuleType,
+  type EventPattern,
+  type ArrangementType,
+  type HolidayCalendarScopeType,
+  type HolidayDayType,
+  holidayCalendarScopeTypes,
+  holidayDayTypes,
+  scheduleTypes,
+  arrangementTypes,
+  ruleTypes,
+  eventPatterns,
+  weekdayLabels,
+  type WorkScheduleDayRule,
+  type WorkScheduleVersion,
+  type WorkSchedule,
+  type WorkScheduleListResponse,
+  type WorkScheduleDetail,
+  type WorkArrangementVersion,
+  type WorkArrangement,
+  type WorkArrangementListResponse,
+  type WorkArrangementDetail,
+  type HolidayCalendarVersion,
+  type HolidayCalendar,
+  type HolidayCalendarListResponse,
+  type HolidayCalendarDetail,
+  type ScheduleAssignment,
+  type ScheduleAssignmentListResponse,
+  type AttendanceResolution,
+  type EmployeeOption,
+  type EvidenceOption,
+  type BreakForm,
+  type DayRuleForm,
+  type ScheduleFormValues,
+  type ArrangementFormValues,
+  type ActivationValues,
+  type HolidayEntryForm,
+  type HolidayCalendarFormValues,
+  type AssignmentFormValues,
+  type AssignmentEndValues,
+  AttendanceRequestError,
+  type DialogKind,
+} from './attendance-configuration/types';
 
 function emptyActivation(): ActivationValues {
   return { authorityDocumentVersionId: '', approvingAuthority: '', reason: '' };
@@ -733,30 +418,6 @@ function assignmentPayload(values: AssignmentFormValues): Record<string, unknown
   };
 }
 
-function dateLabel(value: string): string {
-  const date = new Date(value.includes('T') ? value : value.slice(0, 10) + 'T00:00:00.000Z');
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('en-PH', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'Asia/Manila',
-  });
-}
-
-function errorMessage(value: unknown, fallback: string): string {
-  if (typeof value !== 'object' || value === null) return fallback;
-  const error = (value as { error?: { message?: unknown } }).error;
-  return typeof error?.message === 'string' ? error.message : fallback;
-}
-
-function describeRequestError(error: unknown, fallback: string): string {
-  if (error instanceof AttendanceRequestError && error.exceptionType) {
-    return error.message + ' · Cause: ' + label(error.exceptionType);
-  }
-  return error instanceof Error ? error.message : fallback;
-}
-
 function ruleWindow(rule: WorkScheduleDayRule): string {
   if (rule.ruleType === 'REST') return 'No duty';
   if (rule.ruleType === 'FIXED') {
@@ -790,25 +451,6 @@ function breaksLabel(rule: WorkScheduleDayRule): string {
     .join(', ');
 }
 
-function label(value: string): string {
-  return value
-    .toLowerCase()
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function parseEvidenceOptions(value: unknown): EvidenceOption[] {
-  if (
-    !value ||
-    typeof value !== 'object' ||
-    !Array.isArray((value as { documents?: unknown }).documents)
-  ) {
-    throw new Error('The Agency Document response was invalid.');
-  }
-  return (value as { documents: EvidenceOption[] }).documents;
-}
-
 function parseEmployeeOptions(value: unknown): EmployeeOption[] {
   if (
     !value ||
@@ -825,91 +467,6 @@ function parseAssignments(value: unknown): ScheduleAssignment[] {
     throw new Error('The Schedule Assignment list response was invalid.');
   }
   return (value as ScheduleAssignmentListResponse).items;
-}
-
-function targetValue(event: { currentTarget: EventTarget }): string {
-  return (event.currentTarget as unknown as { value: string }).value;
-}
-
-function targetChecked(event: { currentTarget: EventTarget }): boolean {
-  return (event.currentTarget as unknown as { checked: boolean }).checked;
-}
-
-function validForm(event: FormEvent<HTMLFormElement>): boolean {
-  return (event.currentTarget as unknown as { reportValidity(): boolean }).reportValidity();
-}
-
-const VERSION_TONES: Record<VersionState, StatusTone> = {
-  DRAFT: 'warning',
-  ACTIVE: 'success',
-  SUPERSEDED: 'neutral',
-};
-
-const sectionTitleClass = 'm-0 text-panel-title text-ink';
-const noteClass = 'm-0 border-l-2 border-primary bg-canvas px-3 py-2.5 text-small text-ink-muted';
-const rowBoxClass = 'rounded-control border border-border bg-canvas p-3';
-const recordLinkClass =
-  'w-fit cursor-pointer border-0 bg-transparent p-0 text-left font-[600] text-primary hover:underline';
-
-function countLabel(count: number, noun: string): string {
-  return count === 1 ? '1 ' + noun : count + ' ' + noun + 's';
-}
-
-function StatusBadge({ status }: { status: VersionState }) {
-  return <StatusTag tone={VERSION_TONES[status]}>{label(status)}</StatusTag>;
-}
-
-function VersionMeta({ children, label: name }: { children: ReactNode; label: string }) {
-  return (
-    <div>
-      <dt className="text-caption text-ink-muted">{name}</dt>
-      <dd className="m-0 text-ink">{children}</dd>
-    </div>
-  );
-}
-
-function VersionCard({
-  children,
-  meta,
-  state,
-  versionNo,
-}: {
-  children?: ReactNode;
-  meta: ReactNode;
-  state: VersionState;
-  versionNo: number;
-}) {
-  return (
-    <article className="grid gap-3 rounded-control border border-border p-4 text-small">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <strong className="text-ink">Version {versionNo}</strong>
-        <StatusBadge status={state} />
-      </div>
-      <dl className="m-0 grid gap-2 min-[621px]:grid-cols-2">{meta}</dl>
-      {children}
-    </article>
-  );
-}
-
-function VersionEffectivity({ from, to }: { from: string; to: string | null }) {
-  return (
-    <VersionMeta label="Effectivity">
-      {dateLabel(from)}
-      {to ? ' – ' + dateLabel(to) : ' – open-ended'}
-    </VersionMeta>
-  );
-}
-
-function DetailFooter() {
-  return (
-    <DialogFooter>
-      <DialogClose asChild>
-        <Button type="button" variant="secondary">
-          Close
-        </Button>
-      </DialogClose>
-    </DialogFooter>
-  );
 }
 
 function ScheduleDayRuleTable({
@@ -957,42 +514,6 @@ function ScheduleDayRuleTable({
         ))}
       </tbody>
     </Table>
-  );
-}
-
-function TransitionHistory({
-  history,
-  id,
-}: {
-  history: WorkScheduleDetail['history'];
-  id: string;
-}) {
-  return (
-    <section className="grid gap-3" aria-labelledby={id}>
-      <h3 className={sectionTitleClass} id={id}>
-        Transition history
-      </h3>
-      {history.length ? (
-        <ol className="m-0 grid gap-2 pl-5 text-small text-ink-muted">
-          {history.map((entry) => (
-            <li key={entry.id}>
-              {entry.action} · {entry.reason ?? 'No reason recorded'} ·{' '}
-              {dateLabel(entry.occurredAt)}
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="m-0 text-small text-ink-muted">No transitions recorded.</p>
-      )}
-    </section>
-  );
-}
-
-function DetailLoading({ children, name }: { children: string; name: string }) {
-  return (
-    <StateSurface compact busy label={name}>
-      <p className="m-0">{children}</p>
-    </StateSurface>
   );
 }
 
@@ -2166,89 +1687,6 @@ function ArrangementDefinitionFields({
         </div>
       </fieldset>
     </fieldset>
-  );
-}
-
-function ActivationForm({
-  error,
-  evidenceLoading,
-  evidenceOptions,
-  onSubmit,
-  setActivation,
-  activation,
-}: {
-  activation: ActivationValues;
-  error: string;
-  evidenceLoading: boolean;
-  evidenceOptions: EvidenceOption[];
-  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-  setActivation: (values: ActivationValues) => void;
-}) {
-  return (
-    <form onSubmit={(event) => void onSubmit(event)}>
-      <DialogBody className="grid gap-5">
-        <FormError message={error} />
-        <Field htmlFor="attendance-activation-evidence" label="Authority Document Version">
-          <select
-            className={inputClass}
-            disabled={evidenceLoading}
-            id="attendance-activation-evidence"
-            onChange={(event) =>
-              setActivation({
-                ...activation,
-                authorityDocumentVersionId: targetValue(event),
-              })
-            }
-            required
-            value={activation.authorityDocumentVersionId}
-          >
-            <option value="">
-              {evidenceLoading ? 'Loading Document Versions…' : 'Select a finalized Document'}
-            </option>
-            {evidenceOptions.map((option) => (
-              <option key={option.version.id} value={option.version.id}>
-                {(option.documentNo ?? option.documentType) +
-                  ' · version ' +
-                  option.version.versionNo}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field htmlFor="attendance-activation-authority" label="Approving authority">
-          <input
-            className={inputClass}
-            id="attendance-activation-authority"
-            maxLength={300}
-            onChange={(event) =>
-              setActivation({ ...activation, approvingAuthority: targetValue(event) })
-            }
-            required
-            value={activation.approvingAuthority}
-          />
-        </Field>
-        <Field htmlFor="attendance-activation-reason" label="Activation reason">
-          <textarea
-            className={inputClass}
-            id="attendance-activation-reason"
-            maxLength={500}
-            onChange={(event) => setActivation({ ...activation, reason: targetValue(event) })}
-            required
-            rows={3}
-            value={activation.reason}
-          />
-        </Field>
-      </DialogBody>
-      <DialogFooter>
-        <DialogClose asChild>
-          <Button type="button" variant="secondary">
-            Cancel
-          </Button>
-        </DialogClose>
-        <Button disabled={evidenceLoading} type="submit" variant="primary">
-          Activate Version
-        </Button>
-      </DialogFooter>
-    </form>
   );
 }
 
