@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useRecordNavigation } from './record-navigation';
+import { RestrictedEvidence } from './restricted-evidence';
 import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
@@ -123,13 +124,14 @@ function coverageLabel(record: AttendanceContextItem): string {
   return `${instantLabel(record.startsAt)} – ${instantLabel(record.endsAt)}`;
 }
 
-function basisLabel(record: AttendanceContextItem): string {
+function basisLabel(record: AttendanceContextItem): ReactNode {
   if (record.sourceType !== null) {
     return record.sourceId ? `${record.sourceType} · ${record.sourceId}` : record.sourceType;
   }
   if (record.evidence?.access === 'FULL') {
     return `${record.evidence.documentNo ?? record.evidence.documentType} · v${record.evidence.versionNo}`;
   }
+  if (record.evidence?.access === 'RESTRICTED') return <RestrictedEvidence />;
   return '—';
 }
 

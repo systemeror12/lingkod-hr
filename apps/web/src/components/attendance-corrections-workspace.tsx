@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { useRecordNavigation } from './record-navigation';
+import { RestrictedEvidence } from './restricted-evidence';
 import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
@@ -77,14 +78,18 @@ export interface AttendanceCorrectionImpactPreview {
 export interface AttendanceCorrectionDetail {
   correction: AttendanceCorrection;
   impactPreview: AttendanceCorrectionImpactPreview;
-  evidence: Array<{
-    id: string;
-    documentVersionId: string | null;
-    documentNo: string | null;
-    sourceType: string | null;
-    sourceId: string | null;
-    createdAt: string;
-  }>;
+  evidence: Array<
+    | {
+        access: 'FULL';
+        id: string;
+        documentVersionId: string | null;
+        documentNo: string | null;
+        sourceType: string | null;
+        sourceId: string | null;
+        createdAt: string;
+      }
+    | { access: 'RESTRICTED'; id: string; createdAt: string }
+  >;
   effect: {
     id: string;
     effectAction: AttendanceCorrectionAction;
@@ -166,6 +171,14 @@ const TARGET_LABEL: Record<AttendanceCorrectionTargetType, string> = {
   ATTENDANCE_CONTEXT: 'attendance context',
   POSTED_LEAVE_INPUT: 'posted leave',
 };
+
+/** Names one evidence link, or only marks it when the reader may not identify it. */
+export function evidenceLabel(item: AttendanceCorrectionDetail['evidence'][number]): ReactNode {
+  if (item.access === 'RESTRICTED') return <RestrictedEvidence />;
+  return item.documentVersionId
+    ? `Document${item.documentNo ? ` ${item.documentNo}` : ''} version ${item.documentVersionId}`
+    : `${item.sourceType} ${item.sourceId}`;
+}
 
 function actionLabel(action: AttendanceCorrectionAction): string {
   if (action === 'ADD') return 'Add';
@@ -939,9 +952,7 @@ function CorrectionDetail({
           <ul className="m-0 grid list-none gap-1 p-0 text-small">
             {detail.evidence.map((item) => (
               <li key={item.id} className="break-all text-ink">
-                {item.documentVersionId
-                  ? `Document${item.documentNo ? ` ${item.documentNo}` : ''} version ${item.documentVersionId}`
-                  : `${item.sourceType} ${item.sourceId}`}
+                {evidenceLabel(item)}
               </li>
             ))}
           </ul>
