@@ -12,7 +12,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { PageHeader, type Breadcrumb } from './ui/page-header';
@@ -34,6 +33,7 @@ import {
   countLabel,
   dateLabel,
   describeRequestError,
+  emptyActivation,
   errorMessage,
   label,
   noteClass,
@@ -49,13 +49,11 @@ import {
   type ScheduleType,
   type DayRuleType,
   type EventPattern,
-  type ArrangementType,
   type HolidayCalendarScopeType,
   type HolidayDayType,
   holidayCalendarScopeTypes,
   holidayDayTypes,
   scheduleTypes,
-  arrangementTypes,
   ruleTypes,
   eventPatterns,
   weekdayLabels,
@@ -64,10 +62,8 @@ import {
   type WorkSchedule,
   type WorkScheduleListResponse,
   type WorkScheduleDetail,
-  type WorkArrangementVersion,
   type WorkArrangement,
   type WorkArrangementListResponse,
-  type WorkArrangementDetail,
   type HolidayCalendarVersion,
   type HolidayCalendar,
   type HolidayCalendarListResponse,
@@ -80,19 +76,15 @@ import {
   type BreakForm,
   type DayRuleForm,
   type ScheduleFormValues,
-  type ArrangementFormValues,
-  type ActivationValues,
   type HolidayEntryForm,
   type HolidayCalendarFormValues,
   type AssignmentFormValues,
   type AssignmentEndValues,
   AttendanceRequestError,
   type DialogKind,
+  type TabSectionHandle,
 } from './attendance-configuration/types';
-
-function emptyActivation(): ActivationValues {
-  return { authorityDocumentVersionId: '', approvingAuthority: '', reason: '' };
-}
+import { WorkArrangementsSection } from './attendance-configuration/work-arrangements-section';
 
 function defaultDayRule(weekday: number, ruleType: DayRuleType): DayRuleForm {
   const base: DayRuleForm = {
@@ -147,17 +139,6 @@ function emptyScheduleValues(): ScheduleFormValues {
     timezone: 'Asia/Manila',
     effectiveDate: manilaToday(),
     dayRules: emptyDayRules(),
-  };
-}
-
-function emptyArrangementValues(holidayCalendarId: string): ArrangementFormValues {
-  return {
-    code: '',
-    name: '',
-    arrangementType: 'ONSITE',
-    permittedScheduleTypes: ['REGULAR'],
-    holidayCalendarId,
-    effectiveDate: manilaToday(),
   };
 }
 
@@ -283,21 +264,6 @@ function dayRuleFrom(rule: WorkScheduleDayRule): DayRuleForm {
   };
 }
 
-function arrangementValuesFrom(
-  arrangement: WorkArrangement,
-  version: WorkArrangementVersion,
-): ArrangementFormValues {
-  return {
-    code: arrangement.code,
-    name: arrangement.name,
-    arrangementType: version.arrangementType,
-    permittedScheduleTypes: version.permittedScheduleTypes,
-    holidayCalendarId: version.holidayCalendarId,
-    effectiveDate: version.effectiveFrom,
-    rowVersion: version.rowVersion,
-  };
-}
-
 function timeOrNull(value: string): string | null {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
@@ -355,25 +321,6 @@ function schedulePayload(
     timezone: values.timezone,
     effectiveDate: values.effectiveDate,
     dayRules: values.dayRules.map(dayRulePayload),
-  };
-  if (includeIdentity) {
-    result.code = values.code;
-    result.name = values.name;
-  } else if (values.rowVersion !== undefined) {
-    result.rowVersion = values.rowVersion;
-  }
-  return result;
-}
-
-function arrangementPayload(
-  values: ArrangementFormValues,
-  includeIdentity: boolean,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    arrangementType: values.arrangementType,
-    permittedScheduleTypes: values.permittedScheduleTypes,
-    holidayCalendarId: values.holidayCalendarId,
-    effectiveDate: values.effectiveDate,
   };
   if (includeIdentity) {
     result.code = values.code;
@@ -580,89 +527,6 @@ function ScheduleDetailBody({
               ))}
             </section>
             <TransitionHistory history={detail.history} id="work-schedule-audit-history-title" />
-          </>
-        ) : null}
-      </DialogBody>
-      <DetailFooter />
-    </>
-  );
-}
-
-function ArrangementDetailBody({
-  calendars,
-  detail,
-  detailLoading,
-  error,
-}: {
-  calendars: HolidayCalendar[];
-  detail: WorkArrangementDetail | null;
-  detailLoading: boolean;
-  error: string;
-}) {
-  function calendarName(id: string): string {
-    const calendar = calendars.find((entry) => entry.id === id);
-    return calendar ? calendar.code + ' · ' + calendar.name : id;
-  }
-  return (
-    <>
-      <DialogBody className="grid gap-6">
-        {detailLoading ? (
-          <DetailLoading name="Work Arrangement history">
-            Loading arrangement history…
-          </DetailLoading>
-        ) : null}
-        <FormError message={error} />
-        {detail ? (
-          <>
-            <dl className="m-0 grid gap-4 text-small min-[621px]:grid-cols-2">
-              <VersionMeta label="Code">{detail.arrangement.code}</VersionMeta>
-              <VersionMeta label="Name">{detail.arrangement.name}</VersionMeta>
-              <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
-              <VersionMeta label="Effective version">
-                {detail.effective
-                  ? 'v' +
-                    detail.effective.versionNo +
-                    ' · ' +
-                    label(detail.effective.arrangementType)
-                  : 'No effective version'}
-              </VersionMeta>
-            </dl>
-            <section
-              className="grid gap-3"
-              aria-labelledby="work-arrangement-version-history-title"
-            >
-              <h3 className={sectionTitleClass} id="work-arrangement-version-history-title">
-                Version history
-              </h3>
-              {detail.versions.map((version) => (
-                <VersionCard
-                  key={version.id}
-                  meta={
-                    <>
-                      <VersionEffectivity from={version.effectiveFrom} to={version.effectiveTo} />
-                      <VersionMeta label="Arrangement type">
-                        {label(version.arrangementType)}
-                      </VersionMeta>
-                      <VersionMeta label="Permitted schedule types">
-                        {version.permittedScheduleTypes.map((entry) => label(entry)).join(', ')}
-                      </VersionMeta>
-                      <VersionMeta label="Holiday Calendar">
-                        {calendarName(version.holidayCalendarId)}
-                      </VersionMeta>
-                      <VersionMeta label="Approving authority">
-                        {version.approvingAuthority ?? 'Not recorded'}
-                      </VersionMeta>
-                      <VersionMeta label="Activated">
-                        {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
-                      </VersionMeta>
-                    </>
-                  }
-                  state={version.versionState}
-                  versionNo={version.versionNo}
-                />
-              ))}
-            </section>
-            <TransitionHistory history={detail.history} id="work-arrangement-audit-history-title" />
           </>
         ) : null}
       </DialogBody>
@@ -1575,121 +1439,6 @@ function ScheduleDefinitionFields({
   );
 }
 
-function ArrangementDefinitionFields({
-  calendars,
-  dialog,
-  setValue,
-  values,
-}: {
-  calendars: HolidayCalendar[];
-  dialog: DialogKind | null;
-  setValue: <K extends keyof ArrangementFormValues>(
-    field: K,
-    value: ArrangementFormValues[K],
-  ) => void;
-  values: ArrangementFormValues;
-}) {
-  const creating = dialog === 'arrangement-create';
-  return (
-    <fieldset className="grid gap-4">
-      <legend className="mb-1 text-panel-title text-ink">Arrangement definition</legend>
-      {creating ? (
-        <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
-          <Field htmlFor="work-arrangement-code" label="Work Arrangement code">
-            <input
-              autoFocus
-              className={inputClass}
-              data-autofocus=""
-              id="work-arrangement-code"
-              maxLength={80}
-              onChange={(event) => setValue('code', targetValue(event))}
-              required
-              value={values.code}
-            />
-          </Field>
-          <Field htmlFor="work-arrangement-name" label="Work Arrangement name">
-            <input
-              className={inputClass}
-              id="work-arrangement-name"
-              maxLength={200}
-              onChange={(event) => setValue('name', targetValue(event))}
-              required
-              value={values.name}
-            />
-          </Field>
-        </div>
-      ) : null}
-      <div className="grid gap-4 min-[621px]:grid-cols-3">
-        <Field htmlFor="work-arrangement-type" label="Arrangement type">
-          <select
-            className={inputClass}
-            id="work-arrangement-type"
-            onChange={(event) => setValue('arrangementType', targetValue(event) as ArrangementType)}
-            value={values.arrangementType}
-          >
-            {arrangementTypes.map((entry) => (
-              <option key={entry} value={entry}>
-                {label(entry)}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field htmlFor="work-arrangement-calendar" label="Holiday Calendar">
-          <select
-            className={inputClass}
-            id="work-arrangement-calendar"
-            onChange={(event) => setValue('holidayCalendarId', targetValue(event))}
-            required
-            value={values.holidayCalendarId}
-          >
-            <option value="">Select a Holiday Calendar</option>
-            {calendars.map((calendar) => (
-              <option key={calendar.id} value={calendar.id}>
-                {calendar.code} · {calendar.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field htmlFor="work-arrangement-effective-date" label="Effective date">
-          <input
-            className={inputClass}
-            id="work-arrangement-effective-date"
-            onChange={(event) => setValue('effectiveDate', targetValue(event))}
-            required
-            type="date"
-            value={values.effectiveDate}
-          />
-        </Field>
-      </div>
-      <fieldset className="grid gap-2">
-        <legend className="text-caption font-[650] text-ink">Permitted schedule types</legend>
-        <div className="flex flex-wrap gap-3">
-          {scheduleTypes.map((entry) => (
-            <label
-              className="flex min-h-11 items-center gap-2 rounded-control border border-border px-3 text-small text-ink"
-              key={entry}
-            >
-              <input
-                checked={values.permittedScheduleTypes.includes(entry)}
-                onChange={(event) =>
-                  setValue(
-                    'permittedScheduleTypes',
-                    targetChecked(event)
-                      ? [...values.permittedScheduleTypes, entry]
-                      : values.permittedScheduleTypes.filter((value) => value !== entry),
-                  )
-                }
-                type="checkbox"
-              />
-              {label(entry)}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-    </fieldset>
-  );
-}
-
 export function AttendanceConfigurationWorkspace({
   agencyId,
   arrangements: initialArrangements,
@@ -1720,17 +1469,12 @@ export function AttendanceConfigurationWorkspace({
   const [employeesError, setEmployeesError] = useState('');
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<WorkSchedule | null>(null);
-  const [selectedArrangement, setSelectedArrangement] = useState<WorkArrangement | null>(null);
   const [selectedCalendar, setSelectedCalendar] = useState<HolidayCalendar | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<ScheduleAssignment | null>(null);
   const [scheduleDetail, setScheduleDetail] = useState<WorkScheduleDetail | null>(null);
-  const [arrangementDetail, setArrangementDetail] = useState<WorkArrangementDetail | null>(null);
   const [calendarDetail, setCalendarDetail] = useState<HolidayCalendarDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [scheduleValues, setScheduleValues] = useState(emptyScheduleValues);
-  const [arrangementValues, setArrangementValues] = useState(() =>
-    emptyArrangementValues(initialCalendars[0]?.id ?? ''),
-  );
   const [calendarValues, setCalendarValues] = useState(emptyHolidayCalendarValues);
   const [assignmentValues, setAssignmentValues] = useState(emptyAssignmentValues);
   const [assignmentEndValues, setAssignmentEndValues] = useState<AssignmentEndValues>(() => ({
@@ -1748,47 +1492,39 @@ export function AttendanceConfigurationWorkspace({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState('');
+  const [sectionFormOpen, setSectionFormOpen] = useState(false);
   const returnFocusRef = useRef<{ focus(): void } | null>(null);
+  const arrangementsRef = useRef<TabSectionHandle>(null);
   const navigation = useRecordNavigation();
   const recordId = navigation.search.get('record');
   const recordKind =
     navigation.search.get('kind') === 'work-arrangement' ? 'work-arrangement' : 'work-schedule';
 
   useEffect(() => {
+    if (recordId) setTab(recordKind === 'work-arrangement' ? 'arrangements' : 'schedules');
+  }, [recordId, recordKind]);
+
+  useEffect(() => {
     let active = true;
-    if (!recordId) {
-      if (dialog === 'schedule-detail' || dialog === 'arrangement-detail') {
+    if (!recordId || recordKind !== 'work-schedule') {
+      if (dialog === 'schedule-detail') {
         setDialog(null);
         setSelectedSchedule(null);
-        setSelectedArrangement(null);
         setScheduleDetail(null);
-        setArrangementDetail(null);
       }
       return;
     }
     setSelectedSchedule(null);
-    setSelectedArrangement(null);
     setScheduleDetail(null);
-    setArrangementDetail(null);
     setError('');
-    setDialog(recordKind === 'work-arrangement' ? 'arrangement-detail' : 'schedule-detail');
+    setDialog('schedule-detail');
     setDetailLoading(true);
-    const path =
-      recordKind === 'work-arrangement'
-        ? '/work-arrangements/' + encodeURIComponent(recordId)
-        : '/work-schedules/' + encodeURIComponent(recordId);
-    void request(path)
+    void request('/work-schedules/' + encodeURIComponent(recordId))
       .then((value) => {
         if (!active) return;
-        if (recordKind === 'work-arrangement') {
-          const next = value as WorkArrangementDetail;
-          setArrangementDetail(next);
-          setSelectedArrangement(next.arrangement);
-        } else {
-          const next = value as WorkScheduleDetail;
-          setScheduleDetail(next);
-          setSelectedSchedule(next.schedule);
-        }
+        const next = value as WorkScheduleDetail;
+        setScheduleDetail(next);
+        setSelectedSchedule(next.schedule);
       })
       .catch((caught: unknown) => {
         if (active)
@@ -1805,7 +1541,6 @@ export function AttendanceConfigurationWorkspace({
   useEffect(() => {
     if (
       dialog !== 'schedule-activate' &&
-      dialog !== 'arrangement-activate' &&
       dialog !== 'calendar-activate' &&
       dialog !== 'assignment-create'
     ) {
@@ -1960,8 +1695,6 @@ export function AttendanceConfigurationWorkspace({
     returnFocusRef.current = target;
     resetAction();
     if (kind.startsWith('schedule')) setSelectedSchedule(entity as WorkSchedule | null);
-    else if (kind.startsWith('arrangement'))
-      setSelectedArrangement(entity as WorkArrangement | null);
     else if (kind.startsWith('calendar')) setSelectedCalendar(entity as HolidayCalendar | null);
     else setSelectedAssignment(entity as ScheduleAssignment | null);
     setDialog(kind);
@@ -1973,11 +1706,9 @@ export function AttendanceConfigurationWorkspace({
     navigation.navigate({ record: null, view: null, kind: null });
     setDialog(null);
     setSelectedSchedule(null);
-    setSelectedArrangement(null);
     setSelectedCalendar(null);
     setSelectedAssignment(null);
     setScheduleDetail(null);
-    setArrangementDetail(null);
     setCalendarDetail(null);
     setTimeout(() => {
       focusTarget?.focus();
@@ -2045,41 +1776,6 @@ export function AttendanceConfigurationWorkspace({
     }
   }
 
-  async function submitArrangement(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (busy || !validForm(event)) return;
-    setBusy(true);
-    setError('');
-    try {
-      const creating = dialog === 'arrangement-create';
-      await request(
-        creating
-          ? '/work-arrangements'
-          : '/work-arrangements/' +
-              selectedArrangement?.id +
-              '/drafts/' +
-              selectedArrangement?.draft?.id,
-        {
-          method: creating ? 'POST' : 'PATCH',
-          body: JSON.stringify(arrangementPayload(arrangementValues, creating)),
-        },
-      );
-      await refreshArrangements();
-      setSuccess(
-        creating
-          ? 'Draft Work Arrangement “' + arrangementValues.code + '” was created.'
-          : 'Draft Work Arrangement “' + arrangementValues.code + '” was updated.',
-      );
-      closeDialog(true);
-    } catch (requestError: unknown) {
-      setError(
-        requestError instanceof Error ? requestError.message : 'The Draft could not be saved.',
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function submitHolidayCalendar(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (busy || !validForm(event)) return;
@@ -2120,12 +1816,6 @@ export function AttendanceConfigurationWorkspace({
         await request('/work-schedules/' + selectedSchedule.id + '/successor', { method: 'POST' });
         await refreshSchedules();
         setSuccess('A Draft successor for “' + selectedSchedule.code + '” was created.');
-      } else if (dialog === 'arrangement-successor' && selectedArrangement) {
-        await request('/work-arrangements/' + selectedArrangement.id + '/successor', {
-          method: 'POST',
-        });
-        await refreshArrangements();
-        setSuccess('A Draft successor for “' + selectedArrangement.code + '” was created.');
       } else if (dialog === 'calendar-successor' && selectedCalendar) {
         await request('/holiday-calendars/' + selectedCalendar.id + '/successor', {
           method: 'POST',
@@ -2168,21 +1858,6 @@ export function AttendanceConfigurationWorkspace({
         );
         await refreshSchedules();
         setSuccess('Work Schedule “' + selectedSchedule.code + '” was activated.');
-      } else if (dialog === 'arrangement-activate' && selectedArrangement?.draft) {
-        await request(
-          '/work-arrangements/' +
-            selectedArrangement.id +
-            '/drafts/' +
-            selectedArrangement.draft.id +
-            '/activate',
-          {
-            method: 'POST',
-            headers: { 'Idempotency-Key': crypto.randomUUID() },
-            body: JSON.stringify(activation),
-          },
-        );
-        await refreshArrangements();
-        setSuccess('Work Arrangement “' + selectedArrangement.code + '” was activated.');
       } else if (dialog === 'calendar-activate' && selectedCalendar?.draft) {
         await request(
           '/holiday-calendars/' +
@@ -2356,74 +2031,6 @@ export function AttendanceConfigurationWorkspace({
     );
   }
 
-  function arrangementActions(arrangement: WorkArrangement) {
-    return (
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={(event) =>
-            openDetail(
-              'work-arrangement',
-              arrangement,
-              event.currentTarget as unknown as { focus(): void },
-            )
-          }
-        >
-          Details
-        </Button>
-        {arrangement.draft && canManage ? (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={(event) => {
-              setArrangementValues(
-                arrangementValuesFrom(arrangement, arrangement.draft as WorkArrangementVersion),
-              );
-              openDialog(
-                'arrangement-edit',
-                event.currentTarget as unknown as { focus(): void },
-                arrangement,
-              );
-            }}
-          >
-            Edit Draft
-          </Button>
-        ) : null}
-        {arrangement.draft && canActivate ? (
-          <Button
-            type="button"
-            variant="primary"
-            onClick={(event) =>
-              openDialog(
-                'arrangement-activate',
-                event.currentTarget as unknown as { focus(): void },
-                arrangement,
-              )
-            }
-          >
-            Activate
-          </Button>
-        ) : null}
-        {arrangement.currentVersion && !arrangement.draft && canManage ? (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={(event) =>
-              openDialog(
-                'arrangement-successor',
-                event.currentTarget as unknown as { focus(): void },
-                arrangement,
-              )
-            }
-          >
-            Create Successor
-          </Button>
-        ) : null}
-      </div>
-    );
-  }
-
   function calendarActions(calendar: HolidayCalendar) {
     return (
       <div className="flex flex-wrap justify-end gap-2">
@@ -2514,31 +2121,29 @@ export function AttendanceConfigurationWorkspace({
   }
 
   const editingSchedule = dialog === 'schedule-create' || dialog === 'schedule-edit';
-  const editingArrangement = dialog === 'arrangement-create' || dialog === 'arrangement-edit';
   const editingCalendar = dialog === 'calendar-create' || dialog === 'calendar-edit';
   const showingForm =
+    sectionFormOpen ||
     editingSchedule ||
-    editingArrangement ||
     editingCalendar ||
     dialog === 'schedule-detail' ||
-    dialog === 'arrangement-detail' ||
     dialog === 'calendar-detail' ||
     dialog === 'assignment-create' ||
     dialog === 'assignment-end';
   const selectedLabel =
     dialog?.startsWith('schedule') && selectedSchedule
       ? selectedSchedule.code
-      : dialog?.startsWith('arrangement') && selectedArrangement
-        ? selectedArrangement.code
-        : dialog?.startsWith('calendar') && selectedCalendar
-          ? selectedCalendar.code
-          : dialog === 'assignment-end' && selectedAssignment
-            ? selectedAssignment.employee.legalName
-            : 'Attendance Configuration';
+      : dialog?.startsWith('calendar') && selectedCalendar
+        ? selectedCalendar.code
+        : dialog === 'assignment-end' && selectedAssignment
+          ? selectedAssignment.employee.legalName
+          : 'Attendance Configuration';
   const dialogDescriptionId = 'attendance-configuration-dialog-description';
 
   const recordCode =
-    recordKind === 'work-arrangement' ? selectedArrangement?.code : selectedSchedule?.code;
+    recordKind === 'work-arrangement'
+      ? arrangements.find((item) => item.id === recordId)?.code
+      : schedules.find((item) => item.id === recordId)?.code;
   const breadcrumbs: Breadcrumb[] = [{ label: 'Time & attendance' }];
   // Only record views change the URL, so only they can link back to the register.
   if (recordId) {
@@ -2548,30 +2153,38 @@ export function AttendanceConfigurationWorkspace({
     });
     if (recordCode) breadcrumbs.push({ label: recordCode });
   }
-  const creator: { kind: DialogKind; name: string; prepare: () => void } | null =
+  const creator: { name: string; open: (target: { focus(): void }) => void } | null =
     tab === 'schedules' && canManage
       ? {
-          kind: 'schedule-create',
           name: 'Create Work Schedule',
-          prepare: () => setScheduleValues(emptyScheduleValues()),
+          open: (target) => {
+            resetAction();
+            setScheduleValues(emptyScheduleValues());
+            openDialog('schedule-create', target, null);
+          },
         }
       : tab === 'arrangements' && canManage
         ? {
-            kind: 'arrangement-create',
             name: 'Create Work Arrangement',
-            prepare: () => setArrangementValues(emptyArrangementValues(calendars[0]?.id ?? '')),
+            open: (target) => arrangementsRef.current?.openCreate(target),
           }
         : tab === 'calendars' && canManage
           ? {
-              kind: 'calendar-create',
               name: 'Create Holiday Calendar',
-              prepare: () => setCalendarValues(emptyHolidayCalendarValues()),
+              open: (target) => {
+                resetAction();
+                setCalendarValues(emptyHolidayCalendarValues());
+                openDialog('calendar-create', target, null);
+              },
             }
           : tab === 'assignments' && canAssign
             ? {
-                kind: 'assignment-create',
                 name: 'Create Schedule Assignment',
-                prepare: () => setAssignmentValues(emptyAssignmentValues()),
+                open: (target) => {
+                  resetAction();
+                  setAssignmentValues(emptyAssignmentValues());
+                  openDialog('assignment-create', target, null);
+                },
               }
             : null;
 
@@ -2589,25 +2202,17 @@ export function AttendanceConfigurationWorkspace({
         <PageHeader
           actions={
             creator ? (
-              <DialogTrigger asChild>
-                <Button
-                  // Hidden rather than unmounted, so focus can return here when the form closes.
-                  hidden={showingForm}
-                  onClick={(event) => {
-                    resetAction();
-                    creator.prepare();
-                    openDialog(
-                      creator.kind,
-                      event.currentTarget as unknown as { focus(): void },
-                      null,
-                    );
-                  }}
-                  type="button"
-                  variant="primary"
-                >
-                  {creator.name}
-                </Button>
-              </DialogTrigger>
+              <Button
+                // Hidden rather than unmounted, so focus can return here when the form closes.
+                hidden={showingForm}
+                onClick={(event) =>
+                  creator.open(event.currentTarget as unknown as { focus(): void })
+                }
+                type="button"
+                variant="primary"
+              >
+                {creator.name}
+              </Button>
             ) : null
           }
           breadcrumbs={breadcrumbs}
@@ -2719,97 +2324,6 @@ export function AttendanceConfigurationWorkspace({
                           {(schedule.currentVersion ?? schedule.draft)?.timezone ?? '—'}
                         </Td>
                         <Td>{scheduleActions(schedule)}</Td>
-                      </Tr>
-                    ))}
-                  </tbody>
-                </Table>
-              )}
-            </Panel>
-          </SectionTabPanel>
-
-          <SectionTabPanel value="arrangements">
-            <Panel
-              title="Work Arrangement register"
-              flush
-              actions={
-                <span className="text-caption text-ink-muted">
-                  {countLabel(arrangements.length, 'arrangement')} · Agency scoped · Holiday
-                  Calendar pinned
-                </span>
-              }
-            >
-              {arrangements.length === 0 ? (
-                <StateSurface compact label="Work Arrangements">
-                  <strong className="text-body font-[650] text-ink">
-                    No Work Arrangements yet.
-                  </strong>
-                  <p className="m-0 max-w-[560px]">
-                    Each Work Arrangement Version pins one Holiday Calendar scope and the schedule
-                    types it permits for an operating mode.
-                  </p>
-                </StateSurface>
-              ) : (
-                <Table aria-label="Work Arrangements" className="min-w-[860px]">
-                  <thead>
-                    <tr>
-                      <Th>Arrangement</Th>
-                      <Th>Current version</Th>
-                      <Th>Permitted schedule types</Th>
-                      <Th>Draft</Th>
-                      <Th>
-                        <span className="sr-only">Actions</span>
-                      </Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {arrangements.map((arrangement) => (
-                      <Tr key={arrangement.id}>
-                        <RowHeader>
-                          <div className="grid gap-1">
-                            <button
-                              className={recordLinkClass}
-                              onClick={(event) =>
-                                openDetail(
-                                  'work-arrangement',
-                                  arrangement,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                              type="button"
-                            >
-                              {arrangement.code}
-                            </button>
-                            <span className="text-caption font-normal text-ink-muted">
-                              {arrangement.name}
-                            </span>
-                          </div>
-                        </RowHeader>
-                        <Td>
-                          {arrangement.currentVersion
-                            ? 'v' +
-                              arrangement.currentVersion.versionNo +
-                              ' · ' +
-                              label(arrangement.currentVersion.arrangementType) +
-                              ' · ' +
-                              dateLabel(arrangement.currentVersion.effectiveFrom)
-                            : 'No active version'}
-                        </Td>
-                        <Td className="text-ink-muted">
-                          {arrangement.currentVersion
-                            ? arrangement.currentVersion.permittedScheduleTypes
-                                .map((entry) => label(entry))
-                                .join(', ')
-                            : '—'}
-                        </Td>
-                        <Td className="text-ink-muted">
-                          {arrangement.draft
-                            ? 'v' +
-                              arrangement.draft.versionNo +
-                              ' · ' +
-                              dateLabel(arrangement.draft.effectiveFrom)
-                            : 'None'}
-                        </Td>
-                        <Td>{arrangementActions(arrangement)}</Td>
                       </Tr>
                     ))}
                   </tbody>
@@ -3045,11 +2559,25 @@ export function AttendanceConfigurationWorkspace({
           </SectionTabPanel>
         </div>
 
+        {/* Outside the hidden wrapper: the section shows its own forms inline in this panel. */}
+        <SectionTabPanel value="arrangements">
+          <WorkArrangementsSection
+            agencyId={agencyId}
+            arrangements={arrangements}
+            calendars={calendars}
+            canActivate={canActivate}
+            canManage={canManage}
+            onFormChange={setSectionFormOpen}
+            onRefresh={refreshArrangements}
+            recordId={recordKind === 'work-arrangement' ? recordId : null}
+            ref={arrangementsRef}
+            request={request}
+          />
+        </SectionTabPanel>
+
         <DialogContent
           aria-describedby={dialogDescriptionId}
-          className={
-            editingSchedule || editingArrangement || editingCalendar ? 'max-w-[980px]' : undefined
-          }
+          className={editingSchedule || editingCalendar ? 'max-w-[980px]' : undefined}
         >
           <DialogHeader>
             <div className="grid min-w-0 gap-1.5">
@@ -3064,54 +2592,36 @@ export function AttendanceConfigurationWorkspace({
                         ? 'Activate ' + selectedLabel
                         : dialog === 'schedule-detail'
                           ? 'Work Schedule · ' + selectedLabel
-                          : dialog === 'arrangement-create'
-                            ? 'Create Work Arrangement'
-                            : dialog === 'arrangement-edit'
-                              ? 'Edit Draft Work Arrangement'
-                              : dialog === 'arrangement-successor'
+                          : dialog === 'calendar-create'
+                            ? 'Create Holiday Calendar'
+                            : dialog === 'calendar-edit'
+                              ? 'Edit Draft Holiday Calendar'
+                              : dialog === 'calendar-successor'
                                 ? 'Create Successor · ' + selectedLabel
-                                : dialog === 'arrangement-activate'
+                                : dialog === 'calendar-activate'
                                   ? 'Activate ' + selectedLabel
-                                  : dialog === 'arrangement-detail'
-                                    ? 'Work Arrangement · ' + selectedLabel
-                                    : dialog === 'calendar-create'
-                                      ? 'Create Holiday Calendar'
-                                      : dialog === 'calendar-edit'
-                                        ? 'Edit Draft Holiday Calendar'
-                                        : dialog === 'calendar-successor'
-                                          ? 'Create Successor · ' + selectedLabel
-                                          : dialog === 'calendar-activate'
-                                            ? 'Activate ' + selectedLabel
-                                            : dialog === 'calendar-detail'
-                                              ? 'Holiday Calendar · ' + selectedLabel
-                                              : dialog === 'assignment-create'
-                                                ? 'Create Schedule Assignment'
-                                                : 'End Schedule Assignment · ' + selectedLabel}
+                                  : dialog === 'calendar-detail'
+                                    ? 'Holiday Calendar · ' + selectedLabel
+                                    : dialog === 'assignment-create'
+                                      ? 'Create Schedule Assignment'
+                                      : 'End Schedule Assignment · ' + selectedLabel}
               </DialogTitle>
               <DialogDescription id={dialogDescriptionId}>
                 {dialog === 'schedule-create' || dialog === 'schedule-edit'
                   ? 'Declare the schedule type, time zone, effective date, and exactly one Day Rule per weekday. Required minutes exclude unpaid breaks.'
-                  : dialog === 'schedule-activate' ||
-                      dialog === 'arrangement-activate' ||
-                      dialog === 'calendar-activate'
+                  : dialog === 'schedule-activate' || dialog === 'calendar-activate'
                     ? 'Activation pins the authority Document Version, validates the Draft, and retires any predecessor by supersession.'
-                    : dialog === 'schedule-successor' ||
-                        dialog === 'arrangement-successor' ||
-                        dialog === 'calendar-successor'
+                    : dialog === 'schedule-successor' || dialog === 'calendar-successor'
                       ? 'The successor copies the current published definition and receives a later effective date. It remains Draft until reviewed.'
                       : dialog === 'schedule-detail'
                         ? 'Inspect effective-dated versions, the seven-day rule matrix, and the immutable transition history.'
-                        : dialog === 'arrangement-create' || dialog === 'arrangement-edit'
-                          ? 'Declare the operating mode, its permitted schedule types, the pinned Holiday Calendar, and the effective date.'
-                          : dialog === 'arrangement-detail'
-                            ? 'Inspect effective-dated versions, the pinned Holiday Calendar, and the immutable transition history.'
-                            : dialog === 'calendar-create' || dialog === 'calendar-edit'
-                              ? 'Declare the calendar scope, effective date, and one row per holiday date and day type.'
-                              : dialog === 'calendar-detail'
-                                ? 'Inspect effective-dated versions, their holiday entries, and the immutable transition history.'
-                                : dialog === 'assignment-create'
-                                  ? 'Bind one Employee to an active Work Schedule Version and Work Arrangement Version for a non-overlapping period, with the authority Document Version.'
-                                  : 'Ending records the last covered date and the reason. The Assignment then remains immutable.'}
+                        : dialog === 'calendar-create' || dialog === 'calendar-edit'
+                          ? 'Declare the calendar scope, effective date, and one row per holiday date and day type.'
+                          : dialog === 'calendar-detail'
+                            ? 'Inspect effective-dated versions, their holiday entries, and the immutable transition history.'
+                            : dialog === 'assignment-create'
+                              ? 'Bind one Employee to an active Work Schedule Version and Work Arrangement Version for a non-overlapping period, with the authority Document Version.'
+                              : 'Ending records the last covered date and the reason. The Assignment then remains immutable.'}
               </DialogDescription>
             </div>
             <DialogClose asChild>
@@ -3133,22 +2643,13 @@ export function AttendanceConfigurationWorkspace({
               detailLoading={detailLoading}
               error={error}
             />
-          ) : dialog === 'arrangement-detail' ? (
-            <ArrangementDetailBody
-              calendars={calendars}
-              detail={arrangementDetail}
-              detailLoading={detailLoading}
-              error={error}
-            />
           ) : dialog === 'calendar-detail' ? (
             <HolidayCalendarDetailBody
               detail={calendarDetail}
               detailLoading={detailLoading}
               error={error}
             />
-          ) : dialog === 'schedule-activate' ||
-            dialog === 'arrangement-activate' ||
-            dialog === 'calendar-activate' ? (
+          ) : dialog === 'schedule-activate' || dialog === 'calendar-activate' ? (
             <ActivationForm
               activation={activation}
               error={error}
@@ -3157,9 +2658,7 @@ export function AttendanceConfigurationWorkspace({
               onSubmit={submitActivation}
               setActivation={setActivation}
             />
-          ) : dialog === 'schedule-successor' ||
-            dialog === 'arrangement-successor' ||
-            dialog === 'calendar-successor' ? (
+          ) : dialog === 'schedule-successor' || dialog === 'calendar-successor' ? (
             <>
               <DialogBody className="grid gap-5">
                 <FormError message={error} />
@@ -3290,37 +2789,6 @@ export function AttendanceConfigurationWorkspace({
                 </DialogClose>
                 <Button disabled={busy} type="submit" variant="primary">
                   {busy ? 'Ending…' : 'End Assignment'}
-                </Button>
-              </DialogFooter>
-            </form>
-          ) : dialog === 'arrangement-create' || dialog === 'arrangement-edit' ? (
-            <form
-              className="flex min-h-0 flex-1 flex-col overflow-hidden"
-              onSubmit={(event) => void submitArrangement(event)}
-            >
-              <DialogBody className="grid auto-rows-max content-start gap-6">
-                <FormError message={error} />
-                <ArrangementDefinitionFields
-                  calendars={calendars}
-                  dialog={dialog}
-                  setValue={(field, value) =>
-                    setArrangementValues((current) => ({ ...current, [field]: value }))
-                  }
-                  values={arrangementValues}
-                />
-              </DialogBody>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button disabled={busy} type="button" variant="secondary">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button disabled={busy} type="submit" variant="primary">
-                  {busy
-                    ? 'Saving…'
-                    : dialog === 'arrangement-create'
-                      ? 'Create Draft'
-                      : 'Save Draft'}
                 </Button>
               </DialogFooter>
             </form>
