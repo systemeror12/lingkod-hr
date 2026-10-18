@@ -1,5 +1,5 @@
 import type { FormEvent } from 'react';
-import { AttendanceRequestError, type EvidenceOption } from './types';
+import { AttendanceRequestError, type ActivationValues, type EvidenceOption } from './types';
 
 export function dateLabel(value: string): string {
   const date = new Date(value.includes('T') ? value : value.slice(0, 10) + 'T00:00:00.000Z');
@@ -42,6 +42,10 @@ export function parseEvidenceOptions(value: unknown): EvidenceOption[] {
     throw new Error('The Agency Document response was invalid.');
   }
   return (value as { documents: EvidenceOption[] }).documents;
+}
+
+export function emptyActivation(): ActivationValues {
+  return { authorityDocumentVersionId: '', approvingAuthority: '', reason: '' };
 }
 
 export function targetValue(event: { currentTarget: EventTarget }): string {

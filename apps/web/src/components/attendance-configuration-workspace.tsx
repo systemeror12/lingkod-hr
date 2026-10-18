@@ -12,7 +12,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { PageHeader, type Breadcrumb } from './ui/page-header';
@@ -34,6 +33,7 @@ import {
   countLabel,
   dateLabel,
   describeRequestError,
+  emptyActivation,
   errorMessage,
   label,
   noteClass,
@@ -50,10 +50,6 @@ import {
   type DayRuleType,
   type EventPattern,
   type ArrangementType,
-  type HolidayCalendarScopeType,
-  type HolidayDayType,
-  holidayCalendarScopeTypes,
-  holidayDayTypes,
   scheduleTypes,
   arrangementTypes,
   ruleTypes,
@@ -68,10 +64,8 @@ import {
   type WorkArrangement,
   type WorkArrangementListResponse,
   type WorkArrangementDetail,
-  type HolidayCalendarVersion,
   type HolidayCalendar,
   type HolidayCalendarListResponse,
-  type HolidayCalendarDetail,
   type ScheduleAssignment,
   type ScheduleAssignmentListResponse,
   type AttendanceResolution,
@@ -81,18 +75,13 @@ import {
   type DayRuleForm,
   type ScheduleFormValues,
   type ArrangementFormValues,
-  type ActivationValues,
-  type HolidayEntryForm,
-  type HolidayCalendarFormValues,
   type AssignmentFormValues,
   type AssignmentEndValues,
   AttendanceRequestError,
   type DialogKind,
+  type TabSectionHandle,
 } from './attendance-configuration/types';
-
-function emptyActivation(): ActivationValues {
-  return { authorityDocumentVersionId: '', approvingAuthority: '', reason: '' };
-}
+import { HolidayCalendarsSection } from './attendance-configuration/holiday-calendars-section';
 
 function defaultDayRule(weekday: number, ruleType: DayRuleType): DayRuleForm {
   const base: DayRuleForm = {
@@ -158,39 +147,6 @@ function emptyArrangementValues(holidayCalendarId: string): ArrangementFormValue
     permittedScheduleTypes: ['REGULAR'],
     holidayCalendarId,
     effectiveDate: manilaToday(),
-  };
-}
-
-function emptyHolidayCalendarValues(): HolidayCalendarFormValues {
-  return {
-    code: '',
-    name: '',
-    scopeType: 'AGENCY',
-    scopeReference: '',
-    effectiveDate: manilaToday(),
-    entries: [
-      { holidayDate: manilaToday(), name: '', dayType: 'REGULAR_HOLIDAY', sourceReference: '' },
-    ],
-  };
-}
-
-function holidayCalendarValuesFrom(
-  calendar: HolidayCalendar,
-  version: HolidayCalendarVersion,
-): HolidayCalendarFormValues {
-  return {
-    code: calendar.code,
-    name: calendar.name,
-    scopeType: calendar.scopeType,
-    scopeReference: calendar.scopeReference,
-    effectiveDate: version.effectiveFrom,
-    entries: version.entries.map((entry) => ({
-      holidayDate: entry.holidayDate,
-      name: entry.name,
-      dayType: entry.dayType,
-      sourceReference: entry.sourceReference,
-    })),
-    rowVersion: version.rowVersion,
   };
 }
 
@@ -378,30 +334,6 @@ function arrangementPayload(
   if (includeIdentity) {
     result.code = values.code;
     result.name = values.name;
-  } else if (values.rowVersion !== undefined) {
-    result.rowVersion = values.rowVersion;
-  }
-  return result;
-}
-
-function holidayCalendarPayload(
-  values: HolidayCalendarFormValues,
-  includeIdentity: boolean,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    effectiveDate: values.effectiveDate,
-    entries: values.entries.map((entry) => ({
-      holidayDate: entry.holidayDate,
-      name: entry.name,
-      dayType: entry.dayType,
-      sourceReference: entry.sourceReference,
-    })),
-  };
-  if (includeIdentity) {
-    result.code = values.code;
-    result.name = values.name;
-    result.scopeType = values.scopeType;
-    result.scopeReference = values.scopeReference;
   } else if (values.rowVersion !== undefined) {
     result.rowVersion = values.rowVersion;
   }
@@ -667,310 +599,6 @@ function ArrangementDetailBody({
         ) : null}
       </DialogBody>
       <DetailFooter />
-    </>
-  );
-}
-
-function HolidayCalendarDetailBody({
-  detail,
-  detailLoading,
-  error,
-}: {
-  detail: HolidayCalendarDetail | null;
-  detailLoading: boolean;
-  error: string;
-}) {
-  return (
-    <>
-      <DialogBody className="grid gap-6">
-        {detailLoading ? (
-          <DetailLoading name="Holiday Calendar history">
-            Loading Holiday Calendar history…
-          </DetailLoading>
-        ) : null}
-        <FormError message={error} />
-        {detail ? (
-          <>
-            <dl className="m-0 grid gap-4 text-small min-[621px]:grid-cols-2">
-              <VersionMeta label="Code">{detail.calendar.code}</VersionMeta>
-              <VersionMeta label="Name">{detail.calendar.name}</VersionMeta>
-              <VersionMeta label="Scope">
-                {label(detail.calendar.scopeType)} · {detail.calendar.scopeReference}
-              </VersionMeta>
-              <VersionMeta label="Effective on">{dateLabel(detail.asOf)}</VersionMeta>
-              <VersionMeta label="Effective version">
-                {detail.effective
-                  ? 'v' +
-                    detail.effective.versionNo +
-                    ' · ' +
-                    detail.effective.entries.length +
-                    (detail.effective.entries.length === 1 ? ' entry' : ' entries')
-                  : 'No effective version'}
-              </VersionMeta>
-            </dl>
-            <section
-              className="grid gap-3"
-              aria-labelledby="holiday-calendar-version-history-title"
-            >
-              <h3 className={sectionTitleClass} id="holiday-calendar-version-history-title">
-                Version history
-              </h3>
-              {detail.versions.map((version) => (
-                <VersionCard
-                  key={version.id}
-                  meta={
-                    <>
-                      <VersionEffectivity from={version.effectiveFrom} to={version.effectiveTo} />
-                      <VersionMeta label="Approving authority">
-                        {version.approvingAuthority ?? 'Not recorded'}
-                      </VersionMeta>
-                      <VersionMeta label="Activated">
-                        {version.activatedAt ? dateLabel(version.activatedAt) : 'Not activated'}
-                      </VersionMeta>
-                      <VersionMeta label="Entries">{version.entries.length.toString()}</VersionMeta>
-                    </>
-                  }
-                  state={version.versionState}
-                  versionNo={version.versionNo}
-                >
-                  {version.entries.length ? (
-                    <Table
-                      aria-label={'Version ' + version.versionNo + ' holiday entries'}
-                      className="min-w-[560px]"
-                    >
-                      <thead>
-                        <tr>
-                          <Th kind="date">Date</Th>
-                          <Th>Holiday</Th>
-                          <Th>Day type</Th>
-                          <Th>Source</Th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {version.entries.map((entry) => (
-                          <Tr key={entry.id}>
-                            <Td kind="date">{dateLabel(entry.holidayDate)}</Td>
-                            <RowHeader>{entry.name}</RowHeader>
-                            <Td>{label(entry.dayType)}</Td>
-                            <Td className="text-ink-muted">{entry.sourceReference}</Td>
-                          </Tr>
-                        ))}
-                      </tbody>
-                    </Table>
-                  ) : (
-                    <p className="m-0 text-small text-ink-muted">
-                      No holiday entries in this version.
-                    </p>
-                  )}
-                </VersionCard>
-              ))}
-            </section>
-            <TransitionHistory history={detail.history} id="holiday-calendar-audit-history-title" />
-          </>
-        ) : null}
-      </DialogBody>
-      <DetailFooter />
-    </>
-  );
-}
-
-function HolidayCalendarDefinitionFields({
-  dialog,
-  setValue,
-  values,
-}: {
-  dialog: DialogKind;
-  setValue: <K extends keyof HolidayCalendarFormValues>(
-    field: K,
-    value: HolidayCalendarFormValues[K],
-  ) => void;
-  values: HolidayCalendarFormValues;
-}) {
-  const creating = dialog === 'calendar-create';
-  function setEntry(index: number, patch: Partial<HolidayEntryForm>): void {
-    setValue(
-      'entries',
-      values.entries.map((entry, position) =>
-        position === index ? { ...entry, ...patch } : entry,
-      ),
-    );
-  }
-  return (
-    <>
-      <fieldset className="grid gap-4">
-        <legend className="mb-1 text-panel-title text-ink">Calendar definition</legend>
-        {creating ? (
-          <div className="grid gap-4 min-[621px]:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
-            <Field htmlFor="holiday-calendar-code" label="Holiday Calendar code">
-              <input
-                autoFocus
-                className={inputClass}
-                data-autofocus=""
-                id="holiday-calendar-code"
-                maxLength={80}
-                onChange={(event) => setValue('code', targetValue(event))}
-                required
-                value={values.code}
-              />
-            </Field>
-            <Field htmlFor="holiday-calendar-name" label="Holiday Calendar name">
-              <input
-                className={inputClass}
-                id="holiday-calendar-name"
-                maxLength={200}
-                onChange={(event) => setValue('name', targetValue(event))}
-                required
-                value={values.name}
-              />
-            </Field>
-          </div>
-        ) : null}
-        <div className="grid gap-4 min-[621px]:grid-cols-3">
-          <Field htmlFor="holiday-calendar-scope-type" label="Calendar scope">
-            <select
-              className={inputClass}
-              disabled={!creating}
-              id="holiday-calendar-scope-type"
-              onChange={(event) =>
-                setValue('scopeType', targetValue(event) as HolidayCalendarScopeType)
-              }
-              value={values.scopeType}
-            >
-              {holidayCalendarScopeTypes.map((entry) => (
-                <option key={entry} value={entry}>
-                  {label(entry)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field htmlFor="holiday-calendar-scope-reference" label="Scope reference">
-            <input
-              className={inputClass}
-              disabled={!creating}
-              id="holiday-calendar-scope-reference"
-              maxLength={300}
-              onChange={(event) => setValue('scopeReference', targetValue(event))}
-              required
-              value={values.scopeReference}
-            />
-          </Field>
-          <Field htmlFor="holiday-calendar-effective-date" label="Effective date">
-            <input
-              className={inputClass}
-              id="holiday-calendar-effective-date"
-              onChange={(event) => setValue('effectiveDate', targetValue(event))}
-              required
-              type="date"
-              value={values.effectiveDate}
-            />
-          </Field>
-        </div>
-      </fieldset>
-      <section className="grid gap-4" aria-labelledby="holiday-calendar-entries-title">
-        <div className="grid gap-1">
-          <h3 className={sectionTitleClass} id="holiday-calendar-entries-title">
-            Holiday entries
-          </h3>
-          <p className="m-0 text-small text-ink-muted">One row per holiday date and day type</p>
-        </div>
-        {values.entries.length === 0 ? (
-          <p className="m-0 text-small text-ink-muted">
-            A version needs at least one entry before it can be activated.
-          </p>
-        ) : null}
-        {values.entries.map((entry, index) => (
-          <div
-            className={
-              'grid items-end gap-3 ' +
-              rowBoxClass +
-              ' min-[900px]:grid-cols-[150px_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]'
-            }
-            key={index}
-          >
-            <label className={labelClass}>
-              <span>Holiday date</span>
-              <input
-                aria-label={'Holiday date ' + (index + 1)}
-                className={inputClass}
-                onChange={(event) => setEntry(index, { holidayDate: targetValue(event) })}
-                required
-                type="date"
-                value={entry.holidayDate}
-              />
-            </label>
-            <label className={labelClass}>
-              <span>Holiday</span>
-              <input
-                aria-label={'Holiday name ' + (index + 1)}
-                className={inputClass}
-                maxLength={200}
-                onChange={(event) => setEntry(index, { name: targetValue(event) })}
-                required
-                value={entry.name}
-              />
-            </label>
-            <label className={labelClass}>
-              <span>Day type</span>
-              <select
-                aria-label={'Holiday day type ' + (index + 1)}
-                className={inputClass}
-                onChange={(event) =>
-                  setEntry(index, { dayType: targetValue(event) as HolidayDayType })
-                }
-                value={entry.dayType}
-              >
-                {holidayDayTypes.map((value) => (
-                  <option key={value} value={value}>
-                    {label(value)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className={labelClass}>
-              <span>Source</span>
-              <input
-                aria-label={'Holiday source ' + (index + 1)}
-                className={inputClass}
-                maxLength={300}
-                onChange={(event) => setEntry(index, { sourceReference: targetValue(event) })}
-                required
-                value={entry.sourceReference}
-              />
-            </label>
-            <Button
-              onClick={() =>
-                setValue(
-                  'entries',
-                  values.entries.filter((_, position) => position !== index),
-                )
-              }
-              type="button"
-              variant="secondary"
-            >
-              Remove
-            </Button>
-          </div>
-        ))}
-        <Button
-          className="w-fit"
-          disabled={values.entries.length >= 400}
-          onClick={() =>
-            setValue('entries', [
-              ...values.entries,
-              {
-                holidayDate: values.effectiveDate,
-                name: '',
-                dayType: 'REGULAR_HOLIDAY',
-                sourceReference: '',
-              },
-            ])
-          }
-          type="button"
-          variant="secondary"
-        >
-          Add holiday entry
-        </Button>
-      </section>
     </>
   );
 }
@@ -1721,17 +1349,14 @@ export function AttendanceConfigurationWorkspace({
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [selectedSchedule, setSelectedSchedule] = useState<WorkSchedule | null>(null);
   const [selectedArrangement, setSelectedArrangement] = useState<WorkArrangement | null>(null);
-  const [selectedCalendar, setSelectedCalendar] = useState<HolidayCalendar | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<ScheduleAssignment | null>(null);
   const [scheduleDetail, setScheduleDetail] = useState<WorkScheduleDetail | null>(null);
   const [arrangementDetail, setArrangementDetail] = useState<WorkArrangementDetail | null>(null);
-  const [calendarDetail, setCalendarDetail] = useState<HolidayCalendarDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [scheduleValues, setScheduleValues] = useState(emptyScheduleValues);
   const [arrangementValues, setArrangementValues] = useState(() =>
     emptyArrangementValues(initialCalendars[0]?.id ?? ''),
   );
-  const [calendarValues, setCalendarValues] = useState(emptyHolidayCalendarValues);
   const [assignmentValues, setAssignmentValues] = useState(emptyAssignmentValues);
   const [assignmentEndValues, setAssignmentEndValues] = useState<AssignmentEndValues>(() => ({
     effectiveTo: manilaToday(),
@@ -1748,6 +1373,8 @@ export function AttendanceConfigurationWorkspace({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState('');
+  const [sectionFormOpen, setSectionFormOpen] = useState(false);
+  const calendarsSectionRef = useRef<TabSectionHandle>(null);
   const returnFocusRef = useRef<{ focus(): void } | null>(null);
   const navigation = useRecordNavigation();
   const recordId = navigation.search.get('record');
@@ -1806,7 +1433,6 @@ export function AttendanceConfigurationWorkspace({
     if (
       dialog !== 'schedule-activate' &&
       dialog !== 'arrangement-activate' &&
-      dialog !== 'calendar-activate' &&
       dialog !== 'assignment-create'
     ) {
       return;
@@ -1955,14 +1581,13 @@ export function AttendanceConfigurationWorkspace({
   function openDialog(
     kind: DialogKind,
     target: { focus(): void },
-    entity: WorkSchedule | WorkArrangement | HolidayCalendar | ScheduleAssignment | null,
+    entity: WorkSchedule | WorkArrangement | ScheduleAssignment | null,
   ): void {
     returnFocusRef.current = target;
     resetAction();
     if (kind.startsWith('schedule')) setSelectedSchedule(entity as WorkSchedule | null);
     else if (kind.startsWith('arrangement'))
       setSelectedArrangement(entity as WorkArrangement | null);
-    else if (kind.startsWith('calendar')) setSelectedCalendar(entity as HolidayCalendar | null);
     else setSelectedAssignment(entity as ScheduleAssignment | null);
     setDialog(kind);
   }
@@ -1974,11 +1599,9 @@ export function AttendanceConfigurationWorkspace({
     setDialog(null);
     setSelectedSchedule(null);
     setSelectedArrangement(null);
-    setSelectedCalendar(null);
     setSelectedAssignment(null);
     setScheduleDetail(null);
     setArrangementDetail(null);
-    setCalendarDetail(null);
     setTimeout(() => {
       focusTarget?.focus();
       setTimeout(() => focusTarget?.focus(), 0);
@@ -1992,25 +1615,6 @@ export function AttendanceConfigurationWorkspace({
   ): void {
     returnFocusRef.current = target;
     navigation.navigate({ record: entity.id, view: 'form', kind });
-  }
-
-  function openCalendarDetail(calendar: HolidayCalendar, target: { focus(): void }): void {
-    returnFocusRef.current = target;
-    resetAction();
-    setSelectedCalendar(calendar);
-    setCalendarDetail(null);
-    setDialog('calendar-detail');
-    setDetailLoading(true);
-    void request('/holiday-calendars/' + encodeURIComponent(calendar.id))
-      .then((value) => {
-        setCalendarDetail(value as HolidayCalendarDetail);
-      })
-      .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : 'This record is unavailable.');
-      })
-      .finally(() => {
-        setDetailLoading(false);
-      });
   }
 
   async function submitSchedule(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -2080,38 +1684,6 @@ export function AttendanceConfigurationWorkspace({
     }
   }
 
-  async function submitHolidayCalendar(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    if (busy || !validForm(event)) return;
-    setBusy(true);
-    setError('');
-    try {
-      const creating = dialog === 'calendar-create';
-      await request(
-        creating
-          ? '/holiday-calendars'
-          : '/holiday-calendars/' + selectedCalendar?.id + '/drafts/' + selectedCalendar?.draft?.id,
-        {
-          method: creating ? 'POST' : 'PATCH',
-          body: JSON.stringify(holidayCalendarPayload(calendarValues, creating)),
-        },
-      );
-      await refreshCalendars();
-      setSuccess(
-        creating
-          ? 'Draft Holiday Calendar “' + calendarValues.code + '” was created.'
-          : 'Draft Holiday Calendar “' + calendarValues.code + '” was updated.',
-      );
-      closeDialog(true);
-    } catch (requestError: unknown) {
-      setError(
-        requestError instanceof Error ? requestError.message : 'The Draft could not be saved.',
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function submitSuccessor(): Promise<void> {
     setBusy(true);
     setError('');
@@ -2126,12 +1698,6 @@ export function AttendanceConfigurationWorkspace({
         });
         await refreshArrangements();
         setSuccess('A Draft successor for “' + selectedArrangement.code + '” was created.');
-      } else if (dialog === 'calendar-successor' && selectedCalendar) {
-        await request('/holiday-calendars/' + selectedCalendar.id + '/successor', {
-          method: 'POST',
-        });
-        await refreshCalendars();
-        setSuccess('A Draft successor for “' + selectedCalendar.code + '” was created.');
       } else {
         return;
       }
@@ -2183,21 +1749,6 @@ export function AttendanceConfigurationWorkspace({
         );
         await refreshArrangements();
         setSuccess('Work Arrangement “' + selectedArrangement.code + '” was activated.');
-      } else if (dialog === 'calendar-activate' && selectedCalendar?.draft) {
-        await request(
-          '/holiday-calendars/' +
-            selectedCalendar.id +
-            '/drafts/' +
-            selectedCalendar.draft.id +
-            '/activate',
-          {
-            method: 'POST',
-            headers: { 'Idempotency-Key': crypto.randomUUID() },
-            body: JSON.stringify(activation),
-          },
-        );
-        await refreshCalendars();
-        setSuccess('Holiday Calendar “' + selectedCalendar.code + '” was activated.');
       } else {
         return;
       }
@@ -2424,70 +1975,6 @@ export function AttendanceConfigurationWorkspace({
     );
   }
 
-  function calendarActions(calendar: HolidayCalendar) {
-    return (
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={(event) =>
-            openCalendarDetail(calendar, event.currentTarget as unknown as { focus(): void })
-          }
-        >
-          Details
-        </Button>
-        {calendar.draft && canManage ? (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={(event) => {
-              setCalendarValues(
-                holidayCalendarValuesFrom(calendar, calendar.draft as HolidayCalendarVersion),
-              );
-              openDialog(
-                'calendar-edit',
-                event.currentTarget as unknown as { focus(): void },
-                calendar,
-              );
-            }}
-          >
-            Edit Draft
-          </Button>
-        ) : null}
-        {calendar.draft && canActivate ? (
-          <Button
-            type="button"
-            variant="primary"
-            onClick={(event) =>
-              openDialog(
-                'calendar-activate',
-                event.currentTarget as unknown as { focus(): void },
-                calendar,
-              )
-            }
-          >
-            Activate
-          </Button>
-        ) : null}
-        {calendar.currentVersion && !calendar.draft && canManage ? (
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={(event) =>
-              openDialog(
-                'calendar-successor',
-                event.currentTarget as unknown as { focus(): void },
-                calendar,
-              )
-            }
-          >
-            Create Successor
-          </Button>
-        ) : null}
-      </div>
-    );
-  }
-
   function assignmentActions(assignment: ScheduleAssignment) {
     return (
       <div className="flex flex-wrap justify-end gap-2">
@@ -2515,14 +2002,12 @@ export function AttendanceConfigurationWorkspace({
 
   const editingSchedule = dialog === 'schedule-create' || dialog === 'schedule-edit';
   const editingArrangement = dialog === 'arrangement-create' || dialog === 'arrangement-edit';
-  const editingCalendar = dialog === 'calendar-create' || dialog === 'calendar-edit';
   const showingForm =
+    sectionFormOpen ||
     editingSchedule ||
     editingArrangement ||
-    editingCalendar ||
     dialog === 'schedule-detail' ||
     dialog === 'arrangement-detail' ||
-    dialog === 'calendar-detail' ||
     dialog === 'assignment-create' ||
     dialog === 'assignment-end';
   const selectedLabel =
@@ -2530,11 +2015,9 @@ export function AttendanceConfigurationWorkspace({
       ? selectedSchedule.code
       : dialog?.startsWith('arrangement') && selectedArrangement
         ? selectedArrangement.code
-        : dialog?.startsWith('calendar') && selectedCalendar
-          ? selectedCalendar.code
-          : dialog === 'assignment-end' && selectedAssignment
-            ? selectedAssignment.employee.legalName
-            : 'Attendance Configuration';
+        : dialog === 'assignment-end' && selectedAssignment
+          ? selectedAssignment.employee.legalName
+          : 'Attendance Configuration';
   const dialogDescriptionId = 'attendance-configuration-dialog-description';
 
   const recordCode =
@@ -2548,30 +2031,38 @@ export function AttendanceConfigurationWorkspace({
     });
     if (recordCode) breadcrumbs.push({ label: recordCode });
   }
-  const creator: { kind: DialogKind; name: string; prepare: () => void } | null =
+  const creator: { name: string; open: (target: { focus(): void }) => void } | null =
     tab === 'schedules' && canManage
       ? {
-          kind: 'schedule-create',
           name: 'Create Work Schedule',
-          prepare: () => setScheduleValues(emptyScheduleValues()),
+          open: (target) => {
+            resetAction();
+            setScheduleValues(emptyScheduleValues());
+            openDialog('schedule-create', target, null);
+          },
         }
       : tab === 'arrangements' && canManage
         ? {
-            kind: 'arrangement-create',
             name: 'Create Work Arrangement',
-            prepare: () => setArrangementValues(emptyArrangementValues(calendars[0]?.id ?? '')),
+            open: (target) => {
+              resetAction();
+              setArrangementValues(emptyArrangementValues(calendars[0]?.id ?? ''));
+              openDialog('arrangement-create', target, null);
+            },
           }
         : tab === 'calendars' && canManage
           ? {
-              kind: 'calendar-create',
               name: 'Create Holiday Calendar',
-              prepare: () => setCalendarValues(emptyHolidayCalendarValues()),
+              open: (target) => calendarsSectionRef.current?.openCreate(target),
             }
           : tab === 'assignments' && canAssign
             ? {
-                kind: 'assignment-create',
                 name: 'Create Schedule Assignment',
-                prepare: () => setAssignmentValues(emptyAssignmentValues()),
+                open: (target) => {
+                  resetAction();
+                  setAssignmentValues(emptyAssignmentValues());
+                  openDialog('assignment-create', target, null);
+                },
               }
             : null;
 
@@ -2589,25 +2080,17 @@ export function AttendanceConfigurationWorkspace({
         <PageHeader
           actions={
             creator ? (
-              <DialogTrigger asChild>
-                <Button
-                  // Hidden rather than unmounted, so focus can return here when the form closes.
-                  hidden={showingForm}
-                  onClick={(event) => {
-                    resetAction();
-                    creator.prepare();
-                    openDialog(
-                      creator.kind,
-                      event.currentTarget as unknown as { focus(): void },
-                      null,
-                    );
-                  }}
-                  type="button"
-                  variant="primary"
-                >
-                  {creator.name}
-                </Button>
-              </DialogTrigger>
+              <Button
+                // Hidden rather than unmounted, so focus can return here when the form closes.
+                hidden={showingForm}
+                onClick={(event) =>
+                  creator.open(event.currentTarget as unknown as { focus(): void })
+                }
+                type="button"
+                variant="primary"
+              >
+                {creator.name}
+              </Button>
             ) : null
           }
           breadcrumbs={breadcrumbs}
@@ -2818,93 +2301,6 @@ export function AttendanceConfigurationWorkspace({
             </Panel>
           </SectionTabPanel>
 
-          <SectionTabPanel value="calendars">
-            <Panel
-              title="Holiday Calendar register"
-              flush
-              actions={
-                <span className="text-caption text-ink-muted">
-                  {countLabel(calendars.length, 'calendar')} · Agency scoped · Published per version
-                </span>
-              }
-            >
-              {calendars.length === 0 ? (
-                <StateSurface compact label="Holiday Calendars">
-                  <strong className="text-body font-[650] text-ink">
-                    No Holiday Calendars yet.
-                  </strong>
-                  <p className="m-0 max-w-[560px]">
-                    A Holiday Calendar fixes the day types that Work Arrangement Versions pin for
-                    their scope. Each activated version is immutable and superseded in turn.
-                  </p>
-                </StateSurface>
-              ) : (
-                <Table aria-label="Holiday Calendars" className="min-w-[860px]">
-                  <thead>
-                    <tr>
-                      <Th>Holiday Calendar</Th>
-                      <Th>Scope</Th>
-                      <Th>Current version</Th>
-                      <Th>Draft</Th>
-                      <Th>
-                        <span className="sr-only">Actions</span>
-                      </Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {calendars.map((calendar) => (
-                      <Tr key={calendar.id}>
-                        <RowHeader>
-                          <div className="grid gap-1">
-                            <button
-                              className={recordLinkClass}
-                              onClick={(event) =>
-                                openCalendarDetail(
-                                  calendar,
-                                  event.currentTarget as unknown as { focus(): void },
-                                )
-                              }
-                              type="button"
-                            >
-                              {calendar.code}
-                            </button>
-                            <span className="text-caption font-normal text-ink-muted">
-                              {calendar.name}
-                            </span>
-                          </div>
-                        </RowHeader>
-                        <Td className="text-ink-muted">
-                          {label(calendar.scopeType) + ' · ' + calendar.scopeReference}
-                        </Td>
-                        <Td>
-                          {calendar.currentVersion
-                            ? 'v' +
-                              calendar.currentVersion.versionNo +
-                              ' · ' +
-                              calendar.currentVersion.entries.length +
-                              (calendar.currentVersion.entries.length === 1
-                                ? ' entry · '
-                                : ' entries · ') +
-                              dateLabel(calendar.currentVersion.effectiveFrom)
-                            : 'No active version'}
-                        </Td>
-                        <Td className="text-ink-muted">
-                          {calendar.draft
-                            ? 'v' +
-                              calendar.draft.versionNo +
-                              ' · ' +
-                              dateLabel(calendar.draft.effectiveFrom)
-                            : 'None'}
-                        </Td>
-                        <Td>{calendarActions(calendar)}</Td>
-                      </Tr>
-                    ))}
-                  </tbody>
-                </Table>
-              )}
-            </Panel>
-          </SectionTabPanel>
-
           <SectionTabPanel className="grid gap-5" value="assignments">
             <Panel
               title="Schedule Assignment register"
@@ -3045,11 +2441,23 @@ export function AttendanceConfigurationWorkspace({
           </SectionTabPanel>
         </div>
 
+        {/* Outside the hidden wrapper: the section shows its own forms inline in this panel. */}
+        <SectionTabPanel value="calendars">
+          <HolidayCalendarsSection
+            ref={calendarsSectionRef}
+            agencyId={agencyId}
+            request={request}
+            canManage={canManage}
+            canActivate={canActivate}
+            calendars={calendars}
+            onRefresh={refreshCalendars}
+            onFormChange={setSectionFormOpen}
+          />
+        </SectionTabPanel>
+
         <DialogContent
           aria-describedby={dialogDescriptionId}
-          className={
-            editingSchedule || editingArrangement || editingCalendar ? 'max-w-[980px]' : undefined
-          }
+          className={editingSchedule || editingArrangement ? 'max-w-[980px]' : undefined}
         >
           <DialogHeader>
             <div className="grid min-w-0 gap-1.5">
@@ -3074,30 +2482,16 @@ export function AttendanceConfigurationWorkspace({
                                   ? 'Activate ' + selectedLabel
                                   : dialog === 'arrangement-detail'
                                     ? 'Work Arrangement · ' + selectedLabel
-                                    : dialog === 'calendar-create'
-                                      ? 'Create Holiday Calendar'
-                                      : dialog === 'calendar-edit'
-                                        ? 'Edit Draft Holiday Calendar'
-                                        : dialog === 'calendar-successor'
-                                          ? 'Create Successor · ' + selectedLabel
-                                          : dialog === 'calendar-activate'
-                                            ? 'Activate ' + selectedLabel
-                                            : dialog === 'calendar-detail'
-                                              ? 'Holiday Calendar · ' + selectedLabel
-                                              : dialog === 'assignment-create'
-                                                ? 'Create Schedule Assignment'
-                                                : 'End Schedule Assignment · ' + selectedLabel}
+                                    : dialog === 'assignment-create'
+                                      ? 'Create Schedule Assignment'
+                                      : 'End Schedule Assignment · ' + selectedLabel}
               </DialogTitle>
               <DialogDescription id={dialogDescriptionId}>
                 {dialog === 'schedule-create' || dialog === 'schedule-edit'
                   ? 'Declare the schedule type, time zone, effective date, and exactly one Day Rule per weekday. Required minutes exclude unpaid breaks.'
-                  : dialog === 'schedule-activate' ||
-                      dialog === 'arrangement-activate' ||
-                      dialog === 'calendar-activate'
+                  : dialog === 'schedule-activate' || dialog === 'arrangement-activate'
                     ? 'Activation pins the authority Document Version, validates the Draft, and retires any predecessor by supersession.'
-                    : dialog === 'schedule-successor' ||
-                        dialog === 'arrangement-successor' ||
-                        dialog === 'calendar-successor'
+                    : dialog === 'schedule-successor' || dialog === 'arrangement-successor'
                       ? 'The successor copies the current published definition and receives a later effective date. It remains Draft until reviewed.'
                       : dialog === 'schedule-detail'
                         ? 'Inspect effective-dated versions, the seven-day rule matrix, and the immutable transition history.'
@@ -3105,13 +2499,9 @@ export function AttendanceConfigurationWorkspace({
                           ? 'Declare the operating mode, its permitted schedule types, the pinned Holiday Calendar, and the effective date.'
                           : dialog === 'arrangement-detail'
                             ? 'Inspect effective-dated versions, the pinned Holiday Calendar, and the immutable transition history.'
-                            : dialog === 'calendar-create' || dialog === 'calendar-edit'
-                              ? 'Declare the calendar scope, effective date, and one row per holiday date and day type.'
-                              : dialog === 'calendar-detail'
-                                ? 'Inspect effective-dated versions, their holiday entries, and the immutable transition history.'
-                                : dialog === 'assignment-create'
-                                  ? 'Bind one Employee to an active Work Schedule Version and Work Arrangement Version for a non-overlapping period, with the authority Document Version.'
-                                  : 'Ending records the last covered date and the reason. The Assignment then remains immutable.'}
+                            : dialog === 'assignment-create'
+                              ? 'Bind one Employee to an active Work Schedule Version and Work Arrangement Version for a non-overlapping period, with the authority Document Version.'
+                              : 'Ending records the last covered date and the reason. The Assignment then remains immutable.'}
               </DialogDescription>
             </div>
             <DialogClose asChild>
@@ -3140,15 +2530,7 @@ export function AttendanceConfigurationWorkspace({
               detailLoading={detailLoading}
               error={error}
             />
-          ) : dialog === 'calendar-detail' ? (
-            <HolidayCalendarDetailBody
-              detail={calendarDetail}
-              detailLoading={detailLoading}
-              error={error}
-            />
-          ) : dialog === 'schedule-activate' ||
-            dialog === 'arrangement-activate' ||
-            dialog === 'calendar-activate' ? (
+          ) : dialog === 'schedule-activate' || dialog === 'arrangement-activate' ? (
             <ActivationForm
               activation={activation}
               error={error}
@@ -3157,9 +2539,7 @@ export function AttendanceConfigurationWorkspace({
               onSubmit={submitActivation}
               setActivation={setActivation}
             />
-          ) : dialog === 'schedule-successor' ||
-            dialog === 'arrangement-successor' ||
-            dialog === 'calendar-successor' ? (
+          ) : dialog === 'schedule-successor' || dialog === 'arrangement-successor' ? (
             <>
               <DialogBody className="grid gap-5">
                 <FormError message={error} />
@@ -3207,32 +2587,6 @@ export function AttendanceConfigurationWorkspace({
                 </DialogClose>
                 <Button disabled={busy} type="submit" variant="primary">
                   {busy ? 'Saving…' : dialog === 'schedule-create' ? 'Create Draft' : 'Save Draft'}
-                </Button>
-              </DialogFooter>
-            </form>
-          ) : dialog === 'calendar-create' || dialog === 'calendar-edit' ? (
-            <form
-              className="flex min-h-0 flex-1 flex-col overflow-hidden"
-              onSubmit={(event) => void submitHolidayCalendar(event)}
-            >
-              <DialogBody className="grid auto-rows-max content-start gap-6">
-                <FormError message={error} />
-                <HolidayCalendarDefinitionFields
-                  dialog={dialog}
-                  setValue={(field, value) =>
-                    setCalendarValues((current) => ({ ...current, [field]: value }))
-                  }
-                  values={calendarValues}
-                />
-              </DialogBody>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button disabled={busy} type="button" variant="secondary">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button disabled={busy} type="submit" variant="primary">
-                  {busy ? 'Saving…' : dialog === 'calendar-create' ? 'Create Draft' : 'Save Draft'}
                 </Button>
               </DialogFooter>
             </form>
