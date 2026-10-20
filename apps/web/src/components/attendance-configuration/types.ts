@@ -370,11 +370,6 @@ export class AttendanceRequestError extends Error {
 export type TabSectionHandle = { openCreate(target: { focus(): void }): void };
 
 export type DialogKind =
-  | 'schedule-create'
-  | 'schedule-edit'
-  | 'schedule-detail'
-  | 'schedule-successor'
-  | 'schedule-activate'
   | 'calendar-create'
   | 'calendar-edit'
   | 'calendar-detail'
