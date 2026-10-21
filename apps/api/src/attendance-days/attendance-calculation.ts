@@ -257,7 +257,11 @@ function materializeDayRule(
   const instantOfWall = (value: string, dayOffset: number): number =>
     minuteOf(zonedTimeToInstant(addDateValueDays(workDate, dayOffset), value, timezone));
   const crossesMidnight = dayRule.endNextCalendarDay;
-  const dutyStartWall = wallMinutesOf(dayRule.dutyStartTime);
+  // Config validation starts the break window at the fixed duty start or the
+  // flexible latest permitted start, so an overnight break is placed the same way.
+  const breakWindowStartWall = wallMinutesOf(
+    dayRule.ruleType === 'FIXED' ? dayRule.dutyStartTime : dayRule.latestStartTime,
+  );
   const dutyEndOffset = crossesMidnight ? 1 : 0;
   const anchorStartMinute =
     dayRule.ruleType === 'FIXED'
@@ -275,7 +279,9 @@ function materializeDayRule(
     .map((item) => {
       const startWall = minutesOfTimeValue(item.breakStartTime);
       const dayOffset =
-        crossesMidnight && dutyStartWall !== null && startWall < dutyStartWall ? 1 : 0;
+        crossesMidnight && breakWindowStartWall !== null && startWall < breakWindowStartWall
+          ? 1
+          : 0;
       const endOffset = dayOffset + (item.endNextCalendarDay ? 1 : 0);
       return {
         start: instantOfWall(item.breakStartTime, dayOffset),
@@ -868,6 +874,9 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
       requiredMinutes: input.dayRule.requiredMinutes,
       eventPattern: input.dayRule.eventPattern,
       breaks: input.dayRule.breaks,
+      // Flexible Days calculated before expected duty ended at required minutes
+      // must recalculate; fixed Day fingerprints stay stable.
+      ...(input.dayRule.ruleType === 'FLEXIBLE' ? { expectedEnd: 'REQUIRED_MINUTES' } : {}),
     },
     events: [...input.events]
       .map((event) => ({

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import type { WorkScheduleDayRuleSummary } from '../attendance-configuration/work-schedules.service';
 import {
@@ -27,6 +28,14 @@ vi.mock('node:crypto', async (importOriginal) => {
     },
   };
 });
+
+function digestOf(payload: string): string {
+  return createHash('sha256').update(payload).digest('hex');
+}
+
+function fingerprintDayRule(payload: string): Record<string, unknown> {
+  return (JSON.parse(payload) as { dayRule: Record<string, unknown> }).dayRule;
+}
 
 const WORK_DATE = '2026-01-02';
 const TIMEZONE = 'Asia/Manila';
@@ -499,6 +508,57 @@ it('does not extend the expected end for a break that starts after it', () => {
   });
 });
 
+it('places an overnight flexible break on the next calendar day', () => {
+  const overnight = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '20:00',
+    latestStartTime: '22:00',
+    dutyEndTime: '06:00',
+    endNextCalendarDay: true,
+    requiredMinutes: 420,
+    breaks: [
+      {
+        id: 'overnight-break',
+        sequenceNo: 1,
+        breakStartTime: '02:00',
+        breakEndTime: '03:00',
+        endNextCalendarDay: false,
+      },
+    ],
+  });
+
+  const full = calculateAttendanceDay(
+    input({
+      dayRule: overnight,
+      events: [at('22:00', 'TIME_IN'), at('06:00', 'TIME_OUT', 'TIME_OUT-next', 1)],
+    }),
+  );
+  expect(full.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 420,
+    coverageMinutes: 420,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+
+  const short = calculateAttendanceDay(
+    input({
+      dayRule: overnight,
+      events: [at('22:00', 'TIME_IN'), at('05:00', 'TIME_OUT', 'TIME_OUT-short', 1)],
+    }),
+  );
+  expect(short.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 360,
+    coverageMinutes: 360,
+    lateMinutes: 0,
+    undertimeMinutes: 60,
+    absenceMinutes: 0,
+  });
+});
+
 it('anchors a flexible day on its latest permitted start when nothing qualifies', () => {
   const result = calculateAttendanceDay(
     input({
@@ -805,6 +865,37 @@ it('fingerprints every calculation input deterministically', () => {
   expect(fingerprintAttendanceDayInput(base)).toMatch(/^[0-9a-f]{64}$/);
   expect(fingerprintAttendanceDayInput(base)).toBe(fingerprintAttendanceDayInput(same));
   expect(fingerprintAttendanceDayInput(base)).not.toBe(fingerprintAttendanceDayInput(moved));
+});
+
+it('forces a flexible Day recalculation without moving a fixed Day fingerprint', () => {
+  const flexible = input({
+    dayRule: dayRule({
+      ruleType: 'FLEXIBLE',
+      dutyStartTime: null,
+      earliestStartTime: '07:00',
+      latestStartTime: '09:00',
+      dutyEndTime: '17:00',
+      requiredMinutes: 420,
+    }),
+  });
+
+  hashedPayloads.length = 0;
+  const flexibleFingerprint = fingerprintAttendanceDayInput(flexible);
+  const flexiblePayload = JSON.parse(hashedPayloads[0]!) as {
+    dayRule: Record<string, unknown>;
+  };
+  expect(flexiblePayload.dayRule.expectedEnd).toBe('REQUIRED_MINUTES');
+
+  // Dropping the marker leaves the canonical input a Day calculated before this
+  // fix stored, so its fingerprint no longer matches and the Day recalculates.
+  delete flexiblePayload.dayRule.expectedEnd;
+  expect(flexibleFingerprint).not.toBe(digestOf(JSON.stringify(flexiblePayload)));
+
+  hashedPayloads.length = 0;
+  const fixedFingerprint = fingerprintAttendanceDayInput(input());
+  const fixedPayload = hashedPayloads[0]!;
+  expect(fingerprintDayRule(fixedPayload)).not.toHaveProperty('expectedEnd');
+  expect(fixedFingerprint).toBe(digestOf(fixedPayload));
 });
 
 it('fingerprints a new effective governing version even when its rules are identical', () => {
