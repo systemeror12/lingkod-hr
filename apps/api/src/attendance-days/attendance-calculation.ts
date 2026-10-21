@@ -137,6 +137,7 @@ interface MinuteDayRule {
   anchorStartMinute: number | null;
   latestStartMinute: number | null;
   dutyEndMinute: number | null;
+  requiredMinutes: number;
   eventPattern: EventPattern;
   breaks: Interval[];
 }
@@ -288,6 +289,7 @@ function materializeDayRule(
     latestStartMinute:
       dayRule.latestStartTime === null ? null : instantOfWall(dayRule.latestStartTime, 0),
     dutyEndMinute,
+    requiredMinutes: dayRule.requiredMinutes,
     eventPattern: dayRule.eventPattern,
     breaks,
   };
@@ -309,7 +311,7 @@ export function wholeWorkDateCoverageIntervals(
   const rule = materializeDayRule(dayRule, workDate, timezone);
   if (rule.ruleType === 'REST') return [];
   if (rule.anchorStartMinute === null || rule.dutyEndMinute === null) return [];
-  return expectedIntervals(rule, rule.anchorStartMinute).map((interval) => ({
+  return dutyWindowIntervals(rule, rule.anchorStartMinute).map((interval) => ({
     startsAt: instantOf(interval.start),
     endsAt: instantOf(interval.end),
   }));
@@ -352,10 +354,48 @@ function workedIntervals(
   return subtractIntervals(span, breaks);
 }
 
-function expectedIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
+/**
+ * The duty window one anchor covers: every minute from the anchor to the fixed
+ * duty end, less scheduled unpaid breaks. Whole-day coverage spans this window
+ * so it still qualifies as coverage without anchoring a flexible start.
+ */
+function dutyWindowIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
   if (rule.dutyEndMinute === null || rule.dutyEndMinute <= anchorMinute) return [];
   return subtractIntervals(
     { start: anchorMinute, end: rule.dutyEndMinute },
+    rule.breaks.map((item) => ({ start: item.start, end: item.end })),
+  );
+}
+
+/**
+ * The minute a flexible duty span ends when it anchors at the first qualifying
+ * minute: walk forward from the anchor counting only minutes outside scheduled
+ * unpaid breaks until `requiredMinutes` is met. A break that starts after that
+ * point does not extend the end, and configuration validation keeps the result
+ * at or before the duty end.
+ */
+function requiredEndMinute(rule: MinuteDayRule, anchorMinute: number): number {
+  const dutyEndMinute = rule.dutyEndMinute ?? anchorMinute;
+  let remaining = Math.max(0, rule.requiredMinutes);
+  let cursor = anchorMinute;
+  for (const item of rule.breaks) {
+    if (item.end <= cursor) continue;
+    const beforeBreak = Math.max(0, item.start - cursor);
+    if (remaining <= beforeBreak) return Math.min(cursor + remaining, dutyEndMinute);
+    remaining -= beforeBreak;
+    cursor = Math.max(cursor, item.end);
+    if (cursor >= dutyEndMinute) break;
+  }
+  return Math.min(cursor + remaining, dutyEndMinute);
+}
+
+function expectedIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
+  if (rule.dutyEndMinute === null || rule.dutyEndMinute <= anchorMinute) return [];
+  if (rule.ruleType === 'FIXED') return dutyWindowIntervals(rule, anchorMinute);
+  const end = requiredEndMinute(rule, anchorMinute);
+  if (end <= anchorMinute) return [];
+  return subtractIntervals(
+    { start: anchorMinute, end },
     rule.breaks.map((item) => ({ start: item.start, end: item.end })),
   );
 }
