@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 
 /**
  * Resolve the Employees who report directly to one Supervisor Employee on a
- * date (ADR 0005). The Supervisor heads every active Organization Unit whose
+ * date (ADR 0007). The Supervisor heads every active Organization Unit whose
  * head Plantilla Position they hold. Their direct reports are the Employees
  * serving in those units and the heads of their immediate child units, one
  * level only. The Supervisor is never their own direct report.

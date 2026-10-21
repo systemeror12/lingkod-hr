@@ -1,4 +1,4 @@
--- ADR 0005: a Supervisor's direct reports are the Employees serving in the
+-- ADR 0007: a Supervisor's direct reports are the Employees serving in the
 -- Organization Units they head and the heads of those units' immediate child
 -- units. The Supervisor role starts with only the `leave.mandatory_assessments.read`
 -- grant from hris-controls §6.8 (`S`). Other `S` grants follow as their

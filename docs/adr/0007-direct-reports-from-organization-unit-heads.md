@@ -1,4 +1,4 @@
-# ADR 0005: Direct reports come from Organization Unit heads
+# ADR 0007: Direct reports come from Organization Unit heads
 
 - Status: Accepted
 - Date: 2026-10-04
@@ -36,9 +36,9 @@ have no direct-report Supervisor until it is filled. A Supervisor is never
 their own direct report.
 
 The developer chose the Organization Unit head as the source on issue #445
-after no CSC or BRD source defined the relationship. Depth was not answered.
-One level is provisional, taken as the literal reading of "direct reports",
-until the developer confirms it.
+after no CSC or BRD source defined the relationship. The developer confirmed
+one level on issue #446 as the literal reading of "direct reports"; the whole
+subtree below a Supervisor was considered and not chosen.
 
 ## Consequences
 

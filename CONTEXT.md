@@ -229,7 +229,7 @@ An agency-scoped role for the incumbent of an Organization Unit's head Plantilla
 _Avoid_: Manager, Approving Official
 
 **Direct Report**:
-An Employee serving in an Organization Unit the Supervisor heads, or the head of one of its immediate child units, on the date of the read. It covers one level only (ADR 0005).
+An Employee serving in an Organization Unit the Supervisor heads, or the head of one of its immediate child units, on the date of the read. It covers one level only (ADR 0007).
 _Avoid_: Team member, subordinate, everyone below
 
 **HR Officer**:

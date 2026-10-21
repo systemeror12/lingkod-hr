@@ -390,7 +390,7 @@ test('shows a Supervisor only their direct reports, without the Evaluate action'
   const chief = await createEmployee('CHIEF');
   const report = await createEmployee('REPORT');
 
-  // ADR 0005: the chief heads a fresh Division through its head Plantilla Position, and the
+  // ADR 0007: the chief heads a fresh Division through its head Plantilla Position, and the
   // report serves in it. Organization and Plantilla projections normally require their
   // application services, which this journey does not exercise.
   await withAdmin((admin) =>
