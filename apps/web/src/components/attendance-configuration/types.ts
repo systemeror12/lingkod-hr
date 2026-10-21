@@ -368,5 +368,3 @@ export class AttendanceRequestError extends Error {
 
 /** Lets the workspace header's create button open a tab section's create form. */
 export type TabSectionHandle = { openCreate(target: { focus(): void }): void };
-
-export type DialogKind = 'assignment-create' | 'assignment-end';
