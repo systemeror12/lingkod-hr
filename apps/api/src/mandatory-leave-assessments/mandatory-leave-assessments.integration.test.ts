@@ -972,3 +972,289 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct reports', async () => {
+  const admin = await createAdminClient();
+  const suffix = `${Date.now()}-mandatory-leave-supervisor`;
+  const year = Number(manilaDate(0).slice(0, 4));
+  const agency = await admin.agency.create({
+    data: {
+      code: `MLS-${suffix}`,
+      name: 'Mandatory Leave Supervisor Agency',
+      agencyType: 'NGA',
+      status: 'ACTIVE',
+    },
+  });
+  const user = await admin.user.create({
+    data: {
+      emailNormalized: `mandatory-leave-supervisor-${suffix}@example.test`,
+      displayName: 'Division Chief',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  const membership = await admin.agencyMembership.create({
+    data: { agencyId: agency.id, userId: user.id, status: 'ACTIVE' },
+  });
+  const unlinkedUser = await admin.user.create({
+    data: {
+      emailNormalized: `mandatory-leave-unlinked-${suffix}@example.test`,
+      displayName: 'Unlinked Supervisor',
+      globalStatus: 'ACTIVE',
+    },
+  });
+  const unlinkedMembership = await admin.agencyMembership.create({
+    data: { agencyId: agency.id, userId: unlinkedUser.id, status: 'ACTIVE' },
+  });
+  try {
+    // A record closed on a future date stays in effect until then.
+    const unit = async (
+      code: string,
+      parentUnitId: string | null,
+      headPositionId: string,
+      effectiveTo: string | null = null,
+    ) => {
+      const record = await admin.organizationUnit.create({
+        data: {
+          agencyId: agency.id,
+          code: `${code}-${suffix}`,
+          unitType: 'DIVISION',
+          status: 'ACTIVE',
+        },
+      });
+      const version = await admin.organizationUnitVersion.create({
+        data: {
+          agencyId: agency.id,
+          organizationUnitId: record.id,
+          versionNo: 1,
+          name: code,
+          parentUnitId,
+          headPositionId,
+          effectiveFrom: new Date('2020-01-01'),
+          effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+          status: effectiveTo ? 'SUPERSEDED' : 'ACTIVE',
+          domainStatus: 'ACTIVE',
+        },
+      });
+      await admin.organizationUnit.update({
+        where: { id: record.id },
+        data: { currentVersionId: version.id },
+      });
+      return record;
+    };
+    // Plantilla Position projections normally require the application service.
+    const position = (itemNumber: string) =>
+      admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        return transaction.plantillaPosition.create({
+          data: {
+            agencyId: agency.id,
+            itemNumber: `${itemNumber}-${suffix}`,
+            status: 'OCCUPIED',
+            createdByMembershipId: membership.id,
+            updatedByMembershipId: membership.id,
+          },
+        });
+      });
+    const assign = (
+      employeeId: string,
+      organizationUnitId: string,
+      positionId: string | null,
+      effectiveTo: string | null = null,
+    ) =>
+      withDatabaseContext(
+        {
+          agencyId: agency.id,
+          membershipId: membership.id,
+          capabilities: ['personnel-baseline-transition'],
+        },
+        async (transaction) => {
+          const segment = await transaction.serviceSegment.create({
+            data: {
+              agencyId: agency.id,
+              employeeId,
+              positionId,
+              organizationUnitId,
+              appointmentStatus: 'PERMANENT',
+              effectiveFrom: new Date('2020-01-01'),
+              effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+              status: effectiveTo ? 'CLOSED' : 'ACTIVE',
+              createdByMembershipId: membership.id,
+            },
+          });
+          if (positionId) {
+            await transaction.positionIncumbency.create({
+              data: {
+                agencyId: agency.id,
+                positionId,
+                employeeId,
+                serviceSegmentId: segment.id,
+                effectiveFrom: new Date('2020-01-01'),
+                effectiveTo: effectiveTo ? new Date(effectiveTo) : null,
+                status: effectiveTo ? 'ENDED' : 'ACTIVE',
+                createdByMembershipId: membership.id,
+              },
+            });
+          }
+        },
+      );
+
+    const chiefPosition = await position('CHIEF');
+    const sectionHeadPosition = await position('SECTION-HEAD');
+    const otherChiefPosition = await position('OTHER-CHIEF');
+    const division = await unit('DIV', null, chiefPosition.id, manilaDate(1));
+    const section = await unit('SEC', division.id, sectionHeadPosition.id);
+    const otherDivision = await unit('OTHER', null, otherChiefPosition.id);
+
+    const chief = await createEmployee(
+      admin,
+      agency.id,
+      membership.id,
+      `${suffix}-1`,
+      'Dana Chief',
+    );
+    const member = await createEmployee(
+      admin,
+      agency.id,
+      membership.id,
+      `${suffix}-2`,
+      'Eli Member',
+    );
+    const sectionHead = await createEmployee(
+      admin,
+      agency.id,
+      membership.id,
+      `${suffix}-3`,
+      'Sam Head',
+    );
+    const sectionMember = await createEmployee(
+      admin,
+      agency.id,
+      membership.id,
+      `${suffix}-4`,
+      'Tess Section',
+    );
+    const outsider = await createEmployee(
+      admin,
+      agency.id,
+      membership.id,
+      `${suffix}-5`,
+      'Owen Outside',
+    );
+    const former = await createEmployee(
+      admin,
+      agency.id,
+      membership.id,
+      `${suffix}-6`,
+      'Fay Former',
+    );
+    await assign(chief.id, division.id, chiefPosition.id, manilaDate(1));
+    await assign(member.id, division.id, null, manilaDate(1));
+    await assign(sectionHead.id, section.id, sectionHeadPosition.id);
+    await assign(sectionMember.id, section.id, null);
+    await assign(outsider.id, otherDivision.id, null);
+    await assign(former.id, division.id, null, manilaDate(-1));
+    await withDatabaseContext(
+      {
+        agencyId: agency.id,
+        userId: user.id,
+        membershipId: membership.id,
+        capabilities: ['employee-membership-link'],
+      },
+      (transaction) =>
+        transaction.agencyMembership.update({
+          where: { agencyId_id: { agencyId: agency.id, id: membership.id } },
+          data: { employeeId: chief.id },
+        }),
+    );
+    const assessments = new Map<string, string>();
+    for (const employee of [chief, member, sectionHead, sectionMember, outsider, former]) {
+      const assessment = await admin.mandatoryLeaveAssessment.create({
+        data: {
+          agencyId: agency.id,
+          employeeId: employee.id,
+          assessmentYear: year,
+          assessmentDate: new Date(`${year}-06-30T00:00:00.000Z`),
+          result: 'INDETERMINATE',
+          materialFingerprint: `fingerprint-${employee.id}`,
+          inputFacts: { indeterminateReasons: ['MISSING_POLICY'] },
+          ruleResults: [],
+        },
+      });
+      assessments.set(employee.id, assessment.id);
+    }
+
+    const service = new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter);
+    const directReportsContext = context(agency.id, user.id, membership.id, [
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'DIRECT_REPORTS' },
+    ]);
+    const supervisorEmployeeContext = context(agency.id, user.id, membership.id, [
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'DIRECT_REPORTS' },
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'OWN' },
+    ]);
+
+    // One level: the unit's members and the heads of its child units.
+    const latest = await service.latestByEmployee(directReportsContext, year);
+    expect(latest.items.map((row) => row.employeeId)).toEqual([member.id, sectionHead.id]);
+    const { items } = await service.list(directReportsContext, { year });
+    expect(items.map((row) => row.employeeId)).toEqual([member.id, sectionHead.id]);
+    await expect(
+      service.findById(directReportsContext, assessments.get(member.id)!),
+    ).resolves.toMatchObject({ employeeId: member.id });
+    for (const hidden of [chief, sectionMember, outsider, former]) {
+      await expect(
+        service.findById(directReportsContext, assessments.get(hidden.id)!),
+      ).resolves.toBeNull();
+    }
+
+    // The Supervisor's Employee role adds their own assessment.
+    const combined = await service.latestByEmployee(supervisorEmployeeContext, year);
+    expect(combined.items.map((row) => row.employeeId)).toEqual([
+      chief.id,
+      member.id,
+      sectionHead.id,
+    ]);
+
+    // A Supervisor membership without a linked Employee has no direct reports.
+    const unlinked = context(agency.id, unlinkedUser.id, unlinkedMembership.id, [
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'DIRECT_REPORTS' },
+    ]);
+    await expect(service.latestByEmployee(unlinked, year)).resolves.toMatchObject({ items: [] });
+    await expect(service.list(unlinked, { year })).resolves.toMatchObject({ items: [] });
+
+    await expect(service.evaluateAgencyYear(directReportsContext, year)).rejects.toMatchObject({
+      statusCode: 403,
+    });
+
+    // The Supervisor role carries the direct-report read grant and no evaluate grant.
+    const grants = await admin.rolePermission.findMany({
+      where: { role: { code: 'supervisor', agencyId: null } },
+      select: { scopePolicy: true, permission: { select: { code: true } } },
+    });
+    expect(grants.map((grant) => [grant.permission.code, grant.scopePolicy])).toEqual([
+      ['leave.mandatory_assessments.read', 'DIRECT_REPORTS'],
+    ]);
+  } finally {
+    await admin.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      await transaction.mandatoryLeaveAssessment.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.agencyMembership.updateMany({
+        where: { agencyId: agency.id },
+        data: { employeeId: null },
+      });
+      await transaction.positionIncumbency.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.serviceSegment.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.organizationUnit.updateMany({
+        where: { agencyId: agency.id },
+        data: { currentVersionId: null },
+      });
+      await transaction.organizationUnitVersion.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.organizationUnit.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.plantillaPosition.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.employee.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.agencyMembership.deleteMany({ where: { agencyId: agency.id } });
+      await transaction.agency.deleteMany({ where: { id: agency.id } });
+      await transaction.user.deleteMany({ where: { id: { in: [user.id, unlinkedUser.id] } } });
+    });
+    await admin.$disconnect();
+  }
+});
