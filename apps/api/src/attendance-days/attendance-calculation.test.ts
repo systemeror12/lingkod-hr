@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import type { WorkScheduleDayRuleSummary } from '../attendance-configuration/work-schedules.service';
 import {
+  ATTENDANCE_EXPECTED_END_RULE,
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
@@ -116,6 +117,14 @@ const lunchBreak = {
   sequenceNo: 1,
   breakStartTime: '12:00',
   breakEndTime: '13:00',
+  endNextCalendarDay: false,
+};
+
+const overnightBreak = {
+  id: 'b2',
+  sequenceNo: 1,
+  breakStartTime: '02:00',
+  breakEndTime: '03:00',
   endNextCalendarDay: false,
 };
 
@@ -517,15 +526,7 @@ it('places an overnight flexible break on the next calendar day', () => {
     dutyEndTime: '06:00',
     endNextCalendarDay: true,
     requiredMinutes: 420,
-    breaks: [
-      {
-        id: 'overnight-break',
-        sequenceNo: 1,
-        breakStartTime: '02:00',
-        breakEndTime: '03:00',
-        endNextCalendarDay: false,
-      },
-    ],
+    breaks: [overnightBreak],
   });
 
   const full = calculateAttendanceDay(
@@ -556,6 +557,63 @@ it('places an overnight flexible break on the next calendar day', () => {
     lateMinutes: 0,
     undertimeMinutes: 60,
     absenceMinutes: 0,
+  });
+});
+
+it('derives an early flexible expected end across an overnight break', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        ruleType: 'FLEXIBLE',
+        dutyStartTime: null,
+        earliestStartTime: '20:00',
+        latestStartTime: '22:00',
+        dutyEndTime: '06:00',
+        endNextCalendarDay: true,
+        requiredMinutes: 420,
+        breaks: [overnightBreak],
+      }),
+      events: [at('20:00', 'TIME_IN'), at('04:00', 'TIME_OUT', 'TIME_OUT-early', 1)],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 420,
+    coverageMinutes: 420,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+    outsideScheduleMinutes: 0,
+  });
+  expect(wallSegments(result)).toEqual([
+    ['20:00', '02:00'],
+    ['03:00', '04:00'],
+  ]);
+});
+
+it('places a fixed overnight break on the next calendar day', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        dutyStartTime: '22:00',
+        dutyEndTime: '06:00',
+        endNextCalendarDay: true,
+        requiredMinutes: 420,
+        breaks: [overnightBreak],
+      }),
+      events: [at('22:00', 'TIME_IN'), at('06:00', 'TIME_OUT', 'TIME_OUT-fixed', 1)],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 420,
+    coverageMinutes: 420,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+    outsideScheduleMinutes: 0,
   });
 });
 
@@ -875,7 +933,7 @@ it('forces a flexible Day recalculation without moving a fixed Day fingerprint',
       earliestStartTime: '07:00',
       latestStartTime: '09:00',
       dutyEndTime: '17:00',
-      requiredMinutes: 420,
+      requiredMinutes: 480,
     }),
   });
 
@@ -884,7 +942,7 @@ it('forces a flexible Day recalculation without moving a fixed Day fingerprint',
   const flexiblePayload = JSON.parse(hashedPayloads[0]!) as {
     dayRule: Record<string, unknown>;
   };
-  expect(flexiblePayload.dayRule.expectedEnd).toBe('REQUIRED_MINUTES');
+  expect(flexiblePayload.dayRule.expectedEnd).toBe(ATTENDANCE_EXPECTED_END_RULE);
 
   // Dropping the marker leaves the canonical input a Day calculated before this
   // fix stored, so its fingerprint no longer matches and the Day recalculates.
@@ -929,7 +987,7 @@ it('covers a whole Work Date from the duty window and the earliest flexible star
       dutyStartTime: null,
       earliestStartTime: '07:00',
       latestStartTime: '09:00',
-      requiredMinutes: 420,
+      requiredMinutes: 480,
       endNextCalendarDay: false,
     }),
     WORK_DATE,

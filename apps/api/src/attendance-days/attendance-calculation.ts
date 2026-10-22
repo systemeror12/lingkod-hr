@@ -165,6 +165,13 @@ const COVERAGE_TOTAL_KEYS: Partial<
  */
 export const ATTENDANCE_MINUTE_RULE = 'FULLY_COVERED_MINUTE';
 
+/**
+ * The flexible expected-duty convention, recorded in the input fingerprint so a
+ * Day calculated before required minutes ended the anchored span reads stale.
+ * Fixed Day Rules keep their whole duty window and do not carry it.
+ */
+export const ATTENDANCE_EXPECTED_END_RULE = 'REQUIRED_MINUTES';
+
 /** The whole minute a boundary falls in; minutes are the ledger's unit of account. */
 function minuteOf(value: Date): number {
   return Math.floor(value.getTime() / 60_000);
@@ -361,49 +368,31 @@ function workedIntervals(
 }
 
 /**
- * The duty window one anchor covers: every minute from the anchor to the fixed
- * duty end, less scheduled unpaid breaks. Whole-day coverage spans this window
- * so it still qualifies as coverage without anchoring a flexible start.
+ * The whole duty window from an anchor to the fixed duty end, less scheduled
+ * unpaid breaks. Whole-day coverage spans this window so it covers every
+ * permitted start; the calculation chooses the anchor later from qualifying
+ * coverage.
  */
 function dutyWindowIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
   if (rule.dutyEndMinute === null || rule.dutyEndMinute <= anchorMinute) return [];
-  return subtractIntervals(
-    { start: anchorMinute, end: rule.dutyEndMinute },
-    rule.breaks.map((item) => ({ start: item.start, end: item.end })),
-  );
+  return subtractIntervals({ start: anchorMinute, end: rule.dutyEndMinute }, rule.breaks);
 }
 
 /**
- * The minute a flexible duty span ends when it anchors at the first qualifying
- * minute: walk forward from the anchor counting only minutes outside scheduled
- * unpaid breaks until `requiredMinutes` is met. A break that starts after that
- * point does not extend the end, and configuration validation keeps the result
- * at or before the duty end.
+ * Expected duty for an anchored start: the first `requiredMinutes` of the duty
+ * window, skipping scheduled unpaid breaks. A flexible Day that anchors early
+ * therefore stops when its required minutes are met instead of running to the
+ * fixed duty end. Fixed Day Rules keep the whole window, since validation pins
+ * their required minutes to it and malformed last-known snapshots stay unchanged.
  */
-function requiredEndMinute(rule: MinuteDayRule, anchorMinute: number): number {
-  const dutyEndMinute = rule.dutyEndMinute ?? anchorMinute;
-  let remaining = Math.max(0, rule.requiredMinutes);
-  let cursor = anchorMinute;
-  for (const item of rule.breaks) {
-    if (item.end <= cursor) continue;
-    const beforeBreak = Math.max(0, item.start - cursor);
-    if (remaining <= beforeBreak) return Math.min(cursor + remaining, dutyEndMinute);
-    remaining -= beforeBreak;
-    cursor = Math.max(cursor, item.end);
-    if (cursor >= dutyEndMinute) break;
-  }
-  return Math.min(cursor + remaining, dutyEndMinute);
-}
-
 function expectedIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
-  if (rule.dutyEndMinute === null || rule.dutyEndMinute <= anchorMinute) return [];
   if (rule.ruleType === 'FIXED') return dutyWindowIntervals(rule, anchorMinute);
-  const end = requiredEndMinute(rule, anchorMinute);
-  if (end <= anchorMinute) return [];
-  return subtractIntervals(
-    { start: anchorMinute, end },
-    rule.breaks.map((item) => ({ start: item.start, end: item.end })),
-  );
+  let remaining = rule.requiredMinutes;
+  return dutyWindowIntervals(rule, anchorMinute).flatMap((interval) => {
+    const taken = Math.min(remaining, interval.end - interval.start);
+    remaining -= taken;
+    return taken > 0 ? [{ start: interval.start, end: interval.start + taken }] : [];
+  });
 }
 
 function flexibleAnchorMinute(rule: MinuteDayRule, qualifying: readonly Interval[]): number | null {
@@ -876,7 +865,9 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
       breaks: input.dayRule.breaks,
       // Flexible Days calculated before expected duty ended at required minutes
       // must recalculate; fixed Day fingerprints stay stable.
-      ...(input.dayRule.ruleType === 'FLEXIBLE' ? { expectedEnd: 'REQUIRED_MINUTES' } : {}),
+      ...(input.dayRule.ruleType === 'FLEXIBLE'
+        ? { expectedEnd: ATTENDANCE_EXPECTED_END_RULE }
+        : {}),
     },
     events: [...input.events]
       .map((event) => ({
