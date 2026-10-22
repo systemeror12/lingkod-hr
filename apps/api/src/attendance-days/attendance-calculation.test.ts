@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import type { WorkScheduleDayRuleSummary } from '../attendance-configuration/work-schedules.service';
 import {
+  ATTENDANCE_EXPECTED_END_RULE,
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
@@ -27,6 +29,14 @@ vi.mock('node:crypto', async (importOriginal) => {
     },
   };
 });
+
+function digestOf(payload: string): string {
+  return createHash('sha256').update(payload).digest('hex');
+}
+
+function fingerprintDayRule(payload: string): Record<string, unknown> {
+  return (JSON.parse(payload) as { dayRule: Record<string, unknown> }).dayRule;
+}
 
 const WORK_DATE = '2026-01-02';
 const TIMEZONE = 'Asia/Manila';
@@ -107,6 +117,14 @@ const lunchBreak = {
   sequenceNo: 1,
   breakStartTime: '12:00',
   breakEndTime: '13:00',
+  endNextCalendarDay: false,
+};
+
+const overnightBreak = {
+  id: 'b2',
+  sequenceNo: 1,
+  breakStartTime: '02:00',
+  breakEndTime: '03:00',
   endNextCalendarDay: false,
 };
 
@@ -388,15 +406,16 @@ it('anchors a flexible day on the first qualifying minute and clamps to the perm
     earliestStartTime: '07:00',
     latestStartTime: '09:00',
     dutyEndTime: '17:00',
+    requiredMinutes: 420,
     breaks: [lunchBreak],
   });
 
   const early = calculateAttendanceDay(
     input({ dayRule: flexible, events: [at('06:30', 'TIME_IN'), at('17:00', 'TIME_OUT')] }),
   );
-  expect(early.totals.expectedMinutes).toBe(540);
+  expect(early.totals.expectedMinutes).toBe(420);
   expect(early.totals.workedMinutes).toBe(570);
-  expect(early.totals.outsideScheduleMinutes).toBe(30);
+  expect(early.totals.outsideScheduleMinutes).toBe(150);
   expect(early.totals).toMatchObject({ lateMinutes: 0, undertimeMinutes: 0, absenceMinutes: 0 });
 
   const late = calculateAttendanceDay(
@@ -405,6 +424,197 @@ it('anchors a flexible day on the first qualifying minute and clamps to the perm
   expect(late.totals.expectedMinutes).toBe(420);
   expect(late.totals.lateMinutes).toBe(45);
   expect(late.totals.coverageMinutes).toBe(375);
+});
+
+it('derives the expected end of an early flexible start from its required minutes', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '18:00',
+    requiredMinutes: 480,
+    breaks: [lunchBreak],
+  });
+
+  const result = calculateAttendanceDay(
+    input({ dayRule: flexible, events: [at('07:00', 'TIME_IN'), at('16:00', 'TIME_OUT')] }),
+  );
+
+  expect(result.exceptions).toEqual([]);
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    workedMinutes: 480,
+    coverageMinutes: 480,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+    outsideScheduleMinutes: 0,
+  });
+  expect(wallSegments(result)).toEqual([
+    ['07:00', '12:00'],
+    ['13:00', '16:00'],
+  ]);
+});
+
+it('still classifies tardiness when a flexible time-in passes the latest start', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        ruleType: 'FLEXIBLE',
+        dutyStartTime: null,
+        earliestStartTime: '07:00',
+        latestStartTime: '09:00',
+        dutyEndTime: '18:00',
+        requiredMinutes: 480,
+        breaks: [lunchBreak],
+      }),
+      events: [at('09:30', 'TIME_IN'), at('18:00', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    workedMinutes: 450,
+    coverageMinutes: 450,
+    lateMinutes: 30,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+});
+
+it('does not extend the expected end for a break that starts after it', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        ruleType: 'FLEXIBLE',
+        dutyStartTime: null,
+        earliestStartTime: '07:00',
+        latestStartTime: '09:00',
+        dutyEndTime: '13:00',
+        requiredMinutes: 210,
+        breaks: [
+          {
+            id: 'b2',
+            sequenceNo: 1,
+            breakStartTime: '12:00',
+            breakEndTime: '12:30',
+            endNextCalendarDay: false,
+          },
+        ],
+      }),
+      events: [at('07:00', 'TIME_IN'), at('10:30', 'TIME_OUT')],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 210,
+    workedMinutes: 210,
+    coverageMinutes: 210,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+});
+
+it('places an overnight flexible break on the next calendar day', () => {
+  const overnight = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '20:00',
+    latestStartTime: '22:00',
+    dutyEndTime: '06:00',
+    endNextCalendarDay: true,
+    requiredMinutes: 420,
+    breaks: [overnightBreak],
+  });
+
+  const full = calculateAttendanceDay(
+    input({
+      dayRule: overnight,
+      events: [at('22:00', 'TIME_IN'), at('06:00', 'TIME_OUT', 'TIME_OUT-next', 1)],
+    }),
+  );
+  expect(full.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 420,
+    coverageMinutes: 420,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+
+  const short = calculateAttendanceDay(
+    input({
+      dayRule: overnight,
+      events: [at('22:00', 'TIME_IN'), at('05:00', 'TIME_OUT', 'TIME_OUT-short', 1)],
+    }),
+  );
+  expect(short.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 360,
+    coverageMinutes: 360,
+    lateMinutes: 0,
+    undertimeMinutes: 60,
+    absenceMinutes: 0,
+  });
+});
+
+it('derives an early flexible expected end across an overnight break', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        ruleType: 'FLEXIBLE',
+        dutyStartTime: null,
+        earliestStartTime: '20:00',
+        latestStartTime: '22:00',
+        dutyEndTime: '06:00',
+        endNextCalendarDay: true,
+        requiredMinutes: 420,
+        breaks: [overnightBreak],
+      }),
+      events: [at('20:00', 'TIME_IN'), at('04:00', 'TIME_OUT', 'TIME_OUT-early', 1)],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 420,
+    coverageMinutes: 420,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+    outsideScheduleMinutes: 0,
+  });
+  expect(wallSegments(result)).toEqual([
+    ['20:00', '02:00'],
+    ['03:00', '04:00'],
+  ]);
+});
+
+it('places a fixed overnight break on the next calendar day', () => {
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: dayRule({
+        dutyStartTime: '22:00',
+        dutyEndTime: '06:00',
+        endNextCalendarDay: true,
+        requiredMinutes: 420,
+        breaks: [overnightBreak],
+      }),
+      events: [at('22:00', 'TIME_IN'), at('06:00', 'TIME_OUT', 'TIME_OUT-fixed', 1)],
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 420,
+    workedMinutes: 420,
+    coverageMinutes: 420,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+    outsideScheduleMinutes: 0,
+  });
 });
 
 it('anchors a flexible day on its latest permitted start when nothing qualifies', () => {
@@ -416,6 +626,7 @@ it('anchors a flexible day on its latest permitted start when nothing qualifies'
         earliestStartTime: '07:00',
         latestStartTime: '09:00',
         dutyEndTime: '17:00',
+        requiredMinutes: 420,
         breaks: [lunchBreak],
       }),
       coverage: [
@@ -686,13 +897,14 @@ it('anchors a flexible day on the first fully covered minute of a sub-minute tim
         earliestStartTime: '07:00',
         latestStartTime: '09:00',
         dutyEndTime: '17:00',
+        requiredMinutes: 420,
         breaks: [lunchBreak],
       }),
       events: [at('08:30:20', 'TIME_IN'), at('17:00', 'TIME_OUT')],
     }),
   );
 
-  expect(result.totals).toMatchObject({ expectedMinutes: 449, workedMinutes: 449, lateMinutes: 0 });
+  expect(result.totals).toMatchObject({ expectedMinutes: 420, workedMinutes: 449, lateMinutes: 0 });
   expect(wallSegments(result)[0]).toEqual(['08:31', '12:00']);
 });
 
@@ -711,6 +923,37 @@ it('fingerprints every calculation input deterministically', () => {
   expect(fingerprintAttendanceDayInput(base)).toMatch(/^[0-9a-f]{64}$/);
   expect(fingerprintAttendanceDayInput(base)).toBe(fingerprintAttendanceDayInput(same));
   expect(fingerprintAttendanceDayInput(base)).not.toBe(fingerprintAttendanceDayInput(moved));
+});
+
+it('forces a flexible Day recalculation without moving a fixed Day fingerprint', () => {
+  const flexible = input({
+    dayRule: dayRule({
+      ruleType: 'FLEXIBLE',
+      dutyStartTime: null,
+      earliestStartTime: '07:00',
+      latestStartTime: '09:00',
+      dutyEndTime: '17:00',
+      requiredMinutes: 480,
+    }),
+  });
+
+  hashedPayloads.length = 0;
+  const flexibleFingerprint = fingerprintAttendanceDayInput(flexible);
+  const flexiblePayload = JSON.parse(hashedPayloads[0]!) as {
+    dayRule: Record<string, unknown>;
+  };
+  expect(flexiblePayload.dayRule.expectedEnd).toBe(ATTENDANCE_EXPECTED_END_RULE);
+
+  // Dropping the marker leaves the canonical input a Day calculated before this
+  // fix stored, so its fingerprint no longer matches and the Day recalculates.
+  delete flexiblePayload.dayRule.expectedEnd;
+  expect(flexibleFingerprint).not.toBe(digestOf(JSON.stringify(flexiblePayload)));
+
+  hashedPayloads.length = 0;
+  const fixedFingerprint = fingerprintAttendanceDayInput(input());
+  const fixedPayload = hashedPayloads[0]!;
+  expect(fingerprintDayRule(fixedPayload)).not.toHaveProperty('expectedEnd');
+  expect(fixedFingerprint).toBe(digestOf(fixedPayload));
 });
 
 it('fingerprints a new effective governing version even when its rules are identical', () => {
@@ -744,6 +987,7 @@ it('covers a whole Work Date from the duty window and the earliest flexible star
       dutyStartTime: null,
       earliestStartTime: '07:00',
       latestStartTime: '09:00',
+      requiredMinutes: 480,
       endNextCalendarDay: false,
     }),
     WORK_DATE,
@@ -760,6 +1004,84 @@ it('covers a whole Work Date from the duty window and the earliest flexible star
     { startsAt: manila('08:00'), endsAt: manila('12:00') },
     { startsAt: manila('13:00'), endsAt: manila('17:00') },
   ]);
+});
+
+it('anchors a whole-day Attendance Context on the earliest flexible start', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '18:00',
+    requiredMinutes: 480,
+    breaks: [lunchBreak],
+  });
+  const whole = wholeWorkDateCoverageIntervals(flexible, WORK_DATE, TIMEZONE);
+  expect(whole).toEqual([
+    { startsAt: manila('07:00'), endsAt: manila('12:00') },
+    { startsAt: manila('13:00'), endsAt: manila('18:00') },
+  ]);
+
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: flexible,
+      coverage: whole.map((interval) =>
+        coverage({
+          sourceId: 'context-whole-day',
+          coverageType: 'OFFICIAL_BUSINESS',
+          startsAt: interval.startsAt,
+          endsAt: interval.endsAt,
+        }),
+      ),
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    coverageMinutes: 480,
+    officialBusinessMinutes: 600,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+});
+
+it('places a whole-day posted leave from the latest permitted flexible start', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '18:00',
+    requiredMinutes: 480,
+    breaks: [lunchBreak],
+  });
+  const whole = wholeWorkDateCoverageIntervals(flexible, WORK_DATE, TIMEZONE);
+
+  const result = calculateAttendanceDay(
+    input({
+      dayRule: flexible,
+      coverage: whole.map((interval) =>
+        coverage({
+          sourceId: 'leave-input-1',
+          sourceType: 'POSTED_LEAVE',
+          coverageType: 'POSTED_LEAVE',
+          startsAt: interval.startsAt,
+          endsAt: interval.endsAt,
+        }),
+      ),
+    }),
+  );
+
+  expect(result.totals).toMatchObject({
+    expectedMinutes: 480,
+    coverageMinutes: 480,
+    postedLeaveMinutes: 600,
+    lateMinutes: 0,
+    undertimeMinutes: 0,
+    absenceMinutes: 0,
+  });
+  expect(result.segments.filter((segment) => segment.coverageType === 'UNCOVERED')).toEqual([]);
 });
 
 it('covers no interval on a rest day or an incomplete Day Rule', () => {

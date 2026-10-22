@@ -137,6 +137,7 @@ interface MinuteDayRule {
   anchorStartMinute: number | null;
   latestStartMinute: number | null;
   dutyEndMinute: number | null;
+  requiredMinutes: number;
   eventPattern: EventPattern;
   breaks: Interval[];
 }
@@ -163,6 +164,13 @@ const COVERAGE_TOTAL_KEYS: Partial<
  * input fingerprint so a Day calculated under another convention reads stale.
  */
 export const ATTENDANCE_MINUTE_RULE = 'FULLY_COVERED_MINUTE';
+
+/**
+ * The flexible expected-duty convention, recorded in the input fingerprint so a
+ * Day calculated before required minutes ended the anchored span reads stale.
+ * Fixed Day Rules keep their whole duty window and do not carry it.
+ */
+export const ATTENDANCE_EXPECTED_END_RULE = 'REQUIRED_MINUTES';
 
 /** The whole minute a boundary falls in; minutes are the ledger's unit of account. */
 function minuteOf(value: Date): number {
@@ -256,7 +264,11 @@ function materializeDayRule(
   const instantOfWall = (value: string, dayOffset: number): number =>
     minuteOf(zonedTimeToInstant(addDateValueDays(workDate, dayOffset), value, timezone));
   const crossesMidnight = dayRule.endNextCalendarDay;
-  const dutyStartWall = wallMinutesOf(dayRule.dutyStartTime);
+  // Config validation starts the break window at the fixed duty start or the
+  // flexible latest permitted start, so an overnight break is placed the same way.
+  const breakWindowStartWall = wallMinutesOf(
+    dayRule.ruleType === 'FIXED' ? dayRule.dutyStartTime : dayRule.latestStartTime,
+  );
   const dutyEndOffset = crossesMidnight ? 1 : 0;
   const anchorStartMinute =
     dayRule.ruleType === 'FIXED'
@@ -274,7 +286,9 @@ function materializeDayRule(
     .map((item) => {
       const startWall = minutesOfTimeValue(item.breakStartTime);
       const dayOffset =
-        crossesMidnight && dutyStartWall !== null && startWall < dutyStartWall ? 1 : 0;
+        crossesMidnight && breakWindowStartWall !== null && startWall < breakWindowStartWall
+          ? 1
+          : 0;
       const endOffset = dayOffset + (item.endNextCalendarDay ? 1 : 0);
       return {
         start: instantOfWall(item.breakStartTime, dayOffset),
@@ -288,6 +302,7 @@ function materializeDayRule(
     latestStartMinute:
       dayRule.latestStartTime === null ? null : instantOfWall(dayRule.latestStartTime, 0),
     dutyEndMinute,
+    requiredMinutes: dayRule.requiredMinutes,
     eventPattern: dayRule.eventPattern,
     breaks,
   };
@@ -309,7 +324,7 @@ export function wholeWorkDateCoverageIntervals(
   const rule = materializeDayRule(dayRule, workDate, timezone);
   if (rule.ruleType === 'REST') return [];
   if (rule.anchorStartMinute === null || rule.dutyEndMinute === null) return [];
-  return expectedIntervals(rule, rule.anchorStartMinute).map((interval) => ({
+  return dutyWindowIntervals(rule, rule.anchorStartMinute).map((interval) => ({
     startsAt: instantOf(interval.start),
     endsAt: instantOf(interval.end),
   }));
@@ -352,12 +367,32 @@ function workedIntervals(
   return subtractIntervals(span, breaks);
 }
 
-function expectedIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
+/**
+ * The whole duty window from an anchor to the fixed duty end, less scheduled
+ * unpaid breaks. Whole-day coverage spans this window so it covers every
+ * permitted start; the calculation chooses the anchor later from qualifying
+ * coverage.
+ */
+function dutyWindowIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
   if (rule.dutyEndMinute === null || rule.dutyEndMinute <= anchorMinute) return [];
-  return subtractIntervals(
-    { start: anchorMinute, end: rule.dutyEndMinute },
-    rule.breaks.map((item) => ({ start: item.start, end: item.end })),
-  );
+  return subtractIntervals({ start: anchorMinute, end: rule.dutyEndMinute }, rule.breaks);
+}
+
+/**
+ * Expected duty for an anchored start: the first `requiredMinutes` of the duty
+ * window, skipping scheduled unpaid breaks. A flexible Day that anchors early
+ * therefore stops when its required minutes are met instead of running to the
+ * fixed duty end. Fixed Day Rules keep the whole window, since validation pins
+ * their required minutes to it and malformed last-known snapshots stay unchanged.
+ */
+function expectedIntervals(rule: MinuteDayRule, anchorMinute: number): Interval[] {
+  if (rule.ruleType === 'FIXED') return dutyWindowIntervals(rule, anchorMinute);
+  let remaining = rule.requiredMinutes;
+  return dutyWindowIntervals(rule, anchorMinute).flatMap((interval) => {
+    const taken = Math.min(remaining, interval.end - interval.start);
+    remaining -= taken;
+    return taken > 0 ? [{ start: interval.start, end: interval.start + taken }] : [];
+  });
 }
 
 function flexibleAnchorMinute(rule: MinuteDayRule, qualifying: readonly Interval[]): number | null {
@@ -828,6 +863,11 @@ export function fingerprintAttendanceDayInput(input: AttendanceDayCalculationInp
       requiredMinutes: input.dayRule.requiredMinutes,
       eventPattern: input.dayRule.eventPattern,
       breaks: input.dayRule.breaks,
+      // Flexible Days calculated before expected duty ended at required minutes
+      // must recalculate; fixed Day fingerprints stay stable.
+      ...(input.dayRule.ruleType === 'FLEXIBLE'
+        ? { expectedEnd: ATTENDANCE_EXPECTED_END_RULE }
+        : {}),
     },
     events: [...input.events]
       .map((event) => ({
