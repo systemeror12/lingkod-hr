@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { findDirectReportEmployeeIds, findSupervisorEmployeeIds } from '../direct-reports';
 import {
   APPROVAL_REQUEST_SUBJECT_TYPES,
   approvalRouteDefinitionSchema,
@@ -31,6 +32,11 @@ type ApprovalDecision = 'APPROVE' | 'RETURN' | 'REJECT';
 
 export type ApprovalRouteInput = typeof approvalRouteCreateSchema._output;
 export type ApprovalRequestInput = typeof approvalRequestCreateSchema._output;
+/**
+ * An owning domain names the subject Employee so a `SUBJECT_SUPERVISOR` step
+ * can resolve to that Employee's Supervisor.
+ */
+export type ApprovalRequestDomainInput = ApprovalRequestInput & { subjectEmployeeId?: string };
 
 export interface ApprovalPage<T> {
   items: T[];
@@ -837,7 +843,7 @@ export class ApprovalsService {
   async createRequestInTransaction(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
-    input: ApprovalRequestInput,
+    input: ApprovalRequestDomainInput,
     rawIdempotencyKey?: string,
     boundRouteVersionId?: string,
   ): Promise<ApprovalRequestSummary> {
@@ -888,6 +894,7 @@ export class ApprovalsService {
       definition,
       effectiveDate,
       context.membershipId,
+      input.subjectEmployeeId,
     );
     const request = await transaction.approvalRequest.create({
       data: {
@@ -1188,6 +1195,9 @@ export class ApprovalsService {
    * Decision authorization still uses the bound Approval Step snapshot. The
    * optional effect context is echoed back to the completion handler so the
    * owning domain can apply its effects against the decision it just made.
+   * An owning domain that names the subject Employee lets the assigned
+   * Supervisor decide on a `DIRECT_REPORTS` grant while that Employee is still
+   * their direct report.
    */
   async decideInTransaction(
     transaction: Prisma.TransactionClient,
@@ -1197,6 +1207,7 @@ export class ApprovalsService {
     rawComments?: string,
     rawIdempotencyKey?: string,
     effectContext?: ApprovalEffectContext,
+    subjectEmployeeId?: string,
   ): Promise<ApprovalRequestSummary> {
     this.assertDecisionReason(decision, rawComments);
     const comments = rawComments?.trim() ?? '';
@@ -1247,6 +1258,7 @@ export class ApprovalsService {
       context,
       step,
       decisionPermission(step, decision),
+      subjectEmployeeId,
     );
     const now = new Date();
     await transaction.approvalDecision.create({
@@ -1367,7 +1379,7 @@ export class ApprovalsService {
       );
     }
     for (const step of definition.steps) {
-      if (step.assignment.kind === 'ROLE') {
+      if (step.assignment.kind !== 'MEMBERSHIP') {
         const role = await transaction.role.findFirst({
           where: {
             code: step.assignment.roleCode,
@@ -1468,77 +1480,148 @@ export class ApprovalsService {
     definition: ApprovalRouteDefinition,
     asOf: Date,
     requesterMembershipId: string,
+    subjectEmployeeId: string | undefined,
   ): Promise<Array<{ step: ApprovalRouteStep; membershipId: string; roleCode: string | null }>> {
-    const evaluationTime = roleEvaluationTime(asOf);
     const assignments: Array<{
       step: ApprovalRouteStep;
       membershipId: string;
       roleCode: string | null;
     }> = [];
     for (const step of definition.steps) {
-      const roleFilter = {
-        status: 'ACTIVE' as const,
-        permissions: {
-          some: {
-            scopePolicy: 'AGENCY' as const,
-            permission: { code: step.requiredPermission },
-          },
-        },
-      };
-      const rows = await transaction.membershipRole.findMany({
-        where: {
-          agencyId,
-          effectiveFrom: { lte: evaluationTime },
-          OR: [{ effectiveTo: null }, { effectiveTo: { gt: evaluationTime } }],
-          membership: {
-            status: 'ACTIVE',
-            ...(step.assignment.kind === 'MEMBERSHIP' ? { id: step.assignment.membershipId } : {}),
-          },
-          role: {
-            ...roleFilter,
-            ...(step.assignment.kind === 'ROLE'
-              ? {
-                  code: step.assignment.roleCode,
-                  OR: [{ agencyId }, { agencyId: null }],
-                }
-              : {}),
-          },
-        },
-        select: { membershipId: true, role: { select: { code: true } } },
-      });
-      const unique = new Map(rows.map((row) => [row.membershipId, row.role.code]));
-      if (unique.size !== 1) {
-        throw new ApprovalServiceError(
-          unique.size === 0
-            ? 'The Approval Route has no active assigned Membership for one of its steps.'
-            : 'The Approval Route resolves more than one assigned Membership for one of its steps.',
-          409,
-          unique.size === 0 ? 'APPROVAL_ASSIGNMENT_UNRESOLVED' : 'APPROVAL_ASSIGNMENT_AMBIGUOUS',
-        );
-      }
-      const assignment = [...unique.entries()][0];
-      if (!assignment) {
-        throw new ApprovalServiceError(
-          'The Approval Route assignment could not be resolved.',
-          409,
-          'APPROVAL_ASSIGNMENT_UNRESOLVED',
-        );
-      }
-      const [membershipId, roleCode] = assignment;
-      if (step.requiresSeparateReview && membershipId === requesterMembershipId) {
+      // A subject Supervisor step without one Supervisor falls back to its role.
+      const resolved =
+        (step.assignment.kind === 'SUBJECT_SUPERVISOR'
+          ? await this.resolveSubjectSupervisor(
+              transaction,
+              agencyId,
+              step,
+              asOf,
+              subjectEmployeeId,
+            )
+          : null) ?? (await this.resolveConfiguredAssignment(transaction, agencyId, step, asOf));
+      if (step.requiresSeparateReview && resolved.membershipId === requesterMembershipId) {
         throw new ApprovalServiceError(
           'The drafter cannot be assigned to a step that requires separate review.',
           409,
           'APPROVAL_SEGREGATION_REQUIRED',
         );
       }
-      assignments.push({
-        step,
-        membershipId,
-        roleCode: step.assignment.kind === 'ROLE' ? step.assignment.roleCode : roleCode,
-      });
+      assignments.push({ step, ...resolved });
     }
     return assignments;
+  }
+
+  /**
+   * Resolve a step to the one active Membership it names, or the one holder of
+   * its role, with an AGENCY-scoped grant of the step permission.
+   */
+  private async resolveConfiguredAssignment(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    step: ApprovalRouteStep,
+    asOf: Date,
+  ): Promise<{ membershipId: string; roleCode: string | null }> {
+    const evaluationTime = roleEvaluationTime(asOf);
+    const assignedRoleCode =
+      step.assignment.kind === 'MEMBERSHIP' ? null : step.assignment.roleCode;
+    const rows = await transaction.membershipRole.findMany({
+      where: {
+        agencyId,
+        effectiveFrom: { lte: evaluationTime },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: evaluationTime } }],
+        membership: {
+          status: 'ACTIVE',
+          ...(step.assignment.kind === 'MEMBERSHIP' ? { id: step.assignment.membershipId } : {}),
+        },
+        role: {
+          status: 'ACTIVE',
+          permissions: {
+            some: {
+              scopePolicy: 'AGENCY',
+              permission: { code: step.requiredPermission },
+            },
+          },
+          ...(assignedRoleCode
+            ? { code: assignedRoleCode, OR: [{ agencyId }, { agencyId: null }] }
+            : {}),
+        },
+      },
+      select: { membershipId: true, role: { select: { code: true } } },
+    });
+    const unique = new Map(rows.map((row) => [row.membershipId, row.role.code]));
+    if (unique.size !== 1) {
+      throw new ApprovalServiceError(
+        unique.size === 0
+          ? 'The Approval Route has no active assigned Membership for one of its steps.'
+          : 'The Approval Route resolves more than one assigned Membership for one of its steps.',
+        409,
+        unique.size === 0 ? 'APPROVAL_ASSIGNMENT_UNRESOLVED' : 'APPROVAL_ASSIGNMENT_AMBIGUOUS',
+      );
+    }
+    const assignment = [...unique.entries()][0];
+    if (!assignment) {
+      throw new ApprovalServiceError(
+        'The Approval Route assignment could not be resolved.',
+        409,
+        'APPROVAL_ASSIGNMENT_UNRESOLVED',
+      );
+    }
+    const [membershipId, roleCode] = assignment;
+    return { membershipId, roleCode: assignedRoleCode ?? roleCode };
+  }
+
+  /**
+   * Resolve a `SUBJECT_SUPERVISOR` step to the subject Employee's one
+   * Supervisor on the request date: their active Membership whose role grants
+   * the step permission. Returns null, so the step falls back to its role, when
+   * the Employee has no Supervisor, more than one, or a Supervisor without such
+   * a Membership.
+   */
+  private async resolveSubjectSupervisor(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    step: ApprovalRouteStep,
+    asOf: Date,
+    subjectEmployeeId: string | undefined,
+  ): Promise<{ membershipId: string; roleCode: string } | null> {
+    if (!subjectEmployeeId) {
+      throw new ApprovalServiceError(
+        "The Approval Route assigns a step to the subject Employee's Supervisor, but the request names no subject Employee.",
+        409,
+        'APPROVAL_ASSIGNMENT_UNRESOLVED',
+      );
+    }
+    const supervisorIds = await findSupervisorEmployeeIds(
+      transaction,
+      agencyId,
+      subjectEmployeeId,
+      formatDate(asOf),
+    );
+    const [supervisorId] = supervisorIds;
+    if (supervisorIds.length !== 1 || !supervisorId) return null;
+    const evaluationTime = roleEvaluationTime(asOf);
+    const rows = await transaction.membershipRole.findMany({
+      where: {
+        agencyId,
+        effectiveFrom: { lte: evaluationTime },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: evaluationTime } }],
+        membership: { status: 'ACTIVE', employeeId: supervisorId },
+        role: {
+          status: 'ACTIVE',
+          permissions: {
+            some: {
+              scopePolicy: { in: ['AGENCY', 'DIRECT_REPORTS'] },
+              permission: { code: step.requiredPermission },
+            },
+          },
+        },
+      },
+      select: { membershipId: true, role: { select: { code: true } } },
+    });
+    const unique = new Map(rows.map((row) => [row.membershipId, row.role.code]));
+    const [assignment] = [...unique.entries()];
+    if (unique.size !== 1 || !assignment) return null;
+    return { membershipId: assignment[0], roleCode: assignment[1] };
   }
 
   /**
@@ -1576,6 +1659,7 @@ export class ApprovalsService {
     context: RequestContext,
     step: StepRecord,
     actionPermission: string,
+    subjectEmployeeId?: string,
   ): Promise<string | null> {
     const now = new Date();
     const roleWindow = {
@@ -1611,6 +1695,19 @@ export class ApprovalsService {
       select: { id: true },
     });
     if (direct && step.assignedMembershipId === context.membershipId) return null;
+    if (
+      subjectEmployeeId &&
+      step.assignedMembershipId === context.membershipId &&
+      (await this.isAssignedSupervisor(
+        transaction,
+        context,
+        step,
+        actionPermission,
+        subjectEmployeeId,
+      ))
+    ) {
+      return null;
+    }
 
     const delegation = step.assignedMembershipId
       ? await transaction.delegatedAuthority.findFirst({
@@ -1664,6 +1761,61 @@ export class ApprovalsService {
       403,
       'APPROVAL_AUTHORITY_REQUIRED',
     );
+  }
+
+  /**
+   * The assigned Membership decides on a `DIRECT_REPORTS` grant only while the
+   * subject Employee is its Employee's direct report on the decision date.
+   */
+  private async isAssignedSupervisor(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    step: StepRecord,
+    actionPermission: string,
+    subjectEmployeeId: string,
+  ): Promise<boolean> {
+    const now = new Date();
+    const membership = await transaction.agencyMembership.findFirst({
+      where: { agencyId: context.agencyId, id: context.membershipId, status: 'ACTIVE' },
+      select: { employeeId: true },
+    });
+    if (!membership?.employeeId) return false;
+    const grant = await transaction.membershipRole.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        membershipId: context.membershipId,
+        effectiveFrom: { lte: now },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+        role: {
+          status: 'ACTIVE',
+          permissions: {
+            some: {
+              scopePolicy: 'DIRECT_REPORTS',
+              permission: { code: step.requiredPermission },
+            },
+          },
+          AND: [
+            {
+              permissions: {
+                some: {
+                  scopePolicy: 'DIRECT_REPORTS',
+                  permission: { code: actionPermission },
+                },
+              },
+            },
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    if (!grant) return false;
+    const reports = await findDirectReportEmployeeIds(
+      transaction,
+      context.agencyId,
+      membership.employeeId,
+      formatDate(approvalDate()),
+    );
+    return reports.includes(subjectEmployeeId);
   }
 
   private async lockRoute(

@@ -21,6 +21,19 @@ it('accepts a narrow sequential route with a typed assignment selector', () => {
   });
 });
 
+it('accepts a subject Supervisor assignment with a fallback role', () => {
+  const step = {
+    ...validStep,
+    assignment: { kind: 'SUBJECT_SUPERVISOR' as const, roleCode: 'hrmo_administrator' },
+  };
+  expect(approvalRouteDefinitionSchema.parse({ steps: [step] })).toEqual({ steps: [step] });
+  expect(() =>
+    approvalRouteDefinitionSchema.parse({
+      steps: [{ ...validStep, assignment: { kind: 'SUBJECT_SUPERVISOR' } }],
+    }),
+  ).toThrow();
+});
+
 it('accepts distinct permissions for each decision outcome', () => {
   expect(
     approvalRouteDefinitionSchema.parse({
