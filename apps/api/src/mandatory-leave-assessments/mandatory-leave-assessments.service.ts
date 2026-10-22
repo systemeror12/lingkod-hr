@@ -4,7 +4,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { requestDatabaseContext } from '../database-context';
-import { findDirectReportEmployeeIds } from '../direct-reports';
+import { resolveEmployeeScope } from '../employee-scope';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
 import {
   mandatoryLeaveAssessmentCursorSchema,
@@ -448,11 +448,10 @@ export class MandatoryLeaveAssessmentsService {
     filters: MandatoryLeaveAssessmentFilters = {},
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveAssessmentPage> {
-    const scopes = requireReadScopes(context);
+    const readable = await readableEmployeeIds(context);
     const limit = page.limit ?? 25;
     const cursor = page.cursor ? decodeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const readable = await readableEmployeeIds(transaction, context, scopes);
       const records = await transaction.mandatoryLeaveAssessment.findMany({
         where: {
           agencyId: context.agencyId,
@@ -500,11 +499,10 @@ export class MandatoryLeaveAssessmentsService {
     assessmentYear: number,
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveEmployeeLatestPage> {
-    const scopes = requireReadScopes(context);
+    const readable = await readableEmployeeIds(context);
     const limit = page.limit ?? 25;
     const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const readable = await readableEmployeeIds(transaction, context, scopes);
       const employees = await transaction.employee.findMany({
         where: {
           agencyId: context.agencyId,
@@ -556,14 +554,13 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentId: string,
   ): Promise<MandatoryLeaveAssessmentDetail | null> {
-    const scopes = requireReadScopes(context);
+    const readable = await readableEmployeeIds(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const record = await transaction.mandatoryLeaveAssessment.findFirst({
         where: { agencyId: context.agencyId, id: assessmentId },
         select: assessmentSelect,
       });
       if (!record) return null;
-      const readable = await readableEmployeeIds(transaction, context, scopes);
       if (readable && !readable.includes(record.employeeId)) return null;
       return {
         ...summaryOf(record),
@@ -850,50 +847,21 @@ function hasScope(context: RequestContext, code: string, scopePolicy: string): b
   );
 }
 
-const READ_SCOPES = ['AGENCY', 'OWN', 'DIRECT_REPORTS'] as const;
-type ReadScope = (typeof READ_SCOPES)[number];
-const isReadScope = (scope: string): scope is ReadScope =>
-  (READ_SCOPES as readonly string[]).includes(scope);
-
-function requireReadScopes(context: RequestContext): ReadonlySet<ReadScope> {
-  const scopes = new Set(
-    context.permissions
-      .filter((grant) => grant.code === 'leave.mandatory_assessments.read')
-      .map((grant) => grant.scopePolicy)
-      .filter(isReadScope),
-  );
-  if (scopes.size === 0) {
+/**
+ * The Employees whose assessments the caller may read, or null for the whole
+ * Agency. OWN adds the caller's linked Employee; DIRECT_REPORTS adds that
+ * Employee's direct reports today.
+ */
+async function readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
+  const scope = await resolveEmployeeScope(context, 'leave.mandatory_assessments.read');
+  if (!scope) {
     throw new MandatoryLeaveAssessmentServiceError(
       'The leave.mandatory_assessments.read permission is required.',
       403,
       'MANDATORY_LEAVE_ASSESSMENT_READ_FORBIDDEN',
     );
   }
-  return scopes;
-}
-
-/**
- * The Employees whose assessments the caller may read, or null for the whole
- * Agency. OWN adds the caller's linked Employee; DIRECT_REPORTS adds that
- * Employee's direct reports today.
- */
-async function readableEmployeeIds(
-  transaction: Prisma.TransactionClient,
-  context: RequestContext,
-  scopes: ReadonlySet<ReadScope>,
-): Promise<string[] | null> {
-  if (scopes.has('AGENCY')) return null;
-  const membership = await transaction.agencyMembership.findFirst({
-    where: { agencyId: context.agencyId, id: context.membershipId },
-    select: { employeeId: true },
-  });
-  const employeeId = membership?.employeeId;
-  if (!employeeId) return [];
-  const employeeIds = scopes.has('DIRECT_REPORTS')
-    ? await findDirectReportEmployeeIds(transaction, context.agencyId, employeeId, manilaToday())
-    : [];
-  if (scopes.has('OWN')) employeeIds.push(employeeId);
-  return employeeIds;
+  return scope.kind === 'AGENCY' ? null : scope.employeeIds;
 }
 
 function summaryOf(record: AssessmentRecord): MandatoryLeaveAssessmentSummary {

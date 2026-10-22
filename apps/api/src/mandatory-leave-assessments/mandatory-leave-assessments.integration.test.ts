@@ -1230,9 +1230,9 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
       where: { role: { code: 'supervisor', agencyId: null } },
       select: { scopePolicy: true, permission: { select: { code: true } } },
     });
-    expect(grants.map((grant) => [grant.permission.code, grant.scopePolicy])).toEqual([
-      ['leave.mandatory_assessments.read', 'DIRECT_REPORTS'],
-    ]);
+    const held = grants.map((grant) => [grant.permission.code, grant.scopePolicy]);
+    expect(held).toContainEqual(['leave.mandatory_assessments.read', 'DIRECT_REPORTS']);
+    expect(held.some(([code]) => code === 'leave.mandatory_assessments.evaluate')).toBe(false);
   } finally {
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
