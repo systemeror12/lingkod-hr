@@ -4,6 +4,7 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { resolveEmployeeScope } from '../employee-scope';
 import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
   findLeaveCatalogueEntry,
@@ -201,7 +202,6 @@ const accountSelect = {
     select: {
       employeeNumber: true,
       legalName: true,
-      memberships: { select: { id: true } },
     },
   },
   leaveType: { select: { code: true, name: true } },
@@ -440,7 +440,7 @@ export class LeaveAccountsService {
     context: RequestContext,
     filters: LeaveAccountListFilters = {},
   ): Promise<LeaveAccountSummary[]> {
-    const scope = this.requireReadScope(context);
+    const readable = await this.readableEmployeeIds(context);
     const asOfValue = filters.asOf ?? manilaToday();
     const asOf = toDatabaseDate(asOfValue);
     const recordedThrough = filters.recordedThrough
@@ -453,9 +453,7 @@ export class LeaveAccountsService {
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.leaveTypeId ? { leaveTypeId: filters.leaveTypeId } : {}),
           ...(filters.status ? { status: filters.status } : {}),
-          ...(scope === 'OWN'
-            ? { employee: { memberships: { some: { id: context.membershipId } } } }
-            : {}),
+          ...(readable ? { AND: [{ employeeId: { in: readable } }] } : {}),
         },
         orderBy: [{ employee: { legalName: 'asc' } }, { leaveType: { code: 'asc' } }],
         select: accountSelect,
@@ -481,7 +479,7 @@ export class LeaveAccountsService {
     accountId: string,
     options: { asOf?: string | undefined; recordedThrough?: string | undefined } = {},
   ): Promise<LeaveAccountDetail | null> {
-    const scope = this.requireReadScope(context);
+    const readable = await this.readableEmployeeIds(context);
     const asOf = toDatabaseDate(options.asOf ?? manilaToday());
     const recordedThrough = options.recordedThrough
       ? toDatabaseInstant(options.recordedThrough)
@@ -492,12 +490,7 @@ export class LeaveAccountsService {
         select: accountSelect,
       });
       if (!record) return null;
-      if (
-        scope === 'OWN' &&
-        !record.employee.memberships.some((m) => m.id === context.membershipId)
-      ) {
-        return null;
-      }
+      if (readable && !readable.includes(record.employeeId)) return null;
       const opening = await transaction.leaveAccountOpening.findFirst({
         where: { agencyId: context.agencyId, leaveAccountId: accountId },
         select: openingSelect,
@@ -1348,26 +1341,20 @@ export class LeaveAccountsService {
     return completed;
   }
 
-  private requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {
-    if (
-      context.permissions.some(
-        (grant) => grant.code === 'leave.accounts.read' && grant.scopePolicy === 'AGENCY',
-      )
-    ) {
-      return 'AGENCY';
+  /**
+   * The Employees whose Leave Accounts the caller may read, or null for the
+   * whole Agency.
+   */
+  private async readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
+    const scope = await resolveEmployeeScope(context, 'leave.accounts.read');
+    if (!scope) {
+      throw new LeaveAccountServiceError(
+        'The leave.accounts.read permission is required.',
+        403,
+        'LEAVE_ACCOUNT_READ_FORBIDDEN',
+      );
     }
-    if (
-      context.permissions.some(
-        (grant) => grant.code === 'leave.accounts.read' && grant.scopePolicy === 'OWN',
-      )
-    ) {
-      return 'OWN';
-    }
-    throw new LeaveAccountServiceError(
-      'The leave.accounts.read permission is required.',
-      403,
-      'LEAVE_ACCOUNT_READ_FORBIDDEN',
-    );
+    return scope.kind === 'AGENCY' ? null : scope.employeeIds;
   }
 
   private assertPermission(context: RequestContext, permission: string, code: string): void {
