@@ -806,6 +806,205 @@ it.skipIf(!enabled)(
           },
         }),
       ).toBe(0);
+
+      // A Supervisor files for a direct report only (ADR 0007); the Employee stays the subject.
+      const supervisorUser = await createUser('supervisor');
+      const supervisorMembership = await createMembership(supervisorUser.id);
+      const supervisorEmployee = await createEmployee(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-supervisor`,
+        'Dana Chief',
+      );
+      await withDatabaseContext(
+        {
+          agencyId: agency.id,
+          userId: supervisorUser.id,
+          membershipId: supervisorMembership.id,
+          capabilities: ['employee-membership-link'],
+        },
+        (transaction) =>
+          transaction.agencyMembership.update({
+            where: { agencyId_id: { agencyId: agency.id, id: supervisorMembership.id } },
+            data: { employeeId: supervisorEmployee.id },
+          }),
+      );
+      const report = await createEmployee(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-report`,
+        'Rina Report',
+      );
+      const outsider = await createEmployee(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-outsider`,
+        'Olive Outsider',
+      );
+      // Plantilla Position projections normally require the application service.
+      const headPosition = await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        return transaction.plantillaPosition.create({
+          data: {
+            agencyId: agency.id,
+            itemNumber: `CHIEF-${suffix}`,
+            status: 'OCCUPIED',
+            createdByMembershipId: custodianMembership.id,
+            updatedByMembershipId: custodianMembership.id,
+          },
+        });
+      });
+      const unit = await admin.organizationUnit.create({
+        data: {
+          agencyId: agency.id,
+          code: `DIV-${suffix}`,
+          unitType: 'DIVISION',
+          status: 'ACTIVE',
+        },
+      });
+      const unitVersion = await admin.organizationUnitVersion.create({
+        data: {
+          agencyId: agency.id,
+          organizationUnitId: unit.id,
+          versionNo: 1,
+          name: 'Division',
+          headPositionId: headPosition.id,
+          effectiveFrom: new Date('2020-01-01'),
+          status: 'ACTIVE',
+          domainStatus: 'ACTIVE',
+        },
+      });
+      await admin.organizationUnit.update({
+        where: { id: unit.id },
+        data: { currentVersionId: unitVersion.id },
+      });
+      await withDatabaseContext(
+        {
+          agencyId: agency.id,
+          membershipId: custodianMembership.id,
+          capabilities: ['personnel-baseline-transition'],
+        },
+        async (transaction) => {
+          for (const [employeeId, positionId] of [
+            [supervisorEmployee.id, headPosition.id],
+            [report.id, null],
+          ] as const) {
+            const segment = await transaction.serviceSegment.create({
+              data: {
+                agencyId: agency.id,
+                employeeId,
+                organizationUnitId: unit.id,
+                positionId,
+                segmentType: 'PRIMARY',
+                appointmentStatus: 'PERMANENT',
+                salaryGrade: 18,
+                salaryStep: 2,
+                effectiveFrom: new Date('2020-01-01'),
+                status: 'ACTIVE',
+                createdByMembershipId: custodianMembership.id,
+              },
+            });
+            if (positionId) {
+              await transaction.positionIncumbency.create({
+                data: {
+                  agencyId: agency.id,
+                  positionId,
+                  employeeId,
+                  serviceSegmentId: segment.id,
+                  effectiveFrom: new Date('2020-01-01'),
+                  status: 'ACTIVE',
+                  createdByMembershipId: custodianMembership.id,
+                },
+              });
+            }
+          }
+        },
+      );
+      const reportAccount = await accounts.open(
+        adminContext,
+        {
+          employeeId: report.id,
+          leaveTypeId: vacation.id,
+          effectiveDate: manilaDate(-5),
+          openingQuantity: 20,
+          evidenceDocumentId: accountEvidence.documentId,
+          reason: 'Opening vacation-leave balance.',
+        },
+        'monetization-open-report-vacation',
+      );
+      const supervisorContext = context(agency.id, supervisorUser.id, supervisorMembership.id, [
+        { code: 'leave.monetization.create', scopePolicy: 'OWN' },
+        { code: 'leave.monetization.submit', scopePolicy: 'OWN' },
+        { code: 'leave.monetization.create', scopePolicy: 'DIRECT_REPORTS' },
+        { code: 'leave.monetization.submit', scopePolicy: 'DIRECT_REPORTS' },
+        { code: 'approvals.requests.create', scopePolicy: 'OWN' },
+        { code: 'leave.accounts.read', scopePolicy: 'OWN' },
+        { code: 'leave.accounts.read', scopePolicy: 'DIRECT_REPORTS' },
+      ]);
+
+      await expect(
+        service.create(supervisorContext, { employeeId: outsider.id }),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_SCOPE_FORBIDDEN', statusCode: 403 });
+      const outsiderDraft = await service.create(adminContext, { employeeId: outsider.id });
+      const reportSubmitInput = {
+        ...recordedSubmitInput,
+        allocations: [{ leaveAccountId: reportAccount.id, requestedQuantity: '10' }],
+      };
+      await expect(
+        service.submit(supervisorContext, outsiderDraft.id, reportSubmitInput),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_SCOPE_FORBIDDEN', statusCode: 403 });
+      await expect(service.findById(supervisorContext, outsiderDraft.id)).rejects.toMatchObject({
+        code: 'MONETIZATION_REQUEST_NOT_FOUND',
+      });
+
+      const supervisorDraft = await service.create(supervisorContext, { employeeId: report.id });
+      expect(supervisorDraft).toMatchObject({ employeeId: report.id, status: 'DRAFT' });
+      await expect(
+        service.submit(supervisorContext, supervisorDraft.id, {
+          ...reportSubmitInput,
+          attestationType: 'AUTHENTICATED_SUBMISSION',
+          attestationDocumentVersionId: undefined,
+        }),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      const supervisorSubmitted = await service.submit(
+        supervisorContext,
+        supervisorDraft.id,
+        reportSubmitInput,
+      );
+      expect(supervisorSubmitted.request.employeeId).toBe(report.id);
+      expect(
+        await admin.leaveMonetizationRequestVersion.findFirstOrThrow({
+          where: { agencyId: agency.id, id: supervisorSubmitted.request.currentVersionId! },
+        }),
+      ).toMatchObject({
+        attestationType: 'SIGNED_DOCUMENT',
+        submittedByMembershipId: supervisorMembership.id,
+        employeeAttestedAt: null,
+      });
+      const supervisorList = await service.list(supervisorContext);
+      expect(supervisorList.items.map(({ id }) => id)).toContain(supervisorDraft.id);
+      expect(supervisorList.items.map(({ id }) => id)).not.toContain(outsiderDraft.id);
+
+      // The Supervisor role carries both filing grants with direct-report scope.
+      const supervisorRole = await admin.role.findFirstOrThrow({
+        where: { code: 'supervisor', agencyId: null },
+      });
+      const supervisorGrants = await admin.rolePermission.findMany({
+        where: {
+          roleId: supervisorRole.id,
+          permission: { code: { startsWith: 'leave.monetization.' } },
+        },
+        select: { scopePolicy: true, permission: { select: { code: true } } },
+      });
+      expect(
+        supervisorGrants.map((grant) => `${grant.permission.code}:${grant.scopePolicy}`).sort(),
+      ).toEqual([
+        'leave.monetization.create:DIRECT_REPORTS',
+        'leave.monetization.submit:DIRECT_REPORTS',
+      ]);
     } finally {
       await admin.$disconnect();
     }

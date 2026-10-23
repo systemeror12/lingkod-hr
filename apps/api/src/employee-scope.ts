@@ -1,9 +1,15 @@
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import type { Prisma } from '@prisma/client';
 import { requestDatabaseContext } from './database-context';
 import { findDirectReportEmployeeIds } from './direct-reports';
 
 export type EmployeeScope = { kind: 'AGENCY' } | { kind: 'SCOPED'; employeeIds: string[] };
+
+/** Whether the scope reaches one Employee. */
+export function scopeCovers(scope: EmployeeScope, employeeId: string): boolean {
+  return scope.kind === 'AGENCY' || scope.employeeIds.includes(employeeId);
+}
 
 /**
  * Resolve which Employees one permission's grants cover: the whole Agency, or
@@ -11,11 +17,13 @@ export type EmployeeScope = { kind: 'AGENCY' } | { kind: 'SCOPED'; employeeIds: 
  * DIRECT_REPORTS adds that Employee's direct reports on today's Manila date
  * (ADR 0007), and ASSIGNED_OFFICE adds the active Service Segments of the
  * caller's primary Organization Unit. Returns null when the caller holds no
- * grant for the permission; the set may be empty.
+ * grant for the permission; the set may be empty. Pass the caller's open
+ * transaction to resolve inside it.
  */
 export async function resolveEmployeeScope(
   context: RequestContext,
   permissionCode: string,
+  transaction?: Prisma.TransactionClient,
 ): Promise<EmployeeScope | null> {
   const grants = context.permissions.filter((grant) => grant.code === permissionCode);
   if (grants.length === 0) return null;
@@ -24,7 +32,7 @@ export async function resolveEmployeeScope(
   }
   const scopePolicies = new Set(grants.map((grant) => grant.scopePolicy));
   const employeeIds = new Set<string>();
-  await withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+  const resolve = async (transaction: Prisma.TransactionClient) => {
     if (scopePolicies.has('OWN') || scopePolicies.has('DIRECT_REPORTS')) {
       const membership = await transaction.agencyMembership.findFirst({
         where: { agencyId: context.agencyId, id: context.membershipId },
@@ -53,7 +61,9 @@ export async function resolveEmployeeScope(
       });
       for (const segment of segments) employeeIds.add(segment.employeeId);
     }
-  });
+  };
+  if (transaction) await resolve(transaction);
+  else await withDatabaseContext(requestDatabaseContext(context), resolve);
   return { kind: 'SCOPED', employeeIds: [...employeeIds] };
 }
 
