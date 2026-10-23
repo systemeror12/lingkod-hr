@@ -1752,6 +1752,7 @@ export class LeaveApplicationsService implements OnModuleInit {
           routeCode,
           subjectType: 'LEAVE_APPLICATION',
           subjectId: applicationId,
+          subjectEmployeeId: application.employeeId,
           effectiveDate: formatDate(submissionDate),
         },
         idempotencyKey ?? undefined,
@@ -2874,6 +2875,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         input.comments ?? input.reason,
         idempotencyKey ?? undefined,
         { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'RECOMMEND' } },
+        application.employeeId,
       );
       const decisionId = stepApprovalDecisionId(summary, step.stepNo, context.membershipId);
       await transaction.leaveRecommendation.create({
@@ -3440,6 +3442,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         input.reason,
         idempotencyKey ?? undefined,
         { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'RETURN' } },
+        application.employeeId,
       );
       if (summary.status !== 'RETURNED') throw routeInvalid();
       await this.releaseVersionCommitments(transaction, context.agencyId, version.id);
