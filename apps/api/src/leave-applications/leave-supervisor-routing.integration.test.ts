@@ -41,6 +41,7 @@ import {
   MandatoryLeaveAssessmentsService,
 } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
+  LEAVE_CANCELLATION_ROUTE_CODE,
   leaveApplicationAuditWriter,
   LeaveApplicationsService,
 } from './leave-applications.service';
@@ -365,8 +366,16 @@ it.skipIf(!enabled)(
         context(agency.id, target.userId, target.membershipId, OWN_APPLICATION_PERMISSIONS);
       const chiefContext = context(agency.id, chief.userId, chief.membershipId, [
         ...OWN_APPLICATION_PERMISSIONS,
+        { code: 'leave.applications.create', scopePolicy: 'DIRECT_REPORTS' },
+        { code: 'leave.applications.submit', scopePolicy: 'DIRECT_REPORTS' },
+        { code: 'leave.applications.request_cancel', scopePolicy: 'DIRECT_REPORTS' },
         { code: 'leave.applications.recommend', scopePolicy: 'DIRECT_REPORTS' },
         { code: 'leave.applications.return', scopePolicy: 'DIRECT_REPORTS' },
+      ]);
+      const approverContext = context(agency.id, approver.userId, approver.membershipId, [
+        { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
+        { code: 'leave.applications.approve', scopePolicy: 'AGENCY' },
+        { code: 'leave.applications.reject', scopePolicy: 'AGENCY' },
       ]);
       const fallbackContext = context(agency.id, fallback.userId, fallback.membershipId, [
         { code: 'approvals.requests.read', scopePolicy: 'AGENCY' },
@@ -473,14 +482,14 @@ it.skipIf(!enabled)(
       );
       applications.onModuleInit();
 
-      const evidence = async (name: string) => {
+      const evidence = async (name: string, createdByMembershipId = hr.membershipId) => {
         const document = await admin.document.create({
           data: {
             agencyId: agency.id,
             documentType: 'LEAVE_EVIDENCE',
             classification: 'INTERNAL',
             status: 'APPROVED',
-            createdByMembershipId: hr.membershipId,
+            createdByMembershipId,
           },
         });
         const version = await admin.documentVersion.create({
@@ -493,7 +502,7 @@ it.skipIf(!enabled)(
             mimeType: 'application/pdf',
             sizeBytes: 1,
             issuedAt: new Date(`${manilaDate(-30)}T00:00:00.000Z`),
-            createdByMembershipId: hr.membershipId,
+            createdByMembershipId,
           },
         });
         await admin.document.update({
@@ -707,8 +716,10 @@ it.skipIf(!enabled)(
       ).resolves.toMatchObject({ application: { status: 'FOR_APPROVAL' } });
 
       // With a vacant unit head, or more than one Supervisor, the Agency role holder recommends.
+      const fallbackApplicationIds: string[] = [];
       for (const target of [orphan, dual]) {
         const fallbackApplication = await certifiedApplication(target);
+        fallbackApplicationIds.push(fallbackApplication.applicationId);
         expect(fallbackApplication.recommendationStep).toMatchObject({
           assignedMembershipId: fallback.membershipId,
           assignedRoleCode: fallbackRole.code,
@@ -768,18 +779,154 @@ it.skipIf(!enabled)(
         }),
       ).resolves.toEqual({ status: 'FOR_RECOMMENDATION' });
 
-      // The Supervisor role carries both grants with direct-report scope only.
+      // A Supervisor files on behalf of a direct report, who stays the subject.
+      const tuesday = addDays(monday, 1);
+      const signedForm = await evidence('supervisor-signed-form', chief.membershipId);
+      await expect(
+        applications.create(chiefContext, { employeeId: orphan.id, leaveTypeId: leaveType.id }),
+      ).rejects.toMatchObject({
+        code: 'LEAVE_APPLICATION_EMPLOYEE_SCOPE_FORBIDDEN',
+        statusCode: 403,
+      });
+      const outsiderDraft = await applications.create(hrContext, {
+        employeeId: orphan.id,
+        leaveTypeId: leaveType.id,
+      });
+      await expect(
+        applications.update(chiefContext, outsiderDraft.application.id, {
+          periods: [{ dateFrom: tuesday, dateTo: tuesday }],
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_FORBIDDEN', statusCode: 403 });
+      await expect(
+        applications.findById(chiefContext, outsiderDraft.application.id),
+      ).resolves.toBeNull();
+
+      const filed = await applications.create(chiefContext, {
+        employeeId: report.id,
+        leaveTypeId: leaveType.id,
+      });
+      const filedId = filed.application.id;
+      expect(filed.application).toMatchObject({ employeeId: report.id, status: 'DRAFT' });
+      await applications.update(chiefContext, filedId, {
+        reason: 'Special privilege leave filed by the Supervisor.',
+        commutationChoice: 'NOT_REQUESTED',
+        periods: [{ dateFrom: tuesday, dateTo: tuesday }],
+        documents: [
+          { documentId: signedForm.documentId, purposeCode: 'SIGNED_LEAVE_APPLICATION_FORM' },
+        ],
+      });
+      await expect(applications.preview(chiefContext, filedId)).resolves.toBeDefined();
+      expect((await applications.list(chiefContext)).map(({ id }) => id)).toContain(filedId);
+      await expect(
+        applications.submit(chiefContext, filedId, {
+          formTemplateDocumentVersionId: templateEvidence.versionId,
+          attestation: { type: 'AUTHENTICATED_SUBMISSION' },
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      const filedSubmitted = await applications.submit(chiefContext, filedId, {
+        formTemplateDocumentVersionId: templateEvidence.versionId,
+        attestation: {
+          type: 'SIGNED_DOCUMENT',
+          documentId: signedForm.documentId,
+          receivedAt: new Date().toISOString(),
+        },
+      });
+      expect(filedSubmitted.application).toMatchObject({
+        employeeId: report.id,
+        status: 'SUBMITTED',
+      });
+      expect(filedSubmitted.versions.at(-1)).toMatchObject({
+        submittedByMembershipId: chief.membershipId,
+        attestationType: 'SIGNED_DOCUMENT',
+      });
+
+      // Actor separation: the Supervisor who filed cannot also recommend it, so the
+      // recommendation step falls back to the Agency role.
+      await applications.route(hrContext, filedId);
+      const filedCertified = await applications.certify(hrContext, filedId, {});
+      expect(filedCertified.versions.at(-1)!.approvalSteps[1]).toMatchObject({
+        assignedMembershipId: fallback.membershipId,
+        assignedRoleCode: fallbackRole.code,
+      });
+      await expect(
+        applications.recommend(chiefContext, filedId, { outcome: 'RECOMMEND_APPROVAL' }),
+      ).rejects.toMatchObject({ code: 'APPROVAL_SEGREGATION_REQUIRED', statusCode: 403 });
+      await expect(
+        applications.recommend(fallbackContext, filedId, { outcome: 'RECOMMEND_APPROVAL' }),
+      ).resolves.toMatchObject({ application: { status: 'FOR_APPROVAL' } });
+
+      // A Supervisor requests cancellation of a direct report's approved application only.
+      const cancellationRoute = await approvals.createRoute(hrContext, {
+        routeCode: LEAVE_CANCELLATION_ROUTE_CODE,
+        domain: 'LEAVE',
+        versionNo: 1,
+        effectiveFrom,
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'leave.applications.cancel',
+              approvePermission: 'leave.applications.cancel',
+              rejectPermission: 'leave.applications.reject_cancel',
+              assignment: { kind: 'MEMBERSHIP', membershipId: approver.membershipId },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      });
+      await approvals.activateRoute(
+        hrContext,
+        cancellationRoute.id,
+        'Activate the Leave Cancellation route.',
+      );
+      const approve = async (applicationId: string) => {
+        const detail = await applications.findById(hrContext, applicationId);
+        const segmentId = detail!.versions.at(-1)!.calculationSegments[0]!.id;
+        const decided = await applications.decide(approverContext, applicationId, {
+          decision: 'APPROVE',
+          comments: 'Approved.',
+          allocations: [{ segmentId, quantity: '1' }],
+        });
+        expect(decided.application.status).toBe('APPROVED');
+      };
+      await approve(fromReport.applicationId);
+      await approve(fallbackApplicationIds[0]!);
+      const cancelEvidence = await evidence('supervisor-cancel', chief.membershipId);
+      await expect(
+        applications.requestCancellation(chiefContext, fallbackApplicationIds[0]!, {
+          scopeType: 'WHOLE',
+          reason: 'Not my direct report.',
+          evidenceDocumentId: cancelEvidence.documentId,
+        }),
+      ).rejects.toMatchObject({ code: 'LEAVE_APPLICATION_FORBIDDEN', statusCode: 403 });
+      const cancelRequested = await applications.requestCancellation(
+        chiefContext,
+        fromReport.applicationId,
+        {
+          scopeType: 'WHOLE',
+          reason: 'The Employee asked their Supervisor to cancel.',
+          evidenceDocumentId: cancelEvidence.documentId,
+        },
+      );
+      expect(cancelRequested.application.status).toBe('CANCEL_REQUESTED');
+
+      // The Supervisor role carries these grants with direct-report scope only.
       const grants = await admin.rolePermission.findMany({
         where: {
           roleId: supervisorRole.id,
-          permission: {
-            code: { in: ['leave.applications.recommend', 'leave.applications.return'] },
-          },
+          permission: { code: { startsWith: 'leave.applications.' } },
         },
         select: { scopePolicy: true, permission: { select: { code: true } } },
       });
       expect(grants.map((grant) => `${grant.permission.code}:${grant.scopePolicy}`).sort()).toEqual(
-        ['leave.applications.recommend:DIRECT_REPORTS', 'leave.applications.return:DIRECT_REPORTS'],
+        [
+          'leave.applications.create:DIRECT_REPORTS',
+          'leave.applications.recommend:DIRECT_REPORTS',
+          'leave.applications.request_cancel:DIRECT_REPORTS',
+          'leave.applications.return:DIRECT_REPORTS',
+          'leave.applications.submit:DIRECT_REPORTS',
+        ],
       );
     } finally {
       await admin.$transaction(async (transaction) => {
@@ -787,6 +934,8 @@ it.skipIf(!enabled)(
         const scoped = { where: { agencyId: agency.id } };
         await transaction.outboxEvent.deleteMany(scoped);
         await transaction.auditEvent.deleteMany(scoped);
+        await transaction.leaveCancellationScope.deleteMany(scoped);
+        await transaction.leaveCancellation.deleteMany(scoped);
         await transaction.leaveApplicationVersionDocument.deleteMany(scoped);
         await transaction.leaveApprovalAllocationLine.deleteMany(scoped);
         await transaction.leaveApprovalAllocation.deleteMany(scoped);

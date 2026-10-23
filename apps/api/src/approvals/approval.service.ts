@@ -1488,9 +1488,10 @@ export class ApprovalsService {
       roleCode: string | null;
     }> = [];
     for (const step of definition.steps) {
-      // A subject Supervisor step without one Supervisor falls back to its role.
-      const resolved =
-        (step.assignment.kind === 'SUBJECT_SUPERVISOR'
+      // A subject Supervisor step without one Supervisor falls back to its role,
+      // as does a separate-review step whose Supervisor drafted the request.
+      const supervisor =
+        step.assignment.kind === 'SUBJECT_SUPERVISOR'
           ? await this.resolveSubjectSupervisor(
               transaction,
               agencyId,
@@ -1498,6 +1499,11 @@ export class ApprovalsService {
               asOf,
               subjectEmployeeId,
             )
+          : null;
+      const resolved =
+        (supervisor &&
+        !(step.requiresSeparateReview && supervisor.membershipId === requesterMembershipId)
+          ? supervisor
           : null) ?? (await this.resolveConfiguredAssignment(transaction, agencyId, step, asOf));
       if (step.requiresSeparateReview && resolved.membershipId === requesterMembershipId) {
         throw new ApprovalServiceError(
