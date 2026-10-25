@@ -13,7 +13,7 @@ import { type DatabaseContext, withDatabaseContext } from '@lingkod-hr/database'
 import type { MailMessage } from '../invitations/mail';
 import { prismaBytes } from '../invitations/invitation-utils';
 import { AuthServiceError } from './auth-error';
-import type { SignInRequest } from './auth.service';
+import type { AuthenticatedSession, SignInRequest } from './auth.service';
 
 /*
  * Credential Proof: one attempt to prove who a User is, with the same guess protocol whichever
@@ -27,6 +27,37 @@ const SECOND_FACTOR_CEILING = 10;
 export type SecondFactorMethod = 'totp' | 'recovery_code';
 
 /**
+ * The Security Event a failed proof records, chosen by the asking flow: a sign-in's
+ * LOGIN_FAILURE, before any session, or a signed-in User's REAUTHENTICATION_FAILURE, which
+ * carries the session, its User, Agency, and Agency Membership.
+ */
+export type FailureEvent =
+  | { eventType: 'LOGIN_FAILURE'; session?: undefined }
+  | { eventType: 'REAUTHENTICATION_FAILURE'; session: AuthenticatedSession };
+
+export const LOGIN_FAILURE: FailureEvent = { eventType: 'LOGIN_FAILURE' };
+
+/** The failure event of a proof inside a signed-in session. */
+export function reauthenticationFailure(session: AuthenticatedSession): FailureEvent {
+  return { eventType: 'REAUTHENTICATION_FAILURE', session };
+}
+
+/**
+ * The database context that may record `event`: the session's Agency Context, which RLS needs
+ * for a row with its Agency, or platform security's with `userId`.
+ */
+export function failureScope({ session }: FailureEvent, userId: string | null): DatabaseContext {
+  if (!session) return { ...(userId ? { userId } : {}), capabilities: ['platform-security'] };
+  const { agencyId, membershipId } = session.context;
+  return {
+    userId: session.context.userId,
+    agencyId,
+    membershipId,
+    capabilities: ['platform-security'],
+  };
+}
+
+/**
  * A wrong password or code; `secondFactor` marks a wrong code on the User's pending sign-in, and
  * `cooldown` is the Sign-in Cool-down that counting the guess started.
  */
@@ -36,6 +67,8 @@ export interface GuessFailure {
   reason: string;
   cooldown: SignInCooldownStart | null;
   secondFactor?: { method: SecondFactorMethod; email: string };
+  /** LOGIN_FAILURE unless the flow passes its own. */
+  event?: FailureEvent;
 }
 
 /**
@@ -112,6 +145,8 @@ export interface TotpAttempt<T> {
   passwordReset?: { recordWrongCode: (transaction: Prisma.TransactionClient) => Promise<void> };
   /** The flow's work, run in the transaction that accepts the code. */
   onProved: (transaction: Prisma.TransactionClient) => Promise<T>;
+  /** What a refused code records, LOGIN_FAILURE unless the flow passes its own; `scope` holds it. */
+  failureEvent?: FailureEvent;
 }
 
 /** Proves who a User is for every flow that asks, built once per `AuthService`. */
@@ -138,11 +173,11 @@ export class CredentialProof {
     noFactor,
     passwordReset,
     onProved,
+    failureEvent: event = LOGIN_FAILURE,
   }: TotpAttempt<T>): Promise<T> {
     const outcome = await withDatabaseContext(scope, async (transaction) => {
       const now = new Date();
-      await transaction.$queryRaw`
-        SELECT 1 FROM "user_passwords" WHERE "user_id" = ${user.id}::uuid FOR UPDATE`;
+      await lockUserPassword(transaction, user.id);
       if (!passwordReset) {
         const cooldownUntil = await readCooldown(transaction, user.emailHash, now);
         if (cooldownUntil) {
@@ -151,6 +186,7 @@ export class CredentialProof {
             emailHash: user.emailHash,
             reason: 'COOLDOWN_ACTIVE',
             method: 'totp',
+            event,
           });
           return { refusal: signInCooldown(cooldownUntil, now) };
         }
@@ -184,12 +220,27 @@ export class CredentialProof {
         reason: 'INVALID_CODE',
         cooldown: guess.cooldownUntil ? null : guess.counted.cooldown,
         secondFactor: { method: 'totp', email: user.email },
+        event,
       });
       return { refusal: ceiling ? passwordResetRequired(ceiling) : wrongCode() };
     });
     if ('refusal' in outcome) throw outcome.refusal;
     return outcome.proved;
   }
+}
+
+/**
+ * Sign-in, Password Reset, and reauthentication failures from `ipAddress` since `since`, in every
+ * Agency. A SECURITY DEFINER function counts them, since RLS shows the runtime role one Agency's.
+ */
+export async function countIpFailures(
+  transaction: Prisma.TransactionClient,
+  ipAddress: string,
+  since: Date,
+): Promise<number> {
+  const [row] = await transaction.$queryRaw<{ failures: bigint }[]>`
+    SELECT app_ip_failure_count(${ipAddress}::inet, ${since}) AS "failures"`;
+  return Number(row?.failures ?? 0);
 }
 
 /** When the email's running Sign-in Cool-down ends, or null. */
@@ -229,16 +280,16 @@ export async function countGuess(
 }
 
 /**
- * A wrong password, TOTP code, or Recovery Code, already counted by `countGuess`: a LOGIN_FAILURE,
- * and a SIGN_IN_COOLDOWN_STARTED for the cool-down counting it started.
+ * A wrong password, TOTP code, or Recovery Code, already counted by `countGuess`: the failure's
+ * event, and a SIGN_IN_COOLDOWN_STARTED for the cool-down counting it started.
  * A wrong code also counts toward the second-factor ceiling; the failure that reaches it disables
  * the password, ends the User's pending sign-ins and activations, and answers the notice to send.
- * The transaction needs the platform-security capability, and the User's context for a wrong code.
+ * The transaction needs `failureScope`'s context.
  */
 export async function writeGuessFailure(
   transaction: Prisma.TransactionClient,
   request: SignInRequest,
-  { emailHash, userId, reason, cooldown, secondFactor }: GuessFailure,
+  { emailHash, userId, reason, cooldown, secondFactor, event }: GuessFailure,
 ): Promise<MailMessage | null> {
   const now = new Date();
   await writeSignInFailure(transaction, request, {
@@ -246,6 +297,7 @@ export async function writeGuessFailure(
     emailHash,
     reason,
     method: secondFactor?.method,
+    event,
   });
   if (cooldown) {
     await transaction.securityEvent.create({
@@ -290,7 +342,23 @@ export async function writeGuessFailure(
   return passwordResetRequiredNotice(secondFactor.email);
 }
 
-/** A sign-in LOGIN_FAILURE event; it never holds the password, code, token, or raw email. */
+/**
+ * Locks the User's password row to commit. Take it before writing any other row of the User, as
+ * Password Reset and password change do, so a sign-in or proof queues behind them instead of
+ * deadlocking.
+ */
+export async function lockUserPassword(
+  transaction: Prisma.TransactionClient,
+  userId: string,
+): Promise<void> {
+  await transaction.$queryRaw`
+    SELECT 1 FROM "user_passwords" WHERE "user_id" = ${userId}::uuid FOR UPDATE`;
+}
+
+/**
+ * A failed proof's event, LOGIN_FAILURE unless the flow passes its own, in `failureScope`'s
+ * context. It never holds the password, code, token, or raw email.
+ */
 export async function writeSignInFailure(
   transaction: Prisma.TransactionClient,
   request: SignInRequest,
@@ -299,12 +367,16 @@ export async function writeSignInFailure(
     emailHash: Buffer | null;
     reason: string;
     method?: SecondFactorMethod | undefined;
+    event?: FailureEvent | undefined;
   },
 ): Promise<void> {
+  const { eventType, session } = failure.event ?? LOGIN_FAILURE;
   await transaction.securityEvent.create({
     data: {
-      userId: failure.userId,
-      eventType: 'LOGIN_FAILURE',
+      agencyId: session?.context.agencyId ?? null,
+      userId: session?.context.userId ?? failure.userId,
+      membershipId: session?.context.membershipId ?? null,
+      eventType,
       requestId: request.requestId,
       ipAddress: request.ipAddress,
       userAgent: request.userAgent,
@@ -312,6 +384,7 @@ export async function writeSignInFailure(
       details: {
         reason: failure.reason,
         ...(failure.method ? { method: failure.method } : {}),
+        ...(session ? { sessionId: session.sessionId } : {}),
       },
     },
   });

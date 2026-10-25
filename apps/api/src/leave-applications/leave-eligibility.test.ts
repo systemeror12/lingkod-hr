@@ -75,6 +75,109 @@ it('marks a fully resolved working-day request eligible with one segment', () =>
   ]);
 });
 
+it('keeps separate requested periods in separate segments', () => {
+  const outcome = evaluateLeaveEligibility(
+    input({
+      periods: [
+        { dateFrom: '2026-03-02', dateTo: '2026-03-02' },
+        { dateFrom: '2026-03-09', dateTo: '2026-03-09' },
+      ],
+      dateFacts: [dateFact(), dateFact({ date: '2026-03-09' })],
+    }),
+  );
+
+  expect(outcome.result).toBe('ELIGIBLE');
+  expect(outcome.requestedQuantity).toBe(2);
+  expect(
+    outcome.segments.map(({ dateFrom, dateTo, requestedQuantity }) => ({
+      dateFrom,
+      dateTo,
+      requestedQuantity,
+    })),
+  ).toEqual([
+    { dateFrom: '2026-03-02', dateTo: '2026-03-02', requestedQuantity: 1 },
+    { dateFrom: '2026-03-09', dateTo: '2026-03-09', requestedQuantity: 1 },
+  ]);
+});
+
+it('keeps adjacent requested periods in separate segments', () => {
+  const outcome = evaluateLeaveEligibility(
+    input({
+      periods: [
+        { dateFrom: '2026-03-02', dateTo: '2026-03-03' },
+        { dateFrom: '2026-03-04', dateTo: '2026-03-04' },
+      ],
+    }),
+  );
+
+  expect(outcome.segments.map(({ dateFrom, dateTo }) => [dateFrom, dateTo])).toEqual([
+    ['2026-03-02', '2026-03-03'],
+    ['2026-03-04', '2026-03-04'],
+  ]);
+});
+
+it('fails overlapping requested periods without quantifying them', () => {
+  const outcome = evaluateLeaveEligibility(
+    input({
+      periods: [
+        { dateFrom: '2026-03-02', dateTo: '2026-03-04' },
+        { dateFrom: '2026-03-04', dateTo: '2026-03-04' },
+      ],
+      dateFacts: [
+        dateFact(),
+        dateFact({ date: '2026-03-03' }),
+        dateFact({ date: '2026-03-04' }),
+        dateFact({ date: '2026-03-04' }),
+      ],
+    }),
+  );
+
+  expect(outcome.result).toBe('INELIGIBLE');
+  expect(ruleResult(outcome.ruleResults, 'REQUESTED_PERIODS').outcome).toBe('FAIL');
+  expect(outcome.requestedQuantity).toBeNull();
+  expect(outcome.segments).toEqual([]);
+});
+
+it('splits one requested period at policy, schedule, and holiday version boundaries', () => {
+  const outcome = evaluateLeaveEligibility(
+    input({
+      periods: [{ dateFrom: '2026-03-02', dateTo: '2026-03-05' }],
+      dateFacts: [
+        dateFact(),
+        dateFact({ date: '2026-03-03', policyVersionId: 'policy-2' }),
+        dateFact({
+          date: '2026-03-04',
+          policyVersionId: 'policy-2',
+          scheduleAssignmentId: 'assignment-2',
+        }),
+        dateFact({
+          date: '2026-03-05',
+          policyVersionId: 'policy-2',
+          scheduleAssignmentId: 'assignment-2',
+          holidayCalendarVersionId: 'calendar-2',
+        }),
+      ],
+    }),
+  );
+
+  expect(
+    outcome.segments.map(
+      ({ policyVersionId, scheduleAssignmentId, holidayCalendarVersionId, dateFrom, dateTo }) => [
+        policyVersionId,
+        scheduleAssignmentId,
+        holidayCalendarVersionId,
+        dateFrom,
+        dateTo,
+      ],
+    ),
+  ).toEqual([
+    ['policy-1', 'assignment-1', 'calendar-1', '2026-03-02', '2026-03-02'],
+    ['policy-2', 'assignment-1', 'calendar-1', '2026-03-03', '2026-03-03'],
+    ['policy-2', 'assignment-2', 'calendar-1', '2026-03-04', '2026-03-04'],
+    ['policy-2', 'assignment-2', 'calendar-2', '2026-03-05', '2026-03-05'],
+  ]);
+});
+
 it('excludes non-working holidays and rest days from the requested quantity', () => {
   const outcome = evaluateLeaveEligibility(
     input({
@@ -174,11 +277,11 @@ it('rejects a request longer than the granted entitlement', () => {
   });
 });
 
-it('requires an exact working-day count when the policy configures one', () => {
+it('leaves the annual mandatory-leave obligation to the assessment, not each application', () => {
   const outcome = evaluateLeaveEligibility(input({ ruleParameters: { requiredWorkingDays: 5 } }));
 
-  expect(outcome.result).toBe('INELIGIBLE');
-  expect(ruleResult(outcome.ruleResults, 'REQUIRED_WORKING_DAYS').outcome).toBe('FAIL');
+  expect(outcome.result).toBe('ELIGIBLE');
+  expect(outcome.ruleResults.map(({ rule }) => rule)).not.toContain('REQUIRED_WORKING_DAYS');
 });
 
 it('resolves minimum account credits against the charged account', () => {

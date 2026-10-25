@@ -30,6 +30,7 @@ import { AttendancePeriodsModule } from './attendance-periods/attendance-periods
 import { DtrsModule } from './dtrs/dtrs.module';
 import { LeavePoliciesModule } from './leave-policies/leave-policies.module';
 import { LeaveAccountsModule } from './leave-accounts/leave-accounts.module';
+import { MandatoryLeaveAssessmentsModule } from './mandatory-leave-assessments/mandatory-leave-assessments.module';
 import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
 import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
 import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leave-inputs.module';
@@ -66,6 +67,7 @@ import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leav
     DtrsModule,
     LeavePoliciesModule,
     LeaveAccountsModule,
+    MandatoryLeaveAssessmentsModule,
     LeaveApplicationsModule,
     LeaveMonetizationModule,
     TerminalLeaveInputsModule,

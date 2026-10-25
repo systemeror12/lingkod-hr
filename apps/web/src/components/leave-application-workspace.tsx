@@ -584,6 +584,43 @@ export function LeaveApplicationWorkspace({
   const [success, setSuccess] = useState('');
   const optionsRequested = useRef(false);
   const syncedRecordId = useRef<string | null>(null);
+  const prefill = useRef<{ employeeId: string; leaveTypeCode: string } | null>(null);
+
+  // `?prepare=1&employeeId=…&leaveType=CODE` opens the prepare form preselected, as the
+  // Mandatory Leave workspace links here to start fulfillment with an ordinary application.
+  useEffect(() => {
+    if (navigation.search.get('prepare') !== '1') return;
+    prefill.current = {
+      employeeId: navigation.search.get('employeeId') ?? '',
+      leaveTypeCode: navigation.search.get('leaveType') ?? '',
+    };
+    navigation.show({ prepare: null, employeeId: null, leaveType: null });
+    resetAction();
+    void loadOptions();
+    setDialog('prepare');
+  }, []);
+
+  useEffect(() => {
+    const pending = prefill.current;
+    if (!pending || leaveTypeOptions.length === 0) return;
+    prefill.current = null;
+    const leaveType = leaveTypeOptions.find(({ code }) => code === pending.leaveTypeCode);
+    if (leaveType) setLeaveTypeId(leaveType.id);
+    if (!canRecordForOthers || !pending.employeeId) return;
+    if (employeeOptions.some(({ id }) => id === pending.employeeId)) {
+      setEmployeeId(pending.employeeId);
+      return;
+    }
+    // The option list holds one page; fetch an Employee outside it rather than drop the choice.
+    void request('/employees/' + encodeURIComponent(pending.employeeId))
+      .then((value) => {
+        const employee = value as EmployeeOption;
+        setEmployeeOptions((current) => [employee, ...current]);
+        // Keep a choice the user made while the lookup was pending.
+        setEmployeeId((current) => current || employee.id);
+      })
+      .catch(() => undefined);
+  }, [employeeOptions, leaveTypeOptions]);
 
   useEffect(() => {
     let active = true;

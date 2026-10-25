@@ -26,6 +26,10 @@ import {
   LEAVE_MONETIZATION_ROUTE_CODE,
   LeaveMonetizationService,
 } from './leave-monetization.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -168,6 +172,7 @@ it.skipIf(!enabled)(
     const fundingUser = await createUser('funding');
     const approverUser = await createUser('approver');
     const posterUser = await createUser('poster');
+    const secondRecorderUser = await createUser('second-recorder');
     const foreignUser = await createUser('foreign');
     const createMembership = (userId: string, targetAgencyId = agency.id) =>
       admin.agencyMembership.create({
@@ -179,6 +184,7 @@ it.skipIf(!enabled)(
     const fundingMembership = await createMembership(fundingUser.id);
     const approverMembership = await createMembership(approverUser.id);
     const posterMembership = await createMembership(posterUser.id);
+    const secondRecorderMembership = await createMembership(secondRecorderUser.id);
     const foreignMembership = await createMembership(foreignUser.id, foreignAgency.id);
     const employee = await createEmployee(
       admin,
@@ -204,10 +210,12 @@ it.skipIf(!enabled)(
     const policies = new LeavePoliciesService(
       leavePolicyAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     const accounts = new LeaveAccountsService(
       leaveAccountAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     const registry = new ApprovalCompletionRegistry();
     const approvals = new ApprovalsService(approvalAuditWriter, registry);
@@ -216,6 +224,7 @@ it.skipIf(!enabled)(
       registry,
       new LocalPayrollMonetizationAdapter(salarySource),
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     service.onModuleInit();
 
@@ -224,6 +233,7 @@ it.skipIf(!enabled)(
       { code: 'leave.monetization.submit', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.withdraw', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.cancel', scopePolicy: 'AGENCY' },
+      { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
       { code: 'approvals.routes.create', scopePolicy: 'AGENCY' },
       { code: 'approvals.routes.activate', scopePolicy: 'AGENCY' },
       { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
@@ -263,6 +273,18 @@ it.skipIf(!enabled)(
       { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
       { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
     ]);
+    const secondRecorderContext = context(
+      agency.id,
+      secondRecorderUser.id,
+      secondRecorderMembership.id,
+      [
+        { code: 'leave.monetization.submit', scopePolicy: 'AGENCY' },
+        { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
+        { code: 'leave.monetization.withdraw', scopePolicy: 'AGENCY' },
+        { code: 'approvals.requests.create', scopePolicy: 'AGENCY' },
+        { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
+      ],
+    );
     const foreignContext = context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
       { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
       { code: 'leave.monetization.certify', scopePolicy: 'AGENCY' },
@@ -348,6 +370,12 @@ it.skipIf(!enabled)(
         agency.id,
         custodianMembership.id,
         `${suffix}-fiscal`,
+      );
+      const signedAttestation = await createDocumentVersion(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-signed-attestation`,
       );
 
       const vacation = await policies.create(adminContext, { catalogueCode: 'VACATION_LEAVE' });
@@ -571,6 +599,8 @@ it.skipIf(!enabled)(
 
       const subjectList = await service.list(subjectContext);
       expect(subjectList.items.map(({ id }) => id)).toContain(created.id);
+      expect(subjectList.actorEmployeeId).toBe(employee.id);
+      expect((await service.list(adminContext)).actorEmployeeId).toBeNull();
       const foreignList = await service.list(
         context(foreignAgency.id, foreignUser.id, foreignMembership.id, [
           { code: 'leave.accounts.read', scopePolicy: 'AGENCY' },
@@ -582,15 +612,109 @@ it.skipIf(!enabled)(
         service.certify(foreignContext, created.id, { allocations: [{ allocationId }] }),
       ).rejects.toMatchObject({ code: 'MONETIZATION_REQUEST_NOT_FOUND', statusCode: 404 });
 
+      const recordedSubmitInput = {
+        ...submitInput,
+        attestationType: 'SIGNED_DOCUMENT' as const,
+        attestationDocumentVersionId: signedAttestation.versionId,
+      };
+      const recordedRequest = await service.create(adminContext, { employeeId: employee.id });
+      await expect(
+        service.submit(adminContext, recordedRequest.id, submitInput),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      const recordedSubmitted = await service.submit(
+        adminContext,
+        recordedRequest.id,
+        recordedSubmitInput,
+      );
+      expect(
+        await admin.leaveMonetizationRequestVersion.findFirstOrThrow({
+          where: { agencyId: agency.id, id: recordedSubmitted.request.currentVersionId! },
+        }),
+      ).toMatchObject({
+        attestationType: 'SIGNED_DOCUMENT',
+        attestationDocumentVersionId: signedAttestation.versionId,
+        submittedByMembershipId: custodianMembership.id,
+        employeeAttestedAt: null,
+      });
+      await expect(
+        service.certify(adminContext, recordedRequest.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The recording actor cannot perform this Monetization step.',
+      });
+      await service.withdraw(adminContext, recordedRequest.id, {
+        reason: 'The recorded request is no longer needed.',
+      });
+
+      const draftedForSubject = await service.create(adminContext, { employeeId: employee.id });
+      const subjectSubmitted = await service.submit(
+        subjectContext,
+        draftedForSubject.id,
+        submitInput,
+        'monetization-submit-subject',
+      );
+      expect(
+        await admin.leaveMonetizationRequestVersion.findFirstOrThrow({
+          where: { agencyId: agency.id, id: subjectSubmitted.request.currentVersionId! },
+        }),
+      ).toMatchObject({
+        attestationType: 'AUTHENTICATED_SUBMISSION',
+        submittedByMembershipId: subjectMembership.id,
+        employeeAttestedAt: expect.any(Date),
+      });
+      await expect(
+        service.submit(
+          adminContext,
+          draftedForSubject.id,
+          submitInput,
+          'monetization-submit-subject',
+        ),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      await expect(
+        service.certify(subjectContext, draftedForSubject.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The subject Employee cannot perform this Monetization step.',
+      });
+      await expect(
+        service.certify(adminContext, draftedForSubject.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The recording actor cannot perform this Monetization step.',
+      });
+      await service.withdraw(adminContext, draftedForSubject.id, {
+        reason: 'The drafted request is no longer needed.',
+      });
+
+      const submittedByOther = await service.create(adminContext, { employeeId: employee.id });
+      await service.submit(secondRecorderContext, submittedByOther.id, recordedSubmitInput);
+      await expect(
+        service.certify(secondRecorderContext, submittedByOther.id, { allocations: [] }),
+      ).rejects.toMatchObject({
+        code: 'MONETIZATION_ACTOR_SEPARATION',
+        statusCode: 403,
+        message: 'The submitting actor cannot perform this Monetization step.',
+      });
+      await service.withdraw(adminContext, submittedByOther.id, {
+        reason: 'The request submitted by another recorder is no longer needed.',
+      });
+
       const withdrawRequest = await service.create(adminContext, { employeeId: employee.id });
-      await service.submit(adminContext, withdrawRequest.id, submitInput);
+      await service.submit(adminContext, withdrawRequest.id, recordedSubmitInput);
       const withdrawn = await service.withdraw(adminContext, withdrawRequest.id, {
         reason: 'The employee withdrew the request.',
       });
       expect(withdrawn.request.status).toBe('WITHDRAWN');
 
       const blockedRequest = await service.create(adminContext, { employeeId: employee.id });
-      const blockedSubmitted = await service.submit(adminContext, blockedRequest.id, submitInput);
+      const blockedSubmitted = await service.submit(
+        adminContext,
+        blockedRequest.id,
+        recordedSubmitInput,
+      );
       expect(blockedSubmitted.request.status).toBe('SUBMITTED');
       const blockedAssessed = await service.assess(certifierContext, blockedRequest.id, {});
       expect(blockedAssessed.assessment).toMatchObject({ result: 'ELIGIBLE' });
@@ -625,6 +749,7 @@ it.skipIf(!enabled)(
         registry,
         new FailClosedPayrollMonetizationProvider(),
         new DocumentsService({} as never, documentAuditWriter),
+        new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
       );
       failClosedService.onModuleInit();
       const specialRequest = await failClosedService.create(adminContext, {
@@ -634,7 +759,8 @@ it.skipIf(!enabled)(
         kind: 'SPECIAL',
         reason: 'Medical hardship grounded on the cited authority.',
         formTemplateDocumentVersionId: formTemplate.versionId,
-        attestationType: 'AUTHENTICATED_SUBMISSION',
+        attestationType: 'SIGNED_DOCUMENT',
+        attestationDocumentVersionId: signedAttestation.versionId,
         authoritySnapshot: {
           citations: ['CSC MC No. 5, s. 2021'],
           valuationDate: manilaDate(),
@@ -680,6 +806,205 @@ it.skipIf(!enabled)(
           },
         }),
       ).toBe(0);
+
+      // A Supervisor files for a direct report only (ADR 0007); the Employee stays the subject.
+      const supervisorUser = await createUser('supervisor');
+      const supervisorMembership = await createMembership(supervisorUser.id);
+      const supervisorEmployee = await createEmployee(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-supervisor`,
+        'Dana Chief',
+      );
+      await withDatabaseContext(
+        {
+          agencyId: agency.id,
+          userId: supervisorUser.id,
+          membershipId: supervisorMembership.id,
+          capabilities: ['employee-membership-link'],
+        },
+        (transaction) =>
+          transaction.agencyMembership.update({
+            where: { agencyId_id: { agencyId: agency.id, id: supervisorMembership.id } },
+            data: { employeeId: supervisorEmployee.id },
+          }),
+      );
+      const report = await createEmployee(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-report`,
+        'Rina Report',
+      );
+      const outsider = await createEmployee(
+        admin,
+        agency.id,
+        custodianMembership.id,
+        `${suffix}-outsider`,
+        'Olive Outsider',
+      );
+      // Plantilla Position projections normally require the application service.
+      const headPosition = await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        return transaction.plantillaPosition.create({
+          data: {
+            agencyId: agency.id,
+            itemNumber: `CHIEF-${suffix}`,
+            status: 'OCCUPIED',
+            createdByMembershipId: custodianMembership.id,
+            updatedByMembershipId: custodianMembership.id,
+          },
+        });
+      });
+      const unit = await admin.organizationUnit.create({
+        data: {
+          agencyId: agency.id,
+          code: `DIV-${suffix}`,
+          unitType: 'DIVISION',
+          status: 'ACTIVE',
+        },
+      });
+      const unitVersion = await admin.organizationUnitVersion.create({
+        data: {
+          agencyId: agency.id,
+          organizationUnitId: unit.id,
+          versionNo: 1,
+          name: 'Division',
+          headPositionId: headPosition.id,
+          effectiveFrom: new Date('2020-01-01'),
+          status: 'ACTIVE',
+          domainStatus: 'ACTIVE',
+        },
+      });
+      await admin.organizationUnit.update({
+        where: { id: unit.id },
+        data: { currentVersionId: unitVersion.id },
+      });
+      await withDatabaseContext(
+        {
+          agencyId: agency.id,
+          membershipId: custodianMembership.id,
+          capabilities: ['personnel-baseline-transition'],
+        },
+        async (transaction) => {
+          for (const [employeeId, positionId] of [
+            [supervisorEmployee.id, headPosition.id],
+            [report.id, null],
+          ] as const) {
+            const segment = await transaction.serviceSegment.create({
+              data: {
+                agencyId: agency.id,
+                employeeId,
+                organizationUnitId: unit.id,
+                positionId,
+                segmentType: 'PRIMARY',
+                appointmentStatus: 'PERMANENT',
+                salaryGrade: 18,
+                salaryStep: 2,
+                effectiveFrom: new Date('2020-01-01'),
+                status: 'ACTIVE',
+                createdByMembershipId: custodianMembership.id,
+              },
+            });
+            if (positionId) {
+              await transaction.positionIncumbency.create({
+                data: {
+                  agencyId: agency.id,
+                  positionId,
+                  employeeId,
+                  serviceSegmentId: segment.id,
+                  effectiveFrom: new Date('2020-01-01'),
+                  status: 'ACTIVE',
+                  createdByMembershipId: custodianMembership.id,
+                },
+              });
+            }
+          }
+        },
+      );
+      const reportAccount = await accounts.open(
+        adminContext,
+        {
+          employeeId: report.id,
+          leaveTypeId: vacation.id,
+          effectiveDate: manilaDate(-5),
+          openingQuantity: 20,
+          evidenceDocumentId: accountEvidence.documentId,
+          reason: 'Opening vacation-leave balance.',
+        },
+        'monetization-open-report-vacation',
+      );
+      const supervisorContext = context(agency.id, supervisorUser.id, supervisorMembership.id, [
+        { code: 'leave.monetization.create', scopePolicy: 'OWN' },
+        { code: 'leave.monetization.submit', scopePolicy: 'OWN' },
+        { code: 'leave.monetization.create', scopePolicy: 'DIRECT_REPORTS' },
+        { code: 'leave.monetization.submit', scopePolicy: 'DIRECT_REPORTS' },
+        { code: 'approvals.requests.create', scopePolicy: 'OWN' },
+        { code: 'leave.accounts.read', scopePolicy: 'OWN' },
+        { code: 'leave.accounts.read', scopePolicy: 'DIRECT_REPORTS' },
+      ]);
+
+      await expect(
+        service.create(supervisorContext, { employeeId: outsider.id }),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_SCOPE_FORBIDDEN', statusCode: 403 });
+      const outsiderDraft = await service.create(adminContext, { employeeId: outsider.id });
+      const reportSubmitInput = {
+        ...recordedSubmitInput,
+        allocations: [{ leaveAccountId: reportAccount.id, requestedQuantity: '10' }],
+      };
+      await expect(
+        service.submit(supervisorContext, outsiderDraft.id, reportSubmitInput),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_SCOPE_FORBIDDEN', statusCode: 403 });
+      await expect(service.findById(supervisorContext, outsiderDraft.id)).rejects.toMatchObject({
+        code: 'MONETIZATION_REQUEST_NOT_FOUND',
+      });
+
+      const supervisorDraft = await service.create(supervisorContext, { employeeId: report.id });
+      expect(supervisorDraft).toMatchObject({ employeeId: report.id, status: 'DRAFT' });
+      await expect(
+        service.submit(supervisorContext, supervisorDraft.id, {
+          ...reportSubmitInput,
+          attestationType: 'AUTHENTICATED_SUBMISSION',
+          attestationDocumentVersionId: undefined,
+        }),
+      ).rejects.toMatchObject({ code: 'MONETIZATION_ATTESTATION_FORBIDDEN', statusCode: 403 });
+      const supervisorSubmitted = await service.submit(
+        supervisorContext,
+        supervisorDraft.id,
+        reportSubmitInput,
+      );
+      expect(supervisorSubmitted.request.employeeId).toBe(report.id);
+      expect(
+        await admin.leaveMonetizationRequestVersion.findFirstOrThrow({
+          where: { agencyId: agency.id, id: supervisorSubmitted.request.currentVersionId! },
+        }),
+      ).toMatchObject({
+        attestationType: 'SIGNED_DOCUMENT',
+        submittedByMembershipId: supervisorMembership.id,
+        employeeAttestedAt: null,
+      });
+      const supervisorList = await service.list(supervisorContext);
+      expect(supervisorList.items.map(({ id }) => id)).toContain(supervisorDraft.id);
+      expect(supervisorList.items.map(({ id }) => id)).not.toContain(outsiderDraft.id);
+
+      // The Supervisor role carries both filing grants with direct-report scope.
+      const supervisorRole = await admin.role.findFirstOrThrow({
+        where: { code: 'supervisor', agencyId: null },
+      });
+      const supervisorGrants = await admin.rolePermission.findMany({
+        where: {
+          roleId: supervisorRole.id,
+          permission: { code: { startsWith: 'leave.monetization.' } },
+        },
+        select: { scopePolicy: true, permission: { select: { code: true } } },
+      });
+      expect(
+        supervisorGrants.map((grant) => `${grant.permission.code}:${grant.scopePolicy}`).sort(),
+      ).toEqual([
+        'leave.monetization.create:DIRECT_REPORTS',
+        'leave.monetization.submit:DIRECT_REPORTS',
+      ]);
     } finally {
       await admin.$disconnect();
     }

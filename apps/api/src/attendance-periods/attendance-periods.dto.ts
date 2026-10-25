@@ -64,6 +64,7 @@ export class AttendancePeriodVersionDto {
   readonly coveredEmployeeCount: number;
   readonly coveredWorkDateCount: number;
   readonly dtrCount: number;
+  readonly supersededDayCount: number;
   readonly publication: AttendancePayrollPublicationDto | null;
 
   constructor(version: AttendancePeriodVersionSummary) {
@@ -84,6 +85,7 @@ export class AttendancePeriodVersionDto {
     this.coveredEmployeeCount = version.coveredEmployeeCount;
     this.coveredWorkDateCount = version.coveredWorkDateCount;
     this.dtrCount = version.dtrCount;
+    this.supersededDayCount = version.supersededDayCount;
     this.publication = version.publication
       ? new AttendancePayrollPublicationDto(version.publication)
       : null;

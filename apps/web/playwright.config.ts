@@ -47,7 +47,6 @@ export default defineConfig({
         APP_URL: appUrl,
         API_URL: apiUrl,
         API_PORT: apiPort,
-        DATA_ENCRYPTION_KEY: process.env.DATA_ENCRYPTION_KEY || Buffer.alloc(32, 7).toString('hex'),
       },
     },
     {

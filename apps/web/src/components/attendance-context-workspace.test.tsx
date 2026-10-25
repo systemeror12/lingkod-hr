@@ -65,4 +65,16 @@ describe('AttendanceContextWorkspace', () => {
     expect(html).toContain('id="attendance-context-search"');
     expect(html).toContain('id="attendance-context-filter"');
   });
+
+  it('marks restricted evidence without identifying it', () => {
+    search = new URLSearchParams(`view=form&record=${record.id}`);
+    const html = renderToStaticMarkup(
+      <AttendanceContextWorkspace
+        agencyId={record.agencyId}
+        canCreate={false}
+        initial={{ contexts: [{ ...record, evidence: { access: 'RESTRICTED' } }] }}
+      />,
+    );
+    expect(html).toContain('Restricted evidence');
+  });
 });

@@ -3,6 +3,10 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { expect, it } from 'vitest';
 import { documentAuditWriter, DocumentsService } from '../documents/documents.service';
 import { leavePolicyAuditWriter, LeavePoliciesService } from './leave-policies.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -114,6 +118,7 @@ it.skipIf(!enabled)(
     const service = new LeavePoliciesService(
       leavePolicyAuditWriter,
       new DocumentsService({} as never, documentAuditWriter),
+      new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
     );
     const nationalEvidenceId = await createEvidence(
       admin,

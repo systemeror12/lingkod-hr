@@ -204,6 +204,12 @@ const destinations: readonly (Destination & {
     permission: 'leave.applications.create',
   },
   {
+    href: '/mandatory-leave',
+    label: 'Mandatory Leave',
+    stage: 'Leave',
+    permission: 'leave.mandatory_assessments.read',
+  },
+  {
     href: '/leave-monetization',
     label: 'Leave Monetization',
     stage: 'Leave',

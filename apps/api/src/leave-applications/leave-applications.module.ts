@@ -5,6 +5,7 @@ import { AttendanceConfigurationModule } from '../attendance-configuration/atten
 import { AttendanceCorrectionsModule } from '../attendance-corrections/attendance-corrections.module';
 import { AuthModule } from '../auth/auth.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { MandatoryLeaveAssessmentsModule } from '../mandatory-leave-assessments/mandatory-leave-assessments.module';
 import { LeaveApplicationsController } from './leave-applications.controller';
 import {
   LEAVE_APPLICATION_AUDIT_WRITER,
@@ -20,6 +21,7 @@ import {
     AttendanceConfigurationModule,
     AttendancePostedLeaveInputsModule,
     AttendanceCorrectionsModule,
+    MandatoryLeaveAssessmentsModule,
   ],
   controllers: [LeaveApplicationsController],
   providers: [

@@ -15,9 +15,11 @@ import {
 } from '../attendance-configuration/attendance-configuration.types';
 import {
   ScheduleAssignmentsService,
+  isWorkingDate,
   type AttendanceResolution,
 } from '../attendance-configuration/schedule-assignments.service';
 import {
+  addDateValueDays,
   eventCollectionWindow,
   localDateValue,
   zonedTimeToInstant,
@@ -35,6 +37,7 @@ import {
 } from '../attendance-corrections/attendance-corrections.effects';
 import {
   calculateAttendanceDay,
+  ATTENDANCE_MINUTE_RULE,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
   type AttendanceCalculationCoverage,
@@ -140,6 +143,11 @@ type AttendanceExceptionRecord = Prisma.AttendanceExceptionGetPayload<{
   select: typeof exceptionSelect;
 }>;
 type AttendancePeriodRecord = Prisma.AttendancePeriodGetPayload<{ select: typeof periodSelect }>;
+type WorkingDateCounter = (
+  employeeId: string,
+  dateFrom: string,
+  dateTo: string,
+) => Promise<number | null>;
 
 function databaseContext(context: RequestContext) {
   return requestDatabaseContext(context);
@@ -149,11 +157,6 @@ function metadataString(metadata: Prisma.JsonValue, key: string): string | null 
   if (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const value = (metadata as Record<string, unknown>)[key];
   return typeof value === 'string' ? value : null;
-}
-
-function holidayEffectRulesOf(value: Prisma.JsonValue): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
 }
 
 function employeeSummary(record: AttendanceDayRecord): AttendanceDayEmployeeSummary {
@@ -168,6 +171,7 @@ function ruleSnapshotOf(value: Prisma.JsonValue): AttendanceDayRuleSnapshot {
   const snapshot = (value ?? {}) as Record<string, unknown>;
   return {
     fingerprint: typeof snapshot.fingerprint === 'string' ? snapshot.fingerprint : '',
+    minuteRule: snapshot.minuteRule === ATTENDANCE_MINUTE_RULE ? ATTENDANCE_MINUTE_RULE : undefined,
     timezone: typeof snapshot.timezone === 'string' ? snapshot.timezone : '',
     assignmentId: typeof snapshot.assignmentId === 'string' ? snapshot.assignmentId : null,
     workScheduleVersionId:
@@ -349,12 +353,21 @@ export class AttendanceDaysService {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const now = new Date();
       const period = await this.findOrCreatePeriod(transaction, context, input);
+      const workingDates = this.workingDateCounter(transaction, context.agencyId);
       const days: AttendanceDayCalculationResultSummary[] = [];
       for (const employeeId of input.employeeIds) {
         for (let offset = 0; offset < dateCount; offset += 1) {
           const workDate = formatDate(addDays(toDatabaseDate(input.dateFrom), offset));
           days.push(
-            await this.calculateOne(transaction, context, period, employeeId, workDate, now),
+            await this.calculateOne(
+              transaction,
+              context,
+              period,
+              employeeId,
+              workDate,
+              now,
+              workingDates,
+            ),
           );
         }
       }
@@ -366,6 +379,42 @@ export class AttendanceDaysService {
         unchangedCount: days.filter((day) => day.outcome === 'UNCHANGED').length,
       };
     });
+  }
+
+  /**
+   * Internal contract: recompute each Attendance Day's input fingerprint from
+   * its current sources without writing, and return the ids of the days whose
+   * stored fingerprint no longer matches. Attendance Period Reconciliation
+   * uses it to refuse a lock over sources that changed after approval.
+   */
+  async changedInputDayIdsInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    attendanceDayIds: readonly string[],
+  ): Promise<string[]> {
+    if (attendanceDayIds.length === 0) return [];
+    const days = await transaction.attendanceDay.findMany({
+      where: { agencyId: context.agencyId, id: { in: [...attendanceDayIds] } },
+      orderBy: [{ workDate: 'asc' }, { id: 'asc' }],
+      select: { id: true, employeeId: true, workDate: true, ruleSnapshot: true },
+    });
+    const now = new Date();
+    const workingDates = this.workingDateCounter(transaction, context.agencyId);
+    const changed: string[] = [];
+    for (const day of days) {
+      const calculation = await this.calculationOf(
+        transaction,
+        context,
+        day.employeeId,
+        formatDate(day.workDate),
+        now,
+        workingDates,
+      );
+      if (metadataString(day.ruleSnapshot, 'fingerprint') !== calculation.fingerprint) {
+        changed.push(day.id);
+      }
+    }
+    return changed;
   }
 
   /**
@@ -393,10 +442,9 @@ export class AttendanceDaysService {
 
   /**
    * Recalculate the affected Work Dates of one applied Attendance Correction
-   * inside the caller-owned transaction. An applied correction, or Leave's
-   * posted-leave supersession on unlocked Work Dates, are the only authorized
-   * paths that may supersede an APPROVED Attendance Day while the original
-   * version and its segments stay retained.
+   * inside the caller-owned transaction. Unlike an ordinary calculation, it
+   * also recalculates Work Dates of a finalized Attendance Period. A superseded
+   * APPROVED version and its segments stay retained.
    */
   async recalculateCorrectedWorkDates(
     transaction: Prisma.TransactionClient,
@@ -415,12 +463,19 @@ export class AttendanceDaysService {
       );
     }
     const now = new Date();
+    const workingDates = this.workingDateCounter(transaction, context.agencyId);
     const results: AttendanceDayCalculationResultSummary[] = [];
     for (const workDate of input.workDates) {
       results.push(
-        await this.calculateOne(transaction, context, period, input.employeeId, workDate, now, {
-          correctionRecalculation: true,
-        }),
+        await this.calculateOne(
+          transaction,
+          context,
+          period,
+          input.employeeId,
+          workDate,
+          now,
+          workingDates,
+        ),
       );
     }
     return results;
@@ -495,6 +550,7 @@ export class AttendanceDaysService {
       select: { workDate: true, attendancePeriod: { select: periodSelect } },
     });
     const now = new Date();
+    const workingDates = this.workingDateCounter(transaction, context.agencyId);
     for (const day of days) {
       await this.calculateOne(
         transaction,
@@ -503,7 +559,7 @@ export class AttendanceDaysService {
         input.employeeId,
         formatDate(day.workDate),
         now,
-        { correctionRecalculation: true },
+        workingDates,
       );
     }
     return {
@@ -638,6 +694,11 @@ export class AttendanceDaysService {
     context: RequestContext,
     input: CalculateAttendanceDaysInput,
   ): Promise<AttendancePeriodRecord> {
+    // Hold the period so a concurrent lock either waits for this calculation,
+    // then fails reconciliation, or finalizes first and refuses it below.
+    await transaction.$queryRaw`SELECT "id" FROM "attendance_periods"
+      WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "code" = ${input.periodCode}
+      FOR SHARE`;
     const existing = await transaction.attendancePeriod.findUnique({
       where: { agencyId_code: { agencyId: context.agencyId, code: input.periodCode } },
       select: periodSelect,
@@ -674,6 +735,32 @@ export class AttendanceDaysService {
     });
   }
 
+  /**
+   * Working-date counts for one operation's transaction, memoized per
+   * Employee and range so each Work Date of a long leave range reuses one count.
+   */
+  private workingDateCounter(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+  ): WorkingDateCounter {
+    const counts = new Map<string, Promise<number | null>>();
+    return (employeeId, dateFrom, dateTo) => {
+      const key = `${employeeId}/${dateFrom}/${dateTo}`;
+      let count = counts.get(key);
+      if (!count) {
+        count = this.assignments.workingDatesInTransaction(
+          transaction,
+          agencyId,
+          employeeId,
+          dateFrom,
+          dateTo,
+        );
+        counts.set(key, count);
+      }
+      return count;
+    };
+  }
+
   private async calculateOne(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
@@ -681,7 +768,7 @@ export class AttendanceDaysService {
     employeeId: string,
     workDate: string,
     now: Date,
-    options: { correctionRecalculation?: boolean } = {},
+    workingDates: WorkingDateCounter,
   ): Promise<AttendanceDayCalculationResultSummary> {
     const current = await transaction.attendanceDay.findFirst({
       where: {
@@ -706,31 +793,14 @@ export class AttendanceDaysService {
       );
     }
 
-    let resolution: AttendanceResolution | null = null;
-    let resolutionException: AttendanceExceptionError | null = null;
-    try {
-      resolution = await this.assignments.resolveForWorkDateInTransaction(
-        transaction,
-        context.agencyId,
-        employeeId,
-        workDate,
-      );
-    } catch (error: unknown) {
-      if (error instanceof AttendanceExceptionError) {
-        resolutionException = error;
-      } else {
-        throw error;
-      }
-    }
-
-    const overlays = await this.appliedCorrectionOverlays(
+    const calculation = await this.calculationOf(
       transaction,
-      context.agencyId,
+      context,
       employeeId,
+      workDate,
+      now,
+      workingDates,
     );
-    const calculation = resolution
-      ? await this.calculateResolved(transaction, context, resolution, workDate, overlays)
-      : this.unresolvedCalculation(resolutionException!, employeeId, workDate, now);
     const fingerprint = calculation.fingerprint;
     const exceptionTypes = calculation.exceptions.map((exception) => exception.type);
 
@@ -754,14 +824,6 @@ export class AttendanceDaysService {
         exceptionTypes,
       };
     }
-    if (current && current.status === 'APPROVED' && !options.correctionRecalculation) {
-      throw new AttendanceDayServiceError(
-        'An approved Attendance Day cannot be recalculated.',
-        409,
-        'ATTENDANCE_DAY_APPROVED',
-      );
-    }
-
     const maxVersion = await transaction.attendanceDay.aggregate({
       where: {
         agencyId: context.agencyId,
@@ -873,6 +935,46 @@ export class AttendanceDaysService {
   }
 
   /**
+   * Reads the current sources of one Work Date and calculates it without
+   * writing. The fingerprint identifies those sources, so it changes whenever
+   * an Attendance Event, Attendance Context, posted-leave input, applied
+   * correction, or schedule binding the Day depends on changes.
+   */
+  private async calculationOf(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    workDate: string,
+    now: Date,
+    workingDates: WorkingDateCounter,
+  ) {
+    let resolution: AttendanceResolution | null = null;
+    let resolutionException: AttendanceExceptionError | null = null;
+    try {
+      resolution = await this.assignments.resolveForWorkDateInTransaction(
+        transaction,
+        context.agencyId,
+        employeeId,
+        workDate,
+      );
+    } catch (error: unknown) {
+      if (error instanceof AttendanceExceptionError) {
+        resolutionException = error;
+      } else {
+        throw error;
+      }
+    }
+    const overlays = await this.appliedCorrectionOverlays(
+      transaction,
+      context.agencyId,
+      employeeId,
+    );
+    return resolution
+      ? this.calculateResolved(transaction, context, resolution, workDate, overlays, workingDates)
+      : this.unresolvedCalculation(resolutionException!, employeeId, workDate, now);
+  }
+
+  /**
    * Any Employee Attendance Submission bound to a superseded Attendance Day
    * version stops being current and must be resubmitted. A STALE submission
    * never returns to an active state.
@@ -906,6 +1008,7 @@ export class AttendanceDaysService {
     resolution: AttendanceResolution,
     workDate: string,
     overlays: AppliedAttendanceCorrectionOverlays,
+    workingDates: WorkingDateCounter,
   ): Promise<{
     fingerprint: string;
     snapshot: AttendanceDayRuleSnapshot;
@@ -973,7 +1076,10 @@ export class AttendanceDaysService {
       context.agencyId,
       resolution.employeeId,
       workDate,
+      (dateFrom, dateTo) => workingDates(resolution.employeeId, dateFrom, dateTo),
     );
+    // Leave counts no working day here, so placed leave covers nothing.
+    const placesLeave = isWorkingDate(resolution);
     const leaveExceptions: AttendanceCalculationException[] = [];
     for (const entry of postedLeave) {
       if (entry.ambiguousReason !== null) {
@@ -989,6 +1095,7 @@ export class AttendanceDaysService {
         });
         continue;
       }
+      if (!placesLeave) continue;
       const wholeIntervals = wholeWorkDateCoverageIntervals(dayRule, workDate, timezone);
       for (const whole of wholeIntervals) {
         coverage.push({
@@ -1000,10 +1107,17 @@ export class AttendanceDaysService {
         });
       }
     }
+    // Every calendar date the Day's expected duty reaches, so an overnight shift
+    // sees a holiday on its second date. `holidayEntries` keeps the Work Date
+    // alone because Leave counts working days from it.
+    const dutyDates = dayRule.endNextCalendarDay
+      ? [workDate, addDateValueDays(workDate, 1)]
+      : [workDate];
     const holidayClassifications = new Map(
-      resolution.holidayEntries.map((entry) => [entry.holidayDate, entry.dayType]),
+      resolution.holidayCalendarVersion.entries
+        .filter((entry) => dutyDates.includes(entry.holidayDate))
+        .map((entry) => [entry.holidayDate, entry.dayType]),
     );
-    const holidayEffectRules = holidayEffectRulesOf(workScheduleVersion.holidayEffectRules);
     const result = calculateAttendanceDay({
       timezone,
       workDate,
@@ -1011,7 +1125,6 @@ export class AttendanceDaysService {
       events,
       coverage,
       holidayClassifications,
-      holidayEffectRules,
     });
     const exceptions = [...result.exceptions, ...leaveExceptions];
     const fingerprint = fingerprintAttendanceDayInput({
@@ -1021,18 +1134,21 @@ export class AttendanceDaysService {
       events,
       coverage,
       holidayClassifications,
-      holidayEffectRules,
       governingVersions: {
         assignmentId: resolution.assignment.id,
         workScheduleVersionId: resolution.workScheduleVersion.id,
         workArrangementVersionId: resolution.workArrangementVersion.id,
         holidayCalendarVersionId: resolution.holidayCalendarVersion.id,
       },
+      unplacedSources: postedLeave
+        .filter((entry) => entry.ambiguousReason !== null)
+        .map((entry) => ({ sourceType: 'POSTED_LEAVE', sourceId: entry.inputId })),
     });
     return {
       fingerprint,
       snapshot: {
         fingerprint,
+        minuteRule: ATTENDANCE_MINUTE_RULE,
         timezone,
         assignmentId: resolution.assignment.id,
         workScheduleVersionId: resolution.workScheduleVersion.id,
@@ -1048,8 +1164,9 @@ export class AttendanceDaysService {
         })),
         capturedAt: new Date().toISOString(),
       },
+      // Service on a rest day or a Non-Working Holiday is outside any expected duty.
       dayClassification:
-        dayRule.ruleType === 'REST' && result.totals.workedMinutes > 0
+        result.totals.expectedMinutes === 0 && result.totals.workedMinutes > 0
           ? 'UNSCHEDULED_SERVICE'
           : 'SCHEDULED',
       totals: result.totals,

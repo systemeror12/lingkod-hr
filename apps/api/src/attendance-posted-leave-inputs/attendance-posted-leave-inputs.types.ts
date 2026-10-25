@@ -75,7 +75,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Why a posted-leave input cannot be placed as whole Work Date coverage, or
  * null when it can. Attendance places only whole days; a fraction, minutes, or
- * a source-defined quantity would need an interval it must not assume.
+ * a source-defined quantity would need an interval it must not assume. A
+ * working-day quantity also needs `workingDayAmbiguity` against the schedule.
  */
 export function postedLeaveAmbiguity(input: {
   dateFrom: string;
@@ -95,8 +96,22 @@ export function postedLeaveAmbiguity(input: {
   if (input.unitCode === 'CALENDAR_DAY' && input.quantity !== rangeDays) {
     return 'The posted leave quantity does not match the calendar days in its date range.';
   }
-  if (input.quantity > rangeDays) {
-    return 'The posted leave quantity exceeds the days in its date range.';
+  return null;
+}
+
+/**
+ * Why working-day leave cannot be placed on every working date of its range,
+ * or null when it can. `quantity` is the combined quantity of the current
+ * inputs sharing the range, so a line split between charged leave and leave
+ * without pay still places; `workingDates` is null when the Employee's
+ * schedule for a date in the range cannot be resolved.
+ */
+export function workingDayAmbiguity(quantity: number, workingDates: number | null): string | null {
+  if (workingDates === null) {
+    return "The Employee's schedule for the posted leave date range cannot be resolved, so its working dates cannot be counted.";
+  }
+  if (quantity !== workingDates) {
+    return 'The posted leave quantity does not match the working dates in its date range.';
   }
   return null;
 }

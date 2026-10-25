@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
+import { setDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import {
   createAttendanceWorkflowFixture,
@@ -412,6 +413,7 @@ it.skipIf(!enabled)(
         attendancePeriodAuditWriter,
         services.approvals,
         failingDtrsService(),
+        services.days,
       );
 
       await expect(
@@ -434,6 +436,270 @@ it.skipIf(!enabled)(
         await admin.attendancePayrollFact.count({ where: { agencyId: fixture.agencyId } }),
       ).toBe(0);
       expect(await admin.dtrDocument.count({ where: { agencyId: fixture.agencyId } })).toBe(0);
+    } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses to lock when an approved Day gains an Attendance Context, then locks the corrected facts after recalculation and re-approval',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services } = fixture;
+    try {
+      await activateLockRoute(fixture);
+      await approveSubmission(fixture);
+      const first = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      await services.periods.approve(fixture.officerContext, first.version.id, {});
+
+      const contextRecorder = {
+        ...fixture.administratorContext,
+        permissions: [
+          ...fixture.administratorContext.permissions,
+          { code: 'attendance.contexts.create', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+      await services.contexts.record(contextRecorder, {
+        employeeId: fixture.employeeId,
+        contextType: 'OFFICIAL_BUSINESS',
+        coverageMode: 'TIMED',
+        startsAt: `${fixture.workDate}T16:00:00+08:00`,
+        endsAt: `${fixture.workDate}T17:00:00+08:00`,
+        reason: 'Authorized official business after the approval.',
+        evidenceDocumentVersionId: fixture.evidenceDocumentVersionId,
+      });
+
+      const employee = await admin.employee.findUniqueOrThrow({
+        where: { id: fixture.employeeId },
+        select: { employeeNumber: true },
+      });
+      const reconciliation = await services.periods.reconcile(
+        fixture.administratorContext,
+        first.version.id,
+      );
+      expect(reconciliation.ok).toBe(false);
+      const changed = reconciliation.failures.find(
+        (failure) => failure.code === 'DAY_INPUTS_CHANGED',
+      );
+      expect(changed?.message).toContain(employee.employeeNumber);
+      expect(changed?.message).toContain(fixture.workDate);
+      expect(changed?.details).toEqual({
+        days: [
+          {
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: fixture.workDate,
+          },
+        ],
+      });
+      await expect(
+        services.periods.lock(fixture.administratorContext, first.version.id),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_PERIOD_RECONCILIATION_FAILED',
+        statusCode: 409,
+        reasons: ['DAY_INPUTS_CHANGED'],
+      });
+
+      const period = await admin.attendancePeriod.findUniqueOrThrow({
+        where: { id: fixture.periodId },
+      });
+      const recalculated = await services.days.calculate(fixture.administratorContext, {
+        periodCode: period.code,
+        dateFrom: fixture.workDate,
+        dateTo: fixture.workDate,
+        employeeIds: [fixture.employeeId],
+      });
+      expect(recalculated.recalculatedCount).toBe(1);
+      const staleSubmissionIds = recalculated.days[0]?.staleSubmissionIds ?? [];
+      expect(staleSubmissionIds).toHaveLength(1);
+      expect(
+        await admin.employeeAttendanceSubmission.findUniqueOrThrow({
+          where: { id: staleSubmissionIds[0]! },
+          select: { status: true },
+        }),
+      ).toEqual({ status: 'STALE' });
+
+      const superseded = await services.periods.findById(
+        fixture.administratorContext,
+        first.version.id,
+      );
+      expect(superseded.version).toMatchObject({ status: 'APPROVED', supersededDayCount: 1 });
+
+      await approveSubmission(fixture);
+      const second = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      expect(second.version.versionNo).toBe(2);
+      await services.periods.approve(fixture.officerContext, second.version.id, {});
+      const locked = await services.periods.lock(fixture.administratorContext, second.version.id);
+      expect(locked.replay).toBe(false);
+
+      const publication = await services.periods.findPublication(
+        fixture.administratorContext,
+        second.version.id,
+      );
+      const minutes = Object.fromEntries(
+        publication.facts.map((fact) => [fact.factType, fact.correctedMinutes]),
+      );
+      expect(minutes).toEqual({ EXPECTED: 480, WORKED: 420, OFFICIAL_BUSINESS: 60 });
+
+      await expect(
+        services.periods.lock(fixture.administratorContext, first.version.id),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_PERIOD_RECONCILIATION_FAILED' });
+    } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'makes a recalculation racing a lock wait, then refuses it once the period finalizes',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services } = fixture;
+    try {
+      await approveSubmission(fixture);
+      const period = await admin.attendancePeriod.findUniqueOrThrow({
+        where: { id: fixture.periodId },
+      });
+      let settled = false;
+      let recalculation: Promise<unknown> | undefined;
+      // The admin transaction stands in for a lock holding the period row.
+      await admin.$transaction(
+        async (transaction) => {
+          await setDatabaseContext(transaction, { capabilities: ['attendance-transition'] });
+          await transaction.$queryRaw`SELECT "id" FROM "attendance_periods"
+            WHERE "id" = CAST(${fixture.periodId} AS uuid) FOR UPDATE`;
+          recalculation = services.days
+            .calculate(fixture.administratorContext, {
+              periodCode: period.code,
+              dateFrom: fixture.workDate,
+              dateTo: fixture.workDate,
+              employeeIds: [fixture.employeeId],
+            })
+            .finally(() => {
+              settled = true;
+            });
+          recalculation.catch(() => undefined);
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          expect(settled).toBe(false);
+          await transaction.attendancePeriod.update({
+            where: { id: fixture.periodId },
+            data: { status: 'FINALIZED' },
+          });
+        },
+        { timeout: 10_000 },
+      );
+      await expect(recalculation).rejects.toMatchObject({ code: 'ATTENDANCE_PERIOD_FINALIZED' });
+      expect(
+        await admin.attendanceDay.findUniqueOrThrow({
+          where: { id: fixture.attendanceDayId },
+          select: { isCurrent: true, status: true },
+        }),
+      ).toEqual({ isCurrent: true, status: 'APPROVED' });
+    } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses to lock over a Day calculated before the Fully Covered Minute convention until a successor is recalculated',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services } = fixture;
+    try {
+      await activateLockRoute(fixture);
+      await approveSubmission(fixture);
+      const first = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      await services.periods.approve(fixture.officerContext, first.version.id, {});
+
+      // Stand in for a Day version written before ADR 0005: its snapshot has no
+      // minute rule and its fingerprint was computed without one.
+      const current = await admin.attendanceDay.findUniqueOrThrow({
+        where: { id: fixture.attendanceDayId },
+        select: { ruleSnapshot: true },
+      });
+      const { minuteRule, ...legacySnapshot } = current.ruleSnapshot as Record<string, unknown>;
+      expect(minuteRule).toBe('FULLY_COVERED_MINUTE');
+      const legacy = { ...legacySnapshot, fingerprint: 'f'.repeat(64) };
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceDay.update({
+          where: { id: fixture.attendanceDayId },
+          data: { ruleSnapshot: legacy as Prisma.InputJsonValue },
+        });
+      });
+
+      const reconciliation = await services.periods.reconcile(
+        fixture.administratorContext,
+        first.version.id,
+      );
+      expect(reconciliation.ok).toBe(false);
+      expect(
+        reconciliation.failures.find((failure) => failure.code === 'DAY_INPUTS_CHANGED')?.details,
+      ).toEqual({
+        days: [
+          {
+            attendanceDayId: fixture.attendanceDayId,
+            employeeId: fixture.employeeId,
+            workDate: fixture.workDate,
+          },
+        ],
+      });
+      await expect(
+        services.periods.lock(fixture.administratorContext, first.version.id),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_PERIOD_RECONCILIATION_FAILED',
+        reasons: ['DAY_INPUTS_CHANGED'],
+      });
+
+      const period = await admin.attendancePeriod.findUniqueOrThrow({
+        where: { id: fixture.periodId },
+      });
+      const recalculated = await services.days.calculate(fixture.administratorContext, {
+        periodCode: period.code,
+        dateFrom: fixture.workDate,
+        dateTo: fixture.workDate,
+        employeeIds: [fixture.employeeId],
+      });
+      expect(recalculated.recalculatedCount).toBe(1);
+      const successorId = recalculated.days[0]!.attendanceDayId!;
+      expect(successorId).not.toBe(fixture.attendanceDayId);
+
+      const versions = await admin.attendanceDay.findMany({
+        where: { id: { in: [fixture.attendanceDayId, successorId] } },
+        select: { id: true, isCurrent: true, status: true, ruleSnapshot: true },
+      });
+      const original = versions.find((version) => version.id === fixture.attendanceDayId);
+      const successor = versions.find((version) => version.id === successorId);
+      expect(original).toMatchObject({
+        isCurrent: false,
+        status: 'APPROVED',
+        ruleSnapshot: legacy,
+      });
+      expect(successor?.isCurrent).toBe(true);
+      expect(successor?.ruleSnapshot).toMatchObject({ minuteRule: 'FULLY_COVERED_MINUTE' });
+
+      await approveSubmission(fixture);
+      const second = await services.periods.submitForReview(
+        fixture.administratorContext,
+        fixture.periodId,
+      );
+      await services.periods.approve(fixture.officerContext, second.version.id, {});
+      const locked = await services.periods.lock(fixture.administratorContext, second.version.id);
+      expect(locked.replay).toBe(false);
     } finally {
       await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
       await admin.$disconnect();

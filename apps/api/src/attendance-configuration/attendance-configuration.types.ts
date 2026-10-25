@@ -665,18 +665,15 @@ export function normalizeHolidayCalendarDefinition(
     if (!sourceReference) {
       throw invalid('Every Holiday Calendar entry requires its source reference.');
     }
-    const key = `${holidayDate}:${entry.dayType}`;
-    if (seen.has(key)) {
-      throw invalid('A Holiday Calendar Version cannot repeat one day type on the same date.');
+    if (seen.has(holidayDate)) {
+      throw invalid(
+        `A Holiday Calendar Version holds one classification per date; ${holidayDate} is repeated.`,
+      );
     }
-    seen.add(key);
+    seen.add(holidayDate);
     return { holidayDate, name, dayType: entry.dayType, sourceReference };
   });
-  entries.sort(
-    (left, right) =>
-      left.holidayDate.localeCompare(right.holidayDate) ||
-      left.dayType.localeCompare(right.dayType),
-  );
+  entries.sort((left, right) => left.holidayDate.localeCompare(right.holidayDate));
   return { effectiveDate, entries };
 }
 

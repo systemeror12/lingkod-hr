@@ -286,6 +286,7 @@ The User's LingkodHR-owned password. Carries no `agency_id`; visible only in the
 | changed_at | datetime | No |  | Last change |
 | second_factor_failures | integer | No | ≥ 0 | Consecutive second-factor failures |
 | reset_required_at | datetime | Yes |  | When a reset became required |
+| recovery_code_prompt_owed_at | datetime | Yes |  | When a Password Reset spent a Recovery Code; the next sign-in shows the remaining-codes prompt and clears it; a Factor Reset clears it too |
 
 **Constraints and indexes**
 
@@ -346,6 +347,7 @@ Short-lived state between sign-in or activation steps, referenced by an HTTP-onl
 | enrollment_secret_envelope | bytes | Yes |  | TOTP secret being enrolled, encrypted like a factor's and bound to the User and the pending row, whose id becomes the factor id |
 | recovery_code_hashes | string[] | No |  | Hashes of the Recovery Codes shown once at enrollment |
 | enrollment_accepted_step | integer | Yes |  | Step of the code that confirmed enrollment; the factor's first `last_accepted_step` |
+| enrollment_confirmed_at | datetime | Yes |  | When the code that confirmed enrollment was accepted; the new session's `auth_time` |
 | expires_at | datetime | No | After `created_at` | Sign-in and TOTP replacement expire after 5 minutes |
 | created_at | datetime | No |  | Started |
 
@@ -379,6 +381,24 @@ Emailed password reset links. Carries no `agency_id`; visible in the owning User
 - Changing `user_passwords.changed_at`, by any route, supersedes the User's outstanding link. A completing reset consumes its link first.
 
 **Deletion behavior:** Kept while the User exists, so a failed reset can tell a used, superseded, or expired link from an unknown one; cascades with the User.
+## `sign_in_throttles`
+
+The Sign-in Cool-down ladder, one row per keyed email hash. It carries the failure count between attempts and is updated under a row lock, so it isn't derived from Security Events. Unknown and real emails get rows alike, so a row says nothing about whether an account exists. Carries no `agency_id` or `user_id`; sign-in runs before any User or Agency context exists, so RLS is enabled and forced, and only the `platform-security` capability reads or writes rows.
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| email_hash | bytes | No | PK | Keyed hash (`BLIND_INDEX_KEY`) of the submitted email; the raw email is not stored |
+| failure_count | integer | No | ≥ 0, default 0 | Failures since the last cool-down started |
+| cooldown_level | integer | No | ≥ 0, default 0 | Cool-downs started so far; the next uses the following step of the ladder |
+| cooldown_until | datetime | Yes |  | When the running cool-down ends |
+| last_failure_at | datetime | No |  | Latest counted failure |
+
+**Constraints and indexes**
+
+- 5 failures start a cool-down; each later one for the same email doubles: 5, 10, 20, 40, then 60 minutes.
+- A row whose `last_failure_at` is more than 24 hours old counts as reset.
+
+**Deletion behavior:** Deleted for the email by a full sign-in, a successful reauthentication or password change by the signed-in User, or a completed Password Reset; otherwise kept, and treated as reset after 24 hours without a failure.
 ## `security_events`
 
 Append-only authentication and authorization security events.
@@ -389,7 +409,7 @@ Append-only authentication and authorization security events.
 | agency_id | uuid | Yes | FK agencies | Agency context when applicable |
 | user_id | uuid | Yes | FK users | Known user |
 | membership_id | uuid | Yes | FK agency_memberships | Known membership |
-| event_type | enum | No |  | LOGIN_SUCCESS, LOGIN_FAILURE, LOCK, ROLE_CHANGE, SESSION_REVOKED, etc. |
+| event_type | enum | No |  | LOGIN_SUCCESS, LOGIN_FAILURE, REAUTHENTICATION_FAILURE, LOCK, ROLE_CHANGE, SESSION_REVOKED, etc. |
 | occurred_at | datetime | No |  | Event time |
 | request_id | string | Yes |  | Request correlation |
 | ip_address | string | Yes |  | Protected network metadata |
@@ -400,6 +420,7 @@ Append-only authentication and authorization security events.
 **Constraints and indexes**
 
 - Append-only; no secrets or full sensitive payloads. Sign-in events never hold a password, code, token, or raw email.
+- A failed proof inside a signed-in session (reauthentication, or the current password on password change) is a `REAUTHENTICATION_FAILURE` with the session's Agency, User, and Agency Membership; `details.sessionId` names the session. A sign-in failure is a `LOGIN_FAILURE`, which has no Agency.
 - Indexes on `(email_hash, event_type, occurred_at)` and `(ip_address, event_type, occurred_at)` for sign-in attempt counts.
 
 **Deletion behavior:** Retention-controlled purge only.

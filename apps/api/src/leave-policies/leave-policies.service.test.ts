@@ -6,6 +6,10 @@ import {
   LeavePolicyServiceError,
   leavePolicyAuditWriter,
 } from './leave-policies.service';
+import {
+  mandatoryLeaveAssessmentAuditWriter,
+  MandatoryLeaveAssessmentsService,
+} from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 
 const documentsService = {} as ConstructorParameters<typeof LeavePoliciesService>[1];
 const agencyId = '00000000-0000-4000-8000-000000000001';
@@ -24,7 +28,11 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 function service() {
-  return new LeavePoliciesService(leavePolicyAuditWriter, documentsService);
+  return new LeavePoliciesService(
+    leavePolicyAuditWriter,
+    documentsService,
+    new MandatoryLeaveAssessmentsService(mandatoryLeaveAssessmentAuditWriter),
+  );
 }
 
 it('requires leave.types.read before exposing the catalogue', () => {

@@ -11,6 +11,7 @@ import {
   StepFooter,
   type LetterheadAgency,
 } from './civic-sunrise';
+import { RecoveryCodePrompt } from './recovery-code-prompt';
 import { Button } from './ui/button';
 import { Field, FormError, inputClass } from './ui/field';
 
@@ -24,7 +25,7 @@ export interface ActivationInvitation {
   expiresAt: string;
 }
 
-type Step = 'start' | 'totp' | 'recovery' | 'enroll-scan' | 'enroll-codes' | 'done';
+type Step = 'start' | 'totp' | 'recovery' | 'enroll-scan' | 'enroll-codes' | 'codes-left' | 'done';
 
 /** Ends the flow in place of the form. */
 interface Outcome {
@@ -44,6 +45,7 @@ interface Enrollment {
 
 type ActivationResponse = {
   status?: string;
+  recoveryCodesRemaining?: number;
   enrollment?: Enrollment;
   recoveryCodes?: string[];
 };
@@ -113,6 +115,13 @@ function outcomeFor(code: string): Outcome | null {
       return invitationOutcome('EXPIRED');
     case 'INVITATION_INVALID':
       return invitationOutcome('INVALID');
+    case 'INVITATION_ROLE_UNAVAILABLE':
+      return {
+        tone: 'danger',
+        kicker: 'Nothing was saved',
+        title: 'A role in this invitation is no longer available',
+        body: 'Ask your Agency Administrator to send a new invitation. No access was granted.',
+      };
     case 'USER_LOCKED':
       return {
         tone: 'danger',
@@ -228,7 +237,8 @@ export function ActivationOutcome({
  * Invitation Activation. A first-time User sets their name and a password; an existing User
  * confirms their password, then their authenticator code or a Recovery Code. An MFA-Required
  * invitee without an authenticator sets one up and saves Recovery Codes. Nothing is saved until
- * the last step, which opens a session in the inviting Agency.
+ * the last step, which opens a session in the inviting Agency. A Recovery Code that proved it, or
+ * a Password Reset that owed the prompt, shows the codes left before the welcome.
  */
 export function InvitationActivationForm({ invitation }: { invitation: ActivationInvitation }) {
   const router = useRouter();
@@ -243,6 +253,7 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [enrolled, setEnrolled] = useState(false);
+  const [codesLeft, setCodesLeft] = useState<{ remaining: number; title: string } | null>(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -317,7 +328,23 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
     else if (result.status === 'ENROLLMENT_REQUIRED' && result.enrollment) {
       setEnrollment(result.enrollment);
       goTo('enroll-scan');
-    } else goTo('done');
+    } else activated(result);
+  }
+
+  /** The session is open; the remaining-codes prompt comes first when the API returns a count. */
+  function activated(result: ActivationResponse) {
+    if (typeof result.recoveryCodesRemaining !== 'number') {
+      goTo('done');
+      return;
+    }
+    setCodesLeft({
+      remaining: result.recoveryCodesRemaining,
+      title:
+        step === 'recovery'
+          ? 'You accepted the invitation with a Recovery Code'
+          : 'You reset your password with a Recovery Code',
+    });
+    goTo('codes-left');
   }
 
   if (outcome) return <ActivationOutcome outcome={outcome} agency={agency} onRestart={restart} />;
@@ -336,6 +363,7 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
     recovery: 1,
     'enroll-scan': 1,
     'enroll-codes': 2,
+    'codes-left': steps.length,
     done: steps.length,
   }[step];
   const account = (
@@ -530,6 +558,14 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
               </div>
             </form>
           </>
+        ) : step === 'codes-left' && codesLeft ? (
+          <RecoveryCodePrompt
+            title={<Title>{codesLeft.title}</Title>}
+            email={invitation.email}
+            remaining={codesLeft.remaining}
+            continueLabel="Continue"
+            onContinue={() => goTo('done')}
+          />
         ) : step === 'done' ? (
           <>
             <div className="grid gap-2">
@@ -574,7 +610,7 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
                   event,
                   step === 'totp' ? '/code' : '/recovery-code',
                   { code },
-                  () => goTo('done'),
+                  activated,
                   step === 'recovery' ? 'That Recovery Code didn’t work.' : undefined,
                 )
               }
@@ -619,7 +655,7 @@ export function InvitationActivationForm({ invitation }: { invitation: Activatio
           </>
         )}
       </div>
-      {step === 'done' ? null : (
+      {step === 'done' || step === 'codes-left' ? null : (
         <StepFooter
           step={index + 1}
           of={steps.length}

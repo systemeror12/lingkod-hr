@@ -252,7 +252,11 @@ function configurationServices() {
     calendars,
   );
   const attendance = new AttendanceService(attendanceAuditWriter, assignments);
-  const contexts = new AttendanceContextsService(attendanceContextAuditWriter, documentsService);
+  const contexts = new AttendanceContextsService(
+    attendanceContextAuditWriter,
+    documentsService,
+    attendance,
+  );
   const postedLeaveInputs = new AttendancePostedLeaveInputsService();
   const days = new AttendanceDaysService(
     attendanceDayAuditWriter,
@@ -280,6 +284,7 @@ async function setupSchedule(
     membershipId: string;
     suffix: string;
     effectiveFrom: string;
+    dayRules?: Parameters<WorkSchedulesService['create']>[1]['dayRules'] | undefined;
   },
 ) {
   const { context, membershipId, suffix, effectiveFrom } = values;
@@ -331,7 +336,7 @@ async function setupSchedule(
     name: 'Ordinary Work Schedule',
     scheduleType: 'REGULAR',
     effectiveDate: effectiveFrom,
-    dayRules: dayRules(),
+    dayRules: values.dayRules ?? dayRules(),
   });
   const scheduleActive = await schedules.activate(context, schedule.id, schedule.draft!.id, {
     authorityDocumentVersionId: scheduleEvidence.id,
@@ -656,7 +661,10 @@ it.skipIf(!enabled)(
         absenceMinutes: 480,
       });
 
-      // A half-day quantity has no clock placement, so the day blocks.
+      // A half-day quantity has no clock placement, so the day blocks. The
+      // unplaceable input still changes the Day's sources, so it recalculates.
+      const beforeLeave = await calculate(ambiguousDate);
+      expect(beforeLeave.days[0]?.outcome).toBe('CREATED');
       await createInput({
         sourceKey: `${suffix}-half-day`,
         employeeId: employee.id,
@@ -669,8 +677,32 @@ it.skipIf(!enabled)(
         allocationKind: 'LEAVE_ACCOUNT',
       });
       const ambiguous = await calculate(ambiguousDate);
+      expect(ambiguous.days[0]?.outcome).toBe('RECALCULATED');
       expect(ambiguous.days[0]?.status).toBe('EXCEPTION');
       expect(ambiguous.days[0]?.exceptionTypes).toContain('AMBIGUOUS_LEAVE_QUANTITY');
+
+      // Leave counts no working day on the fixture's Christmas Day holiday, so
+      // one working day over Thursday–Friday covers Thursday alone.
+      await createInput({
+        sourceKey: `${suffix}-holiday`,
+        employeeId: employee.id,
+        sourceType: 'LeavePosting',
+        sourceId,
+        dateFrom: '2026-12-24',
+        dateTo: '2026-12-25',
+        unitCode: 'WORKING_DAY',
+        quantity: 1,
+        allocationKind: 'LEAVE_ACCOUNT',
+      });
+      for (const [workDate, postedLeaveMinutes] of [
+        ['2026-12-24', 480],
+        ['2026-12-25', 0],
+      ] as const) {
+        const result = await calculate(workDate);
+        expect(result.days[0]?.exceptionTypes).not.toContain('AMBIGUOUS_LEAVE_QUANTITY');
+        const detail = await setup.days.findById(context, result.days[0]!.attendanceDayId!);
+        expect(detail.day.totals).toMatchObject({ postedLeaveMinutes });
+      }
     } finally {
       await cleanupAgency(admin, agency.id, suffix);
       await admin.$disconnect();
@@ -1026,6 +1058,136 @@ it.skipIf(!enabled)(
         absenceMinutes: 0,
         undertimeMinutes: 0,
       });
+
+      // The fixture's Christmas Day falls on a Friday: a Non-Working Holiday
+      // expects no duty, so service on it is unscheduled and absence is no deficit.
+      for (const [eventType, time] of [
+        ['TIME_IN', '08:00'],
+        ['BREAK_OUT', '12:00'],
+        ['BREAK_IN', '13:00'],
+        ['TIME_OUT', '15:00'],
+      ] as const) {
+        await admin.attendanceEvent.create({
+          data: {
+            agencyId: agency.id,
+            employeeId: employee.id,
+            eventTime: manilaInstant('2026-12-25', time),
+            eventType,
+            source: 'MANUAL',
+            enteredByMembershipId: membership.id,
+            reason: 'Holiday duty.',
+          },
+        });
+      }
+      const holidays = await setup.days.calculate(context, {
+        periodCode: '2026-12',
+        dateFrom: '2026-12-25',
+        dateTo: '2026-12-25',
+        employeeIds: [employee.id],
+      });
+      expect(holidays.days[0]).toMatchObject({ status: 'CALCULATED', exceptionTypes: [] });
+      const holiday = await setup.days.findById(context, holidays.days[0]!.attendanceDayId!);
+      expect(holiday.day.dayClassification).toBe('UNSCHEDULED_SERVICE');
+      expect(holiday.day.totals).toMatchObject({
+        expectedMinutes: 0,
+        workedMinutes: 360,
+        outsideScheduleMinutes: 360,
+        absenceMinutes: 0,
+      });
+    } finally {
+      await cleanupAgency(admin, agency.id, suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'expects duty only before midnight on an overnight shift into a Non-Working Holiday',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-attendance-day-overnight-holiday`;
+    const { agency, membership, unit, context } = await createAgency(admin, suffix);
+    const effectiveFrom = manilaDate(-30);
+
+    try {
+      const setup = await setupSchedule(admin, {
+        context,
+        membershipId: membership.id,
+        suffix,
+        effectiveFrom,
+        dayRules: dayRules().map((rule) =>
+          rule.ruleType === 'FIXED'
+            ? {
+                ...rule,
+                dutyStartTime: '22:00',
+                dutyEndTime: '06:00',
+                endNextCalendarDay: true,
+                eventPattern: 'IN_OUT' as const,
+                breaks: [],
+              }
+            : rule,
+        ),
+      });
+      const employee = await createEmployee(admin, {
+        agencyId: agency.id,
+        membershipId: membership.id,
+        unitId: unit.id,
+        suffix,
+        withSegment: true,
+      });
+      await setup.assignments.create(context, {
+        employeeId: employee.id,
+        workScheduleVersionId: setup.scheduleVersionId,
+        workArrangementVersionId: setup.arrangementVersionId,
+        authorityDocumentVersionId: setup.assignmentEvidence.id,
+        effectiveFrom,
+      });
+      // The Christmas Eve shift runs into the fixture's Christmas Day holiday.
+      for (const [eventType, eventTime] of [
+        ['TIME_IN', manilaInstant('2026-12-24', '22:00')],
+        ['TIME_OUT', manilaInstant('2026-12-25', '06:00')],
+      ] as const) {
+        await admin.attendanceEvent.create({
+          data: {
+            agencyId: agency.id,
+            employeeId: employee.id,
+            eventTime,
+            eventType,
+            source: 'MANUAL',
+            enteredByMembershipId: membership.id,
+            reason: 'Overnight duty.',
+          },
+        });
+      }
+
+      const result = await setup.days.calculate(context, {
+        periodCode: '2026-12',
+        dateFrom: '2026-12-24',
+        dateTo: '2026-12-24',
+        employeeIds: [employee.id],
+      });
+      expect(result.days[0]).toMatchObject({ status: 'CALCULATED', exceptionTypes: [] });
+      const eve = await setup.days.findById(context, result.days[0]!.attendanceDayId!);
+      expect(eve.day.dayClassification).toBe('SCHEDULED');
+      expect(eve.day.totals).toMatchObject({
+        expectedMinutes: 120,
+        workedMinutes: 480,
+        coverageMinutes: 120,
+        outsideScheduleMinutes: 360,
+        lateMinutes: 0,
+        undertimeMinutes: 0,
+        absenceMinutes: 0,
+      });
+      expect(
+        eve.segments.map((segment) => [
+          segment.dutyRelation,
+          segment.holidayClassification,
+          segment.deficitType,
+        ]),
+      ).toEqual([
+        ['EXPECTED', null, null],
+        ['OUTSIDE_SCHEDULE', 'REGULAR_HOLIDAY', null],
+      ]);
     } finally {
       await cleanupAgency(admin, agency.id, suffix);
       await admin.$disconnect();

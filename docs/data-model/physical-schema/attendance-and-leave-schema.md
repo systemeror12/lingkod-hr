@@ -33,7 +33,6 @@ CREATE TABLE work_schedule_versions (
   schedule_type text NOT NULL
     CHECK (schedule_type IN ('REGULAR','FLEXIBLE','SHIFT','COMPRESSED')),
   timezone text NOT NULL DEFAULT 'Asia/Manila',
-  holiday_effect_rules jsonb NOT NULL DEFAULT '{}'::jsonb,
   authority_document_version_id uuid,
   approving_authority text,
   status text NOT NULL CHECK (status IN ('DRAFT','ACTIVE','SUPERSEDED')),
@@ -204,7 +203,7 @@ CREATE TABLE holiday_calendar_entries (
   source_reference text NOT NULL,
   FOREIGN KEY (agency_id, holiday_calendar_version_id)
     REFERENCES holiday_calendar_versions (agency_id, id),
-  UNIQUE (holiday_calendar_version_id, holiday_date, day_type),
+  UNIQUE (holiday_calendar_version_id, holiday_date),
   UNIQUE (agency_id, id)
 );
 
@@ -332,6 +331,8 @@ CREATE TABLE attendance_period_versions (
   UNIQUE (agency_id, id)
 );
 ```
+
+An Attendance Period is the stable interval every Attendance Period Version, Finalized Daily Time Record, and Attendance Payroll Publication refers to. `hris_app` holds `SELECT, INSERT, UPDATE` under the Agency policy, and the `attendance_periods_update_trigger` (`guard_attendance_period_update`) narrows UPDATE: `id`, `agency_id`, `code`, `date_from`, `date_to`, and `created_at` never change; status moves only from `OPEN` to `FINALIZED`, and only under the Attendance transition capability (`app.attendance_transition`) that Attendance Period Lock sets. A finalized period never reopens.
 
 ```sql
 CREATE TABLE attendance_events (
@@ -545,11 +546,15 @@ CREATE TABLE attendance_posted_leave_inputs (
 );
 ```
 
-`attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. A zero-quantity successor withdraws its predecessor's coverage; only a successor may be zero. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, or a source-defined unit, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval.
+`attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. A zero-quantity successor withdraws its predecessor's coverage; only a successor may be zero. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, a source-defined unit, or working days that do not equal the working dates of their range under the Employee's schedule, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval. Working-day inputs from one source sharing one date range, such as a posting's lines split between charged leave and leave without pay, are counted together; inputs from separate sources are never combined. A range whose schedule cannot be resolved fails closed. A REST day or non-working holiday inside a placeable range receives no leave coverage, matching Leave's working-day count.
 
 Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, and posted-leave intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
 
-An overnight calculation remains one Attendance Day under the beginning-local-date Work Date, while each segment keeps the holiday classification of its actual local calendar date. Complete events on a rest day create `UNSCHEDULED_SERVICE` with no deficit minutes. Outside-schedule and statutory-night-window totals remain factual candidates, not compensation decisions.
+Segment boundaries are whole minutes, while Attendance Event and Attendance Context timestamps keep their seconds. Calculation counts Fully Covered Minutes (ADR 0005): a timed interval starts at the first whole minute at or after its raw start and ends at the last whole minute at or before its raw end, so no segment starts before or ends after its raw source. `rule_snapshot.minuteRule` records `FULLY_COVERED_MINUTE`, and the input fingerprint includes it.
+
+An overnight calculation remains one Attendance Day under the beginning-local-date Work Date, while each segment keeps the holiday classification of its actual local calendar date. Complete events on a rest day create `UNSCHEDULED_SERVICE` with no deficit minutes.
+
+A Non-Working Holiday (`REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, `LOCAL_HOLIDAY`, or `WORK_SUSPENSION`) removes expected duty for the minutes on its actual calendar date, so an overnight shift loses only the portion after midnight on the holiday. Service rendered there is recorded like rest-day service: `OUTSIDE_SCHEDULE` worked minutes and `UNSCHEDULED_SERVICE`, with no deficit, premium, overtime, or credit. `SPECIAL_WORKING` keeps ordinary duty. The rule is fixed and shared with Leave's working-day count; Work Schedule Versions carry no holiday setting (ADR 0006). A partial-day work suspension is recorded as Attendance Context, not as a `WORK_SUSPENSION` entry. Outside-schedule and statutory-night-window totals remain factual candidates, not compensation decisions.
 
 ---
 

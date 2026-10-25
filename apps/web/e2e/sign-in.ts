@@ -6,7 +6,7 @@ import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 
 // Duplicated from packages/database/scripts/seed-protected-shell-e2e.ts.
 export const LOCAL_SEED_PASSPHRASE = 'local-only seed passphrase';
-const LOCAL_SEED_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+export const LOCAL_SEED_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 /** Every seed run restores all ten for each seeded MFA-Required User. */
 export const LOCAL_SEED_RECOVERY_CODES = [
   'seedc-ode22',

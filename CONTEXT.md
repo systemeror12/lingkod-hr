@@ -224,6 +224,14 @@ _Avoid_: Platform administrator, HR administrator
 An agency-scoped role responsible for broad human-resource management without unrestricted system-administration or payroll authority. In Attendance, it inherits HR Officer access and additionally owns configuration, authorized inputs, recalculation, period administration, and locking.
 _Avoid_: Agency Administrator, HRMO Administrator, Attendance Administrator
 
+**Supervisor**:
+An agency-scoped role for the incumbent of an Organization Unit's head Plantilla Position. It acts only on that person's Direct Reports.
+_Avoid_: Manager, Approving Official
+
+**Direct Report**:
+An Employee serving in an Organization Unit the Supervisor heads, or the head of one of its immediate child units, on the date of the read. It covers one level only (ADR 0007).
+_Avoid_: Team member, subordinate, everyone below
+
 **HR Officer**:
 An agency-scoped operational HR role that inherits Employee access and may review, return, and approve attendance records within assigned scope. Attendance settings and period locking remain HR Administrator responsibilities.
 _Avoid_: Attendance Administrator, HR Certifying Officer
@@ -429,8 +437,12 @@ The local date on which an assigned duty interval begins in the governing Work S
 _Avoid_: Event date, clock-in date
 
 **Holiday Calendar Version**:
-An immutable, effective-dated calendar used with a Schedule Assignment to classify holidays that may affect expected duty. A classification does not by itself erase scheduled duty, and attendance calculation requires exactly one applicable version rather than silently selecting a current or default calendar.
+An immutable, effective-dated calendar used with a Schedule Assignment to classify each listed date exactly once, citing its issuance. Attendance calculation requires exactly one applicable version rather than silently selecting a current or default calendar.
 _Avoid_: Current holiday list, hard-coded holidays
+
+**Non-Working Holiday**:
+A Holiday Calendar classification (regular holiday, special non-working day, local holiday, or whole-day work suspension) on which no duty is expected for that calendar date. Service rendered on it is recorded only as fact.
+_Avoid_: Holiday effect, holiday effect rule, day off
 
 **Day Rule**:
 One weekday within a Work Schedule Version, defined as a rest day or as fixed or flexible duty with required minutes, zero or more unpaid breaks, and an Event Collection Window. Compressed, daytime, overnight, and shifting schedules combine the same Day Rules.
@@ -459,6 +471,10 @@ _Avoid_: Attendance Event, leave copy, attendance approval
 **Attendance Coverage**:
 The union of worked time, Attendance Context, and posted leave that covers expected duty without counting overlapping minutes twice. Conflicting Attendance Context or leave classifications require an Attendance Exception instead of an assumed precedence.
 _Avoid_: Credited hours, summed attendance inputs
+
+**Fully Covered Minute**:
+A whole minute that counts as worked or covered only when a raw timed interval covers all of it; a partial minute at either end stays uncovered, so no Attendance Day Segment extends past its raw source. It is a LingkodHR calculation convention, not a national rule.
+_Avoid_: Minute rounding, grace period, truncated time
 
 **Attendance Day Segment**:
 An immutable interval-level result belonging to one Attendance Day calculation version, carrying its expected-duty relation, coverage or deficit classification, holiday classification, and source references. Attendance Day totals are derived from non-overlapping segments.

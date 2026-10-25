@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AgencyController } from './agency.controller';
+import { AgencyMemberListService } from './agency-member-list.service';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
@@ -11,6 +12,7 @@ import { createMailDelivery, INVITATION_MAIL_DELIVERY } from '../invitations/mai
 @Module({
   controllers: [AuthController, AgencyController],
   providers: [
+    AgencyMemberListService,
     AuthService,
     AuthGuard,
     PermissionGuard,

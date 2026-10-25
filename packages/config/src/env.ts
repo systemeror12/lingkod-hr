@@ -27,8 +27,6 @@ const localDefaults = {
   EMAIL_PORT: '1025',
   EMAIL_SECURE: 'false',
   EMAIL_PROVIDER_API_KEY: 'local-only',
-  DATA_ENCRYPTION_KEY: '07'.repeat(32),
-  BLIND_INDEX_KEY: 'local-development-blind-index-key-change-me',
 };
 
 const emptyStringAsUndefined = (value: unknown): unknown =>
@@ -75,7 +73,10 @@ const configSchema = z.object({
   DATA_ENCRYPTION_KEY: z.string().refine(isProtectedValueKey, {
     message: 'Must be a 32-byte key as 64 hex characters or canonical base64.',
   }),
-  BLIND_INDEX_KEY: z.string().min(32),
+  BLIND_INDEX_KEY: z
+    .string()
+    .min(32)
+    .refine((value) => value.trim() !== '', { message: 'Must not be blank.' }),
 });
 
 function isProtectedValueKey(value: string): boolean {

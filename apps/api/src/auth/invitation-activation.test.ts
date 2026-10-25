@@ -8,9 +8,19 @@ import {
   sealTotpSecret,
   totpCode,
 } from '@lingkod-hr/auth';
+import * as auth from '@lingkod-hr/auth';
 import { getConfig, parseProtectedValueKey } from '@lingkod-hr/config';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { AuthService } from './auth.service';
+
+vi.mock('@lingkod-hr/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lingkod-hr/auth')>();
+  return {
+    ...actual,
+    hashPassword: vi.fn(actual.hashPassword),
+    verifyPassword: vi.fn(actual.verifyPassword),
+  };
+});
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const STRONG_PASSWORD = 'tahimik na umaga sa bundok 42';
@@ -223,6 +233,91 @@ it.skipIf(!enabled)('opens an invitation without writing anything', async () => 
     await fixture.cleanup();
   }
 });
+
+it.skipIf(!enabled)(
+  "gives the activated session its TOTP confirmation's time as authTime, however late the acknowledgment",
+  async () => {
+    const fixture = await activationFixture({ roleCodes: ['hrmo_administrator'] });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const service = new AuthService();
+      const started = await service.startActivation(
+        fixture.token,
+        { name: 'Maria Clara Santos', password: STRONG_PASSWORD },
+        activationRequest('time-start'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      const confirmedAt = new Date();
+      await service.confirmActivationEnrollment(
+        fixture.token,
+        started.pendingToken,
+        totpCode(secretFromUri(started.enrollment.otpauthUri)),
+        activationRequest('time-confirm'),
+      );
+
+      vi.setSystemTime(confirmedAt.getTime() + 2 * 60_000);
+      const done = await service.finishActivationEnrollment(
+        fixture.token,
+        started.pendingToken,
+        activationRequest('time-finish'),
+      );
+      expect(done.session.authTime).toEqual(confirmedAt);
+    } finally {
+      vi.useRealTimers();
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses an acknowledgment whose pending activation has no confirmation time',
+  async () => {
+    const fixture = await activationFixture({ roleCodes: ['hrmo_administrator'] });
+    const { admin } = fixture;
+    try {
+      const service = new AuthService();
+      const started = await service.startActivation(
+        fixture.token,
+        { name: 'Maria Clara Santos', password: STRONG_PASSWORD },
+        activationRequest('unconfirmed-start'),
+      );
+      if (started.status !== 'ENROLLMENT_REQUIRED') throw new Error('Expected enrollment.');
+      await service.confirmActivationEnrollment(
+        fixture.token,
+        started.pendingToken,
+        totpCode(secretFromUri(started.enrollment.otpauthUri)),
+        activationRequest('unconfirmed-confirm'),
+      );
+      // A row confirmed before enrollment_confirmed_at existed.
+      await admin.pendingAuthentication.updateMany({
+        where: { invitationId: fixture.invitation.id },
+        data: { enrollmentConfirmedAt: null },
+      });
+
+      const request = activationRequest('unconfirmed-finish');
+      await expect(
+        service.finishActivationEnrollment(fixture.token, started.pendingToken, request),
+      ).rejects.toMatchObject({ code: 'ACTIVATION_EXPIRED' });
+      await expect(fixture.written()).resolves.toMatchObject({
+        user: null,
+        invitation: { status: 'PENDING' },
+      });
+      await expect(
+        admin.securityEvent.findMany({
+          where: { requestId: request.requestId },
+          select: { eventType: true, details: true },
+        }),
+      ).resolves.toEqual([
+        {
+          eventType: 'INVITATION_ACTIVATION_FAILED',
+          details: { invitationId: fixture.invitation.id, reason: 'ACTIVATION_EXPIRED' },
+        },
+      ]);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
 
 it.skipIf(!enabled)(
   'activates a first-time MFA-Required invitee only once enrollment is acknowledged',
@@ -469,6 +564,80 @@ it.skipIf(!enabled)('writes nothing when the setup is abandoned or expires', asy
     await fixture.cleanup();
   }
 });
+
+it.skipIf(!enabled)(
+  'refuses the final save when an invited role was disabled during the password work',
+  async () => {
+    for (const existingUser of [false, true]) {
+      const fixture = await activationFixture({
+        roleCodes: ['employee'],
+        ...(existingUser ? { existingUser: {} } : {}),
+      });
+      const role = await fixture.admin.role.create({
+        data: {
+          agencyId: fixture.agency.id,
+          code: 'employee',
+          name: 'Agency employee',
+          status: 'ACTIVE',
+        },
+      });
+      // The invitation and its roles are read first; the role is disabled while the password is
+      // hashed or checked, before the final save.
+      const disableRole = async () => {
+        await fixture.admin.role.update({ where: { id: role.id }, data: { status: 'INACTIVE' } });
+      };
+      if (existingUser) {
+        const actual = vi.mocked(auth.verifyPassword).getMockImplementation()!;
+        vi.mocked(auth.verifyPassword).mockImplementationOnce(async (...args) => {
+          await disableRole();
+          return actual(...args);
+        });
+      } else {
+        const actual = vi.mocked(auth.hashPassword).getMockImplementation()!;
+        vi.mocked(auth.hashPassword).mockImplementationOnce(async (...args) => {
+          await disableRole();
+          return actual(...args);
+        });
+      }
+      try {
+        await expect(
+          new AuthService().startActivation(
+            fixture.token,
+            { name: 'Apolinario Mabini', password: fixture.existing?.password ?? STRONG_PASSWORD },
+            activationRequest('role-disabled'),
+          ),
+        ).rejects.toMatchObject({ code: 'INVITATION_ROLE_UNAVAILABLE', statusCode: 409 });
+        const written = await fixture.written();
+        expect(written.invitation).toMatchObject({ status: 'PENDING', acceptedAt: null });
+        expect(written.pending).toEqual([]);
+        if (existingUser) {
+          expect(written.user).toMatchObject({ memberships: [], sessions: [] });
+        } else {
+          expect(written.user).toBeNull();
+        }
+        await expect(
+          fixture.admin.membershipRole.count({ where: { agencyId: fixture.agency.id } }),
+        ).resolves.toBe(0);
+        await expect(
+          fixture.admin.securityEvent.findMany({
+            where: { agencyId: fixture.agency.id },
+            select: { eventType: true, details: true },
+          }),
+        ).resolves.toEqual([
+          {
+            eventType: 'INVITATION_ACTIVATION_FAILED',
+            details: {
+              invitationId: fixture.invitation.id,
+              reason: 'INVITATION_ROLE_UNAVAILABLE',
+            },
+          },
+        ]);
+      } finally {
+        await fixture.cleanup();
+      }
+    }
+  },
+);
 
 it.skipIf(!enabled)('lets the first of two saves win', async () => {
   const fixture = await activationFixture({ roleCodes: ['employee'] });

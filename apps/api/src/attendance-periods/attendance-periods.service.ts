@@ -9,6 +9,7 @@ import {
   formatDate,
   toDatabaseDate,
 } from '../attendance-configuration/attendance-configuration.types';
+import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import type { AttendancePeriodState } from '../attendance-days/attendance-days.types';
 import { ApprovalsService } from '../approvals/approval.service';
 import { DtrsService } from '../dtrs/dtrs.service';
@@ -64,7 +65,12 @@ const versionSelect = {
   attendancePeriod: {
     select: { id: true, code: true, dateFrom: true, dateTo: true, status: true },
   },
-  _count: { select: { dtrDocuments: true } },
+  _count: {
+    select: {
+      dtrDocuments: true,
+      days: { where: { attendanceDay: { isCurrent: false } } },
+    },
+  },
   payrollPublications: {
     select: {
       id: true,
@@ -118,6 +124,7 @@ const membershipSelect = {
   attendanceDay: {
     select: {
       ...daySelect,
+      employee: { select: { employeeNumber: true, legalName: true } },
       segments: {
         orderBy: { sequenceNo: 'asc' },
         select: segmentSelect,
@@ -173,6 +180,7 @@ export class AttendancePeriodsService {
     private readonly auditWriter: AttendancePeriodAuditWriter,
     @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
     @Inject(DtrsService) private readonly dtrs: DtrsService,
+    @Inject(AttendanceDaysService) private readonly days: AttendanceDaysService,
   ) {}
 
   async list(
@@ -273,11 +281,16 @@ export class AttendancePeriodsService {
           'ATTENDANCE_PERIOD_FINALIZED',
         );
       }
+      // An APPROVED version whose bound Attendance Day was since recalculated
+      // can never lock, so it no longer blocks a new snapshot.
       const pending = await transaction.attendancePeriodVersion.findFirst({
         where: {
           agencyId: context.agencyId,
           attendancePeriodId: period.id,
-          status: { in: ['FOR_REVIEW', 'APPROVED'] },
+          OR: [
+            { status: 'FOR_REVIEW' },
+            { status: 'APPROVED', days: { none: { attendanceDay: { isCurrent: false } } } },
+          ],
         },
         select: { id: true, status: true },
       });
@@ -926,6 +939,33 @@ export class AttendancePeriodsService {
         message:
           'An Attendance Period Version membership no longer binds the exact approved sources.',
         details: { bindings: changedBindings },
+      });
+    }
+    const changedInputDayIds = new Set(
+      await this.days.changedInputDayIdsInTransaction(
+        transaction,
+        context,
+        memberships.map((row) => row.attendanceDayId),
+      ),
+    );
+    const changedInputDays = memberships.filter((row) =>
+      changedInputDayIds.has(row.attendanceDayId),
+    );
+    if (changedInputDays.length > 0) {
+      const named = changedInputDays.map(
+        ({ attendanceDay: day }) =>
+          `${day.employee.legalName} (${day.employee.employeeNumber}) on ${formatDate(day.workDate)}`,
+      );
+      failures.push({
+        code: 'DAY_INPUTS_CHANGED',
+        message: `The sources of an approved Attendance Day changed after approval. Recalculate, resubmit, and re-approve: ${named.join('; ')}.`,
+        details: {
+          days: changedInputDays.map(({ attendanceDay: day }) => ({
+            attendanceDayId: day.id,
+            employeeId: day.employeeId,
+            workDate: formatDate(day.workDate),
+          })),
+        },
       });
     }
     if (population.openExceptions.length > 0) {
@@ -1694,6 +1734,7 @@ function versionSummary(
     coveredEmployeeCount: counts.employees,
     coveredWorkDateCount: counts.workDates,
     dtrCount: record._count.dtrDocuments,
+    supersededDayCount: record._count.days,
     publication: publication
       ? {
           id: publication.id,

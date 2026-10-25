@@ -15,7 +15,12 @@ function context(permissions: RequestContext['permissions']): RequestContext {
 }
 
 function service() {
-  return new AttendancePeriodsService(attendancePeriodAuditWriter, {} as never, {} as never);
+  return new AttendancePeriodsService(
+    attendancePeriodAuditWriter,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
 }
 
 const periodId = '3f2504e0-4f89-41d3-9a0c-0305e82c3304';

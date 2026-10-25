@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ApprovalModule } from '../approvals/approval.module';
+import { AttendanceDaysModule } from '../attendance-days/attendance-days.module';
 import { AuthModule } from '../auth/auth.module';
 import { DtrsModule } from '../dtrs/dtrs.module';
 import {
@@ -10,7 +11,7 @@ import { AttendancePeriodsController } from './attendance-periods.controller';
 import { AttendancePeriodsService } from './attendance-periods.service';
 
 @Module({
-  imports: [AuthModule, ApprovalModule, DtrsModule],
+  imports: [AuthModule, ApprovalModule, DtrsModule, AttendanceDaysModule],
   controllers: [AttendancePeriodsController],
   providers: [
     AttendancePeriodsService,

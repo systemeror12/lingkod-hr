@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useReauthentication } from '../../../components/reauthentication';
 import { Button } from '../../../components/ui/button';
 import {
@@ -30,6 +30,12 @@ export interface AgencyMember {
   hasAuthenticator: boolean;
 }
 
+/** A member-list page; `nextCursor` is set while more members follow (#468). */
+export interface AgencyMemberPage {
+  members: AgencyMember[];
+  nextCursor: string | null;
+}
+
 type LockAction = { kind: 'lock' | 'unlock'; member: AgencyMember };
 
 const membershipStatus: Record<string, StatusDisplay> = {
@@ -51,7 +57,8 @@ function eventValue(event: { currentTarget: EventTarget }): string {
 /**
  * The Agency's members with their membership status, Global User Lock, and whether each has an
  * authenticator. Holders of `security.mfa.reset_factor` may reset another active member's factor;
- * holders of `security.users.lock` and `security.users.unlock` may lock and unlock Users.
+ * holders of `security.users.lock` and `security.users.unlock` may lock and unlock Users. Later
+ * pages append to the loaded rows, so an action updates its row wherever it was loaded.
  */
 export function MemberList({
   agencyId,
@@ -66,14 +73,51 @@ export function MemberList({
   canResetFactor: boolean;
   canLock: boolean;
   canUnlock: boolean;
-  initial: AgencyMember[];
+  initial: AgencyMemberPage;
 }) {
-  const [members, setMembers] = useState(initial);
+  const [members, setMembers] = useState(initial.members);
+  const [nextCursor, setNextCursor] = useState(initial.nextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [listError, setListError] = useState('');
+  // State lags a fast double click by a render; the ref stops the second request.
+  const loadingRef = useRef(false);
   const [resetting, setResetting] = useState<AgencyMember | null>(null);
   const [locking, setLocking] = useState<LockAction | null>(null);
   const hasActions = canResetFactor || canLock || canUnlock;
   const [done, setDone] = useState('');
   const { guarded, prompt } = useReauthentication();
+
+  async function loadMore(): Promise<void> {
+    if (!nextCursor || loadingRef.current) return;
+    loadingRef.current = true;
+    setLoadingMore(true);
+    setListError('');
+    try {
+      const response = await fetch(
+        `/api/v1/agencies/${agencyId}/members?cursor=${encodeURIComponent(nextCursor)}`,
+        { credentials: 'include' },
+      );
+      if (!response.ok) {
+        setListError(
+          (await refusal(response)).message ?? 'More members could not be loaded. Try again.',
+        );
+        return;
+      }
+      const page = (await response.json()) as AgencyMemberPage;
+      setMembers((current) => [
+        ...current,
+        ...page.members.filter(
+          (member) => !current.some((item) => item.membershipId === member.membershipId),
+        ),
+      ]);
+      setNextCursor(page.nextCursor);
+    } catch {
+      setListError('More members could not be loaded. Check the connection and try again.');
+    } finally {
+      loadingRef.current = false;
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <>
@@ -88,7 +132,11 @@ export function MemberList({
       <Panel
         title="Members"
         flush
-        actions={<span className="text-caption text-ink-muted tabular-nums">{members.length}</span>}
+        actions={
+          <span className="text-caption text-ink-muted tabular-nums">
+            {nextCursor ? `${members.length}+` : members.length}
+          </span>
+        }
       >
         <Table>
           <thead>
@@ -172,6 +220,21 @@ export function MemberList({
             })}
           </tbody>
         </Table>
+        {listError || nextCursor ? (
+          <div className="grid justify-items-start gap-3 border-t border-border p-4">
+            <FormError message={listError} className="self-stretch" />
+            {nextCursor ? (
+              <Button
+                disabled={loadingMore}
+                onClick={() => void loadMore()}
+                type="button"
+                variant="secondary"
+              >
+                {loadingMore ? 'Loading…' : 'Load more members'}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </Panel>
       {resetting ? (
         <FactorResetDialog

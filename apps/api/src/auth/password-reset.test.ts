@@ -25,6 +25,7 @@ const NEW_PASSWORD = 'tahimik na umaga sa bundok 42';
 const LATER_PASSWORD = 'maaliwalas na hapon sa dagat 17';
 const USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) LingkodHR test';
 const INVALID_LINK = 'This reset link is invalid or has expired. Request a new one.';
+const SAME_PASSWORD = 'Choose a password that’s different from your current one.';
 
 function databaseBytes(value: Buffer): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(value.byteLength));
@@ -50,6 +51,7 @@ async function resetFixture(
     withTotp?: boolean;
     recoveryCodes?: number;
     globalStatus?: string;
+    secondFactorFailures?: number;
   } = {},
 ) {
   const admin = new PrismaClient({
@@ -57,6 +59,7 @@ async function resetFixture(
   });
   const suffix = `${Date.now()}-${randomBytes(4).toString('hex')}`;
   const email = `password-reset-${suffix}@example.test`;
+  const password = `old passphrase ${suffix}`;
   const ipAddress = `198.18.${randomInt(0, 255)}.${randomInt(1, 255)}`;
   const agency = await admin.agency.create({
     data: {
@@ -83,8 +86,8 @@ async function resetFixture(
     await admin.userPassword.create({
       data: {
         userId: user.id,
-        passwordHash: await hashPassword(`old passphrase ${suffix}`),
-        secondFactorFailures: 4,
+        passwordHash: await hashPassword(password),
+        secondFactorFailures: options.secondFactorFailures ?? 4,
         resetRequiredAt: new Date(),
       },
     });
@@ -127,6 +130,7 @@ async function resetFixture(
   return {
     admin,
     email,
+    password,
     emailHash,
     totpSecret,
     recoveryCodes,
@@ -621,6 +625,143 @@ it.skipIf(!enabled)('names a broken password rule and keeps the link usable', as
     await fixture.cleanup();
   }
 });
+
+/** The password row, link, sessions, and events a refused reset must leave as they were. */
+async function resetState(fixture: Fixture) {
+  const { admin, userId } = fixture;
+  return {
+    password: await admin.userPassword.findUniqueOrThrow({ where: { userId } }),
+    tokens: await fixture.tokens(),
+    sessions: await admin.userSession.findMany({ where: { userId }, orderBy: { id: 'asc' } }),
+    completed: await fixture.events('PASSWORD_RESET_COMPLETED'),
+    revoked: await fixture.events('SESSION_REVOKED'),
+  };
+}
+
+it.skipIf(!enabled)(
+  'refuses the current password, keeping the link, the reset-required state, and sessions',
+  async () => {
+    const fixture = await resetFixture();
+    try {
+      const service = new AuthService();
+      const token = await requestLink(service, fixture);
+      const before = await resetState(fixture);
+
+      await expect(
+        service.completePasswordReset(
+          token,
+          { password: fixture.password },
+          fixture.request('same'),
+        ),
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'PASSWORD_REJECTED',
+        message: SAME_PASSWORD,
+      });
+      expect(await resetState(fixture)).toEqual(before);
+      expect(before.password.resetRequiredAt).not.toBeNull();
+
+      const result = await service.completePasswordReset(
+        token,
+        { password: NEW_PASSWORD },
+        fixture.request('new'),
+      );
+      expect(result.notices).toHaveLength(1);
+      const after = await resetState(fixture);
+      expect(after.password.resetRequiredAt).toBeNull();
+      expect(after.tokens[0]?.consumedAt).not.toBeNull();
+      expect(after.sessions.every(({ revokedAt }) => revokedAt !== null)).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses the current password disabled by the second-factor ceiling, after the code checks',
+  async () => {
+    const fixture = await resetFixture({
+      withTotp: true,
+      recoveryCodes: 2,
+      secondFactorFailures: 10,
+    });
+    const { admin, userId } = fixture;
+    try {
+      const service = new AuthService();
+      const token = await requestLink(service, fixture);
+      const before = await resetState(fixture);
+
+      await expect(
+        service.completePasswordReset(
+          token,
+          { password: fixture.password, code: totpCode(fixture.totpSecret ?? '', new Date()) },
+          fixture.request('totp'),
+        ),
+      ).rejects.toMatchObject({ code: 'PASSWORD_REJECTED', message: SAME_PASSWORD });
+      await expect(
+        service.completePasswordReset(
+          token,
+          { password: fixture.password, recoveryCode: fixture.recoveryCodes[0] ?? '' },
+          fixture.request('recovery'),
+        ),
+      ).rejects.toMatchObject({ code: 'PASSWORD_REJECTED', message: SAME_PASSWORD });
+      expect(await resetState(fixture)).toEqual(before);
+      expect(before.password).toMatchObject({ secondFactorFailures: 10 });
+      expect(await admin.userRecoveryCode.count({ where: { userId } })).toBe(2);
+      // A wrong code still answers as one, so the refusal never confirms the current password.
+      await expect(
+        service.completePasswordReset(
+          token,
+          { password: fixture.password, recoveryCode: 'aaaaa-bbbbb' },
+          fixture.request('wrong'),
+        ),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE' });
+
+      await service.completePasswordReset(
+        token,
+        { password: NEW_PASSWORD, recoveryCode: fixture.recoveryCodes[0] ?? '' },
+        fixture.request('new'),
+      );
+      await expect(
+        admin.userPassword.findUniqueOrThrow({ where: { userId } }),
+      ).resolves.toMatchObject({ secondFactorFailures: 0, resetRequiredAt: null });
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'answers a Recovery Code spent after it matched as wrong, even for the current password',
+  async () => {
+    const fixture = await resetFixture({ withTotp: true, recoveryCodes: 1 });
+    const { admin, userId } = fixture;
+    try {
+      const service = new AuthService();
+      const token = await requestLink(service, fixture);
+      // Spends the code on the link's second opening, after it matched.
+      const links = service as unknown as { openResetLink: (...args: unknown[]) => unknown };
+      const open = links.openResetLink.bind(service);
+      let opened = 0;
+      vi.spyOn(links, 'openResetLink').mockImplementation(async (...args) => {
+        opened += 1;
+        if (opened === 2) await admin.userRecoveryCode.deleteMany({ where: { userId } });
+        return open(...args);
+      });
+
+      await expect(
+        service.completePasswordReset(
+          token,
+          { password: fixture.password, recoveryCode: fixture.recoveryCodes[0] ?? '' },
+          fixture.request('spent'),
+        ),
+      ).rejects.toMatchObject({ code: 'INVALID_CODE' });
+      expect(opened).toBe(2);
+    } finally {
+      await fixture.cleanup();
+    }
+  },
+);
 
 it.skipIf(!enabled)(
   'counts a wrong TOTP code toward the cool-down but not the second-factor ceiling',

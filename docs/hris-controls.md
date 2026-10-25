@@ -533,7 +533,7 @@ SUPERSEDED
 | DRAFT   | Activate       | ACTIVE     | HR Administrator | `attendance.configuration.activate` | Exact authority Document Version, approving authority, effectivity, complete Day Rules or calendar entries, and no conflicting active period | Freeze version for new assignments or date resolution      |
 | ACTIVE  | Supersede      | SUPERSEDED | HR Administrator | `attendance.configuration.activate` | Complete successor and prospective effectivity                                                                                               | Activate successor without rewriting prior Attendance Days |
 
-Activation records an already-approved agency configuration and does not start another approval workflow. A Schedule Assignment separately records its assignment authority and may reference only active configuration versions. Schedule Assignments cannot overlap for the same Appointed Personnel.
+Activation records an already-approved agency configuration and does not start another approval workflow. A Holiday Calendar Version holds at most one classification per date. Whether a classification is a Non-Working Holiday is one fixed national rule shared by Attendance and Leave, not a Work Schedule Version setting (ADR 0006). A Schedule Assignment separately records its assignment authority and may reference only active configuration versions. Schedule Assignments cannot overlap for the same Appointed Personnel.
 
 ---
 
@@ -560,6 +560,8 @@ APPROVED
 | EXCEPTION  | Recalculate after correction or resolved input | PENDING    | System / HR Administrator     | `attendance.days.calculate`      | Retained resolution or correction effect exists                                                                               | Create a successor Attendance Day version                    |
 
 Attendance Day versions never enter period review, lock, or adjustment states. Those states belong to Employee Attendance Submissions, Attendance Period Versions, and correction records.
+
+Calculation counts Fully Covered Minutes from raw timestamps and applies no implicit grace or rounding (ADR 0005). A partial minute at a time-in, break, time-out, or Attendance Context boundary stays uncovered, and inside expected duty it becomes a deficit. The rule snapshot names the convention, and the input fingerprint includes it, so Attendance Period Reconciliation refuses a lock over a Day calculated under a different convention until it is recalculated as a successor.
 
 ### Employee Attendance Submission
 

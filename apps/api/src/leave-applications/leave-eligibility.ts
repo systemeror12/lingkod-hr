@@ -94,13 +94,6 @@ export interface LeaveEligibilityOutcome {
   requestedUnit: string;
 }
 
-export const NON_WORKING_HOLIDAY_DAY_TYPES = [
-  'REGULAR_HOLIDAY',
-  'SPECIAL_NON_WORKING',
-  'LOCAL_HOLIDAY',
-  'WORK_SUSPENSION',
-] as const;
-
 function rule(
   name: string,
   outcome: LeaveRuleOutcome,
@@ -132,6 +125,11 @@ function dateContribution(fact: LeaveEligibilityDateFact): number {
     return 1;
   }
   return 0;
+}
+
+function periodsOverlap(periods: readonly LeaveEligibilityPeriod[]): boolean {
+  const sorted = [...periods].sort((a, b) => a.dateFrom.localeCompare(b.dateFrom));
+  return sorted.some((period, index) => index > 0 && period.dateFrom <= sorted[index - 1]!.dateTo);
 }
 
 export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEligibilityOutcome {
@@ -257,12 +255,21 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
     }
   }
 
+  const overlappingPeriods = periodsOverlap(input.periods);
+  if (overlappingPeriods) {
+    rules.push(rule('REQUESTED_PERIODS', 'FAIL', 'The requested periods overlap.'));
+  }
+
   const indeterminateDates = dateFacts.filter((fact) => fact.missing.length > 0);
   let requestedQuantity: number | null = null;
   const requestedUnit = input.calendarBasis;
   let quantityComputable = false;
 
-  if (input.calendarBasis === 'SOURCE_DEFINED') {
+  if (overlappingPeriods) {
+    rules.push(
+      rule('QUANTITY', 'NOT_EVALUATED', 'Overlapping requested periods cannot be quantified.'),
+    );
+  } else if (input.calendarBasis === 'SOURCE_DEFINED') {
     addMissing(
       'SOURCE_DEFINED_QUANTITY_UNSUPPORTED',
       'The accepted sources define this quantity in their own unit, so it cannot be computed yet.',
@@ -330,27 +337,6 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
           'The entitlement is expressed in months and is certified downstream.',
         ),
       );
-    }
-    const requiredWorkingDays = input.ruleParameters.requiredWorkingDays;
-    if (requiredWorkingDays !== undefined) {
-      if (requestedQuantity !== requiredWorkingDays) {
-        rules.push(
-          rule(
-            'REQUIRED_WORKING_DAYS',
-            'FAIL',
-            `This Leave Type must be exactly ${requiredWorkingDays} working day(s).`,
-            input.authorityCitations,
-          ),
-        );
-      } else {
-        rules.push(
-          rule(
-            'REQUIRED_WORKING_DAYS',
-            'PASS',
-            `The request covers ${requiredWorkingDays} working day(s).`,
-          ),
-        );
-      }
     }
   }
 
@@ -421,15 +407,18 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
     rules.push(rule('APPROVAL_ROUTE', 'PASS', `Approval Route ${routeCodes[0]} applies.`));
   }
 
+  // A segment never crosses a requested-period boundary, so approval, posting,
+  // and Attendance cover only requested dates.
   const segments: LeaveEligibilitySegment[] = [];
   if (quantityComputable) {
+    let lastKey: string | null = null;
     for (const fact of dateFacts) {
-      const key = `${fact.policyVersionId}|${fact.scheduleAssignmentId}|${fact.holidayCalendarVersionId}`;
+      const periodIndex = input.periods.findIndex(
+        ({ dateFrom, dateTo }) => dateFrom <= fact.date && fact.date <= dateTo,
+      );
+      const key = `${periodIndex}|${fact.policyVersionId}|${fact.scheduleAssignmentId}|${fact.holidayCalendarVersionId}`;
       const contribution = dateContribution(fact);
       const last = segments[segments.length - 1];
-      const lastKey = last
-        ? `${last.policyVersionId}|${last.scheduleAssignmentId}|${last.holidayCalendarVersionId}`
-        : null;
       if (last && lastKey === key) {
         last.dateTo = fact.date;
         last.requestedQuantity += contribution;
@@ -445,6 +434,7 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
           accountQuantity: null,
         });
       }
+      lastKey = key;
     }
     for (const segment of segments) {
       segment.accountQuantity = input.chargesAccount ? segment.requestedQuantity : null;
@@ -472,7 +462,6 @@ export function evaluateLeaveEligibility(input: LeaveEligibilityInput): LeaveEli
     requestedQuantity,
     grantedDays: grantedDaysFor(input) ?? null,
     grantedMonths: grantedMonthsFor(input) ?? null,
-    requiredWorkingDays: input.ruleParameters.requiredWorkingDays ?? null,
     minimumAccountCredits: input.ruleParameters.minimumAccountCredits ?? null,
     accountAvailableQuantity: input.accountAvailableQuantity,
     approvalRouteCodes: routeCodes,

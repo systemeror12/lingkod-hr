@@ -195,7 +195,10 @@ it.skipIf(!enabled)(
       });
       expect(onBehalf.submission.status).toBe('DRAFT');
       expect(onBehalf.submission.onBehalfReason).toBe('Employee is on field assignment.');
-      expect(onBehalf.submission.evidenceDocumentVersionId).toBe(fixture.evidenceDocumentVersionId);
+      expect(onBehalf.submission.evidence).toEqual({
+        access: 'FULL',
+        documentVersionId: fixture.evidenceDocumentVersionId,
+      });
       expect(onBehalf.submission.submittedByMembershipId).toBe(fixture.memberships.administrator);
 
       const submitted = await services.submissions.submit(
@@ -231,6 +234,134 @@ it.skipIf(!enabled)(
         services.submissions.findById(foreignContext, onBehalf.submission.id),
       ).rejects.toMatchObject({ code: 'ATTENDANCE_SUBMISSION_NOT_FOUND' });
     } finally {
+      await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'requires read_sensitive for HIGHLY_SENSITIVE on-behalf evidence and hides it from other readers',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services } = fixture;
+    const foreignSuffix = `${fixture.suffix}-foreign`;
+    let foreignAgencyId: string | null = null;
+    try {
+      const foreignAgency = await admin.agency.create({
+        data: {
+          code: `ASF-${foreignSuffix}`,
+          name: 'Foreign Attendance Submission Agency',
+          agencyType: 'NGA',
+          status: 'ACTIVE',
+        },
+      });
+      foreignAgencyId = foreignAgency.id;
+      const foreignUser = await admin.user.create({
+        data: {
+          emailNormalized: `attendance-submission-foreign-${foreignSuffix}@example.test`,
+          displayName: 'Foreign Attendance Submission Custodian',
+          globalStatus: 'ACTIVE',
+        },
+      });
+      const foreignMembership = await admin.agencyMembership.create({
+        data: { agencyId: foreignAgency.id, userId: foreignUser.id, status: 'ACTIVE' },
+      });
+      const foreignDocument = await admin.document.create({
+        data: {
+          agencyId: foreignAgency.id,
+          documentType: 'ATTENDANCE_SUBMISSION_EVIDENCE',
+          classification: 'HIGHLY_SENSITIVE',
+          status: 'APPROVED',
+          createdByMembershipId: foreignMembership.id,
+        },
+      });
+      const foreignVersion = await admin.documentVersion.create({
+        data: {
+          agencyId: foreignAgency.id,
+          documentId: foreignDocument.id,
+          versionNo: 1,
+          storageKey: `attendance-workflow/${foreignSuffix}`,
+          contentHash: 'c'.repeat(64),
+          mimeType: 'application/pdf',
+          sizeBytes: 1,
+          issuedAt: new Date(),
+          createdByMembershipId: foreignMembership.id,
+        },
+      });
+      await admin.document.update({
+        where: { id: foreignDocument.id },
+        data: { currentVersionId: foreignVersion.id },
+      });
+
+      const version = await admin.documentVersion.findUniqueOrThrow({
+        where: { id: fixture.evidenceDocumentVersionId },
+      });
+      await admin.document.update({
+        where: { id: version.documentId },
+        data: { classification: 'HIGHLY_SENSITIVE' },
+      });
+      const input = {
+        attendancePeriodId: fixture.periodId,
+        employeeId: fixture.employeeId,
+        onBehalfReason: 'Employee is on field assignment.',
+        evidenceDocumentVersionId: fixture.evidenceDocumentVersionId,
+      };
+      const sensitiveContext = {
+        ...fixture.administratorContext,
+        permissions: [
+          ...fixture.administratorContext.permissions,
+          { code: 'documents.evidence.read_sensitive', scopePolicy: 'AGENCY' as const },
+        ],
+      };
+
+      await expect(
+        services.submissions.create(fixture.administratorContext, input),
+      ).rejects.toMatchObject({
+        code: 'ATTENDANCE_SUBMISSION_EVIDENCE_FORBIDDEN',
+        statusCode: 403,
+      });
+      // Foreign evidence is invalid whether or not the actor may read sensitive evidence.
+      for (const actor of [fixture.administratorContext, sensitiveContext]) {
+        await expect(
+          services.submissions.create(actor, {
+            ...input,
+            evidenceDocumentVersionId: foreignVersion.id,
+          }),
+        ).rejects.toMatchObject({
+          code: 'ATTENDANCE_SUBMISSION_EVIDENCE_INVALID',
+          statusCode: 409,
+        });
+      }
+      expect(
+        await admin.employeeAttendanceSubmission.count({ where: { agencyId: fixture.agencyId } }),
+      ).toBe(0);
+
+      const created = await services.submissions.create(sensitiveContext, input);
+      expect(created.submission.evidence).toEqual({
+        access: 'FULL',
+        documentVersionId: fixture.evidenceDocumentVersionId,
+      });
+
+      const restricted = await services.submissions.findById(
+        fixture.administratorContext,
+        created.submission.id,
+      );
+      expect(restricted.submission.evidence).toEqual({ access: 'RESTRICTED' });
+      const ownList = await services.submissions.list(fixture.employeeContext, {});
+      expect(ownList.map((item) => item.id)).toEqual([created.submission.id]);
+      expect(ownList[0]?.evidence).toEqual({ access: 'RESTRICTED' });
+      expect(JSON.stringify(ownList)).not.toContain(fixture.evidenceDocumentVersionId);
+
+      const full = await services.submissions.list(sensitiveContext, {});
+      expect(full[0]?.evidence).toEqual({
+        access: 'FULL',
+        documentVersionId: fixture.evidenceDocumentVersionId,
+      });
+    } finally {
+      if (foreignAgencyId) {
+        await cleanupAttendanceWorkflowAgency(admin, foreignAgencyId, foreignSuffix);
+      }
       await cleanupAttendanceWorkflowAgency(admin, fixture.agencyId, fixture.suffix);
       await admin.$disconnect();
     }

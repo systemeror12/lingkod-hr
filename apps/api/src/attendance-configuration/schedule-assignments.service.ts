@@ -11,6 +11,7 @@ import {
 import {
   AttendanceConfigurationServiceError,
   AttendanceExceptionError,
+  addDays,
   formatDate,
   manilaToday,
   toDatabaseDate,
@@ -21,6 +22,7 @@ import {
   type WorkArrangementType,
   type WorkScheduleType,
 } from './attendance-configuration.types';
+import { isNonWorkingHoliday } from './holiday-effect-rules';
 import {
   HolidayCalendarsService,
   type HolidayCalendarEntrySummary,
@@ -74,6 +76,17 @@ export interface AttendanceResolution {
   holidayCalendarVersion: HolidayCalendarVersionSummary;
   dayRule: WorkScheduleDayRuleSummary;
   holidayEntries: HolidayCalendarEntrySummary[];
+}
+
+/**
+ * Whether a resolved Work Date counts as a working date the way Leave counts
+ * working days: neither a REST Day Rule nor a non-working holiday.
+ */
+export function isWorkingDate(resolution: AttendanceResolution): boolean {
+  return (
+    resolution.dayRule.ruleType !== 'REST' &&
+    !resolution.holidayEntries.some((entry) => isNonWorkingHoliday(entry.dayType))
+  );
 }
 
 export interface ScheduleAssignmentListFilter {
@@ -617,6 +630,42 @@ export class ScheduleAssignmentsService {
         (entry) => entry.holidayDate === holidayDate,
       ),
     };
+  }
+
+  /**
+   * Count the working dates from `dateFromValue` through `dateToValue` under
+   * the Employee's resolved schedule; see `isWorkingDate`. Returns
+   * null when any date in the range cannot be resolved, so callers fail closed.
+   */
+  async workingDatesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    dateFromValue: string,
+    dateToValue: string,
+  ): Promise<number | null> {
+    let workingDates = 0;
+    const dateTo = toDatabaseDate(dateToValue);
+    for (
+      let date = toDatabaseDate(dateFromValue);
+      date.getTime() <= dateTo.getTime();
+      date = addDays(date, 1)
+    ) {
+      let resolution: AttendanceResolution;
+      try {
+        resolution = await this.resolveForWorkDateInTransaction(
+          transaction,
+          agencyId,
+          employeeId,
+          formatDate(date),
+        );
+      } catch (error: unknown) {
+        if (error instanceof AttendanceExceptionError) return null;
+        throw error;
+      }
+      if (isWorkingDate(resolution)) workingDates += 1;
+    }
+    return workingDates;
   }
 
   private async assertApplicable(

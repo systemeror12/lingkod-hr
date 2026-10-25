@@ -271,7 +271,8 @@ CREATE TABLE user_passwords (
   password_hash text NOT NULL,    -- Argon2id PHC string
   changed_at timestamptz NOT NULL DEFAULT now(),
   second_factor_failures integer NOT NULL DEFAULT 0 CHECK (second_factor_failures >= 0),
-  reset_required_at timestamptz
+  reset_required_at timestamptz,
+  recovery_code_prompt_owed_at timestamptz -- set by a reset that spends a Recovery Code
 );
 
 CREATE TABLE user_totp_factors (
@@ -303,6 +304,7 @@ CREATE TABLE pending_authentications (
   enrollment_secret_envelope bytea,
   recovery_code_hashes text[] NOT NULL DEFAULT ARRAY[]::text[],
   enrollment_accepted_step bigint,
+  enrollment_confirmed_at timestamptz,
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (expires_at > created_at),
@@ -342,7 +344,22 @@ CREATE TRIGGER user_passwords_supersede_reset_tokens_trigger
   AFTER UPDATE OF changed_at ON user_passwords
   FOR EACH ROW WHEN (OLD.changed_at IS DISTINCT FROM NEW.changed_at)
   EXECUTE FUNCTION supersede_password_reset_tokens();
+
+-- The Sign-in Cool-down ladder, one row per keyed email hash, for unknown and
+-- real emails alike. A row whose last failure is more than 24 hours old counts
+-- as reset. A full sign-in, a successful reauthentication or password change,
+-- or a completed Password Reset deletes it.
+CREATE TABLE sign_in_throttles (
+  email_hash bytea PRIMARY KEY, -- keyed hash (BLIND_INDEX_KEY) of the email
+  failure_count integer NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+  cooldown_level integer NOT NULL DEFAULT 0 CHECK (cooldown_level >= 0),
+  cooldown_until timestamptz,
+  last_failure_at timestamptz NOT NULL
+);
 ```
+
+The runtime role may select, insert, update, and delete `sign_in_throttles`
+rows, within the policy in section 2.
 
 The runtime role may update only `consumed_at` and `superseded_at` on
 `password_reset_tokens`.
@@ -372,6 +389,28 @@ CREATE POLICY agency_memberships_isolation
 ON agency_memberships
 USING (agency_id = current_setting('app.agency_id', true)::uuid)
 WITH CHECK (agency_id = current_setting('app.agency_id', true)::uuid);
+```
+
+A member page shows whether its Agency may lift a Global User Lock that
+another Agency placed: only once that Agency no longer has the User as an
+ACTIVE member. The runtime role never reads another Agency's memberships; a
+SECURITY DEFINER function answers only User ids, and the table owner it runs
+as gets the read. The owner policy goes through `users`, because a policy on
+`agency_memberships` that reads `agency_memberships` recurses (42P17):
+
+```sql
+CREATE POLICY agency_memberships_owner_locking_agency_select ON agency_memberships
+FOR SELECT TO CURRENT_USER
+USING (EXISTS (
+  SELECT 1 FROM users u
+  WHERE u.id = agency_memberships.user_id
+    AND u.locked_by_agency_id = agency_memberships.agency_id
+));
+
+-- Of the given Users with a membership in the Agency Context, those locked by
+-- another Agency that has no ACTIVE membership for them.
+CREATE FUNCTION app_agency_member_lifted_lock_user_ids(user_ids uuid[])
+RETURNS SETOF uuid SECURITY DEFINER SET search_path = public AS $$ ... $$;
 ```
 
 `users` is global and should be accessed only through identity services, not ordinary tenant repositories.
@@ -404,6 +443,33 @@ SECURITY DEFINER AS $$
   WHERE m.agency_id = app_agency_id();
 $$;
 
+-- The paged member list asks only about its page: each given User at most
+-- once, if they have a factor and a membership in the Agency Context.
+CREATE FUNCTION app_agency_member_factor_user_ids(user_ids uuid[])
+RETURNS SETOF uuid SECURITY DEFINER SET search_path = public AS $$
+  SELECT DISTINCT u.id FROM unnest(user_ids) AS u(id)
+  WHERE EXISTS (SELECT 1 FROM user_totp_factors f WHERE f.user_id = u.id)
+    AND EXISTS (
+      SELECT 1 FROM agency_memberships m
+      WHERE m.user_id = u.id AND m.agency_id = app_agency_id()
+    );
+$$;
+
+-- The per-IP sign-in limit counts LOGIN_FAILURE, PASSWORD_RESET_FAILURE, and
+-- REAUTHENTICATION_FAILURE. A reauthentication failure carries its Agency, so
+-- RLS hides it from platform security; a SECURITY DEFINER function answers
+-- only the count, and the table owner it runs as gets the read.
+CREATE POLICY security_events_owner_reauthentication_failure_select ON security_events
+FOR SELECT TO CURRENT_USER
+USING (app_platform_security() AND event_type = 'REAUTHENTICATION_FAILURE');
+
+CREATE FUNCTION app_ip_failure_count(ip inet, since timestamptz) RETURNS bigint
+SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT count(*) FROM public.security_events
+  WHERE ip_address = ip AND occurred_at >= since
+    AND event_type IN ('LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE', 'REAUTHENTICATION_FAILURE');
+$$;
+
 CREATE POLICY pending_authentications_owner ON pending_authentications
 USING (
   user_id = app_user_id()
@@ -423,6 +489,12 @@ WITH CHECK (
   user_id = app_user_id()
   OR encode(token_hash, 'hex') = current_setting('app.password_reset_token_hash', true)
 );
+
+-- Sign-in runs before any User or Agency context exists, so only the
+-- platform-security capability reaches throttle rows. RLS is enabled and forced.
+CREATE POLICY sign_in_throttles_platform_security ON sign_in_throttles
+USING (app_platform_security())
+WITH CHECK (app_platform_security());
 ```
 
 ---

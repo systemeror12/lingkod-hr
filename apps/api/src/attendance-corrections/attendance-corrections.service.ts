@@ -11,13 +11,6 @@ import {
   manilaToday,
   toDatabaseDate,
 } from '../attendance-configuration/attendance-configuration.types';
-import { ScheduleAssignmentsService } from '../attendance-configuration/schedule-assignments.service';
-import {
-  addDateValueDays,
-  eventCollectionWindow,
-  localDateValue,
-  zonedTimeToInstant,
-} from '../attendance/attendance.types';
 import {
   ApprovalCompletionRegistry,
   ApprovalsService,
@@ -33,6 +26,13 @@ import {
   ATTENDANCE_CORRECTION_AUDIT_WRITER,
   type AttendanceCorrectionAuditWriter,
 } from './attendance-corrections.audit';
+import {
+  assertCorrectionEvidenceLinkable,
+  canReadSensitiveEvidence,
+  correctionEvidenceSelect,
+  correctionEvidenceSummary,
+  redactRecordEvidence,
+} from './attendance-corrections.evidence';
 import {
   ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND,
   ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
@@ -63,7 +63,6 @@ import {
 
 const MAX_LIST_LIMIT = 200;
 const DEFAULT_LIST_LIMIT = 100;
-const MAX_CONTEXT_ENUMERATION_DAYS = 62;
 const CORRECTION_REVIEW_PERMISSIONS = ['attendance.corrections.approve'] as const;
 const CORRECTION_AUTHORIZE_PERMISSIONS = ['attendance.corrections.authorize_locked'] as const;
 const LEAVE_CANCELLATION_SOURCE_TYPE = 'LeaveCancellation';
@@ -288,7 +287,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     private readonly completionRegistry: ApprovalCompletionRegistry,
     @Inject(AttendanceDaysService) private readonly days: AttendanceDaysService,
     @Inject(AttendanceService) private readonly attendance: AttendanceService,
-    @Inject(ScheduleAssignmentsService) private readonly assignments: ScheduleAssignmentsService,
     @Inject(DocumentsService) private readonly documents: DocumentsService,
     @Inject(DtrsService) private readonly dtrs: DtrsService,
     @Inject(AttendancePeriodsService) private readonly periods: AttendancePeriodsService,
@@ -345,6 +343,17 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         input.targetId,
       );
       this.validateRequestedFact(input);
+      if (
+        input.targetType === 'ATTENDANCE_CONTEXT' &&
+        input.requestedRecord?.evidenceDocumentVersionId
+      ) {
+        await assertCorrectionEvidenceLinkable(
+          this.documents,
+          transaction,
+          context,
+          input.requestedRecord.evidenceDocumentVersionId,
+        );
+      }
       const preview = await this.computePreview(
         transaction,
         context,
@@ -383,12 +392,12 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         const documentVersionId =
           'documentVersionId' in evidence ? evidence.documentVersionId : null;
         if (documentVersionId) {
-          const resolved = await this.documents.resolveFinalizedVersionInTransaction(
+          await assertCorrectionEvidenceLinkable(
+            this.documents,
             transaction,
-            { agencyId: context.agencyId },
+            context,
             documentVersionId,
           );
-          if (!resolved) throw this.evidenceInvalid();
         }
         await transaction.attendanceCorrectionEvidence.create({
           data: {
@@ -1136,7 +1145,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         take: limit,
         select: correctionSelect,
       });
-      return records.map(correctionSummary);
+      const requested = await redactRecordEvidence(
+        transaction,
+        context,
+        records.map((record) => record.requestedRecord),
+      );
+      return records.map((record, index) => ({
+        ...correctionSummary(record),
+        requestedRecord: requested[index] ?? null,
+      }));
     });
   }
 
@@ -1531,20 +1548,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       transaction.attendanceCorrectionEvidence.findMany({
         where: { agencyId: context.agencyId, attendanceCorrectionId: record.id },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        select: {
-          id: true,
-          documentVersionId: true,
-          sourceType: true,
-          sourceId: true,
-          createdAt: true,
-          documentVersion: {
-            select: {
-              id: true,
-              versionNo: true,
-              document: { select: { id: true, documentNo: true, documentType: true } },
-            },
-          },
-        },
+        select: correctionEvidenceSelect,
       }),
       transaction.attendanceCorrectionEffect.findUnique({
         where: { attendanceCorrectionId: record.id },
@@ -1582,26 +1586,23 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         select: { id: true, routeVersionId: true, status: true, currentStepNo: true },
       }),
     ]);
+    const canReadSensitive = canReadSensitiveEvidence(context);
+    const [requestedRecord = null, replacementRecord = null] = await redactRecordEvidence(
+      transaction,
+      context,
+      [record.requestedRecord, effect?.replacementRecord ?? null],
+    );
     return {
-      correction: correctionSummary(record),
+      correction: { ...correctionSummary(record), requestedRecord },
       impactPreview: parseImpactPreview(record.impactPreview),
-      evidence: evidence.map((row) => ({
-        id: row.id,
-        documentVersionId: row.documentVersionId,
-        documentId: row.documentVersion?.document.id ?? null,
-        documentNo: row.documentVersion?.document.documentNo ?? null,
-        documentType: row.documentVersion?.document.documentType ?? null,
-        sourceType: row.sourceType,
-        sourceId: row.sourceId,
-        createdAt: row.createdAt.toISOString(),
-      })),
+      evidence: evidence.map((row) => correctionEvidenceSummary(row, canReadSensitive)),
       effect: effect
         ? {
             id: effect.id,
             effectAction: effect.effectAction as AttendanceCorrectionAction,
             targetType: effect.targetType as AttendanceCorrectionTargetType,
             originalTargetId: effect.originalTargetId,
-            replacementRecord: effect.replacementRecord,
+            replacementRecord,
             appliedByMembershipId: effect.appliedByMembershipId,
             appliedAt: effect.appliedAt.toISOString(),
           }
@@ -1698,22 +1699,14 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     targetId: string | null,
     fact: RequestedAttendanceFact,
   ): Promise<AttendanceCorrectionImpactPreview> {
-    const timezone = await this.agencyTimezone(transaction, context.agencyId);
     const targetWorkDates =
       targetId && requestedAction !== 'ADD'
-        ? await this.targetWorkDates(
-            transaction,
-            context,
-            employeeId,
-            targetType,
-            targetId,
-            timezone,
-          )
+        ? await this.targetWorkDates(transaction, context, employeeId, targetType, targetId)
         : [];
     // A posted-leave successor never covers a date outside its predecessor.
     const proposedWorkDates =
       requestedAction !== 'VOID' && targetType !== 'POSTED_LEAVE_INPUT'
-        ? await this.proposedWorkDates(transaction, context, employeeId, targetType, fact, timezone)
+        ? await this.proposedWorkDates(transaction, context, employeeId, targetType, fact)
         : [];
     const affectedDates = unique([...targetWorkDates, ...proposedWorkDates]).sort();
     const days: AttendanceCorrectionImpactPreviewDay[] = [];
@@ -1808,7 +1801,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     employeeId: string,
     targetType: AttendanceCorrectionTargetType,
     targetId: string,
-    timezone: string,
   ): Promise<string[]> {
     if (targetType === 'POSTED_LEAVE_INPUT') {
       const input = await transaction.attendancePostedLeaveInput.findFirst({
@@ -1850,23 +1842,17 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     if (record.coverageMode === 'WHOLE_WORK_DATE') {
       return record.workDate ? [formatDate(record.workDate)] : [];
     }
-    return this.contextOverlappingWorkDates(
-      transaction,
-      context,
-      employeeId,
-      {
-        contextType: 'OFFICIAL_BUSINESS',
-        coverageMode: 'TIMED',
-        workDate: null,
-        startsAt: record.startsAt ? record.startsAt.toISOString() : null,
-        endsAt: record.endsAt ? record.endsAt.toISOString() : null,
-        reason: '',
-        sourceType: null,
-        sourceId: null,
-        evidenceDocumentVersionId: null,
-      },
-      timezone,
-    );
+    return this.contextOverlappingWorkDates(transaction, context, employeeId, {
+      contextType: 'OFFICIAL_BUSINESS',
+      coverageMode: 'TIMED',
+      workDate: null,
+      startsAt: record.startsAt ? record.startsAt.toISOString() : null,
+      endsAt: record.endsAt ? record.endsAt.toISOString() : null,
+      reason: '',
+      sourceType: null,
+      sourceId: null,
+      evidenceDocumentVersionId: null,
+    });
   }
 
   private async proposedWorkDates(
@@ -1875,7 +1861,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     employeeId: string,
     targetType: AttendanceCorrectionTargetType,
     fact: RequestedAttendanceFact,
-    timezone: string,
   ): Promise<string[]> {
     if (targetType === 'ATTENDANCE_EVENT') {
       const eventFact = fact as RequestedAttendanceEventFact;
@@ -1891,13 +1876,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     if (contextFact.coverageMode === 'WHOLE_WORK_DATE') {
       return contextFact.workDate ? [contextFact.workDate] : [];
     }
-    return this.contextOverlappingWorkDates(
-      transaction,
-      context,
-      employeeId,
-      contextFact,
-      timezone,
-    );
+    return this.contextOverlappingWorkDates(transaction, context, employeeId, contextFact);
   }
 
   private async contextOverlappingWorkDates(
@@ -1905,7 +1884,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     employeeId: string,
     fact: RequestedAttendanceContextFact,
-    timezone: string,
   ): Promise<string[]> {
     if (fact.coverageMode === 'WHOLE_WORK_DATE') {
       return fact.workDate ? [fact.workDate] : [];
@@ -1914,55 +1892,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     const startsAt = new Date(fact.startsAt);
     const endsAt = new Date(fact.endsAt);
     if (endsAt.getTime() <= startsAt.getTime()) throw this.factInvalid();
-    const firstDate = addDateValueDays(localDateValue(startsAt, timezone), -1);
-    const lastDate = addDateValueDays(localDateValue(endsAt, timezone), 1);
-    const dates: string[] = [];
-    let cursor = firstDate;
-    let guard = 0;
-    while (cursor <= lastDate) {
-      guard += 1;
-      if (guard > MAX_CONTEXT_ENUMERATION_DAYS) throw this.rangeInvalid();
-      try {
-        const resolution = await this.assignments.resolveForWorkDateInTransaction(
-          transaction,
-          context.agencyId,
-          employeeId,
-          cursor,
-        );
-        const window = this.coverageWindow(
-          resolution.dayRule,
-          cursor,
-          resolution.workScheduleVersion.timezone,
-        );
-        if (
-          startsAt.getTime() < window.endsAt.getTime() &&
-          endsAt.getTime() > window.startsAt.getTime()
-        ) {
-          dates.push(cursor);
-        }
-      } catch {
-        // A date without complete applicability has no calculable Attendance Day.
-      }
-      cursor = addDateValueDays(cursor, 1);
-    }
-    return dates;
-  }
-
-  private coverageWindow(
-    dayRule: { ruleType: string },
-    workDate: string,
-    timezone: string,
-  ): { startsAt: Date; endsAt: Date } {
-    const window = eventCollectionWindow(
-      dayRule as Parameters<typeof eventCollectionWindow>[0],
-      workDate,
-      timezone,
+    const dates = await this.attendance.coveredWorkDatesInTransaction(
+      transaction,
+      context.agencyId,
+      employeeId,
+      startsAt,
+      endsAt,
     );
-    if (window) return { startsAt: window.start, endsAt: window.end };
-    return {
-      startsAt: zonedTimeToInstant(workDate, '00:00', timezone),
-      endsAt: zonedTimeToInstant(addDateValueDays(workDate, 1), '00:00', timezone),
-    };
+    if (!dates) throw this.rangeInvalid();
+    return dates.covered;
   }
 
   private async validateTargetFact(
@@ -2282,17 +2220,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     return completed.entityId;
   }
 
-  private async agencyTimezone(
-    transaction: Prisma.TransactionClient,
-    agencyId: string,
-  ): Promise<string> {
-    const agency = await transaction.agency.findFirst({
-      where: { id: agencyId },
-      select: { defaultTimezone: true },
-    });
-    return agency?.defaultTimezone ?? 'Asia/Manila';
-  }
-
   private effectContext(
     command: 'APPROVE' | 'AUTHORIZE' | 'RETURN' | 'REJECT',
   ): ApprovalEffectContext {
@@ -2349,14 +2276,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       'The corrected Attendance Event or Attendance Context could not be found for this Employee.',
       404,
       'ATTENDANCE_CORRECTION_TARGET_NOT_FOUND',
-    );
-  }
-
-  private evidenceInvalid(): AttendanceCorrectionServiceError {
-    return new AttendanceCorrectionServiceError(
-      'Attendance Correction evidence must reference a finalized Document Version.',
-      409,
-      'ATTENDANCE_CORRECTION_EVIDENCE_INVALID',
     );
   }
 

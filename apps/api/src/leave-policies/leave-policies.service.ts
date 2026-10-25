@@ -4,6 +4,7 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
   LEAVE_CATALOGUE,
   LEAVE_EVIDENCE_KINDS,
@@ -559,6 +560,8 @@ export class LeavePoliciesService {
     @Inject(LEAVE_POLICY_AUDIT_WRITER)
     private readonly auditWriter: LeavePolicyAuditWriter,
     @Inject(DocumentsService) private readonly documentsService: DocumentsService,
+    @Inject(MandatoryLeaveAssessmentsService)
+    private readonly mandatoryLeave: MandatoryLeaveAssessmentsService,
   ) {}
 
   listCatalogue(context: RequestContext): LeaveCatalogueEntrySummary[] {
@@ -1058,6 +1061,9 @@ export class LeavePoliciesService {
         },
       });
       await this.refreshCurrentProjection(transaction, context.agencyId, leaveTypeId);
+      if (leaveType.code === 'MANDATORY_LEAVE') {
+        await this.mandatoryLeave.reevaluateAgency(transaction, context, draft.effectiveFrom);
+      }
       const result = await this.leaveTypeRecord(transaction, context.agencyId, leaveTypeId);
       if (!result) throw leaveTypeNotFound();
       await this.auditWriter.write(transaction, {

@@ -2,12 +2,12 @@ import type { Metadata } from 'next';
 import { getConfig } from '@lingkod-hr/config';
 import { cookies } from 'next/headers';
 import { ShellState } from '../../../components/shell-state';
-import {
-  AttendanceConfigurationWorkspace,
-  type HolidayCalendarListResponse,
-  type WorkArrangementListResponse,
-  type WorkScheduleListResponse,
-} from '../../../components/attendance-configuration-workspace';
+import { AttendanceConfigurationWorkspace } from '../../../components/attendance-configuration-workspace';
+import type {
+  HolidayCalendarListResponse,
+  WorkArrangementListResponse,
+  WorkScheduleListResponse,
+} from '../../../components/attendance-configuration/types';
 import { getActiveSession, hasPermission } from '../../../lib/session';
 
 export const metadata: Metadata = { title: 'Attendance Configuration' };

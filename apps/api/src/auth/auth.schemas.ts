@@ -91,6 +91,14 @@ export const agencyIdSchema = z.string().uuid();
 
 export const membershipIdSchema = z.string().uuid();
 
+/** A member-list page: the Service Records cursor contract (#468). */
+export const memberListSchema = z
+  .object({
+    cursor: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+  })
+  .strict();
+
 /** How a Security Administrator verified the User before a Factor Reset. No ID numbers or images. */
 export const factorResetSchema = z
   .object({

@@ -51,19 +51,27 @@ import {
   acceptEnrollmentCode,
   beginTotpEnrollment,
   confirmTotpEnrollment,
+  enrollmentAuthTime,
   ENROLL_CODES_STAGE,
   ENROLL_SCAN_STAGE,
   writeTotpEnrollment,
   writeTotpFactor,
 } from './totp-enrollment';
+import { liftedLockUserIds } from './agency-member-list.service';
 import { AuthServiceError } from './auth-error';
 import {
   countGuess,
+  countIpFailures,
   CredentialProof,
+  type FailureEvent,
+  failureScope,
   type GuessCount,
   type GuessFailure,
+  lockUserPassword,
+  LOGIN_FAILURE,
   passwordResetRequired,
   readCooldown,
+  reauthenticationFailure,
   type SecondFactorMethod,
   signInCooldown,
   type ThrottleRow,
@@ -71,6 +79,11 @@ import {
   writeGuessFailure,
   writeSignInFailure,
 } from './credential-proof';
+import {
+  dischargeRecoveryCodePrompt,
+  oweRecoveryCodePrompt,
+  takeRecoveryCodePrompt,
+} from './recovery-code-prompt';
 
 export { AuthServiceError };
 
@@ -128,6 +141,15 @@ export type PasswordSignInResult =
   | { status: 'ENROLLMENT_REQUIRED'; pendingToken: string; enrollment: TotpEnrollmentStart }
   | { status: 'SIGNED_IN'; session: AuthenticatedSession & { token: string } };
 
+/**
+ * A session a sign-in opened. `recoveryCodesRemaining` is the count for the remaining-codes prompt
+ * a Password Reset owed, or null when none was owed.
+ */
+export type OpenedSession = AuthenticatedSession & {
+  token: string;
+  recoveryCodesRemaining: number | null;
+};
+
 export interface RecoveryCodeSignIn {
   session: AuthenticatedSession & { token: string };
   recoveryCodesRemaining: number;
@@ -149,6 +171,7 @@ interface PendingSignIn {
   verifiedMethods: string[];
   enrollmentSecretEnvelope: Uint8Array | null;
   enrollmentAcceptedStep: bigint | null;
+  enrollmentConfirmedAt: Date | null;
   recoveryCodeHashes: string[];
   user: { emailNormalized: string; globalStatus: string };
   emailHash: Buffer;
@@ -204,22 +227,6 @@ export interface PendingInvitation {
   status: 'PENDING';
 }
 
-/** A row of the Users & Access member list. */
-export interface AgencyMember {
-  membershipId: string;
-  userId: string;
-  displayName: string | null;
-  email: string;
-  membershipStatus: string;
-  globalStatus: string;
-  /**
-   * A Global User Lock as this Agency may see it: whether this Agency placed it and whether this
-   * Agency may lift it. Never which other Agency placed it, or why.
-   */
-  lock: { byThisAgency: boolean; unlockable: boolean } | null;
-  hasAuthenticator: boolean;
-}
-
 /** How a Security Administrator verified the User before a Factor Reset (#370). */
 export interface FactorResetVerification {
   method: 'IN_PERSON_GOVERNMENT_ID' | 'VIDEO_CALL_GOVERNMENT_ID';
@@ -247,6 +254,8 @@ export type InvitationLookup =
 export interface ActivationDone {
   session: AuthenticatedSession & { token: string };
   notices: MailMessage[];
+  /** For the remaining-codes prompt: set when a Recovery Code proved it, or a reset owed one. */
+  recoveryCodesRemaining: number | null;
 }
 
 export type ActivationStart =
@@ -484,6 +493,14 @@ function resetMethod(
   return answer.code ? 'totp' : 'missing';
 }
 
+function samePasswordRejected(): AuthServiceError {
+  return new AuthServiceError(
+    'Choose a password that’s different from your current one.',
+    400,
+    'PASSWORD_REJECTED',
+  );
+}
+
 function invitationInvalid(): AuthServiceError {
   return new AuthServiceError(
     'This invitation can’t be used. Ask your Agency Administrator for a new one.',
@@ -497,6 +514,14 @@ function invitationExpired(): AuthServiceError {
     'This invitation has expired. Ask your Agency Administrator to send it again.',
     400,
     'INVITATION_EXPIRED',
+  );
+}
+
+function invitationRoleUnavailable(): AuthServiceError {
+  return new AuthServiceError(
+    'A role in this invitation is no longer available. Ask your Agency Administrator for a new invitation.',
+    409,
+    'INVITATION_ROLE_UNAVAILABLE',
   );
 }
 
@@ -555,22 +580,28 @@ export class AuthService {
     this.invitationIssuer = new InvitationIssuer(this.mailDelivery, this.config.APP_URL);
   }
 
-  /** The per-IP limit for a sign-in step; a refusal is a LOGIN_FAILURE. */
-  async assertIpAllowed(request: SignInRequest, emailHash: Buffer | null = null): Promise<void> {
-    await this.refuseOverIpLimit(request, (transaction) =>
-      writeSignInFailure(transaction, request, {
+  /** The per-IP limit for a sign-in step; a refusal records `event`. */
+  async assertIpAllowed(
+    request: SignInRequest,
+    emailHash: Buffer | null = null,
+    event: FailureEvent = LOGIN_FAILURE,
+  ): Promise<void> {
+    await this.refuseOverIpLimit(request, async (transaction) => {
+      await setDatabaseContext(transaction, failureScope(event, null));
+      await writeSignInFailure(transaction, request, {
         userId: null,
         emailHash,
         reason: 'IP_RATE_LIMITED',
-      }),
-    );
+        event,
+      });
+    });
   }
 
   /**
-   * The per-IP limit: 100 sign-in or Password Reset failures in 15 minutes, counted from Security
-   * Events. The flow records its own refusal, which is a failure too, so a client that keeps trying
-   * stays refused. Failures are written after the attempt's slow work, so a burst of parallel
-   * attempts can each find the count under the limit and overshoot it once.
+   * The per-IP limit: 100 sign-in, Password Reset, or reauthentication failures in 15 minutes,
+   * counted from Security Events. The flow records its own refusal, which is a failure too, so a
+   * client that keeps trying stays refused. Failures are written after the attempt's slow work, so
+   * a burst of parallel attempts can each find the count under the limit and overshoot it once.
    */
   private async refuseOverIpLimit(
     { ipAddress }: SignInRequest,
@@ -580,13 +611,11 @@ export class AuthService {
     const refused = await withDatabaseContext(
       { capabilities: ['platform-security'] },
       async (transaction) => {
-        const failures = await transaction.securityEvent.count({
-          where: {
-            eventType: { in: ['LOGIN_FAILURE', 'PASSWORD_RESET_FAILURE'] },
-            ipAddress,
-            occurredAt: { gte: new Date(Date.now() - IP_WINDOW_MS) },
-          },
-        });
+        const failures = await countIpFailures(
+          transaction,
+          ipAddress,
+          new Date(Date.now() - IP_WINDOW_MS),
+        );
         if (failures < IP_FAILURE_LIMIT) return false;
         await recordRefusal(transaction);
         return true;
@@ -664,6 +693,19 @@ export class AuthService {
       return await withDatabaseContext(
         { userId, capabilities: ['platform-security'] },
         async (transaction): Promise<PasswordSignInResult> => {
+          // Held to commit, as a Password Reset or change holds it: a password replaced since it
+          // was verified refuses the sign-in, and a later replacement ends what this one writes.
+          // A hash changed meanwhile is checked again, so a concurrent rehash doesn't refuse.
+          await lockUserPassword(transaction, userId);
+          const current = await transaction.userPassword.findUnique({
+            where: { userId },
+            select: { passwordHash: true, resetRequiredAt: true },
+          });
+          const stillVerified =
+            current?.passwordHash === account.passwordHash ||
+            (!!current && (await verifyPassword(current.passwordHash, password)));
+          if (!current || !stillVerified) throw invalidCredentials();
+          if (current.resetRequiredAt) throw passwordResetRequired();
           if (rehashed) {
             await transaction.userPassword.updateMany({
               where: { userId, passwordHash: account.passwordHash },
@@ -768,7 +810,7 @@ export class AuthService {
     pendingToken: string,
     code: string,
     request: SignInRequest,
-  ): Promise<AuthenticatedSession & { token: string }> {
+  ): Promise<OpenedSession> {
     const pendingTokenHash = hashSessionToken(pendingToken).toString('hex');
     const scope = { pendingTokenHash, capabilities: ['platform-security'] as const };
     // Set once both factors verify, so a later refusal can still be recorded.
@@ -800,9 +842,10 @@ export class AuthService {
         },
         onProved: async (transaction) => {
           const consumed = await transaction.pendingAuthentication.deleteMany({
-            where: { id: pending.id },
+            where: { id: pending.id, expiresAt: { gt: new Date() } },
           });
-          // Another step consumed it meanwhile: the code stays spent and the refusal is recorded.
+          // Another step consumed it or it expired meanwhile: the code stays spent and the refusal
+          // is recorded.
           if (consumed.count !== 1) return { refusal: await expired(transaction) };
 
           verified.userId = userId;
@@ -900,6 +943,7 @@ export class AuthService {
     await this.refundGuess(emailHash, guess);
     try {
       return await withDatabaseContext({ ...scope, userId }, async (transaction) => {
+        await lockUserPassword(transaction, userId);
         const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (spent.count !== 1) {
           throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
@@ -1013,6 +1057,7 @@ export class AuthService {
           stage: ENROLL_CODES_STAGE,
           verifiedMethods: [...pending.verifiedMethods, 'totp'],
           enrollmentAcceptedStep: confirmed.step,
+          enrollmentConfirmedAt: confirmed.confirmedAt,
           recoveryCodeHashes: confirmed.recoveryCodeHashes,
         },
       }),
@@ -1055,8 +1100,9 @@ export class AuthService {
         const { userId, emailHash } = pending;
         opened.userId = userId;
         opened.emailHash = emailHash;
+        await lockUserPassword(transaction, userId);
         const consumed = await transaction.pendingAuthentication.deleteMany({
-          where: { id: pending.id, stage: ENROLL_CODES_STAGE },
+          where: { id: pending.id, stage: ENROLL_CODES_STAGE, expiresAt: { gt: new Date() } },
         });
         if (consumed.count !== 1) throw signInExpired();
         if (pending.user.globalStatus !== 'ACTIVE') {
@@ -1081,6 +1127,7 @@ export class AuthService {
           pending.verifiedMethods,
           request,
           emailHash,
+          enrollmentAuthTime(pending, signInExpired),
         );
         return { ...owned, notice: totpEnrolledNotice(pending.user.emailNormalized) };
       });
@@ -1145,21 +1192,25 @@ export class AuthService {
     // Passwords are hashed NFKC-normalized, so once the current one verifies this is the same as
     // the new one verifying against its hash.
     if (answer.newPassword.normalize('NFKC') === answer.currentPassword.normalize('NFKC')) {
-      throw new AuthServiceError(
-        'Choose a password that’s different from your current one.',
-        400,
-        'PASSWORD_REJECTED',
-      );
+      throw samePasswordRejected();
     }
     // Refuse a throttled caller before the slow hash; the proof below counts the guess.
     const emailHash = hashEmail(user.emailNormalized, this.config.BLIND_INDEX_KEY);
-    await this.assertIpAllowed(request, emailHash);
+    const failure = reauthenticationFailure(session);
+    await this.assertIpAllowed(request, emailHash, failure);
     const now = new Date();
     const cooldownUntil = await withDatabaseContext(scope, (transaction) =>
       readCooldown(transaction, emailHash, now),
     );
     if (cooldownUntil) {
-      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'COOLDOWN_ACTIVE',
+        undefined,
+        failure,
+      );
       throw signInCooldown(cooldownUntil, now);
     }
     // Hashing takes too long to hold a transaction open.
@@ -1377,7 +1428,8 @@ export class AuthService {
       }),
     );
     const emailHash = hashEmail(email, this.config.BLIND_INDEX_KEY);
-    await this.assertIpAllowed(request, emailHash);
+    const failure = reauthenticationFailure(session);
+    await this.assertIpAllowed(request, emailHash, failure);
     const now = new Date();
     const { guess, stored, hasFactor } = await withDatabaseContext(scope, async (transaction) => ({
       guess: await countGuess(transaction, emailHash, now),
@@ -1388,7 +1440,14 @@ export class AuthService {
       hasFactor: (await transaction.userTotpFactor.count({ where: { userId } })) === 1,
     }));
     if (guess.cooldownUntil) {
-      await this.recordSignInFailure(request, emailHash, userId, 'COOLDOWN_ACTIVE');
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'COOLDOWN_ACTIVE',
+        undefined,
+        failure,
+      );
       throw signInCooldown(guess.cooldownUntil, now);
     }
     const verified = stored
@@ -1400,12 +1459,20 @@ export class AuthService {
         userId,
         reason: 'INVALID_CREDENTIALS',
         cooldown: guess.counted.cooldown,
+        event: failure,
       });
       throw reauthenticationRefused();
     }
     await this.refundGuess(emailHash, guess);
     if (stored.resetRequiredAt) {
-      await this.recordSignInFailure(request, emailHash, userId, 'PASSWORD_RESET_REQUIRED');
+      await this.recordSignInFailure(
+        request,
+        emailHash,
+        userId,
+        'PASSWORD_RESET_REQUIRED',
+        undefined,
+        failure,
+      );
       throw passwordResetRequired();
     }
 
@@ -1426,6 +1493,7 @@ export class AuthService {
       request,
       wrongCode: reauthenticationRefused,
       noFactor: async () => reauthenticationRefused(),
+      failureEvent: failure,
       onProved: async (transaction) => {
         await this.clearGuesses(transaction, proved);
         return onProved(transaction, proved, ['pwd', 'totp']);
@@ -1514,6 +1582,7 @@ export class AuthService {
   ): Promise<{ result: T; notice: MailMessage }> {
     const { session, request, emailHash, email } = proved;
     const { userId } = session.context;
+    const failure = reauthenticationFailure(session);
     const now = new Date();
     const { guess, codes } = await withDatabaseContext(scope, async (transaction) => ({
       guess: await countGuess(transaction, emailHash, now),
@@ -1529,6 +1598,7 @@ export class AuthService {
         userId,
         'COOLDOWN_ACTIVE',
         'recovery_code',
+        failure,
       );
       throw signInCooldown(guess.cooldownUntil, now);
     }
@@ -1540,6 +1610,7 @@ export class AuthService {
     const spent =
       used &&
       (await withDatabaseContext(scope, async (transaction) => {
+        await lockUserPassword(transaction, userId);
         const deleted = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (deleted.count !== 1) return null;
         await this.clearGuesses(transaction, proved);
@@ -1564,6 +1635,7 @@ export class AuthService {
       reason: 'INVALID_CODE',
       cooldown: guess.counted.cooldown,
       secondFactor: { method: 'recovery_code', email },
+      event: failure,
     });
     throw reauthenticationRefused();
   }
@@ -1758,7 +1830,9 @@ export class AuthService {
 
   /**
    * Sets a new password from a reset link. An IP address over the per-IP limit is refused before
-   * the link is opened. A User with a TOTP factor also gives a code or a Recovery Code; a wrong
+   * the link is opened. The new password must differ from the current one; that refusal comes
+   * after any second factor is proved and before a Recovery Code is spent, and leaves the link
+   * usable. A User with a TOTP factor also gives a code or a Recovery Code; a wrong
    * one counts toward the email's Sign-in Cool-down, not the second-factor ceiling, and leaves
    * the link usable. Recovery Codes are matched outside a transaction, as at sign-in.
    * The last transaction holds the User's password row. Credential Proof checks a TOTP code in
@@ -1797,6 +1871,10 @@ export class AuthService {
       if (rejected) return { status: 'REJECTED' as const, message: rejected.message };
       const method = resetMethod(link, answer);
       if (method === 'missing') return { status: 'CODE_REQUIRED' as const };
+      const { passwordHash: currentHash } = await transaction.userPassword.findUniqueOrThrow({
+        where: { userId: link.user.id },
+        select: { passwordHash: true },
+      });
       const failure = { userId: link.user.id, emailHash: link.emailHash };
       if (!method) {
         const cooldownUntil = await readCooldown(transaction, link.emailHash, now);
@@ -1807,7 +1885,7 @@ export class AuthService {
           });
           return { status: 'COOLDOWN' as const, cooldownUntil, now };
         }
-        return { status: 'OPEN' as const, link, method, guess: null, codes: [] };
+        return { status: 'OPEN' as const, link, method, currentHash, guess: null, codes: [] };
       }
       const guess = await countGuess(transaction, link.emailHash, now);
       if (guess.cooldownUntil) {
@@ -1824,7 +1902,7 @@ export class AuthService {
               select: { id: true, codeHash: true },
             })
           : [];
-      return { status: 'OPEN' as const, link, method, guess, codes };
+      return { status: 'OPEN' as const, link, method, currentHash, guess, codes };
     });
     if (opened.status === 'INVALID') throw resetLinkInvalid();
     if (opened.status === 'REJECTED') {
@@ -1866,7 +1944,12 @@ export class AuthService {
         throw resetCodeInvalid(method);
       }
     }
-    const passwordHash = await hashPassword(answer.password);
+    // A password change since the link opened supersedes it, so `finish` never acts on a stale
+    // answer; a rehash keeps the same password.
+    const [passwordHash, reusesCurrent] = await Promise.all([
+      hashPassword(answer.password),
+      verifyPassword(opened.currentHash, answer.password),
+    ]);
 
     // Runs holding the User's password row: the second of two completions finds the link consumed,
     // or its TOTP code already spent.
@@ -1883,14 +1966,18 @@ export class AuthService {
       if (recheck !== method) return { status: 'INVALID_CODE' as const };
 
       if (recoveryCodeId) {
-        const spent = await transaction.userRecoveryCode.deleteMany({
-          where: { id: recoveryCodeId },
-        });
-        if (spent.count !== 1) {
+        // A refused password leaves the code unspent for the next try.
+        const where = { id: recoveryCodeId };
+        const proved = reusesCurrent
+          ? await transaction.userRecoveryCode.count({ where })
+          : (await transaction.userRecoveryCode.deleteMany({ where })).count;
+        if (proved !== 1) {
           await this.writeResetFailure(transaction, request, wrongCode);
           return { status: 'INVALID_CODE' as const };
         }
       }
+      // Refused once any second factor is proved, so a link can't test a guarded User's password.
+      if (reusesCurrent) return { status: 'REUSED' as const };
 
       // Consumed before the password changes, so the change voids no link but this one.
       await transaction.passwordResetToken.update({
@@ -1901,6 +1988,7 @@ export class AuthService {
         where: { userId },
         data: { passwordHash, changedAt: now, secondFactorFailures: 0, resetRequiredAt: null },
       });
+      if (recoveryCodeId) await oweRecoveryCodePrompt(transaction, userId, now);
       await transaction.pendingAuthentication.deleteMany({ where: { userId } });
       await transaction.signInThrottle.deleteMany({
         where: { emailHash: prismaBytes(current.emailHash) },
@@ -1971,6 +2059,7 @@ export class AuthService {
       );
     }
     if (outcome.status === 'INVALID_CODE') throw resetCodeInvalid(method);
+    if (outcome.status === 'REUSED') throw samePasswordRejected();
     return { notices: outcome.notices };
   }
 
@@ -1988,9 +2077,14 @@ export class AuthService {
     }
   }
 
+  /**
+   * The active session behind a token, or null. Unless `renewIdleTimer` is false, the request
+   * counts as activity and moves the session's last-seen time.
+   */
   async authenticateSession(
     rawToken: string,
     requestId: string,
+    { renewIdleTimer = true } = {},
   ): Promise<AuthenticatedSession | null> {
     if (!rawToken) return null;
     const tokenHash = hashSessionToken(rawToken);
@@ -2065,11 +2159,13 @@ export class AuthService {
           return null;
         }
 
-        const refreshed = await transaction.userSession.updateMany({
-          where: { id: session.id, revokedAt: null },
-          data: { lastSeenAt: new Date() },
-        });
-        if (refreshed.count !== 1) return null;
+        if (renewIdleTimer) {
+          const refreshed = await transaction.userSession.updateMany({
+            where: { id: session.id, revokedAt: null },
+            data: { lastSeenAt: new Date() },
+          });
+          if (refreshed.count !== 1) return null;
+        }
         return {
           sessionId: session.id,
           authenticationMethods: session.authenticationMethods,
@@ -2203,66 +2299,6 @@ export class AuthService {
     });
   }
 
-  /** The Users & Access member list: everyone with a membership in the acting Agency. */
-  async listAgencyMembers(context: RequestContext): Promise<AgencyMember[]> {
-    return withDatabaseContext(context, async (transaction) => {
-      const memberships = await transaction.agencyMembership.findMany({
-        where: { agencyId: context.agencyId },
-        select: {
-          id: true,
-          status: true,
-          user: {
-            select: {
-              id: true,
-              displayName: true,
-              emailNormalized: true,
-              globalStatus: true,
-              lockedByAgencyId: true,
-            },
-          },
-        },
-        orderBy: [{ user: { displayName: 'asc' } }, { user: { emailNormalized: 'asc' } }],
-      });
-      // Unlock authority belongs to the User; whether a row offers it depends on that membership.
-      const authority = new Map<string, boolean>();
-      for (const { user } of memberships) {
-        if (!user.lockedByAgencyId || authority.has(user.id)) continue;
-        authority.set(
-          user.id,
-          user.lockedByAgencyId === context.agencyId ||
-            !(await this.lockingAgencyHasUser(
-              transaction,
-              context,
-              user.id,
-              user.lockedByAgencyId,
-            )),
-        );
-      }
-      // Factor rows hold secrets, so the Agency Context learns only which members have one.
-      const withFactor = new Set(
-        (
-          await transaction.$queryRaw<{ user_id: string }[]>`
-            SELECT "user_id" FROM app_agency_member_factor_user_ids() AS "user_id"`
-        ).map(({ user_id }) => user_id),
-      );
-      return memberships.map(({ id, status, user }) => ({
-        membershipId: id,
-        userId: user.id,
-        displayName: user.displayName,
-        email: user.emailNormalized,
-        membershipStatus: status,
-        globalStatus: user.globalStatus,
-        lock: user.lockedByAgencyId
-          ? {
-              byThisAgency: user.lockedByAgencyId === context.agencyId,
-              unlockable: status === 'ACTIVE' && authority.get(user.id) === true,
-            }
-          : null,
-        hasAuthenticator: withFactor.has(user.id),
-      }));
-    });
-  }
-
   /**
    * Factor Reset (#370): removes the User's factor and every Recovery Code, ends their sessions and
    * pending sign-ins, and records it in the acting Agency only. The password and `globalStatus`
@@ -2311,6 +2347,7 @@ export class AuthService {
         );
       }
       await transaction.userRecoveryCode.deleteMany({ where: { userId } });
+      await dischargeRecoveryCodePrompt(transaction, userId);
       await transaction.pendingAuthentication.deleteMany({ where: { userId } });
       const now = new Date();
       const revokedSessions = await this.revokeMemberSessions(
@@ -2439,7 +2476,7 @@ export class AuthService {
       }
       const lockingAgencyGone =
         lockedByAgencyId !== context.agencyId &&
-        !(await this.lockingAgencyHasUser(transaction, context, userId, lockedByAgencyId));
+        (await liftedLockUserIds(transaction, [userId])).has(userId);
       if (lockedByAgencyId !== context.agencyId && !lockingAgencyGone) {
         throw new AuthServiceError(
           'Only a Security Administrator of the Agency that locked this User can unlock them.',
@@ -2549,25 +2586,6 @@ export class AuthService {
   }
 
   /**
-   * Whether the locking Agency still has the User as an ACTIVE member, which decides who may unlock.
-   * Read in the User's own context, since the membership is in another Agency. Leaves the
-   * transaction in `context`.
-   */
-  private async lockingAgencyHasUser(
-    transaction: Prisma.TransactionClient,
-    context: RequestContext,
-    userId: string,
-    lockedByAgencyId: string,
-  ): Promise<boolean> {
-    await setDatabaseContext(transaction, { agencyId: context.agencyId, userId });
-    const memberships = await transaction.agencyMembership.count({
-      where: { userId, agencyId: lockedByAgencyId, status: 'ACTIVE' },
-    });
-    await setDatabaseContext(transaction, context);
-    return memberships > 0;
-  }
-
-  /**
    * What the invitation page shows. Opening an invitation writes nothing, not even its expiry; an
    * expired one stays PENDING until it is replaced or cancelled.
    */
@@ -2575,7 +2593,8 @@ export class AuthService {
     const scope = this.activationScope(token);
     const result = await withDatabaseContext(scope, async (transaction) => {
       const invitation = await this.readActivationInvitation(transaction, scope, new Date());
-      if (typeof invitation === 'string') return { status: invitation };
+      if (invitation === 'EXPIRED') return { status: invitation };
+      if (typeof invitation === 'string') return { status: 'INVALID' as const };
       const existingUser = await transaction.user.findUnique({
         where: { emailNormalized: invitation.emailNormalized },
         select: { id: true },
@@ -2750,6 +2769,7 @@ export class AuthService {
           scope,
           new Date(),
         );
+        await lockUserPassword(transaction, userId);
         const spent = await transaction.userRecoveryCode.deleteMany({ where: { id: used.id } });
         if (spent.count !== 1) {
           throw new AuthServiceError('The Recovery Code is incorrect.', 401, 'INVALID_CODE');
@@ -2794,6 +2814,7 @@ export class AuthService {
             stage: ENROLL_CODES_STAGE,
             verifiedMethods: [...pending.verifiedMethods, 'totp'],
             enrollmentAcceptedStep: confirmed.step,
+            enrollmentConfirmedAt: confirmed.confirmedAt,
             recoveryCodeHashes: confirmed.recoveryCodeHashes,
           },
         }),
@@ -2823,6 +2844,7 @@ export class AuthService {
           pending,
           userId: pending.userId ?? pending.id,
           methods: pending.verifiedMethods,
+          authTime: enrollmentAuthTime(pending, activationExpired),
           ...(pending.userId ? {} : { newUser: firstTimeUser(pending) }),
         });
       });
@@ -3103,7 +3125,7 @@ export class AuthService {
     transaction: Prisma.TransactionClient,
     scope: ActivationScope,
     now: Date,
-  ): Promise<ActivationInvitation | 'EXPIRED' | 'INVALID'> {
+  ): Promise<ActivationInvitation | 'EXPIRED' | 'INVALID' | 'ROLE_UNAVAILABLE'> {
     const invitation = await transaction.invitation.findFirst({
       where: {
         tokenHash: prismaBytes(Buffer.from(scope.invitationTokenHash, 'hex')),
@@ -3136,9 +3158,8 @@ export class AuthService {
       invitation.requestedRoleCodes,
       invitation.agencyId,
     );
-    if (agency.status !== 'ACTIVE' || roles.length !== invitation.requestedRoleCodes.length) {
-      return 'INVALID';
-    }
+    if (agency.status !== 'ACTIVE') return 'INVALID';
+    if (roles.length !== invitation.requestedRoleCodes.length) return 'ROLE_UNAVAILABLE';
     return {
       id: invitation.id,
       agencyId: invitation.agencyId,
@@ -3160,6 +3181,7 @@ export class AuthService {
     const invitation = await this.readActivationInvitation(transaction, scope, now);
     if (invitation === 'EXPIRED') throw invitationExpired();
     if (invitation === 'INVALID') throw invitationInvalid();
+    if (invitation === 'ROLE_UNAVAILABLE') throw invitationRoleUnavailable();
     return invitation;
   }
 
@@ -3413,7 +3435,8 @@ export class AuthService {
    * pending activation and the invitation; writes a first-time User with their password, any
    * enrolled factor and Recovery Codes, and the Agency Membership with the invited roles; and opens
    * a session in the inviting Agency. The invitation is accepted first with a conditional update,
-   * so of two saves exactly one wins, and a refusal after it rolls everything back.
+   * so of two saves exactly one wins, and a refusal after it rolls everything back. The invited
+   * roles are checked again here, since a step may have read them before its password work.
    */
   private async finishActivation(
     transaction: Prisma.TransactionClient,
@@ -3423,6 +3446,7 @@ export class AuthService {
       invitation: ActivationInvitation;
       userId: string;
       methods: readonly string[];
+      authTime?: Date;
       pending?: PendingActivation;
       newUser?: { displayName: string; passwordHash: string };
       recoveryCodeUsed?: boolean;
@@ -3435,6 +3459,10 @@ export class AuthService {
     const now = new Date();
     const context = { ...scope, agencyId: invitation.agencyId, userId };
     await setDatabaseContext(transaction, context);
+    const activeRoles = await transaction.role.count({
+      where: { id: { in: invitation.roles.map(({ id }) => id) }, status: 'ACTIVE' },
+    });
+    if (activeRoles !== invitation.roles.length) throw invitationRoleUnavailable();
     if (pending) {
       const consumed = await transaction.pendingAuthentication.deleteMany({
         where: { id: pending.id, stage: pending.stage, expiresAt: { gt: now } },
@@ -3598,6 +3626,7 @@ export class AuthService {
       finish.methods,
       request,
       emailHash,
+      finish.authTime,
     );
     if (finish.recoveryCodeUsed) {
       const remaining = await transaction.userRecoveryCode.count({ where: { userId } });
@@ -3615,8 +3644,9 @@ export class AuthService {
         },
       });
       notices.push(recoveryCodeNotice(email, remaining, now));
+      return { session, notices, recoveryCodesRemaining: remaining };
     }
-    return { session, notices };
+    return { session, notices, recoveryCodesRemaining: session.recoveryCodesRemaining };
   }
 
   private async openOwnedSession(
@@ -3626,7 +3656,8 @@ export class AuthService {
     methods: readonly string[],
     request: SignInRequest,
     emailHash: Buffer,
-  ): Promise<AuthenticatedSession & { token: string }> {
+    authTime?: Date,
+  ): Promise<OpenedSession> {
     const now = new Date();
     // Holds the User row through session creation, so a Global User Lock either commits first and
     // refuses this sign-in, or waits and then revokes the new session.
@@ -3644,18 +3675,20 @@ export class AuthService {
       data: { secondFactorFailures: 0 },
     });
     if (usable.count !== 1) throw passwordResetRequired();
+    // Every sign-in takes an owed remaining-codes prompt, so a second one shows nothing.
+    const recoveryCodesRemaining = await takeRecoveryCodePrompt(transaction, userId);
     await transaction.signInThrottle.deleteMany({ where: { emailHash: prismaBytes(emailHash) } });
     const membership = await this.selectSignInMembership(
       transaction,
       userId,
       requestedMembershipId,
     );
-    return this.createSession(
+    const session = await this.createSession(
       transaction,
       userId,
       membership.id,
       {
-        authTime: now,
+        authTime: authTime ?? now,
         authenticationMethods: methods,
         emailHash,
         ipAddress: request.ipAddress,
@@ -3663,6 +3696,7 @@ export class AuthService {
       },
       request.requestId,
     );
+    return { ...session, recoveryCodesRemaining };
   }
 
   /**
@@ -3715,6 +3749,7 @@ export class AuthService {
       verifiedMethods: pending.verifiedMethods,
       enrollmentSecretEnvelope: pending.enrollmentSecretEnvelope,
       enrollmentAcceptedStep: pending.enrollmentAcceptedStep,
+      enrollmentConfirmedAt: pending.enrollmentConfirmedAt,
       recoveryCodeHashes: pending.recoveryCodeHashes,
       user,
       emailHash,
@@ -3751,10 +3786,7 @@ export class AuthService {
   /** `writeGuessFailure` in a transaction of its own; throws at the second-factor ceiling. */
   private async recordGuessFailure(request: SignInRequest, failure: GuessFailure): Promise<void> {
     const ceiling = await withDatabaseContext(
-      {
-        ...(failure.userId ? { userId: failure.userId } : {}),
-        capabilities: ['platform-security'],
-      },
+      failureScope(failure.event ?? LOGIN_FAILURE, failure.userId),
       (transaction) => writeGuessFailure(transaction, request, failure),
     );
     if (ceiling) throw passwordResetRequired(ceiling);
@@ -3851,9 +3883,10 @@ export class AuthService {
     userId: string | null,
     reason: string,
     method?: SecondFactorMethod,
+    event: FailureEvent = LOGIN_FAILURE,
   ): Promise<void> {
-    await withDatabaseContext({ capabilities: ['platform-security'] }, (transaction) =>
-      writeSignInFailure(transaction, request, { userId, emailHash, reason, method }),
+    await withDatabaseContext(failureScope(event, null), (transaction) =>
+      writeSignInFailure(transaction, request, { userId, emailHash, reason, method, event }),
     );
   }
 

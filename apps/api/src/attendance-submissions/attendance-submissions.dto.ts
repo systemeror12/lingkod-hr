@@ -1,6 +1,7 @@
 import type {
   AttendanceSubmissionDaySummary,
   AttendanceSubmissionDetail,
+  AttendanceSubmissionEvidenceSummary,
   AttendanceSubmissionSummary,
 } from './attendance-submissions.types';
 
@@ -60,7 +61,7 @@ export class AttendanceSubmissionDto {
   readonly submittedByMembershipId: string;
   readonly submittedAt: string | null;
   readonly onBehalfReason: string | null;
-  readonly evidenceDocumentVersionId: string | null;
+  readonly evidence: AttendanceSubmissionEvidenceSummary | null;
   readonly reviewedByMembershipId: string | null;
   readonly reviewedAt: string | null;
   readonly reviewReason: string | null;
@@ -77,7 +78,7 @@ export class AttendanceSubmissionDto {
     this.submittedByMembershipId = record.submittedByMembershipId;
     this.submittedAt = record.submittedAt;
     this.onBehalfReason = record.onBehalfReason;
-    this.evidenceDocumentVersionId = record.evidenceDocumentVersionId;
+    this.evidence = record.evidence ? { ...record.evidence } : null;
     this.reviewedByMembershipId = record.reviewedByMembershipId;
     this.reviewedAt = record.reviewedAt;
     this.reviewReason = record.reviewReason;

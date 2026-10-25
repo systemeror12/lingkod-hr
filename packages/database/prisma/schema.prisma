@@ -161,6 +161,7 @@ model Agency {
   terminalLeaveInputAssessments TerminalLeaveInputAssessment[]
   terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
   terminalLeaveInputLines       TerminalLeaveInputSnapshotLine[]
+  mandatoryLeaveAssessments     MandatoryLeaveAssessment[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -630,11 +631,13 @@ model SecurityEvent {
 
 /// The User's password as an Argon2id PHC string, kept apart from routine `users` reads.
 model UserPassword {
-  userId               String    @id @map("user_id") @db.Uuid
-  passwordHash         String    @map("password_hash")
-  changedAt            DateTime  @default(now()) @map("changed_at") @db.Timestamptz(6)
-  secondFactorFailures Int       @default(0) @map("second_factor_failures")
-  resetRequiredAt      DateTime? @map("reset_required_at") @db.Timestamptz(6)
+  userId                   String    @id @map("user_id") @db.Uuid
+  passwordHash             String    @map("password_hash")
+  changedAt                DateTime  @default(now()) @map("changed_at") @db.Timestamptz(6)
+  secondFactorFailures     Int       @default(0) @map("second_factor_failures")
+  resetRequiredAt          DateTime? @map("reset_required_at") @db.Timestamptz(6)
+  /// Set by a Password Reset that spent a Recovery Code; cleared by the next sign-in.
+  recoveryCodePromptOwedAt DateTime? @map("recovery_code_prompt_owed_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -670,21 +673,22 @@ model UserRecoveryCode {
 /// whose token is stored only as `tokenHash`; or a signed-in User's TOTP replacement (5 minutes),
 /// which has no token and is found by its User.
 model PendingAuthentication {
-  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tokenHash                Bytes?   @unique @map("token_hash")
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash                Bytes?    @unique @map("token_hash")
   purpose                  String
-  userId                   String?  @map("user_id") @db.Uuid
-  invitationId             String?  @map("invitation_id") @db.Uuid
-  requestedMembershipId    String?  @map("requested_membership_id") @db.Uuid
+  userId                   String?   @map("user_id") @db.Uuid
+  invitationId             String?   @map("invitation_id") @db.Uuid
+  requestedMembershipId    String?   @map("requested_membership_id") @db.Uuid
   stage                    String
-  verifiedMethods          String[] @default([]) @map("verified_methods")
-  displayName              String?  @map("display_name")
-  passwordHash             String?  @map("password_hash")
-  enrollmentSecretEnvelope Bytes?   @map("enrollment_secret_envelope")
-  recoveryCodeHashes       String[] @default([]) @map("recovery_code_hashes")
-  enrollmentAcceptedStep   BigInt?  @map("enrollment_accepted_step")
-  expiresAt                DateTime @map("expires_at") @db.Timestamptz(6)
-  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  verifiedMethods          String[]  @default([]) @map("verified_methods")
+  displayName              String?   @map("display_name")
+  passwordHash             String?   @map("password_hash")
+  enrollmentSecretEnvelope Bytes?    @map("enrollment_secret_envelope")
+  recoveryCodeHashes       String[]  @default([]) @map("recovery_code_hashes")
+  enrollmentAcceptedStep   BigInt?   @map("enrollment_accepted_step")
+  enrollmentConfirmedAt    DateTime? @map("enrollment_confirmed_at") @db.Timestamptz(6)
+  expiresAt                DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user       User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
   invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
@@ -2053,6 +2057,7 @@ model Employee {
   monetizationRequests   LeaveMonetizationRequest[] @relation("LeaveMonetizationRequestEmployee")
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
+  mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3331,7 +3336,6 @@ model WorkScheduleVersion {
   versionNo                  Int       @map("version_no")
   scheduleType               String    @map("schedule_type")
   timezone                   String    @default("Asia/Manila")
-  holidayEffectRules         Json      @default("{}") @map("holiday_effect_rules")
   authorityDocumentVersionId String?   @map("authority_document_version_id") @db.Uuid
   approvingAuthority         String?   @map("approving_authority")
   status                     String
@@ -3500,7 +3504,7 @@ model HolidayCalendarEntry {
 
   holidayCalendarVersion HolidayCalendarVersion @relation(fields: [agencyId, holidayCalendarVersionId], references: [agencyId, id], onDelete: Restrict)
 
-  @@unique([holidayCalendarVersionId, holidayDate, dayType])
+  @@unique([holidayCalendarVersionId, holidayDate])
   @@unique([agencyId, id])
   @@map("holiday_calendar_entries")
 }
@@ -4127,6 +4131,7 @@ model LeavePolicyVersion {
   approvalAllocationLines LeaveApprovalAllocationLine[] @relation("LeaveApprovalAllocationLinePolicyVersion")
   monetizationAllocations LeaveMonetizationAllocation[] @relation("LeaveMonetizationAllocationPolicyVersion")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLinePolicyVersion")
+  mandatoryLeaveAssessments       MandatoryLeaveAssessment[]       @relation("MandatoryLeaveAssessmentPolicyVersion")
   createdBy            AgencyMembership       @relation("LeavePolicyVersionCreator", fields: [agencyId, createdByMembershipId], references: [agencyId, id], onDelete: Restrict)
   updatedBy            AgencyMembership       @relation("LeavePolicyVersionUpdater", fields: [agencyId, updatedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
@@ -4183,6 +4188,7 @@ model LeaveAccount {
   creditCertificationLines       LeaveCreditCertificationLine[]         @relation("LeaveCreditCertificationLineAccount")
   approvalAllocationLines        LeaveApprovalAllocationLine[]          @relation("LeaveApprovalAllocationLineAccount")
   terminalLeaveInputSnapshotLines TerminalLeaveInputSnapshotLine[] @relation("TerminalLeaveInputSnapshotLines")
+  mandatoryLeaveAssessments       MandatoryLeaveAssessment[]       @relation("MandatoryLeaveAssessmentAccount")
 
   @@unique([agencyId, id])
   @@index([agencyId, status, employeeId])
@@ -5147,4 +5153,36 @@ model AgencyBuildingPhoto {
   changedByMembership   AgencyMembership @relation(fields: [agencyId, changedByMembershipId], references: [agencyId, id], onDelete: Restrict)
 
   @@map("agency_building_photos")
+}
+
+/// The partial unique index mandatory_leave_assessments_first_per_year on
+/// (agency_id, employee_id, assessment_year) WHERE previous_assessment_id IS
+/// NULL lives in migration 0118; Prisma cannot express it.
+model MandatoryLeaveAssessment {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String   @map("agency_id") @db.Uuid
+  employeeId           String   @map("employee_id") @db.Uuid
+  assessmentYear       Int      @map("assessment_year")
+  policyVersionId      String?  @map("policy_version_id") @db.Uuid
+  leaveAccountId       String?  @map("leave_account_id") @db.Uuid
+  previousAssessmentId String?  @unique @map("previous_assessment_id") @db.Uuid
+  assessmentDate       DateTime @map("assessment_date") @db.Date
+  result               String
+  requiredQuantity     Decimal? @map("required_quantity") @db.Decimal(12, 4)
+  fulfilledQuantity    Decimal? @map("fulfilled_quantity") @db.Decimal(12, 4)
+  materialFingerprint  String   @map("material_fingerprint")
+  inputFacts           Json     @map("input_facts")
+  ruleResults          Json     @map("rule_results")
+  assessedAt           DateTime @default(now()) @map("assessed_at") @db.Timestamptz(6)
+
+  agency        Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee      Employee                   @relation("MandatoryLeaveAssessmentEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  policyVersion LeavePolicyVersion?        @relation("MandatoryLeaveAssessmentPolicyVersion", fields: [agencyId, policyVersionId], references: [agencyId, id], onDelete: Restrict)
+  leaveAccount  LeaveAccount?              @relation("MandatoryLeaveAssessmentAccount", fields: [agencyId, leaveAccountId], references: [agencyId, id], onDelete: Restrict)
+  previous      MandatoryLeaveAssessment?  @relation("MandatoryLeaveAssessmentChain", fields: [agencyId, previousAssessmentId], references: [agencyId, id], onDelete: Restrict)
+  successors    MandatoryLeaveAssessment[] @relation("MandatoryLeaveAssessmentChain")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, assessmentYear, assessedAt(sort: Desc)])
+  @@map("mandatory_leave_assessments")
 }

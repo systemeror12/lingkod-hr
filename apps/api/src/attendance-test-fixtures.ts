@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
-import { withDatabaseContext } from '@lingkod-hr/database';
+import { setDatabaseContext, withDatabaseContext } from '@lingkod-hr/database';
 import {
   approvalAuditWriter,
   ApprovalCompletionRegistry,
@@ -55,6 +55,23 @@ export async function createAdminClient(): Promise<PrismaClient> {
     process.env.DATABASE_E2E_ADMIN_URL ?? process.env.DATABASE_MIGRATION_OWNER_URL;
   if (!databaseUrl) throw new Error('A database owner URL is required for the integration test.');
   return new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+}
+
+/**
+ * Finalizes a seeded stable Attendance Period through the Attendance
+ * transition capability, the only path the database lets status move.
+ */
+export async function finalizeAttendancePeriod(
+  admin: PrismaClient,
+  attendancePeriodId: string,
+): Promise<void> {
+  await admin.$transaction(async (transaction) => {
+    await setDatabaseContext(transaction, { capabilities: ['attendance-transition'] });
+    await transaction.attendancePeriod.update({
+      where: { id: attendancePeriodId },
+      data: { status: 'FINALIZED' },
+    });
+  });
 }
 
 export const attendanceAdministratorPermissions: RequestContext['permissions'] = [
@@ -196,7 +213,11 @@ export function attendanceWorkflowServices() {
     calendars,
   );
   const attendance = new AttendanceService(attendanceAuditWriter, assignments);
-  const contexts = new AttendanceContextsService(attendanceContextAuditWriter, documents);
+  const contexts = new AttendanceContextsService(
+    attendanceContextAuditWriter,
+    documents,
+    attendance,
+  );
   const postedLeaveInputs = new AttendancePostedLeaveInputsService();
   const days = new AttendanceDaysService(
     attendanceDayAuditWriter,
@@ -212,7 +233,7 @@ export function attendanceWorkflowServices() {
   );
   const dtrs = new DtrsService(dtrAuditWriter, documents);
   const approvals = new ApprovalsService(approvalAuditWriter, new ApprovalCompletionRegistry());
-  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs);
+  const periods = new AttendancePeriodsService(attendancePeriodAuditWriter, approvals, dtrs, days);
   return {
     documents,
     schedules,

@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope, scopeCovers, type EmployeeScope } from '../employee-scope';
 import {
   ApprovalCompletionRegistry,
   ApprovalServiceError,
@@ -11,6 +12,7 @@ import {
   type ApprovalCompletionRequest,
 } from '../approvals/approval.service';
 import { HolidayCalendarsService } from '../attendance-configuration/holiday-calendars.service';
+import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { WorkArrangementsService } from '../attendance-configuration/work-arrangements.service';
 import { WorkSchedulesService } from '../attendance-configuration/work-schedules.service';
 import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
@@ -25,6 +27,7 @@ import {
   type CreatePostedLeaveInput,
 } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import { DocumentsService } from '../documents/documents.service';
+import { MandatoryLeaveAssessmentsService } from '../mandatory-leave-assessments/mandatory-leave-assessments.service';
 import {
   findLeaveCatalogueEntry,
   parseLeaveRuleParameters,
@@ -39,7 +42,6 @@ import {
 } from '../leave-policies/leave-catalogue';
 import {
   evaluateLeaveEligibility,
-  NON_WORKING_HOLIDAY_DAY_TYPES,
   type LeaveEligibilityDateFact,
   type LeaveEligibilityOutcome,
 } from './leave-eligibility';
@@ -1278,6 +1280,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     private readonly postedLeaveInputs: AttendancePostedLeaveInputsService,
     @Inject(AttendanceCorrectionsService)
     private readonly attendanceCorrections: AttendanceCorrectionsService,
+    @Inject(MandatoryLeaveAssessmentsService)
+    private readonly mandatoryLeave: MandatoryLeaveAssessmentsService,
   ) {}
 
   onModuleInit(): void {
@@ -1311,7 +1315,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     context: RequestContext,
     filters: LeaveApplicationListFilters = {},
   ): Promise<LeaveApplicationSummary[]> {
-    const scope = this.requireScope(context, 'leave.applications.create');
+    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const records = await transaction.leaveApplication.findMany({
         where: {
@@ -1319,9 +1323,7 @@ export class LeaveApplicationsService implements OnModuleInit {
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.leaveTypeId ? { draftLeaveTypeId: filters.leaveTypeId } : {}),
           ...(filters.status ? { status: filters.status } : {}),
-          ...(scope === 'OWN'
-            ? { employee: { memberships: { some: { id: context.membershipId } } } }
-            : {}),
+          ...(scope.kind === 'SCOPED' ? { AND: [{ employeeId: { in: scope.employeeIds } }] } : {}),
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: filters.limit ?? 50,
@@ -1335,7 +1337,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     context: RequestContext,
     applicationId: string,
   ): Promise<LeaveApplicationDetail | null> {
-    const scope = this.requireScope(context, 'leave.applications.create');
+    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), (transaction) =>
       this.detailInTransaction(transaction, context, applicationId, scope),
     );
@@ -1429,7 +1431,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const application = await this.lockApplication(transaction, context.agencyId, applicationId);
       if (!application) throw applicationNotFound();
-      this.assertAccess(context, application, 'leave.applications.create');
+      await this.assertAccess(transaction, context, application, 'leave.applications.create');
       if (!['DRAFT', 'NEEDS_INFORMATION'].includes(application.status)) {
         throw workflowError('change draft facts', application.status);
       }
@@ -1519,19 +1521,13 @@ export class LeaveApplicationsService implements OnModuleInit {
   }
 
   async preview(context: RequestContext, applicationId: string): Promise<LeaveEligibilityOutcome> {
-    const scope = this.requireScope(context, 'leave.applications.create');
+    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const application = await transaction.leaveApplication.findFirst({
         where: { agencyId: context.agencyId, id: applicationId },
         select: applicationSelect,
       });
-      if (!application) throw applicationNotFound();
-      if (
-        scope === 'OWN' &&
-        !application.employee.memberships.some(
-          (membership) => membership.id === context.membershipId,
-        )
-      ) {
+      if (!application || !scopeCovers(scope, application.employeeId)) {
         throw applicationNotFound();
       }
       return this.evaluateApplication(transaction, context, application);
@@ -1571,7 +1567,7 @@ export class LeaveApplicationsService implements OnModuleInit {
       }
       const application = await this.lockApplication(transaction, context.agencyId, applicationId);
       if (!application) throw applicationNotFound();
-      this.assertAccess(context, application, 'leave.applications.submit');
+      await this.assertAccess(transaction, context, application, 'leave.applications.submit');
       if (!['DRAFT', 'NEEDS_INFORMATION'].includes(application.status)) {
         throw workflowError('submit', application.status);
       }
@@ -1656,9 +1652,14 @@ export class LeaveApplicationsService implements OnModuleInit {
         }
         employeeAttestedAt = new Date();
       } else {
-        if (!this.hasScope(context, 'leave.applications.submit', 'AGENCY')) {
+        if (
+          !this.hasScope(context, 'leave.applications.submit', 'AGENCY') &&
+          application.employee.memberships.some(
+            (membership) => membership.id === context.membershipId,
+          )
+        ) {
           throw new LeaveApplicationServiceError(
-            'Only an Agency recorder may attach an employee signed form.',
+            "Only an Agency recorder or the Employee's Supervisor may attach an employee signed form.",
             403,
             'LEAVE_APPLICATION_SIGNED_RECORDING_FORBIDDEN',
           );
@@ -1749,6 +1750,7 @@ export class LeaveApplicationsService implements OnModuleInit {
           routeCode,
           subjectType: 'LEAVE_APPLICATION',
           subjectId: applicationId,
+          subjectEmployeeId: application.employeeId,
           effectiveDate: formatDate(submissionDate),
         },
         idempotencyKey ?? undefined,
@@ -1923,7 +1925,7 @@ export class LeaveApplicationsService implements OnModuleInit {
       }
       const application = await this.lockApplication(transaction, context.agencyId, applicationId);
       if (!application) throw applicationNotFound();
-      this.assertAccess(context, application, 'leave.applications.withdraw');
+      await this.assertAccess(transaction, context, application, 'leave.applications.withdraw');
       if (!(WITHDRAWABLE_STATUSES as readonly string[]).includes(application.status)) {
         throw workflowError('withdraw', application.status);
       }
@@ -2045,7 +2047,12 @@ export class LeaveApplicationsService implements OnModuleInit {
       }
       const application = await this.lockApplication(transaction, context.agencyId, applicationId);
       if (!application) throw applicationNotFound();
-      this.assertAccess(context, application, 'leave.applications.request_cancel');
+      await this.assertAccess(
+        transaction,
+        context,
+        application,
+        'leave.applications.request_cancel',
+      );
       if (application.status !== 'APPROVED' && application.status !== 'POSTED') {
         throw workflowError('request cancellation', application.status);
       }
@@ -2366,7 +2373,12 @@ export class LeaveApplicationsService implements OnModuleInit {
           applicationId,
         );
         if (!application) throw applicationNotFound();
-        this.assertAccess(context, application, 'leave.applications.apply_cancellation');
+        await this.assertAccess(
+          transaction,
+          context,
+          application,
+          'leave.applications.apply_cancellation',
+        );
         const completed = await this.completedWrite(transaction, context, {
           action,
           idempotencyKey,
@@ -2457,6 +2469,19 @@ export class LeaveApplicationsService implements OnModuleInit {
             where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
             data: { status: 'CANCELLED' },
           });
+          await this.mandatoryLeave.reevaluateLeaveAccounts(
+            transaction,
+            context,
+            allocation.lines.flatMap(({ id, leaveAccountId, dateFrom }) =>
+              cancellation.priorStatus === 'POSTED' &&
+              leaveAccountId &&
+              cancellation.scopes.some(
+                ({ approvalAllocationLineId }) => approvalAllocationLineId === id,
+              )
+                ? [{ leaveAccountId, effectiveDate: dateFrom }]
+                : [],
+            ),
+          );
           await this.auditWriter.write(transaction, {
             agencyId: context.agencyId,
             actorUserId: context.userId,
@@ -2508,7 +2533,12 @@ export class LeaveApplicationsService implements OnModuleInit {
           applicationId,
         );
         if (!application) throw applicationNotFound();
-        this.assertAccess(context, application, 'leave.applications.apply_cancellation');
+        await this.assertAccess(
+          transaction,
+          context,
+          application,
+          'leave.applications.apply_cancellation',
+        );
         const cancellation = await transaction.leaveCancellation.findFirst({
           where: {
             agencyId: context.agencyId,
@@ -2858,6 +2888,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         input.comments ?? input.reason,
         idempotencyKey ?? undefined,
         { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'RECOMMEND' } },
+        application.employeeId,
       );
       const decisionId = stepApprovalDecisionId(summary, step.stepNo, context.membershipId);
       await transaction.leaveRecommendation.create({
@@ -3054,7 +3085,7 @@ export class LeaveApplicationsService implements OnModuleInit {
             applicationId,
           );
           if (!application) throw applicationNotFound();
-          this.assertAccess(context, application, 'leave.applications.post');
+          await this.assertAccess(transaction, context, application, 'leave.applications.post');
           const previous = await transaction.leavePosting.findFirst({
             where: { agencyId: context.agencyId, idempotencyKey },
           });
@@ -3298,6 +3329,13 @@ export class LeaveApplicationsService implements OnModuleInit {
             where: { agencyId_id: { agencyId: context.agencyId, id: applicationId } },
             data: { status: 'POSTED' },
           });
+          await this.mandatoryLeave.reevaluateLeaveAccounts(
+            transaction,
+            context,
+            allocation.lines.flatMap(({ leaveAccountId, dateFrom }) =>
+              leaveAccountId ? [{ leaveAccountId, effectiveDate: dateFrom }] : [],
+            ),
+          );
           await this.auditWriter.write(transaction, {
             agencyId: context.agencyId,
             actorUserId: context.userId,
@@ -3417,6 +3455,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         input.reason,
         idempotencyKey ?? undefined,
         { kind: LEAVE_APPROVAL_EFFECT_KIND, payload: { command: 'RETURN' } },
+        application.employeeId,
       );
       if (summary.status !== 'RETURNED') throw routeInvalid();
       await this.releaseVersionCommitments(transaction, context.agencyId, version.id);
@@ -3460,7 +3499,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const application = await this.lockApplication(transaction, context.agencyId, applicationId);
       if (!application) throw applicationNotFound();
-      this.assertAccess(context, application, 'leave.applications.create');
+      await this.assertAccess(transaction, context, application, 'leave.applications.create');
       if (!application.currentVersionId) {
         throw workflowError('attach a submitted document', application.status);
       }
@@ -3502,19 +3541,14 @@ export class LeaveApplicationsService implements OnModuleInit {
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     applicationId: string,
-    scope?: 'AGENCY' | 'OWN',
+    scope?: EmployeeScope,
   ): Promise<LeaveApplicationDetail | null> {
     const record = await transaction.leaveApplication.findFirst({
       where: { agencyId: context.agencyId, id: applicationId },
       select: applicationSelect,
     });
     if (!record) return null;
-    if (
-      scope === 'OWN' &&
-      !record.employee.memberships.some((membership) => membership.id === context.membershipId)
-    ) {
-      return null;
-    }
+    if (scope && !scopeCovers(scope, record.employeeId)) return null;
     const [draftPeriods, draftDocuments, versions, cancellations, events] = await Promise.all([
       transaction.leaveApplicationDraftPeriod.findMany({
         where: { agencyId: context.agencyId, leaveApplicationId: applicationId },
@@ -3889,9 +3923,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         holidayEntries = calendar.entries
           .filter((entry) => entry.holidayDate === dateString)
           .map((entry) => ({ holidayDate: entry.holidayDate, dayType: entry.dayType }));
-        nonWorkingHoliday = holidayEntries.some((entry) =>
-          (NON_WORKING_HOLIDAY_DAY_TYPES as readonly string[]).includes(entry.dayType),
-        );
+        nonWorkingHoliday = holidayEntries.some((entry) => isNonWorkingHoliday(entry.dayType));
       }
       const matched = workScheduleVersion.dayRules.find(
         (candidate) => candidate.weekday === isoWeekday(date),
@@ -3978,9 +4010,10 @@ export class LeaveApplicationsService implements OnModuleInit {
     permission: string,
   ) {
     if (employeeId) {
-      if (!this.hasScope(context, permission, 'AGENCY')) {
+      const scope = await resolveEmployeeScope(context, permission, transaction);
+      if (!scope || !scopeCovers(scope, employeeId)) {
         throw new LeaveApplicationServiceError(
-          'Only an Agency recorder may prepare a Leave Application for another Employee.',
+          "Only an Agency recorder or the Employee's Supervisor may prepare a Leave Application for another Employee.",
           403,
           'LEAVE_APPLICATION_EMPLOYEE_SCOPE_FORBIDDEN',
         );
@@ -4861,7 +4894,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     leaveAccountId: string,
   ): Promise<void> {
     await transaction.$queryRaw(
-      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${leaveAccountId} AS uuid) FOR UPDATE`,
+      Prisma.sql`SELECT "id" FROM "leave_accounts" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${leaveAccountId} AS uuid) FOR NO KEY UPDATE`,
     );
   }
 
@@ -5030,9 +5063,9 @@ export class LeaveApplicationsService implements OnModuleInit {
     return completed;
   }
 
-  private requireScope(context: RequestContext, permission: string): 'AGENCY' | 'OWN' {
-    if (this.hasScope(context, permission, 'AGENCY')) return 'AGENCY';
-    if (this.hasScope(context, permission, 'OWN')) return 'OWN';
+  private async requireScope(context: RequestContext, permission: string): Promise<EmployeeScope> {
+    const scope = await resolveEmployeeScope(context, permission);
+    if (scope) return scope;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required.`,
       403,
@@ -5056,18 +5089,14 @@ export class LeaveApplicationsService implements OnModuleInit {
     }
   }
 
-  private assertAccess(
+  private async assertAccess(
+    transaction: Prisma.TransactionClient,
     context: RequestContext,
     record: ApplicationRecord,
     permission: string,
-  ): void {
-    if (this.hasScope(context, permission, 'AGENCY')) return;
-    if (
-      this.hasScope(context, permission, 'OWN') &&
-      record.employee.memberships.some((membership) => membership.id === context.membershipId)
-    ) {
-      return;
-    }
+  ): Promise<void> {
+    const scope = await resolveEmployeeScope(context, permission, transaction);
+    if (scope && scopeCovers(scope, record.employeeId)) return;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required for this Leave Application.`,
       403,

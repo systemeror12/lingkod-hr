@@ -17,6 +17,7 @@ import {
 import type { Request, Response } from 'express';
 import { getConfig } from '@lingkod-hr/config';
 import { AuthGuard, cookieValue } from './auth.guard';
+import { SkipIdleRenewal } from './auth.decorators';
 import { AuthMeResponseDto } from './auth.dto';
 import {
   AuthService,
@@ -148,7 +149,14 @@ export class AuthController {
         ...cookieOptions(secure),
         maxAge: 8 * 60 * 60 * 1000,
       });
-      response.status(HttpStatus.OK).json({ status: 'SIGNED_IN' });
+      // A Password Reset that spent a Recovery Code owes this sign-in the remaining-codes prompt.
+      response
+        .status(HttpStatus.OK)
+        .json(
+          session.recoveryCodesRemaining === null
+            ? { status: 'SIGNED_IN' }
+            : { status: 'SIGNED_IN', recoveryCodesRemaining: session.recoveryCodesRemaining },
+        );
     } catch (error: unknown) {
       this.clearEndedPendingSignIn(error, response);
       translateError(error);
@@ -537,10 +545,11 @@ export class AuthController {
 
   /**
    * Proves again who the signed-in User is, with the same proof as sign-in, and opens the
-   * Reauthentication Window for 5 minutes.
+   * Reauthentication Window for 5 minutes. It isn't activity: the idle timer and `expiresAt` stay.
    */
   @Post('reauthenticate')
   @UseGuards(AuthGuard)
+  @SkipIdleRenewal()
   async reauthenticate(
     @Body() body: unknown,
     @Req() request: AuthenticatedRequest,
@@ -705,7 +714,13 @@ export class AuthController {
       ...cookieOptions(secure),
       maxAge: 8 * 60 * 60 * 1000,
     });
-    response.status(HttpStatus.OK).json({ status: 'ACTIVATED' });
+    response
+      .status(HttpStatus.OK)
+      .json(
+        done.recoveryCodesRemaining === null
+          ? { status: 'ACTIVATED' }
+          : { status: 'ACTIVATED', recoveryCodesRemaining: done.recoveryCodesRemaining },
+      );
     for (const notice of done.notices) this.noticeAfterResponse(response, notice);
   }
 
@@ -717,6 +732,7 @@ export class AuthController {
         'ACTIVATION_EXPIRED',
         'INVITATION_INVALID',
         'INVITATION_EXPIRED',
+        'INVITATION_ROLE_UNAVAILABLE',
         'MEMBERSHIP_EXISTS',
         'PASSWORD_RESET_REQUIRED',
         'USER_LOCKED',
