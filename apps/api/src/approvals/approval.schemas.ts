@@ -24,6 +24,15 @@ const routeAssignmentSchema = z.discriminatedUnion('kind', [
       roleCode: z.string().trim().min(1).max(120),
     })
     .strict(),
+  // The subject Employee's one Supervisor (ADR 0007) on the request date. With
+  // no Supervisor, or more than one, the step falls back to `roleCode` as a
+  // ROLE assignment.
+  z
+    .object({
+      kind: z.literal('SUBJECT_SUPERVISOR'),
+      roleCode: z.string().trim().min(1).max(120),
+    })
+    .strict(),
 ]);
 
 const permissionCodeSchema = z.string().trim().min(1).max(160);

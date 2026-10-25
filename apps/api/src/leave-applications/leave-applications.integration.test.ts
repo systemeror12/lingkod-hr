@@ -2704,9 +2704,10 @@ it.skipIf(!enabled)(
         await applications.decide(approverContext, id, { decision: 'APPROVE' });
         return id;
       }
+      // Distinct Work Dates, so the whole cancellation below leaves no other leave on its date.
       const competingIds = [
         await approveConcurrentApplication(nextMonday(35)),
-        await approveConcurrentApplication(nextMonday(40)),
+        await approveConcurrentApplication(addDays(nextMonday(35), 1)),
       ];
       const unavailableCredits = await admin.leaveLedgerEntry.create({
         data: {

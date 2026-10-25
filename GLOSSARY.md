@@ -224,6 +224,14 @@ _Avoid_: Platform administrator, HR administrator
 An agency-scoped role responsible for broad human-resource management without unrestricted system-administration or payroll authority. In Attendance, it inherits HR Officer access and additionally owns configuration, authorized inputs, recalculation, period administration, and locking.
 _Avoid_: Agency Administrator, HRMO Administrator, Attendance Administrator
 
+**Supervisor**:
+An agency-scoped role for the incumbent of an Organization Unit's head Plantilla Position. It acts only on that person's Direct Reports.
+_Avoid_: Manager, Approving Official
+
+**Direct Report**:
+An Employee serving in an Organization Unit the Supervisor heads, or the head of one of its immediate child units, on the date of the read. It covers one level only (ADR 0007).
+_Avoid_: Team member, subordinate, everyone below
+
 **HR Officer**:
 An agency-scoped operational HR role that inherits Employee access and may review, return, and approve attendance records within assigned scope. Attendance settings and period locking remain HR Administrator responsibilities.
 _Avoid_: Attendance Administrator, HR Certifying Officer

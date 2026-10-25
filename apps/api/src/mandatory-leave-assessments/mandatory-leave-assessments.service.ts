@@ -4,6 +4,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope } from '../employee-scope';
 import { findLeaveCatalogueEntry } from '../leave-policies/leave-catalogue';
 import {
   mandatoryLeaveAssessmentCursorSchema,
@@ -135,7 +136,6 @@ const assessmentSelect = {
     select: {
       employeeNumber: true,
       legalName: true,
-      memberships: { select: { id: true } },
     },
   },
   successors: { select: { id: true } },
@@ -448,7 +448,7 @@ export class MandatoryLeaveAssessmentsService {
     filters: MandatoryLeaveAssessmentFilters = {},
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveAssessmentPage> {
-    const scope = requireReadScope(context);
+    const readable = await readableEmployeeIds(context);
     const limit = page.limit ?? 25;
     const cursor = page.cursor ? decodeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
@@ -458,9 +458,7 @@ export class MandatoryLeaveAssessmentsService {
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.year ? { assessmentYear: filters.year } : {}),
           ...(filters.result ? { result: filters.result } : {}),
-          ...(scope === 'OWN'
-            ? { employee: { memberships: { some: { id: context.membershipId } } } }
-            : {}),
+          ...(readable ? { employeeId: { in: readable } } : {}),
           ...(cursor ? { AND: [afterCursor(cursor)] } : {}),
         },
         orderBy: [
@@ -501,14 +499,14 @@ export class MandatoryLeaveAssessmentsService {
     assessmentYear: number,
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveEmployeeLatestPage> {
-    const scope = requireReadScope(context);
+    const readable = await readableEmployeeIds(context);
     const limit = page.limit ?? 25;
     const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const employees = await transaction.employee.findMany({
         where: {
           agencyId: context.agencyId,
-          ...(scope === 'OWN' ? { memberships: { some: { id: context.membershipId } } } : {}),
+          ...(readable ? { id: { in: readable } } : {}),
           ...(cursor
             ? {
                 OR: [
@@ -556,19 +554,14 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentId: string,
   ): Promise<MandatoryLeaveAssessmentDetail | null> {
-    const scope = requireReadScope(context);
+    const readable = await readableEmployeeIds(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const record = await transaction.mandatoryLeaveAssessment.findFirst({
         where: { agencyId: context.agencyId, id: assessmentId },
         select: assessmentSelect,
       });
       if (!record) return null;
-      if (
-        scope === 'OWN' &&
-        !record.employee.memberships.some((membership) => membership.id === context.membershipId)
-      ) {
-        return null;
-      }
+      if (readable && !readable.includes(record.employeeId)) return null;
       return {
         ...summaryOf(record),
         materialFingerprint: record.materialFingerprint,
@@ -854,14 +847,21 @@ function hasScope(context: RequestContext, code: string, scopePolicy: string): b
   );
 }
 
-function requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {
-  if (hasScope(context, 'leave.mandatory_assessments.read', 'AGENCY')) return 'AGENCY';
-  if (hasScope(context, 'leave.mandatory_assessments.read', 'OWN')) return 'OWN';
-  throw new MandatoryLeaveAssessmentServiceError(
-    'The leave.mandatory_assessments.read permission is required.',
-    403,
-    'MANDATORY_LEAVE_ASSESSMENT_READ_FORBIDDEN',
-  );
+/**
+ * The Employees whose assessments the caller may read, or null for the whole
+ * Agency. OWN adds the caller's linked Employee; DIRECT_REPORTS adds that
+ * Employee's direct reports today.
+ */
+async function readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
+  const scope = await resolveEmployeeScope(context, 'leave.mandatory_assessments.read');
+  if (!scope) {
+    throw new MandatoryLeaveAssessmentServiceError(
+      'The leave.mandatory_assessments.read permission is required.',
+      403,
+      'MANDATORY_LEAVE_ASSESSMENT_READ_FORBIDDEN',
+    );
+  }
+  return scope.kind === 'AGENCY' ? null : scope.employeeIds;
 }
 
 function summaryOf(record: AssessmentRecord): MandatoryLeaveAssessmentSummary {
