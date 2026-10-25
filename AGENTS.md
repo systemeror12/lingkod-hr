@@ -130,12 +130,12 @@ first, then leave the setup reproducible for the next machine.
 
 ### Issue tracker
 
-Issues live in GitHub Issues; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues for `systemeror12/lingkod-hr`, through `gh`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Use the default canonical triage labels. See `docs/agents/triage-labels.md`.
+The default triage labels, with no remapped roles. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` and `docs/adr/` at the root. See `docs/agents/domain.md`.
