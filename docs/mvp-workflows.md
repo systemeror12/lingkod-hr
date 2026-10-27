@@ -555,8 +555,8 @@ flowchart TD
     O --> P[Check COC balance and service needs]
     P --> Q{Supervisor and authorized official approve?}
     Q -- No --> R[Reject CTO request]
-    Q -- Yes --> S[Create COC usage entry]
-    S --> T[Update attendance as approved CTO]
+    Q -- Yes --> S[Approval posts COC usage by Valid Until]
+    S --> T[Same transaction creates Attendance CTO inputs]
 ```
 
 Claimed, authorized, actual, certified, credited, used, and paid values are stored separately.

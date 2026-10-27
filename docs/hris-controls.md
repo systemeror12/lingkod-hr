@@ -631,7 +631,8 @@ APPLIED
 | SUBMITTED         | Approve locked-period correction         | FOR_AUTHORIZATION | HR Officer / HR Administrator | `attendance.corrections.approve`          | Same separation and preview checks; at least one affected period is locked                             | Record factual approval; notify HR Administrator authorizer                                  |
 | FOR_AUTHORIZATION | Authorize and apply                      | APPLIED           | HR Administrator              | `attendance.corrections.authorize_locked` | Authorizer differs from factual reviewer and other prohibited actors; locked predecessors unchanged    | Atomically create grouped adjustment, effects, and successor day and period versions         |
 | None              | Accept posted-leave handoff              | FOR_AUTHORIZATION | Leave canceller               | `leave.applications.apply_cancellation`   | Applied Leave Cancellation changes posted leave on a locked Work Date; evidence names the cancellation | Record `POSTED_LEAVE_INPUT` REPLACE or VOID; the approved cancellation is the factual review |
-| FOR_AUTHORIZATION | Record blocking reason                   | FOR_AUTHORIZATION | HR Administrator              | `attendance.corrections.authorize_locked` | `POSTED_LEAVE_INPUT` only; reason required; same separation as authorization                           | Leave shows the reason; the Leave fact and locked records stay unchanged                     |
+| None              | Accept CTO handoff                       | FOR_AUTHORIZATION | CTO canceller                 | `overtime.cto.cancel`                     | CTO cancellation changes a CTO input on a locked Work Date; evidence names the cancellation            | Record `CTO_INPUT` REPLACE or VOID; the approved cancellation is the factual review          |
+| FOR_AUTHORIZATION | Record blocking reason                   | FOR_AUTHORIZATION | HR Administrator              | `attendance.corrections.authorize_locked` | `POSTED_LEAVE_INPUT` or `CTO_INPUT` only; reason required; same separation as authorization            | The source shows the reason; its fact and locked records stay unchanged                      |
 | SUBMITTED         | Reject                                   | REJECTED          | HR Officer / HR Administrator | `attendance.corrections.reject`           | Reason required                                                                                        | Notify submitter                                                                             |
 | DRAFT             | Cancel                                   | CANCELLED         | Employee                      | `attendance.corrections.cancel`           | Not submitted                                                                                          | Close request                                                                                |
 | SUBMITTED         | Cancel                                   | CANCELLED         | Employee / HR Administrator   | `attendance.corrections.cancel`           | Not yet decided or authorized withdrawal                                                               | Stop approval                                                                                |
@@ -870,7 +871,7 @@ CERTIFIED
 NOT_CERTIFIED
 ```
 
-Recording creates the record; no expected records are created in advance. Each covered Employee has at most one Overtime Service Record per Work Date that is not `NOT_CERTIFIED`, across all authorities. Claimed, authorized, actual, and certified hours are stored separately.
+Recording creates the record; no expected records are created in advance. Each covered Employee has at most one Overtime Service Record per Work Date that is not `NOT_CERTIFIED`, across all authorities. Claimed, authorized, actual, and certified hours are stored separately. Actual and certified hours are whole minutes, as Attendance counts them (ADR 0005), so the COC award needs no rounding (ADR 0009).
 
 Actual Overtime Hours are read through Attendance's application service from the Attendance Day version in the latest locked Attendance Period Version covering the Work Date: its outside-schedule `WORKED` minutes and its day classification. Hours inside a compressed-workweek day's expected duty are not overtime. A record whose Work Date has no locked Attendance cannot be submitted.
 
@@ -900,7 +901,11 @@ DISCARDED
 
 A Certificate of COC Earned awards COC for one Employee's certified Overtime Service Records under `COC` authorities whose Work Dates fall in one calendar month. The Head of Office grants it each month, and the HRMO computes it (JC 2, s. 2004 items 5.8, 6.3, 7.1.2, Annex A). An Employee may have more than one certificate for a month, and the monthly cap applies across them. A certified record can be a line on only one certificate that is not `DISCARDED`.
 
-The COC module applies the earning ratio, caps, and validity. For each line, Overtime passes the certified hours, day classification, and service record as the source. The COC module returns the credited hours and any excess, which stays certified but uncredited. The arrival and two-hour minimum in JC 2, s. 2015 item 10.1 governs overtime work with pay, so it does not apply to COC. Service on a whole-day work suspension or under a partial-day suspension is refused with a typed reason, because no authority sets its ratio.
+The COC module applies the earning ratio, caps, and validity. For each line, Overtime passes the certified minutes, day classification, and service record as the source. The COC module returns the credited minutes and any excess, which stays certified but uncredited.
+
+- The ratio is 1.0 for a scheduled workday, including `SPECIAL_WORKING`, and 1.5 for a Day Rule `REST` day, `REGULAR_HOLIDAY`, `SPECIAL_NON_WORKING`, and `LOCAL_HOLIDAY` (JC 2, s. 2004 items 5.4.1–5.4.2). A CWW non-working day is a `REST` day. A `LOCAL_HOLIDAY` takes 1.5 as a scheduled day off under ADR 0006, whatever issuance it rests on.
+- The 40-hour monthly cap counts COC after the ratio, across all approved certificates for the earned month. The 120-hour cap counts the account's balance as of the approval date. Each line is credited the least of its COC, the month's remaining 2,400 minutes, and the balance's remaining 7,200 minutes, applied in Work Date order.
+- The certificate's Valid Until is December 31 of the year after its earned month (JC 2-A, s. 2005 item 2.0). CSC MC No. 11, s. 2024 restated the caps and validity for one event and amends neither joint circular, so it is not applied. Approval is refused with a typed reason when the Valid Until has already passed. The arrival and two-hour minimum in JC 2, s. 2015 item 10.1 governs overtime work with pay, so it does not apply to COC. Service on a whole-day work suspension or under a partial-day suspension is refused with a typed reason, because no authority sets its ratio.
 
 | Current      | Action  | Next         | Actor              | Permission                          | Validations                                                                                 | Side effects                                                                                      |
 | ------------ | ------- | ------------ | ------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
@@ -915,25 +920,28 @@ An approved certificate is immutable. Its COC is corrected only by a COC adjustm
 
 ## 5.18 COC Ledger Entry
 
-Entry types:
+A COC Account covers one Employee and one continuous period of employment in the Agency. The first award opens it. A COC Ledger Entry is a signed number of minutes, at one decimal place, with an effective date, a typed source and posting key, and the `valid_until` of the COC it changes. There is no entry-type enum; the source says what the entry is. Posted entries are immutable. A reversal exactly negates its original in the same account, and an entry is reversed at most once (ADR 0009).
 
-```text
-EARNED
-USED
-ADJUSTMENT
-EXPIRATION
-REVERSAL
-```
+The ratios, caps, validity, CTO blocks, and five-day limit are national rules in code, as in ADR 0006, and each award, use, expiry, and forfeiture records the rule it applied. A use, adjustment, expiry, or forfeiture draws from COC sharing one Valid Until. A use draws first from the earliest-expiring COC still valid on its date, so one CTO splits into at most two entries. No source sets a draw order; earliest-expiring first is a Project Decision (#318), because any other order forfeits credit the Employee could have used.
 
-COC entries are immutable. Corrections shall create adjusting or reversing entries.
+| Action                  | Actor                                              | Permission             | Validation                                                                                              | Side effect                                                          |
+| ----------------------- | -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Award COC               | System, on approval of a Certificate of COC Earned | Internal               | Approved certificate; ratio, caps, and validity applied                                                 | Open the account if none; one positive entry per line credited       |
+| Use COC                 | System, on approval of a CTO Request               | Internal               | Balance valid on each CTO date covers the minutes                                                       | Negative entries, effective on the CTO dates, by Valid Until         |
+| Adjust COC              | HR Administrator / Leave Administrator             | `overtime.coc.adjust`  | Negative only; reason and supporting Document Version; chosen Valid Until, earliest-expiring by default | Negative entry                                                       |
+| Reverse incorrect entry | HR Administrator / Leave Administrator             | `overtime.coc.reverse` | Original is a negative entry not already reversed; reason and supporting Document Version               | Linked reversal restoring the same Valid Until                       |
+| Expire COC              | System, scheduled                                  | Internal               | Valid Until has passed and COC remains                                                                  | One negative entry per Valid Until, effective the following day      |
+| Forfeit COC             | System, on separation or transfer out              | Internal               | Separation Case effective                                                                               | One negative entry per Valid Until with COC remaining; close account |
 
-| Action                  | Actor                                              | Permission             | Validation                                                                | Side effect             |
-| ----------------------- | -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------- | ----------------------- |
-| Post earned COC         | System, on approval of a Certificate of COC Earned | Internal               | Approved certificate; ratio, caps, and validity applied by the COC module | Increase balance        |
-| Post CTO usage          | Leave Administrator / System                       | `overtime.coc.use`     | Approved CTO request and sufficient balance                               | Decrease balance        |
-| Adjust COC              | HRMO Approver                                      | `overtime.coc.adjust`  | Reason and supporting authority                                           | Create adjustment entry |
-| Expire COC              | System / HRMO                                      | `overtime.coc.expire`  | Effective rule version                                                    | Decrease balance        |
-| Reverse incorrect entry | HRMO Approver                                      | `overtime.coc.reverse` | Original entry identified                                                 | Create linked reversal  |
+New credit comes only from a Certificate of COC Earned (ADR 0008). Credit returns only when a negative entry is reversed, such as an adjustment or an expiry posted in error; CTO usage returns through CTO cancellation. A reversal that restores COC whose Valid Until has already passed is followed by an expiry in the same transaction. Expiry is idempotent per account and Valid Until, so a late or repeated run posts nothing twice.
+
+A balance as of a date counts entries effective on or before it. The available balance for a CTO date also subtracts future-dated uses.
+
+No authority addresses these, so none has an automatic effect, and any change is an authority-backed adjustment:
+
+- the balance after promotion to a position ineligible for overtime (JC 2, s. 2004 item 5.7.3 withholds retention but states no result); Overtime eligibility already stops new earning;
+- use after return from detail or secondment;
+- earning, validity, or use during leave without pay.
 
 ---
 
@@ -944,25 +952,33 @@ Statuses:
 ```text
 DRAFT
 SUBMITTED
-FOR_RECOMMENDATION
 FOR_APPROVAL
 APPROVED
 REJECTED
-POSTED
 CANCELLED
 ```
 
-| Current      | Action            | Next         | Actor                        | Permission               | Validations                    | Side effects                          |
-| ------------ | ----------------- | ------------ | ---------------------------- | ------------------------ | ------------------------------ | ------------------------------------- |
-| None         | Create request    | DRAFT        | Employee                     | `overtime.cto.create`    | COC account exists             | Save                                  |
-| DRAFT        | Submit            | SUBMITTED    | Employee                     | `overtime.cto.submit`    | Requested units valid          | Start review                          |
-| SUBMITTED    | Recommend         | FOR_APPROVAL | Supervisor                   | `overtime.cto.recommend` | Service needs and balance      | Route approval                        |
-| SUBMITTED    | Return            | DRAFT        | Supervisor                   | `overtime.cto.return`    | Comment required               | Notify employee                       |
-| FOR_APPROVAL | Approve           | APPROVED     | Authorized Approver          | `overtime.cto.approve`   | Available COC                  | Reserve units                         |
-| FOR_APPROVAL | Reject            | REJECTED     | Authorized Approver          | `overtime.cto.reject`    | Reason required                | Release reservation                   |
-| APPROVED     | Post usage        | POSTED       | Leave Administrator / System | `overtime.cto.post`      | Date reached; attendance valid | Create COC usage and attendance entry |
-| DRAFT        | Cancel            | CANCELLED    | Employee                     | `overtime.cto.cancel`    | Not submitted                  | Close                                 |
-| APPROVED     | Cancel before use | CANCELLED    | Authorized Approver          | `overtime.cto.cancel`    | Policy permits                 | Release reservation                   |
+A CTO Request names Work Dates of one Employee, each `WHOLE` or `HALF`. A whole date charges the Work Date's expected-duty minutes, and a half date half of them, with a stated start and end time inside expected duty. That gives 480 or 240 minutes on an 8-hour day and 600 or 300 on a 10-hour compressed day: the "half or full day" blocks of JC 2, s. 2004 item 5.9.1, taken from the Employee's Work Schedule Version rather than configured. A date without expected duty is refused. A request covers at most five consecutive Work Dates (item 5.9.2). CTO must be approved before it is taken (item 5.9.3).
+
+Approval posts the usage and creates one Attendance CTO input per Work Date in the same transaction (ADR 0009). There is no commitment and no separate posting.
+
+| Current                 | Action    | Next                                   | Actor                                | Permission               | Validations                                                                                                    | Side effects                                                                                                |
+| ----------------------- | --------- | -------------------------------------- | ------------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| None                    | Create    | DRAFT                                  | Employee (own) / Leave Administrator | `overtime.cto.create`    | Active COC Account                                                                                             | Save draft                                                                                                  |
+| DRAFT                   | Submit    | SUBMITTED                              | Employee (own) / Leave Administrator | `overtime.cto.submit`    | Units valid against the schedule; at most five consecutive Work Dates                                          | Start the shared Approval Route                                                                             |
+| SUBMITTED               | Recommend | FOR_APPROVAL                           | Supervisor (Direct Reports)          | `overtime.cto.recommend` | Service needs                                                                                                  | Route to approval                                                                                           |
+| SUBMITTED, FOR_APPROVAL | Return    | DRAFT                                  | Supervisor / Approving Official      | `overtime.cto.return`    | Comment required                                                                                               | Notify Employee                                                                                             |
+| SUBMITTED, FOR_APPROVAL | Withdraw  | CANCELLED                              | Employee (own)                       | `overtime.cto.withdraw`  | Not approved                                                                                                   | Close                                                                                                       |
+| FOR_APPROVAL            | Approve   | APPROVED                               | Approving Official                   | `overtime.cto.approve`   | Approver is not the Employee; balance valid on each date covers it; no Work Date in a locked Attendance Period | Post usage by Valid Until; create Attendance CTO inputs                                                     |
+| FOR_APPROVAL            | Reject    | REJECTED                               | Approving Official                   | `overtime.cto.reject`    | Reason required                                                                                                | Notify Employee                                                                                             |
+| DRAFT                   | Discard   | CANCELLED                              | Employee (own) / Leave Administrator | `overtime.cto.create`    | Not submitted                                                                                                  | Close                                                                                                       |
+| APPROVED                | Cancel    | CANCELLED, or APPROVED if dates remain | Approving Official                   | `overtime.cto.cancel`    | Kind `RECALL` or `EMPLOYEE_REQUEST`; reason required; whole request or named Work Dates                        | Reverse the cancelled dates' usage entries; supersede each cancelled date's input, or hand off a locked one |
+
+The Head of Office may recall approved CTO in the exigency of the service (JC 2, s. 2004 item 5.9.3), so recall is a cancellation by the Approving Official. An Employee asks for cancellation outside the system. A reschedule is a new CTO Request.
+
+For a cancelled Work Date in an unlocked period, Attendance creates a zero successor input and recalculates. In a locked period, Attendance accepts a `CTO_INPUT` Attendance Correction at `FOR_AUTHORIZATION`, handled like the posted-leave handoff in §5.12: the approved cancellation is its factual basis, and a different HR Administrator authorizes it through the ordinary Locked Attendance Adjustment.
+
+CTO time is excused with full pay and benefits (item 4.0). Attendance places it as covered, paid time with no deficit.
 
 ---
 
@@ -1463,10 +1479,15 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `overtime.coc_certificates.approve` |        C |          — |        — |              — |                  A |                — |           — |       — |
 | `overtime.coc.read`                 |        A |          S |        O |              — |                  R |                R |           A |       R |
 | `overtime.coc.adjust`               |        A |          — |        — |              — |                  C |                — |           A |       — |
-| `overtime.cto.create`               |        C |          S |        O |              — |                  — |                — |           A |       — |
+| `overtime.coc.reverse`              |        A |          — |        — |              — |                  C |                — |           A |       — |
+| `overtime.cto.create`               |        C |          — |        O |              — |                  — |                — |           A |       — |
+| `overtime.cto.submit`               |        C |          — |        O |              — |                  — |                — |           A |       — |
+| `overtime.cto.withdraw`             |        — |          — |        O |              — |                  — |                — |           — |       — |
 | `overtime.cto.recommend`            |        C |          S |        — |              — |                  — |                — |           — |       — |
+| `overtime.cto.return`               |        C |          S |        — |              — |                  A |                — |           — |       — |
 | `overtime.cto.approve`              |        C |          — |        — |              — |                  A |                — |           — |       — |
-| `overtime.cto.post`                 |        C |          — |        — |              — |                  — |                — |           A |       — |
+| `overtime.cto.reject`               |        C |          — |        — |              — |                  A |                — |           — |       — |
+| `overtime.cto.cancel`               |        C |          — |        — |              — |                  A |                — |           — |       — |
 
 ---
 
