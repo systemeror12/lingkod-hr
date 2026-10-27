@@ -654,6 +654,32 @@ _Avoid_: Terminal benefit eligibility, terminal payment approval
 An immutable Leave-owned preservation of the exact separation, service, account-balance, ledger-cutoff, authority, evidence, and salary-source references needed for a later terminal-leave claim and calculation.
 _Avoid_: Terminal leave computation, Payroll Input, leave ledger posting
 
+## Overtime and COC
+
+**Overtime Authority**:
+The prior, per-case authorization by an Approving Official for named Appointed Personnel to render overtime on stated Work Dates, for a stated purpose and up to authorized hours, together with the compensation method, COC or overtime pay, fixed at approval.
+_Avoid_: Office order, OT request, overtime approval
+
+**Overtime Service Record**:
+One covered Employee's claim of overtime service on one Work Date under an Overtime Authority, with its accomplishment, Actual Overtime Hours, and certification outcome.
+_Avoid_: Rendered service, OT claim, overtime entry
+
+**Actual Overtime Hours**:
+The outside-schedule worked time of the Attendance Day version in the latest locked Attendance Period Version for one Employee and Work Date. It caps certification, and Overtime never edits it.
+_Avoid_: Candidate hours, claimed hours, overtime minutes
+
+**Certified Overtime Hours**:
+The hours a certifier other than the Employee attests were rendered as overtime, net of breaks, within the Actual Overtime Hours and the Employee's authorized hours.
+_Avoid_: Approved hours, credited hours
+
+**Certificate of COC Earned**:
+The monthly award, prepared by HR and approved by an Approving Official, that credits COC for one Employee's Certified Overtime Hours on Work Dates in one calendar month. It is the only way COC is earned.
+_Avoid_: Compensation decision, COC award, COC posting
+
+**Compensatory Overtime Credit (COC)**:
+Hours of credit an Employee earns for certified overtime without overtime pay, usable only as Compensatory Time-Off within its validity and never converted to cash or leave credits.
+_Avoid_: Overtime credit, comp time, CTO balance
+
 ## Workforce Relationships
 
 **JO/COS Worker**:

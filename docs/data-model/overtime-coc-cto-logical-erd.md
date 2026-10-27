@@ -30,12 +30,12 @@ erDiagram
     OVERTIME_AUTHORITIES ||--o{ OVERTIME_AUTHORITY_EMPLOYEES : covers
     EMPLOYEES ||--o{ OVERTIME_AUTHORITY_EMPLOYEES : included
     OVERTIME_AUTHORITY_EMPLOYEES ||--o{ OVERTIME_SERVICE_RECORDS : renders
-    OVERTIME_SERVICE_RECORDS ||--o| OVERTIME_COMPENSATION_DECISIONS : resolved_by
+    OVERTIME_SERVICE_RECORDS ||--o{ COC_EARNED_CERTIFICATE_LINES : credited_by
+    COC_EARNED_CERTIFICATES ||--|{ COC_EARNED_CERTIFICATE_LINES : contains
     EMPLOYEES ||--o{ COC_ACCOUNTS : holds
     COC_ACCOUNTS ||--o{ COC_LEDGER_ENTRIES : records
     COC_ACCOUNTS ||--o{ CTO_REQUESTS : funds
-    OVERTIME_COMPENSATION_DECISIONS ||--o| COC_LEDGER_ENTRIES : may_create
-    OVERTIME_COMPENSATION_DECISIONS ||--o| PAYROLL_INPUTS : may_create
+    COC_EARNED_CERTIFICATES ||--o{ COC_LEDGER_ENTRIES : awards
 ```
 
 # Entity definitions
@@ -51,17 +51,20 @@ Prior authorization for overtime service
 | requesting_unit_id | uuid | No | FK organization_units | Office |
 | authority_no | string | No |  | Reference |
 | purpose | string | No |  | Necessity |
-| date_from | datetime | No |  | Start |
-| date_to | datetime | No |  | End |
-| proposed_compensation_method | enum | No |  | OVERTIME_PAY, COC, TO_BE_DETERMINED |
-| funding_reference | string | Yes |  | Funding |
-| status | enum | No |  | DRAFT, SUBMITTED, FOR_REVIEW, APPROVED, REJECTED, ACTIVE, COMPLETED, CANCELLED |
+| work_date_from | date | No |  | First Work Date |
+| work_date_to | date | No |  | Last Work Date |
+| compensation_method | enum | No |  | COC, OVERTIME_PAY; proposed in draft, fixed at approval |
+| funding_reference | string | Yes |  | Required for OVERTIME_PAY |
+| status | enum | No |  | DRAFT, SUBMITTED, FOR_REVIEW, APPROVED, REJECTED, CANCELLED |
 | approved_by_membership_id | uuid | Yes | FK agency_memberships | Approver |
+| approved_at | datetime | Yes |  | Approval |
 
 **Constraints and indexes**
 
 - Unique `(agency_id, authority_no)`.
-- End must be after start.
+- Last Work Date on or after the first.
+- Approval refuses `OVERTIME_PAY` until Payroll supports it (#347).
+- In effect and ended are derived from the Work Dates, not stored.
 
 **Deletion behavior:** Retain.
 ## `overtime_authority_employees`
@@ -74,9 +77,9 @@ Employees covered by authority
 | agency_id | uuid | No | FK agencies | Tenant |
 | overtime_authority_id | uuid | No | FK overtime_authorities | Authority |
 | employee_id | uuid | No | FK employees | Employee |
-| authorized_hours | decimal | Yes |  | Maximum |
+| authorized_hours | decimal | No |  | Total across the authority |
 | task_description | string | Yes |  | Assigned work |
-| eligibility_snapshot | json | No |  | Eligibility at approval |
+| eligibility_snapshot | json | Yes |  | System-derived facts and reviewer attestations, written at approval |
 
 **Constraints and indexes**
 
@@ -93,43 +96,66 @@ Actual overtime rendered
 | agency_id | uuid | No | FK agencies | Tenant |
 | overtime_authority_employee_id | uuid | No | FK overtime_authority_employees | Coverage |
 | employee_id | uuid | No | FK employees | Employee |
-| service_date | date | No |  | Date |
+| work_date | date | No |  | Work Date |
 | claimed_hours | decimal | No |  | Claim |
-| actual_hours | decimal | Yes |  | Attendance-validated |
-| certified_hours | decimal | Yes |  | Certified |
-| accomplishment | string | Yes |  | Output |
-| status | enum | No |  | PENDING, RENDERED, FOR_CERTIFICATION, CERTIFIED, NOT_CERTIFIED, FOR_COMPENSATION, COMPENSATED |
+| accomplishment | string | No |  | Output |
+| actual_hours | decimal | Yes |  | Actual Overtime Hours, from locked Attendance at submission |
+| source_attendance_day_id | uuid | Yes | FK attendance_days | Locked day version read |
+| day_classification | string | Yes |  | From the source day version |
+| certified_hours | decimal | Yes |  | Certified Overtime Hours |
+| decline_reason | string | Yes |  | Required when not certified |
+| status | enum | No |  | RENDERED, FOR_CERTIFICATION, CERTIFIED, NOT_CERTIFIED |
+| recorded_by_membership_id | uuid | No | FK agency_memberships | Recorder |
 | certified_by_membership_id | uuid | Yes | FK agency_memberships | Certifier |
 
 **Constraints and indexes**
 
-- Unique `(overtime_authority_employee_id, service_date)` unless split records are supported.
+- One record per Employee and Work Date that is not `NOT_CERTIFIED`, across authorities.
+- Certified hours do not exceed actual hours; an Employee's certified hours across an authority do not exceed authorized hours.
 
 **Deletion behavior:** Retain.
-## `overtime_compensation_decisions`
+## `coc_earned_certificates`
 
-Final compensation treatment for certified service
+Monthly award of COC for one Employee, owned by Overtime
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
-| id | uuid | No | PK | Decision |
+| id | uuid | No | PK | Certificate |
 | agency_id | uuid | No | FK agencies | Tenant |
-| overtime_service_record_id | uuid | No | FK overtime_service_records | Service |
-| method | enum | No |  | OVERTIME_PAY, COC, NON_COMPENSABLE |
-| approved_hours | decimal | No |  | Hours |
-| rate_rule_snapshot | json | No |  | Applied rule |
-| funding_validated_by_membership_id | uuid | Yes | FK agency_memberships | Budget validation |
-| decided_by_membership_id | uuid | No | FK agency_memberships | Decision actor |
-| decided_at | datetime | No |  | Decision |
-| payroll_input_id | uuid | Yes | FK payroll_inputs | If OT pay |
-| coc_ledger_entry_id | uuid | Yes | FK coc_ledger_entries | If COC |
+| employee_id | uuid | No | FK employees | Employee |
+| earned_month | date | No |  | First day of the month |
+| status | enum | No |  | DRAFT, FOR_APPROVAL, APPROVED, DISCARDED |
+| prepared_by_membership_id | uuid | No | FK agency_memberships | Preparer |
+| approved_by_membership_id | uuid | Yes | FK agency_memberships | Approver |
+| approved_at | datetime | Yes |  | Approval and award |
 
 **Constraints and indexes**
 
-- Exactly one of payroll_input_id or coc_ledger_entry_id for compensable decisions.
-- One effective decision per service record.
+- Approver is neither the preparer nor the covered Employee.
+- Approval awards COC through the COC module in the same transaction, keyed by the certificate.
 
-**Deletion behavior:** Retain; correct via replacement/reversal.
+**Deletion behavior:** Retain; an approved certificate is corrected only by COC adjustment or reversal.
+## `coc_earned_certificate_lines`
+
+One certified service record on a certificate
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Line |
+| agency_id | uuid | No | FK agencies | Tenant |
+| coc_earned_certificate_id | uuid | No | FK coc_earned_certificates | Certificate |
+| overtime_service_record_id | uuid | No | FK overtime_service_records | Certified service |
+| certified_hours | decimal | No |  | Hours submitted for credit |
+| credited_hours | decimal | Yes |  | Returned by the COC module at approval |
+| excess_hours | decimal | Yes |  | Certified but not credited because of a cap |
+| released_at | datetime | Yes |  | Set when a draft is discarded |
+
+**Constraints and indexes**
+
+- One unreleased line per service record.
+- Lines are the Employee's `CERTIFIED` records under `COC` authorities with Work Dates in the certificate's month.
+
+**Deletion behavior:** Retain.
 ## `coc_accounts`
 
 Employee COC account
@@ -200,6 +226,7 @@ Use COC as compensatory time off
 # Domain invariants
 
 - Prior authority is separate from actual service and compensation.
-- Requested, authorized, actual, certified, credited, and paid hours remain distinct.
+- Claimed, authorized, actual, certified, credited, and paid hours remain distinct.
+- COC is awarded only by an approved Certificate of COC Earned; there is no per-record compensation decision.
 - COC is an immutable ledger.
 - CTO posting consumes COC and creates an attendance effect through owning services.
