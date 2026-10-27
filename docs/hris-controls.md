@@ -82,7 +82,7 @@ appointments.records.issue
 personnel.pds.update
 attendance.corrections.approve
 leave.credits.certify
-overtime.coc.award
+overtime.coc_certificates.approve
 payroll.periods.finalize
 performance.ratings.approve
 security.users.deactivate
@@ -825,6 +825,8 @@ handoff outcomes do not mutate the Terminal Leave Input Snapshot.
 
 ## 5.16 Overtime Authority
 
+The sources cited in §5.16–5.17 are recorded in [overtime-coc-cto-authorities.md](research/overtime-coc-cto-authorities.md).
+
 Statuses:
 
 ```text
@@ -833,22 +835,27 @@ SUBMITTED
 FOR_REVIEW
 APPROVED
 REJECTED
-ACTIVE
-COMPLETED
 CANCELLED
 ```
 
-| Current    | Action                 | Next       | Actor                 | Permission                      | Validations                                 | Side effects                    |
-| ---------- | ---------------------- | ---------- | --------------------- | ------------------------------- | ------------------------------------------- | ------------------------------- |
-| None       | Create authority       | DRAFT      | Supervisor / HRMO     | `overtime.authorities.create`   | Purpose, dates, employees, method           | Save draft                      |
-| DRAFT      | Submit                 | SUBMITTED  | Supervisor            | `overtime.authorities.submit`   | Required details complete                   | Start review                    |
-| SUBMITTED  | Review                 | FOR_REVIEW | HRMO / Budget Officer | `overtime.authorities.review`   | Eligibility, necessity, funding             | Create review result            |
-| FOR_REVIEW | Approve                | APPROVED   | Authorized Approver   | `overtime.authorities.approve`  | Prior authority requirement satisfied       | Authorize service               |
-| FOR_REVIEW | Reject                 | REJECTED   | Authorized Approver   | `overtime.authorities.reject`   | Reason required                             | Notify requester                |
-| APPROVED   | Activate on start date | ACTIVE     | System                | Internal                        | Effective date reached                      | Permit service records          |
-| ACTIVE     | Complete authority     | COMPLETED  | Supervisor / HRMO     | `overtime.authorities.complete` | Service period ended                        | Start accomplishment validation |
-| DRAFT      | Cancel                 | CANCELLED  | Supervisor            | `overtime.authorities.cancel`   | Not submitted                               | Close                           |
-| APPROVED   | Cancel before service  | CANCELLED  | Authorized Approver   | `overtime.authorities.cancel`   | No rendered service or documented treatment | Stop authority                  |
+An approved authority is in effect from its first to its last Work Date and has ended after that. Both are derived from its dates, so no System job changes its status. The Approving Official fixes its compensation method, `COC` or `OVERTIME_PAY`, when approving it, as the agency head decides the manner of compensation for each authority (JC 2, s. 2015 items 3.2, 3.3, 5.3). `OVERTIME_PAY` is refused with a typed blocking reason naming Payroll until #347 adds the Payroll Input. COC uses no funds, so a funding reference is required only for `OVERTIME_PAY`. No source allows service rendered without prior authority to be ratified, so none is.
+
+| Current    | Action                | Next       | Actor                             | Permission                     | Validations                                                                                                         | Side effects                                                              |
+| ---------- | --------------------- | ---------- | --------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| None       | Create authority      | DRAFT      | Supervisor / HR Administrator     | `overtime.authorities.create`  | Purpose, Work Dates, covered Appointed Personnel with authorized hours, proposed method                             | Save draft                                                                |
+| DRAFT      | Submit                | SUBMITTED  | Supervisor / HR Administrator     | `overtime.authorities.submit`  | Required details complete                                                                                           | Start review                                                              |
+| SUBMITTED  | Review                | FOR_REVIEW | HR Administrator / Budget Officer | `overtime.authorities.review`  | Eligibility, necessity; reviewer attests the eligibility facts the system does not hold; funding for `OVERTIME_PAY` | Create review result                                                      |
+| FOR_REVIEW | Approve               | APPROVED   | Approving Official                | `overtime.authorities.approve` | Shared Approval Route; approver is not the preparer or submitter; eligibility rechecked; method is `COC` until #347 | Fix method; store each Employee's eligibility snapshot; authorize service |
+| FOR_REVIEW | Reject                | REJECTED   | Approving Official                | `overtime.authorities.reject`  | Reason required                                                                                                     | Notify requester                                                          |
+| DRAFT      | Cancel                | CANCELLED  | Supervisor / HR Administrator     | `overtime.authorities.cancel`  | Not submitted                                                                                                       | Close                                                                     |
+| APPROVED   | Cancel before service | CANCELLED  | Approving Official                | `overtime.authorities.cancel`  | No Overtime Service Record exists                                                                                   | Stop authority                                                            |
+
+Covered Employees are Appointed Personnel of the Agency. The eligibility snapshot stores, per covered Employee:
+
+- system-derived facts: Appointed Personnel category, appointment status, position and salary grade, and the Work Arrangement Versions over the authority's Work Dates;
+- the reviewer's attestations for facts the system does not hold: the Employee is at division-chief level or below, or is such an incumbent designated Officer-in-Charge of a higher position, and receives no other allowance for service beyond prescribed hours (JC 2, s. 2015 items 6.1–7.0).
+
+Part-time Employees are refused with a typed reason, since the overtime period is defined only for full-time employees (JC 2, s. 2015 item 8.2) and no authority covers them.
 
 ---
 
@@ -857,25 +864,53 @@ CANCELLED
 Statuses:
 
 ```text
-PENDING
 RENDERED
 FOR_CERTIFICATION
 CERTIFIED
 NOT_CERTIFIED
-FOR_COMPENSATION
-COMPENSATED
 ```
 
-| Current           | Action                 | Next              | Actor                             | Permission                        | Validations                        | Side effects                              |
-| ----------------- | ---------------------- | ----------------- | --------------------------------- | --------------------------------- | ---------------------------------- | ----------------------------------------- |
-| None              | Create expected record | PENDING           | System / Supervisor               | `overtime.service.create`         | Approved authority                 | Initialize                                |
-| PENDING           | Record service         | RENDERED          | Employee / Supervisor             | `overtime.service.record`         | Actual attendance/accomplishment   | Store claimed hours                       |
-| RENDERED          | Submit certification   | FOR_CERTIFICATION | Employee / Supervisor             | `overtime.service.submit`         | Evidence complete                  | Route supervisor                          |
-| FOR_CERTIFICATION | Certify                | CERTIFIED         | Supervisor / Authorized Certifier | `overtime.service.certify`        | Hours and accomplishment validated | Permit compensation                       |
-| FOR_CERTIFICATION | Decline certification  | NOT_CERTIFIED     | Supervisor                        | `overtime.service.reject`         | Reason required                    | Exclude compensation                      |
-| CERTIFIED         | Determine compensation | FOR_COMPENSATION  | HRMO / Budget Officer             | `overtime.compensation.determine` | Rule, funding, employee category   | Select OT pay, COC, or none               |
-| FOR_COMPENSATION  | Post compensation      | COMPENSATED       | HRMO / Payroll Preparer           | `overtime.compensation.post`      | Approved method                    | Create payroll input or COC ledger credit |
+Recording creates the record; no expected records are created in advance. Each covered Employee has at most one Overtime Service Record per Work Date that is not `NOT_CERTIFIED`, across all authorities. Claimed, authorized, actual, and certified hours are stored separately.
 
+Actual Overtime Hours are read through Attendance's application service from the Attendance Day version in the latest locked Attendance Period Version covering the Work Date: its outside-schedule `WORKED` minutes and its day classification. Hours inside a compressed-workweek day's expected duty are not overtime. A record whose Work Date has no locked Attendance cannot be submitted.
+
+| Current           | Action                | Next              | Actor                                            | Permission                 | Validations                                                                                                                                                                                                                                                                                                                                   | Side effects                                             |
+| ----------------- | --------------------- | ----------------- | ------------------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| None              | Record service        | RENDERED          | Employee (own) / Supervisor                      | `overtime.service.record`  | Approved authority covers the Employee and Work Date                                                                                                                                                                                                                                                                                          | Store claimed hours and accomplishment                   |
+| RENDERED          | Submit certification  | FOR_CERTIFICATION | Employee (own) / Supervisor                      | `overtime.service.submit`  | Locked Attendance exists for the Work Date; accomplishment stated                                                                                                                                                                                                                                                                             | Store Actual Overtime Hours and their source day version |
+| FOR_CERTIFICATION | Certify               | CERTIFIED         | Supervisor (Direct Reports) / Approving Official | `overtime.service.certify` | Certifier is not the Employee; Attendance re-read and unchanged since submission; certified hours, net of breaks, do not exceed actual hours, and the Employee's certified hours across the authority do not exceed authorized hours; no official travel on the date; the Work Arrangement on the date requires physically reporting for work | Store Certified Overtime Hours                           |
+| FOR_CERTIFICATION | Decline certification | NOT_CERTIFIED     | Supervisor (Direct Reports) / Approving Official | `overtime.service.reject`  | Reason required                                                                                                                                                                                                                                                                                                                               | Exclude from compensation                                |
+
+Work from home and work from another fixed place earn neither COC nor Overtime Pay (CSC MC No. 6, s. 2022). A satellite-office arrangement is refused at certification with a typed reason, because no authority covers it.
+
+A certified record is credited only through a Certificate of COC Earned. Whether it is on a certificate, and what that certificate credited, is derived from the certificate line rather than stored as a service-record status. When a Locked Attendance Adjustment later changes the source day version, the certified record and any COC stay unchanged; the Overtime workspace flags the record as changed since certification, and HR corrects the COC through an adjustment or reversal.
+
+---
+
+## Certificate of COC Earned
+
+Statuses:
+
+```text
+DRAFT
+FOR_APPROVAL
+APPROVED
+DISCARDED
+```
+
+A Certificate of COC Earned awards COC for one Employee's certified Overtime Service Records under `COC` authorities whose Work Dates fall in one calendar month. The Head of Office grants it each month, and the HRMO computes it (JC 2, s. 2004 items 5.8, 6.3, 7.1.2, Annex A). An Employee may have more than one certificate for a month, and the monthly cap applies across them. A certified record can be a line on only one certificate that is not `DISCARDED`.
+
+The COC module applies the earning ratio, caps, and validity. For each line, Overtime passes the certified hours, day classification, and service record as the source. The COC module returns the credited hours and any excess, which stays certified but uncredited. The arrival and two-hour minimum in JC 2, s. 2015 item 10.1 governs overtime work with pay, so it does not apply to COC. Service on a whole-day work suspension or under a partial-day suspension is refused with a typed reason, because no authority sets its ratio.
+
+| Current      | Action  | Next         | Actor              | Permission                          | Validations                                                                                 | Side effects                                                                                      |
+| ------------ | ------- | ------------ | ------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| None         | Prepare | DRAFT        | HR Administrator   | `overtime.coc_certificates.prepare` | Lines are the Employee's certified records for the month, not on another active certificate | Save draft                                                                                        |
+| DRAFT        | Submit  | FOR_APPROVAL | HR Administrator   | `overtime.coc_certificates.prepare` | At least one line                                                                           | Start shared Approval Route                                                                       |
+| FOR_APPROVAL | Return  | DRAFT        | Approving Official | `overtime.coc_certificates.approve` | Reason required                                                                             | Notify preparer                                                                                   |
+| FOR_APPROVAL | Approve | APPROVED     | Approving Official | `overtime.coc_certificates.approve` | Approver is neither the preparer nor the covered Employee                                   | Award COC through the COC module in one transaction, keyed by the certificate; freeze certificate |
+| DRAFT        | Discard | DISCARDED    | HR Administrator   | `overtime.coc_certificates.prepare` | Not submitted                                                                               | Release its lines                                                                                 |
+
+An approved certificate is immutable. Its COC is corrected only by a COC adjustment or reversal.
 ---
 
 ## 5.18 COC Ledger Entry
@@ -892,13 +927,13 @@ REVERSAL
 
 COC entries are immutable. Corrections shall create adjusting or reversing entries.
 
-| Action                  | Actor                        | Permission             | Validation                                  | Side effect             |
-| ----------------------- | ---------------------------- | ---------------------- | ------------------------------------------- | ----------------------- |
-| Post earned COC         | Leave/Overtime Administrator | `overtime.coc.award`   | Certified service and approved method       | Increase balance        |
-| Post CTO usage          | Leave Administrator / System | `overtime.coc.use`     | Approved CTO request and sufficient balance | Decrease balance        |
-| Adjust COC              | HRMO Approver                | `overtime.coc.adjust`  | Reason and supporting authority             | Create adjustment entry |
-| Expire COC              | System / HRMO                | `overtime.coc.expire`  | Effective rule version                      | Decrease balance        |
-| Reverse incorrect entry | HRMO Approver                | `overtime.coc.reverse` | Original entry identified                   | Create linked reversal  |
+| Action                  | Actor                                              | Permission             | Validation                                                                | Side effect             |
+| ----------------------- | -------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------- | ----------------------- |
+| Post earned COC         | System, on approval of a Certificate of COC Earned | Internal               | Approved certificate; ratio, caps, and validity applied by the COC module | Increase balance        |
+| Post CTO usage          | Leave Administrator / System                       | `overtime.coc.use`     | Approved CTO request and sufficient balance                               | Decrease balance        |
+| Adjust COC              | HRMO Approver                                      | `overtime.coc.adjust`  | Reason and supporting authority                                           | Create adjustment entry |
+| Expire COC              | System / HRMO                                      | `overtime.coc.expire`  | Effective rule version                                                    | Decrease balance        |
+| Reverse incorrect entry | HRMO Approver                                      | `overtime.coc.reverse` | Original entry identified                                                 | Create linked reversal  |
 
 ---
 
@@ -1412,23 +1447,26 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 
 ## 6.9 Overtime, COC, and CTO
 
-| Permission                        | HR Admin | Supervisor | Employee | Budget Officer | Approving Official | Payroll Preparer | Leave Admin | Auditor |
-| --------------------------------- | -------: | ---------: | -------: | -------------: | -----------------: | ---------------: | ----------: | ------: |
-| `overtime.authorities.create`     |        A |          S |        — |              — |                  — |                — |           — |       — |
-| `overtime.authorities.submit`     |        A |          S |        — |              — |                  — |                — |           — |       — |
-| `overtime.authorities.review`     |        A |          — |        — |              A |                  — |                — |           — |       R |
-| `overtime.authorities.approve`    |        C |          — |        — |              C |                  A |                — |           — |       — |
-| `overtime.service.record`         |        C |          S |        O |              — |                  — |                — |           — |       — |
-| `overtime.service.certify`        |        C |          S |        — |              — |                  C |                — |           — |       — |
-| `overtime.compensation.determine` |        A |          — |        — |              A |                  C |                — |           — |       R |
-| `overtime.compensation.post`      |        A |          — |        — |              C |                  — |                A |           C |       — |
-| `overtime.coc.read`               |        A |          S |        O |              — |                  R |                R |           A |       R |
-| `overtime.coc.award`              |        A |          — |        — |              — |                  C |                — |           A |       — |
-| `overtime.coc.adjust`             |        A |          — |        — |              — |                  C |                — |           A |       — |
-| `overtime.cto.create`             |        C |          S |        O |              — |                  — |                — |           A |       — |
-| `overtime.cto.recommend`          |        C |          S |        — |              — |                  — |                — |           — |       — |
-| `overtime.cto.approve`            |        C |          — |        — |              — |                  A |                — |           — |       — |
-| `overtime.cto.post`               |        C |          — |        — |              — |                  — |                — |           A |       — |
+| Permission                          | HR Admin | Supervisor | Employee | Budget Officer | Approving Official | Payroll Preparer | Leave Admin | Auditor |
+| ----------------------------------- | -------: | ---------: | -------: | -------------: | -----------------: | ---------------: | ----------: | ------: |
+| `overtime.authorities.create`       |        A |          S |        — |              — |                  — |                — |           — |       — |
+| `overtime.authorities.submit`       |        A |          S |        — |              — |                  — |                — |           — |       — |
+| `overtime.authorities.review`       |        A |          — |        — |              A |                  — |                — |           — |       R |
+| `overtime.authorities.approve`      |        C |          — |        — |              C |                  A |                — |           — |       — |
+| `overtime.authorities.reject`       |        C |          — |        — |              C |                  A |                — |           — |       — |
+| `overtime.authorities.cancel`       |        A |          S |        — |              — |                  A |                — |           — |       — |
+| `overtime.service.record`           |        C |          S |        O |              — |                  — |                — |           — |       — |
+| `overtime.service.submit`           |        C |          S |        O |              — |                  — |                — |           — |       — |
+| `overtime.service.certify`          |        C |          S |        — |              — |                  C |                — |           — |       — |
+| `overtime.service.reject`           |        C |          S |        — |              — |                  C |                — |           — |       — |
+| `overtime.coc_certificates.prepare` |        A |          — |        — |              — |                  — |                — |           — |       — |
+| `overtime.coc_certificates.approve` |        C |          — |        — |              — |                  A |                — |           — |       — |
+| `overtime.coc.read`                 |        A |          S |        O |              — |                  R |                R |           A |       R |
+| `overtime.coc.adjust`               |        A |          — |        — |              — |                  C |                — |           A |       — |
+| `overtime.cto.create`               |        C |          S |        O |              — |                  — |                — |           A |       — |
+| `overtime.cto.recommend`            |        C |          S |        — |              — |                  — |                — |           — |       — |
+| `overtime.cto.approve`              |        C |          — |        — |              — |                  A |                — |           — |       — |
+| `overtime.cto.post`                 |        C |          — |        — |              — |                  — |                — |           A |       — |
 
 ---
 
