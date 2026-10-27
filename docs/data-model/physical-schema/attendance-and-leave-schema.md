@@ -548,7 +548,39 @@ CREATE TABLE attendance_posted_leave_inputs (
 
 `attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. A zero-quantity successor withdraws its predecessor's coverage; only a successor may be zero. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, a source-defined unit, or working days that do not equal the working dates of their range under the Employee's schedule, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval. Working-day inputs from one source sharing one date range, such as a posting's lines split between charged leave and leave without pay, are counted together; inputs from separate sources are never combined. A range whose schedule cannot be resolved fails closed. A REST day or non-working holiday inside a placeable range receives no leave coverage, matching Leave's working-day count.
 
-Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, and posted-leave intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
+```sql
+CREATE TABLE attendance_cto_inputs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  source_key text NOT NULL CHECK (btrim(source_key) <> ''),
+  source_type text NOT NULL CHECK (btrim(source_type) <> ''),
+  source_id uuid NOT NULL,
+  work_date date NOT NULL,
+  coverage_mode text NOT NULL CHECK (coverage_mode IN ('WHOLE_WORK_DATE','TIMED','NONE')),
+  starts_at timestamptz,
+  ends_at timestamptz,
+  predecessor_input_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    (coverage_mode = 'WHOLE_WORK_DATE' AND starts_at IS NULL AND ends_at IS NULL)
+    OR (coverage_mode = 'TIMED' AND ends_at > starts_at)
+    OR (coverage_mode = 'NONE' AND predecessor_input_id IS NOT NULL
+        AND starts_at IS NULL AND ends_at IS NULL)
+  ),
+  FOREIGN KEY (agency_id, employee_id) REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id, predecessor_input_id)
+    REFERENCES attendance_cto_inputs (agency_id, employee_id, id),
+  UNIQUE (agency_id, id),
+  UNIQUE (agency_id, employee_id, id),
+  UNIQUE (agency_id, source_key),
+  UNIQUE (agency_id, predecessor_input_id)
+);
+```
+
+`attendance_cto_inputs` is Attendance's immutable record of approved CTO, following `attendance_posted_leave_inputs`. CTO Request approval creates one input per Work Date through the Attendance application service, and a retry with the same `source_key` returns the existing input. Only an input with no successor is current. A `NONE` successor withdraws coverage, and only a successor may be `NONE`. Attendance Day calculation places current inputs as `CTO` coverage: the whole Work Date's expected duty, or the timed interval. The coverage is paid time with no deficit, published as its own Attendance Payroll Fact classification. Creating or superseding an input on a Work Date in a locked period is refused. A cancellation there becomes a `CTO_INPUT` Attendance Correction, which extends `target_type` with the same rules as `POSTED_LEAVE_INPUT`: created only by the COC module, entering at `FOR_AUTHORIZATION` with the approved CTO cancellation as its evidence, and authorized by a different HR Administrator through the ordinary Locked Attendance Adjustment (#548).
+
+Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, posted-leave, and CTO intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
 
 Segment boundaries are whole minutes, while Attendance Event and Attendance Context timestamps keep their seconds. Calculation counts Fully Covered Minutes (ADR 0005): a timed interval starts at the first whole minute at or after its raw start and ends at the last whole minute at or before its raw end, so no segment starts before or ends after its raw source. `rule_snapshot.minuteRule` records `FULLY_COVERED_MINUTE`, and the input fingerprint includes it.
 

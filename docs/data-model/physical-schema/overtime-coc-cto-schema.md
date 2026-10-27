@@ -73,10 +73,10 @@ CREATE TABLE overtime_service_records (
   work_date date NOT NULL,
   claimed_hours numeric(12,4) NOT NULL CHECK (claimed_hours > 0),
   accomplishment text NOT NULL,
-  actual_hours numeric(12,4) CHECK (actual_hours IS NULL OR actual_hours >= 0),
+  actual_minutes integer CHECK (actual_minutes IS NULL OR actual_minutes >= 0),
   source_attendance_day_id uuid,
   day_classification text,
-  certified_hours numeric(12,4) CHECK (certified_hours IS NULL OR certified_hours >= 0),
+  certified_minutes integer CHECK (certified_minutes IS NULL OR certified_minutes >= 0),
   decline_reason text,
   status text NOT NULL
     CHECK (status IN ('RENDERED','FOR_CERTIFICATION','CERTIFIED','NOT_CERTIFIED')),
@@ -85,9 +85,9 @@ CREATE TABLE overtime_service_records (
   certified_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (status = 'RENDERED'
-         OR (actual_hours IS NOT NULL AND source_attendance_day_id IS NOT NULL AND day_classification IS NOT NULL)),
-  CHECK ((status = 'CERTIFIED') = (certified_hours IS NOT NULL)),
-  CHECK (certified_hours IS NULL OR certified_hours <= actual_hours),
+         OR (actual_minutes IS NOT NULL AND source_attendance_day_id IS NOT NULL AND day_classification IS NOT NULL)),
+  CHECK ((status = 'CERTIFIED') = (certified_minutes IS NOT NULL)),
+  CHECK (certified_minutes IS NULL OR certified_minutes <= actual_minutes),
   CHECK ((status = 'NOT_CERTIFIED') = (decline_reason IS NOT NULL)),
   FOREIGN KEY (agency_id, overtime_authority_employee_id)
     REFERENCES overtime_authority_employees (agency_id, id),
@@ -107,7 +107,7 @@ ON overtime_service_records (agency_id, employee_id, work_date)
 WHERE status <> 'NOT_CERTIFIED';
 ```
 
-Submitting reads `actual_hours`, `day_classification`, and `source_attendance_day_id` through Attendance's application service from the latest locked Attendance Period Version covering the Work Date. Certifying re-reads them and is refused if the source day version has changed. The Employee's certified hours across one authority may not exceed `authorized_hours`; the certify service checks this under a lock on the `overtime_authority_employees` row.
+Actual and certified time are whole minutes, as Attendance counts them, so the COC award needs no rounding (ADR 0009). Submitting reads `actual_minutes`, `day_classification`, and `source_attendance_day_id` through Attendance's application service from the latest locked Attendance Period Version covering the Work Date. Certifying re-reads them and is refused if the source day version has changed. The Employee's certified minutes across one authority may not exceed `authorized_hours` × 60; the certify service checks this under a lock on the `overtime_authority_employees` row.
 
 ---
 
@@ -141,9 +141,9 @@ CREATE TABLE coc_earned_certificate_lines (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   coc_earned_certificate_id uuid NOT NULL,
   overtime_service_record_id uuid NOT NULL,
-  certified_hours numeric(12,4) NOT NULL CHECK (certified_hours > 0),
-  credited_hours numeric(12,4) CHECK (credited_hours IS NULL OR credited_hours >= 0),
-  excess_hours numeric(12,4) CHECK (excess_hours IS NULL OR excess_hours >= 0),
+  certified_minutes integer NOT NULL CHECK (certified_minutes > 0),
+  credited_minutes numeric(12,1) CHECK (credited_minutes IS NULL OR credited_minutes >= 0),
+  excess_minutes numeric(12,1) CHECK (excess_minutes IS NULL OR excess_minutes >= 0),
   released_at timestamptz,
   FOREIGN KEY (agency_id, coc_earned_certificate_id)
     REFERENCES coc_earned_certificates (agency_id, id),
@@ -158,7 +158,7 @@ ON coc_earned_certificate_lines (overtime_service_record_id)
 WHERE released_at IS NULL;
 ```
 
-The Overtime module owns certificates. Each line is a `CERTIFIED` record of the certificate's Employee, under a `COC` authority, with a Work Date in `earned_month`. Discarding a draft sets `released_at` on its lines. Approval calls the COC module once, keyed by the certificate, which applies the ratio, caps, and validity, writes the earned COC with the certificate as its source, and returns each line's `credited_hours` and `excess_hours`. An approved certificate and its lines are immutable. There is no per-record compensation decision.
+The Overtime module owns certificates. Each line is a `CERTIFIED` record of the certificate's Employee, under a `COC` authority, with a Work Date in `earned_month`. Discarding a draft sets `released_at` on its lines. Approval calls the COC module once, keyed by the certificate, which applies the ratio, caps, and validity, writes the earned COC with the certificate as its source, and returns each line's `credited_minutes` and `excess_minutes`, which are COC after the ratio. Approval is refused when the certificate's Valid Until, December 31 of the year after `earned_month`, has already passed. An approved certificate and its lines are immutable. There is no per-record compensation decision.
 
 ---
 
@@ -169,9 +169,11 @@ CREATE TABLE coc_accounts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
-  status text NOT NULL CHECK (status IN ('ACTIVE','FROZEN','CLOSED')),
+  status text NOT NULL CHECK (status IN ('ACTIVE','CLOSED')),
   opened_at date NOT NULL,
   closed_at date,
+  CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL)),
+  CHECK (closed_at IS NULL OR closed_at >= opened_at),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   UNIQUE (agency_id, id)
@@ -182,45 +184,73 @@ ON coc_accounts (agency_id, employee_id)
 WHERE status = 'ACTIVE';
 ```
 
+An account covers one continuous period of employment in the Agency. The first certificate approval opens it. Forfeiture on separation or transfer out closes it, and a later reemployment opens a new one.
+
 ```sql
 CREATE TABLE coc_ledger_entries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   coc_account_id uuid NOT NULL,
-  entry_type text NOT NULL
-    CHECK (entry_type IN ('EARNED','USED','ADJUSTMENT','EXPIRATION','REVERSAL')),
-  quantity_hours numeric(12,4) NOT NULL,
+  minutes numeric(12,1) NOT NULL CHECK (minutes <> 0),
   effective_date date NOT NULL,
-  source_type text NOT NULL,
+  valid_until date NOT NULL,
+  source_type citext NOT NULL CHECK (btrim(source_type::text) <> ''),
   source_id uuid NOT NULL,
+  source_posting_key citext NOT NULL
+    CHECK (btrim(source_posting_key::text) <> ''),
+  rule_code text NOT NULL,
+  reason text,
+  supporting_document_version_id uuid,
   reverses_entry_id uuid,
-  expires_at date,
   posted_at timestamptz NOT NULL DEFAULT now(),
   posted_by_membership_id uuid,
+  CHECK (valid_until = make_date(extract(year FROM valid_until)::int, 12, 31)),
   FOREIGN KEY (agency_id, coc_account_id)
     REFERENCES coc_accounts (agency_id, id),
-  FOREIGN KEY (reverses_entry_id)
-    REFERENCES coc_ledger_entries(id) ON DELETE RESTRICT,
+  FOREIGN KEY (agency_id, supporting_document_version_id)
+    REFERENCES document_versions (agency_id, id),
+  FOREIGN KEY (agency_id, reverses_entry_id)
+    REFERENCES coc_ledger_entries (agency_id, id) ON DELETE RESTRICT,
   FOREIGN KEY (agency_id, posted_by_membership_id)
     REFERENCES agency_memberships (agency_id, id),
-  UNIQUE (agency_id, source_type, source_id, entry_type),
+  UNIQUE (
+    agency_id, coc_account_id,
+    source_type, source_id, source_posting_key
+  ),
   UNIQUE (agency_id, id)
 );
+
+CREATE UNIQUE INDEX coc_ledger_entries_one_reversal_uq
+ON coc_ledger_entries (agency_id, reverses_entry_id)
+WHERE reverses_entry_id IS NOT NULL;
 ```
 
-Attach immutable triggers.
+Attach immutable mutation-prevention triggers. A reviewed trigger requires a reversal to use the same account, `valid_until`, and exact opposite minutes as its original. There is no entry-type enum; the source names what an entry is (ADR 0009):
 
-Balance view:
+| Source                       | Sign | Effective date            | Posting key                    |
+| ---------------------------- | ---- | ------------------------- | ------------------------------ |
+| Certificate of COC Earned    | +    | Approval date             | Certificate line               |
+| CTO Request approval         | −    | CTO Work Date             | Work Date and `valid_until`    |
+| CTO cancellation             | +    | CTO Work Date             | Reversed entry                 |
+| COC adjustment               | −    | Adjustment date           | Adjustment                     |
+| COC reversal                 | +    | Original's effective date | Original entry                 |
+| Expiry run                   | −    | Day after `valid_until`   | `valid_until`                  |
+| Separation Case              | −    | Separation effective date | `valid_until`                  |
+
+`rule_code` names the national rule version applied. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
+
+Every balance-sensitive command locks the account, recomputes within the transaction, and writes no entry that would make the balance for any `valid_until` negative. A use draws from the earliest `valid_until` on or after its Work Date. A reversal restoring COC whose `valid_until` has passed is followed by an expiry entry in the same transaction. The expiry job is idempotent through its posting key.
+
+A balance as of a date states its cutoff:
 
 ```sql
-CREATE VIEW coc_account_balances AS
-SELECT
-  agency_id,
-  coc_account_id,
-  SUM(quantity_hours) AS balance_hours
+SELECT valid_until, SUM(minutes) AS minutes
 FROM coc_ledger_entries
-GROUP BY agency_id, coc_account_id;
+WHERE agency_id = $1 AND coc_account_id = $2 AND effective_date <= $3
+GROUP BY valid_until;
 ```
+
+The 120-hour cap reads it as of the certificate's approval date. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date.
 
 ---
 
@@ -232,25 +262,65 @@ CREATE TABLE cto_requests (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
   coc_account_id uuid NOT NULL,
-  date_from timestamptz NOT NULL,
-  date_to timestamptz NOT NULL,
-  requested_hours numeric(12,4) NOT NULL CHECK (requested_hours > 0),
-  approved_hours numeric(12,4),
   status text NOT NULL
-    CHECK (status IN ('DRAFT','SUBMITTED','FOR_RECOMMENDATION','FOR_APPROVAL','APPROVED','REJECTED','POSTED','CANCELLED')),
-  posted_ledger_entry_id uuid,
-  attendance_day_id uuid,
-  CHECK (date_to > date_from),
+    CHECK (status IN ('DRAFT','SUBMITTED','FOR_APPROVAL','APPROVED','REJECTED','CANCELLED')),
+  approved_by_membership_id uuid,
+  approved_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((approved_at IS NULL) = (approved_by_membership_id IS NULL)),
+  CHECK (status <> 'APPROVED' OR approved_at IS NOT NULL),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
   FOREIGN KEY (agency_id, coc_account_id)
     REFERENCES coc_accounts (agency_id, id),
-  FOREIGN KEY (agency_id, posted_ledger_entry_id)
-    REFERENCES coc_ledger_entries (agency_id, id),
-  FOREIGN KEY (agency_id, attendance_day_id)
-    REFERENCES attendance_days (agency_id, id),
+  FOREIGN KEY (agency_id, approved_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
   UNIQUE (agency_id, id)
 );
+
+CREATE TABLE cto_request_dates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  cto_request_id uuid NOT NULL,
+  work_date date NOT NULL,
+  unit text NOT NULL CHECK (unit IN ('WHOLE','HALF')),
+  starts_at timestamptz,
+  ends_at timestamptz,
+  charged_minutes integer NOT NULL CHECK (charged_minutes > 0),
+  attendance_cto_input_id uuid,
+  cancelled_by_cto_cancellation_id uuid,
+  CHECK (
+    (unit = 'WHOLE' AND starts_at IS NULL AND ends_at IS NULL)
+    OR (unit = 'HALF' AND ends_at > starts_at)
+  ),
+  FOREIGN KEY (agency_id, cto_request_id)
+    REFERENCES cto_requests (agency_id, id),
+  UNIQUE (cto_request_id, work_date),
+  UNIQUE (agency_id, id)
+);
+
+CREATE TABLE cto_cancellations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  cto_request_id uuid NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('RECALL','EMPLOYEE_REQUEST')),
+  reason text NOT NULL CHECK (btrim(reason) <> ''),
+  cancelled_by_membership_id uuid NOT NULL,
+  cancelled_at timestamptz NOT NULL DEFAULT now(),
+  FOREIGN KEY (agency_id, cto_request_id)
+    REFERENCES cto_requests (agency_id, id),
+  FOREIGN KEY (agency_id, cancelled_by_membership_id)
+    REFERENCES agency_memberships (agency_id, id),
+  UNIQUE (agency_id, id)
+);
+
+ALTER TABLE cto_request_dates
+ADD FOREIGN KEY (agency_id, cancelled_by_cto_cancellation_id)
+  REFERENCES cto_cancellations (agency_id, id);
 ```
 
-Posting transaction validates the current COC balance with row locking and inserts the usage entry atomically.
+`charged_minutes` is the Work Date's expected-duty minutes for `WHOLE`, or half of them for `HALF`, read from the Employee's Work Schedule Version through Attendance at submission and rechecked at approval. A `HALF` interval lies inside expected duty. A request holds at most five consecutive Work Dates, and an Employee has at most one uncancelled date per Work Date across requests in `SUBMITTED`, `FOR_APPROVAL`, or `APPROVED`; the owning service enforces both.
+
+Approval locks the COC Account, rechecks the balance valid on each Work Date, posts one negative entry per Work Date and `valid_until` drawn, and creates one Attendance CTO input per Work Date, retaining `attendance_cto_input_id`, all in one transaction. A Work Date in a locked Attendance Period refuses approval.
+
+A cancellation names the request's dates it cancels. It reverses each cancelled date's entries and asks Attendance for a zero successor input, or for a `CTO_INPUT` locked correction when the date's period is locked. The request becomes `CANCELLED` when no uncancelled date remains.

@@ -302,6 +302,8 @@ Create:
 6. `coc_earned_certificates`
 7. `coc_earned_certificate_lines`
 8. `cto_requests`
+9. `cto_cancellations`
+10. `cto_request_dates`, after `attendance_cto_inputs`
 
 Attach immutable trigger to COC ledger.
 
