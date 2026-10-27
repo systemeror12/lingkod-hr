@@ -36,6 +36,9 @@ erDiagram
     COC_ACCOUNTS ||--o{ COC_LEDGER_ENTRIES : records
     COC_ACCOUNTS ||--o{ CTO_REQUESTS : funds
     COC_EARNED_CERTIFICATES ||--o{ COC_LEDGER_ENTRIES : awards
+    CTO_REQUESTS ||--|{ CTO_REQUEST_DATES : names
+    CTO_REQUESTS ||--o{ CTO_CANCELLATIONS : cancelled_by
+    CTO_REQUEST_DATES ||--o{ COC_LEDGER_ENTRIES : uses
 ```
 
 # Entity definitions
@@ -99,10 +102,10 @@ Actual overtime rendered
 | work_date | date | No |  | Work Date |
 | claimed_hours | decimal | No |  | Claim |
 | accomplishment | string | No |  | Output |
-| actual_hours | decimal | Yes |  | Actual Overtime Hours, from locked Attendance at submission |
+| actual_minutes | integer | Yes |  | Actual Overtime Hours in whole minutes, from locked Attendance at submission |
 | source_attendance_day_id | uuid | Yes | FK attendance_days | Locked day version read |
 | day_classification | string | Yes |  | From the source day version |
-| certified_hours | decimal | Yes |  | Certified Overtime Hours |
+| certified_minutes | integer | Yes |  | Certified Overtime Hours in whole minutes |
 | decline_reason | string | Yes |  | Required when not certified |
 | status | enum | No |  | RENDERED, FOR_CERTIFICATION, CERTIFIED, NOT_CERTIFIED |
 | recorded_by_membership_id | uuid | No | FK agency_memberships | Recorder |
@@ -145,9 +148,9 @@ One certified service record on a certificate
 | agency_id | uuid | No | FK agencies | Tenant |
 | coc_earned_certificate_id | uuid | No | FK coc_earned_certificates | Certificate |
 | overtime_service_record_id | uuid | No | FK overtime_service_records | Certified service |
-| certified_hours | decimal | No |  | Hours submitted for credit |
-| credited_hours | decimal | Yes |  | Returned by the COC module at approval |
-| excess_hours | decimal | Yes |  | Certified but not credited because of a cap |
+| certified_minutes | integer | No |  | Minutes submitted for credit |
+| credited_minutes | decimal | Yes |  | COC after the ratio, returned by the COC module at approval |
+| excess_minutes | decimal | Yes |  | COC after the ratio not credited because of a cap |
 | released_at | datetime | Yes |  | Set when a draft is discarded |
 
 **Constraints and indexes**
@@ -158,16 +161,16 @@ One certified service record on a certificate
 **Deletion behavior:** Retain.
 ## `coc_accounts`
 
-Employee COC account
+Employee COC account for one continuous period of employment in the Agency
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
 | id | uuid | No | PK | COC account |
 | agency_id | uuid | No | FK agencies | Tenant |
 | employee_id | uuid | No | FK employees | Employee |
-| status | enum | No |  | ACTIVE, FROZEN, CLOSED |
-| opened_at | date | No |  | Open |
-| closed_at | date | Yes |  | Close |
+| status | enum | No |  | ACTIVE, CLOSED |
+| opened_at | date | No |  | First award |
+| closed_at | date | Yes |  | Forfeiture on separation or transfer out |
 
 **Constraints and indexes**
 
@@ -176,31 +179,36 @@ Employee COC account
 **Deletion behavior:** Close.
 ## `coc_ledger_entries`
 
-Immutable COC transaction
+Immutable, signed COC posting
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
 | id | uuid | No | PK | Entry |
 | agency_id | uuid | No | FK agencies | Tenant |
 | coc_account_id | uuid | No | FK coc_accounts | Account |
-| entry_type | enum | No |  | EARNED, USED, ADJUSTMENT, EXPIRATION, REVERSAL |
-| quantity_hours | decimal | No |  | Signed hours |
-| effective_date | date | No |  | Date |
-| source_type | string | No |  | Source |
+| minutes | decimal(1) | No |  | Signed minutes, nonzero |
+| effective_date | date | No |  | Date the change takes effect |
+| valid_until | date | No |  | December 31 of the year after the earned month |
+| source_type | string | No |  | Certificate, CTO request, cancellation, adjustment, reversal, expiry, separation |
 | source_id | uuid | No |  | Source ID |
+| source_posting_key | string | No |  | Idempotency within the source |
+| rule_code | string | No |  | National rule version applied |
+| reason | string | Yes |  | Required for adjustments and reversals |
+| supporting_document_version_id | uuid | Yes | FK document_versions | Required for adjustments and reversals |
 | reverses_entry_id | uuid | Yes | FK coc_ledger_entries | Original |
-| expires_at | date | Yes |  | Expiry |
 | posted_at | datetime | No |  | Posted |
 
 **Constraints and indexes**
 
-- Unique source key for idempotency.
-- Reversal references same account.
+- Unique `(coc_account_id, source_type, source_id, source_posting_key)`.
+- A reversal negates its original exactly, in the same account and `valid_until`; at most one reversal per entry.
+- Only a certificate posts new credit; adjustments are negative.
+- No balance for a `valid_until` may go negative.
 
 **Deletion behavior:** Never delete.
 ## `cto_requests`
 
-Use COC as compensatory time off
+Request to use COC as compensatory time-off
 
 | Column | Logical type | Null? | Key / rule | Description |
 | --- | --- | --- | --- | --- |
@@ -208,18 +216,52 @@ Use COC as compensatory time off
 | agency_id | uuid | No | FK agencies | Tenant |
 | employee_id | uuid | No | FK employees | Employee |
 | coc_account_id | uuid | No | FK coc_accounts | Account |
-| date_from | datetime | No |  | Start |
-| date_to | datetime | No |  | End |
-| requested_hours | decimal | No |  | Hours |
-| approved_hours | decimal | Yes |  | Approved |
-| status | enum | No |  | DRAFT, SUBMITTED, FOR_RECOMMENDATION, FOR_APPROVAL, APPROVED, REJECTED, POSTED, CANCELLED |
-| posted_ledger_entry_id | uuid | Yes | FK coc_ledger_entries | Usage entry |
-| attendance_day_id | uuid | Yes | FK attendance_days | Attendance effect |
+| status | enum | No |  | DRAFT, SUBMITTED, FOR_APPROVAL, APPROVED, REJECTED, CANCELLED |
+| approved_by_membership_id | uuid | Yes | FK agency_memberships | Approver |
+| approved_at | datetime | Yes |  | Approval and usage posting |
 
 **Constraints and indexes**
 
-- Approved/posting requires available COC balance.
-- No overlap with incompatible attendance or leave.
+- Approval posts the usage and creates Attendance CTO inputs in one transaction.
+
+**Deletion behavior:** Retain.
+## `cto_request_dates`
+
+One Work Date of a CTO request
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Date |
+| agency_id | uuid | No | FK agencies | Tenant |
+| cto_request_id | uuid | No | FK cto_requests | Request |
+| work_date | date | No |  | Work Date |
+| unit | enum | No |  | WHOLE, HALF |
+| starts_at | datetime | Yes |  | Required for HALF |
+| ends_at | datetime | Yes |  | Required for HALF |
+| charged_minutes | integer | No |  | Expected-duty minutes, or half of them |
+| attendance_cto_input_id | uuid | Yes | FK attendance_cto_inputs | Attendance coverage |
+| cancelled_by_cto_cancellation_id | uuid | Yes | FK cto_cancellations | Cancellation |
+
+**Constraints and indexes**
+
+- Unique `(cto_request_id, work_date)`.
+- At most five consecutive Work Dates per request.
+- One uncancelled date per Employee and Work Date across live requests.
+
+**Deletion behavior:** Retain.
+## `cto_cancellations`
+
+Cancellation or recall of approved CTO dates
+
+| Column | Logical type | Null? | Key / rule | Description |
+| --- | --- | --- | --- | --- |
+| id | uuid | No | PK | Cancellation |
+| agency_id | uuid | No | FK agencies | Tenant |
+| cto_request_id | uuid | No | FK cto_requests | Request |
+| kind | enum | No |  | RECALL, EMPLOYEE_REQUEST |
+| reason | string | No |  | Reason |
+| cancelled_by_membership_id | uuid | No | FK agency_memberships | Approving Official |
+| cancelled_at | datetime | No |  | Cancellation |
 
 **Deletion behavior:** Retain.
 
@@ -228,5 +270,5 @@ Use COC as compensatory time off
 - Prior authority is separate from actual service and compensation.
 - Claimed, authorized, actual, certified, credited, and paid hours remain distinct.
 - COC is awarded only by an approved Certificate of COC Earned; there is no per-record compensation decision.
-- COC is an immutable ledger.
-- CTO posting consumes COC and creates an attendance effect through owning services.
+- COC is an immutable ledger in minutes, grouped by Valid Until; a use draws the earliest-expiring COC still valid on its date.
+- CTO approval consumes COC and creates Attendance CTO inputs through owning services; there is no commitment or separate posting.
