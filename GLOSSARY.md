@@ -680,6 +680,22 @@ _Avoid_: Compensation decision, COC award, COC posting
 Hours of credit an Employee earns for certified overtime without overtime pay, usable only as Compensatory Time-Off within its validity and never converted to cash or leave credits.
 _Avoid_: Overtime credit, comp time, CTO balance
 
+**COC Account**:
+A record for one Employee and one continuous period of employment in the Agency whose COC balance is derived from its COC Ledger Entries. The first award opens it; separation or transfer out forfeits its balance and closes it.
+_Avoid_: COC balance field, CTO account
+
+**COC Ledger Entry**:
+An immutable, source-linked posting that changes one COC Account by a signed number of minutes on an effective date, against the COC sharing one Valid Until date. Corrections use linked reversals or adjustments rather than editing an entry.
+_Avoid_: COC entry type, CTO deduction, lot
+
+**Compensatory Time-Off (CTO)**:
+Whole or half Work Dates of expected duty an Employee is excused from with full pay and benefits, approved in advance and charged against unexpired COC.
+_Avoid_: Leave, COC, offset
+
+**CTO Request**:
+An Employee's request for CTO on named Work Dates. Its approval by an Approving Official posts the COC usage and the Attendance coverage at once; an approved CTO is withdrawn only by that official's cancellation or recall.
+_Avoid_: CTO application, COC reservation, posted CTO
+
 ## Workforce Relationships
 
 **JO/COS Worker**:
