@@ -424,6 +424,7 @@ CREATE TABLE attendance_days (
   training_minutes integer NOT NULL DEFAULT 0 CHECK (training_minutes >= 0),
   approved_absence_minutes integer NOT NULL DEFAULT 0 CHECK (approved_absence_minutes >= 0),
   posted_leave_minutes integer NOT NULL DEFAULT 0 CHECK (posted_leave_minutes >= 0),
+  cto_minutes integer NOT NULL DEFAULT 0 CHECK (cto_minutes >= 0),
   outside_schedule_minutes integer NOT NULL DEFAULT 0 CHECK (outside_schedule_minutes >= 0),
   statutory_night_window_minutes integer NOT NULL DEFAULT 0 CHECK (statutory_night_window_minutes >= 0),
   calculation_version integer NOT NULL DEFAULT 1 CHECK (calculation_version > 0),
@@ -564,7 +565,8 @@ CREATE TABLE attendance_cto_inputs (
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
     (coverage_mode = 'WHOLE_WORK_DATE' AND starts_at IS NULL AND ends_at IS NULL)
-    OR (coverage_mode = 'TIMED' AND ends_at > starts_at)
+    OR (coverage_mode = 'TIMED' AND starts_at IS NOT NULL AND ends_at IS NOT NULL
+        AND ends_at > starts_at)
     OR (coverage_mode = 'NONE' AND predecessor_input_id IS NOT NULL
         AND starts_at IS NULL AND ends_at IS NULL)
   ),
@@ -578,7 +580,7 @@ CREATE TABLE attendance_cto_inputs (
 );
 ```
 
-`attendance_cto_inputs` is Attendance's immutable record of approved CTO, following `attendance_posted_leave_inputs`. CTO Request approval creates one input per Work Date through the Attendance application service, and a retry with the same `source_key` returns the existing input. Only an input with no successor is current. A `NONE` successor withdraws coverage, and only a successor may be `NONE`. Attendance Day calculation places current inputs as `CTO` coverage: the whole Work Date's expected duty, or the timed interval. The coverage is paid time with no deficit, published as its own Attendance Payroll Fact classification. Creating or superseding an input on a Work Date in a locked period is refused. A cancellation there becomes a `CTO_INPUT` Attendance Correction, which extends `target_type` with the same rules as `POSTED_LEAVE_INPUT`: created only by the COC module, entering at `FOR_AUTHORIZATION` with the approved CTO cancellation as its evidence, and authorized by a different HR Administrator through the ordinary Locked Attendance Adjustment (#548).
+`attendance_cto_inputs` is Attendance's immutable record of approved CTO, following `attendance_posted_leave_inputs`. CTO Request approval creates one input per Work Date through the Attendance application service, and a retry with the same `source_key` returns the existing input. Only an input with no successor is current. A `NONE` successor withdraws coverage, and only a successor may be `NONE`. Attendance Day calculation places current inputs as `CTO` coverage: the whole Work Date's expected duty, or the timed interval. A timed interval must lie inside the window calculation reads the Work Date's coverage from: the Day Rule's Event Collection Window, which an overnight Day Rule extends past midnight, or the local calendar date for a REST Day Rule. A timed interval outside it, or on a Work Date whose schedule cannot be resolved, is refused. The coverage is paid time with no deficit, stored as the Day's `cto_minutes`, and published as its own Attendance Payroll Fact classification that period lock reconciles against that total. Creating or superseding an input on a Work Date in a locked period is refused. A cancellation there becomes a `CTO_INPUT` Attendance Correction, which extends `target_type` with the same rules as `POSTED_LEAVE_INPUT`: created only by the COC module, entering at `FOR_AUTHORIZATION` with the approved CTO cancellation as its evidence, and authorized by a different HR Administrator through the ordinary Locked Attendance Adjustment (#548).
 
 Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, posted-leave, and CTO intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
 

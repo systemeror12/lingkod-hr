@@ -117,6 +117,7 @@ export interface AttendanceCalculationTotals {
   trainingMinutes: number;
   approvedAbsenceMinutes: number;
   postedLeaveMinutes: number;
+  ctoMinutes: number;
   outsideScheduleMinutes: number;
   statutoryNightWindowMinutes: number;
 }
@@ -158,6 +159,7 @@ const COVERAGE_TOTAL_KEYS: Partial<
   TRAINING: 'trainingMinutes',
   APPROVED_ABSENCE: 'approvedAbsenceMinutes',
   POSTED_LEAVE: 'postedLeaveMinutes',
+  CTO: 'ctoMinutes',
 };
 
 /**
@@ -541,6 +543,7 @@ export function calculateAttendanceDay(
     trainingMinutes: 0,
     approvedAbsenceMinutes: 0,
     postedLeaveMinutes: 0,
+    ctoMinutes: 0,
     outsideScheduleMinutes: 0,
     statutoryNightWindowMinutes: 0,
   };

@@ -58,6 +58,105 @@ async function createSecondAdministrator(
   };
 }
 
+/**
+ * A second Employee in the fixture Agency on an overnight 22:00-06:00 Work
+ * Schedule, so a Work Date's calculation window runs past midnight.
+ */
+async function createOvernightEmployee(fixture: AttendanceWorkflowFixture): Promise<string> {
+  const { admin, agencyId, services, suffix } = fixture;
+  const context = fixture.administratorContext;
+  const evidenceOf = (documentType: string) =>
+    admin.documentVersion.findFirstOrThrow({
+      where: { agencyId, document: { documentType } },
+      select: { id: true },
+    });
+  const scheduleEvidence = await evidenceOf('WORK_SCHEDULE_AUTHORITY');
+  const assignmentEvidence = await evidenceOf('SCHEDULE_ASSIGNMENT_AUTHORITY');
+  const effectiveFrom = manilaDate(-30);
+  const schedule = await services.schedules.create(context, {
+    code: 'OVERNIGHT',
+    name: 'Overnight Work Schedule',
+    scheduleType: 'REGULAR',
+    effectiveDate: effectiveFrom,
+    dayRules: [1, 2, 3, 4, 5, 6, 7].map((weekday) =>
+      weekday <= 5
+        ? {
+            weekday,
+            ruleType: 'FIXED' as const,
+            dutyStartTime: '22:00',
+            dutyEndTime: '06:00',
+            endNextCalendarDay: true,
+            requiredMinutes: 480,
+            eventPattern: 'IN_OUT' as const,
+            collectionBeforeMinutes: 0,
+            collectionAfterMinutes: 0,
+            breaks: [],
+          }
+        : {
+            weekday,
+            ruleType: 'REST' as const,
+            requiredMinutes: 0,
+            eventPattern: 'IN_OUT' as const,
+            collectionBeforeMinutes: 0,
+            collectionAfterMinutes: 0,
+            breaks: [],
+          },
+    ),
+  });
+  const active = await services.schedules.activate(context, schedule.id, schedule.draft!.id, {
+    authorityDocumentVersionId: scheduleEvidence.id,
+    approvingAuthority: 'Office of the President',
+    reason: 'Overnight schedule authority reviewed.',
+  });
+  const arrangementVersion = await admin.workArrangementVersion.findFirstOrThrow({
+    where: { agencyId },
+    select: { id: true },
+  });
+  const employee = await admin.employee.create({
+    data: {
+      agencyId,
+      employeeNumber: `CTO-NIGHT-${suffix}`,
+      legalName: `Attendance CTO Night ${suffix}`,
+      birthDate: new Date('1990-01-01'),
+      sex: 'FEMALE',
+      civilStatus: 'SINGLE',
+      contactEmail: `attendance-cto-night-${suffix}@example.test`,
+      serviceStatus: 'ACTIVE',
+      createdByMembershipId: fixture.memberships.administrator,
+      updatedByMembershipId: fixture.memberships.administrator,
+    },
+  });
+  await withDatabaseContext(
+    {
+      agencyId,
+      membershipId: fixture.memberships.administrator,
+      capabilities: ['personnel-baseline-transition'],
+    },
+    (transaction) =>
+      transaction.serviceSegment.create({
+        data: {
+          agencyId,
+          employeeId: employee.id,
+          organizationUnitId: fixture.unitId,
+          appointmentStatus: 'PERMANENT',
+          salaryGrade: 18,
+          salaryStep: 2,
+          effectiveFrom: new Date('2020-01-01'),
+          status: 'ACTIVE',
+          createdByMembershipId: fixture.memberships.administrator,
+        },
+      }),
+  );
+  await services.assignments.create(context, {
+    employeeId: employee.id,
+    workScheduleVersionId: active.currentVersion!.id,
+    workArrangementVersionId: arrangementVersion.id,
+    authorityDocumentVersionId: assignmentEvidence.id,
+    effectiveFrom,
+  });
+  return employee.id;
+}
+
 function shiftDate(value: string, days: number): string {
   return new Date(new Date(`${value}T00:00:00.000Z`).getTime() + days * 86_400_000)
     .toISOString()
@@ -115,7 +214,12 @@ it.skipIf(!enabled)(
       expect(recalculated.day.totals).toMatchObject({
         undertimeMinutes: 0,
         coverageMinutes: 480,
+        ctoMinutes: 60,
       });
+      expect(
+        (await admin.attendanceDay.findUniqueOrThrow({ where: { id: recalculated.day.id } }))
+          .ctoMinutes,
+      ).toBe(60);
       expect(recalculated.segments.find((segment) => segment.coverageType === 'CTO')).toMatchObject(
         { deficitType: null, dutyRelation: 'EXPECTED' },
       );
@@ -136,7 +240,7 @@ it.skipIf(!enabled)(
           ...timed,
           sourceKey: `${fixture.suffix}-overlap`,
           startsAt: manilaInstant(workDate, '16:30').toISOString(),
-          endsAt: manilaInstant(workDate, '17:30').toISOString(),
+          endsAt: manilaInstant(workDate, '17:00').toISOString(),
         }),
       ).rejects.toMatchObject({ code: 'CTO_INPUT_OVERLAPS_CTO', statusCode: 409 });
       await expect(
@@ -220,6 +324,24 @@ it.skipIf(!enabled)(
         ),
       ).toBe(0);
 
+      // The database refuses a TIMED row missing a bound.
+      await expect(
+        withDatabaseContext({ agencyId }, (transaction) =>
+          transaction.attendanceCtoInput.create({
+            data: {
+              agencyId,
+              employeeId,
+              sourceKey: `${fixture.suffix}-null-bound`,
+              sourceType: 'CtoRequest',
+              sourceId: employeeId,
+              workDate: new Date(`${shiftDate(workDate, -7)}T00:00:00.000Z`),
+              coverageMode: 'TIMED',
+              startsAt: manilaInstant(shiftDate(workDate, -7), '08:00'),
+            },
+          }),
+        ),
+      ).rejects.toThrow(/attendance_cto_inputs_coverage_check/);
+
       // Inputs are immutable and retained.
       await expect(
         admin.attendanceCtoInput.update({ where: { id: first.id }, data: { sourceType: 'Other' } }),
@@ -236,6 +358,10 @@ it.skipIf(!enabled)(
       await services.submissions.submit(fixture.employeeContext, submission.submission.id);
       await services.submissions.approve(fixture.officerContext, submission.submission.id, {});
       const submitted = await services.periods.submitForReview(context, fixture.periodId);
+      // The stored CTO total reconciles with the published CTO classification.
+      const reconciliation = await services.periods.reconcile(context, submitted.version.id);
+      expect(reconciliation.ok).toBe(true);
+      expect(reconciliation.payroll.factTypeMinutes).toMatchObject({ CTO: 60 });
       await services.periods.approve(fixture.officerContext, submitted.version.id, {});
       const locked = await services.periods.lock(
         await createSecondAdministrator(fixture),
@@ -266,6 +392,71 @@ it.skipIf(!enabled)(
         await transaction.attendanceCtoInput.deleteMany({ where: { agencyId } });
         await transaction.attendancePostedLeaveInput.deleteMany({ where: { agencyId } });
         await transaction.agency.delete({ where: { id: foreignAgency.id } });
+      });
+      await cleanupAttendanceWorkflowAgency(admin, agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  "refuses a timed CTO interval outside the Work Date's calculation window, which an overnight Day Rule extends past midnight",
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services, agencyId, employeeId, workDate } = fixture;
+    const context = fixture.administratorContext;
+    const cto = new AttendanceCtoInputsService(services.days);
+    const record = (input: RecordCtoInput) =>
+      withDatabaseContext({ agencyId, membershipId: context.membershipId }, (transaction) =>
+        cto.recordInTransaction(transaction, context, input),
+      );
+    const base = { employeeId, sourceType: 'CtoRequest', sourceId: employeeId };
+
+    try {
+      const nightEmployeeId = await createOvernightEmployee(fixture);
+      const nightDate = shiftDate(workDate, -6);
+      const night = { ...base, employeeId: nightEmployeeId, workDate: nightDate };
+      await record({
+        ...night,
+        sourceKey: `${fixture.suffix}-after-midnight`,
+        coverageMode: 'TIMED',
+        startsAt: manilaInstant(shiftDate(nightDate, 1), '00:00').toISOString(),
+        endsAt: manilaInstant(shiftDate(nightDate, 1), '02:00').toISOString(),
+      });
+      await expect(
+        record({
+          ...night,
+          sourceKey: `${fixture.suffix}-other-date`,
+          coverageMode: 'TIMED',
+          startsAt: manilaInstant(shiftDate(nightDate, -1), '22:00').toISOString(),
+          endsAt: manilaInstant(shiftDate(nightDate, -1), '23:00').toISOString(),
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_WORK_DATE', statusCode: 400 });
+      await expect(
+        record({
+          ...night,
+          sourceKey: `${fixture.suffix}-past-window`,
+          coverageMode: 'TIMED',
+          startsAt: manilaInstant(shiftDate(nightDate, 1), '05:30').toISOString(),
+          endsAt: manilaInstant(shiftDate(nightDate, 1), '06:30').toISOString(),
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_WORK_DATE' });
+      await expect(
+        record({
+          ...base,
+          sourceKey: `${fixture.suffix}-day-other-date`,
+          workDate: nightDate,
+          coverageMode: 'TIMED',
+          startsAt: manilaInstant(shiftDate(nightDate, 1), '08:00').toISOString(),
+          endsAt: manilaInstant(shiftDate(nightDate, 1), '09:00').toISOString(),
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_WORK_DATE' });
+
+      expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(1);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceCtoInput.deleteMany({ where: { agencyId } });
       });
       await cleanupAttendanceWorkflowAgency(admin, agencyId, fixture.suffix);
       await admin.$disconnect();

@@ -263,6 +263,7 @@ it('places CTO as paid coverage with no deficit', () => {
 
   expect(result.exceptions).toEqual([]);
   expect(result.totals.coverageMinutes).toBe(540);
+  expect(result.totals.ctoMinutes).toBe(300);
   expect(result.totals).toMatchObject({ lateMinutes: 0, undertimeMinutes: 0, absenceMinutes: 0 });
   expect(result.segments[0]).toMatchObject({
     coverageType: 'CTO',
@@ -672,6 +673,48 @@ it('anchors a flexible day on its latest permitted start when nothing qualifies'
   expect(result.totals.coverageMinutes).toBe(180);
   expect(result.totals.undertimeMinutes).toBe(240);
   expect(result.totals.absenceMinutes).toBe(0);
+});
+
+it('anchors a flexible day on timed CTO before time-in, unlike posted leave', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '17:00',
+    requiredMinutes: 420,
+    breaks: [lunchBreak],
+  });
+  const morning = (sourceType: 'CTO_INPUT' | 'POSTED_LEAVE') =>
+    calculateAttendanceDay(
+      input({
+        dayRule: flexible,
+        events: [at('09:30', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+        coverage: [
+          coverage({
+            sourceId: `${sourceType}-1`,
+            sourceType,
+            coverageType: sourceType === 'CTO_INPUT' ? 'CTO' : 'POSTED_LEAVE',
+            startsAt: manila('07:30'),
+            endsAt: manila('09:30'),
+          }),
+        ],
+      }),
+    );
+  const firstExpected = (result: ReturnType<typeof calculateAttendanceDay>) =>
+    wallSegments({
+      segments: result.segments.filter((segment) => segment.dutyRelation === 'EXPECTED'),
+    })[0];
+
+  // Timed CTO is a qualifying interval, so it anchors the start at 07:30.
+  const cto = morning('CTO_INPUT');
+  expect(firstExpected(cto)).toEqual(['07:30', '09:30']);
+  expect(cto.totals).toMatchObject({ expectedMinutes: 420, ctoMinutes: 120, lateMinutes: 0 });
+
+  // Posted leave never anchors, so the start clamps to the latest permitted 09:00.
+  const leave = morning('POSTED_LEAVE');
+  expect(firstExpected(leave)).toEqual(['09:00', '09:30']);
+  expect(leave.totals).toMatchObject({ expectedMinutes: 420, lateMinutes: 0 });
 });
 
 it('reports missing, duplicate, and out-of-order events without inventing time', () => {

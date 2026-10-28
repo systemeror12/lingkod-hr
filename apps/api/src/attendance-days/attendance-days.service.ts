@@ -94,6 +94,7 @@ const daySelect = {
   trainingMinutes: true,
   approvedAbsenceMinutes: true,
   postedLeaveMinutes: true,
+  ctoMinutes: true,
   outsideScheduleMinutes: true,
   statutoryNightWindowMinutes: true,
   calculationVersion: true,
@@ -236,6 +237,7 @@ function daySummary(record: AttendanceDayRecord): AttendanceDaySummary {
       trainingMinutes: record.trainingMinutes,
       approvedAbsenceMinutes: record.approvedAbsenceMinutes,
       postedLeaveMinutes: record.postedLeaveMinutes,
+      ctoMinutes: record.ctoMinutes,
       outsideScheduleMinutes: record.outsideScheduleMinutes,
       statutoryNightWindowMinutes: record.statutoryNightWindowMinutes,
     },
@@ -598,6 +600,37 @@ export class AttendanceDaysService {
       workDate,
       new Date(),
       this.workingDateCounter(transaction, context.agencyId),
+    );
+  }
+
+  /**
+   * The interval Attendance Day calculation reads coverage from for one Work
+   * Date: the Day Rule's Event Collection Window, which an overnight Day Rule
+   * extends past midnight, or the local calendar date for a REST Day Rule.
+   * Null when the Employee's schedule for the date cannot be resolved.
+   */
+  async workDateCoverageWindowInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDate: string,
+  ): Promise<{ startsAt: Date; endsAt: Date } | null> {
+    let resolution: AttendanceResolution;
+    try {
+      resolution = await this.assignments.resolveForWorkDateInTransaction(
+        transaction,
+        agencyId,
+        employeeId,
+        workDate,
+      );
+    } catch (error: unknown) {
+      if (error instanceof AttendanceExceptionError) return null;
+      throw error;
+    }
+    return this.coverageWindow(
+      resolution.dayRule,
+      workDate,
+      resolution.workScheduleVersion.timezone,
     );
   }
 
@@ -1270,6 +1303,7 @@ export class AttendanceDaysService {
         trainingMinutes: 0,
         approvedAbsenceMinutes: 0,
         postedLeaveMinutes: 0,
+        ctoMinutes: 0,
         outsideScheduleMinutes: 0,
         statutoryNightWindowMinutes: 0,
       },

@@ -3703,6 +3703,7 @@ model AttendanceDay {
   trainingMinutes            Int       @default(0) @map("training_minutes")
   approvedAbsenceMinutes     Int       @default(0) @map("approved_absence_minutes")
   postedLeaveMinutes         Int       @default(0) @map("posted_leave_minutes")
+  ctoMinutes                 Int       @default(0) @map("cto_minutes")
   outsideScheduleMinutes     Int       @default(0) @map("outside_schedule_minutes")
   statutoryNightWindowMinutes Int      @default(0) @map("statutory_night_window_minutes")
   calculationVersion         Int       @default(1) @map("calculation_version")

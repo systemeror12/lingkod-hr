@@ -27,8 +27,8 @@ export class AttendanceCtoInputsService {
    * Employee's current Attendance Day for the Work Date, when one exists. A
    * retry with the same source key returns the existing input; the same key
    * with different facts is a conflict. A Work Date in a finalized Attendance
-   * Period, or coverage overlapping posted leave or another current CTO input,
-   * is refused.
+   * Period, a timed interval outside the Work Date's calculation window, or
+   * coverage overlapping posted leave or another current CTO input, is refused.
    */
   async recordInTransaction(
     transaction: Prisma.TransactionClient,
@@ -50,7 +50,9 @@ export class AttendanceCtoInputsService {
       );
     }
     // One Employee's CTO inputs are recorded one at a time, so a concurrent
-    // retry or overlapping input sees the committed winner.
+    // retry or overlapping CTO input sees the committed winner. Posted leave
+    // does not take this lock; refusing CTO and leave in both directions
+    // belongs to Leave and CTO approval (#543).
     await transaction.$queryRaw(
       Prisma.sql`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${agencyId}:attendance-cto:${input.employeeId}`}, 0))`,
     );
@@ -85,6 +87,30 @@ export class AttendanceCtoInputsService {
         409,
         ATTENDANCE_WORK_DATE_LOCKED,
       );
+    }
+    if (facts.startsAt && facts.endsAt) {
+      // The same window Attendance Day calculation reads coverage from, so an
+      // overnight Work Date reaches past midnight.
+      const window = await this.days.workDateCoverageWindowInTransaction(
+        transaction,
+        agencyId,
+        input.employeeId,
+        input.workDate,
+      );
+      if (!window) {
+        throw new AttendanceCtoInputError(
+          "The Employee's schedule for the Work Date cannot be resolved, so the CTO interval cannot be placed.",
+          409,
+          'CTO_INPUT_SCHEDULE_UNRESOLVED',
+        );
+      }
+      if (facts.startsAt < window.startsAt || facts.endsAt > window.endsAt) {
+        throw new AttendanceCtoInputError(
+          'The CTO interval falls outside the Work Date.',
+          400,
+          'CTO_INPUT_OUTSIDE_WORK_DATE',
+        );
+      }
     }
 
     // Posted leave covers its whole Work Date, so any CTO on that date overlaps.

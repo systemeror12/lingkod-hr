@@ -101,6 +101,7 @@ const daySelect = {
   trainingMinutes: true,
   approvedAbsenceMinutes: true,
   postedLeaveMinutes: true,
+  ctoMinutes: true,
   outsideScheduleMinutes: true,
   statutoryNightWindowMinutes: true,
 } as const;
@@ -144,6 +145,7 @@ const DAY_COVERAGE_COLUMNS: Readonly<Record<string, keyof DayRecord>> = {
   TRAINING: 'trainingMinutes',
   APPROVED_ABSENCE: 'approvedAbsenceMinutes',
   POSTED_LEAVE: 'postedLeaveMinutes',
+  CTO: 'ctoMinutes',
   TARDINESS: 'lateMinutes',
   UNDERTIME: 'undertimeMinutes',
   ABSENCE: 'absenceMinutes',
