@@ -60,6 +60,8 @@ CREATE TABLE overtime_authority_employees (
 
 `compensation_method` is proposed in the draft and fixed when the Approving Official approves. Approval refuses `OVERTIME_PAY` until #347. An authority is in effect or ended by its Work Dates; neither is a stored status. `authorized_hours` is the Employee's total across the authority. `eligibility_snapshot` is written once at approval and holds the system-derived facts and the reviewer's attestations listed in `hris-controls.md` §5.16. Approved authorities and their covered Employees are immutable.
 
+Review records its attestations on the `OVERTIME_AUTHORITY_REVIEWED` Audit Event and opens the authority's Approval Request (subject type `OVERTIME_AUTHORITY`, route code `OVERTIME_AUTHORITY`); approval copies the attestations from that event into each snapshot. The preparers and submitter that review and approval exclude are the actors of the authority's create, update, and submit Audit Events, so no column records them. Each snapshot holds `service` (one entry per Service Segment over the Work Dates: appointment status, salary grade, position item number and title, and the position's employment category), `workArrangements` (one entry per Schedule Assignment over the Work Dates), and `attestation`.
+
 ---
 
 ## 2. Overtime Service Records

@@ -9,12 +9,17 @@ import {
 import type { OvertimeAuthoritySummary } from './overtime-authorities.types';
 import {
   assertCommandAccess,
-  lockAuthority,
   assertDraft,
+  lockAuthority,
   readAuthority,
 } from './overtime-authority.records';
 
-/** Cancel a DRAFT that was never submitted. Cancelling an approved one is #532's. */
+/**
+ * Cancel a DRAFT that was never submitted, or an APPROVED authority before
+ * service. Only the Approving Official cancels an approved one (hris-controls
+ * §5.16), so that also needs `overtime.authorities.approve`. Refusing it once
+ * an Overtime Service Record exists is #320's.
+ */
 @Injectable()
 export class CancelOvertimeAuthorityService {
   constructor(
@@ -25,13 +30,18 @@ export class CancelOvertimeAuthorityService {
   async execute(context: RequestContext, authorityId: string): Promise<OvertimeAuthoritySummary> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const current = await lockAuthority(transaction, context.agencyId, authorityId);
-      await assertCommandAccess(
-        transaction,
-        context,
-        'overtime.authorities.cancel',
-        current.employees.map((row) => row.employeeId),
-      );
-      assertDraft(current);
+      const employeeIds = current.employees.map((row) => row.employeeId);
+      await assertCommandAccess(transaction, context, 'overtime.authorities.cancel', employeeIds);
+      if (current.status === 'APPROVED') {
+        await assertCommandAccess(
+          transaction,
+          context,
+          'overtime.authorities.approve',
+          employeeIds,
+        );
+      } else {
+        assertDraft(current);
+      }
       await transaction.overtimeAuthority.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: authorityId } },
         data: { status: 'CANCELLED' },
@@ -44,7 +54,7 @@ export class CancelOvertimeAuthorityService {
         action: 'OVERTIME_AUTHORITY_CANCELLED',
         entityType: 'OvertimeAuthority',
         entityId: authorityId,
-        previousStatus: 'DRAFT',
+        previousStatus: current.status,
         newStatus: 'CANCELLED',
         requestId: context.requestId,
         metadata: { authorityNo: current.authorityNo },
