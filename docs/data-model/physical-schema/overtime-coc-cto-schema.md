@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Overtime Authorities
 
 ```sql
@@ -158,7 +157,7 @@ ON coc_earned_certificate_lines (overtime_service_record_id)
 WHERE released_at IS NULL;
 ```
 
-The Overtime module owns certificates. Each line is a `CERTIFIED` record of the certificate's Employee, under a `COC` authority, with a Work Date in `earned_month`. Discarding a draft sets `released_at` on its lines. Approval calls the COC module once, keyed by the certificate, which applies the ratio, caps, and validity, writes the earned COC with the certificate as its source, and returns each line's `credited_minutes` and `excess_minutes`, which are COC after the ratio. Approval is refused when the certificate's Valid Until, December 31 of the year after `earned_month`, has already passed. An approved certificate and its lines are immutable. There is no per-record compensation decision.
+The Overtime module owns certificates. Each line is a `CERTIFIED` record of the certificate's Employee, under a `COC` authority, with a Work Date in `earned_month`. Discarding a draft sets `released_at` on its lines. Approval calls the COC module once, keyed by the certificate, which applies the ratio, caps, and validity, writes the earned COC with the certificate as its source, and returns each line's `credited_minutes` and `excess_minutes`, which are COC after the ratio. Approval is refused when the certificate's Valid Until, December 31 of the year after `earned_month`, has already passed. An approved certificate and its lines are immutable. A repeat call for an awarded certificate writes nothing and returns only its stored entries, refused if they belong to another Employee or name a line the call lacks; the certificate's `FOR_APPROVAL` to `APPROVED` transition is what makes the award happen once. There is no per-record compensation decision.
 
 ---
 
@@ -233,15 +232,15 @@ WHERE reverses_entry_id IS NOT NULL;
 
 Attach immutable mutation-prevention triggers. A reviewed trigger requires a reversal to use the same account, `valid_until`, and exact opposite minutes as its original. There is no entry-type enum; the source names what an entry is (ADR 0009):
 
-| Source                       | Sign | Effective date            | Posting key                    |
-| ---------------------------- | ---- | ------------------------- | ------------------------------ |
-| Certificate of COC Earned    | +    | Approval date             | Certificate line               |
-| CTO Request approval         | −    | CTO Work Date             | Work Date and `valid_until`    |
-| CTO cancellation             | +    | CTO Work Date             | Reversed entry                 |
-| COC adjustment               | −    | Adjustment date           | Adjustment                     |
-| COC reversal                 | +    | Original's effective date | Original entry                 |
-| Expiry run                   | −    | Day after `valid_until`   | `valid_until`                  |
-| Separation Case              | −    | Separation effective date | `valid_until`                  |
+| Source                    | Sign | Effective date            | Posting key                 |
+| ------------------------- | ---- | ------------------------- | --------------------------- |
+| Certificate of COC Earned | +    | Approval date             | Certificate line            |
+| CTO Request approval      | −    | CTO Work Date             | Work Date and `valid_until` |
+| CTO cancellation          | +    | CTO Work Date             | Reversed entry              |
+| COC adjustment            | −    | Adjustment date           | Adjustment                  |
+| COC reversal              | +    | Original's effective date | Original entry              |
+| Expiry run                | −    | Day after `valid_until`   | `valid_until`               |
+| Separation Case           | −    | Separation effective date | `valid_until`               |
 
 `rule_code` names the national rule version applied. `earned_month` is set only on a certificate award, so the monthly cap counts the month's credited COC from the ledger under the account lock, without reading certificates. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
 

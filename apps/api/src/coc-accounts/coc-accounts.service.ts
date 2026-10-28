@@ -7,7 +7,6 @@ import {
   cocValidUntil,
   earnCoc,
   formatCocMinutes,
-  inWorkDateOrder,
   type CertificateLineCoc,
   type CocEarningRefusalCode,
 } from './coc-earning-rule';
@@ -37,13 +36,15 @@ export class CocAccountsService {
    * Award a Certificate of COC Earned on approval, keyed by the certificate.
    * Applies the earning rule, the monthly and balance caps in Work Date order,
    * and the certificate's Valid Until. Opens the Employee's account if none is
-   * active and locks it, then writes one entry per credited line. A repeat for
-   * the same certificate returns its existing entries and writes nothing, and
-   * is refused if its Employee, earned month, or lines differ.
+   * active and locks it, then writes one entry per credited line.
    *
-   * A certificate whose lines all credit zero leaves no ledger trace, so a
-   * repeat of it recomputes. The certificate's own status transition in the
-   * Overtime module (#538) is what prevents a second award.
+   * Under the lock, a certificate that already has entries writes nothing and
+   * returns those stored entries. The repeat is refused only when the entries
+   * belong to another Employee or name a line the input lacks; it does not
+   * check certified minutes, day classifications, earned month, or added
+   * lines. A certificate whose lines all credited zero leaves no entries, so
+   * a repeat of it awards afresh. The certificate's FOR_APPROVAL to APPROVED
+   * transition in the Overtime module (#538) is what guarantees one award.
    */
   async awardEarnedCocInTransaction(
     transaction: Transaction,
@@ -64,14 +65,11 @@ export class CocAccountsService {
       );
     }
 
-    const earlier = await this.replay(transaction, agencyId, input, lineCoc);
-    if (earlier) return earlier;
-
     await this.refuseServiceInClosedAccount(transaction, agencyId, input);
     const cocAccountId = await this.openAndLockAccount(transaction, agencyId, input);
-    // A concurrent award of the same certificate may have committed while this one waited.
-    const concurrent = await this.replay(transaction, agencyId, input, lineCoc);
-    if (concurrent) return concurrent;
+    // Read under the lock, so a concurrent award of the same certificate is seen.
+    const earlier = await this.replay(transaction, agencyId, input);
+    if (earlier) return earlier;
 
     // An earlier-dated award would raise the balance under a later award's cap.
     const approvalDate = toCocDate(input.approvalDate, 'Approval date');
@@ -213,7 +211,7 @@ export class CocAccountsService {
 
     const month = input.earnedMonth.slice(0, 7);
     const lineCoc: CertificateLineCoc[] = [];
-    const refused: { lineId: string; code: CocEarningRefusalCode }[] = [];
+    const refused: { certificateLineId: string; code: CocEarningRefusalCode }[] = [];
     for (const line of input.lines) {
       toCocDate(line.workDate, 'Work Date');
       if (line.workDate.slice(0, 7) !== month) {
@@ -227,7 +225,7 @@ export class CocAccountsService {
       }
       const earning = earnCoc(line.certifiedMinutes, line.dayClassification);
       if (!earning.earns) {
-        refused.push({ lineId: line.certificateLineId, code: earning.code });
+        refused.push({ certificateLineId: line.certificateLineId, code: earning.code });
         continue;
       }
       lineCoc.push({
@@ -241,7 +239,7 @@ export class CocAccountsService {
         'Service during a work suspension earns no COC.',
         409,
         refused[0].code,
-        refused.map((refusal) => refusal.lineId),
+        refused,
       );
     }
     return { lineCoc, validUntil };
@@ -309,17 +307,14 @@ export class CocAccountsService {
   }
 
   /**
-   * The certificate's existing award, if any, rebuilt from its stored entries.
-   * Entries hold only credited lines, so the check is structural: every entry
-   * is an input line of the same earned month, credited no more than its COC,
-   * and in Work Date order the lines credit in full, then at most one in part,
-   * then nothing, as the caps allow.
+   * The certificate's stored entries, if any. Refused when they belong to
+   * another Employee or name a line the input lacks; otherwise returned as
+   * stored, without recomputing what the input would earn.
    */
   private async replay(
     transaction: Transaction,
     agencyId: string,
     input: CocEarnedCertificate,
-    lineCoc: readonly CertificateLineCoc[],
   ): Promise<CocEarnedCertificateCredit | null> {
     const entries = await transaction.cocLedgerEntry.findMany({
       where: { agencyId, sourceType: COC_CERTIFICATE_SOURCE_TYPE, sourceId: input.certificateId },
@@ -329,9 +324,9 @@ export class CocAccountsService {
         sourcePostingKey: true,
         minutes: true,
         validUntil: true,
-        earnedMonth: true,
         cocAccount: { select: { employeeId: true } },
       },
+      orderBy: { sourcePostingKey: 'asc' },
     });
     const first = entries[0];
     if (!first) return null;
@@ -342,46 +337,23 @@ export class CocAccountsService {
         'COC_CERTIFICATE_OF_ANOTHER_EMPLOYEE',
       );
     }
-
-    const mismatch = () =>
-      new CocServiceError(
-        'This certificate was already awarded with a different earned month or lines.',
+    const inputLineIds = new Set(input.lines.map((line) => line.certificateLineId));
+    if (entries.some((entry) => !inputLineIds.has(entry.sourcePostingKey))) {
+      throw new CocServiceError(
+        'This certificate was already awarded with a line the input lacks.',
         409,
         'COC_AWARD_REPLAY_MISMATCH',
       );
-    const byLine = new Map(entries.map((entry) => [entry.sourcePostingKey, entry]));
-    const inputLineIds = new Set(lineCoc.map((line) => line.certificateLineId));
-    if (
-      entries.some(
-        (entry) =>
-          !inputLineIds.has(entry.sourcePostingKey) ||
-          !entry.earnedMonth ||
-          fromCocDate(entry.earnedMonth) !== input.earnedMonth,
-      )
-    ) {
-      throw mismatch();
     }
-
-    let capped = false;
-    const lines = inWorkDateOrder(lineCoc).map((line) => {
-      const entry = byLine.get(line.certificateLineId);
-      const credited = tenths(entry?.minutes);
-      if (credited > line.cocTenths || (capped && credited > 0)) throw mismatch();
-      if (credited < line.cocTenths) capped = true;
-      return {
-        certificateLineId: line.certificateLineId,
-        workDate: line.workDate,
-        cocMinutes: formatCocMinutes(line.cocTenths),
-        creditedMinutes: formatCocMinutes(credited),
-        excessMinutes: formatCocMinutes(line.cocTenths - credited),
-        ledgerEntryId: entry?.id ?? null,
-      };
-    });
     return {
+      replayed: true,
       cocAccountId: first.cocAccountId,
       validUntil: fromCocDate(first.validUntil),
-      replayed: true,
-      lines,
+      entries: entries.map((entry) => ({
+        certificateLineId: entry.sourcePostingKey,
+        creditedMinutes: formatCocMinutes(tenths(entry.minutes)),
+        ledgerEntryId: entry.id,
+      })),
     };
   }
 }

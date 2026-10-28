@@ -36,14 +36,32 @@ export interface CocEarnedCertificateLineCredit {
   ledgerEntryId: string | null;
 }
 
-export interface CocEarnedCertificateCredit {
-  cocAccountId: string;
-  validUntil: string;
-  /** True when the certificate was already awarded and its entries are returned. */
-  replayed: boolean;
-  /** In Work Date order. */
-  lines: CocEarnedCertificateLineCredit[];
+/** A stored entry of an earlier award, as the ledger holds it. */
+export interface CocAwardedEntry {
+  certificateLineId: string;
+  creditedMinutes: string;
+  ledgerEntryId: string;
 }
+
+/**
+ * A first award reports every line; a replay reports only the entries the
+ * first award stored, since the ledger keeps neither excess nor uncredited lines.
+ */
+export type CocEarnedCertificateCredit =
+  | {
+      replayed: false;
+      cocAccountId: string;
+      validUntil: string;
+      /** In Work Date order. */
+      lines: CocEarnedCertificateLineCredit[];
+    }
+  | {
+      replayed: true;
+      cocAccountId: string;
+      validUntil: string;
+      /** By certificate line id. */
+      entries: CocAwardedEntry[];
+    };
 
 /**
  * A balance as of a date counts entries effective on or before it whose Valid
@@ -72,8 +90,8 @@ export class CocServiceError extends Error {
     message: string,
     readonly statusCode: number,
     readonly code: CocRefusalCode,
-    /** Lines refused by the earning rule, when `code` is a suspension. */
-    readonly lineIds: string[] = [],
+    /** Each line the earning rule refused, with its own reason, when `code` is a suspension. */
+    readonly refusals: { certificateLineId: string; code: CocEarningRefusalCode }[] = [],
   ) {
     super(message);
     this.name = 'CocServiceError';
