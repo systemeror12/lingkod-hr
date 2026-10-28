@@ -16,8 +16,8 @@ import {
   assertCommandAccess,
   assertStatus,
   lockAuthority,
-  openApprovalRequestId,
   readAuthority,
+  recordedReview,
 } from './overtime-authority.records';
 
 /** Reject a reviewed authority on the shared Approval Route, with a reason. */
@@ -45,7 +45,11 @@ export class RejectOvertimeAuthorityService {
           current.employees.map((row) => row.employeeId),
         );
         assertStatus(current, 'FOR_REVIEW', 'rejected');
-        const requestId = await openApprovalRequestId(transaction, context.agencyId, authorityId);
+        const { approvalRequestId: requestId } = await recordedReview(
+          transaction,
+          context.agencyId,
+          authorityId,
+        );
         await this.approvals.decideInTransaction(
           transaction,
           context,

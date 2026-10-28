@@ -18,6 +18,7 @@ import {
 import {
   assertCommandAccess,
   assertDraftValid,
+  assertEligibleApprover,
   assertNotPreparer,
   assertStatus,
   lockAuthority,
@@ -66,6 +67,7 @@ export class ReviewOvertimeAuthorityService {
           );
         }
         await assertDraftValid(transaction, context.agencyId, current);
+        await assertEligibleApprover(transaction, context.agencyId, authorityId);
 
         const route = await resolveOvertimeAuthorityRoute(this.approvals, transaction, context);
         const request = await this.approvals.createRequestInTransaction(

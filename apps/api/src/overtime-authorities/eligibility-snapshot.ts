@@ -1,19 +1,10 @@
 import type { Prisma } from '@prisma/client';
-import { z } from 'zod';
-import { reviewerAttestationSchema } from './overtime-authorities.schemas';
 import {
   OvertimeAuthorityServiceError,
   type EligibilitySnapshot,
   type OvertimeAuthoritySummary,
-  type ReviewerAttestation,
 } from './overtime-authorities.types';
-import { formatDate, toDatabaseDate } from './overtime-authority.records';
-
-export interface RecordedReview {
-  reviewedByMembershipId: string;
-  reviewedAt: Date;
-  attestations: ReviewerAttestation[];
-}
+import { formatDate, toDatabaseDate, type RecordedReview } from './overtime-authority.records';
 
 /**
  * Build each covered Employee's eligibility snapshot at approval: the Service
@@ -58,29 +49,49 @@ export async function eligibilitySnapshots(
       workArrangementVersion: { select: { id: true, arrangementType: true, versionNo: true } },
     },
   });
+  // A position keeps its earlier versions as SUPERSEDED once a successor is
+  // activated; both still describe the position over their own dates.
+  const positionIds = [
+    ...new Set(segments.flatMap((row) => (row.positionId ? [row.positionId] : []))),
+  ];
+  const versions = await transaction.plantillaPositionVersion.findMany({
+    where: {
+      agencyId,
+      positionId: { in: positionIds },
+      status: { in: ['ACTIVE', 'SUPERSEDED'] },
+      ...overlapping,
+    },
+    orderBy: { versionNo: 'desc' },
+    select: {
+      positionId: true,
+      effectiveFrom: true,
+      effectiveTo: true,
+      positionTitle: true,
+      employmentCategory: true,
+    },
+  });
   const attestations = new Map(review.attestations.map((row) => [row.employeeId, row]));
 
   const snapshots = new Map<string, EligibilitySnapshot>();
   for (const employeeId of employeeIds) {
     const attestation = attestations.get(employeeId);
-    if (!attestation) continue;
+    if (!attestation) {
+      throw new OvertimeAuthorityServiceError(
+        'The recorded review does not attest every covered Employee.',
+        409,
+        'OVERTIME_AUTHORITY_REVIEW_MISSING',
+      );
+    }
     const service = [];
     for (const segment of segments.filter((row) => row.employeeId === employeeId)) {
       // The position as it stood on the segment's first covered Work Date.
       const asOf = segment.effectiveFrom > from ? segment.effectiveFrom : from;
-      const version = segment.positionId
-        ? await transaction.plantillaPositionVersion.findFirst({
-            where: {
-              agencyId,
-              positionId: segment.positionId,
-              status: 'ACTIVE',
-              effectiveFrom: { lte: asOf },
-              OR: [{ effectiveTo: null }, { effectiveTo: { gte: asOf } }],
-            },
-            orderBy: { versionNo: 'desc' },
-            select: { positionTitle: true, employmentCategory: true },
-          })
-        : null;
+      const version = versions.find(
+        (row) =>
+          row.positionId === segment.positionId &&
+          row.effectiveFrom <= asOf &&
+          (row.effectiveTo === null || row.effectiveTo >= asOf),
+      );
       service.push({
         serviceSegmentId: segment.id,
         effectiveFrom: formatDate(segment.effectiveFrom),
@@ -117,39 +128,3 @@ export async function eligibilitySnapshots(
   }
   return snapshots;
 }
-
-/**
- * Read the review result: the attestations stored on the authority's
- * immutable review Audit Event. Approval copies them into each snapshot.
- */
-export async function recordedReview(
-  transaction: Prisma.TransactionClient,
-  agencyId: string,
-  authorityId: string,
-): Promise<RecordedReview> {
-  const event = await transaction.auditEvent.findFirst({
-    where: {
-      agencyId,
-      entityType: 'OvertimeAuthority',
-      entityId: authorityId,
-      action: 'OVERTIME_AUTHORITY_REVIEWED',
-    },
-    orderBy: { occurredAt: 'desc' },
-    select: { actorMembershipId: true, occurredAt: true, metadata: true },
-  });
-  const parsed = reviewMetadataSchema.safeParse(event?.metadata);
-  if (!event?.actorMembershipId || !parsed.success) {
-    throw new OvertimeAuthorityServiceError(
-      'The Overtime Authority has no recorded review to approve against.',
-      409,
-      'OVERTIME_AUTHORITY_REVIEW_MISSING',
-    );
-  }
-  return {
-    reviewedByMembershipId: event.actorMembershipId,
-    reviewedAt: event.occurredAt,
-    attestations: parsed.data.attestations,
-  };
-}
-
-const reviewMetadataSchema = z.object({ attestations: z.array(reviewerAttestationSchema) });

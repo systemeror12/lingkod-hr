@@ -25,7 +25,8 @@ export const overtimeAuthorityEffect: ApprovalEffectContext = {
 /**
  * Make the generic Approval API fail closed for Overtime Authorities: approval
  * and rejection must go through the Overtime module, which moves the authority
- * with its request in one transaction.
+ * with its request in one transaction. Cancelling the request is refused
+ * outright, since nothing could then move the authority out of FOR_REVIEW.
  */
 export function registerOvertimeAuthorityApproval(registry: ApprovalCompletionRegistry): void {
   const guard = async (
@@ -43,12 +44,19 @@ export function registerOvertimeAuthorityApproval(registry: ApprovalCompletionRe
   };
   registry.register(OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE, guard);
   registry.registerDecision(OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE, guard);
+  registry.registerCancel(OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE, async () => {
+    throw new ApprovalServiceError(
+      'An Overtime Authority Approval Request cannot be cancelled; approve or reject the authority.',
+      409,
+      'OVERTIME_AUTHORITY_APPROVAL_CANCEL_FORBIDDEN',
+    );
+  });
 }
 
 /**
- * Resolve the Agency's active Overtime Authority route. Every step must
- * approve with `overtime.authorities.approve` and reject with `.reject`, so
- * the route cannot hand the decision to another permission.
+ * Resolve the Agency's active Overtime Authority route. hris-controls §5.16
+ * names one Approving Official, so the route has exactly one step, which
+ * approves with `overtime.authorities.approve` and rejects with `.reject`.
  */
 export async function resolveOvertimeAuthorityRoute(
   approvals: ApprovalsService,
@@ -60,14 +68,15 @@ export async function resolveOvertimeAuthorityRoute(
     context,
     OVERTIME_AUTHORITY_ROUTE_CODE,
   );
-  const valid = route.stepDefinition.steps.every(
-    (step) =>
-      (step.approvePermission ?? step.requiredPermission) === APPROVE &&
-      (step.rejectPermission ?? step.requiredPermission) === REJECT,
-  );
+  const [step, ...rest] = route.stepDefinition.steps;
+  const valid =
+    step !== undefined &&
+    rest.length === 0 &&
+    (step.approvePermission ?? step.requiredPermission) === APPROVE &&
+    (step.rejectPermission ?? step.requiredPermission) === REJECT;
   if (!valid) {
     throw new OvertimeAuthorityServiceError(
-      `Every step of the ${OVERTIME_AUTHORITY_ROUTE_CODE} Approval Route must approve with ${APPROVE} and reject with ${REJECT}.`,
+      `The ${OVERTIME_AUTHORITY_ROUTE_CODE} Approval Route must have one step that approves with ${APPROVE} and rejects with ${REJECT}.`,
       409,
       'OVERTIME_AUTHORITY_ROUTE_INVALID',
     );

@@ -153,6 +153,12 @@ export interface ApprovalCompletionHandler {
     request: ApprovalCompletionRequest,
     outcome: 'RETURNED' | 'REJECTED',
   ): Promise<void>;
+  /** Runs before unfinished route work is cancelled; a domain may refuse it. */
+  onCancel?(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    request: ApprovalCompletionRequest,
+  ): Promise<void>;
 }
 
 export type ApprovalCompletionCallback = ApprovalCompletionHandler['complete'];
@@ -180,6 +186,7 @@ export const approvalCompletionHandler: ApprovalCompletionHandler = {
 export class ApprovalCompletionRegistry implements ApprovalCompletionHandler {
   private readonly callbacks = new Map<string, ApprovalCompletionCallback>();
   private readonly decisionCallbacks = new Map<string, ApprovalDecisionCallback>();
+  private readonly cancelCallbacks = new Map<string, ApprovalCompletionCallback>();
 
   register(subjectType: string, callback: ApprovalCompletionCallback): void {
     this.callbacks.set(subjectType, callback);
@@ -187,6 +194,10 @@ export class ApprovalCompletionRegistry implements ApprovalCompletionHandler {
 
   registerDecision(subjectType: string, callback: ApprovalDecisionCallback): void {
     this.decisionCallbacks.set(subjectType, callback);
+  }
+
+  registerCancel(subjectType: string, callback: ApprovalCompletionCallback): void {
+    this.cancelCallbacks.set(subjectType, callback);
   }
 
   async complete(
@@ -208,6 +219,14 @@ export class ApprovalCompletionRegistry implements ApprovalCompletionHandler {
     outcome: 'RETURNED' | 'REJECTED',
   ): Promise<void> {
     await this.decisionCallbacks.get(request.subjectType)?.(transaction, context, request, outcome);
+  }
+
+  async onCancel(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    request: ApprovalCompletionRequest,
+  ): Promise<void> {
+    await this.cancelCallbacks.get(request.subjectType)?.(transaction, context, request);
   }
 }
 
@@ -1131,6 +1150,13 @@ export class ApprovalsService {
     if (!['PENDING', 'IN_PROGRESS', 'RETURNED'].includes(current.status)) {
       throw this.requestWorkflowError('cancel', current.status);
     }
+    await this.completionHandler.onCancel?.(transaction, context, {
+      approvalRequestId: current.id,
+      agencyId: current.agencyId,
+      subjectType: current.subjectType,
+      subjectId: current.subjectId,
+      routeVersionId: current.routeVersionId,
+    });
     await transaction.approvalStep.updateMany({
       where: {
         agencyId: context.agencyId,

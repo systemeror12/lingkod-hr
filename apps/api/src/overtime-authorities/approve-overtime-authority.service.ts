@@ -4,7 +4,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { ApprovalsService } from '../approvals/approval.service';
 import { requestDatabaseContext } from '../database-context';
-import { eligibilitySnapshots, recordedReview } from './eligibility-snapshot';
+import { eligibilitySnapshots } from './eligibility-snapshot';
 import { overtimeAuthorityEffect } from './overtime-authority-approval';
 import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
@@ -21,14 +21,14 @@ import {
   assertNotPreparer,
   assertStatus,
   lockAuthority,
-  openApprovalRequestId,
   readAuthority,
+  recordedReview,
 } from './overtime-authority.records';
 
 /**
- * Record the Approving Official's decision on the shared Approval Route. When
- * the route completes, fix the compensation method, store each covered
- * Employee's eligibility snapshot, and freeze the authority as APPROVED.
+ * Record the Approving Official's decision on the one-step shared Approval
+ * Route the review opened, then fix the compensation method, store each
+ * covered Employee's eligibility snapshot, and freeze the authority as APPROVED.
  */
 @Injectable()
 export class ApproveOvertimeAuthorityService {
@@ -64,9 +64,8 @@ export class ApproveOvertimeAuthorityService {
         }
         await assertDraftValid(transaction, context.agencyId, current);
         const review = await recordedReview(transaction, context.agencyId, authorityId);
-
-        const requestId = await openApprovalRequestId(transaction, context.agencyId, authorityId);
-        const decided = await this.approvals.decideInTransaction(
+        const requestId = review.approvalRequestId;
+        await this.approvals.decideInTransaction(
           transaction,
           context,
           requestId,
@@ -75,9 +74,6 @@ export class ApproveOvertimeAuthorityService {
           undefined,
           overtimeAuthorityEffect,
         );
-        // A later route step still has to decide; the authority stays FOR_REVIEW.
-        if (decided.status !== 'APPROVED') return current;
-
         const approvedAt = new Date();
         const snapshots = await eligibilitySnapshots(transaction, current, review, approvedAt);
         for (const row of current.employees) {
