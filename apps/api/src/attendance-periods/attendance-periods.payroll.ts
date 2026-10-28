@@ -46,6 +46,7 @@ const COVERAGE_FACT_TYPES: Readonly<Record<string, AttendancePayrollFactType>> =
   TRAINING: 'TRAINING',
   APPROVED_ABSENCE: 'APPROVED_ABSENCE',
   POSTED_LEAVE: 'POSTED_LEAVE',
+  CTO: 'CTO',
 };
 
 const DEFICIT_FACT_TYPES: Readonly<Record<string, AttendancePayrollFactType>> = {

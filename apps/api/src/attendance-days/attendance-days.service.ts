@@ -25,6 +25,7 @@ import {
   zonedTimeToInstant,
   type AttendanceWorkDateEvent,
 } from '../attendance/attendance.types';
+import { ctoCoverageInTransaction } from '../attendance-cto-inputs/attendance-cto-inputs.coverage';
 import { AttendancePostedLeaveInputsService } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.service';
 import {
   AttendancePostedLeaveInputError,
@@ -302,11 +303,11 @@ function resolutionFingerprint(
 
 /**
  * Attendance Day calculation turns the resolved schedule configuration,
- * immutable Attendance Events, Attendance Context, and Attendance-owned posted-leave
- * coverage of one Work Date into an immutable calculation version with exact
- * whole-minute segments and blocking Attendance Exceptions. Recalculation is
- * idempotent through the stored input fingerprint and creates a successor
- * version instead of editing history.
+ * immutable Attendance Events, Attendance Context, and Attendance-owned
+ * posted-leave and CTO coverage of one Work Date into an immutable calculation
+ * version with exact whole-minute segments and blocking Attendance Exceptions.
+ * Recalculation is idempotent through the stored input fingerprint and creates
+ * a successor version instead of editing history.
  */
 @Injectable()
 export class AttendanceDaysService {
@@ -566,6 +567,38 @@ export class AttendanceDaysService {
       id: successor.id,
       recalculatedWorkDates: days.map(({ workDate }) => formatDate(workDate)),
     };
+  }
+
+  /**
+   * Recalculate the Employee's current Attendance Day for one Work Date inside
+   * the caller-owned transaction, after an Attendance-owned input changed. A
+   * Work Date with no Attendance Day yet is left for its first calculation.
+   */
+  async recalculateCurrentWorkDateInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    employeeId: string,
+    workDate: string,
+  ): Promise<AttendanceDayCalculationResultSummary | null> {
+    const day = await transaction.attendanceDay.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        employeeId,
+        workDate: toDatabaseDate(workDate),
+        isCurrent: true,
+      },
+      select: { attendancePeriod: { select: periodSelect } },
+    });
+    if (!day) return null;
+    return this.calculateOne(
+      transaction,
+      context,
+      day.attendancePeriod,
+      employeeId,
+      workDate,
+      new Date(),
+      this.workingDateCounter(transaction, context.agencyId),
+    );
   }
 
   /**
@@ -1104,6 +1137,29 @@ export class AttendanceDaysService {
           coverageType: 'POSTED_LEAVE',
           startsAt: whole.startsAt,
           endsAt: whole.endsAt,
+        });
+      }
+    }
+    // Whole-day CTO covers the Work Date's expected duty, so like leave it
+    // covers nothing on a date with none; timed CTO keeps its own interval.
+    for (const entry of await ctoCoverageInTransaction(
+      transaction,
+      context.agencyId,
+      resolution.employeeId,
+      workDate,
+    )) {
+      const intervals = entry.interval
+        ? [entry.interval]
+        : placesLeave
+          ? wholeWorkDateCoverageIntervals(dayRule, workDate, timezone)
+          : [];
+      for (const interval of intervals) {
+        coverage.push({
+          sourceType: 'CTO_INPUT',
+          sourceId: entry.inputId,
+          coverageType: 'CTO',
+          startsAt: interval.startsAt,
+          endsAt: interval.endsAt,
         });
       }
     }

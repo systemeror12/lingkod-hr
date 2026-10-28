@@ -461,7 +461,7 @@ CREATE TABLE attendance_day_segments (
   duty_relation text NOT NULL CHECK (duty_relation IN ('EXPECTED','OUTSIDE_SCHEDULE')),
   coverage_type text NOT NULL CHECK (coverage_type IN (
     'WORKED','OFFICIAL_BUSINESS','OFFICIAL_TRAVEL','TRAINING',
-    'APPROVED_ABSENCE','POSTED_LEAVE','UNCOVERED'
+    'APPROVED_ABSENCE','POSTED_LEAVE','CTO','UNCOVERED'
   )),
   deficit_type text CHECK (deficit_type IN ('TARDINESS','UNDERTIME','ABSENCE')),
   holiday_classification text,
@@ -800,7 +800,7 @@ CREATE TABLE attendance_payroll_facts (
   work_date date NOT NULL,
   fact_type text NOT NULL CHECK (fact_type IN (
     'EXPECTED','WORKED','OFFICIAL_BUSINESS','OFFICIAL_TRAVEL','TRAINING',
-    'APPROVED_ABSENCE','POSTED_LEAVE','TARDINESS','UNDERTIME','ABSENCE'
+    'APPROVED_ABSENCE','POSTED_LEAVE','CTO','TARDINESS','UNDERTIME','ABSENCE'
   )),
   holiday_classification text,
   stable_source_key text NOT NULL,

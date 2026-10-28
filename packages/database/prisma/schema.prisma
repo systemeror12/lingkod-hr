@@ -2052,6 +2052,7 @@ model Employee {
   leaveApplications      LeaveApplication[]      @relation("LeaveApplicationEmployee")
   attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
   attendancePostedLeaveInputs AttendancePostedLeaveInput[] @relation("AttendancePostedLeaveInputEmployee")
+  attendanceCtoInputs    AttendanceCtoInput[]    @relation("AttendanceCtoInputEmployee")
   attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
   attendanceDays         AttendanceDay[]         @relation("AttendanceDayEmployee")
   attendanceSubmissions  EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionEmployee")
@@ -3589,6 +3590,32 @@ model AttendancePostedLeaveInput {
   @@unique([agencyId, predecessorInputId])
   @@index([agencyId, employeeId, dateFrom, dateTo], map: "attendance_posted_leave_inputs_employee_range_idx")
   @@map("attendance_posted_leave_inputs")
+}
+
+model AttendanceCtoInput {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String    @map("agency_id") @db.Uuid
+  employeeId         String    @map("employee_id") @db.Uuid
+  sourceKey          String    @map("source_key")
+  sourceType         String    @map("source_type")
+  sourceId           String    @map("source_id") @db.Uuid
+  workDate           DateTime  @map("work_date") @db.Date
+  coverageMode       String    @map("coverage_mode")
+  startsAt           DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt             DateTime? @map("ends_at") @db.Timestamptz(6)
+  predecessorInputId String?   @map("predecessor_input_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee    Employee             @relation("AttendanceCtoInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  predecessor AttendanceCtoInput?  @relation("AttendanceCtoInputSuccession", fields: [agencyId, employeeId, predecessorInputId], references: [agencyId, employeeId, id], onDelete: Restrict, map: "attendance_cto_inputs_predecessor_fkey")
+  successors  AttendanceCtoInput[] @relation("AttendanceCtoInputSuccession")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeId, id], map: "attendance_cto_inputs_employee_id_key")
+  @@unique([agencyId, sourceKey])
+  @@unique([agencyId, predecessorInputId])
+  @@index([agencyId, employeeId, workDate], map: "attendance_cto_inputs_employee_work_date_idx")
+  @@map("attendance_cto_inputs")
 }
 
 model AttendanceWebClockVersion {

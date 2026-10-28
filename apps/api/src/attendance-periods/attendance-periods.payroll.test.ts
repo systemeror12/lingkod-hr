@@ -111,6 +111,17 @@ describe('deriveAttendancePayrollFactLines', () => {
     expect(lines.find((line) => line.factType === 'POSTED_LEAVE')?.minutes).toBe(180);
     expect(summarizeAttendancePayrollFactMinutes(lines).EXPECTED).toBe(480);
   });
+
+  it('publishes CTO as its own classification', () => {
+    const lines = deriveAttendancePayrollFactLines([
+      day('day-1', [
+        segment({ minutes: 240, coverageType: 'WORKED' }),
+        segment({ minutes: 240, coverageType: 'CTO' }),
+      ]),
+    ]);
+    expect(lines.find((line) => line.factType === 'CTO')?.minutes).toBe(240);
+    expect(summarizeAttendancePayrollFactMinutes(lines).EXPECTED).toBe(480);
+  });
 });
 
 describe('buildAttendancePayrollAdjustmentLines', () => {

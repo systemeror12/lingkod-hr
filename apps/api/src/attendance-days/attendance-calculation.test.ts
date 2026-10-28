@@ -245,6 +245,32 @@ it('classifies internal uncovered expected minutes as absence', () => {
   expect(internal.every((segment) => segment.deficitType === 'ABSENCE')).toBe(true);
 });
 
+it('places CTO as paid coverage with no deficit', () => {
+  const result = calculateAttendanceDay(
+    input({
+      events: [at('13:00', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+      coverage: [
+        coverage({
+          sourceId: 'cto-1',
+          sourceType: 'CTO_INPUT',
+          coverageType: 'CTO',
+          startsAt: manila('08:00'),
+          endsAt: manila('13:00'),
+        }),
+      ],
+    }),
+  );
+
+  expect(result.exceptions).toEqual([]);
+  expect(result.totals.coverageMinutes).toBe(540);
+  expect(result.totals).toMatchObject({ lateMinutes: 0, undertimeMinutes: 0, absenceMinutes: 0 });
+  expect(result.segments[0]).toMatchObject({
+    coverageType: 'CTO',
+    deficitType: null,
+    sources: [{ sourceType: 'CTO_INPUT', id: 'cto-1' }],
+  });
+});
+
 it('counts posted leave and worked time as one union without double counting', () => {
   const result = calculateAttendanceDay(
     input({

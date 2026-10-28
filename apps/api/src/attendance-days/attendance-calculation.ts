@@ -45,6 +45,7 @@ export const ATTENDANCE_COVERAGE_TYPES = [
   'TRAINING',
   'APPROVED_ABSENCE',
   'POSTED_LEAVE',
+  'CTO',
   'UNCOVERED',
 ] as const;
 export type AttendanceCoverageType = (typeof ATTENDANCE_COVERAGE_TYPES)[number];
@@ -58,7 +59,7 @@ export interface AttendanceCalculationEvent {
 }
 
 export interface AttendanceCalculationCoverage {
-  sourceType: 'ATTENDANCE_CONTEXT' | 'POSTED_LEAVE';
+  sourceType: 'ATTENDANCE_CONTEXT' | 'POSTED_LEAVE' | 'CTO_INPUT';
   sourceId: string;
   coverageType: Exclude<AttendanceCoverageType, 'WORKED' | 'UNCOVERED'>;
   startsAt: Date;
@@ -309,11 +310,11 @@ function materializeDayRule(
 }
 
 /**
- * Cover one whole Work Date for posted leave or an Attendance Context that
- * carries no clock time. A fixed Day Rule covers its duty window; a flexible
- * Day Rule covers its earliest permitted start through the duty end so the
- * interval still qualifies as coverage without anchoring the flexible start by
- * itself. Scheduled unpaid breaks are not expected duty, so they stay outside
+ * Cover one whole Work Date for posted leave, whole-day CTO, or an Attendance
+ * Context that carries no clock time. A fixed Day Rule covers its duty window;
+ * a flexible Day Rule covers its earliest permitted start through the duty end
+ * so the interval still qualifies as coverage without anchoring the flexible
+ * start by itself. Scheduled unpaid breaks are not expected duty, so they stay outside
  * the covered intervals.
  */
 export function wholeWorkDateCoverageIntervals(
@@ -665,7 +666,7 @@ export function calculateAttendanceDay(
     exceptions.push({
       type: 'CONFLICTING_COVERAGE',
       message:
-        'Worked time, Attendance Context, and posted leave classify overlapping minutes differently.',
+        'Worked time, Attendance Context, posted leave, and CTO classify overlapping minutes differently.',
       details: {
         workDate,
         conflictingTypes: [...conflictingTypes].sort(),
