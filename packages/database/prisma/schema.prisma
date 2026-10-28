@@ -162,6 +162,8 @@ model Agency {
   terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
   terminalLeaveInputLines       TerminalLeaveInputSnapshotLine[]
   mandatoryLeaveAssessments     MandatoryLeaveAssessment[]
+  overtimeAuthorities           OvertimeAuthority[]
+  overtimeAuthorityEmployees    OvertimeAuthorityEmployee[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -233,6 +235,7 @@ model OrganizationUnit {
   personnelBaselines        PersonnelBaseline[]        @relation("PersonnelBaselineOrganizationUnit")
   personnelActionTargets    PersonnelActionVersion[]   @relation("PersonnelActionTargetOrganizationUnit")
   requestsToFill            RequestToFill[]            @relation("RequestToFillRequestingUnit")
+  overtimeAuthorities       OvertimeAuthority[]        @relation("OvertimeAuthorityRequestingUnit")
 
   @@unique([agencyId, id])
   @@unique([agencyId, code])
@@ -461,6 +464,7 @@ model AgencyMembership {
   assessedTerminalLeaveInputs            TerminalLeaveInputAssessment[]       @relation("TerminalLeaveInputAssessmentAssessor")
 
   leavePostings LeavePosting[] @relation("LeavePostingPoster")
+  overtimeAuthoritiesApproved OvertimeAuthority[] @relation("OvertimeAuthorityApprover")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -2058,6 +2062,7 @@ model Employee {
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
   mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
+  overtimeAuthorityCoverage      OvertimeAuthorityEmployee[]     @relation("OvertimeAuthorityEmployeeEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -5185,4 +5190,49 @@ model MandatoryLeaveAssessment {
   @@unique([agencyId, id])
   @@index([agencyId, employeeId, assessmentYear, assessedAt(sort: Desc)])
   @@map("mandatory_leave_assessments")
+}
+
+model OvertimeAuthority {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  requestingUnitId       String    @map("requesting_unit_id") @db.Uuid
+  authorityNo            String    @map("authority_no") @db.Citext
+  purpose                String
+  workDateFrom           DateTime  @map("work_date_from") @db.Date
+  workDateTo             DateTime  @map("work_date_to") @db.Date
+  compensationMethod     String    @map("compensation_method")
+  fundingReference       String?   @map("funding_reference")
+  status                 String
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency         Agency                      @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestingUnit OrganizationUnit            @relation("OvertimeAuthorityRequestingUnit", fields: [agencyId, requestingUnitId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy     AgencyMembership?           @relation("OvertimeAuthorityApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  employees      OvertimeAuthorityEmployee[] @relation("OvertimeAuthorityEmployees")
+
+  @@unique([agencyId, authorityNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, status, workDateFrom])
+  @@map("overtime_authorities")
+}
+
+model OvertimeAuthorityEmployee {
+  id                  String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId            String  @map("agency_id") @db.Uuid
+  overtimeAuthorityId String  @map("overtime_authority_id") @db.Uuid
+  employeeId          String  @map("employee_id") @db.Uuid
+  authorizedHours     Decimal @map("authorized_hours") @db.Decimal(12, 4)
+  taskDescription     String? @map("task_description")
+  eligibilitySnapshot Json?   @map("eligibility_snapshot")
+
+  agency    Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  authority OvertimeAuthority @relation("OvertimeAuthorityEmployees", fields: [agencyId, overtimeAuthorityId], references: [agencyId, id], onDelete: Restrict)
+  employee  Employee          @relation("OvertimeAuthorityEmployeeEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([overtimeAuthorityId, employeeId])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId])
+  @@map("overtime_authority_employees")
 }
