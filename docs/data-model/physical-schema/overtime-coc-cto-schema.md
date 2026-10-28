@@ -194,6 +194,7 @@ CREATE TABLE coc_ledger_entries (
   minutes numeric(12,1) NOT NULL CHECK (minutes <> 0),
   effective_date date NOT NULL,
   valid_until date NOT NULL,
+  earned_month date,
   source_type citext NOT NULL CHECK (btrim(source_type::text) <> ''),
   source_id uuid NOT NULL,
   source_posting_key citext NOT NULL
@@ -205,6 +206,11 @@ CREATE TABLE coc_ledger_entries (
   posted_at timestamptz NOT NULL DEFAULT now(),
   posted_by_membership_id uuid,
   CHECK (valid_until = make_date(extract(year FROM valid_until)::int, 12, 31)),
+  CHECK (earned_month IS NULL OR (
+    earned_month = date_trunc('month', earned_month)::date
+    AND valid_until = make_date(extract(year FROM earned_month)::int + 1, 12, 31)
+    AND minutes > 0 AND reverses_entry_id IS NULL)),
+  CHECK (minutes < 0 OR earned_month IS NOT NULL OR reverses_entry_id IS NOT NULL),
   FOREIGN KEY (agency_id, coc_account_id)
     REFERENCES coc_accounts (agency_id, id),
   FOREIGN KEY (agency_id, supporting_document_version_id)
@@ -237,7 +243,7 @@ Attach immutable mutation-prevention triggers. A reviewed trigger requires a rev
 | Expiry run                   | −    | Day after `valid_until`   | `valid_until`                  |
 | Separation Case              | −    | Separation effective date | `valid_until`                  |
 
-`rule_code` names the national rule version applied. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
+`rule_code` names the national rule version applied. `earned_month` is set only on a certificate award, so the monthly cap counts the month's credited COC from the ledger under the account lock, without reading certificates. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
 
 Every balance-sensitive command locks the account, recomputes within the transaction, and writes no entry that would make the balance for any `valid_until` negative. A use draws from the earliest `valid_until` on or after its Work Date. A reversal restoring COC whose `valid_until` has passed is followed by an expiry entry in the same transaction. The expiry job is idempotent through its posting key.
 
