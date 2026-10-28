@@ -189,6 +189,7 @@ Immutable, signed COC posting
 | minutes | decimal(1) | No |  | Signed minutes, nonzero |
 | effective_date | date | No |  | Date the change takes effect |
 | valid_until | date | No |  | December 31 of the year after the earned month |
+| earned_month | date | Yes |  | First day of the certificate's earned month; set only on certificate entries, for the monthly cap |
 | source_type | string | No |  | Certificate, CTO request, cancellation, adjustment, reversal, expiry, separation |
 | source_id | uuid | No |  | Source ID |
 | source_posting_key | string | No |  | Idempotency within the source |
@@ -202,7 +203,7 @@ Immutable, signed COC posting
 
 - Unique `(coc_account_id, source_type, source_id, source_posting_key)`.
 - A reversal negates its original exactly, in the same account and `valid_until`; at most one reversal per entry.
-- Only a certificate posts new credit; adjustments are negative.
+- Only a certificate posts new credit; adjustments are negative, and a reversal may only negate a negative entry.
 - No balance for a `valid_until` may go negative.
 
 **Deletion behavior:** Never delete.

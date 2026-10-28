@@ -4,7 +4,11 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { createAdminClient } from '../attendance-test-fixtures';
 import { CocAccountsService } from './coc-accounts.service';
-import { CocServiceError, type CocAwardInput, type CocAwardLineInput } from './coc-accounts.types';
+import {
+  CocServiceError,
+  type CocEarnedCertificate,
+  type CocEarnedCertificateLine,
+} from './coc-accounts.types';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const coc = new CocAccountsService();
@@ -51,7 +55,7 @@ async function createAgency(admin: PrismaClient, suffix: string, label: string) 
 
 type Agency = Awaited<ReturnType<typeof createAgency>>;
 
-function award(agency: Agency, input: CocAwardInput) {
+function award(agency: Agency, input: CocEarnedCertificate) {
   return withDatabaseContext(
     { agencyId: agency.agencyId, membershipId: agency.membershipId },
     (transaction) => coc.awardEarnedCocInTransaction(transaction, agency.agencyId, input),
@@ -68,8 +72,8 @@ function balance(agency: Agency, employeeId: string, asOf: string) {
 const line = (
   workDate: string,
   certifiedMinutes: number,
-  dayClassification: CocAwardLineInput['dayClassification'] = 'WORKDAY',
-): CocAwardLineInput => ({
+  dayClassification: CocEarnedCertificateLine['dayClassification'] = 'WORKDAY',
+): CocEarnedCertificateLine => ({
   certificateLineId: randomUUID(),
   workDate,
   certifiedMinutes,
@@ -81,8 +85,8 @@ function certificate(
   employeeId: string,
   earnedMonth: string,
   approvalDate: string,
-  lines: CocAwardLineInput[],
-): CocAwardInput {
+  lines: CocEarnedCertificateLine[],
+): CocEarnedCertificate {
   return {
     certificateId: randomUUID(),
     employeeId,
@@ -295,6 +299,174 @@ it.skipIf(!enabled)(
       );
       await Promise.all(months);
       expect((await balance(home, employee.id, '2026-09-01')).totalMinutes).toBe('7200.0');
+    } finally {
+      await cleanup(admin, [home.agencyId], suffix);
+      await admin.$disconnect();
+    }
+  },
+  60_000,
+);
+
+it.skipIf(!enabled)(
+  'replays a certificate only for the same Employee, earned month, and lines',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-coc-replay`;
+    const home = await createAgency(admin, suffix, 'REPLAY');
+    try {
+      const employee = await home.employee();
+      const other = await home.employee();
+      const first = line('2026-03-02', 120);
+      const second = line('2026-03-03', 60);
+      const march = certificate(home, employee.id, '2026-03-01', '2026-04-06', [first, second]);
+      const awarded = await award(home, march);
+
+      expect(await refusal(award(home, { ...march, employeeId: other.id }))).toMatchObject({
+        statusCode: 409,
+        code: 'COC_CERTIFICATE_OF_ANOTHER_EMPLOYEE',
+      });
+      for (const changed of [
+        // A credited line dropped.
+        { ...march, lines: [first] },
+        // A line's COC lowered below what it was credited.
+        { ...march, lines: [{ ...first, certifiedMinutes: 100 }, second] },
+        // A line added ahead of credited lines.
+        { ...march, lines: [line('2026-03-01', 30), first, second] },
+        // Another earned month.
+        {
+          ...march,
+          earnedMonth: '2026-04-01',
+          lines: [first, second].map((entry) => ({
+            ...entry,
+            workDate: entry.workDate.replace('2026-03', '2026-04'),
+          })),
+        },
+      ]) {
+        expect(await refusal(award(home, changed))).toMatchObject({
+          statusCode: 409,
+          code: 'COC_AWARD_REPLAY_MISMATCH',
+        });
+      }
+      expect(await award(home, march)).toEqual({ ...awarded, replayed: true });
+
+      // Fill the month, then a certificate the cap credits nothing leaves no
+      // ledger trace, so a repeat recomputes; #538's status transition stops it.
+      await award(
+        home,
+        certificate(home, employee.id, '2026-03-01', '2026-04-07', [line('2026-03-04', 2_220)]),
+      );
+      const zero = certificate(home, employee.id, '2026-03-01', '2026-04-08', [
+        line('2026-03-05', 60),
+      ]);
+      const once = await award(home, zero);
+      const again = await award(home, zero);
+      for (const result of [once, again]) {
+        expect(result).toMatchObject({ replayed: false });
+        expect(result.lines[0]).toMatchObject({ creditedMinutes: '0.0', ledgerEntryId: null });
+      }
+
+      // A reversal may only negate a negative entry, so a certificate entry can't be reversed.
+      const credited = await admin.cocLedgerEntry.findFirstOrThrow({
+        where: { id: awarded.lines[0]!.ledgerEntryId! },
+      });
+      await expect(
+        admin.cocLedgerEntry.create({
+          data: {
+            agencyId: home.agencyId,
+            cocAccountId: credited.cocAccountId,
+            minutes: credited.minutes.negated(),
+            effectiveDate: credited.effectiveDate,
+            validUntil: credited.validUntil,
+            sourceType: 'COC_REVERSAL',
+            sourceId: randomUUID(),
+            sourcePostingKey: credited.id,
+            ruleCode: 'TEST',
+            reason: 'Reverse a certificate entry.',
+            reversesEntryId: credited.id,
+          },
+        }),
+      ).rejects.toThrow(/may only negate a negative/);
+    } finally {
+      await cleanup(admin, [home.agencyId], suffix);
+      await admin.$disconnect();
+    }
+  },
+  60_000,
+);
+
+it.skipIf(!enabled)(
+  'caps against unexpired credit, in approval order, within one employment period',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-coc-periods`;
+    const home = await createAgency(admin, suffix, 'PERIOD');
+    try {
+      const employee = await home.employee();
+      // 6,900 minutes valid until 2025-12-31.
+      for (const [month, workDate, minutes] of [
+        ['2024-10-01', '2024-10-07', 2_400],
+        ['2024-11-01', '2024-11-04', 2_400],
+        ['2024-12-01', '2024-12-02', 2_100],
+      ] as const) {
+        await award(
+          home,
+          certificate(home, employee.id, month, '2025-01-05', [line(workDate, minutes)]),
+        );
+      }
+
+      // The balance cap holds the first December 2025 certificate back.
+      const heldBack = await award(
+        home,
+        certificate(home, employee.id, '2025-12-01', '2025-12-31', [line('2025-12-01', 1_000)]),
+      );
+      expect(heldBack.lines[0]).toMatchObject({ creditedMinutes: '300.0', excessMinutes: '700.0' });
+
+      // Once 2025-12-31 passes, that COC neither counts in the balance nor
+      // against the cap, though no expiry entry exists yet.
+      expect((await balance(home, employee.id, '2026-01-02')).byValidUntil).toEqual([
+        { validUntil: '2026-12-31', minutes: '300.0' },
+      ]);
+      // The monthly cap counts the 300 minutes credited, not the 1,000 earned.
+      const second = await award(
+        home,
+        certificate(home, employee.id, '2025-12-01', '2026-01-02', [line('2025-12-02', 2_400)]),
+      );
+      expect(second.lines[0]).toMatchObject({ creditedMinutes: '2100.0', excessMinutes: '300.0' });
+
+      // An approval dated before the account's latest certificate is refused.
+      expect(
+        await refusal(
+          award(
+            home,
+            certificate(home, employee.id, '2025-12-01', '2026-01-01', [line('2025-12-03', 60)]),
+          ),
+        ),
+      ).toMatchObject({ statusCode: 409, code: 'COC_APPROVAL_BEFORE_LATEST_CERTIFICATE' });
+
+      // Service inside a closed account's period is refused; later service opens a new account.
+      const leaver = await home.employee();
+      const closedAccount = await award(
+        home,
+        certificate(home, leaver.id, '2026-03-01', '2026-04-06', [line('2026-03-02', 60)]),
+      );
+      await admin.cocAccount.update({
+        where: { id: closedAccount.cocAccountId },
+        data: { status: 'CLOSED', closedAt: new Date('2026-04-30') },
+      });
+      expect(
+        await refusal(
+          award(
+            home,
+            certificate(home, leaver.id, '2026-04-01', '2026-05-04', [line('2026-04-10', 60)]),
+          ),
+        ),
+      ).toMatchObject({ statusCode: 409, code: 'COC_SERVICE_IN_CLOSED_ACCOUNT' });
+      const reemployed = await award(
+        home,
+        certificate(home, leaver.id, '2026-05-01', '2026-06-01', [line('2026-05-04', 60)]),
+      );
+      expect(reemployed.cocAccountId).not.toBe(closedAccount.cocAccountId);
+      expect(reemployed.lines[0]).toMatchObject({ creditedMinutes: '60.0' });
     } finally {
       await cleanup(admin, [home.agencyId], suffix);
       await admin.$disconnect();

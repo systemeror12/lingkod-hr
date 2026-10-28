@@ -5,7 +5,7 @@
  * exact (ADR 0009) and the ledger stores them at one decimal place.
  */
 
-/** Recorded on every award entry as the rule version it applied. */
+/** Recorded on every certificate entry as the rule version it applied. */
 export const COC_EARNING_RULE_CODE = 'JC2_2004_COC_EARNING';
 
 /** The 40-hour monthly cap, after the ratio, across a month's approved certificates. */
@@ -66,13 +66,13 @@ export function cocValidUntil(earnedMonth: string): string {
   return `${Number(earnedMonth.slice(0, 4)) + 1}-12-31`;
 }
 
-export interface CocAwardLineCoc {
+export interface CertificateLineCoc {
   certificateLineId: string;
   workDate: string;
   cocTenths: number;
 }
 
-export interface CocAwardLineAllocation extends CocAwardLineCoc {
+export interface CertificateLineAllocation extends CertificateLineCoc {
   creditedTenths: number;
   excessTenths: number;
 }
@@ -82,11 +82,11 @@ export interface CocAwardLineAllocation extends CocAwardLineCoc {
  * remaining 2,400 minutes, and 7,200 minutes less the running balance. The
  * rest of the line's COC is excess, which stays certified but uncredited.
  */
-export function allocateCocAward(
-  lines: readonly CocAwardLineCoc[],
+export function creditCertificateLines(
+  lines: readonly CertificateLineCoc[],
   monthCreditedTenths: number,
   balanceTenths: number,
-): CocAwardLineAllocation[] {
+): CertificateLineAllocation[] {
   let month = monthCreditedTenths;
   let balance = balanceTenths;
   return inWorkDateOrder(lines).map((line) => {

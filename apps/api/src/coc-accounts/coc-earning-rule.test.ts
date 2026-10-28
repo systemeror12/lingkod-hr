@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allocateCocAward,
+  creditCertificateLines,
   cocValidUntil,
   earnCoc,
   formatCocMinutes,
@@ -52,9 +52,9 @@ const line = (certificateLineId: string, workDate: string, cocTenths: number) =>
   cocTenths,
 });
 
-describe('allocateCocAward', () => {
+describe('creditCertificateLines', () => {
   it('credits each line in full under both caps, in Work Date order', () => {
-    const result = allocateCocAward(
+    const result = creditCertificateLines(
       [line('b', '2026-03-10', 900), line('a', '2026-03-02', 600)],
       0,
       0,
@@ -67,7 +67,7 @@ describe('allocateCocAward', () => {
   });
 
   it('stops at the 2,400-minute monthly cap, counting earlier certificates', () => {
-    const result = allocateCocAward(
+    const result = creditCertificateLines(
       [line('a', '2026-03-02', 3_000), line('b', '2026-03-03', 1_000)],
       21_000,
       0,
@@ -81,12 +81,12 @@ describe('allocateCocAward', () => {
   });
 
   it('splits the line that crosses the monthly cap', () => {
-    const [first] = allocateCocAward([line('a', '2026-03-02', 5_000)], 20_000, 0);
+    const [first] = creditCertificateLines([line('a', '2026-03-02', 5_000)], 20_000, 0);
     expect(first).toMatchObject({ creditedTenths: 4_000, excessTenths: 1_000 });
   });
 
   it('stops at the 7,200-minute balance cap as of the approval date', () => {
-    const result = allocateCocAward(
+    const result = creditCertificateLines(
       [line('a', '2026-03-02', 2_000), line('b', '2026-03-03', 2_000)],
       0,
       70_000,
@@ -100,12 +100,12 @@ describe('allocateCocAward', () => {
   });
 
   it('applies the lesser cap when both bind', () => {
-    const [first] = allocateCocAward([line('a', '2026-03-02', 9_000)], 18_000, 67_000);
+    const [first] = creditCertificateLines([line('a', '2026-03-02', 9_000)], 18_000, 67_000);
     expect(first).toMatchObject({ creditedTenths: 5_000, excessTenths: 4_000 });
   });
 
   it('credits nothing once the balance is already over the cap', () => {
-    const [first] = allocateCocAward([line('a', '2026-03-02', 600)], 0, 75_000);
+    const [first] = creditCertificateLines([line('a', '2026-03-02', 600)], 0, 75_000);
     expect(first).toMatchObject({ creditedTenths: 0, excessTenths: 600 });
   });
 });

@@ -247,16 +247,17 @@ Attach immutable mutation-prevention triggers. A reviewed trigger requires a rev
 
 Every balance-sensitive command locks the account, recomputes within the transaction, and writes no entry that would make the balance for any `valid_until` negative. A use draws from the earliest `valid_until` on or after its Work Date. A reversal restoring COC whose `valid_until` has passed is followed by an expiry entry in the same transaction. The expiry job is idempotent through its posting key.
 
-A balance as of a date states its cutoff:
+A balance as of a date states its cutoff. It counts entries effective on or before the cutoff whose `valid_until` is on or after it, so COC past its Valid Until never counts, even before its expiry entry is posted:
 
 ```sql
 SELECT valid_until, SUM(minutes) AS minutes
 FROM coc_ledger_entries
-WHERE agency_id = $1 AND coc_account_id = $2 AND effective_date <= $3
+WHERE agency_id = $1 AND coc_account_id = $2
+  AND effective_date <= $3 AND valid_until >= $3
 GROUP BY valid_until;
 ```
 
-The 120-hour cap reads it as of the certificate's approval date. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date.
+The 120-hour cap reads it as of the certificate's approval date. A certificate approval dated before the account's latest certificate entry is refused, so a back-dated award cannot raise the balance under a later award's cap. Service on or before a `CLOSED` account's `closed_at` belongs to the forfeited period and is refused rather than opening a new account. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date.
 
 ---
 

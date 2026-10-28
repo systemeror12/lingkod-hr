@@ -1,10 +1,10 @@
 import type { CocDayClassification, CocEarningRefusalCode } from './coc-earning-rule';
 
-/** The ledger source of an award entry; its posting key is the certificate line. */
+/** The ledger source of a certificate entry; its posting key is the certificate line. */
 export const COC_CERTIFICATE_SOURCE_TYPE = 'COC_EARNED_CERTIFICATE';
 
 /** One certified Overtime Service Record on a Certificate of COC Earned. */
-export interface CocAwardLineInput {
+export interface CocEarnedCertificateLine {
   certificateLineId: string;
   /** The service record's Work Date, inside the earned month. */
   workDate: string;
@@ -14,19 +14,19 @@ export interface CocAwardLineInput {
 }
 
 /** What approving a Certificate of COC Earned passes to the COC module. */
-export interface CocAwardInput {
+export interface CocEarnedCertificate {
   certificateId: string;
   employeeId: string;
   /** First day of the earned month, `YYYY-MM-01`. */
   earnedMonth: string;
-  /** The approval's local date; award entries take effect on it. */
+  /** The approval's local date; its entries take effect on it. */
   approvalDate: string;
   approvedByMembershipId: string;
-  lines: CocAwardLineInput[];
+  lines: CocEarnedCertificateLine[];
 }
 
 /** COC after the ratio, at one decimal place, as the certificate line stores it. */
-export interface CocAwardLineResult {
+export interface CocEarnedCertificateLineCredit {
   certificateLineId: string;
   workDate: string;
   cocMinutes: string;
@@ -36,16 +36,20 @@ export interface CocAwardLineResult {
   ledgerEntryId: string | null;
 }
 
-export interface CocAwardResult {
+export interface CocEarnedCertificateCredit {
   cocAccountId: string;
   validUntil: string;
   /** True when the certificate was already awarded and its entries are returned. */
   replayed: boolean;
   /** In Work Date order. */
-  lines: CocAwardLineResult[];
+  lines: CocEarnedCertificateLineCredit[];
 }
 
-/** A balance as of a date counts entries effective on or before it, by Valid Until. */
+/**
+ * A balance as of a date counts entries effective on or before it whose Valid
+ * Until has not passed, so COC past its Valid Until never counts, even before
+ * an expiry entry exists.
+ */
 export interface CocBalance {
   cocAccountId: string | null;
   asOf: string;
@@ -53,18 +57,21 @@ export interface CocBalance {
   totalMinutes: string;
 }
 
-export type CocAwardRefusalCode =
+export type CocRefusalCode =
   | CocEarningRefusalCode
   | 'COC_AWARD_INVALID'
   | 'COC_VALIDITY_PASSED'
   | 'COC_EMPLOYEE_NOT_FOUND'
-  | 'COC_AWARD_REPLAY_MISMATCH';
+  | 'COC_AWARD_REPLAY_MISMATCH'
+  | 'COC_CERTIFICATE_OF_ANOTHER_EMPLOYEE'
+  | 'COC_APPROVAL_BEFORE_LATEST_CERTIFICATE'
+  | 'COC_SERVICE_IN_CLOSED_ACCOUNT';
 
 export class CocServiceError extends Error {
   constructor(
     message: string,
     readonly statusCode: number,
-    readonly code: CocAwardRefusalCode,
+    readonly code: CocRefusalCode,
     /** Lines refused by the earning rule, when `code` is a suspension. */
     readonly lineIds: string[] = [],
   ) {
