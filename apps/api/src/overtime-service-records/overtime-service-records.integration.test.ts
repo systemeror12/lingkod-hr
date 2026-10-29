@@ -122,8 +122,8 @@ it.skipIf(!enabled)(
           requestingUnitId: home.division.id,
           approverMembershipId: home.membership.id,
           authorityNo,
-          workDateFrom: '2030-06-01',
-          workDateTo: '2030-06-30',
+          workDateFrom: '2026-06-01',
+          workDateTo: '2026-06-30',
           employeeIds: [home.member.id, home.outsider.id],
           ...extra,
         });
@@ -133,7 +133,7 @@ it.skipIf(!enabled)(
       const claim = (overrides: Partial<OvertimeServiceRecordInput> = {}) => ({
         overtimeAuthorityId: approvedId,
         employeeId: home.member.id,
-        workDate: '2030-06-10',
+        workDate: '2026-06-10',
         claimedHours: '3.5',
         accomplishment: 'Reconciled the June disbursement vouchers.',
         ...overrides,
@@ -142,7 +142,7 @@ it.skipIf(!enabled)(
       // No approved authority covering the Employee and Work Date, no record.
       for (const [input, reason] of [
         [claim({ overtimeAuthorityId: draftId }), 'is DRAFT, not APPROVED'],
-        [claim({ workDate: '2030-07-01' }), 'does not cover this Work Date'],
+        [claim({ workDate: '2026-07-01' }), 'does not cover this Work Date'],
         [claim({ employeeId: home.chief.id }), 'does not cover this Employee'],
       ] as const) {
         await expect(service.record(hr, input)).rejects.toMatchObject({
@@ -151,6 +151,18 @@ it.skipIf(!enabled)(
           message: expect.stringContaining(reason),
         });
       }
+      // Service not yet rendered cannot be recorded, so it never blocks cancellation.
+      const futureId = await authority('OT-SVC-003', {
+        workDateFrom: '2099-01-01',
+        workDateTo: '2099-01-31',
+      });
+      await expect(
+        service.record(hr, claim({ overtimeAuthorityId: futureId, workDate: '2099-01-15' })),
+      ).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'OVERTIME_SERVICE_WORK_DATE_FUTURE',
+        message: expect.stringContaining('2099-01-15'),
+      });
       // The database refuses the same, whoever writes.
       const draftCoverage = await admin.overtimeAuthorityEmployee.findFirstOrThrow({
         where: { overtimeAuthorityId: draftId, employeeId: home.member.id },
@@ -161,7 +173,7 @@ it.skipIf(!enabled)(
             agencyId: home.agency.id,
             overtimeAuthorityEmployeeId: draftCoverage.id,
             employeeId: home.member.id,
-            workDate: new Date('2030-06-10'),
+            workDate: new Date('2026-06-10'),
             claimedHours: '1',
             accomplishment: 'Unauthorized.',
             status: 'RENDERED',
@@ -191,7 +203,7 @@ it.skipIf(!enabled)(
         overtimeAuthorityId: approvedId,
         authorityNo: 'OT-SVC-001',
         employeeId: home.member.id,
-        workDate: '2030-06-10',
+        workDate: '2026-06-10',
         claimedHours: '3.5000',
         authorizedHours: '16.0000',
         accomplishment: 'Reconciled the June disbursement vouchers.',
@@ -219,7 +231,7 @@ it.skipIf(!enabled)(
         service.record(supervisor, claim({ employeeId: home.outsider.id })),
       ).rejects.toMatchObject({ statusCode: 403, code: 'OVERTIME_SERVICE_SCOPE_FORBIDDEN' });
       await expect(
-        service.record(supervisor, claim({ workDate: '2030-06-11' })),
+        service.record(supervisor, claim({ workDate: '2026-06-11' })),
       ).resolves.toMatchObject({ status: 'RENDERED', recordedByMembershipId: home.membership.id });
 
       // Submitting needs `overtime.service.submit`.
@@ -238,7 +250,7 @@ it.skipIf(!enabled)(
       await expect(service.submit(memberContext, recorded.id)).rejects.toMatchObject({
         statusCode: 409,
         code: 'OVERTIME_SERVICE_ATTENDANCE_NOT_LOCKED',
-        message: expect.stringContaining('Attendance for 2030-06-10 is not locked'),
+        message: expect.stringContaining('Attendance for 2026-06-10 is not locked'),
       });
 
       // Another Agency sees neither the authority nor the record.
@@ -249,7 +261,7 @@ it.skipIf(!enabled)(
         serviceGrants('AGENCY'),
       );
       await expect(
-        service.record(foreignHr, claim({ workDate: '2030-06-12' })),
+        service.record(foreignHr, claim({ workDate: '2026-06-12' })),
       ).rejects.toMatchObject({
         statusCode: 404,
         code: 'OVERTIME_AUTHORITY_NOT_FOUND',
@@ -299,8 +311,8 @@ it.skipIf(!enabled)(
           requestingUnitId: home.division.id,
           approverMembershipId: home.membership.id,
           authorityNo,
-          workDateFrom: '2030-06-01',
-          workDateTo: '2030-06-30',
+          workDateFrom: '2026-06-01',
+          workDateTo: '2026-06-30',
           employeeIds: [home.member.id],
         });
       const [first, second] = [await authority('OT-RACE-001'), await authority('OT-RACE-002')];
@@ -308,7 +320,7 @@ it.skipIf(!enabled)(
       const claim = (overtimeAuthorityId: string) => ({
         overtimeAuthorityId,
         employeeId: home.member.id,
-        workDate: '2030-06-10',
+        workDate: '2026-06-10',
         claimedHours: '2',
         accomplishment: 'Prepared the procurement report.',
       });
@@ -357,8 +369,8 @@ it.skipIf(!enabled)(
           requestingUnitId: home.division.id,
           approverMembershipId: approver.membershipId,
           authorityNo,
-          workDateFrom: '2030-06-01',
-          workDateTo: '2030-06-30',
+          workDateFrom: '2026-06-01',
+          workDateTo: '2026-06-30',
           employeeIds: [home.member.id],
         });
       const hr = context(home.agency.id, home.user.id, home.membership.id, serviceGrants('AGENCY'));
@@ -371,7 +383,7 @@ it.skipIf(!enabled)(
       });
 
       const recordedId = await authority('OT-CANCEL-001');
-      await service.record(hr, claim(recordedId, '2030-06-10'));
+      await service.record(hr, claim(recordedId, '2026-06-10'));
       await expect(cancel.execute(approver, recordedId)).rejects.toMatchObject({
         statusCode: 409,
         code: 'OVERTIME_AUTHORITY_SERVICE_RECORDED',
@@ -380,7 +392,7 @@ it.skipIf(!enabled)(
       // Whichever wins, an authority is never both cancelled and recorded under.
       const racedId = await authority('OT-CANCEL-002');
       const [recording, cancelling] = await Promise.allSettled([
-        service.record(hr, claim(racedId, '2030-06-11')),
+        service.record(hr, claim(racedId, '2026-06-11')),
         cancel.execute(approver, racedId),
       ]);
       expect([recording.status, cancelling.status].sort()).toEqual(['fulfilled', 'rejected']);

@@ -4,7 +4,7 @@ import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { AttendanceLockedDaysService } from '../attendance-locked-days/attendance-locked-days.service';
 import { requestDatabaseContext } from '../database-context';
-import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
+import { manilaToday, resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
   type OvertimeAuthorityAuditWriter,
@@ -56,7 +56,8 @@ export class OvertimeServiceRecordsService {
 
   /**
    * Create a RENDERED record. The authority must be APPROVED and cover the
-   * Employee and Work Date; there is no ratification path. Its row is locked
+   * Employee and Work Date, and the Work Date must not be after today in
+   * Asia/Manila; there is no ratification path. Its row is locked
    * FOR SHARE so a concurrent cancellation waits for this record.
    */
   async record(
@@ -92,6 +93,14 @@ export class OvertimeServiceRecordsService {
           input.workDate > formatDate(authority.work_date_to)
         ) {
           throw notAuthorized('The Overtime Authority does not cover this Work Date.');
+        }
+        const today = manilaToday();
+        if (input.workDate > today) {
+          throw new OvertimeServiceRecordError(
+            `The Work Date ${input.workDate} is after today (${today}); record overtime service once it has been rendered.`,
+            422,
+            'OVERTIME_SERVICE_WORK_DATE_FUTURE',
+          );
         }
         const coverage = await transaction.overtimeAuthorityEmployee.findFirst({
           where: {
