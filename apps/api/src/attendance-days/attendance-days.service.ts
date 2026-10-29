@@ -622,11 +622,14 @@ export class AttendanceDaysService {
   }
 
   /**
-   * The expected-duty intervals of one Work Date, the coverage whole-day leave
-   * and CTO receive: empty on a REST Day Rule or a non-working holiday. Null
-   * when the Employee's schedule for the date cannot be resolved.
+   * The whole-Work-Date coverage window of one Work Date, the coverage whole-day
+   * leave and CTO receive: empty on a REST Day Rule or a non-working holiday.
+   * It bounds expected duty without being it: a flexible Day Rule's window is
+   * wider, and an overnight window keeps a Non-Working Holiday after midnight
+   * that the calculation drops. Null when the Employee's schedule for the date
+   * cannot be resolved.
    */
-  async workDateExpectedDutyInTransaction(
+  async workDateCoverageWindowInTransaction(
     transaction: Prisma.TransactionClient,
     agencyId: string,
     employeeId: string,

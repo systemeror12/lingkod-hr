@@ -89,22 +89,23 @@ export class AttendanceCtoInputsService {
         ATTENDANCE_WORK_DATE_LOCKED,
       );
     }
-    // CTO pays expected duty only (docs/hris-controls.md, CTO Request), the
-    // same intervals Attendance Day calculation places it on.
-    const expectedDuty = await this.days.workDateExpectedDutyInTransaction(
+    // CTO pays expected duty only (docs/hris-controls.md, CTO Request). Recording
+    // can check only the Work Date's coverage window, which bounds expected duty
+    // without being it; the calculated Day decides placement.
+    const coverageWindow = await this.days.workDateCoverageWindowInTransaction(
       transaction,
       agencyId,
       input.employeeId,
       input.workDate,
     );
-    if (!expectedDuty) {
+    if (!coverageWindow) {
       throw new AttendanceCtoInputError(
         "The Employee's schedule for the Work Date cannot be resolved, so the CTO cannot be placed.",
         409,
         'CTO_INPUT_SCHEDULE_UNRESOLVED',
       );
     }
-    if (expectedDuty.length === 0) {
+    if (coverageWindow.length === 0) {
       throw new AttendanceCtoInputError(
         'The Work Date has no expected duty, so it cannot take CTO.',
         409,
@@ -114,7 +115,7 @@ export class AttendanceCtoInputsService {
     if (
       facts.startsAt &&
       facts.endsAt &&
-      !withinIntervals(expectedDuty, { startsAt: facts.startsAt, endsAt: facts.endsAt })
+      !withinIntervals(coverageWindow, { startsAt: facts.startsAt, endsAt: facts.endsAt })
     ) {
       throw new AttendanceCtoInputError(
         "The CTO interval falls outside the Work Date's expected duty.",
