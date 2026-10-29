@@ -164,6 +164,8 @@ model Agency {
   mandatoryLeaveAssessments     MandatoryLeaveAssessment[]
   overtimeAuthorities           OvertimeAuthority[]
   overtimeAuthorityEmployees    OvertimeAuthorityEmployee[]
+  cocAccounts                   CocAccount[]
+  cocLedgerEntries              CocLedgerEntry[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -465,6 +467,7 @@ model AgencyMembership {
 
   leavePostings LeavePosting[] @relation("LeavePostingPoster")
   overtimeAuthoritiesApproved OvertimeAuthority[] @relation("OvertimeAuthorityApprover")
+  cocLedgerEntriesPosted      CocLedgerEntry[]    @relation("CocLedgerEntryPoster")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1773,6 +1776,7 @@ model DocumentVersion {
   leaveAccountOpeningEvidenceVersions              LeaveAccountOpening[]                 @relation("LeaveAccountOpeningEvidenceVersion")
   leaveLedgerAdjustmentAuthorityVersions           LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentAuthorityVersion")
   leaveLedgerAdjustmentEvidenceVersions            LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentEvidenceVersion")
+  cocLedgerEntrySupportingVersions                 CocLedgerEntry[]                      @relation("CocLedgerEntrySupportingDocument")
   leaveApplicationDraftDocumentVersions            LeaveApplicationDraftDocument[]       @relation("LeaveApplicationDraftDocumentVersion")
   leaveApplicationVersionDocuments                 LeaveApplicationVersionDocument[]     @relation("LeaveApplicationVersionDocumentVersion")
   leaveCancellationDocuments                       LeaveCancellationDocument[]           @relation("LeaveCancellationDocumentVersion")
@@ -2063,6 +2067,7 @@ model Employee {
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
   mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
   overtimeAuthorityCoverage      OvertimeAuthorityEmployee[]     @relation("OvertimeAuthorityEmployeeEmployee")
+  cocAccounts                    CocAccount[]                    @relation("CocAccountEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -5235,4 +5240,52 @@ model OvertimeAuthorityEmployee {
   @@unique([agencyId, id])
   @@index([agencyId, employeeId])
   @@map("overtime_authority_employees")
+}
+
+model CocAccount {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId   String    @map("agency_id") @db.Uuid
+  employeeId String    @map("employee_id") @db.Uuid
+  status     String
+  openedAt   DateTime  @map("opened_at") @db.Date
+  closedAt   DateTime? @map("closed_at") @db.Date
+
+  agency        Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee      Employee         @relation("CocAccountEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  ledgerEntries CocLedgerEntry[] @relation("CocLedgerEntries")
+
+  @@unique([agencyId, id])
+  @@map("coc_accounts")
+}
+
+model CocLedgerEntry {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String    @map("agency_id") @db.Uuid
+  cocAccountId                String    @map("coc_account_id") @db.Uuid
+  minutes                     Decimal   @db.Decimal(12, 1)
+  effectiveDate               DateTime  @map("effective_date") @db.Date
+  validUntil                  DateTime  @map("valid_until") @db.Date
+  earnedMonth                 DateTime? @map("earned_month") @db.Date
+  sourceType                  String    @map("source_type") @db.Citext
+  sourceId                    String    @map("source_id") @db.Uuid
+  sourcePostingKey            String    @map("source_posting_key") @db.Citext
+  ruleCode                    String    @map("rule_code")
+  reason                      String?
+  supportingDocumentVersionId String?   @map("supporting_document_version_id") @db.Uuid
+  reversesEntryId             String?   @map("reverses_entry_id") @db.Uuid
+  postedAt                    DateTime  @default(now()) @map("posted_at") @db.Timestamptz(6)
+  postedByMembershipId        String?   @map("posted_by_membership_id") @db.Uuid
+
+  agency                    Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  cocAccount                CocAccount        @relation("CocLedgerEntries", fields: [agencyId, cocAccountId], references: [agencyId, id], onDelete: Restrict)
+  supportingDocumentVersion DocumentVersion?  @relation("CocLedgerEntrySupportingDocument", fields: [agencyId, supportingDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  reversesEntry             CocLedgerEntry?   @relation("CocLedgerEntryReversal", fields: [agencyId, reversesEntryId], references: [agencyId, id], onDelete: Restrict)
+  reversedByEntry           CocLedgerEntry[]  @relation("CocLedgerEntryReversal")
+  postedBy                  AgencyMembership? @relation("CocLedgerEntryPoster", fields: [agencyId, postedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, cocAccountId, sourceType, sourceId, sourcePostingKey])
+  @@index([agencyId, cocAccountId, effectiveDate])
+  @@index([agencyId, sourceType, sourceId])
+  @@map("coc_ledger_entries")
 }

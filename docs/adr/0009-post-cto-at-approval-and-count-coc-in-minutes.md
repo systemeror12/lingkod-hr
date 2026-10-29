@@ -28,3 +28,7 @@ Rejected alternatives:
 - Approval is refused on a locked Work Date, and cancellation on a locked Work Date goes through a Locked Attendance Adjustment, as Leave Cancellation does.
 - Overtime stores Actual and Certified Overtime Hours as whole minutes so the award needs no conversion.
 - New credit comes only from a Certificate of COC Earned. Adjustments are negative, and credit returns only when a negative entry is reversed.
+
+### Amendment, 2026-10-29 (#537)
+
+A balance as of a date counts entries effective on or before it whose Valid Until is on or after it, replacing the first consequence above. Expiry and forfeiture entries carry the Valid Until of the COC they remove, so the filter changes no balance once they post; before the expiry run exists (#322), it keeps expired COC out of the balance and the 120-hour cap. An award is also refused when its approval date is before the account's latest certificate entry, and when its service falls on or before a closed account's close date.
