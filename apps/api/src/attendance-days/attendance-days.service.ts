@@ -40,8 +40,8 @@ import {
   calculateAttendanceDay,
   ATTENDANCE_MINUTE_RULE,
   fingerprintAttendanceDayInput,
+  unplacedCtoInputIds,
   wholeWorkDateCoverageIntervals,
-  withinIntervals,
   type AttendanceCalculationCoverage,
   type AttendanceCalculationException,
   type AttendanceDayExceptionType,
@@ -286,8 +286,12 @@ function periodSummary(record: AttendancePeriodRecord): AttendancePeriodSummary 
   };
 }
 
-/** Expected duty of a resolved Work Date; none on a non-working date. */
-function expectedDutyIntervals(
+/**
+ * The whole-Work-Date coverage window of a resolved Work Date, none on a
+ * non-working date. A flexible Day Rule's window is wider than the expected duty
+ * the calculation anchors, so it bounds expected duty without being it.
+ */
+function wholeWorkDateCoverageWindow(
   resolution: AttendanceResolution,
   workDate: string,
 ): Array<{ startsAt: Date; endsAt: Date }> {
@@ -640,7 +644,7 @@ export class AttendanceDaysService {
       if (error instanceof AttendanceExceptionError) return null;
       throw error;
     }
-    return expectedDutyIntervals(resolution, workDate);
+    return wholeWorkDateCoverageWindow(resolution, workDate);
   }
 
   /**
@@ -1123,7 +1127,7 @@ export class AttendanceDaysService {
       { startsAt: window.startsAt.toISOString(), endsAt: window.endsAt.toISOString() },
       overlays.contexts,
     );
-    const coverage: AttendanceCalculationCoverage[] = [];
+    let coverage: AttendanceCalculationCoverage[] = [];
     for (const interval of contexts.intervals) {
       const summary = interval.context;
       if (summary.coverageMode === 'WHOLE_WORK_DATE') {
@@ -1182,31 +1186,19 @@ export class AttendanceDaysService {
         });
       }
     }
-    // CTO pays expected duty only: whole-day CTO covers all of it, and timed CTO
-    // its interval inside it. A CTO input that a later schedule change leaves
-    // outside expected duty is a blocking exception, not silently unpaid.
-    const expectedDuty = expectedDutyIntervals(resolution, workDate);
-    const unplacedCto: string[] = [];
-    for (const entry of await ctoCoverageInTransaction(
+    // CTO pays expected duty only: whole-day CTO covers the coverage window and
+    // timed CTO its interval. The calculated Day decides whether each input lies
+    // in expected duty; one it leaves unpaid is a blocking exception and is
+    // placed nowhere, so the Day is recalculated without it.
+    const ctoEntries = await ctoCoverageInTransaction(
       transaction,
       context.agencyId,
       resolution.employeeId,
       workDate,
-    )) {
-      const intervals = entry.interval ? [entry.interval] : expectedDuty;
-      if (
-        expectedDuty.length === 0 ||
-        (entry.interval && !withinIntervals(expectedDuty, entry.interval))
-      ) {
-        unplacedCto.push(entry.inputId);
-        sourceExceptions.push({
-          type: 'UNPLACED_CTO_INPUT',
-          message: "A current CTO input lies outside the Work Date's expected duty.",
-          details: { ctoInputId: entry.inputId },
-        });
-        continue;
-      }
-      for (const interval of intervals) {
+    );
+    const coverageWindow = wholeWorkDateCoverageWindow(resolution, workDate);
+    for (const entry of ctoEntries) {
+      for (const interval of entry.interval ? [entry.interval] : coverageWindow) {
         coverage.push({
           sourceType: 'CTO_INPUT',
           sourceId: entry.inputId,
@@ -1227,14 +1219,33 @@ export class AttendanceDaysService {
         .filter((entry) => dutyDates.includes(entry.holidayDate))
         .map((entry) => [entry.holidayDate, entry.dayType]),
     );
-    const result = calculateAttendanceDay({
-      timezone,
-      workDate,
-      dayRule,
-      events,
-      coverage,
-      holidayClassifications,
-    });
+    const calculate = () =>
+      calculateAttendanceDay({
+        timezone,
+        workDate,
+        dayRule,
+        events,
+        coverage,
+        holidayClassifications,
+      });
+    let result = calculate();
+    const unplacedCto = unplacedCtoInputIds(
+      result.segments,
+      ctoEntries.map((entry) => ({ inputId: entry.inputId, timed: entry.interval !== null })),
+    );
+    if (unplacedCto.length > 0) {
+      coverage = coverage.filter(
+        (item) => item.sourceType !== 'CTO_INPUT' || !unplacedCto.includes(item.sourceId),
+      );
+      result = calculate();
+    }
+    for (const ctoInputId of unplacedCto) {
+      sourceExceptions.push({
+        type: 'UNPLACED_CTO_INPUT',
+        message: "A current CTO input lies outside the Work Date's expected duty.",
+        details: { ctoInputId },
+      });
+    }
     const exceptions = [...result.exceptions, ...sourceExceptions];
     const fingerprint = fingerprintAttendanceDayInput({
       timezone,

@@ -5,6 +5,7 @@ import {
   ATTENDANCE_EXPECTED_END_RULE,
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
+  unplacedCtoInputIds,
   wholeWorkDateCoverageIntervals,
   withinIntervals,
   type AttendanceCalculationEvent,
@@ -716,6 +717,56 @@ it('anchors a flexible day on timed CTO before time-in, unlike posted leave', ()
   const leave = morning('POSTED_LEAVE');
   expect(firstExpected(leave)).toEqual(['09:00', '09:30']);
   expect(leave.totals).toMatchObject({ expectedMinutes: 420, lateMinutes: 0 });
+});
+
+it('leaves timed CTO unplaced when an early flexible time-in ends expected duty before it', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '18:00',
+    requiredMinutes: 480,
+    breaks: [lunchBreak],
+  });
+  const timed = calculateAttendanceDay(
+    input({
+      dayRule: flexible,
+      events: [at('07:00', 'TIME_IN'), at('16:00', 'TIME_OUT')],
+      coverage: [
+        coverage({
+          sourceId: 'cto-pm',
+          sourceType: 'CTO_INPUT',
+          coverageType: 'CTO',
+          startsAt: manila('16:00'),
+          endsAt: manila('18:00'),
+        }),
+      ],
+    }),
+  );
+  // The 07:00 time-in anchors expected duty to 07:00-16:00, so the CTO lies outside it.
+  expect(timed.totals.ctoMinutes).toBe(120);
+  expect(unplacedCtoInputIds(timed.segments, [{ inputId: 'cto-pm', timed: true }])).toEqual([
+    'cto-pm',
+  ]);
+
+  // Whole-day CTO covers the earliest start through duty end, wider than expected duty.
+  const whole = calculateAttendanceDay(
+    input({
+      dayRule: flexible,
+      coverage: wholeWorkDateCoverageIntervals(flexible, WORK_DATE, TIMEZONE).map((interval) =>
+        coverage({
+          sourceId: 'cto-day',
+          sourceType: 'CTO_INPUT',
+          coverageType: 'CTO',
+          ...interval,
+        }),
+      ),
+    }),
+  );
+  expect(whole.segments.some((segment) => segment.dutyRelation === 'OUTSIDE_SCHEDULE')).toBe(true);
+  expect(unplacedCtoInputIds(whole.segments, [{ inputId: 'cto-day', timed: false }])).toEqual([]);
+  expect(unplacedCtoInputIds([], [{ inputId: 'cto-rest', timed: false }])).toEqual(['cto-rest']);
 });
 
 it('reports missing, duplicate, and out-of-order events without inventing time', () => {

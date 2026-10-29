@@ -352,6 +352,32 @@ export function withinIntervals(
 }
 
 /**
+ * CTO inputs a calculated Day leaves unpaid, since Payroll publishes only
+ * `EXPECTED` coverage. Any input placed on no expected minute is unplaced, and a
+ * timed input also when any of its minutes falls outside expected duty. A
+ * whole-day input spans the coverage window, which a flexible Day Rule makes
+ * wider than expected duty, so its outside minutes alone do not unplace it.
+ */
+export function unplacedCtoInputIds(
+  segments: readonly AttendanceCalculationSegment[],
+  inputs: readonly { inputId: string; timed: boolean }[],
+): string[] {
+  return inputs
+    .filter(({ inputId, timed }) => {
+      const placed = segments.filter((segment) =>
+        segment.sources.some(
+          (source) => source.sourceType === 'CTO_INPUT' && source.id === inputId,
+        ),
+      );
+      return (
+        !placed.some((segment) => segment.dutyRelation === 'EXPECTED') ||
+        (timed && placed.some((segment) => segment.dutyRelation === 'OUTSIDE_SCHEDULE'))
+      );
+    })
+    .map(({ inputId }) => inputId);
+}
+
+/**
  * Derive worked intervals from the semantic event sequence. An `IN_OUT` Day
  * Rule excludes its scheduled unpaid breaks from the elapsed duty span, while a
  * `WITH_BREAK_EVENTS` Day Rule excludes the recorded break pairs. A day without

@@ -453,6 +453,40 @@ it.skipIf(!enabled)(
       ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_EXPECTED_DUTY' });
 
       expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(1);
+
+      // The fixture calendar's Christmas Day is a Friday, so Thursday's overnight
+      // duty stops at midnight: CTO after midnight lies outside expected duty.
+      const eveDate = '2026-12-24';
+      const holidayCto = await record({
+        ...base,
+        employeeId: nightEmployeeId,
+        workDate: eveDate,
+        sourceKey: `${fixture.suffix}-into-holiday`,
+        coverageMode: 'TIMED',
+        startsAt: manilaInstant('2026-12-25', '02:00').toISOString(),
+        endsAt: manilaInstant('2026-12-25', '06:00').toISOString(),
+      });
+      const recalculated = await services.days.calculate(context, {
+        periodCode: `CTO-EVE-${fixture.suffix.slice(0, 12)}`,
+        dateFrom: eveDate,
+        dateTo: eveDate,
+        employeeIds: [nightEmployeeId],
+      });
+      expect(recalculated.days[0]?.status).toBe('EXCEPTION');
+      expect(recalculated.days[0]?.exceptionTypes).toContain('UNPLACED_CTO_INPUT');
+      const [eve] = await services.days.list(context, {
+        employeeId: nightEmployeeId,
+        workDateFrom: eveDate,
+        workDateTo: eveDate,
+      });
+      const eveDetail = await services.days.findById(context, eve!.id);
+      expect(eveDetail.day.totals).toMatchObject({ ctoMinutes: 0 });
+      expect(eveDetail.exceptions).toContainEqual(
+        expect.objectContaining({
+          exceptionType: 'UNPLACED_CTO_INPUT',
+          details: expect.objectContaining({ ctoInputId: holidayCto.id }),
+        }),
+      );
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
