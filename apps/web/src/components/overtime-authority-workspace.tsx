@@ -950,7 +950,8 @@ function AuthoritySection({
         />
       ) : null}
 
-      {detail.status === 'APPROVED' && canCancel ? (
+      {/* Only the Approving Official cancels an approved authority (hris-controls §5.16). */}
+      {detail.status === 'APPROVED' && canCancel && canApprove ? (
         <section className="grid gap-2" aria-label="Cancel before service">
           <p className="m-0 text-small text-ink-muted">
             An approved authority can be cancelled only before any service is recorded.

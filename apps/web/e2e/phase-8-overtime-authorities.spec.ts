@@ -244,6 +244,13 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await expect(covered).toContainText('12');
   await expect(covered).toContainText('Attested: Division chief or below');
   await expect(record.getByRole('button', { name: 'Approve authority' })).toHaveCount(0);
+  await expect(record.getByRole('button', { name: 'Cancel authority' })).toBeVisible();
+
+  // Only the Approving Official cancels an approved authority, so an HR Administrator, who holds
+  // cancel without approve, sees no Cancel on it.
+  await openFromTree(reviewer.page, approvedNo);
+  await expect(reviewerRecord).toContainText('Approved');
+  await expect(reviewerRecord.getByRole('button', { name: 'Cancel authority' })).toHaveCount(0);
 
   // Reject a second authority with its reason.
   await prepareDraft(preparer.page, rejectedNo, '6');
