@@ -52,6 +52,7 @@ export class AttendanceDayTotalsDto {
   readonly trainingMinutes: number;
   readonly approvedAbsenceMinutes: number;
   readonly postedLeaveMinutes: number;
+  readonly ctoMinutes: number;
   readonly outsideScheduleMinutes: number;
   readonly statutoryNightWindowMinutes: number;
 
@@ -67,6 +68,7 @@ export class AttendanceDayTotalsDto {
     this.trainingMinutes = totals.trainingMinutes;
     this.approvedAbsenceMinutes = totals.approvedAbsenceMinutes;
     this.postedLeaveMinutes = totals.postedLeaveMinutes;
+    this.ctoMinutes = totals.ctoMinutes;
     this.outsideScheduleMinutes = totals.outsideScheduleMinutes;
     this.statutoryNightWindowMinutes = totals.statutoryNightWindowMinutes;
   }
