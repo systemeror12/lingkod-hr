@@ -180,7 +180,8 @@ export async function assertNotPreparer(
 /**
  * Refuse a review no one could decide: approval refuses a preparer or
  * submitter, so no step of the request the review opened may be assigned to
- * one. Throwing rolls the review back with its request.
+ * one, and each step's assignee must be able to both approve and reject it.
+ * Throwing rolls the review back with its request.
  */
 export async function assertEligibleApprover(
   transaction: Prisma.TransactionClient,
@@ -200,6 +201,49 @@ export async function assertEligibleApprover(
       'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
     );
   }
+  for (const step of request.steps) {
+    for (const permission of [step.approvePermission, step.rejectPermission]) {
+      if (!(await canDecide(transaction, agencyId, step, permission))) {
+        throw new OvertimeAuthorityServiceError(
+          'The Overtime Authority route assigns its decision to a Membership that cannot both approve and reject it.',
+          409,
+          'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Mirror the Approval decision check: the assignee needs one active role
+ * granting both the step permission and the decision permission Agency-wide.
+ */
+async function canDecide(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  step: ApprovalRequestSummary['steps'][number],
+  permission: string,
+): Promise<boolean> {
+  if (!step.assignedMembershipId) return false;
+  const now = new Date();
+  const agencyGrant = (code: string) => ({
+    permissions: { some: { scopePolicy: 'AGENCY' as const, permission: { code } } },
+  });
+  const role = await transaction.membershipRole.findFirst({
+    where: {
+      agencyId,
+      membershipId: step.assignedMembershipId,
+      membership: { status: 'ACTIVE' },
+      effectiveFrom: { lte: now },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+      role: {
+        status: 'ACTIVE',
+        AND: [agencyGrant(step.requiredPermission), agencyGrant(permission)],
+      },
+    },
+    select: { id: true },
+  });
+  return role !== null;
 }
 
 export interface RecordedReview {

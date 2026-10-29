@@ -36,11 +36,12 @@ const attestationsFor = (memberId: string, chiefId: string) => [
  * One home Agency with a preparer (who also holds the Approving Official role,
  * so only segregation stops them), a Budget Officer reviewer, an Approving
  * Official, and a foreign Agency. The route's one step is assigned to the
- * Approving Official; `route` reassigns it to the preparer or adds a second.
+ * Approving Official; `route` reassigns it to the preparer or an Internal
+ * Auditor, or adds a second.
  */
 async function setup(
   label: string,
-  options: { route?: 'approver' | 'preparer' | 'two-steps' } = {},
+  options: { route?: 'approver' | 'preparer' | 'two-steps' | 'auditor' } = {},
 ) {
   const admin = await createAdminClient();
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-ot-${label}`;
@@ -79,9 +80,16 @@ async function setup(
       'appointing_authority',
       APPROVER_GRANTS,
     );
-    await seedRoute(home, approver.membershipId, second.membershipId);
+    await seedRoute(home, [approver.membershipId, second.membershipId]);
+  } else if (route === 'auditor') {
+    // A read permission assigns the step; the overrides keep its decision codes valid.
+    const auditor = await addMember(admin, home, suffix, 'auditor', 'internal_auditor', []);
+    await seedRoute(home, [auditor.membershipId], {
+      requiredPermission: 'approvals.requests.read',
+      approvePermission: 'overtime.authorities.approve',
+    });
   } else {
-    await seedRoute(home, route === 'preparer' ? preparer.membershipId : approver.membershipId);
+    await seedRoute(home, [route === 'preparer' ? preparer.membershipId : approver.membershipId]);
   }
   const facts = await seedEligibilityFacts(home);
   const foreignApprover = context(foreign.agency.id, foreign.user.id, foreign.membership.id, [
@@ -245,6 +253,34 @@ it.skipIf(!enabled)(
       expect(
         await f.admin.auditEvent.count({
           where: { entityId: authority.id, action: 'OVERTIME_AUTHORITY_REVIEWED' },
+        }),
+      ).toBe(0);
+    } finally {
+      await f.teardown();
+    }
+  },
+  60_000,
+);
+
+it.skipIf(!enabled)(
+  'refuses a review whose route assigns the decision to a Membership that cannot approve and reject',
+  async () => {
+    // The Internal Auditor holds the step's read permission but not .approve or .reject.
+    const f = await setup('MISS', { route: 'auditor' });
+    try {
+      const authority = await f.prepare('OT-MISS-1');
+      await expect(
+        f.review.execute(f.reviewer, authority.id, { attestations: f.attestations }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
+      });
+      expect(
+        await f.admin.overtimeAuthority.findUniqueOrThrow({ where: { id: authority.id } }),
+      ).toMatchObject({ status: 'SUBMITTED' });
+      expect(
+        await f.admin.approvalRequest.count({
+          where: { agencyId: f.home.agency.id, subjectId: authority.id },
         }),
       ).toBe(0);
     } finally {

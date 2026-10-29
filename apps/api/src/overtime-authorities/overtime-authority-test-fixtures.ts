@@ -327,8 +327,15 @@ export async function giveRole(
   });
 }
 
-/** Activate the Overtime Authority route, one step per approver given. */
-export async function seedRoute(home: AgencyFixture, ...approverMembershipIds: string[]) {
+/**
+ * Activate the Overtime Authority route, one step per approver given. `step`
+ * overrides the permissions each step assigns and decides with.
+ */
+export async function seedRoute(
+  home: AgencyFixture,
+  approverMembershipIds: string[],
+  step: { requiredPermission?: string; approvePermission?: string } = {},
+) {
   const routeAdmin = context(
     home.agency.id,
     home.user.id,
@@ -350,6 +357,7 @@ export async function seedRoute(home: AgencyFixture, ...approverMembershipIds: s
         stepMode: 'SEQUENTIAL' as const,
         requiredPermission: 'overtime.authorities.approve',
         rejectPermission: 'overtime.authorities.reject',
+        ...step,
         assignment: { kind: 'MEMBERSHIP' as const, membershipId },
         requiresSeparateReview: true,
       })),
