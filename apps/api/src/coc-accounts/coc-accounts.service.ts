@@ -65,8 +65,10 @@ export class CocAccountsService {
       );
     }
 
-    await this.refuseServiceInClosedAccount(transaction, agencyId, input);
     const cocAccountId = await this.openAndLockAccount(transaction, agencyId, input);
+    // Checked after the insert, so a close committed before it is seen and
+    // the refusal rolls back the account the insert just opened.
+    await this.refuseServiceInClosedAccount(transaction, agencyId, input);
     // Read under the lock, so a concurrent award of the same certificate is seen.
     const earlier = await this.replay(transaction, agencyId, input);
     if (earlier) return earlier;
@@ -268,7 +270,7 @@ export class CocAccountsService {
     });
     if (closed?.closedAt) {
       throw new CocServiceError(
-        `The Employee's COC Account closed on ${fromCocDate(closed.closedAt)}, after this service.`,
+        `The Employee's COC Account closed on ${fromCocDate(closed.closedAt)}, on or after this service.`,
         409,
         'COC_SERVICE_IN_CLOSED_ACCOUNT',
       );

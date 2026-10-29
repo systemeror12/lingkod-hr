@@ -502,3 +502,79 @@ it.skipIf(!enabled)(
   },
   60_000,
 );
+
+it.skipIf(!enabled)(
+  'refuses service in an account closed while the award opens one, and keeps no new account',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-coc-close-race`;
+    const home = await createAgency(admin, suffix, 'RACE');
+    try {
+      const leaver = await home.employee();
+      const first = await awardNew(
+        home,
+        certificate(home, leaver.id, '2026-03-01', '2026-04-06', [line('2026-03-02', 60)]),
+      );
+
+      // Close the account in an open transaction, so the award reads it as
+      // ACTIVE and then waits on the close at the account insert.
+      let notifyClosed = () => {};
+      let commitClose = () => {};
+      const closed = new Promise<void>((resolve) => {
+        notifyClosed = resolve;
+      });
+      const committed = new Promise<void>((resolve) => {
+        commitClose = resolve;
+      });
+      const closing = admin.$transaction(
+        async (transaction) => {
+          await transaction.cocAccount.update({
+            where: { id: first.cocAccountId },
+            data: { status: 'CLOSED', closedAt: new Date('2026-04-30') },
+          });
+          notifyClosed();
+          await committed;
+        },
+        { timeout: 10_000 },
+      );
+      await closed;
+      const racing = refusal(
+        award(
+          home,
+          certificate(home, leaver.id, '2026-04-01', '2026-05-04', [line('2026-04-30', 60)]),
+        ),
+      );
+      try {
+        await expect
+          .poll(
+            async () => {
+              const waiting = await admin.$queryRaw<
+                { count: number }[]
+              >`SELECT COUNT(*)::integer AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%coc_accounts%' AND cardinality(pg_blocking_pids(pid)) > 0`;
+              return waiting[0]!.count;
+            },
+            { timeout: 2_000, interval: 20 },
+          )
+          .toBe(1);
+      } finally {
+        commitClose();
+      }
+      await closing;
+
+      expect(await racing).toMatchObject({
+        statusCode: 409,
+        code: 'COC_SERVICE_IN_CLOSED_ACCOUNT',
+        message: "The Employee's COC Account closed on 2026-04-30, on or after this service.",
+      });
+      expect(
+        await admin.cocAccount.count({
+          where: { agencyId: home.agencyId, employeeId: leaver.id, status: 'ACTIVE' },
+        }),
+      ).toBe(0);
+    } finally {
+      await cleanup(admin, [home.agencyId], suffix);
+      await admin.$disconnect();
+    }
+  },
+  60_000,
+);
