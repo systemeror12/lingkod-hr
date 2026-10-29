@@ -6,6 +6,7 @@ import {
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
+  withinIntervals,
   type AttendanceCalculationEvent,
   type AttendanceCalculationCoverage,
   type AttendanceDayCalculationInput,
@@ -1151,6 +1152,29 @@ it('places a whole-day posted leave from the latest permitted flexible start', (
     absenceMinutes: 0,
   });
   expect(result.segments.filter((segment) => segment.coverageType === 'UNCOVERED')).toEqual([]);
+});
+
+it('reads an interval as inside expected duty only when no instant falls outside it', () => {
+  const at = (hour: number) => new Date(Date.UTC(2026, 0, 5, hour));
+  const duty = [
+    { startsAt: at(13), endsAt: at(17) },
+    { startsAt: at(8), endsAt: at(12) },
+  ];
+  expect(withinIntervals(duty, { startsAt: at(8), endsAt: at(12) })).toBe(true);
+  expect(withinIntervals(duty, { startsAt: at(14), endsAt: at(17) })).toBe(true);
+  expect(withinIntervals(duty, { startsAt: at(11), endsAt: at(14) })).toBe(false);
+  expect(withinIntervals(duty, { startsAt: at(16), endsAt: at(18) })).toBe(false);
+  expect(withinIntervals(duty, { startsAt: at(7), endsAt: at(9) })).toBe(false);
+  expect(withinIntervals([], { startsAt: at(8), endsAt: at(9) })).toBe(false);
+  expect(
+    withinIntervals(
+      [
+        { startsAt: at(8), endsAt: at(12) },
+        { startsAt: at(12), endsAt: at(17) },
+      ],
+      { startsAt: at(11), endsAt: at(13) },
+    ),
+  ).toBe(true);
 });
 
 it('covers no interval on a rest day or an incomplete Day Rule', () => {

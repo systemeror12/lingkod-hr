@@ -400,7 +400,7 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
-  "refuses a timed CTO interval outside the Work Date's calculation window, which an overnight Day Rule extends past midnight",
+  "refuses a timed CTO interval outside the Work Date's expected duty, which an overnight Day Rule extends past midnight",
   async () => {
     const fixture = await createAttendanceWorkflowFixture();
     const { admin, services, agencyId, employeeId, workDate } = fixture;
@@ -431,7 +431,7 @@ it.skipIf(!enabled)(
           startsAt: manilaInstant(shiftDate(nightDate, -1), '22:00').toISOString(),
           endsAt: manilaInstant(shiftDate(nightDate, -1), '23:00').toISOString(),
         }),
-      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_WORK_DATE', statusCode: 400 });
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_EXPECTED_DUTY', statusCode: 400 });
       await expect(
         record({
           ...night,
@@ -440,7 +440,7 @@ it.skipIf(!enabled)(
           startsAt: manilaInstant(shiftDate(nightDate, 1), '05:30').toISOString(),
           endsAt: manilaInstant(shiftDate(nightDate, 1), '06:30').toISOString(),
         }),
-      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_WORK_DATE' });
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_EXPECTED_DUTY' });
       await expect(
         record({
           ...base,
@@ -450,9 +450,137 @@ it.skipIf(!enabled)(
           startsAt: manilaInstant(shiftDate(nightDate, 1), '08:00').toISOString(),
           endsAt: manilaInstant(shiftDate(nightDate, 1), '09:00').toISOString(),
         }),
-      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_WORK_DATE' });
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_EXPECTED_DUTY' });
 
       expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(1);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceCtoInput.deleteMany({ where: { agencyId } });
+      });
+      await cleanupAttendanceWorkflowAgency(admin, agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses CTO outside expected duty or on a date without it, and blocks a recorded CTO a schedule change leaves outside expected duty',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture({ collectionAfterMinutes: 60 });
+    const { admin, services, agencyId, employeeId, workDate } = fixture;
+    const context = fixture.administratorContext;
+    const cto = new AttendanceCtoInputsService(services.days);
+    const record = (input: RecordCtoInput) =>
+      withDatabaseContext({ agencyId, membershipId: context.membershipId }, (transaction) =>
+        cto.recordInTransaction(transaction, context, input),
+      );
+    const base = { employeeId, sourceType: 'CtoRequest', sourceId: employeeId };
+    const timedOn = (date: string, sourceKey: string, startsAt: string, endsAt: string) => ({
+      ...base,
+      sourceKey: `${fixture.suffix}-${sourceKey}`,
+      workDate: date,
+      coverageMode: 'TIMED' as const,
+      startsAt: manilaInstant(date, startsAt).toISOString(),
+      endsAt: manilaInstant(date, endsAt).toISOString(),
+    });
+    // The fixture's Work Date is a Wednesday, so three days earlier is a REST Sunday.
+    const restDate = shiftDate(workDate, -3);
+
+    try {
+      // Inside the after-margin of the Event Collection Window, but after duty ends.
+      await expect(
+        record(timedOn(workDate, 'after-margin', '17:00', '18:00')),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_OUTSIDE_EXPECTED_DUTY', statusCode: 400 });
+      // The scheduled unpaid lunch break is not expected duty.
+      await expect(record(timedOn(workDate, 'over-break', '11:00', '14:00'))).rejects.toMatchObject(
+        { code: 'CTO_INPUT_OUTSIDE_EXPECTED_DUTY' },
+      );
+      await expect(record(timedOn(restDate, 'rest-timed', '09:00', '12:00'))).rejects.toMatchObject(
+        { code: 'CTO_INPUT_NO_EXPECTED_DUTY', statusCode: 409 },
+      );
+      await expect(
+        record({
+          ...base,
+          sourceKey: `${fixture.suffix}-rest-whole`,
+          workDate: restDate,
+          coverageMode: 'WHOLE_WORK_DATE',
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_NO_EXPECTED_DUTY' });
+      expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(0);
+
+      // CTO is approved before it is taken, so a schedule change can still make
+      // its future Work Date REST after the CTO input is recorded.
+      let ctoDate = manilaDate(2);
+      while (new Date(`${ctoDate}T00:00:00.000Z`).getUTCDay() !== 3)
+        ctoDate = shiftDate(ctoDate, 1);
+      const recorded = await record(timedOn(ctoDate, 'before-change', '16:00', '17:00'));
+      const evidenceOf = (documentType: string) =>
+        admin.documentVersion.findFirstOrThrow({
+          where: { agencyId, document: { documentType } },
+          select: { id: true },
+        });
+      const restSchedule = await services.schedules.create(context, {
+        code: 'ALL-REST',
+        name: 'All Rest Work Schedule',
+        scheduleType: 'REGULAR',
+        effectiveDate: manilaDate(-30),
+        dayRules: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
+          weekday,
+          ruleType: 'REST' as const,
+          requiredMinutes: 0,
+          eventPattern: 'IN_OUT' as const,
+          collectionBeforeMinutes: 0,
+          collectionAfterMinutes: 0,
+          breaks: [],
+        })),
+      });
+      const restActive = await services.schedules.activate(
+        context,
+        restSchedule.id,
+        restSchedule.draft!.id,
+        {
+          authorityDocumentVersionId: (await evidenceOf('WORK_SCHEDULE_AUTHORITY')).id,
+          approvingAuthority: 'Office of the President',
+          reason: 'Rest schedule authority reviewed.',
+        },
+      );
+      const assignment = await admin.scheduleAssignment.findFirstOrThrow({
+        where: { agencyId, employeeId },
+        select: { id: true, workArrangementVersionId: true },
+      });
+      await services.assignments.end(context, assignment.id, {
+        effectiveTo: shiftDate(ctoDate, -1),
+        reason: 'Schedule changed after the CTO was recorded.',
+      });
+      await services.assignments.create(context, {
+        employeeId,
+        workScheduleVersionId: restActive.currentVersion!.id,
+        workArrangementVersionId: assignment.workArrangementVersionId,
+        authorityDocumentVersionId: (await evidenceOf('SCHEDULE_ASSIGNMENT_AUTHORITY')).id,
+        effectiveFrom: ctoDate,
+      });
+      const recalculated = await services.days.calculate(context, {
+        periodCode: `CTO-REST-${fixture.suffix.slice(0, 12)}`,
+        dateFrom: ctoDate,
+        dateTo: ctoDate,
+        employeeIds: [employeeId],
+      });
+      expect(recalculated.days[0]?.status).toBe('EXCEPTION');
+      expect(recalculated.days[0]?.exceptionTypes).toContain('UNPLACED_CTO_INPUT');
+      const [day] = await services.days.list(context, {
+        employeeId,
+        workDateFrom: ctoDate,
+        workDateTo: ctoDate,
+      });
+      const detail = await services.days.findById(context, day!.id);
+      expect(detail.day.totals).toMatchObject({ ctoMinutes: 0 });
+      expect(detail.exceptions).toContainEqual(
+        expect.objectContaining({
+          exceptionType: 'UNPLACED_CTO_INPUT',
+          details: expect.objectContaining({ ctoInputId: recorded.id }),
+        }),
+      );
     } finally {
       await admin.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");

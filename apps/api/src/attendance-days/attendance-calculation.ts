@@ -29,6 +29,7 @@ export const ATTENDANCE_DAY_EXCEPTION_TYPES = [
   'CONFLICTING_COVERAGE',
   'INCOMPLETE_COVERAGE_INPUT',
   'AMBIGUOUS_LEAVE_QUANTITY',
+  'UNPLACED_CTO_INPUT',
 ] as const;
 export type AttendanceDayExceptionType = (typeof ATTENDANCE_DAY_EXCEPTION_TYPES)[number];
 
@@ -331,6 +332,23 @@ export function wholeWorkDateCoverageIntervals(
     startsAt: instantOf(interval.start),
     endsAt: instantOf(interval.end),
   }));
+}
+
+/** Whether every instant of `interval` lies inside the union of `intervals`. */
+export function withinIntervals(
+  intervals: readonly { startsAt: Date; endsAt: Date }[],
+  interval: { startsAt: Date; endsAt: Date },
+): boolean {
+  let reached = interval.startsAt.getTime();
+  const end = interval.endsAt.getTime();
+  for (const candidate of [...intervals].sort(
+    (left, right) => left.startsAt.getTime() - right.startsAt.getTime(),
+  )) {
+    if (candidate.startsAt.getTime() > reached) break;
+    reached = Math.max(reached, candidate.endsAt.getTime());
+    if (reached >= end) return true;
+  }
+  return false;
 }
 
 /**

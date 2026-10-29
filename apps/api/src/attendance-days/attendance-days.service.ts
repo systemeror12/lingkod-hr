@@ -41,6 +41,7 @@ import {
   ATTENDANCE_MINUTE_RULE,
   fingerprintAttendanceDayInput,
   wholeWorkDateCoverageIntervals,
+  withinIntervals,
   type AttendanceCalculationCoverage,
   type AttendanceCalculationException,
   type AttendanceDayExceptionType,
@@ -283,6 +284,19 @@ function periodSummary(record: AttendancePeriodRecord): AttendancePeriodSummary 
     status: record.status as AttendancePeriodSummary['status'],
     createdAt: record.createdAt.toISOString(),
   };
+}
+
+/** Expected duty of a resolved Work Date; none on a non-working date. */
+function expectedDutyIntervals(
+  resolution: AttendanceResolution,
+  workDate: string,
+): Array<{ startsAt: Date; endsAt: Date }> {
+  if (!isWorkingDate(resolution)) return [];
+  return wholeWorkDateCoverageIntervals(
+    resolution.dayRule,
+    workDate,
+    resolution.workScheduleVersion.timezone,
+  );
 }
 
 function resolutionFingerprint(
@@ -604,17 +618,16 @@ export class AttendanceDaysService {
   }
 
   /**
-   * The interval Attendance Day calculation reads coverage from for one Work
-   * Date: the Day Rule's Event Collection Window, which an overnight Day Rule
-   * extends past midnight, or the local calendar date for a REST Day Rule.
-   * Null when the Employee's schedule for the date cannot be resolved.
+   * The expected-duty intervals of one Work Date, the coverage whole-day leave
+   * and CTO receive: empty on a REST Day Rule or a non-working holiday. Null
+   * when the Employee's schedule for the date cannot be resolved.
    */
-  async workDateCoverageWindowInTransaction(
+  async workDateExpectedDutyInTransaction(
     transaction: Prisma.TransactionClient,
     agencyId: string,
     employeeId: string,
     workDate: string,
-  ): Promise<{ startsAt: Date; endsAt: Date } | null> {
+  ): Promise<Array<{ startsAt: Date; endsAt: Date }> | null> {
     let resolution: AttendanceResolution;
     try {
       resolution = await this.assignments.resolveForWorkDateInTransaction(
@@ -627,11 +640,7 @@ export class AttendanceDaysService {
       if (error instanceof AttendanceExceptionError) return null;
       throw error;
     }
-    return this.coverageWindow(
-      resolution.dayRule,
-      workDate,
-      resolution.workScheduleVersion.timezone,
-    );
+    return expectedDutyIntervals(resolution, workDate);
   }
 
   /**
@@ -1146,10 +1155,10 @@ export class AttendanceDaysService {
     );
     // Leave counts no working day here, so placed leave covers nothing.
     const placesLeave = isWorkingDate(resolution);
-    const leaveExceptions: AttendanceCalculationException[] = [];
+    const sourceExceptions: AttendanceCalculationException[] = [];
     for (const entry of postedLeave) {
       if (entry.ambiguousReason !== null) {
-        leaveExceptions.push({
+        sourceExceptions.push({
           type: 'AMBIGUOUS_LEAVE_QUANTITY',
           message: entry.ambiguousReason,
           details: {
@@ -1173,19 +1182,30 @@ export class AttendanceDaysService {
         });
       }
     }
-    // Whole-day CTO covers the Work Date's expected duty, so like leave it
-    // covers nothing on a date with none; timed CTO keeps its own interval.
+    // CTO pays expected duty only: whole-day CTO covers all of it, and timed CTO
+    // its interval inside it. A CTO input that a later schedule change leaves
+    // outside expected duty is a blocking exception, not silently unpaid.
+    const expectedDuty = expectedDutyIntervals(resolution, workDate);
+    const unplacedCto: string[] = [];
     for (const entry of await ctoCoverageInTransaction(
       transaction,
       context.agencyId,
       resolution.employeeId,
       workDate,
     )) {
-      const intervals = entry.interval
-        ? [entry.interval]
-        : placesLeave
-          ? wholeWorkDateCoverageIntervals(dayRule, workDate, timezone)
-          : [];
+      const intervals = entry.interval ? [entry.interval] : expectedDuty;
+      if (
+        expectedDuty.length === 0 ||
+        (entry.interval && !withinIntervals(expectedDuty, entry.interval))
+      ) {
+        unplacedCto.push(entry.inputId);
+        sourceExceptions.push({
+          type: 'UNPLACED_CTO_INPUT',
+          message: "A current CTO input lies outside the Work Date's expected duty.",
+          details: { ctoInputId: entry.inputId },
+        });
+        continue;
+      }
       for (const interval of intervals) {
         coverage.push({
           sourceType: 'CTO_INPUT',
@@ -1215,7 +1235,7 @@ export class AttendanceDaysService {
       coverage,
       holidayClassifications,
     });
-    const exceptions = [...result.exceptions, ...leaveExceptions];
+    const exceptions = [...result.exceptions, ...sourceExceptions];
     const fingerprint = fingerprintAttendanceDayInput({
       timezone,
       workDate,
@@ -1229,9 +1249,12 @@ export class AttendanceDaysService {
         workArrangementVersionId: resolution.workArrangementVersion.id,
         holidayCalendarVersionId: resolution.holidayCalendarVersion.id,
       },
-      unplacedSources: postedLeave
-        .filter((entry) => entry.ambiguousReason !== null)
-        .map((entry) => ({ sourceType: 'POSTED_LEAVE', sourceId: entry.inputId })),
+      unplacedSources: [
+        ...postedLeave
+          .filter((entry) => entry.ambiguousReason !== null)
+          .map((entry) => ({ sourceType: 'POSTED_LEAVE', sourceId: entry.inputId })),
+        ...unplacedCto.map((sourceId) => ({ sourceType: 'CTO_INPUT', sourceId })),
+      ],
     });
     return {
       fingerprint,

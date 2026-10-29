@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
+import { withinIntervals } from '../attendance-days/attendance-calculation';
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import {
   ATTENDANCE_WORK_DATE_LOCKED,
@@ -27,7 +28,7 @@ export class AttendanceCtoInputsService {
    * Employee's current Attendance Day for the Work Date, when one exists. A
    * retry with the same source key returns the existing input; the same key
    * with different facts is a conflict. A Work Date in a finalized Attendance
-   * Period, a timed interval outside the Work Date's calculation window, or
+   * Period or without expected duty, a timed interval outside expected duty, or
    * coverage overlapping posted leave or another current CTO input, is refused.
    */
   async recordInTransaction(
@@ -88,29 +89,38 @@ export class AttendanceCtoInputsService {
         ATTENDANCE_WORK_DATE_LOCKED,
       );
     }
-    if (facts.startsAt && facts.endsAt) {
-      // The same window Attendance Day calculation reads coverage from, so an
-      // overnight Work Date reaches past midnight.
-      const window = await this.days.workDateCoverageWindowInTransaction(
-        transaction,
-        agencyId,
-        input.employeeId,
-        input.workDate,
+    // CTO pays expected duty only (docs/hris-controls.md, CTO Request), the
+    // same intervals Attendance Day calculation places it on.
+    const expectedDuty = await this.days.workDateExpectedDutyInTransaction(
+      transaction,
+      agencyId,
+      input.employeeId,
+      input.workDate,
+    );
+    if (!expectedDuty) {
+      throw new AttendanceCtoInputError(
+        "The Employee's schedule for the Work Date cannot be resolved, so the CTO cannot be placed.",
+        409,
+        'CTO_INPUT_SCHEDULE_UNRESOLVED',
       );
-      if (!window) {
-        throw new AttendanceCtoInputError(
-          "The Employee's schedule for the Work Date cannot be resolved, so the CTO interval cannot be placed.",
-          409,
-          'CTO_INPUT_SCHEDULE_UNRESOLVED',
-        );
-      }
-      if (facts.startsAt < window.startsAt || facts.endsAt > window.endsAt) {
-        throw new AttendanceCtoInputError(
-          'The CTO interval falls outside the Work Date.',
-          400,
-          'CTO_INPUT_OUTSIDE_WORK_DATE',
-        );
-      }
+    }
+    if (expectedDuty.length === 0) {
+      throw new AttendanceCtoInputError(
+        'The Work Date has no expected duty, so it cannot take CTO.',
+        409,
+        'CTO_INPUT_NO_EXPECTED_DUTY',
+      );
+    }
+    if (
+      facts.startsAt &&
+      facts.endsAt &&
+      !withinIntervals(expectedDuty, { startsAt: facts.startsAt, endsAt: facts.endsAt })
+    ) {
+      throw new AttendanceCtoInputError(
+        "The CTO interval falls outside the Work Date's expected duty.",
+        400,
+        'CTO_INPUT_OUTSIDE_EXPECTED_DUTY',
+      );
     }
 
     // Posted leave covers its whole Work Date, so any CTO on that date overlaps.
