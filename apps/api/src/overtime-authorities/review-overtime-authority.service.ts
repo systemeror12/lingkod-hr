@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { ApprovalsService } from '../approvals/approval.service';
@@ -67,20 +68,32 @@ export class ReviewOvertimeAuthorityService {
           );
         }
         await assertDraftValid(transaction, context.agencyId, current);
-        await assertEligibleApprover(transaction, context.agencyId, authorityId);
 
         const route = await resolveOvertimeAuthorityRoute(this.approvals, transaction, context);
-        const request = await this.approvals.createRequestInTransaction(
-          transaction,
-          context,
-          {
-            routeCode: OVERTIME_AUTHORITY_ROUTE_CODE,
-            subjectType: OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
-            subjectId: authorityId,
-          },
-          undefined,
-          route.id,
-        );
+        const request = await this.approvals
+          .createRequestInTransaction(
+            transaction,
+            context,
+            {
+              routeCode: OVERTIME_AUTHORITY_ROUTE_CODE,
+              subjectType: OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
+              subjectId: authorityId,
+            },
+            undefined,
+            route.id,
+          )
+          .catch((error: unknown) => {
+            // approval_requests_one_active_subject_uq: the authority already has an open request.
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+              throw new OvertimeAuthorityServiceError(
+                'The Overtime Authority already has an open Approval Request.',
+                409,
+                'OVERTIME_AUTHORITY_APPROVAL_REQUEST_EXISTS',
+              );
+            }
+            throw error;
+          });
+        await assertEligibleApprover(transaction, context.agencyId, authorityId, request);
         await this.approvals.submitInTransaction(transaction, context, request.id);
         await transaction.overtimeAuthority.update({
           where: { agencyId_id: { agencyId: context.agencyId, id: authorityId } },

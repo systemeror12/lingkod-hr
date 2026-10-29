@@ -59,6 +59,18 @@ it('rejects Recruitment-owned decisions from the generic approval service', asyn
   });
 });
 
+it('refuses to open an Overtime Authority request outside the Overtime module', async () => {
+  await expect(
+    new ApprovalsService().createRequest(
+      context([{ code: 'approvals.requests.create', scopePolicy: 'AGENCY' }]),
+      { routeCode: 'OVERTIME_AUTHORITY', subjectId, subjectType: 'OVERTIME_AUTHORITY' },
+    ),
+  ).rejects.toMatchObject({
+    code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+    statusCode: 400,
+  });
+});
+
 it('uses typed errors for approval workflow failures', () => {
   expect(new ApprovalServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);
 });

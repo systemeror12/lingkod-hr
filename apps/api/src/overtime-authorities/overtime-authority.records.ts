@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
+import type { ApprovalRequestSummary } from '../approvals/approval.service';
 import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import { reviewerAttestationSchema } from './overtime-authorities.schemas';
 import {
@@ -177,37 +178,24 @@ export async function assertNotPreparer(
 }
 
 /**
- * Refuse a review no one could approve: some active membership other than the
- * preparers and submitter must hold `overtime.authorities.approve` Agency-wide,
- * the scope the Approval decision requires, so it reaches every covered
- * Employee.
+ * Refuse a review no one could decide: approval refuses a preparer or
+ * submitter, so no step of the request the review opened may be assigned to
+ * one. Throwing rolls the review back with its request.
  */
 export async function assertEligibleApprover(
   transaction: Prisma.TransactionClient,
   agencyId: string,
   authorityId: string,
+  request: ApprovalRequestSummary,
 ): Promise<void> {
-  const now = new Date();
   const preparers = await preparerMembershipIds(transaction, agencyId, authorityId);
-  const approver = await transaction.membershipRole.findFirst({
-    where: {
-      agencyId,
-      membershipId: { notIn: preparers },
-      membership: { status: 'ACTIVE' },
-      role: {
-        status: 'ACTIVE',
-        permissions: {
-          some: { permission: { code: 'overtime.authorities.approve' }, scopePolicy: 'AGENCY' },
-        },
-      },
-      effectiveFrom: { lte: now },
-      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-    },
-    select: { id: true },
-  });
-  if (!approver) {
+  if (
+    request.steps.some(
+      (step) => step.assignedMembershipId && preparers.includes(step.assignedMembershipId),
+    )
+  ) {
     throw new OvertimeAuthorityServiceError(
-      'No Approving Official other than its preparers and submitter can approve this Overtime Authority.',
+      'The Overtime Authority route assigns its decision to a preparer or submitter, who cannot approve it.',
       409,
       'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
     );

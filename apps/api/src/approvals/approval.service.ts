@@ -398,6 +398,12 @@ function requestSummary(record: RequestRecord): ApprovalRequestSummary {
   };
 }
 
+/**
+ * Subject types whose owning module opens the request in its own command, so
+ * the public create cannot leave one the module would never decide.
+ */
+const DOMAIN_OPENED_SUBJECT_TYPES: ReadonlySet<string> = new Set(['OVERTIME_AUTHORITY']);
+
 function isApprovalSubjectType(
   value: string,
 ): value is (typeof APPROVAL_REQUEST_SUBJECT_TYPES)[number] {
@@ -842,6 +848,13 @@ export class ApprovalsService {
     if (!isApprovalSubjectType(input.subjectType)) {
       throw new ApprovalServiceError(
         'Board Recommendations and Selection Decisions use their Recruitment-owned records.',
+        400,
+        'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+      );
+    }
+    if (DOMAIN_OPENED_SUBJECT_TYPES.has(input.subjectType)) {
+      throw new ApprovalServiceError(
+        `A ${input.subjectType} Approval Request is opened only by its owning module.`,
         400,
         'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
       );

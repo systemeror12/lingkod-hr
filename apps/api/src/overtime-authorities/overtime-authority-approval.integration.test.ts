@@ -1,6 +1,7 @@
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { createAdminClient } from '../attendance-test-fixtures';
+import { requestDatabaseContext } from '../database-context';
 import type { EligibilitySnapshot } from './overtime-authorities.types';
 import {
   addMember,
@@ -34,8 +35,8 @@ const attestationsFor = (memberId: string, chiefId: string) => [
 /**
  * One home Agency with a preparer (who also holds the Approving Official role,
  * so only segregation stops them), a Budget Officer reviewer, an Approving
- * Official on the route, and a foreign Agency. `route` overrides who the
- * route's steps are assigned to.
+ * Official, and a foreign Agency. The route's one step is assigned to the
+ * Approving Official; `route` reassigns it to the preparer or adds a second.
  */
 async function setup(
   label: string,
@@ -61,10 +62,14 @@ async function setup(
     ...APPROVER_GRANTS,
   ]);
   const route = options.route ?? 'approver';
-  const approver =
-    route === 'preparer'
-      ? preparer
-      : await addMember(admin, home, suffix, 'approver', 'appointing_authority', APPROVER_GRANTS);
+  const approver = await addMember(
+    admin,
+    home,
+    suffix,
+    'approver',
+    'appointing_authority',
+    APPROVER_GRANTS,
+  );
   if (route === 'two-steps') {
     const second = await addMember(
       admin,
@@ -76,7 +81,7 @@ async function setup(
     );
     await seedRoute(home, approver.membershipId, second.membershipId);
   } else {
-    await seedRoute(home, approver.membershipId);
+    await seedRoute(home, route === 'preparer' ? preparer.membershipId : approver.membershipId);
   }
   const facts = await seedEligibilityFacts(home);
   const foreignApprover = context(foreign.agency.id, foreign.user.id, foreign.membership.id, [
@@ -217,8 +222,9 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
-  'refuses a review when only the preparer could approve',
+  'refuses a review whose route assigns the decision to the preparer',
   async () => {
+    // The Agency's Approving Official also holds .approve, but the route step goes to the preparer.
     const f = await setup('SOLE', { route: 'preparer' });
     try {
       const authority = await f.prepare('OT-SOLE-1');
@@ -228,6 +234,65 @@ it.skipIf(!enabled)(
         statusCode: 409,
         code: 'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
       });
+      expect(
+        await f.admin.overtimeAuthority.findUniqueOrThrow({ where: { id: authority.id } }),
+      ).toMatchObject({ status: 'SUBMITTED' });
+      expect(
+        await f.admin.approvalRequest.count({
+          where: { agencyId: f.home.agency.id, subjectId: authority.id },
+        }),
+      ).toBe(0);
+      expect(
+        await f.admin.auditEvent.count({
+          where: { entityId: authority.id, action: 'OVERTIME_AUTHORITY_REVIEWED' },
+        }),
+      ).toBe(0);
+    } finally {
+      await f.teardown();
+    }
+  },
+  60_000,
+);
+
+it.skipIf(!enabled)(
+  'refuses a review with a typed conflict when the authority already has an open request',
+  async () => {
+    const f = await setup('DUP');
+    try {
+      const authority = await f.prepare('OT-DUP-1');
+      // Only the internal contract can open one now; the generic create refuses the subject type.
+      await expect(
+        f.approvals.createRequest(f.reviewer, {
+          routeCode: 'OVERTIME_AUTHORITY',
+          subjectType: 'OVERTIME_AUTHORITY',
+          subjectId: authority.id,
+        }),
+      ).rejects.toMatchObject({ statusCode: 400, code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN' });
+      await withDatabaseContext(
+        requestDatabaseContext(f.reviewer, 'approval-transition'),
+        (transaction) =>
+          f.approvals.createRequestInTransaction(transaction, f.reviewer, {
+            routeCode: 'OVERTIME_AUTHORITY',
+            subjectType: 'OVERTIME_AUTHORITY',
+            subjectId: authority.id,
+          }),
+      );
+      expect(
+        await errorOf(
+          f.controller.review(
+            f.home.agency.id,
+            authority.id,
+            { attestations: f.attestations },
+            f.reviewer,
+          ),
+        ),
+      ).toMatchObject({
+        status: 409,
+        body: { error: { code: 'OVERTIME_AUTHORITY_APPROVAL_REQUEST_EXISTS' } },
+      });
+      expect(
+        await f.admin.overtimeAuthority.findUniqueOrThrow({ where: { id: authority.id } }),
+      ).toMatchObject({ status: 'SUBMITTED' });
     } finally {
       await f.teardown();
     }
@@ -402,10 +467,29 @@ it.skipIf(!enabled)(
           }),
         ),
       ).rejects.toThrow(/An APPROVED Overtime Authority is immutable/);
+      // Its status cannot move back to an editable one either.
+      await expect(
+        withDatabaseContext(homeDatabase, (transaction) =>
+          transaction.overtimeAuthority.update({
+            where: { agencyId_id: { agencyId: f.home.agency.id, id: draft.id } },
+            data: { status: 'DRAFT' },
+          }),
+        ),
+      ).rejects.toThrow(/An APPROVED Overtime Authority can only be cancelled/);
       await expect(
         withDatabaseContext(homeDatabase, (transaction) =>
           transaction.overtimeAuthorityEmployee.updateMany({
             where: { overtimeAuthorityId: draft.id },
+            data: { eligibilitySnapshot: {} },
+          }),
+        ),
+      ).rejects.toThrow(/Covered Employees change only while/);
+      // A snapshot is written only during approval, while the authority is FOR_REVIEW.
+      const submitted = await f.prepare('OT-IMM-2');
+      await expect(
+        withDatabaseContext(homeDatabase, (transaction) =>
+          transaction.overtimeAuthorityEmployee.updateMany({
+            where: { overtimeAuthorityId: submitted.id },
             data: { eligibilitySnapshot: {} },
           }),
         ),
