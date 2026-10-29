@@ -2,11 +2,13 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpException,
   Inject,
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -22,13 +24,17 @@ import {
   overtimeAuthorityApproveSchema,
   overtimeAuthorityDraftSchema,
   overtimeAuthorityIdSchema,
+  overtimeAuthorityListSchema,
   overtimeAuthorityRejectSchema,
   overtimeAuthorityReviewSchema,
 } from './overtime-authorities.schemas';
 import {
   OvertimeAuthorityServiceError,
+  type OvertimeAuthorityDetail,
+  type OvertimeAuthorityListResponse,
   type OvertimeAuthoritySummary,
 } from './overtime-authorities.types';
+import { ReadOvertimeAuthoritiesService } from './read-overtime-authorities.service';
 import { RejectOvertimeAuthorityService } from './reject-overtime-authority.service';
 import { ReviewOvertimeAuthorityService } from './review-overtime-authority.service';
 import { SubmitOvertimeAuthorityService } from './submit-overtime-authority.service';
@@ -84,7 +90,43 @@ export class OvertimeAuthoritiesController {
     private readonly approveService: ApproveOvertimeAuthorityService,
     @Inject(RejectOvertimeAuthorityService)
     private readonly rejectService: RejectOvertimeAuthorityService,
+    @Inject(ReadOvertimeAuthoritiesService)
+    private readonly readService: ReadOvertimeAuthoritiesService,
   ) {}
+
+  @Get(':agencyId/overtime-authorities')
+  @RequirePermission('overtime.authorities.read')
+  async list(
+    @Param('agencyId') agencyId: string,
+    @Query() query: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OvertimeAuthorityListResponse> {
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_READ_FORBIDDEN');
+    const parsed = overtimeAuthorityListSchema.safeParse(query ?? {});
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return { authorities: await this.readService.list(context, parsed.data) };
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/overtime-authorities/:authorityId')
+  @RequirePermission('overtime.authorities.read')
+  async detail(
+    @Param('agencyId') agencyId: string,
+    @Param('authorityId') authorityId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OvertimeAuthorityDetail> {
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_READ_FORBIDDEN');
+    const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
+    if (!parsedId.success) throw this.notFound(context);
+    try {
+      return await this.readService.detail(context, parsedId.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
 
   @Post(':agencyId/overtime-authorities')
   @RequirePermission('overtime.authorities.create')
@@ -93,7 +135,7 @@ export class OvertimeAuthoritiesController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsed = overtimeAuthorityDraftSchema.safeParse(body);
     if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     try {
@@ -111,7 +153,7 @@ export class OvertimeAuthoritiesController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
     if (!parsedId.success) throw this.notFound(context);
     const parsed = overtimeAuthorityDraftSchema.safeParse(body);
@@ -130,7 +172,7 @@ export class OvertimeAuthoritiesController {
     @Param('authorityId') authorityId: string,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
     if (!parsedId.success) throw this.notFound(context);
     try {
@@ -147,7 +189,7 @@ export class OvertimeAuthoritiesController {
     @Param('authorityId') authorityId: string,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
     if (!parsedId.success) throw this.notFound(context);
     try {
@@ -165,7 +207,7 @@ export class OvertimeAuthoritiesController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
     if (!parsedId.success) throw this.notFound(context);
     const parsed = overtimeAuthorityReviewSchema.safeParse(body);
@@ -185,7 +227,7 @@ export class OvertimeAuthoritiesController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
     if (!parsedId.success) throw this.notFound(context);
     const parsed = overtimeAuthorityApproveSchema.safeParse(body);
@@ -205,7 +247,7 @@ export class OvertimeAuthoritiesController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeAuthoritySummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN');
     const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
     if (!parsedId.success) throw this.notFound(context);
     const parsed = overtimeAuthorityRejectSchema.safeParse(body);
@@ -217,13 +259,13 @@ export class OvertimeAuthoritiesController {
     }
   }
 
-  private assertWriteAgency(agencyId: string, context: RequestContext): void {
+  private assertAgency(agencyId: string, context: RequestContext, code: string): void {
     const parsed = agencyIdSchema.safeParse(agencyId);
     if (!parsed.success || parsed.data !== context.agencyId) {
       throw new HttpException(
         {
           error: {
-            code: 'OVERTIME_AUTHORITY_WRITE_FORBIDDEN',
+            code,
             message: 'The requested Agency is outside the active context.',
             requestId: context.requestId,
           },

@@ -11,6 +11,7 @@ import {
   overtimeAuthorityAuditWriter,
 } from './overtime-authorities.audit';
 import { OvertimeAuthoritiesController } from './overtime-authorities.controller';
+import { ReadOvertimeAuthoritiesService } from './read-overtime-authorities.service';
 import { RejectOvertimeAuthorityService } from './reject-overtime-authority.service';
 import { ReviewOvertimeAuthorityService } from './review-overtime-authority.service';
 import { SubmitOvertimeAuthorityService } from './submit-overtime-authority.service';
@@ -27,6 +28,7 @@ import { UpdateOvertimeAuthorityService } from './update-overtime-authority.serv
     ReviewOvertimeAuthorityService,
     ApproveOvertimeAuthorityService,
     RejectOvertimeAuthorityService,
+    ReadOvertimeAuthoritiesService,
     { provide: OVERTIME_AUTHORITY_AUDIT_WRITER, useValue: overtimeAuthorityAuditWriter },
   ],
 })

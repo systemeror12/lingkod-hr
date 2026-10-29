@@ -15,6 +15,7 @@ import { overtimeAuthorityAuditWriter } from './overtime-authorities.audit';
 import { OvertimeAuthoritiesController } from './overtime-authorities.controller';
 import { registerOvertimeAuthorityApproval } from './overtime-authority-approval';
 import { OVERTIME_AUTHORITY_ROUTE_CODE } from './overtime-authorities.types';
+import { ReadOvertimeAuthoritiesService } from './read-overtime-authorities.service';
 import { RejectOvertimeAuthorityService } from './reject-overtime-authority.service';
 import { ReviewOvertimeAuthorityService } from './review-overtime-authority.service';
 import { SubmitOvertimeAuthorityService } from './submit-overtime-authority.service';
@@ -59,6 +60,7 @@ export function services() {
   const review = new ReviewOvertimeAuthorityService(overtimeAuthorityAuditWriter, approvals);
   const approve = new ApproveOvertimeAuthorityService(overtimeAuthorityAuditWriter, approvals);
   const reject = new RejectOvertimeAuthorityService(overtimeAuthorityAuditWriter, approvals);
+  const read = new ReadOvertimeAuthoritiesService();
   return {
     approvals,
     create,
@@ -68,6 +70,7 @@ export function services() {
     review,
     approve,
     reject,
+    read,
     controller: new OvertimeAuthoritiesController(
       create,
       update,
@@ -76,6 +79,7 @@ export function services() {
       review,
       approve,
       reject,
+      read,
     ),
   };
 }

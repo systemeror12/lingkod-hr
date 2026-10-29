@@ -143,6 +143,61 @@ export interface OvertimeAuthoritySummary {
   employees: CoveredEmployeeSummary[];
 }
 
+/**
+ * Who holds the authority's next step: the preparer submits a DRAFT, a reviewer
+ * reviews a SUBMITTED one, and the Approving Official decides FOR_REVIEW.
+ */
+export type OvertimeAuthorityPendingRole = 'PREPARER' | 'REVIEWER' | 'APPROVING_OFFICIAL';
+
+export interface OvertimeAuthorityPendingAction {
+  role: OvertimeAuthorityPendingRole;
+  /** The assignee of the open Approval Request's current step, while FOR_REVIEW. */
+  assigneeName: string | null;
+}
+
+/** One authority as the register reads it. */
+export interface OvertimeAuthorityRecord extends OvertimeAuthoritySummary {
+  requestingUnitName: string;
+  /** When the authority last changed: its latest Audit Event. */
+  updatedAt: string;
+  pendingAction: OvertimeAuthorityPendingAction | null;
+}
+
+export interface OvertimeAuthorityListResponse {
+  authorities: OvertimeAuthorityRecord[];
+}
+
+/** The review result read back from the review Audit Event (ADR 0010). */
+export interface OvertimeAuthorityReviewResult {
+  reviewedByName: string | null;
+  reviewedAt: string;
+  attestations: ReviewerAttestation[];
+}
+
+/** The Approving Official's decision on the review's Approval Request. */
+export interface OvertimeAuthorityDecision {
+  decision: string;
+  comments: string | null;
+  decidedByName: string | null;
+  decidedAt: string;
+}
+
+export interface OvertimeAuthorityHistoryEntry {
+  id: string;
+  action: string;
+  previousStatus: string | null;
+  newStatus: string | null;
+  reason: string | null;
+  actorName: string | null;
+  occurredAt: string;
+}
+
+export interface OvertimeAuthorityDetail extends OvertimeAuthorityRecord {
+  review: OvertimeAuthorityReviewResult | null;
+  decision: OvertimeAuthorityDecision | null;
+  history: OvertimeAuthorityHistoryEntry[];
+}
+
 export class OvertimeAuthorityServiceError extends Error {
   constructor(
     message: string,

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
 import type { ApprovalRequestSummary } from '../approvals/approval.service';
-import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
+import { resolveEmployeeScope, scopeCovers, type EmployeeScope } from '../employee-scope';
 import { reviewerAttestationSchema } from './overtime-authorities.schemas';
 import {
   OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
@@ -91,6 +91,20 @@ export async function readAuthority(
   });
   if (!record) throw authorityNotFound();
   return summary(record);
+}
+
+/** Read the Agency's authorities matching `where`, latest Work Dates first. */
+export async function findAuthorities(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  where: Prisma.OvertimeAuthorityWhereInput,
+): Promise<OvertimeAuthoritySummary[]> {
+  const records = await transaction.overtimeAuthority.findMany({
+    where: { ...where, agencyId },
+    orderBy: [{ workDateFrom: 'desc' }, { createdAt: 'desc' }],
+    select: authoritySelect,
+  });
+  return records.map(summary);
 }
 
 /** Lock one authority for a command and return it. */
@@ -253,7 +267,7 @@ export interface RecordedReview {
   attestations: ReviewerAttestation[];
 }
 
-const reviewMetadataSchema = z.object({
+export const reviewMetadataSchema = z.object({
   approvalRequestId: z.string().uuid(),
   attestations: z.array(reviewerAttestationSchema),
 });
@@ -323,10 +337,7 @@ export async function assertCommandAccess(
   permission: string,
   employeeIds: readonly string[],
 ): Promise<void> {
-  if (!context.agencyId || !context.userId || !context.membershipId) throw forbidden();
-  if (hasPermission(context, permission, { agencyId: context.agencyId })) return;
-  const scope = await resolveEmployeeScope(context, permission, transaction);
-  if (!scope) throw forbidden();
+  const scope = await accessScope(transaction, context, permission);
   if (employeeIds.some((employeeId) => !scopeCovers(scope, employeeId))) {
     throw new OvertimeAuthorityServiceError(
       'A covered Employee is outside the scope of the current Agency Membership.',
@@ -334,6 +345,19 @@ export async function assertCommandAccess(
       'OVERTIME_AUTHORITY_SCOPE_FORBIDDEN',
     );
   }
+}
+
+/** The Employees the caller's grants of `permission` reach; refused without a grant. */
+export async function accessScope(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  permission: string,
+): Promise<EmployeeScope> {
+  if (!context.agencyId || !context.userId || !context.membershipId) throw forbidden();
+  if (hasPermission(context, permission, { agencyId: context.agencyId })) return { kind: 'AGENCY' };
+  const scope = await resolveEmployeeScope(context, permission, transaction);
+  if (!scope) throw forbidden();
+  return scope;
 }
 
 /**

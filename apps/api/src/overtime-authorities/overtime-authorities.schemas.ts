@@ -1,7 +1,15 @@
 import { z } from 'zod';
-import { COMPENSATION_METHODS, POSITION_LEVEL_ATTESTATIONS } from './overtime-authorities.types';
+import {
+  COMPENSATION_METHODS,
+  OVERTIME_AUTHORITY_STATUSES,
+  POSITION_LEVEL_ATTESTATIONS,
+} from './overtime-authorities.types';
 
 export const overtimeAuthorityIdSchema = z.string().uuid();
+
+export const overtimeAuthorityListSchema = z
+  .object({ status: z.enum(OVERTIME_AUTHORITY_STATUSES).optional() })
+  .strict();
 
 const coveredEmployeeSchema = z
   .object({
