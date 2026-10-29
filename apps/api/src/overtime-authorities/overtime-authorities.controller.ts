@@ -10,20 +10,27 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
+import { ApprovalServiceError } from '../approvals/approval.service';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
+import { ApproveOvertimeAuthorityService } from './approve-overtime-authority.service';
 import { CancelOvertimeAuthorityService } from './cancel-overtime-authority.service';
 import { CreateOvertimeAuthorityService } from './create-overtime-authority.service';
 import {
+  overtimeAuthorityApproveSchema,
   overtimeAuthorityDraftSchema,
   overtimeAuthorityIdSchema,
+  overtimeAuthorityRejectSchema,
+  overtimeAuthorityReviewSchema,
 } from './overtime-authorities.schemas';
 import {
   OvertimeAuthorityServiceError,
   type OvertimeAuthoritySummary,
 } from './overtime-authorities.types';
+import { RejectOvertimeAuthorityService } from './reject-overtime-authority.service';
+import { ReviewOvertimeAuthorityService } from './review-overtime-authority.service';
 import { SubmitOvertimeAuthorityService } from './submit-overtime-authority.service';
 import { UpdateOvertimeAuthorityService } from './update-overtime-authority.service';
 
@@ -50,6 +57,12 @@ function translateServiceError(error: unknown, requestId: string): never {
       error.statusCode,
     );
   }
+  if (error instanceof ApprovalServiceError) {
+    throw new HttpException(
+      { error: { code: error.code, message: error.message, requestId } },
+      error.statusCode,
+    );
+  }
   throw error;
 }
 
@@ -65,6 +78,12 @@ export class OvertimeAuthoritiesController {
     private readonly submitService: SubmitOvertimeAuthorityService,
     @Inject(CancelOvertimeAuthorityService)
     private readonly cancelService: CancelOvertimeAuthorityService,
+    @Inject(ReviewOvertimeAuthorityService)
+    private readonly reviewService: ReviewOvertimeAuthorityService,
+    @Inject(ApproveOvertimeAuthorityService)
+    private readonly approveService: ApproveOvertimeAuthorityService,
+    @Inject(RejectOvertimeAuthorityService)
+    private readonly rejectService: RejectOvertimeAuthorityService,
   ) {}
 
   @Post(':agencyId/overtime-authorities')
@@ -133,6 +152,66 @@ export class OvertimeAuthoritiesController {
     if (!parsedId.success) throw this.notFound(context);
     try {
       return await this.cancelService.execute(context, parsedId.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/overtime-authorities/:authorityId/review')
+  @RequirePermission('overtime.authorities.review')
+  async review(
+    @Param('agencyId') agencyId: string,
+    @Param('authorityId') authorityId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OvertimeAuthoritySummary> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
+    if (!parsedId.success) throw this.notFound(context);
+    const parsed = overtimeAuthorityReviewSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return await this.reviewService.execute(context, parsedId.data, parsed.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/overtime-authorities/:authorityId/approve')
+  @RequirePermission('overtime.authorities.approve')
+  async approve(
+    @Param('agencyId') agencyId: string,
+    @Param('authorityId') authorityId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OvertimeAuthoritySummary> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
+    if (!parsedId.success) throw this.notFound(context);
+    const parsed = overtimeAuthorityApproveSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return await this.approveService.execute(context, parsedId.data, parsed.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/overtime-authorities/:authorityId/reject')
+  @RequirePermission('overtime.authorities.reject')
+  async reject(
+    @Param('agencyId') agencyId: string,
+    @Param('authorityId') authorityId: string,
+    @Body() body: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OvertimeAuthoritySummary> {
+    this.assertWriteAgency(agencyId, context);
+    const parsedId = overtimeAuthorityIdSchema.safeParse(authorityId);
+    if (!parsedId.success) throw this.notFound(context);
+    const parsed = overtimeAuthorityRejectSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return await this.rejectService.execute(context, parsedId.data, parsed.data);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }

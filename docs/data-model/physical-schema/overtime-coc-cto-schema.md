@@ -10,7 +10,6 @@
 
 ---
 
-
 ## 1. Overtime Authorities
 
 ```sql
@@ -58,7 +57,9 @@ CREATE TABLE overtime_authority_employees (
 );
 ```
 
-`compensation_method` is proposed in the draft and fixed when the Approving Official approves. Approval refuses `OVERTIME_PAY` until #347. An authority is in effect or ended by its Work Dates; neither is a stored status. `authorized_hours` is the Employee's total across the authority. `eligibility_snapshot` is written once at approval and holds the system-derived facts and the reviewer's attestations listed in `hris-controls.md` §5.16. Approved authorities and their covered Employees are immutable.
+`compensation_method` is proposed in the draft and fixed when the Approving Official approves. Approval refuses `OVERTIME_PAY` until #347. An authority is in effect or ended by its Work Dates; neither is a stored status. `authorized_hours` is the Employee's total across the authority. `eligibility_snapshot` is written once at approval and holds the system-derived facts and the reviewer's attestations listed in `hris-controls.md` §5.16. Approved authorities and their covered Employees are immutable; an `APPROVED` authority's status can only move to `CANCELLED`, and a snapshot is filled only while its authority is `FOR_REVIEW`.
+
+Review records its attestations on the `OVERTIME_AUTHORITY_REVIEWED` Audit Event and opens the authority's Approval Request (subject type `OVERTIME_AUTHORITY`, route code `OVERTIME_AUTHORITY`, exactly one step); the event also stores that request's id. Approval copies the attestations from the event into each snapshot, and approve and reject decide only that request ([ADR 0010](../../adr/0010-overtime-review-result-on-its-audit-event.md)). The preparers and submitter that review and approval exclude are the actors of the authority's create, update, and submit Audit Events, so no column records them; review is refused when the route step its request resolves is assigned to one of them. The generic Approval API cannot create, approve, reject, or cancel the request. Each snapshot holds `service` (one entry per Service Segment over the Work Dates: appointment status, salary grade, position item number, and the title and employment category of the `ACTIVE` or `SUPERSEDED` Plantilla Position Version in effect on the segment's first covered Work Date), `workArrangements` (one entry per Schedule Assignment over the Work Dates), and `attestation`.
 
 ---
 
@@ -158,7 +159,7 @@ ON coc_earned_certificate_lines (overtime_service_record_id)
 WHERE released_at IS NULL;
 ```
 
-The Overtime module owns certificates. Each line is a `CERTIFIED` record of the certificate's Employee, under a `COC` authority, with a Work Date in `earned_month`. Discarding a draft sets `released_at` on its lines. Approval calls the COC module once, keyed by the certificate, which applies the ratio, caps, and validity, writes the earned COC with the certificate as its source, and returns each line's `credited_minutes` and `excess_minutes`, which are COC after the ratio. Approval is refused when the certificate's Valid Until, December 31 of the year after `earned_month`, has already passed. An approved certificate and its lines are immutable. There is no per-record compensation decision.
+The Overtime module owns certificates. Each line is a `CERTIFIED` record of the certificate's Employee, under a `COC` authority, with a Work Date in `earned_month`. Discarding a draft sets `released_at` on its lines. Approval calls the COC module once, keyed by the certificate, which applies the ratio, caps, and validity, writes the earned COC with the certificate as its source, and returns each line's `credited_minutes` and `excess_minutes`, which are COC after the ratio. Approval is refused when the certificate's Valid Until, December 31 of the year after `earned_month`, has already passed. An approved certificate and its lines are immutable. A repeat call for an awarded certificate writes nothing and returns only its stored entries, refused if they belong to another Employee or name a line the call lacks; the certificate's `FOR_APPROVAL` to `APPROVED` transition is what makes the award happen once. There is no per-record compensation decision.
 
 ---
 
@@ -194,6 +195,7 @@ CREATE TABLE coc_ledger_entries (
   minutes numeric(12,1) NOT NULL CHECK (minutes <> 0),
   effective_date date NOT NULL,
   valid_until date NOT NULL,
+  earned_month date,
   source_type citext NOT NULL CHECK (btrim(source_type::text) <> ''),
   source_id uuid NOT NULL,
   source_posting_key citext NOT NULL
@@ -205,6 +207,11 @@ CREATE TABLE coc_ledger_entries (
   posted_at timestamptz NOT NULL DEFAULT now(),
   posted_by_membership_id uuid,
   CHECK (valid_until = make_date(extract(year FROM valid_until)::int, 12, 31)),
+  CHECK (earned_month IS NULL OR (
+    earned_month = date_trunc('month', earned_month)::date
+    AND valid_until = make_date(extract(year FROM earned_month)::int + 1, 12, 31)
+    AND minutes > 0 AND reverses_entry_id IS NULL)),
+  CHECK (minutes < 0 OR earned_month IS NOT NULL OR reverses_entry_id IS NOT NULL),
   FOREIGN KEY (agency_id, coc_account_id)
     REFERENCES coc_accounts (agency_id, id),
   FOREIGN KEY (agency_id, supporting_document_version_id)
@@ -227,30 +234,31 @@ WHERE reverses_entry_id IS NOT NULL;
 
 Attach immutable mutation-prevention triggers. A reviewed trigger requires a reversal to use the same account, `valid_until`, and exact opposite minutes as its original. There is no entry-type enum; the source names what an entry is (ADR 0009):
 
-| Source                       | Sign | Effective date            | Posting key                    |
-| ---------------------------- | ---- | ------------------------- | ------------------------------ |
-| Certificate of COC Earned    | +    | Approval date             | Certificate line               |
-| CTO Request approval         | −    | CTO Work Date             | Work Date and `valid_until`    |
-| CTO cancellation             | +    | CTO Work Date             | Reversed entry                 |
-| COC adjustment               | −    | Adjustment date           | Adjustment                     |
-| COC reversal                 | +    | Original's effective date | Original entry                 |
-| Expiry run                   | −    | Day after `valid_until`   | `valid_until`                  |
-| Separation Case              | −    | Separation effective date | `valid_until`                  |
+| Source                    | Sign | Effective date            | Posting key                 |
+| ------------------------- | ---- | ------------------------- | --------------------------- |
+| Certificate of COC Earned | +    | Approval date             | Certificate line            |
+| CTO Request approval      | −    | CTO Work Date             | Work Date and `valid_until` |
+| CTO cancellation          | +    | CTO Work Date             | Reversed entry              |
+| COC adjustment            | −    | Adjustment date           | Adjustment                  |
+| COC reversal              | +    | Original's effective date | Original entry              |
+| Expiry run                | −    | Day after `valid_until`   | `valid_until`               |
+| Separation Case           | −    | Separation effective date | `valid_until`               |
 
-`rule_code` names the national rule version applied. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
+`rule_code` names the national rule version applied. `earned_month` is set only on a certificate award, so the monthly cap counts the month's credited COC from the ledger under the account lock, without reading certificates. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
 
 Every balance-sensitive command locks the account, recomputes within the transaction, and writes no entry that would make the balance for any `valid_until` negative. A use draws from the earliest `valid_until` on or after its Work Date. A reversal restoring COC whose `valid_until` has passed is followed by an expiry entry in the same transaction. The expiry job is idempotent through its posting key.
 
-A balance as of a date states its cutoff:
+A balance as of a date states its cutoff. It counts entries effective on or before the cutoff whose `valid_until` is on or after it, so COC past its Valid Until never counts, even before its expiry entry is posted:
 
 ```sql
 SELECT valid_until, SUM(minutes) AS minutes
 FROM coc_ledger_entries
-WHERE agency_id = $1 AND coc_account_id = $2 AND effective_date <= $3
+WHERE agency_id = $1 AND coc_account_id = $2
+  AND effective_date <= $3 AND valid_until >= $3
 GROUP BY valid_until;
 ```
 
-The 120-hour cap reads it as of the certificate's approval date. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date.
+The 120-hour cap reads it as of the certificate's approval date. A certificate approval dated before the account's latest certificate entry is refused, so a back-dated award cannot raise the balance under a later award's cap. Service on or before a `CLOSED` account's `closed_at` belongs to the forfeited period and is refused rather than opening a new account. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date.
 
 ---
 

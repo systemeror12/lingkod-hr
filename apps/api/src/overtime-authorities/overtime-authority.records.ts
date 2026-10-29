@@ -1,13 +1,19 @@
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { z } from 'zod';
+import type { ApprovalRequestSummary } from '../approvals/approval.service';
 import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
+import { reviewerAttestationSchema } from './overtime-authorities.schemas';
 import {
+  OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
   OvertimeAuthorityServiceError,
   type CompensationMethod,
   type CoveredEmployeeRefusal,
+  type EligibilitySnapshot,
   type OvertimeAuthorityDraftInput,
   type OvertimeAuthorityStatus,
   type OvertimeAuthoritySummary,
+  type ReviewerAttestation,
 } from './overtime-authorities.types';
 
 const authoritySelect = {
@@ -21,6 +27,8 @@ const authoritySelect = {
   compensationMethod: true,
   fundingReference: true,
   status: true,
+  approvedByMembershipId: true,
+  approvedAt: true,
   createdAt: true,
   employees: {
     orderBy: { employee: { employeeNumber: 'asc' as const } },
@@ -29,6 +37,7 @@ const authoritySelect = {
       employeeId: true,
       authorizedHours: true,
       taskDescription: true,
+      eligibilitySnapshot: true,
       employee: { select: { employeeNumber: true, legalName: true } },
     },
   },
@@ -36,11 +45,11 @@ const authoritySelect = {
 
 type AuthorityRecord = Prisma.OvertimeAuthorityGetPayload<{ select: typeof authoritySelect }>;
 
-function formatDate(value: Date): string {
+export function formatDate(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
-function toDatabaseDate(value: string): Date {
+export function toDatabaseDate(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
 
@@ -56,6 +65,8 @@ function summary(record: AuthorityRecord): OvertimeAuthoritySummary {
     compensationMethod: record.compensationMethod as CompensationMethod,
     fundingReference: record.fundingReference,
     status: record.status as OvertimeAuthorityStatus,
+    approvedByMembershipId: record.approvedByMembershipId,
+    approvedAt: record.approvedAt?.toISOString() ?? null,
     createdAt: record.createdAt.toISOString(),
     employees: record.employees.map((row) => ({
       id: row.id,
@@ -64,6 +75,7 @@ function summary(record: AuthorityRecord): OvertimeAuthoritySummary {
       employeeName: row.employee.legalName,
       authorizedHours: row.authorizedHours.toFixed(4),
       taskDescription: row.taskDescription,
+      eligibilitySnapshot: row.eligibilitySnapshot as EligibilitySnapshot | null,
     })),
   };
 }
@@ -103,6 +115,201 @@ export function assertDraft(authority: OvertimeAuthoritySummary): void {
       'OVERTIME_AUTHORITY_NOT_DRAFT',
     );
   }
+}
+
+/** Refuse a command the authority's status does not allow. */
+export function assertStatus(
+  authority: OvertimeAuthoritySummary,
+  expected: OvertimeAuthorityStatus,
+  action: string,
+): void {
+  if (authority.status !== expected) {
+    throw new OvertimeAuthorityServiceError(
+      `Only a ${expected} Overtime Authority can be ${action}; this one is ${authority.status}.`,
+      409,
+      'OVERTIME_AUTHORITY_STATUS_INVALID',
+    );
+  }
+}
+
+const PREPARATION_ACTIONS = [
+  'OVERTIME_AUTHORITY_CREATED',
+  'OVERTIME_AUTHORITY_UPDATED',
+  'OVERTIME_AUTHORITY_SUBMITTED',
+] as const;
+
+/**
+ * The memberships that prepared or submitted the authority: the actors of its
+ * immutable create, update, and submit Audit Events.
+ */
+async function preparerMembershipIds(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  authorityId: string,
+): Promise<string[]> {
+  const events = await transaction.auditEvent.findMany({
+    where: {
+      agencyId,
+      entityType: 'OvertimeAuthority',
+      entityId: authorityId,
+      action: { in: [...PREPARATION_ACTIONS] },
+      actorMembershipId: { not: null },
+    },
+    distinct: ['actorMembershipId'],
+    select: { actorMembershipId: true },
+  });
+  return events.flatMap((event) => (event.actorMembershipId ? [event.actorMembershipId] : []));
+}
+
+/** Refuse a reviewer or approver who prepared or submitted the authority. */
+export async function assertNotPreparer(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  authorityId: string,
+): Promise<void> {
+  const preparers = await preparerMembershipIds(transaction, context.agencyId, authorityId);
+  if (preparers.includes(context.membershipId)) {
+    throw new OvertimeAuthorityServiceError(
+      'Nobody may review or approve an Overtime Authority they prepared or submitted.',
+      403,
+      'OVERTIME_AUTHORITY_SEGREGATION_REQUIRED',
+    );
+  }
+}
+
+/**
+ * Refuse a review no one could decide: approval refuses a preparer or
+ * submitter, so no step of the request the review opened may be assigned to
+ * one, and each step's assignee must be able to both approve and reject it.
+ * Throwing rolls the review back with its request.
+ */
+export async function assertEligibleApprover(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  authorityId: string,
+  request: ApprovalRequestSummary,
+): Promise<void> {
+  const preparers = await preparerMembershipIds(transaction, agencyId, authorityId);
+  if (
+    request.steps.some(
+      (step) => step.assignedMembershipId && preparers.includes(step.assignedMembershipId),
+    )
+  ) {
+    throw new OvertimeAuthorityServiceError(
+      'The Overtime Authority route assigns its decision to a preparer or submitter, who cannot approve it.',
+      409,
+      'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
+    );
+  }
+  for (const step of request.steps) {
+    for (const permission of [step.approvePermission, step.rejectPermission]) {
+      if (!(await canDecide(transaction, agencyId, step, permission))) {
+        throw new OvertimeAuthorityServiceError(
+          'The Overtime Authority route assigns its decision to a Membership that cannot both approve and reject it.',
+          409,
+          'OVERTIME_AUTHORITY_NO_ELIGIBLE_APPROVER',
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Mirror the Approval decision check: the assignee needs one active role
+ * granting both the step permission and the decision permission Agency-wide.
+ */
+async function canDecide(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  step: ApprovalRequestSummary['steps'][number],
+  permission: string,
+): Promise<boolean> {
+  if (!step.assignedMembershipId) return false;
+  const now = new Date();
+  const agencyGrant = (code: string) => ({
+    permissions: { some: { scopePolicy: 'AGENCY' as const, permission: { code } } },
+  });
+  const role = await transaction.membershipRole.findFirst({
+    where: {
+      agencyId,
+      membershipId: step.assignedMembershipId,
+      membership: { status: 'ACTIVE' },
+      effectiveFrom: { lte: now },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+      role: {
+        status: 'ACTIVE',
+        AND: [agencyGrant(step.requiredPermission), agencyGrant(permission)],
+      },
+    },
+    select: { id: true },
+  });
+  return role !== null;
+}
+
+export interface RecordedReview {
+  reviewedByMembershipId: string;
+  reviewedAt: Date;
+  approvalRequestId: string;
+  attestations: ReviewerAttestation[];
+}
+
+const reviewMetadataSchema = z.object({
+  approvalRequestId: z.string().uuid(),
+  attestations: z.array(reviewerAttestationSchema),
+});
+
+/**
+ * Read the review result from the authority's immutable review Audit Event
+ * (ADR 0010): the reviewer's attestations and the Approval Request the review
+ * opened. Approve and reject decide that exact request, so it must still await
+ * a decision.
+ */
+export async function recordedReview(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  authorityId: string,
+): Promise<RecordedReview> {
+  const event = await transaction.auditEvent.findFirst({
+    where: {
+      agencyId,
+      entityType: 'OvertimeAuthority',
+      entityId: authorityId,
+      action: 'OVERTIME_AUTHORITY_REVIEWED',
+    },
+    orderBy: { occurredAt: 'desc' },
+    select: { actorMembershipId: true, occurredAt: true, metadata: true },
+  });
+  const parsed = reviewMetadataSchema.safeParse(event?.metadata);
+  if (!event?.actorMembershipId || !parsed.success) {
+    throw new OvertimeAuthorityServiceError(
+      'The Overtime Authority has no recorded review to decide against.',
+      409,
+      'OVERTIME_AUTHORITY_REVIEW_MISSING',
+    );
+  }
+  const request = await transaction.approvalRequest.findFirst({
+    where: {
+      agencyId,
+      id: parsed.data.approvalRequestId,
+      subjectType: OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
+      subjectId: authorityId,
+      status: 'IN_PROGRESS',
+    },
+    select: { id: true },
+  });
+  if (!request) {
+    throw new OvertimeAuthorityServiceError(
+      'The Overtime Authority has no Approval Request awaiting a decision.',
+      409,
+      'OVERTIME_AUTHORITY_APPROVAL_REQUEST_MISSING',
+    );
+  }
+  return {
+    reviewedByMembershipId: event.actorMembershipId,
+    reviewedAt: event.occurredAt,
+    approvalRequestId: request.id,
+    attestations: parsed.data.attestations,
+  };
 }
 
 /**
