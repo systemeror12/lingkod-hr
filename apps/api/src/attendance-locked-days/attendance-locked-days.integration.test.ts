@@ -17,6 +17,7 @@ import {
   attendanceAdministratorPermissions,
   cleanupAttendanceWorkflowAgency,
   createAttendanceWorkflowFixture,
+  lockAttendancePeriod,
   manilaDate,
   manilaInstant,
   type AttendanceWorkflowFixture,
@@ -137,48 +138,6 @@ function correctionsService(fixture: AttendanceWorkflowFixture) {
   return corrections;
 }
 
-/** Lock the fixture's period through the ordinary submission, review, and lock workflow. */
-async function lockPeriod(
-  fixture: AttendanceWorkflowFixture,
-  locker: RequestContext,
-): Promise<string> {
-  const { services } = fixture;
-  const route = await services.approvals.createRoute(fixture.administratorContext, {
-    routeCode: 'DTR-PERIOD-LOCK',
-    domain: 'ATTENDANCE',
-    versionNo: 1,
-    effectiveFrom: manilaDate(-30),
-    stepDefinition: {
-      steps: [
-        {
-          stepNo: 1,
-          stepMode: 'SEQUENTIAL',
-          requiredPermission: 'attendance.periods.approve',
-          assignment: { kind: 'MEMBERSHIP', membershipId: fixture.memberships.officer },
-          requiresSeparateReview: false,
-        },
-      ],
-    },
-  });
-  await services.approvals.activateRoute(
-    fixture.administratorContext,
-    route.id,
-    'Activate the Attendance Period lock route.',
-  );
-  const submission = await services.submissions.create(fixture.employeeContext, {
-    attendancePeriodId: fixture.periodId,
-  });
-  await services.submissions.submit(fixture.employeeContext, submission.submission.id);
-  await services.submissions.approve(fixture.officerContext, submission.submission.id, {});
-  const submitted = await services.periods.submitForReview(
-    fixture.administratorContext,
-    fixture.periodId,
-  );
-  await services.periods.approve(fixture.officerContext, submitted.version.id, {});
-  await services.periods.lock(locker, submitted.version.id);
-  return submitted.version.id;
-}
-
 async function cleanup(fixture: AttendanceWorkflowFixture): Promise<void> {
   const { admin, agencyId } = fixture;
   await admin.$transaction(async (transaction) => {
@@ -267,7 +226,7 @@ it.skipIf(!enabled)(
         { status: 'NOT_LOCKED', workDate: uncoveredDate },
       ]);
 
-      const predecessorVersionId = await lockPeriod(fixture, actors.authorizer);
+      const predecessorVersionId = await lockAttendancePeriod(fixture, actors.authorizer);
       const arrangementVersion = await admin.attendanceDay.findUniqueOrThrow({
         where: { id: fixture.attendanceDayId },
         select: { workArrangementVersion: { select: { id: true } } },

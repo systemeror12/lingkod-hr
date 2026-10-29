@@ -108,7 +108,7 @@ ON overtime_service_records (agency_id, employee_id, work_date)
 WHERE status <> 'NOT_CERTIFIED';
 ```
 
-Actual and certified time are whole minutes, as Attendance counts them, so the COC award needs no rounding (ADR 0009). Submitting reads `actual_minutes`, `day_classification`, and `source_attendance_day_id` through Attendance's application service from the latest locked Attendance Period Version covering the Work Date. Certifying re-reads them and is refused if the source day version has changed. The Employee's certified minutes across one authority may not exceed `authorized_hours` × 60; the certify service checks this under a lock on the `overtime_authority_employees` row.
+Actual and certified time are whole minutes, as Attendance counts them, so the COC award needs no rounding (ADR 0009). Submitting reads `actual_minutes`, `day_classification`, and `source_attendance_day_id` through Attendance's application service from the latest locked Attendance Period Version covering the Work Date; `day_classification` is the Work Date's holiday classification when it has one, else `WORKDAY` or `REST_DAY` from its Day Rule. Certifying re-reads them and is refused if the source day version has changed. The Employee's certified minutes across one authority may not exceed `authorized_hours` × 60; the certify service checks this under a lock on the `overtime_authority_employees` row.
 
 ---
 
