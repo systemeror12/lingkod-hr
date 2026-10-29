@@ -2,6 +2,7 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { expect, it } from 'vitest';
 import {
   approvalCompletionHandler,
+  ApprovalCompletionRegistry,
   ApprovalServiceError,
   ApprovalsService,
 } from './approval.service';
@@ -58,6 +59,18 @@ it('rejects Recruitment-owned decisions from the generic approval service', asyn
   });
 });
 
+it('refuses to open an Overtime Authority request outside the Overtime module', async () => {
+  await expect(
+    new ApprovalsService().createRequest(
+      context([{ code: 'approvals.requests.create', scopePolicy: 'AGENCY' }]),
+      { routeCode: 'OVERTIME_AUTHORITY', subjectId, subjectType: 'OVERTIME_AUTHORITY' },
+    ),
+  ).rejects.toMatchObject({
+    code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+    statusCode: 400,
+  });
+});
+
 it('uses typed errors for approval workflow failures', () => {
   expect(new ApprovalServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);
 });
@@ -106,4 +119,25 @@ it('rejects malformed approval list cursors before opening PostgreSQL', async ()
       statusCode: 400,
     },
   );
+});
+
+it('runs a cancel guard only for the subject type it was registered for', async () => {
+  const registry = new ApprovalCompletionRegistry();
+  registry.registerCancel('ATTENDANCE_CORRECTION', async () => {
+    throw new ApprovalServiceError('Refused.', 409, 'CANCEL_REFUSED');
+  });
+  const request = (subjectType: string) => ({
+    approvalRequestId: subjectId,
+    agencyId,
+    subjectType,
+    subjectId,
+    routeVersionId: subjectId,
+  });
+  const transaction = {} as never;
+  await expect(
+    registry.onCancel(transaction, context([]), request('ATTENDANCE_CORRECTION')),
+  ).rejects.toMatchObject({ code: 'CANCEL_REFUSED' });
+  await expect(
+    registry.onCancel(transaction, context([]), request('LEAVE_APPLICATION')),
+  ).resolves.toBeUndefined();
 });

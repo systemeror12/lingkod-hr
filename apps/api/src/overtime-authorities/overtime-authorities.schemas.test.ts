@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { overtimeAuthorityDraftSchema } from './overtime-authorities.schemas';
+import {
+  overtimeAuthorityDraftSchema,
+  overtimeAuthorityRejectSchema,
+  overtimeAuthorityReviewSchema,
+} from './overtime-authorities.schemas';
 
 const employeeId = '00000000-0000-4000-8000-000000000001';
 const draft = {
@@ -52,5 +56,48 @@ describe('overtimeAuthorityDraftSchema', () => {
         ],
       }),
     ).toEqual(['employees']);
+  });
+});
+
+describe('overtimeAuthorityReviewSchema', () => {
+  const attestation = {
+    employeeId,
+    positionLevel: 'DIVISION_CHIEF_OR_BELOW',
+    noOtherBeyondHoursAllowance: true,
+  };
+
+  it('accepts either position-level attestation', () => {
+    expect(overtimeAuthorityReviewSchema.safeParse({ attestations: [attestation] }).success).toBe(
+      true,
+    );
+    expect(
+      overtimeAuthorityReviewSchema.safeParse({
+        attestations: [{ ...attestation, positionLevel: 'OIC_OF_HIGHER_POSITION' }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('refuses an Employee who receives another beyond-hours allowance', () => {
+    expect(
+      overtimeAuthorityReviewSchema.safeParse({
+        attestations: [{ ...attestation, noOtherBeyondHoursAllowance: false }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('attests each Employee once', () => {
+    expect(
+      overtimeAuthorityReviewSchema.safeParse({ attestations: [attestation, attestation] }).success,
+    ).toBe(false);
+  });
+});
+
+describe('overtimeAuthorityRejectSchema', () => {
+  it('requires a reason', () => {
+    expect(overtimeAuthorityRejectSchema.safeParse({ reason: '   ' }).success).toBe(false);
+    expect(overtimeAuthorityRejectSchema.safeParse({}).success).toBe(false);
+    expect(overtimeAuthorityRejectSchema.safeParse({ reason: 'Not necessary.' }).success).toBe(
+      true,
+    );
   });
 });
