@@ -391,7 +391,7 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   });
   const firstNo = `OT-E2E-${stamp}-FIRST`;
   const secondNo = `OT-E2E-${stamp}-SECOND`;
-  const first = await apiBody<{ id: string }>(
+  await apiBody(
     await preparer.page.request.post(`${agencyBase}/overtime-authorities`, draftBody(firstNo)),
   );
   const second = await apiBody<{ id: string }>(
