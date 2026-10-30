@@ -67,7 +67,7 @@ Prior authorization for overtime service
 - Unique `(agency_id, authority_no)`.
 - Last Work Date on or after the first.
 - Approval refuses `OVERTIME_PAY` until Payroll supports it (#347).
-- In effect and ended are derived from the Work Dates, not stored.
+- In effect and ended are derived from the Asia/Manila approval date and the Work Dates, not stored.
 
 **Deletion behavior:** Retain.
 ## `overtime_authority_employees`
