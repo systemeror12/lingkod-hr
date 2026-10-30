@@ -260,6 +260,20 @@ function StatusCell({ authority }: { authority: OvertimeAuthority }) {
   );
 }
 
+/** A command's result, kept with the record it belongs to; null for a new authority. */
+interface Notice {
+  recordId: string | null;
+  kind: 'success' | 'error' | 'stale';
+  message: string;
+}
+
+function confirmAction(message: string): boolean {
+  const browser = globalThis as unknown as {
+    confirm?: (value: string) => boolean;
+  };
+  return browser.confirm?.(message) ?? false;
+}
+
 export function OvertimeAuthorityWorkspace({
   agencyId,
   initial,
@@ -292,9 +306,7 @@ export function OvertimeAuthorityWorkspace({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  const [error, setError] = useState('');
-  const [stale, setStale] = useState('');
-  const [success, setSuccess] = useState('');
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [editing, setEditing] = useState(false);
   const [formTab, setFormTab] = useState<'authority' | 'history'>('authority');
   const navigation = useRecordNavigation();
@@ -309,10 +321,15 @@ export function OvertimeAuthorityWorkspace({
   const detail = current?.detail ?? null;
   const detailError = current?.error ?? '';
   const detailLoading = recordId !== null && current === null;
+  // A notice shows on its own record. A refused new authority has no record, so it shows anywhere.
+  const shown = notice?.recordId === null || notice?.recordId === recordId ? notice : null;
+  const error = shown?.kind === 'error' ? shown.message : '';
+  const stale = shown?.kind === 'stale' ? shown.message : '';
+  const success = shown?.kind === 'success' ? shown.message : '';
 
   useEffect(() => {
     setLoaded(null);
-    setStale('');
+    setNotice((held) => (held?.recordId === recordId ? held : null));
     setEditing(false);
     if (recordId === null) return;
     let active = true;
@@ -369,33 +386,33 @@ export function OvertimeAuthorityWorkspace({
   }
 
   function openRecord(id: string): void {
-    setError('');
-    setSuccess('');
+    setNotice(null);
     navigation.navigate({ view: 'form', record: id, new: null });
   }
 
   /** Run one command once: a second click while it is in flight does nothing. */
-  async function run(path: string, init: RequestInit, message: string): Promise<void> {
+  async function run(id: string, path: string, init: RequestInit, message: string): Promise<void> {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setError('');
-    setStale('');
-    setSuccess('');
+    setNotice(null);
     try {
       const saved = (await request(path, {
         ...init,
         headers: { 'Idempotency-Key': crypto.randomUUID() },
       })) as { id: string };
       await reload(saved.id);
-      setSuccess(message);
+      setNotice({ recordId: id, kind: 'success', message });
     } catch (failure: unknown) {
       if (failure instanceof ApiError && failure.code && STALE_CODES.has(failure.code)) {
-        setStale(failure.message);
+        setNotice({ recordId: id, kind: 'stale', message: failure.message });
       } else {
-        setError(
-          failure instanceof Error ? failure.message : 'The Overtime Authority action failed.',
-        );
+        setNotice({
+          recordId: id,
+          kind: 'error',
+          message:
+            failure instanceof Error ? failure.message : 'The Overtime Authority action failed.',
+        });
       }
     } finally {
       busyRef.current = false;
@@ -406,6 +423,7 @@ export function OvertimeAuthorityWorkspace({
   async function act(path: string, body: unknown, message: string): Promise<void> {
     if (!detail) return;
     await run(
+      detail.id,
       '/overtime-authorities/' + detail.id + path,
       { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) },
       message,
@@ -416,9 +434,8 @@ export function OvertimeAuthorityWorkspace({
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setError('');
-    setStale('');
-    setSuccess('');
+    setNotice(null);
+    const editedId = preparing ? null : (detail?.id ?? null);
     try {
       const saved = (await request(
         detail && editing ? '/overtime-authorities/' + detail.id : '/overtime-authorities',
@@ -430,19 +447,34 @@ export function OvertimeAuthorityWorkspace({
       )) as { id: string };
       setEditing(false);
       if (preparing) {
-        setSuccess('The Overtime Authority was saved as a draft.');
+        setNotice({
+          recordId: saved.id,
+          kind: 'success',
+          message: 'The Overtime Authority was saved as a draft.',
+        });
         await reload(null);
         navigation.navigate({ view: 'form', record: saved.id, new: null });
       } else {
         await reload(saved.id);
-        setSuccess('The draft was saved.');
+        setNotice({ recordId: saved.id, kind: 'success', message: 'The draft was saved.' });
       }
     } catch (failure: unknown) {
-      if (failure instanceof ApiError && failure.code && STALE_CODES.has(failure.code)) {
+      if (
+        editedId &&
+        failure instanceof ApiError &&
+        failure.code &&
+        STALE_CODES.has(failure.code)
+      ) {
         setEditing(false);
-        setStale(failure.message);
+        setNotice({ recordId: editedId, kind: 'stale', message: failure.message });
       } else {
-        setError(failure instanceof Error ? failure.message : 'The draft could not be saved.');
+        const message =
+          failure instanceof Error ? failure.message : 'The draft could not be saved.';
+        setNotice({
+          recordId: editedId,
+          kind: 'error',
+          message: editedId ? message : 'The new authority was not saved. ' + message,
+        });
       }
     } finally {
       busyRef.current = false;
@@ -451,17 +483,14 @@ export function OvertimeAuthorityWorkspace({
   }
 
   async function reloadStale(): Promise<void> {
-    setStale('');
-    setError('');
+    setNotice(null);
     try {
       await reload(recordId);
     } catch (failure: unknown) {
-      if (recordId)
-        setLoaded({
-          id: recordId,
-          detail: null,
-          error: failure instanceof Error ? failure.message : 'The reload failed.',
-        });
+      const message = failure instanceof Error ? failure.message : 'The reload failed.';
+      setLoaded((held) =>
+        held?.id === recordId && recordId ? { id: recordId, detail: null, error: message } : held,
+      );
     }
   }
 
@@ -497,8 +526,7 @@ export function OvertimeAuthorityWorkspace({
             <Button
               variant="primary"
               onClick={() => {
-                setError('');
-                setSuccess('');
+                setNotice(null);
                 navigation.navigate({ view: 'form', new: '1', record: null });
               }}
             >
@@ -763,8 +791,7 @@ export function OvertimeAuthorityWorkspace({
                     canApprove={canApprove}
                     canReject={canReject}
                     onEdit={() => {
-                      setError('');
-                      setSuccess('');
+                      setNotice(null);
                       setEditing(true);
                     }}
                     act={act}
@@ -807,6 +834,12 @@ function AuthoritySection({
 }) {
   const draft = detail.status === 'DRAFT';
   const closed = detail.status === 'REJECTED' || detail.status === 'CANCELLED';
+  function cancel(): void {
+    if (!confirmAction(`Cancel Overtime Authority ${detail.authorityNo}? This can’t be undone.`)) {
+      return;
+    }
+    void act('/cancel', undefined, 'The authority was cancelled.');
+  }
   const attested = new Map(
     (detail.review?.attestations ?? []).map((row) => [row.employeeId, row.positionLevel]),
   );
@@ -939,11 +972,7 @@ function AuthoritySection({
             </Button>
           ) : null}
           {canCancel ? (
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void act('/cancel', undefined, 'The authority was cancelled.')}
-            >
+            <Button variant="secondary" disabled={busy} onClick={cancel}>
               Cancel authority
             </Button>
           ) : null}
@@ -971,11 +1000,7 @@ function AuthoritySection({
             An approved authority can be cancelled only before any service is recorded.
           </p>
           <div>
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void act('/cancel', undefined, 'The authority was cancelled.')}
-            >
+            <Button variant="secondary" disabled={busy} onClick={cancel}>
               Cancel authority
             </Button>
           </div>

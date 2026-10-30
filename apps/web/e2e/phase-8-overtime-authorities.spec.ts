@@ -90,6 +90,16 @@ async function inviteHrAdministrator(
   return { page: invitedPage, membershipId: session.membershipId };
 }
 
+/** Let the browser finish rendering what already arrived, so an absence means something. */
+async function settle(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }),
+  );
+}
+
 /** The workspace's own status line; the shell announces other statuses too. */
 async function expectStatus(page: Page, text: string): Promise<void> {
   await expect(page.getByRole('status').filter({ hasText: text })).toBeVisible();
@@ -362,6 +372,146 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await expect(record).toContainText('Select an Overtime Authority');
   await expect(record).not.toContainText('Loading the Overtime Authority');
   await page.unrouteAll({ behavior: 'ignoreErrors' });
+
+  // Two drafts open side by side, to move from one to the other while a request is in flight.
+  const draftBody = (authorityNo: string) => ({
+    headers: preparerHeaders,
+    data: {
+      authorityNo,
+      requestingUnitId: approvedRecord.requestingUnitId,
+      purpose: 'Records digitization backlog.',
+      workDateFrom: '2026-12-22',
+      workDateTo: '2026-12-22',
+      compensationMethod: 'COC',
+      employees: approvedRecord.employees.map(({ employeeId }) => ({
+        employeeId,
+        authorizedHours: '4',
+      })),
+    },
+  });
+  const firstNo = `OT-E2E-${stamp}-FIRST`;
+  const secondNo = `OT-E2E-${stamp}-SECOND`;
+  const first = await apiBody<{ id: string }>(
+    await preparer.page.request.post(`${agencyBase}/overtime-authorities`, draftBody(firstNo)),
+  );
+  const second = await apiBody<{ id: string }>(
+    await preparer.page.request.post(`${agencyBase}/overtime-authorities`, draftBody(secondNo)),
+  );
+  const staleRefusal = {
+    status: 409,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      error: { code: 'OVERTIME_AUTHORITY_NOT_DRAFT', message: 'Refused for the other authority.' },
+    }),
+  };
+  const submitButton = record.getByRole('button', { name: 'Submit for review' });
+  const submitUrl = `**/overtime-authorities/${second.id}/submit`;
+  const secondDetailUrl = `**/overtime-authorities/${second.id}`;
+  const openSecond = async () => {
+    await page.goto('/overtime-authorities');
+    await page.getByLabel('Search authority, purpose, or Employee').fill(`OT-E2E-${stamp}-`);
+    await page.getByRole('button', { name: secondNo, exact: true }).click();
+    await expect(record.getByRole('heading', { level: 2, name: secondNo })).toBeVisible();
+  };
+
+  // A reload of one record failing after the user moved on leaves the next record loaded.
+  await openSecond();
+  await page.route(submitUrl, (route) => route.fulfill(staleRefusal));
+  await submitButton.click();
+  await expect(record.getByRole('alert')).toContainText('Refused for the other authority.');
+  await page.unroute(submitUrl);
+  let failReload = (): void => undefined;
+  await page.route(secondDetailUrl, async (route) => {
+    await new Promise<void>((resolve) => {
+      failReload = resolve;
+    });
+    await route.abort();
+  });
+  const reloadRequest = page.waitForRequest(secondDetailUrl);
+  await record.getByRole('button', { name: 'Reload' }).click();
+  await reloadRequest;
+  await record.getByRole('button', { name: 'Next' }).click();
+  await expect(record.getByRole('heading', { level: 2, name: firstNo })).toBeVisible();
+  const reloadFailed = page.waitForEvent('requestfailed');
+  failReload();
+  await reloadFailed;
+  await settle(page);
+  await expect(record.getByRole('heading', { level: 2, name: firstNo })).toBeVisible();
+  await expect(record).not.toContainText('Loading the Overtime Authority');
+  await page.unroute(secondDetailUrl);
+
+  // A command's result stays with its record: neither its refusal nor its success shows on the next.
+  await openSecond();
+  let releaseSubmit = (): void => undefined;
+  await page.route(submitUrl, async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseSubmit = resolve;
+    });
+    await route.fulfill(staleRefusal);
+  });
+  const submitRequest = page.waitForRequest(submitUrl);
+  await submitButton.click();
+  await submitRequest;
+  await record.getByRole('button', { name: 'Next' }).click();
+  await expect(record.getByRole('heading', { level: 2, name: firstNo })).toBeVisible();
+  const refused = page.waitForResponse(submitUrl);
+  releaseSubmit();
+  await refused;
+  await settle(page);
+  await expect(record.getByRole('alert')).toHaveCount(0);
+  await expect(submitButton).toBeEnabled();
+  await page.unroute(submitUrl);
+
+  await openSecond();
+  await page.route(submitUrl, async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseSubmit = resolve;
+    });
+    await route.continue();
+  });
+  const secondSubmit = page.waitForRequest(submitUrl);
+  await submitButton.click();
+  await secondSubmit;
+  await record.getByRole('button', { name: 'Next' }).click();
+  await expect(record.getByRole('heading', { level: 2, name: firstNo })).toBeVisible();
+  const refreshed = page.waitForResponse(secondDetailUrl);
+  releaseSubmit();
+  await refreshed;
+  await settle(page);
+  await expect(page.getByRole('status').filter({ hasText: 'submitted for review' })).toHaveCount(0);
+  await page.unroute(submitUrl);
+
+  // Cancel is final, so it asks first: dismissing sends nothing, accepting cancels.
+  const cancels: string[] = [];
+  page.on('request', (sent) => {
+    if (sent.url().endsWith('/cancel')) cancels.push(sent.url());
+  });
+  const cancelButton = record.getByRole('button', { name: 'Cancel authority' });
+  let asked = '';
+  page.once('dialog', (dialog) => {
+    asked = dialog.message();
+    void dialog.dismiss();
+  });
+  await cancelButton.click();
+  await settle(page);
+  expect(asked).toContain(firstNo);
+  expect(asked).toContain('can’t be undone');
+  expect(cancels).toHaveLength(0);
+  await expect(record.getByRole('heading', { level: 2, name: firstNo })).toBeVisible();
+  await expect(record).not.toContainText('Cancelled');
+
+  page.once('dialog', (dialog) => void dialog.accept());
+  await cancelButton.click();
+  await expectStatus(page, 'The authority was cancelled.');
+  expect(cancels).toHaveLength(1);
+
+  // An approved authority cancelled before service keeps its approved method.
+  await page.goto(deepLink);
+  await expect(record.getByRole('heading', { level: 2, name: approvedNo })).toBeVisible();
+  page.once('dialog', (dialog) => void dialog.accept());
+  await cancelButton.click();
+  await expectStatus(page, 'The authority was cancelled.');
+  await expect(record).toContainText('Approved method');
 
   // An Auditor can read but not create, so ?new=1 opens no prepare form.
   await withAdmin(async (admin) => {
