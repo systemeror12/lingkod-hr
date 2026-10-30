@@ -56,8 +56,8 @@ export class OvertimeServiceRecordsService {
 
   /**
    * Create a RENDERED record. The authority must be APPROVED and cover the
-   * Employee and Work Date, and the Work Date must not be after today in
-   * Asia/Manila; there is no ratification path. Its row is locked
+   * Employee and Work Date, and the Work Date must fall from its Asia/Manila
+   * approval date through today; there is no ratification path. Its row is locked
    * FOR SHARE so a concurrent cancellation waits for this record.
    */
   async record(
@@ -73,9 +73,9 @@ export class OvertimeServiceRecordsService {
           input.employeeId,
         );
         const authorities = await transaction.$queryRaw<
-          Array<{ status: string; work_date_from: Date; work_date_to: Date }>
+          Array<{ status: string; work_date_from: Date; work_date_to: Date; approved_on: Date }>
         >(
-          Prisma.sql`SELECT "status", "work_date_from", "work_date_to" FROM "overtime_authorities" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${input.overtimeAuthorityId} AS uuid) FOR SHARE`,
+          Prisma.sql`SELECT "status", "work_date_from", "work_date_to", CAST("approved_at" AT TIME ZONE 'Asia/Manila' AS date) AS "approved_on" FROM "overtime_authorities" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${input.overtimeAuthorityId} AS uuid) FOR SHARE`,
         );
         const authority = authorities[0];
         if (!authority) {
@@ -93,6 +93,12 @@ export class OvertimeServiceRecordsService {
           input.workDate > formatDate(authority.work_date_to)
         ) {
           throw notAuthorized('The Overtime Authority does not cover this Work Date.');
+        }
+        const approvedOn = formatDate(authority.approved_on);
+        if (input.workDate < approvedOn) {
+          throw notAuthorized(
+            `The Work Date ${input.workDate} is before the Overtime Authority was approved on ${approvedOn}, and service rendered without prior authority cannot be ratified.`,
+          );
         }
         const today = manilaToday();
         if (input.workDate > today) {

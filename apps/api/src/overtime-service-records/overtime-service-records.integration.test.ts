@@ -54,6 +54,7 @@ async function approvedAuthority(
     workDateTo: string;
     employeeIds: string[];
     status?: 'APPROVED' | 'DRAFT';
+    approvedAt?: Date;
   },
 ): Promise<string> {
   const authority = await admin.overtimeAuthority.create({
@@ -82,7 +83,7 @@ async function approvedAuthority(
       data: {
         status: 'APPROVED',
         approvedByMembershipId: options.approverMembershipId,
-        approvedAt: new Date(),
+        approvedAt: options.approvedAt ?? new Date('2026-05-01T00:00:00+08:00'),
       },
     });
   }
@@ -340,6 +341,49 @@ it.skipIf(!enabled)(
           where: { agencyId: home.agency.id, employeeId: home.member.id },
         }),
       ).toBe(1);
+    } finally {
+      await cleanup(admin, [home.agency.id], suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses a Work Date before the Asia/Manila date the authority was approved',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-overtime-service-prior`;
+    const home = await createAgency(admin, suffix, 'PRIOR');
+    try {
+      // 07:00 on 10 June in Manila is still 9 June in UTC.
+      const authorityId = await approvedAuthority(admin, {
+        agencyId: home.agency.id,
+        requestingUnitId: home.division.id,
+        approverMembershipId: home.membership.id,
+        authorityNo: 'OT-PRIOR-001',
+        workDateFrom: '2026-06-01',
+        workDateTo: '2026-06-30',
+        employeeIds: [home.member.id],
+        approvedAt: new Date('2026-06-10T07:00:00+08:00'),
+      });
+      const hr = context(home.agency.id, home.user.id, home.membership.id, serviceGrants('AGENCY'));
+      const claim = (workDate: string) => ({
+        overtimeAuthorityId: authorityId,
+        employeeId: home.member.id,
+        workDate,
+        claimedHours: '2',
+        accomplishment: 'Prepared the procurement report.',
+      });
+
+      await expect(service.record(hr, claim('2026-06-09'))).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'OVERTIME_SERVICE_NOT_AUTHORIZED',
+        message: expect.stringMatching(/2026-06-09.*2026-06-10/),
+      });
+      await expect(service.record(hr, claim('2026-06-10'))).resolves.toMatchObject({
+        status: 'RENDERED',
+        workDate: '2026-06-10',
+      });
     } finally {
       await cleanup(admin, [home.agency.id], suffix);
       await admin.$disconnect();
