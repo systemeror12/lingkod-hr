@@ -269,6 +269,12 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await record.getByLabel('Rejection reason').fill('The closing is covered by regular hours.');
   await reject.click();
   await expectStatus(page, 'The authority was rejected.');
+  await expect(record).toContainText('Proposed method');
+  await expect(record).not.toContainText('Approved method');
+  await expect(record.getByRole('region', { name: 'Covered Employees' })).toContainText(
+    'Not taken; the authority was not approved.',
+  );
+  await expect(record).not.toContainText('Taken when the authority is approved.');
   await expect(record.getByRole('region', { name: 'Decision' })).toContainText(
     'The closing is covered by regular hours.',
   );
@@ -333,6 +339,46 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await staleNotice.getByRole('button', { name: 'Reload' }).click();
   await expect(preparerRecord).toContainText('Awaiting Reviewer');
   await expect(preparerRecord.getByRole('button', { name: 'Submit for review' })).toHaveCount(0);
+
+  // A Form deep link starts out loading: the first paint never claims nothing is selected.
+  const deepLink = `/overtime-authorities?view=form&record=${approvedRecord.id}`;
+  const firstPaint = await (await page.request.get(deepLink)).text();
+  expect(firstPaint).toContain('Loading the Overtime Authority');
+  expect(firstPaint).not.toContain('Select an Overtime Authority');
+  await page.goto(deepLink);
+  await expect(record.getByRole('heading', { level: 2, name: approvedNo })).toBeVisible();
+  await expect(record).not.toContainText('Select an Overtime Authority');
+
+  // Back during a record's load leaves no spinner behind.
+  const detailUrl = `**/overtime-authorities/${approvedRecord.id}`;
+  await page.route(detailUrl, () => undefined);
+  await page.goto('/overtime-authorities');
+  await page.getByLabel('Search authority, purpose, or Employee').fill(approvedNo);
+  const detailRequest = page.waitForRequest(`**/overtime-authorities/${approvedRecord.id}`);
+  await page.getByRole('button', { name: approvedNo, exact: true }).click();
+  await detailRequest;
+  await page.goBack();
+  await page.getByRole('tab', { name: 'Form' }).click();
+  await expect(record).toContainText('Select an Overtime Authority');
+  await expect(record).not.toContainText('Loading the Overtime Authority');
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+
+  // An Auditor can read but not create, so ?new=1 opens no prepare form.
+  await withAdmin(async (admin) => {
+    const auditor = await admin.role.findFirstOrThrow({
+      where: { agencyId: null, code: 'internal_auditor', status: 'ACTIVE' },
+    });
+    await admin.membershipRole.updateMany({
+      where: { membershipId: reviewer.membershipId, effectiveTo: null },
+      data: { roleId: auditor.id },
+    });
+  });
+  await reviewer.page.goto('/overtime-authorities?new=1');
+  await expect(reviewer.page.getByRole('button', { name: approvedNo, exact: true })).toBeVisible();
+  await expect(reviewer.page.getByRole('button', { name: 'New authority' })).toHaveCount(0);
+  await expect(
+    reviewer.page.getByRole('region', { name: 'Prepare Overtime Authority' }),
+  ).toHaveCount(0);
 
   await preparer.page.context().close();
   await reviewer.page.context().close();

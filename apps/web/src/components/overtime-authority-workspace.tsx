@@ -285,9 +285,11 @@ export function OvertimeAuthorityWorkspace({
   const [authorities, setAuthorities] = useState(initial.authorities);
   const [statusFilter, setStatusFilter] = useState<'ALL' | OvertimeAuthorityStatus>('ALL');
   const [query, setQuery] = useState('');
-  const [detail, setDetail] = useState<OvertimeAuthorityDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState('');
+  const [loaded, setLoaded] = useState<{
+    id: string;
+    detail: OvertimeAuthorityDetail | null;
+    error: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [error, setError] = useState('');
@@ -297,35 +299,36 @@ export function OvertimeAuthorityWorkspace({
   const [formTab, setFormTab] = useState<'authority' | 'history'>('authority');
   const navigation = useRecordNavigation();
   const requestedView = navigation.search.get('view');
-  const preparing = navigation.search.get('new') === '1';
+  const preparing = canCreate && canListEmployees && navigation.search.get('new') === '1';
   const view: View =
     requestedView === 'form' || preparing ? 'form' : requestedView === 'kanban' ? 'kanban' : 'tree';
   const recordId = preparing ? null : navigation.search.get('record');
 
+  // What the Form shows follows from the URL's record and the last load, so no load can outlive it.
+  const current = loaded?.id === recordId ? loaded : null;
+  const detail = current?.detail ?? null;
+  const detailError = current?.error ?? '';
+  const detailLoading = recordId !== null && current === null;
+
   useEffect(() => {
-    if (recordId === null) {
-      setDetail(null);
-      setDetailError('');
-      return;
-    }
-    let active = true;
-    setDetail(null);
-    setDetailLoading(true);
-    setDetailError('');
+    setLoaded(null);
     setStale('');
     setEditing(false);
+    if (recordId === null) return;
+    let active = true;
     void request('/overtime-authorities/' + encodeURIComponent(recordId))
       .then((value) => {
-        if (active) setDetail(value as OvertimeAuthorityDetail);
+        if (active)
+          setLoaded({ id: recordId, detail: value as OvertimeAuthorityDetail, error: '' });
       })
       .catch((failure: unknown) => {
         if (active)
-          setDetailError(
-            failure instanceof Error ? failure.message : 'The Overtime Authority failed to load.',
-          );
-      })
-      .finally(() => {
-        if (active) setDetailLoading(false);
+          setLoaded({
+            id: recordId,
+            detail: null,
+            error:
+              failure instanceof Error ? failure.message : 'The Overtime Authority failed to load.',
+          });
       });
     return () => {
       active = false;
@@ -357,11 +360,11 @@ export function OvertimeAuthorityWorkspace({
     const list = (await request('/overtime-authorities')) as OvertimeAuthorityListResponse;
     setAuthorities(list.authorities);
     if (id) {
-      setDetail(
-        (await request(
-          '/overtime-authorities/' + encodeURIComponent(id),
-        )) as OvertimeAuthorityDetail,
-      );
+      const refreshed = (await request(
+        '/overtime-authorities/' + encodeURIComponent(id),
+      )) as OvertimeAuthorityDetail;
+      // The user may have moved to another record while this was in flight.
+      setLoaded((held) => (held?.id === id ? { id, detail: refreshed, error: '' } : held));
     }
   }
 
@@ -453,8 +456,12 @@ export function OvertimeAuthorityWorkspace({
     try {
       await reload(recordId);
     } catch (failure: unknown) {
-      setDetailError(failure instanceof Error ? failure.message : 'The reload failed.');
-      setDetail(null);
+      if (recordId)
+        setLoaded({
+          id: recordId,
+          detail: null,
+          error: failure instanceof Error ? failure.message : 'The reload failed.',
+        });
     }
   }
 
@@ -799,6 +806,7 @@ function AuthoritySection({
   act: (path: string, body: unknown, message: string) => Promise<void>;
 }) {
   const draft = detail.status === 'DRAFT';
+  const closed = detail.status === 'REJECTED' || detail.status === 'CANCELLED';
   const attested = new Map(
     (detail.review?.attestations ?? []).map((row) => [row.employeeId, row.positionLevel]),
   );
@@ -815,7 +823,7 @@ function AuthoritySection({
         </div>
         <div>
           <dt className="text-caption text-ink-muted">
-            {detail.status === 'APPROVED' ? 'Approved method' : 'Proposed method'}
+            {detail.approvedAt ? 'Approved method' : 'Proposed method'}
           </dt>
           <dd className="m-0 text-ink">{METHOD_LABEL[detail.compensationMethod]}</dd>
         </div>
@@ -852,7 +860,11 @@ function AuthoritySection({
                     {row.eligibilitySnapshot ? (
                       <SnapshotSummary snapshot={row.eligibilitySnapshot} />
                     ) : (
-                      <span className="text-ink-muted">Taken when the authority is approved.</span>
+                      <span className="text-ink-muted">
+                        {closed
+                          ? 'Not taken; the authority was not approved.'
+                          : 'Taken when the authority is approved.'}
+                      </span>
                     )}
                   </Td>
                 </Tr>
@@ -886,7 +898,9 @@ function AuthoritySection({
             </ul>
           </div>
         ) : (
-          <p className="m-0 text-small text-ink-muted">Not reviewed yet.</p>
+          <p className="m-0 text-small text-ink-muted">
+            {closed ? 'Not reviewed.' : 'Not reviewed yet.'}
+          </p>
         )}
       </section>
 
