@@ -90,6 +90,9 @@ CREATE TABLE overtime_service_records (
   CHECK ((status = 'CERTIFIED') = (certified_minutes IS NOT NULL)),
   CHECK (certified_minutes IS NULL OR certified_minutes <= actual_minutes),
   CHECK ((status = 'NOT_CERTIFIED') = (decline_reason IS NOT NULL)),
+  CHECK (decline_reason IS NULL OR btrim(decline_reason) <> ''),
+  CHECK ((status = 'CERTIFIED' AND certified_by_membership_id IS NOT NULL AND certified_at IS NOT NULL)
+         OR (status <> 'CERTIFIED' AND certified_by_membership_id IS NULL AND certified_at IS NULL)),
   FOREIGN KEY (agency_id, overtime_authority_employee_id)
     REFERENCES overtime_authority_employees (agency_id, id),
   FOREIGN KEY (agency_id, employee_id)
@@ -108,7 +111,7 @@ ON overtime_service_records (agency_id, employee_id, work_date)
 WHERE status <> 'NOT_CERTIFIED';
 ```
 
-Actual and certified time are whole minutes, as Attendance counts them, so the COC award needs no rounding (ADR 0009). Submitting reads `actual_minutes`, `day_classification`, and `source_attendance_day_id` through Attendance's application service from the latest locked Attendance Period Version covering the Work Date; `day_classification` is the Work Date's holiday classification when it has one, else `WORKDAY` or `REST_DAY` from its Day Rule. Certifying re-reads them and is refused if the source day version has changed. The Employee's certified minutes across one authority may not exceed `authorized_hours` × 60; the certify service checks this under a lock on the `overtime_authority_employees` row.
+Actual and certified time are whole minutes, as Attendance counts them, so the COC award needs no rounding (ADR 0009). Submitting reads `actual_minutes`, `day_classification`, and `source_attendance_day_id` through Attendance's application service from the latest locked Attendance Period Version covering the Work Date; `day_classification` is the Work Date's holiday classification when it has one, else `WORKDAY` or `REST_DAY` from its Day Rule. Certifying re-reads them and is refused if the source day version has changed. The Employee's certified minutes across one authority may not exceed `authorized_hours` × 60; the certify service checks this under a lock on the `overtime_authority_employees` row. The certifier columns are filled only on `CERTIFIED`; whoever declined a record is the actor of its `OVERTIME_SERVICE_DECLINED` Audit Event.
 
 ---
 

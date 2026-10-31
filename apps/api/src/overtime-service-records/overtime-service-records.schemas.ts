@@ -15,3 +15,12 @@ export const overtimeServiceRecordSchema = z
     accomplishment: z.string().trim().min(1).max(4000),
   })
   .strict();
+
+/** A CERTIFIED record stays on its Work Date, so no time rendered is a decline, not zero minutes. */
+export const overtimeServiceCertificationSchema = z
+  .object({ certifiedMinutes: z.number().int().positive().max(2147483647) })
+  .strict();
+
+export const overtimeServiceDeclineSchema = z
+  .object({ declineReason: z.string().trim().min(1).max(4000) })
+  .strict();
