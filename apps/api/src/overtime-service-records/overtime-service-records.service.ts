@@ -443,8 +443,8 @@ async function lockForDecision(
  * physically reported for work on that date. Allowing `FIELD` and refusing
  * `HYBRID` is a Project Decision (#535), because no source names either type.
  * Work Arrangement Versions have no type for another fixed place, which earns
- * neither, or a satellite office, which no authority covers. Both are `OTHER`,
- * refused under one code because the type cannot separate them.
+ * neither, or a satellite office, for which no authority was found. Both are
+ * `OTHER`, refused under one code because the type cannot separate them.
  */
 function assertPhysicalReporting(arrangementType: string, workDate: string): void {
   if (arrangementType === 'ONSITE' || arrangementType === 'FIELD') return;
