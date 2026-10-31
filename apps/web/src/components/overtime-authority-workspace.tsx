@@ -173,10 +173,8 @@ class ApiError extends Error {
 }
 
 /** Only a 4xx proves a new authority wasn't created; anything else may have committed. */
-function newAuthorityFailure(failure: unknown, message: string): string {
-  return failure instanceof ApiError && failure.status >= 400 && failure.status < 500
-    ? 'The new authority was not saved. ' + message
-    : 'The save could not be confirmed. Check the register before saving again.';
+function newAuthorityRefused(failure: unknown): failure is ApiError {
+  return failure instanceof ApiError && failure.status >= 400 && failure.status < 500;
 }
 
 /** The API's refusal, with each covered Employee's own refusal named. */
@@ -482,14 +480,28 @@ export function OvertimeAuthorityWorkspace({
       ) {
         setEditing(false);
         setNotice({ recordId: editedId, kind: 'stale', message: failure.message });
-      } else {
-        const message =
-          failure instanceof Error ? failure.message : 'The draft could not be saved.';
+      } else if (editedId) {
         setNotice({
           recordId: editedId,
           kind: 'error',
-          message: editedId ? message : newAuthorityFailure(failure, message),
+          message: failure instanceof Error ? failure.message : 'The draft could not be saved.',
         });
+      } else if (newAuthorityRefused(failure)) {
+        setNotice({
+          recordId: null,
+          kind: 'error',
+          message: 'The new authority was not saved. ' + failure.message,
+        });
+      } else {
+        // The draft may exist and the API can't catch a retry, so show the register before Save returns.
+        let message = 'The save could not be confirmed. Check the register before saving again.';
+        try {
+          await reload(null);
+        } catch {
+          message =
+            'The save could not be confirmed and the register could not refresh. Reload the page before saving again.';
+        }
+        setNotice({ recordId: null, kind: 'error', message });
       }
     } finally {
       busyRef.current = false;

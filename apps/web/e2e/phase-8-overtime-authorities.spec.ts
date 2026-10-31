@@ -549,19 +549,28 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
 
   await preparer.page.route(listOrCreate, (route) => route.abort());
   await saveNew.click();
-  await expect(alerts.filter({ hasText: 'could not be confirmed' })).toBeVisible();
+  await expect(
+    alerts.filter({
+      hasText:
+        'The save could not be confirmed and the register could not refresh. Reload the page before saving again.',
+    }),
+  ).toBeVisible();
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await preparer.page.unroute(listOrCreate);
 
-  await preparer.page.route(listOrCreate, (route) =>
-    route.fulfill({
+  // A refusal proves nothing was created, so it refreshes nothing.
+  const refusedMethods: string[] = [];
+  await preparer.page.route(listOrCreate, (route) => {
+    refusedMethods.push(route.request().method());
+    return route.fulfill({
       status: 409,
       contentType: 'application/json',
       body: JSON.stringify({ error: { code: 'REFUSED', message: 'That number is taken.' } }),
-    }),
-  );
+    });
+  });
   await saveNew.click();
   await expect(alerts.filter({ hasText: `${notSaved} That number is taken.` })).toBeVisible();
+  expect(refusedMethods).toEqual(['POST']);
   await preparer.page.unroute(listOrCreate);
 
   await preparer.page.route(listOrCreate, (route) =>
@@ -574,6 +583,41 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await expectStatus(preparer.page, 'The draft was saved, but the register could not refresh.');
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await preparer.page.unroute(listOrCreate);
+
+  // A POST that commits but answers 500: Save stays busy through the refresh, and the Tree shows
+  // the draft the message points at. The draft stays in the register under its own number.
+  const lostNo = `OT-E2E-${stamp}-LOST`;
+  const lostForm = await fillDraft(preparer.page, lostNo, '4');
+  let releaseRefresh = (): void => undefined;
+  await preparer.page.route(listOrCreate, async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fetch();
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    await route.continue();
+  });
+  const refreshRequest = preparer.page.waitForRequest(
+    (sent) => listOrCreate.test(sent.url()) && sent.method() === 'GET',
+    { timeout: 15_000 },
+  );
+  await lostForm.getByRole('button', { name: 'Save draft' }).click();
+  await refreshRequest;
+  await expect(lostForm.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+  releaseRefresh();
+  await expect(
+    alerts.filter({
+      hasText: 'The save could not be confirmed. Check the register before saving again.',
+    }),
+  ).toBeVisible();
+  await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
+  await expect(lostForm.getByRole('button', { name: 'Save draft' })).toBeEnabled();
+  await preparer.page.unroute(listOrCreate);
+  await preparer.page.getByRole('tab', { name: 'Tree' }).click();
+  await expect(preparer.page.getByRole('button', { name: lostNo, exact: true })).toBeVisible();
 
   // An Auditor can read but not create, so ?new=1 opens no prepare form.
   await withAdmin(async (admin) => {
