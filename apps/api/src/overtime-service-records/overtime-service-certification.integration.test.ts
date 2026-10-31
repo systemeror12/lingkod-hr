@@ -214,10 +214,12 @@ async function correctionActors(fixture: AttendanceWorkflowFixture) {
   return { approver, authorizer, initiator: { ...fixture.administratorContext, permissions } };
 }
 
-/** Lengthen the fixture's time-out to 19:30 through an authorized Locked Attendance Adjustment. */
+/** Move one of the fixture's events to a new time through an authorized Locked Attendance Adjustment. */
 async function adjustLockedAttendance(
   fixture: AttendanceWorkflowFixture,
   actors: Awaited<ReturnType<typeof correctionActors>>,
+  eventType: 'TIME_IN' | 'TIME_OUT',
+  timeValue: string,
 ) {
   const { admin, agencyId, suffix, memberships } = fixture;
   const registry = new ApprovalCompletionRegistry();
@@ -259,13 +261,13 @@ async function adjustLockedAttendance(
     employeeId: fixture.employeeId,
     targetType: 'ATTENDANCE_EVENT',
     requestedAction: 'REPLACE',
-    targetId: fixture.eventIds.TIME_OUT,
+    targetId: fixture.eventIds[eventType],
     requestedRecord: {
-      eventType: 'TIME_OUT',
-      eventTime: manilaInstant(fixture.workDate, '19:30').toISOString(),
+      eventType,
+      eventTime: manilaInstant(fixture.workDate, timeValue).toISOString(),
     },
-    reason: 'The Employee timed out after the overtime ended.',
-    onBehalfReason: 'The Employee reported the missed time-out to HR.',
+    reason: 'The recorded event time was wrong.',
+    onBehalfReason: 'The Employee reported the wrong event time to HR.',
     evidence: [{ documentVersionId: evidence.id }],
   });
   await corrections.submit(actors.initiator, created.correction.id);
@@ -410,7 +412,7 @@ it.skipIf(!enabled)(
       await lockAttendancePeriod(fixture, actors.authorizer);
       await service.submit(hr, recorded.id);
 
-      await adjustLockedAttendance(fixture, actors);
+      await adjustLockedAttendance(fixture, actors, 'TIME_OUT', '19:30');
 
       // The reason names the change: 60 minutes at submission, 150 now.
       await expect(
@@ -482,6 +484,39 @@ it.skipIf(!enabled)(
 );
 
 it.skipIf(!enabled)(
+  'names a recalculation that left Actual Overtime Hours unchanged when refusing certification',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture({
+      collectionAfterMinutes: 180,
+      eventTimes: OVERTIME_EVENTS,
+    });
+    const { admin, workDate } = fixture;
+    try {
+      const actors = await correctionActors(fixture);
+      const authorityId = await authorityFor(fixture);
+      const recorded = await recordFor(service, fixture, authorityId);
+      const hr = hrOf(fixture);
+      await lockAttendancePeriod(fixture, actors.authorizer);
+      await service.submit(hr, recorded.id);
+
+      // A later time-in inside the schedule makes a new day version, same outside-schedule minutes.
+      await adjustLockedAttendance(fixture, actors, 'TIME_IN', '08:10');
+
+      await expect(
+        service.certify(hr, recorded.id, { certifiedMinutes: 30 }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'OVERTIME_SERVICE_ATTENDANCE_CHANGED',
+        message: `Attendance for ${workDate} was recalculated after this record was submitted, with its Actual Overtime Hours unchanged at 60 minutes. Decline this record and record the service again.`,
+      });
+    } finally {
+      await cleanupAttendanceOvertime(fixture);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
   'refuses official travel and Work Arrangements without physical reporting, each with its reason',
   async () => {
     const fixture = await createAttendanceWorkflowFixture();
@@ -504,12 +539,15 @@ it.skipIf(!enabled)(
         ],
         [arrangement('WORK_FROM_HOME'), 'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL'],
         [arrangement('HYBRID'), 'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL'],
-        [arrangement('OTHER'), 'OVERTIME_SERVICE_ARRANGEMENT_NO_AUTHORITY'],
       ];
       for (const [facts, code] of refusals) {
         await expect(certify(facts)).rejects.toMatchObject({ statusCode: 422, code });
       }
-      await expect(certify(arrangement('OTHER'))).rejects.toThrow(/No authority was found/);
+      await expect(certify(arrangement('OTHER'))).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'OVERTIME_SERVICE_ARRANGEMENT_NO_AUTHORITY',
+        message: `The Work Arrangement on ${fixture.workDate} is OTHER, which does not show that the Employee physically reported for work. Work from another fixed place earns neither COC nor Overtime Pay, and no authority was found for crediting overtime from a satellite office.`,
+      });
       await expect(certify(arrangement('FIELD'))).resolves.toMatchObject({ status: 'CERTIFIED' });
     } finally {
       await cleanupAttendanceOvertime(fixture);
@@ -535,9 +573,45 @@ it.skipIf(!enabled)(
       );
       for (const record of records) await reading.submit(hr, record.id);
 
-      const results = await Promise.allSettled(
+      // Hold the coverage row until both certifications are waiting on it, so
+      // neither can commit before the other reads its total.
+      let markHeld!: () => void;
+      const held = new Promise<void>((resolve) => {
+        markHeld = resolve;
+      });
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const holder = admin.$transaction(
+        async (transaction) => {
+          await transaction.$executeRaw`SELECT 1 FROM "overtime_authority_employees" WHERE "id" = CAST(${records[0]!.overtimeAuthorityEmployeeId} AS uuid) FOR UPDATE`;
+          markHeld();
+          await released;
+        },
+        { timeout: 10_000 },
+      );
+      await held;
+      const racing = Promise.allSettled(
         records.map((record) => reading.certify(hr, record.id, { certifiedMinutes: 60 })),
       );
+      try {
+        await expect
+          .poll(
+            async () => {
+              const waiting = await admin.$queryRaw<
+                { count: number }[]
+              >`SELECT COUNT(*)::integer AS count FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%overtime_authority_employees%FOR UPDATE%' AND cardinality(pg_blocking_pids(pid)) > 0`;
+              return waiting[0]!.count;
+            },
+            { timeout: 2_000, interval: 20 },
+          )
+          .toBe(2);
+      } finally {
+        release();
+        await Promise.all([holder, racing]);
+      }
+      const results = await racing;
       expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
       const [refused] = results.filter((result) => result.status === 'rejected');
       expect(refused?.reason).toMatchObject({

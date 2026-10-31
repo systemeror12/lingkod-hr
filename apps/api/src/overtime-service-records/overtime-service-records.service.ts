@@ -268,12 +268,14 @@ export class OvertimeServiceRecordsService {
         day.status !== 'LOCKED' ||
         day.attendanceDayId !== current.sourceAttendanceDayId
       ) {
-        const now =
-          day?.status === 'LOCKED'
-            ? `it now shows ${day.outsideScheduleWorkedMinutes} minutes`
-            : 'it is no longer locked';
+        const change =
+          day?.status !== 'LOCKED'
+            ? `changed after this record was submitted with ${current.actualMinutes} actual minutes; it is no longer locked`
+            : day.outsideScheduleWorkedMinutes === current.actualMinutes
+              ? `was recalculated after this record was submitted, with its Actual Overtime Hours unchanged at ${current.actualMinutes} minutes`
+              : `changed after this record was submitted with ${current.actualMinutes} actual minutes; it now shows ${day.outsideScheduleWorkedMinutes} minutes`;
         throw new OvertimeServiceRecordError(
-          `Attendance for ${current.workDate} changed after this record was submitted with ${current.actualMinutes} actual minutes; ${now}. Decline this record and record the service again.`,
+          `Attendance for ${current.workDate} ${change}. Decline this record and record the service again.`,
           409,
           'OVERTIME_SERVICE_ATTENDANCE_CHANGED',
         );
@@ -437,14 +439,15 @@ async function lockForDecision(
 /**
  * COC and Overtime Pay need that the Employee physically reported for work (CSC
  * MC No. 6, s. 2022). `ONSITE` and `FIELD` duty requires it; `WORK_FROM_HOME` and
- * `HYBRID` do not. Work Arrangement Versions have no type for another fixed place
- * or a satellite office, so those are `OTHER`, which is refused as no authority found.
+ * `HYBRID` do not. Work Arrangement Versions have no type for another fixed place,
+ * which earns neither, or a satellite office, which no authority covers. Both are
+ * `OTHER`, refused under one code because the type cannot separate them.
  */
 function assertPhysicalReporting(arrangementType: string, workDate: string): void {
   if (arrangementType === 'ONSITE' || arrangementType === 'FIELD') return;
   if (arrangementType === 'OTHER') {
     throw new OvertimeServiceRecordError(
-      `The Work Arrangement on ${workDate} is OTHER, such as another fixed place or a satellite office. No authority was found for crediting overtime under it.`,
+      `The Work Arrangement on ${workDate} is OTHER, which does not show that the Employee physically reported for work. Work from another fixed place earns neither COC nor Overtime Pay, and no authority was found for crediting overtime from a satellite office.`,
       422,
       'OVERTIME_SERVICE_ARRANGEMENT_NO_AUTHORITY',
     );
