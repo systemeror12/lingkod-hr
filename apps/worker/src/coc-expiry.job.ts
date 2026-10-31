@@ -18,8 +18,11 @@ export function manilaToday(): string {
  */
 export async function runCocExpiry(asOf: string): Promise<{ posted: number; failed: number }> {
   const due = await prisma.$queryRaw<
-    { agency_id: string; coc_account_id: string; valid_until: Date }[]
-  >`SELECT * FROM coc_expiries_due(CAST(${asOf} AS date))`;
+    { agency_id: string; coc_account_id: string; valid_until: string }[]
+  >`
+    SELECT agency_id, coc_account_id, valid_until::text AS valid_until
+    FROM coc_expiries_due(CAST(${asOf} AS date))
+  `;
 
   let posted = 0;
   let failed = 0;

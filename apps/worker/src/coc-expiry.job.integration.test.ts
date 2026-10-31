@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
-import { withDatabaseContext } from '@lingkod-hr/database';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { prisma, withDatabaseContext } from '@lingkod-hr/database';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { runCocExpiry } from './coc-expiry.job';
+
+// Every sweep here runs on a session west of UTC, where a JS Date bound as a
+// `date` lands on the day before.
+vi.hoisted(() => {
+  const url = new URL(process.env.DATABASE_URL ?? 'postgresql://unset');
+  url.searchParams.set('options', '-c TimeZone=America/New_York');
+  process.env.DATABASE_URL = url.toString();
+});
 
 const enabled = process.env.DATABASE_E2E === 'true';
 const suffix = `${Date.now()}-coc-job`;
@@ -130,5 +138,24 @@ it.skipIf(!enabled)(
     // A later run finds these accounts no longer due.
     await runCocExpiry('2002-01-09');
     expect(await expiries(first.cocAccountId)).toHaveLength(1);
+  },
+);
+
+it.skipIf(!enabled)(
+  'posts a first run days late, effective the day after Valid Until, west of UTC',
+  async () => {
+    expect(await prisma.$queryRaw`SELECT current_setting('TimeZone') AS zone`).toEqual([
+      { zone: 'America/New_York' },
+    ]);
+    const late = await seedAccount('LATE', 30);
+
+    const run = await runCocExpiry('2002-01-06');
+
+    expect(run).toEqual({ posted: 1, failed: 0 });
+    const [entry, ...rest] = await expiries(late.cocAccountId);
+    expect(rest).toEqual([]);
+    expect(entry?.minutes.toString()).toBe('-30');
+    expect(entry?.effectiveDate.toISOString().slice(0, 10)).toBe('2002-01-01');
+    expect(entry?.sourcePostingKey).toBe('2001-12-31');
   },
 );
