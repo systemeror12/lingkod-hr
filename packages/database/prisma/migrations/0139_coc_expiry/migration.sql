@@ -75,11 +75,12 @@ BEGIN
 END;
 $$;
 
--- coc_expiries_due is the one function that reads across Agencies for
--- hris_app, a deliberate exception to Agency isolation. It is SECURITY DEFINER,
--- reading through the owner's policy below, so the worker can find due
--- expiries in every Agency. It returns only identifiers and dates, no HTTP
--- input reaches it, and each posting runs under its own Agency's context.
+-- coc_expiries_due returns other Agencies' rows to hris_app, whatever the
+-- caller's Agency Context, a deliberate exception to Agency isolation. It is
+-- SECURITY DEFINER, reading through the owner's policy below, so the worker
+-- can find due expiries in every Agency. It returns only identifiers and
+-- dates, no HTTP input reaches it, and each posting runs under its own
+-- Agency's context.
 CREATE POLICY "coc_ledger_entries_expiry_due_select" ON "coc_ledger_entries"
   FOR SELECT TO CURRENT_USER
   USING (true);
