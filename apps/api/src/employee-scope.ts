@@ -67,7 +67,8 @@ export async function resolveEmployeeScope(
   return { kind: 'SCOPED', employeeIds: [...employeeIds] };
 }
 
-function manilaToday(): string {
+/** Today as a `YYYY-MM-DD` calendar date in Asia/Manila. */
+export function manilaToday(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
     year: 'numeric',

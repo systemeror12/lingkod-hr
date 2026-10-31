@@ -259,6 +259,7 @@ export async function cleanup(admin: PrismaClient, agencyIds: string[], suffix: 
     await transaction.workSchedule.deleteMany({ where });
     await transaction.plantillaPositionVersion.deleteMany({ where });
     await transaction.membershipRole.deleteMany({ where });
+    await transaction.overtimeServiceRecord.deleteMany({ where });
     await transaction.overtimeAuthorityEmployee.deleteMany({ where });
     await transaction.overtimeAuthority.deleteMany({ where });
     await transaction.positionIncumbency.deleteMany({ where });

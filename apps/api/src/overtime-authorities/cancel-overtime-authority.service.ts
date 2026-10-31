@@ -6,7 +6,10 @@ import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
   type OvertimeAuthorityAuditWriter,
 } from './overtime-authorities.audit';
-import type { OvertimeAuthoritySummary } from './overtime-authorities.types';
+import {
+  OvertimeAuthorityServiceError,
+  type OvertimeAuthoritySummary,
+} from './overtime-authorities.types';
 import {
   assertCommandAccess,
   assertDraft,
@@ -17,8 +20,9 @@ import {
 /**
  * Cancel a DRAFT that was never submitted, or an APPROVED authority before
  * service. Only the Approving Official cancels an approved one (hris-controls
- * §5.16), so that also needs `overtime.authorities.approve`. Refusing it once
- * an Overtime Service Record exists is #320's.
+ * §5.16), so that also needs `overtime.authorities.approve`, and is refused
+ * once any Overtime Service Record exists under it. Recording locks the
+ * authority FOR SHARE, so it cannot slip past this check.
  */
 @Injectable()
 export class CancelOvertimeAuthorityService {
@@ -39,6 +43,19 @@ export class CancelOvertimeAuthorityService {
           'overtime.authorities.approve',
           employeeIds,
         );
+        const recorded = await transaction.overtimeServiceRecord.count({
+          where: {
+            agencyId: context.agencyId,
+            authorityEmployee: { overtimeAuthorityId: authorityId },
+          },
+        });
+        if (recorded > 0) {
+          throw new OvertimeAuthorityServiceError(
+            'An APPROVED Overtime Authority cannot be cancelled once overtime service has been recorded under it.',
+            409,
+            'OVERTIME_AUTHORITY_SERVICE_RECORDED',
+          );
+        }
       } else {
         assertDraft(current);
       }
