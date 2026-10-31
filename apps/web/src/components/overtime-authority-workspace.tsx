@@ -172,9 +172,9 @@ class ApiError extends Error {
   }
 }
 
-/** Saving again is safe: a retry under the same number is refused as already in use. */
+/** An unchanged retry is safe: its number is refused as already in use if the first save went through. */
 const UNCONFIRMED_SAVE =
-  'The save could not be confirmed. Save again to retry: if the first save went through, its number will be refused as already in use.';
+  'The save could not be confirmed. Save again without changing anything to retry: if the first save went through, its number will be refused as already in use.';
 
 /** Only a 4xx proves a new authority wasn't created; anything else may have committed. */
 function newAuthorityRefused(failure: unknown): failure is ApiError {
@@ -315,6 +315,8 @@ export function OvertimeAuthorityWorkspace({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  /** The number of this prepare form's last new-authority save that could not be confirmed. */
+  const unconfirmedNo = useRef<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [editing, setEditing] = useState(false);
   const [formTab, setFormTab] = useState<'authority' | 'history'>('authority');
@@ -335,6 +337,10 @@ export function OvertimeAuthorityWorkspace({
   const error = shown?.kind === 'error' ? shown.message : '';
   const stale = shown?.kind === 'stale' ? shown.message : '';
   const success = shown?.kind === 'success' ? shown.message : '';
+
+  useEffect(() => {
+    if (!preparing) unconfirmedNo.current = null;
+  }, [preparing]);
 
   useEffect(() => {
     setLoaded(null);
@@ -454,6 +460,7 @@ export function OvertimeAuthorityWorkspace({
         },
       )) as { id: string };
       setEditing(false);
+      unconfirmedNo.current = null;
       if (preparing) {
         // The draft exists from here on, so a failed refresh can't reopen the form or deny the save.
         setNotice({
@@ -491,18 +498,33 @@ export function OvertimeAuthorityWorkspace({
           message: failure instanceof Error ? failure.message : 'The draft could not be saved.',
         });
       } else if (newAuthorityRefused(failure)) {
-        // The number is unique in the Agency, so this is also how a retry of an unconfirmed save
-        // ends. The number may instead belong to an older authority, so the message says both.
-        setNotice({
-          recordId: null,
-          kind: 'error',
-          message:
-            failure.code === 'OVERTIME_AUTHORITY_NUMBER_CONFLICT'
-              ? 'This number is already in use in the Agency. If an earlier save could not be confirmed, that save went through.'
-              : 'The new authority was not saved. ' + failure.message,
-        });
+        // The number is unique in the Agency, so a retry of an unconfirmed save under the same
+        // number is refused as a duplicate when that save went through. Its draft may be missing
+        // from the register, so refresh it before Save returns. Any other refusal proves nothing
+        // was created, so it refreshes nothing.
+        const earlierNo = unconfirmedNo.current;
+        if (
+          failure.code === 'OVERTIME_AUTHORITY_NUMBER_CONFLICT' &&
+          earlierNo?.toLowerCase() === body.authorityNo.toLowerCase()
+        ) {
+          let message = `The earlier save went through as ${earlierNo}, so saving again was refused as a duplicate number.`;
+          try {
+            await reload(null);
+          } catch {
+            message = 'The register could not refresh. ' + message;
+          }
+          setNotice({ recordId: null, kind: 'error', message });
+        } else {
+          if (failure.code !== 'OVERTIME_AUTHORITY_NUMBER_CONFLICT') unconfirmedNo.current = null;
+          setNotice({
+            recordId: null,
+            kind: 'error',
+            message: 'The new authority was not saved. ' + failure.message,
+          });
+        }
       } else {
         // The POST may have committed, so refresh the register before Save returns.
+        unconfirmedNo.current = body.authorityNo;
         let message = UNCONFIRMED_SAVE;
         try {
           await reload(null);

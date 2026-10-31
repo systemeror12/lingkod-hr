@@ -122,6 +122,11 @@ async function prepareDraft(page: Page, authorityNo: string, hours: string): Pro
 
 async function fillDraft(page: Page, authorityNo: string, hours: string): Promise<Locator> {
   await page.goto('/overtime-authorities');
+  return fillNewDraft(page, authorityNo, hours);
+}
+
+/** Open the prepare form from the workspace already on screen and fill it in. */
+async function fillNewDraft(page: Page, authorityNo: string, hours: string): Promise<Locator> {
   await page.getByRole('button', { name: 'New authority' }).click();
   const form = page.getByRole('region', { name: 'Prepare Overtime Authority' });
   await form.getByLabel('Authority number').fill(authorityNo);
@@ -546,7 +551,10 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   const saveNew = newForm.getByRole('button', { name: 'Save draft' });
   const notSaved = 'The new authority was not saved.';
   const unconfirmed =
-    'The save could not be confirmed. Save again to retry: if the first save went through, its number will be refused as already in use.';
+    'The save could not be confirmed. Save again without changing anything to retry: if the first save went through, its number will be refused as already in use.';
+  const notRefreshed = 'The register could not refresh.';
+  const wentThrough = (authorityNo: string): string =>
+    `The earlier save went through as ${authorityNo}, so saving again was refused as a duplicate number.`;
   const alerts = preparer.page.getByRole('alert');
 
   await preparer.page.route(listOrCreate, (route) => route.abort());
@@ -584,8 +592,8 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await preparer.page.unroute(listOrCreate);
 
   // A POST that commits but answers 500: Save stays busy through the refresh, and saving again
-  // from the same form is refused under the same number, saying the first save went through.
-  // The draft stays in the register under its own number.
+  // from the same form is refused under the same number, saying the first save went through as
+  // that number. The draft stays in the register under its own number.
   const lostNo = `OT-E2E-${stamp}-LOST`;
   const lostForm = await fillDraft(preparer.page, lostNo, '4');
   let releaseRefresh = (): void => undefined;
@@ -609,19 +617,43 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await expect(lostForm.getByRole('button', { name: 'Saving…' })).toBeDisabled();
   releaseRefresh();
   await expect(alerts.filter({ hasText: unconfirmed })).toBeVisible();
+  await expect(alerts.filter({ hasText: notRefreshed })).toHaveCount(0);
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await expect(lostForm.getByRole('button', { name: 'Save draft' })).toBeEnabled();
   await preparer.page.unroute(listOrCreate);
   await lostForm.getByRole('button', { name: 'Save draft' }).click();
-  await expect(
-    alerts.filter({
-      hasText:
-        'This number is already in use in the Agency. If an earlier save could not be confirmed, that save went through.',
-    }),
-  ).toBeVisible();
+  await expect(alerts.filter({ hasText: wentThrough(lostNo) })).toBeVisible();
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await preparer.page.getByRole('tab', { name: 'Tree' }).click();
   await expect(preparer.page.getByRole('button', { name: lostNo, exact: true })).toBeVisible();
+
+  // When the refresh after an unconfirmed save fails too, the refused retry refreshes the
+  // register itself, so Tree shows the draft without a page reload.
+  const goneNo = `OT-E2E-${stamp}-GONE`;
+  const goneForm = await fillDraft(preparer.page, goneNo, '4');
+  await preparer.page.route(listOrCreate, async (route) => {
+    if (route.request().method() === 'POST') await route.fetch();
+    await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+  });
+  await goneForm.getByRole('button', { name: 'Save draft' }).click();
+  await expect(alerts.filter({ hasText: `${notRefreshed} ${unconfirmed}` })).toBeVisible();
+  await preparer.page.unroute(listOrCreate);
+  await goneForm.getByRole('button', { name: 'Save draft' }).click();
+  await expect(alerts.filter({ hasText: wentThrough(goneNo) })).toBeVisible();
+  await expect(alerts.filter({ hasText: notRefreshed })).toHaveCount(0);
+  await preparer.page.getByRole('tab', { name: 'Tree' }).click();
+  await expect(preparer.page.getByRole('button', { name: goneNo, exact: true })).toBeVisible();
+
+  // A fresh form, opened after leaving the last one, made no earlier attempt, so a used number is
+  // only a refusal.
+  const freshForm = await fillNewDraft(preparer.page, goneNo, '4');
+  await freshForm.getByRole('button', { name: 'Save draft' }).click();
+  await expect(
+    alerts.filter({
+      hasText: `${notSaved} An Overtime Authority with this number already exists in the Agency.`,
+    }),
+  ).toBeVisible();
+  await expect(alerts.filter({ hasText: 'went through' })).toHaveCount(0);
 
   // An Auditor can read but not create, so ?new=1 opens no prepare form.
   await withAdmin(async (admin) => {
