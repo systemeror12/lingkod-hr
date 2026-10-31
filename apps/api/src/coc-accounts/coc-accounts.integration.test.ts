@@ -688,6 +688,26 @@ it.skipIf(!enabled)(
         _sum: { minutes: true },
       });
       expect(sum._sum.minutes?.toString()).toBe('0');
+
+      // A first run days late posts the same entry, effective the day after Valid Until.
+      const lateEmployee = await home.employee();
+      const lateAward = await awardNew(
+        home,
+        certificate(home, lateEmployee.id, '2024-12-01', '2025-02-03', [line('2024-12-02', 50)]),
+      );
+      const lateEntryId = await inHome((transaction) =>
+        coc.expireCocInTransaction(transaction, home.agencyId, {
+          cocAccountId: lateAward.cocAccountId,
+          validUntil,
+          asOf: '2026-01-06',
+        }),
+      );
+      const lateEntry = await admin.cocLedgerEntry.findUniqueOrThrow({
+        where: { id: lateEntryId ?? '' },
+      });
+      expect(lateEntry.minutes.toString()).toBe('-50');
+      expect(lateEntry.effectiveDate.toISOString().slice(0, 10)).toBe('2026-01-01');
+      expect(lateEntry.sourcePostingKey).toBe(validUntil);
     } finally {
       await cleanup(admin, [home.agencyId, foreign.agencyId], suffix);
       await admin.$disconnect();
