@@ -679,7 +679,7 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
 
   // A fresh form, opened after leaving the last one, made no earlier attempt, so a used number is
   // only a refusal.
-  const freshForm = await fillNewDraft(preparer.page, goneNo, '4');
+  const freshForm = await fillNewDraft(preparer.page, slipNo, '4');
   await freshForm.getByRole('button', { name: 'Save draft' }).click();
   await expect(
     alerts.filter({
