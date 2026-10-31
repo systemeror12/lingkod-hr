@@ -438,10 +438,13 @@ async function lockForDecision(
 
 /**
  * COC and Overtime Pay need that the Employee physically reported for work (CSC
- * MC No. 6, s. 2022). `ONSITE` and `FIELD` duty requires it; `WORK_FROM_HOME` and
- * `HYBRID` do not. Work Arrangement Versions have no type for another fixed place,
- * which earns neither, or a satellite office, which no authority covers. Both are
- * `OTHER`, refused under one code because the type cannot separate them.
+ * MC No. 6, s. 2022). `ONSITE` and `FIELD` duty requires it; `WORK_FROM_HOME` does
+ * not. `HYBRID` is refused because Attendance cannot show that the Employee
+ * physically reported for work on that date. Allowing `FIELD` and refusing
+ * `HYBRID` is a Project Decision (#535), because no source names either type.
+ * Work Arrangement Versions have no type for another fixed place, which earns
+ * neither, or a satellite office, which no authority covers. Both are `OTHER`,
+ * refused under one code because the type cannot separate them.
  */
 function assertPhysicalReporting(arrangementType: string, workDate: string): void {
   if (arrangementType === 'ONSITE' || arrangementType === 'FIELD') return;
@@ -450,6 +453,13 @@ function assertPhysicalReporting(arrangementType: string, workDate: string): voi
       `The Work Arrangement on ${workDate} is OTHER, which does not show that the Employee physically reported for work. Work from another fixed place earns neither COC nor Overtime Pay, and no authority was found for crediting overtime from a satellite office.`,
       422,
       'OVERTIME_SERVICE_ARRANGEMENT_NO_AUTHORITY',
+    );
+  }
+  if (arrangementType === 'HYBRID') {
+    throw new OvertimeServiceRecordError(
+      `The Work Arrangement on ${workDate} is HYBRID, so Attendance cannot show that the Employee physically reported for work on that date, and the service cannot be certified.`,
+      422,
+      'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL',
     );
   }
   throw new OvertimeServiceRecordError(

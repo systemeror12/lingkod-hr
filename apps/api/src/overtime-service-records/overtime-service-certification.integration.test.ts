@@ -537,12 +537,20 @@ it.skipIf(!enabled)(
           { officialTravel: { minutes: 240, sourceIds: [fixture.attendanceDayId] } },
           'OVERTIME_SERVICE_OFFICIAL_TRAVEL',
         ],
-        [arrangement('WORK_FROM_HOME'), 'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL'],
-        [arrangement('HYBRID'), 'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL'],
       ];
       for (const [facts, code] of refusals) {
         await expect(certify(facts)).rejects.toMatchObject({ statusCode: 422, code });
       }
+      await expect(certify(arrangement('WORK_FROM_HOME'))).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL',
+        message: `The Work Arrangement on ${fixture.workDate} is WORK_FROM_HOME, which does not require physically reporting for work, so the service cannot be certified.`,
+      });
+      await expect(certify(arrangement('HYBRID'))).rejects.toMatchObject({
+        statusCode: 422,
+        code: 'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL',
+        message: `The Work Arrangement on ${fixture.workDate} is HYBRID, so Attendance cannot show that the Employee physically reported for work on that date, and the service cannot be certified.`,
+      });
       await expect(certify(arrangement('OTHER'))).rejects.toMatchObject({
         statusCode: 422,
         code: 'OVERTIME_SERVICE_ARRANGEMENT_NO_AUTHORITY',
