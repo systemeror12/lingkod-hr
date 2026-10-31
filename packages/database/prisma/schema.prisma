@@ -164,6 +164,7 @@ model Agency {
   mandatoryLeaveAssessments     MandatoryLeaveAssessment[]
   overtimeAuthorities           OvertimeAuthority[]
   overtimeAuthorityEmployees    OvertimeAuthorityEmployee[]
+  overtimeServiceRecords        OvertimeServiceRecord[]
   cocAccounts                   CocAccount[]
   cocLedgerEntries              CocLedgerEntry[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
@@ -467,6 +468,8 @@ model AgencyMembership {
 
   leavePostings LeavePosting[] @relation("LeavePostingPoster")
   overtimeAuthoritiesApproved OvertimeAuthority[] @relation("OvertimeAuthorityApprover")
+  overtimeServiceRecorded     OvertimeServiceRecord[] @relation("OvertimeServiceRecordRecorder")
+  overtimeServiceCertified    OvertimeServiceRecord[] @relation("OvertimeServiceRecordCertifier")
   cocLedgerEntriesPosted      CocLedgerEntry[]    @relation("CocLedgerEntryPoster")
 
   @@unique([agencyId, id])
@@ -2068,6 +2071,7 @@ model Employee {
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
   mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
   overtimeAuthorityCoverage      OvertimeAuthorityEmployee[]     @relation("OvertimeAuthorityEmployeeEmployee")
+  overtimeServiceRecords         OvertimeServiceRecord[]         @relation("OvertimeServiceRecordEmployee")
   cocAccounts                    CocAccount[]                    @relation("CocAccountEmployee")
 
   @@unique([agencyId, id])
@@ -3729,6 +3733,7 @@ model AttendanceDay {
   submissionDays         EmployeeAttendanceSubmissionDay[] @relation("EmployeeAttendanceSubmissionDayAttendanceDay")
   periodVersionDays      AttendancePeriodVersionDay[]      @relation("AttendancePeriodVersionDayAttendanceDay")
   payrollFacts           AttendancePayrollFact[]            @relation("AttendancePayrollFactAttendanceDay")
+  overtimeServiceRecords OvertimeServiceRecord[]            @relation("OvertimeServiceRecordSourceDay")
 
   @@unique([attendancePeriodId, employeeId, workDate, calculationVersion])
   @@unique([agencyId, id])
@@ -5264,10 +5269,46 @@ model OvertimeAuthorityEmployee {
   authority OvertimeAuthority @relation("OvertimeAuthorityEmployees", fields: [agencyId, overtimeAuthorityId], references: [agencyId, id], onDelete: Restrict)
   employee  Employee          @relation("OvertimeAuthorityEmployeeEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
 
+  serviceRecords OvertimeServiceRecord[] @relation("OvertimeServiceRecordCoverage")
+
   @@unique([overtimeAuthorityId, employeeId])
   @@unique([agencyId, id])
   @@index([agencyId, employeeId])
   @@map("overtime_authority_employees")
+}
+
+/// At most one per Employee and Work Date that is not NOT_CERTIFIED, by the
+/// partial unique index `overtime_service_one_live_per_date_uq`
+/// (migration 0136), which Prisma cannot express.
+model OvertimeServiceRecord {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String    @map("agency_id") @db.Uuid
+  overtimeAuthorityEmployeeId String    @map("overtime_authority_employee_id") @db.Uuid
+  employeeId                  String    @map("employee_id") @db.Uuid
+  workDate                    DateTime  @map("work_date") @db.Date
+  claimedHours                Decimal   @map("claimed_hours") @db.Decimal(12, 4)
+  accomplishment              String
+  actualMinutes               Int?      @map("actual_minutes")
+  sourceAttendanceDayId       String?   @map("source_attendance_day_id") @db.Uuid
+  dayClassification           String?   @map("day_classification")
+  certifiedMinutes            Int?      @map("certified_minutes")
+  declineReason               String?   @map("decline_reason")
+  status                      String
+  recordedByMembershipId      String    @map("recorded_by_membership_id") @db.Uuid
+  certifiedByMembershipId     String?   @map("certified_by_membership_id") @db.Uuid
+  certifiedAt                 DateTime? @map("certified_at") @db.Timestamptz(6)
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency              Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  authorityEmployee   OvertimeAuthorityEmployee @relation("OvertimeServiceRecordCoverage", fields: [agencyId, overtimeAuthorityEmployeeId], references: [agencyId, id], onDelete: Restrict)
+  employee            Employee                  @relation("OvertimeServiceRecordEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  sourceAttendanceDay AttendanceDay?            @relation("OvertimeServiceRecordSourceDay", fields: [agencyId, sourceAttendanceDayId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy          AgencyMembership          @relation("OvertimeServiceRecordRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  certifiedBy         AgencyMembership?         @relation("OvertimeServiceRecordCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@index([agencyId, overtimeAuthorityEmployeeId])
+  @@map("overtime_service_records")
 }
 
 model CocAccount {

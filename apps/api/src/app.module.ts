@@ -35,6 +35,7 @@ import { LeaveApplicationsModule } from './leave-applications/leave-applications
 import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
 import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leave-inputs.module';
 import { OvertimeAuthoritiesModule } from './overtime-authorities/overtime-authorities.module';
+import { OvertimeServiceRecordsModule } from './overtime-service-records/overtime-service-records.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { OvertimeAuthoritiesModule } from './overtime-authorities/overtime-autho
     LeaveMonetizationModule,
     TerminalLeaveInputsModule,
     OvertimeAuthoritiesModule,
+    OvertimeServiceRecordsModule,
   ],
   controllers: [HealthController],
 })
