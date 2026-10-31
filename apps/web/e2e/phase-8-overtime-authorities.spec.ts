@@ -545,15 +545,14 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   const newForm = await fillDraft(preparer.page, newNo, '4');
   const saveNew = newForm.getByRole('button', { name: 'Save draft' });
   const notSaved = 'The new authority was not saved.';
+  const unconfirmed =
+    'The save could not be confirmed. Save again to retry: if the first save went through, its number will be refused as already in use.';
   const alerts = preparer.page.getByRole('alert');
 
   await preparer.page.route(listOrCreate, (route) => route.abort());
   await saveNew.click();
   await expect(
-    alerts.filter({
-      hasText:
-        'The save could not be confirmed and the register could not refresh. Reload the page before saving again.',
-    }),
+    alerts.filter({ hasText: `The register could not refresh. ${unconfirmed}` }),
   ).toBeVisible();
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await preparer.page.unroute(listOrCreate);
@@ -584,8 +583,9 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await preparer.page.unroute(listOrCreate);
 
-  // A POST that commits but answers 500: Save stays busy through the refresh, and the Tree shows
-  // the draft the message points at. The draft stays in the register under its own number.
+  // A POST that commits but answers 500: Save stays busy through the refresh, and saving again
+  // from the same form is refused under the same number, saying the first save went through.
+  // The draft stays in the register under its own number.
   const lostNo = `OT-E2E-${stamp}-LOST`;
   const lostForm = await fillDraft(preparer.page, lostNo, '4');
   let releaseRefresh = (): void => undefined;
@@ -608,14 +608,18 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await refreshRequest;
   await expect(lostForm.getByRole('button', { name: 'Saving…' })).toBeDisabled();
   releaseRefresh();
-  await expect(
-    alerts.filter({
-      hasText: 'The save could not be confirmed. Check the register before saving again.',
-    }),
-  ).toBeVisible();
+  await expect(alerts.filter({ hasText: unconfirmed })).toBeVisible();
   await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await expect(lostForm.getByRole('button', { name: 'Save draft' })).toBeEnabled();
   await preparer.page.unroute(listOrCreate);
+  await lostForm.getByRole('button', { name: 'Save draft' }).click();
+  await expect(
+    alerts.filter({
+      hasText:
+        'This number is already in use in the Agency. If an earlier save could not be confirmed, that save went through.',
+    }),
+  ).toBeVisible();
+  await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
   await preparer.page.getByRole('tab', { name: 'Tree' }).click();
   await expect(preparer.page.getByRole('button', { name: lostNo, exact: true })).toBeVisible();
 

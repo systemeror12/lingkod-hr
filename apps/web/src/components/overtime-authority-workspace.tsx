@@ -172,6 +172,10 @@ class ApiError extends Error {
   }
 }
 
+/** Saving again is safe: a retry under the same number is refused as already in use. */
+const UNCONFIRMED_SAVE =
+  'The save could not be confirmed. Save again to retry: if the first save went through, its number will be refused as already in use.';
+
 /** Only a 4xx proves a new authority wasn't created; anything else may have committed. */
 function newAuthorityRefused(failure: unknown): failure is ApiError {
   return failure instanceof ApiError && failure.status >= 400 && failure.status < 500;
@@ -487,19 +491,23 @@ export function OvertimeAuthorityWorkspace({
           message: failure instanceof Error ? failure.message : 'The draft could not be saved.',
         });
       } else if (newAuthorityRefused(failure)) {
+        // The number is unique in the Agency, so this is also how a retry of an unconfirmed save
+        // ends. The number may instead belong to an older authority, so the message says both.
         setNotice({
           recordId: null,
           kind: 'error',
-          message: 'The new authority was not saved. ' + failure.message,
+          message:
+            failure.code === 'OVERTIME_AUTHORITY_NUMBER_CONFLICT'
+              ? 'This number is already in use in the Agency. If an earlier save could not be confirmed, that save went through.'
+              : 'The new authority was not saved. ' + failure.message,
         });
       } else {
-        // The draft may exist and the API can't catch a retry, so show the register before Save returns.
-        let message = 'The save could not be confirmed. Check the register before saving again.';
+        // The POST may have committed, so refresh the register before Save returns.
+        let message = UNCONFIRMED_SAVE;
         try {
           await reload(null);
         } catch {
-          message =
-            'The save could not be confirmed and the register could not refresh. Reload the page before saving again.';
+          message = 'The register could not refresh. ' + UNCONFIRMED_SAVE;
         }
         setNotice({ recordId: null, kind: 'error', message });
       }
