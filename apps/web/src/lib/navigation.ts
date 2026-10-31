@@ -10,6 +10,7 @@ export const lifecycleStages = [
   'Personnel',
   'Time & attendance',
   'Leave',
+  'Overtime',
   'Oversight',
 ] as const;
 
@@ -220,6 +221,12 @@ const destinations: readonly (Destination & {
     label: 'Terminal Leave Inputs',
     stage: 'Leave',
     permission: 'leave.terminal_inputs.read',
+  },
+  {
+    href: '/overtime-authorities',
+    label: 'Overtime Authorities',
+    stage: 'Overtime',
+    permission: 'overtime.authorities.read',
   },
   {
     href: '/users-access',

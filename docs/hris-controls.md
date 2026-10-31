@@ -1465,6 +1465,7 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 
 | Permission                          | HR Admin | Supervisor | Employee | Budget Officer | Approving Official | Payroll Preparer | Leave Admin | Auditor |
 | ----------------------------------- | -------: | ---------: | -------: | -------------: | -----------------: | ---------------: | ----------: | ------: |
+| `overtime.authorities.read`         |        A |          S |        — |              A |                  A |                — |           — |       R |
 | `overtime.authorities.create`       |        A |          S |        — |              — |                  — |                — |           — |       — |
 | `overtime.authorities.submit`       |        A |          S |        — |              — |                  — |                — |           — |       — |
 | `overtime.authorities.review`       |        A |          — |        — |              A |                  — |                — |           — |       R |
