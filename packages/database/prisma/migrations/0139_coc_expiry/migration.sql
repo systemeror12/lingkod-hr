@@ -75,10 +75,11 @@ BEGIN
 END;
 $$;
 
--- The runtime role sees one Agency at a time, so finding what is due across
--- Agencies runs as the table owner, as 0104 does. The owner's policy reads
--- entries, and the function returns identifiers only. The posting itself still
--- happens under each Agency's context.
+-- coc_expiries_due is the one function that reads across Agencies for
+-- hris_app, a deliberate exception to Agency isolation. It is SECURITY DEFINER,
+-- reading through the owner's policy below, so the worker can find due
+-- expiries in every Agency. It returns only identifiers and dates, no HTTP
+-- input reaches it, and each posting runs under its own Agency's context.
 CREATE POLICY "coc_ledger_entries_expiry_due_select" ON "coc_ledger_entries"
   FOR SELECT TO CURRENT_USER
   USING (true);
