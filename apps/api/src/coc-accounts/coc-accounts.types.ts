@@ -9,6 +9,46 @@ export const COC_EXPIRY_SOURCE_TYPE = 'COC_EXPIRY';
 /** The national rule an expiry entry applies: JC 2-A, s. 2005 item 2.0. */
 export const COC_EXPIRY_RULE_CODE = 'JC2A_2005_COC_VALIDITY';
 
+/** The ledger source of an adjustment; its source is the adjustment itself. */
+export const COC_ADJUSTMENT_SOURCE_TYPE = 'COC_ADJUSTMENT';
+
+/** The ledger source of a reversal; its source and posting key are the original entry. */
+export const COC_REVERSAL_SOURCE_TYPE = 'COC_REVERSAL';
+
+/**
+ * `rule_code` is required, but a user's correction applies no national rule. It
+ * rests on its reason and supporting Document Version, so this names the control.
+ */
+export const COC_CORRECTION_RULE_CODE = 'HRIS_CONTROL_COC_CORRECTION';
+
+export interface CocAdjustmentInput {
+  /** Negative, at one decimal place. */
+  minutes: string;
+  /** The earliest-expiring COC when omitted. */
+  validUntil?: string | undefined;
+  reason: string;
+  supportingDocumentVersionId: string;
+}
+
+export interface CocReversalInput {
+  reason: string;
+  supportingDocumentVersionId: string;
+}
+
+export interface CocCorrectionEntry {
+  id: string;
+  cocAccountId: string;
+  minutes: string;
+  effectiveDate: string;
+  validUntil: string;
+}
+
+export interface CocReversalResult {
+  entry: CocCorrectionEntry;
+  /** The expiry that followed in the same transaction, when the Valid Until has passed. */
+  expiryEntryId: string | null;
+}
+
 /** One certified Overtime Service Record on a Certificate of COC Earned. */
 export interface CocEarnedCertificateLine {
   certificateLineId: string;
@@ -89,7 +129,19 @@ export type CocRefusalCode =
   | 'COC_AWARD_REPLAY_MISMATCH'
   | 'COC_CERTIFICATE_OF_ANOTHER_EMPLOYEE'
   | 'COC_APPROVAL_BEFORE_LATEST_CERTIFICATE'
-  | 'COC_SERVICE_IN_CLOSED_ACCOUNT';
+  | 'COC_SERVICE_IN_CLOSED_ACCOUNT'
+  | 'COC_CORRECTION_FORBIDDEN'
+  | 'COC_ACCOUNT_NOT_FOUND'
+  | 'COC_ACCOUNT_CLOSED'
+  | 'COC_OWN_ACCOUNT_FORBIDDEN'
+  | 'COC_ENTRY_NOT_FOUND'
+  | 'COC_REVERSAL_NOT_NEGATIVE'
+  | 'COC_REVERSAL_SOURCE_NOT_ALLOWED'
+  | 'COC_ENTRY_ALREADY_REVERSED'
+  | 'COC_INSUFFICIENT_BALANCE'
+  | 'COC_EVIDENCE_FORBIDDEN'
+  | 'COC_EVIDENCE_INVALID'
+  | 'COC_IDEMPOTENCY_CONFLICT';
 
 export class CocServiceError extends Error {
   constructor(

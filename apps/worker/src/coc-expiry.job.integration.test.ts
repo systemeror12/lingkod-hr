@@ -10,10 +10,11 @@ const agencyIds: string[] = [];
 let admin: PrismaClient;
 
 /**
- * An Agency whose one account holds `minutes` of COC valid until 2001-12-31.
- * The job sweeps the whole database, so these dates keep it off other test files' COC.
+ * An Agency whose one account holds `minutes` of COC valid until December 31
+ * of `validYear`. The job sweeps the whole database, so these dates keep it off
+ * other test files' COC.
  */
-async function seedAccount(label: string, minutes: number) {
+async function seedAccount(label: string, minutes: number, validYear = 2001) {
   const agency = await admin.agency.create({
     data: {
       code: `JOB-${label}-${suffix}`,
@@ -53,7 +54,7 @@ async function seedAccount(label: string, minutes: number) {
         agencyId: agency.id,
         employeeId: employee.id,
         status: 'ACTIVE',
-        openedAt: new Date('2001-02-01'),
+        openedAt: new Date(`${validYear}-02-01`),
       },
     });
     await transaction.cocLedgerEntry.create({
@@ -61,9 +62,9 @@ async function seedAccount(label: string, minutes: number) {
         agencyId: agency.id,
         cocAccountId: account.id,
         minutes,
-        effectiveDate: new Date('2001-02-01'),
-        validUntil: new Date('2001-12-31'),
-        earnedMonth: new Date('2000-12-01'),
+        effectiveDate: new Date(`${validYear}-02-01`),
+        validUntil: new Date(`${validYear}-12-31`),
+        earnedMonth: new Date(`${validYear - 1}-12-01`),
         sourceType: 'COC_EARNED_CERTIFICATE',
         sourceId: randomUUID(),
         sourcePostingKey: randomUUID(),
@@ -132,3 +133,42 @@ it.skipIf(!enabled)(
     expect(await expiries(first.cocAccountId)).toHaveLength(1);
   },
 );
+
+it.skipIf(!enabled)('expires COC again after each reversal, then finds nothing due', async () => {
+  const account = await seedAccount('CYCLE', 60, 2002);
+  const asOf = '2003-01-01';
+
+  // The COC module's reversal needs evidence; here only the restored COC matters.
+  const reverse = (entryId: string, effectiveDate: Date) =>
+    withDatabaseContext({ agencyId: account.agencyId }, (transaction) =>
+      transaction.cocLedgerEntry.create({
+        data: {
+          agencyId: account.agencyId,
+          cocAccountId: account.cocAccountId,
+          minutes: 60,
+          effectiveDate,
+          validUntil: new Date('2002-12-31'),
+          sourceType: 'TEST_REVERSAL',
+          sourceId: entryId,
+          sourcePostingKey: entryId,
+          ruleCode: 'TEST',
+          reversesEntryId: entryId,
+        },
+      }),
+    );
+
+  for (const round of [1, 2, 3]) {
+    expect((await runCocExpiry(asOf)).failed).toBe(0);
+    const entries = await expiries(account.cocAccountId);
+    expect(entries).toHaveLength(round);
+    const latest = entries.find(
+      (entry) => entry.sourcePostingKey === (round === 1 ? '2002-12-31' : `2002-12-31#${round}`),
+    );
+    expect(latest?.minutes.toString()).toBe('-60');
+    if (round < 3 && latest) await reverse(latest.id, latest.effectiveDate);
+  }
+
+  // The last expiry stands, so another run posts nothing for this account.
+  await runCocExpiry(asOf);
+  expect(await expiries(account.cocAccountId)).toHaveLength(3);
+});
