@@ -165,7 +165,6 @@ export class CocLedgerCorrectionsService {
     const today = manilaToday();
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const account = await this.lockAccount(transaction, context, cocAccountId);
-      await this.refuseCorrection(transaction, context, account);
       const original = await transaction.cocLedgerEntry.findFirst({
         where: { agencyId: context.agencyId, cocAccountId, id: entryId },
         select: entrySelect,
@@ -177,6 +176,19 @@ export class CocLedgerCorrectionsService {
           'COC_ENTRY_NOT_FOUND',
         );
       }
+      // Already reversed first: a retry stays one, whatever has happened to the account since.
+      const existing = await transaction.cocLedgerEntry.findFirst({
+        where: { agencyId: context.agencyId, reversesEntryId: original.id },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new CocServiceError(
+          'This COC Ledger Entry was already reversed.',
+          409,
+          'COC_ENTRY_ALREADY_REVERSED',
+        );
+      }
+      await this.refuseCorrection(transaction, context, account);
       if (!original.minutes.isNegative()) {
         throw new CocServiceError(
           'Only a negative COC Ledger Entry can be reversed.',
@@ -189,17 +201,6 @@ export class CocLedgerCorrectionsService {
           'Only a COC adjustment or expiry can be reversed; CTO usage returns through CTO cancellation.',
           409,
           'COC_REVERSAL_SOURCE_NOT_ALLOWED',
-        );
-      }
-      const existing = await transaction.cocLedgerEntry.findFirst({
-        where: { agencyId: context.agencyId, reversesEntryId: original.id },
-        select: { id: true },
-      });
-      if (existing) {
-        throw new CocServiceError(
-          'This COC Ledger Entry was already reversed.',
-          409,
-          'COC_ENTRY_ALREADY_REVERSED',
         );
       }
       await this.assertEvidenceLinkable(transaction, context, input.supportingDocumentVersionId);

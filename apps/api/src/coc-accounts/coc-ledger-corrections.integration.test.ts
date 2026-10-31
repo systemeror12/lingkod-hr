@@ -718,6 +718,54 @@ scenario(
 );
 
 scenario(
+  'refuses a reversal retry as already reversed after its account closes or its caller becomes its Employee',
+  async ({ admin, suffix, home, evidence }) => {
+    const body = { reason: 'Posted in error.', supportingDocumentVersionId: evidence };
+    const closing = await seedAccount(admin, home, suffix, [{ validUntil: LIVE, minutes: 100 }]);
+    const owned = await seedAccount(admin, home, suffix, [{ validUntil: LIVE, minutes: 100 }]);
+    const closingAdjustment = await service.adjust(home.context, closing.cocAccountId, {
+      ...body,
+      minutes: '-10',
+    });
+    const ownedAdjustment = await service.adjust(home.context, owned.cocAccountId, {
+      ...body,
+      minutes: '-10',
+    });
+    await service.reverse(home.context, closing.cocAccountId, closingAdjustment.id, body);
+    await service.reverse(home.context, owned.cocAccountId, ownedAdjustment.id, body);
+
+    await admin.cocAccount.update({
+      where: { id: closing.cocAccountId },
+      data: { status: 'CLOSED', closedAt: new Date() },
+    });
+    await withDatabaseContext(
+      {
+        agencyId: home.agencyId,
+        membershipId: home.membershipId,
+        capabilities: ['employee-membership-link'],
+      },
+      (transaction) =>
+        transaction.agencyMembership.update({
+          where: { agencyId_id: { agencyId: home.agencyId, id: home.membershipId } },
+          data: { employeeId: owned.employeeId },
+        }),
+    );
+
+    await expect(
+      service.reverse(home.context, closing.cocAccountId, closingAdjustment.id, body),
+    ).rejects.toMatchObject({ code: 'COC_ENTRY_ALREADY_REVERSED' });
+    await expect(
+      service.reverse(home.context, owned.cocAccountId, ownedAdjustment.id, body),
+    ).rejects.toMatchObject({ code: 'COC_ENTRY_ALREADY_REVERSED' });
+    for (const adjustment of [closingAdjustment, ownedAdjustment]) {
+      expect(await admin.cocLedgerEntry.count({ where: { reversesEntryId: adjustment.id } })).toBe(
+        1,
+      );
+    }
+  },
+);
+
+scenario(
   'lets one of two racing adjustments win rather than overdraw',
   async ({ admin, suffix, home, evidence }) => {
     const { cocAccountId } = await seedAccount(admin, home, suffix, [
