@@ -659,3 +659,113 @@ scenario(
     expect(await remaining(admin, cocAccountId, LIVE)).toBe('90');
   },
 );
+
+scenario(
+  'replays a posted adjustment after its account closes or its caller becomes its Employee',
+  async ({ admin, suffix, home, evidence }) => {
+    const body = {
+      reason: 'Overstated certificate.',
+      supportingDocumentVersionId: evidence,
+      minutes: '-10',
+    };
+    const closing = await seedAccount(admin, home, suffix, [{ validUntil: LIVE, minutes: 100 }]);
+    const owned = await seedAccount(admin, home, suffix, [{ validUntil: LIVE, minutes: 100 }]);
+    const first = await service.adjust(home.context, closing.cocAccountId, body, 'closed-key');
+    const second = await service.adjust(home.context, owned.cocAccountId, body, 'owned-key');
+
+    await admin.cocAccount.update({
+      where: { id: closing.cocAccountId },
+      data: { status: 'CLOSED', closedAt: new Date() },
+    });
+    await withDatabaseContext(
+      {
+        agencyId: home.agencyId,
+        membershipId: home.membershipId,
+        capabilities: ['employee-membership-link'],
+      },
+      (transaction) =>
+        transaction.agencyMembership.update({
+          where: { agencyId_id: { agencyId: home.agencyId, id: home.membershipId } },
+          data: { employeeId: owned.employeeId },
+        }),
+    );
+
+    expect(await service.adjust(home.context, closing.cocAccountId, body, 'closed-key')).toEqual(
+      first,
+    );
+    expect(await service.adjust(home.context, owned.cocAccountId, body, 'owned-key')).toEqual(
+      second,
+    );
+    expect(await remaining(admin, closing.cocAccountId, LIVE)).toBe('90');
+    expect(await remaining(admin, owned.cocAccountId, LIVE)).toBe('90');
+
+    // A new key is a new command, so the refusals still apply, and no permission means no replay.
+    await expect(
+      service.adjust(home.context, closing.cocAccountId, body, 'new-key'),
+    ).rejects.toMatchObject({ code: 'COC_ACCOUNT_CLOSED' });
+    await expect(
+      service.adjust(home.context, owned.cocAccountId, body, 'new-key'),
+    ).rejects.toMatchObject({ code: 'COC_OWN_ACCOUNT_FORBIDDEN' });
+    await expect(
+      service.adjust(
+        { ...home.context, permissions: [] },
+        closing.cocAccountId,
+        body,
+        'closed-key',
+      ),
+    ).rejects.toMatchObject({ code: 'COC_CORRECTION_FORBIDDEN' });
+  },
+);
+
+scenario(
+  'lets one of two racing adjustments win rather than overdraw',
+  async ({ admin, suffix, home, evidence }) => {
+    const { cocAccountId } = await seedAccount(admin, home, suffix, [
+      { validUntil: LIVE, minutes: 100 },
+    ]);
+    const body = {
+      reason: 'Overstated certificate.',
+      supportingDocumentVersionId: evidence,
+      minutes: '-60',
+    };
+
+    const results = await Promise.allSettled([
+      service.adjust(home.context, cocAccountId, body),
+      service.adjust(home.context, cocAccountId, body),
+    ]);
+    const refused = results.filter((result) => result.status === 'rejected');
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(refused[0]?.reason).toMatchObject({ code: 'COC_INSUFFICIENT_BALANCE' });
+    expect(await remaining(admin, cocAccountId, LIVE)).toBe('40');
+  },
+);
+
+scenario(
+  'keeps an adjustment off COC a future-dated use already claims',
+  async ({ admin, suffix, home, evidence }) => {
+    // The credit is already in effect, so only the future-dated use can refuse -30.
+    const { cocAccountId } = await seedAccount(admin, home, suffix, []);
+    await post(home, {
+      cocAccountId,
+      minutes: 100,
+      effectiveDate: '2026-01-05',
+      validUntil: LIVE,
+      earnedMonth: new Date('2098-12-01'),
+      sourceType: 'COC_EARNED_CERTIFICATE',
+    });
+    await post(home, {
+      cocAccountId,
+      minutes: -80,
+      effectiveDate: '2090-01-05',
+      validUntil: LIVE,
+      sourceType: 'CTO_REQUEST',
+    });
+    const body = { reason: 'Overstated.', supportingDocumentVersionId: evidence };
+
+    await expect(
+      service.adjust(home.context, cocAccountId, { ...body, minutes: '-30', validUntil: LIVE }),
+    ).rejects.toMatchObject({ code: 'COC_INSUFFICIENT_BALANCE' });
+    await service.adjust(home.context, cocAccountId, { ...body, minutes: '-20', validUntil: LIVE });
+    expect(await remaining(admin, cocAccountId, LIVE)).toBe('0');
+  },
+);

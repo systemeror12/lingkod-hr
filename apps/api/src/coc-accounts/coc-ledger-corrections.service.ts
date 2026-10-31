@@ -84,7 +84,8 @@ export class CocLedgerCorrectionsService {
       input.supportingDocumentVersionId,
     ]);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      await this.lockCorrectableAccount(transaction, context, cocAccountId);
+      const account = await this.lockAccount(transaction, context, cocAccountId);
+      // Replay first: the entry already posted, whatever has happened to the account since.
       if (idempotencyKey) {
         const earlier = await this.completedAdjustment(
           transaction,
@@ -94,6 +95,7 @@ export class CocLedgerCorrectionsService {
         );
         if (earlier) return earlier;
       }
+      await this.refuseCorrection(transaction, context, account);
       await this.assertEvidenceLinkable(transaction, context, input.supportingDocumentVersionId);
 
       const minutes = new Prisma.Decimal(input.minutes);
@@ -162,7 +164,8 @@ export class CocLedgerCorrectionsService {
     this.assertPermission(context, 'overtime.coc.reverse');
     const today = manilaToday();
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      await this.lockCorrectableAccount(transaction, context, cocAccountId);
+      const account = await this.lockAccount(transaction, context, cocAccountId);
+      await this.refuseCorrection(transaction, context, account);
       const original = await transaction.cocLedgerEntry.findFirst({
         where: { agencyId: context.agencyId, cocAccountId, id: entryId },
         select: entrySelect,
@@ -245,16 +248,12 @@ export class CocLedgerCorrectionsService {
     }
   }
 
-  /**
-   * Lock the account, then refuse a correction by its own Employee or to a closed
-   * account. A closed account is final, and restoring COC to it would leave
-   * credit no one can use, so an erroneous forfeiture is not corrected here.
-   */
-  private async lockCorrectableAccount(
+  /** Lock the account, so concurrent commands recompute under one writer. */
+  private async lockAccount(
     transaction: Transaction,
     context: RequestContext,
     cocAccountId: string,
-  ): Promise<void> {
+  ): Promise<{ employee_id: string; status: string }> {
     const [account] = await transaction.$queryRaw<{ employee_id: string; status: string }[]>`
       SELECT "employee_id", "status" FROM "coc_accounts"
       WHERE "agency_id" = CAST(${context.agencyId} AS uuid)
@@ -268,6 +267,19 @@ export class CocLedgerCorrectionsService {
         'COC_ACCOUNT_NOT_FOUND',
       );
     }
+    return account;
+  }
+
+  /**
+   * Refuse a correction by the account's own Employee or to a closed account. A
+   * closed account is final, and restoring COC to it would leave credit no one
+   * can use, so an erroneous forfeiture is not corrected here.
+   */
+  private async refuseCorrection(
+    transaction: Transaction,
+    context: RequestContext,
+    account: { employee_id: string; status: string },
+  ): Promise<void> {
     const membership = await transaction.agencyMembership.findFirst({
       where: { agencyId: context.agencyId, id: context.membershipId },
       select: { employeeId: true },
