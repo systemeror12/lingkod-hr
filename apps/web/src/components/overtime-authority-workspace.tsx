@@ -172,6 +172,13 @@ class ApiError extends Error {
   }
 }
 
+/** Only a 4xx proves a new authority wasn't created; anything else may have committed. */
+function newAuthorityFailure(failure: unknown, message: string): string {
+  return failure instanceof ApiError && failure.status >= 400 && failure.status < 500
+    ? 'The new authority was not saved. ' + message
+    : 'The save could not be confirmed. Check the register before saving again.';
+}
+
 /** The API's refusal, with each covered Employee's own refusal named. */
 function refusalMessage(value: unknown, fallback: string, names: Map<string, string>): string {
   const error = (
@@ -386,7 +393,6 @@ export function OvertimeAuthorityWorkspace({
   }
 
   function openRecord(id: string): void {
-    setNotice(null);
     navigation.navigate({ view: 'form', record: id, new: null });
   }
 
@@ -447,13 +453,22 @@ export function OvertimeAuthorityWorkspace({
       )) as { id: string };
       setEditing(false);
       if (preparing) {
+        // The draft exists from here on, so a failed refresh can't reopen the form or deny the save.
         setNotice({
           recordId: saved.id,
           kind: 'success',
           message: 'The Overtime Authority was saved as a draft.',
         });
-        await reload(null);
         navigation.navigate({ view: 'form', record: saved.id, new: null });
+        try {
+          await reload(null);
+        } catch {
+          setNotice({
+            recordId: saved.id,
+            kind: 'success',
+            message: 'The draft was saved, but the register could not refresh.',
+          });
+        }
       } else {
         await reload(saved.id);
         setNotice({ recordId: saved.id, kind: 'success', message: 'The draft was saved.' });
@@ -473,7 +488,7 @@ export function OvertimeAuthorityWorkspace({
         setNotice({
           recordId: editedId,
           kind: 'error',
-          message: editedId ? message : 'The new authority was not saved. ' + message,
+          message: editedId ? message : newAuthorityFailure(failure, message),
         });
       }
     } finally {

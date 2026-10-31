@@ -1,6 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { getConfig } from '@lingkod-hr/config';
-import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Browser,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 interface MailpitMessagesResponse {
@@ -107,6 +114,13 @@ async function expectStatus(page: Page, text: string): Promise<void> {
 
 /** Prepare one draft through the Form, covering Alex Rivera. */
 async function prepareDraft(page: Page, authorityNo: string, hours: string): Promise<void> {
+  const form = await fillDraft(page, authorityNo, hours);
+  await form.getByRole('button', { name: 'Save draft' }).click();
+  await expectStatus(page, 'The Overtime Authority was saved as a draft.');
+  await expect(page.getByRole('heading', { level: 2, name: authorityNo })).toBeVisible();
+}
+
+async function fillDraft(page: Page, authorityNo: string, hours: string): Promise<Locator> {
   await page.goto('/overtime-authorities');
   await page.getByRole('button', { name: 'New authority' }).click();
   const form = page.getByRole('region', { name: 'Prepare Overtime Authority' });
@@ -118,9 +132,7 @@ async function prepareDraft(page: Page, authorityNo: string, hours: string): Pro
   await form.getByLabel('Employee 1').selectOption({ label: 'Alex Rivera (E2E-0001)' });
   await form.getByLabel('Authorized hours 1').fill(hours);
   await form.getByLabel('Task 1 (optional)').fill('Reconcile the ledgers.');
-  await form.getByRole('button', { name: 'Save draft' }).click();
-  await expectStatus(page, 'The Overtime Authority was saved as a draft.');
-  await expect(page.getByRole('heading', { level: 2, name: authorityNo })).toBeVisible();
+  return form;
 }
 
 async function openFromTree(page: Page, authorityNo: string): Promise<void> {
@@ -418,8 +430,17 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await openSecond();
   await page.route(submitUrl, (route) => route.fulfill(staleRefusal));
   await submitButton.click();
-  await expect(record.getByRole('alert')).toContainText('Refused for the other authority.');
+  const banner = record.getByRole('alert');
+  await expect(banner).toContainText('Refused for the other authority.');
   await page.unroute(submitUrl);
+
+  // Choosing the same record in the Tree refetches nothing, so the banner and its lock stay.
+  await page.getByRole('tab', { name: 'Tree' }).click();
+  await page.getByRole('button', { name: secondNo, exact: true }).click();
+  await expect(record.getByRole('heading', { level: 2, name: secondNo })).toBeVisible();
+  await expect(banner).toContainText('Refused for the other authority.');
+  await expect(submitButton).toBeDisabled();
+
   let failReload = (): void => undefined;
   await page.route(secondDetailUrl, async (route) => {
     await new Promise<void>((resolve) => {
@@ -457,10 +478,15 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   const refused = page.waitForResponse(submitUrl);
   releaseSubmit();
   await refused;
-  await settle(page);
-  await expect(record.getByRole('alert')).toHaveCount(0);
+  // Actions stay disabled until the command settles, and a refusal shown here would keep them so.
   await expect(submitButton).toBeEnabled();
+  await expect(record.getByRole('alert')).toHaveCount(0);
   await page.unroute(submitUrl);
+
+  // Coming back through the Form's own control shows the refusal it held for this record.
+  await record.getByRole('button', { name: 'Previous' }).click();
+  await expect(record.getByRole('heading', { level: 2, name: secondNo })).toBeVisible();
+  await expect(record.getByRole('alert')).toContainText('Refused for the other authority.');
 
   await openSecond();
   await page.route(submitUrl, async (route) => {
@@ -477,7 +503,7 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   const refreshed = page.waitForResponse(secondDetailUrl);
   releaseSubmit();
   await refreshed;
-  await settle(page);
+  await expect(submitButton).toBeEnabled();
   await expect(page.getByRole('status').filter({ hasText: 'submitted for review' })).toHaveCount(0);
   await page.unroute(submitUrl);
 
@@ -512,6 +538,42 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await cancelButton.click();
   await expectStatus(page, 'The authority was cancelled.');
   await expect(record).toContainText('Approved method');
+
+  // A new authority's message says only what its outcome proves.
+  const newNo = `OT-E2E-${stamp}-NEW`;
+  const listOrCreate = /\/api\/v1\/agencies\/[^/]+\/overtime-authorities$/;
+  const newForm = await fillDraft(preparer.page, newNo, '4');
+  const saveNew = newForm.getByRole('button', { name: 'Save draft' });
+  const notSaved = 'The new authority was not saved.';
+  const alerts = preparer.page.getByRole('alert');
+
+  await preparer.page.route(listOrCreate, (route) => route.abort());
+  await saveNew.click();
+  await expect(alerts.filter({ hasText: 'could not be confirmed' })).toBeVisible();
+  await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
+  await preparer.page.unroute(listOrCreate);
+
+  await preparer.page.route(listOrCreate, (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'REFUSED', message: 'That number is taken.' } }),
+    }),
+  );
+  await saveNew.click();
+  await expect(alerts.filter({ hasText: `${notSaved} That number is taken.` })).toBeVisible();
+  await preparer.page.unroute(listOrCreate);
+
+  await preparer.page.route(listOrCreate, (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })
+      : route.continue(),
+  );
+  await saveNew.click();
+  await expect(preparerRecord.getByRole('heading', { level: 2, name: newNo })).toBeVisible();
+  await expectStatus(preparer.page, 'The draft was saved, but the register could not refresh.');
+  await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
+  await preparer.page.unroute(listOrCreate);
 
   // An Auditor can read but not create, so ?new=1 opens no prepare form.
   await withAdmin(async (admin) => {
