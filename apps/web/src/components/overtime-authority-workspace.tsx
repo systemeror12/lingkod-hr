@@ -315,7 +315,10 @@ export function OvertimeAuthorityWorkspace({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
-  /** The number of this prepare form's last new-authority save that could not be confirmed. */
+  /**
+   * The number of this prepare form's last new-authority save that could not be confirmed. Only a
+   * successful save or leaving the form clears it: a refusal says nothing about an earlier save.
+   */
   const unconfirmedNo = useRef<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [editing, setEditing] = useState(false);
@@ -500,8 +503,8 @@ export function OvertimeAuthorityWorkspace({
       } else if (newAuthorityRefused(failure)) {
         // The number is unique in the Agency, so a retry of an unconfirmed save under the same
         // number is refused as a duplicate when that save went through. Its draft may be missing
-        // from the register, so refresh it before Save returns. Any other refusal proves nothing
-        // was created, so it refreshes nothing.
+        // from the register, so refresh it before Save returns. Any other refusal proves only that
+        // this attempt created nothing, so it refreshes nothing and keeps the earlier save's number.
         const earlierNo = unconfirmedNo.current;
         if (
           failure.code === 'OVERTIME_AUTHORITY_NUMBER_CONFLICT' &&
@@ -515,7 +518,6 @@ export function OvertimeAuthorityWorkspace({
           }
           setNotice({ recordId: null, kind: 'error', message });
         } else {
-          if (failure.code !== 'OVERTIME_AUTHORITY_NUMBER_CONFLICT') unconfirmedNo.current = null;
           setNotice({
             recordId: null,
             kind: 'error',

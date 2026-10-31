@@ -644,6 +644,39 @@ test('prepares, submits, reviews, approves, and rejects Overtime Authorities', a
   await preparer.page.getByRole('tab', { name: 'Tree' }).click();
   await expect(preparer.page.getByRole('button', { name: goneNo, exact: true })).toBeVisible();
 
+  // A refusal between an unconfirmed save and its retry proves only that it created nothing, so
+  // the retry under the same number still says the first save went through.
+  const slipNo = `OT-E2E-${stamp}-SLIP`;
+  const slipForm = await fillDraft(preparer.page, slipNo, '4');
+  const saveSlip = slipForm.getByRole('button', { name: 'Save draft' });
+  await preparer.page.route(listOrCreate, async (route) => {
+    if (route.request().method() === 'POST') await route.fetch();
+    await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+  });
+  await saveSlip.click();
+  await expect(alerts.filter({ hasText: `${notRefreshed} ${unconfirmed}` })).toBeVisible();
+  await preparer.page.unroute(listOrCreate);
+  await preparer.page.route(listOrCreate, (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: { code: 'VALIDATION_FAILED', message: 'Purpose is too long.' },
+          }),
+        })
+      : route.continue(),
+  );
+  await saveSlip.click();
+  await expect(alerts.filter({ hasText: `${notSaved} Purpose is too long.` })).toBeVisible();
+  await expect(alerts.filter({ hasText: 'went through' })).toHaveCount(0);
+  await preparer.page.unroute(listOrCreate);
+  await saveSlip.click();
+  await expect(alerts.filter({ hasText: wentThrough(slipNo) })).toBeVisible();
+  await expect(alerts.filter({ hasText: notSaved })).toHaveCount(0);
+  await preparer.page.getByRole('tab', { name: 'Tree' }).click();
+  await expect(preparer.page.getByRole('button', { name: slipNo, exact: true })).toBeVisible();
+
   // A fresh form, opened after leaving the last one, made no earlier attempt, so a used number is
   // only a refusal.
   const freshForm = await fillNewDraft(preparer.page, goneNo, '4');
