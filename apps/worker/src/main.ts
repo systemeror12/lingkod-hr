@@ -8,6 +8,7 @@ async function bootstrap() {
   const config = getConfig();
   await startTelemetry('lingkod-hr-worker');
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.enableShutdownHooks();
 
   await app.listen(config.WORKER_PORT, '0.0.0.0');
   log('info', 'worker.listening', { port: config.WORKER_PORT });

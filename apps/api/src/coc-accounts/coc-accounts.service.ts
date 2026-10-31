@@ -145,6 +145,30 @@ export class CocAccountsService {
   }
 
   /**
+   * Expire one account's COC for one Valid Until, as System, in the caller's
+   * transaction. Locks the account and posts the remainder as one negative
+   * entry effective the day after Valid Until. Returns that entry, or `null`
+   * when the Valid Until has not passed, nothing remains, or it already posted.
+   */
+  async expireCocInTransaction(
+    transaction: Transaction,
+    agencyId: string,
+    input: { cocAccountId: string; validUntil: string; asOf: string },
+  ): Promise<string | null> {
+    toCocDate(input.validUntil, 'Valid Until');
+    toCocDate(input.asOf, 'Expiry date');
+    const [row] = await transaction.$queryRaw<{ id: string | null }[]>`
+      SELECT post_coc_expiry(
+        CAST(${agencyId} AS uuid),
+        CAST(${input.cocAccountId} AS uuid),
+        CAST(${input.validUntil} AS date),
+        CAST(${input.asOf} AS date)
+      ) AS "id"
+    `;
+    return row?.id ?? null;
+  }
+
+  /**
    * The Employee's active-account balance as of a date: entries effective on
    * or before it whose Valid Until is on or after it, grouped by Valid Until.
    * It never reads a stored balance.

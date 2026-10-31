@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { createAdminClient } from '../attendance-test-fixtures';
 import { CocAccountsService } from './coc-accounts.service';
 import {
+  COC_EXPIRY_RULE_CODE,
+  COC_EXPIRY_SOURCE_TYPE,
   CocServiceError,
   type CocEarnedCertificate,
   type CocEarnedCertificateLine,
@@ -130,6 +132,7 @@ async function cleanup(admin: PrismaClient, agencyIds: string[], suffix: string)
   await admin.$transaction(async (transaction) => {
     await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
     const where = { agencyId: { in: agencyIds } };
+    await transaction.auditEvent.deleteMany({ where });
     await transaction.cocLedgerEntry.deleteMany({ where });
     await transaction.cocAccount.deleteMany({ where });
     await transaction.employee.deleteMany({ where });
@@ -573,6 +576,120 @@ it.skipIf(!enabled)(
       ).toBe(0);
     } finally {
       await cleanup(admin, [home.agencyId], suffix);
+      await admin.$disconnect();
+    }
+  },
+  60_000,
+);
+
+it.skipIf(!enabled)(
+  'expires the remainder once, the day after Valid Until, counting a use on the last valid day',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-coc-expiry`;
+    const home = await createAgency(admin, suffix, 'HOME');
+    const foreign = await createAgency(admin, suffix, 'FOREIGN');
+    const inHome = <T>(work: (transaction: Prisma.TransactionClient) => Promise<T>) =>
+      withDatabaseContext({ agencyId: home.agencyId }, work);
+    const dueAsOf = (asOf: string) =>
+      inHome(
+        (transaction) => transaction.$queryRaw<{ coc_account_id: string }[]>`
+          SELECT coc_account_id FROM coc_expiries_due(CAST(${asOf} AS date))
+        `,
+      );
+    try {
+      const employee = await home.employee();
+      const awarded = await awardNew(
+        home,
+        certificate(home, employee.id, '2024-12-01', '2025-02-03', [line('2024-12-02', 200)]),
+      );
+      const cocAccountId = awarded.cocAccountId;
+      const validUntil = '2025-12-31';
+      const expire = (asOf: string) =>
+        inHome((transaction) =>
+          coc.expireCocInTransaction(transaction, home.agencyId, {
+            cocAccountId,
+            validUntil,
+            asOf,
+          }),
+        );
+      const isDue = async (asOf: string) =>
+        (await dueAsOf(asOf)).some((row) => row.coc_account_id === cocAccountId);
+      const expiries = () =>
+        admin.cocLedgerEntry.findMany({
+          where: { cocAccountId, sourceType: COC_EXPIRY_SOURCE_TYPE },
+        });
+
+      // A CTO on the last valid day reduces what expires.
+      await inHome((transaction) =>
+        transaction.cocLedgerEntry.create({
+          data: {
+            agencyId: home.agencyId,
+            cocAccountId,
+            minutes: -80,
+            effectiveDate: new Date(validUntil),
+            validUntil: new Date(validUntil),
+            sourceType: 'CTO_REQUEST',
+            sourceId: randomUUID(),
+            sourcePostingKey: `${validUntil}:${validUntil}`,
+            ruleCode: 'JC2_2004_CTO',
+          },
+        }),
+      );
+
+      // The day before and on Valid Until, nothing is due and nothing posts.
+      for (const asOf of ['2025-12-30', validUntil]) {
+        expect(await isDue(asOf)).toBe(false);
+        expect(await expire(asOf)).toBeNull();
+      }
+      expect(await expiries()).toEqual([]);
+
+      // Another Agency's context cannot reach the account.
+      await expect(
+        withDatabaseContext({ agencyId: foreign.agencyId }, (transaction) =>
+          coc.expireCocInTransaction(transaction, home.agencyId, {
+            cocAccountId,
+            validUntil,
+            asOf: '2026-01-01',
+          }),
+        ),
+      ).rejects.toThrow('does not belong to the Agency in context');
+
+      // The day after, the remainder posts, effective that day, as System.
+      expect(await isDue('2026-01-01')).toBe(true);
+      const entryId = await expire('2026-01-01');
+      const [entry, ...others] = await expiries();
+      expect(others).toEqual([]);
+      expect(entry).toMatchObject({
+        id: entryId,
+        sourceId: cocAccountId,
+        sourcePostingKey: validUntil,
+        ruleCode: COC_EXPIRY_RULE_CODE,
+        postedByMembershipId: null,
+        reversesEntryId: null,
+      });
+      expect(entry?.minutes.toString()).toBe('-120');
+      expect(entry?.effectiveDate.toISOString().slice(0, 10)).toBe('2026-01-01');
+      expect(
+        await admin.auditEvent.findMany({
+          where: { agencyId: home.agencyId, action: 'COC_EXPIRED' },
+          select: { actorType: true, actorMembershipId: true, entityId: true },
+        }),
+      ).toEqual([{ actorType: 'SYSTEM', actorMembershipId: null, entityId: entryId }]);
+
+      // A retry, even days late, finds nothing due and posts nothing.
+      expect(await isDue('2026-01-09')).toBe(false);
+      expect(await expire('2026-01-09')).toBeNull();
+      expect(await expiries()).toHaveLength(1);
+
+      // Every entry for the Valid Until now nets to zero.
+      const sum = await admin.cocLedgerEntry.aggregate({
+        where: { cocAccountId, validUntil: new Date(validUntil) },
+        _sum: { minutes: true },
+      });
+      expect(sum._sum.minutes?.toString()).toBe('0');
+    } finally {
+      await cleanup(admin, [home.agencyId, foreign.agencyId], suffix);
       await admin.$disconnect();
     }
   },
