@@ -273,7 +273,9 @@ scenario(
     // By default it draws the earliest-expiring COC still valid, not the passed one.
     const first = await adjust({ minutes: '-30.5' });
     expect(first).toMatchObject({ minutes: '-30.5', validUntil: LIVE });
-    const stored = await admin.cocLedgerEntry.findUniqueOrThrow({ where: { id: first.id } });
+    const stored = await admin.cocLedgerEntry.findUnique({ where: { id: first.id } });
+    // The adjustment has no table of its own, so its entry is its source.
+    expect(stored?.sourceId).toBe(first.id);
     expect(stored).toMatchObject({
       sourceType: 'COC_ADJUSTMENT',
       reason: body.reason,

@@ -120,15 +120,18 @@ export class CocLedgerCorrectionsService {
         );
       }
 
+      // An adjustment has no table of its own, so its entry is its source.
+      const entryId = randomUUID();
       const entry = await transaction.cocLedgerEntry.create({
         data: {
+          id: entryId,
           agencyId: context.agencyId,
           cocAccountId,
           minutes,
           effectiveDate: toCocDate(today, 'Adjustment date'),
           validUntil,
           sourceType: COC_ADJUSTMENT_SOURCE_TYPE,
-          sourceId: randomUUID(),
+          sourceId: entryId,
           sourcePostingKey: 'ADJUSTMENT',
           ruleCode: COC_CORRECTION_RULE_CODE,
           reason: input.reason,

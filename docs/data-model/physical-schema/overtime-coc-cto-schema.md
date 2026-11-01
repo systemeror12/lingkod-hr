@@ -212,6 +212,17 @@ CREATE TABLE coc_ledger_entries (
     AND valid_until = make_date(extract(year FROM earned_month)::int + 1, 12, 31)
     AND minutes > 0 AND reverses_entry_id IS NULL)),
   CHECK (minutes < 0 OR earned_month IS NOT NULL OR reverses_entry_id IS NOT NULL),
+  CONSTRAINT coc_ledger_entries_correction_check CHECK (
+    source_type NOT IN ('COC_ADJUSTMENT', 'COC_REVERSAL')
+    OR (
+      reason IS NOT NULL
+      AND btrim(reason) <> ''
+      AND supporting_document_version_id IS NOT NULL
+      AND posted_by_membership_id IS NOT NULL
+    )
+  ),
+  CONSTRAINT coc_ledger_entries_adjustment_negative_check
+    CHECK (source_type <> 'COC_ADJUSTMENT' OR minutes < 0),
   FOREIGN KEY (agency_id, coc_account_id)
     REFERENCES coc_accounts (agency_id, id),
   FOREIGN KEY (agency_id, supporting_document_version_id)
@@ -244,9 +255,9 @@ Attach immutable mutation-prevention triggers. A reviewed trigger requires a rev
 | Expiry run                | −    | Day after `valid_until`   | `valid_until`, then `#2`... |
 | Separation Case           | −    | Separation effective date | `valid_until`               |
 
-`rule_code` names the national rule version applied; adjustments and reversals record `HRIS_CONTROL_COC_CORRECTION` because no national rule applies. `earned_month` is set only on a certificate award, so the monthly cap counts the month's credited COC from the ledger under the account lock, without reading certificates. Adjustments and reversals require `reason` and `supporting_document_version_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
+`rule_code` names the national rule version applied; adjustments and reversals record `HRIS_CONTROL_COC_CORRECTION` because no national rule applies. `earned_month` is set only on a certificate award, so the monthly cap counts the month's credited COC from the ledger under the account lock, without reading certificates. Adjustments and reversals require `reason`, `supporting_document_version_id`, and `posted_by_membership_id`. Only a certificate posts new credit; an adjustment is negative, and a reversal may only negate a negative entry.
 
-Every balance-sensitive command locks the account, recomputes within the transaction, and writes no entry that would make the balance for any `valid_until` negative. A use draws from the earliest `valid_until` on or after its Work Date. An adjustment's `source_type` is `COC_ADJUSTMENT`, and it draws from one `valid_until` still valid on its date. A reversal's is `COC_REVERSAL`, with the original as its `source_id` and posting key; only `COC_ADJUSTMENT` and `COC_EXPIRY` entries are reversible, on an `ACTIVE` account. A reversal restoring COC whose `valid_until` has passed is followed by an expiry entry in the same transaction. The expiry job is idempotent through its posting key: its `source_type` is `COC_EXPIRY`, its `source_id` is the account, and `posted_by_membership_id` is null because System posts it. Restored COC can expire again, so the first expiry's key is the `valid_until` and each later one adds its ordinal (`2025-12-31#2`); under the account lock, a retry finds nothing remaining. `post_coc_expiry` is the one command, run in the caller's transaction and Agency Context. `coc_expiries_due` is a `SECURITY DEFINER` function that returns every Agency's due identifiers and dates to `hris_app`, regardless of Agency Context, through the owner policy `coc_ledger_entries_expiry_due_select`, which exposes only rows whose Valid Until has passed by the Asia/Manila date. This is a deliberate exception to Agency isolation, because the worker sweep must find due expiries in every Agency; each posting still runs in its Agency's context.
+Every balance-sensitive command locks the account, recomputes within the transaction, and writes no entry that would make the balance for any `valid_until` negative. A use draws from the earliest `valid_until` on or after its Work Date. An adjustment's `source_type` is `COC_ADJUSTMENT`, and it draws from one `valid_until` still valid on its date. A reversal's is `COC_REVERSAL`, with the original as its `source_id` and posting key; only `COC_ADJUSTMENT` and `COC_EXPIRY` entries are reversible, on an `ACTIVE` account. A reversal restoring COC whose `valid_until` has passed is followed by an expiry entry in the same transaction. A retry of the expiry job posts nothing because, under the account lock, nothing remains to expire, with the unique posting key as a backstop. An expiry's `source_type` is `COC_EXPIRY`, its `source_id` is the account, and `posted_by_membership_id` is null because System posts it. Restored COC can expire again, so the first expiry's key is the `valid_until` and each later one adds its ordinal (`2025-12-31#2`). `post_coc_expiry` is the one command, run in the caller's transaction and Agency Context. `coc_expiries_due` is a `SECURITY DEFINER` function that returns every Agency's due identifiers and dates to `hris_app`, regardless of Agency Context, through the owner policy `coc_ledger_entries_expiry_due_select`, which exposes only rows whose Valid Until has passed by the Asia/Manila date. This is a deliberate exception to Agency isolation, because the worker sweep must find due expiries in every Agency; each posting still runs in its Agency's context.
 
 A balance as of a date states its cutoff. It counts entries effective on or before the cutoff whose `valid_until` is on or after it, so COC past its Valid Until never counts, even before its expiry entry is posted:
 
