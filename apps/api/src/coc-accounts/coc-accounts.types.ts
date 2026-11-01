@@ -3,7 +3,10 @@ import type { CocDayClassification, CocEarningRefusalCode } from './coc-earning-
 /** The ledger source of a certificate entry; its posting key is the certificate line. */
 export const COC_CERTIFICATE_SOURCE_TYPE = 'COC_EARNED_CERTIFICATE';
 
-/** The ledger source of an expiry entry; its source is the account, its posting key the Valid Until. */
+/**
+ * The ledger source of an expiry entry; its source is the account. The first
+ * expiry's posting key is the Valid Until, and each later one appends its ordinal.
+ */
 export const COC_EXPIRY_SOURCE_TYPE = 'COC_EXPIRY';
 
 /** The national rule an expiry entry applies: JC 2-A, s. 2005 item 2.0. */

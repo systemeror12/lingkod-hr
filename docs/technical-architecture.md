@@ -789,7 +789,7 @@ compensated hours
 
 One `coc` module owns COC Accounts, the COC Ledger, and CTO Requests, as Leave owns its accounts, ledger, and applications. Overtime calls it once, when a Certificate of COC Earned is approved.
 
-- COC Ledger Entries are signed minutes with a typed source, posting key, and `valid_until`, and corrections are exact reversals. The ratios, caps, validity, CTO blocks, and five-day limit are national rules in code (ADR 0009).
+- COC Ledger Entries are signed minutes with a typed source, posting key, and `valid_until`, and corrections are linked reversals or negative adjustments. The ratios, caps, validity, CTO blocks, and five-day limit are national rules in code (ADR 0009).
 - A use draws from the earliest-expiring COC still valid on its Work Date. Forfeiture posts one entry per `valid_until`. Expiry posts the COC remaining for a `valid_until` as one entry, and restored COC expires as a new entry.
 - CTO approval locks the account, posts the usage, and creates Attendance CTO inputs in one transaction. Cancellation reverses the cancelled dates and supersedes their inputs, or hands a locked date to a Locked Attendance Adjustment.
 
