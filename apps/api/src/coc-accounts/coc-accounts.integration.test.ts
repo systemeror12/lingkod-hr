@@ -715,3 +715,52 @@ it.skipIf(!enabled)(
   },
   60_000,
 );
+
+it.skipIf(!enabled)(
+  'keeps COC still within its Valid Until out of the due sweep, whatever date the caller names',
+  async () => {
+    const admin = await createAdminClient();
+    const suffix = `${Date.now()}-coc-due-policy`;
+    const home = await createAgency(admin, suffix, 'HOME');
+    const foreign = await createAgency(admin, suffix, 'FOREIGN');
+    try {
+      const manilaYear = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+      }).format(new Date());
+      // Earned this year, so it stays valid through the end of next year.
+      const valid = await awardNew(
+        home,
+        certificate(
+          home,
+          (await home.employee()).id,
+          `${manilaYear}-01-01`,
+          `${manilaYear}-02-02`,
+          [line(`${manilaYear}-01-05`, 60)],
+        ),
+      );
+      const passed = await awardNew(
+        home,
+        certificate(home, (await home.employee()).id, '2024-12-01', '2025-02-03', [
+          line('2024-12-02', 60),
+        ]),
+      );
+
+      // From another Agency: the isolation policy still shows a caller its own rows.
+      const due = await withDatabaseContext(
+        { agencyId: foreign.agencyId },
+        (transaction) => transaction.$queryRaw<{ coc_account_id: string }[]>`
+          SELECT coc_account_id FROM coc_expiries_due(CAST('2999-01-01' AS date))
+        `,
+      );
+
+      const accounts = due.map((row) => row.coc_account_id);
+      expect(accounts).toContain(passed.cocAccountId);
+      expect(accounts).not.toContain(valid.cocAccountId);
+    } finally {
+      await cleanup(admin, [home.agencyId, foreign.agencyId], suffix);
+      await admin.$disconnect();
+    }
+  },
+  60_000,
+);
