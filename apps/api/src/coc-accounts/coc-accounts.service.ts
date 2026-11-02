@@ -28,7 +28,8 @@ const tenths = (minutes: Prisma.Decimal | null | undefined) =>
 /**
  * The COC module's commands for other modules. Each runs inside the caller's
  * transaction, so a Certificate of COC Earned approval and its award commit or
- * roll back together (ADR 0008). No HTTP route reaches them.
+ * roll back together (ADR 0008). No HTTP route reaches them directly, except that
+ * the reversal route reaches expiry through the corrections service.
  */
 @Injectable()
 export class CocAccountsService {
@@ -148,7 +149,7 @@ export class CocAccountsService {
    * Expire one account's COC for one Valid Until, as System, in the caller's
    * transaction. Locks the account and posts the remainder as one negative
    * entry effective the day after Valid Until. Returns that entry, or `null`
-   * when the Valid Until has not passed, nothing remains, or it already posted.
+   * when the Valid Until has not passed or nothing remains.
    */
   async expireCocInTransaction(
     transaction: Transaction,
