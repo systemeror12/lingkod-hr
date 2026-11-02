@@ -166,6 +166,8 @@ model Agency {
   overtimeAuthorityEmployees    OvertimeAuthorityEmployee[]
   overtimeServiceRecords        OvertimeServiceRecord[]
   cocAccounts                   CocAccount[]
+  cocEarnedCertificates         CocEarnedCertificate[]
+  cocEarnedCertificateLines     CocEarnedCertificateLine[]
   cocLedgerEntries              CocLedgerEntry[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
@@ -470,6 +472,8 @@ model AgencyMembership {
   overtimeAuthoritiesApproved OvertimeAuthority[] @relation("OvertimeAuthorityApprover")
   overtimeServiceRecorded     OvertimeServiceRecord[] @relation("OvertimeServiceRecordRecorder")
   overtimeServiceCertified    OvertimeServiceRecord[] @relation("OvertimeServiceRecordCertifier")
+  cocCertificatesPrepared     CocEarnedCertificate[]  @relation("CocEarnedCertificatePreparer")
+  cocCertificatesApproved     CocEarnedCertificate[]  @relation("CocEarnedCertificateApprover")
   cocLedgerEntriesPosted      CocLedgerEntry[]    @relation("CocLedgerEntryPoster")
 
   @@unique([agencyId, id])
@@ -2073,6 +2077,7 @@ model Employee {
   overtimeAuthorityCoverage      OvertimeAuthorityEmployee[]     @relation("OvertimeAuthorityEmployeeEmployee")
   overtimeServiceRecords         OvertimeServiceRecord[]         @relation("OvertimeServiceRecordEmployee")
   cocAccounts                    CocAccount[]                    @relation("CocAccountEmployee")
+  cocEarnedCertificates          CocEarnedCertificate[]          @relation("CocEarnedCertificateEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -5305,10 +5310,52 @@ model OvertimeServiceRecord {
   sourceAttendanceDay AttendanceDay?            @relation("OvertimeServiceRecordSourceDay", fields: [agencyId, sourceAttendanceDayId], references: [agencyId, id], onDelete: Restrict)
   recordedBy          AgencyMembership          @relation("OvertimeServiceRecordRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
   certifiedBy         AgencyMembership?         @relation("OvertimeServiceRecordCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  cocCertificateLines CocEarnedCertificateLine[] @relation("CocEarnedCertificateLineRecord")
 
   @@unique([agencyId, id])
   @@index([agencyId, overtimeAuthorityEmployeeId])
   @@map("overtime_service_records")
+}
+
+model CocEarnedCertificate {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  employeeId             String    @map("employee_id") @db.Uuid
+  earnedMonth            DateTime  @map("earned_month") @db.Date
+  status                 String
+  preparedByMembershipId String    @map("prepared_by_membership_id") @db.Uuid
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency     Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee   Employee                   @relation("CocEarnedCertificateEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  preparedBy AgencyMembership           @relation("CocEarnedCertificatePreparer", fields: [agencyId, preparedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy AgencyMembership?          @relation("CocEarnedCertificateApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  lines      CocEarnedCertificateLine[] @relation("CocEarnedCertificateLines")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, earnedMonth])
+  @@map("coc_earned_certificates")
+}
+
+model CocEarnedCertificateLine {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  cocEarnedCertificateId  String    @map("coc_earned_certificate_id") @db.Uuid
+  overtimeServiceRecordId String    @map("overtime_service_record_id") @db.Uuid
+  certifiedMinutes        Int       @map("certified_minutes")
+  creditedMinutes         Decimal?  @map("credited_minutes") @db.Decimal(12, 1)
+  excessMinutes           Decimal?  @map("excess_minutes") @db.Decimal(12, 1)
+  releasedAt              DateTime? @map("released_at") @db.Timestamptz(6)
+
+  agency        Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  certificate   CocEarnedCertificate  @relation("CocEarnedCertificateLines", fields: [agencyId, cocEarnedCertificateId], references: [agencyId, id], onDelete: Restrict)
+  serviceRecord OvertimeServiceRecord @relation("CocEarnedCertificateLineRecord", fields: [agencyId, overtimeServiceRecordId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([cocEarnedCertificateId, overtimeServiceRecordId])
+  @@unique([agencyId, id])
+  @@map("coc_earned_certificate_lines")
 }
 
 model CocAccount {

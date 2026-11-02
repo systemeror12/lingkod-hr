@@ -402,7 +402,10 @@ function requestSummary(record: RequestRecord): ApprovalRequestSummary {
  * Subject types whose owning module opens the request in its own command, so
  * the public create cannot leave one the module would never decide.
  */
-const DOMAIN_OPENED_SUBJECT_TYPES: ReadonlySet<string> = new Set(['OVERTIME_AUTHORITY']);
+const DOMAIN_OPENED_SUBJECT_TYPES: ReadonlySet<string> = new Set([
+  'OVERTIME_AUTHORITY',
+  'COC_EARNED_CERTIFICATE',
+]);
 
 function isApprovalSubjectType(
   value: string,
