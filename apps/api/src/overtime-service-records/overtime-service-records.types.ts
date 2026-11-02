@@ -15,10 +15,20 @@ export interface OvertimeServiceRecordInput {
   accomplishment: string;
 }
 
+/** Certified Overtime Hours in whole minutes, net of breaks as the certifier attests. */
+export interface OvertimeServiceCertificationInput {
+  certifiedMinutes: number;
+}
+
+export interface OvertimeServiceDeclineInput {
+  declineReason: string;
+}
+
 /**
- * Claimed, authorized, and actual hours stay separate. `authorizedHours` is
- * the Employee's total across the authority. The actual fields are filled on
- * submission from locked Attendance.
+ * Claimed, authorized, actual, and certified hours stay separate.
+ * `authorizedHours` is the Employee's total across the authority. The actual
+ * fields are filled on submission from locked Attendance. The certifier fields
+ * are filled only on CERTIFIED; whoever declined is the actor of the Audit Event.
  */
 export interface OvertimeServiceRecordSummary {
   id: string;
@@ -37,8 +47,12 @@ export interface OvertimeServiceRecordSummary {
   sourceAttendanceDayId: string | null;
   /** The Work Date's holiday classification if it has one, else `WORKDAY` or `REST_DAY`. */
   dayClassification: string | null;
+  certifiedMinutes: number | null;
+  declineReason: string | null;
   status: OvertimeServiceStatus;
   recordedByMembershipId: string;
+  certifiedByMembershipId: string | null;
+  certifiedAt: string | null;
   createdAt: string;
 }
 

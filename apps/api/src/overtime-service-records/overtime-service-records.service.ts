@@ -12,6 +12,8 @@ import {
 import { formatDate, toDatabaseDate } from '../overtime-authorities/overtime-authority.records';
 import {
   OvertimeServiceRecordError,
+  type OvertimeServiceCertificationInput,
+  type OvertimeServiceDeclineInput,
   type OvertimeServiceRecordInput,
   type OvertimeServiceRecordSummary,
   type OvertimeServiceStatus,
@@ -29,7 +31,11 @@ const recordSelect = {
   sourceAttendanceDayId: true,
   dayClassification: true,
   status: true,
+  certifiedMinutes: true,
+  declineReason: true,
   recordedByMembershipId: true,
+  certifiedByMembershipId: true,
+  certifiedAt: true,
   createdAt: true,
   employee: { select: { employeeNumber: true, legalName: true } },
   authorityEmployee: {
@@ -41,9 +47,9 @@ const recordSelect = {
 } as const;
 
 /**
- * Record overtime service rendered under an approved Overtime Authority, and
- * submit it for certification with its Actual Overtime Hours from locked
- * Attendance (hris-controls §5.17).
+ * Record overtime service rendered under an approved Overtime Authority, submit
+ * it for certification with its Actual Overtime Hours from locked Attendance,
+ * and certify or decline it (hris-controls §5.17).
  */
 @Injectable()
 export class OvertimeServiceRecordsService {
@@ -171,11 +177,7 @@ export class OvertimeServiceRecordsService {
    */
   async submit(context: RequestContext, recordId: string): Promise<OvertimeServiceRecordSummary> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const locked = await transaction.$queryRaw<Array<{ id: string }>>(
-        Prisma.sql`SELECT "id" FROM "overtime_service_records" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${recordId} AS uuid) FOR UPDATE`,
-      );
-      if (locked.length !== 1) throw recordNotFound();
-      const current = await readRecord(transaction, context.agencyId, recordId);
+      const current = await lockRecord(transaction, context.agencyId, recordId);
       await assertEmployeeAccess(
         transaction,
         context,
@@ -234,6 +236,237 @@ export class OvertimeServiceRecordsService {
       return readRecord(transaction, context.agencyId, recordId);
     });
   }
+
+  /**
+   * Move a FOR_CERTIFICATION record to CERTIFIED. Attendance is re-read: a
+   * changed source day version, official travel on the date, or a Work
+   * Arrangement that does not require physically reporting is refused. The
+   * covered Employee's row is locked before totalling, so certifications racing
+   * under one authority cannot together pass the authorized hours.
+   */
+  async certify(
+    context: RequestContext,
+    recordId: string,
+    input: OvertimeServiceCertificationInput,
+  ): Promise<OvertimeServiceRecordSummary> {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const current = await lockForDecision(
+        transaction,
+        context,
+        'overtime.service.certify',
+        recordId,
+        'certified',
+      );
+      const [day] = await this.lockedDays.readInTransaction(
+        transaction,
+        context.agencyId,
+        current.employeeId,
+        [current.workDate],
+      );
+      if (
+        !day ||
+        day.status !== 'LOCKED' ||
+        day.attendanceDayId !== current.sourceAttendanceDayId
+      ) {
+        const change =
+          day?.status !== 'LOCKED'
+            ? `changed after this record was submitted with ${current.actualMinutes} actual minutes; it is no longer locked`
+            : day.outsideScheduleWorkedMinutes === current.actualMinutes
+              ? `was recalculated after this record was submitted, with its Actual Overtime Hours unchanged at ${current.actualMinutes} minutes`
+              : `changed after this record was submitted with ${current.actualMinutes} actual minutes; it now shows ${day.outsideScheduleWorkedMinutes} minutes`;
+        throw new OvertimeServiceRecordError(
+          `Attendance for ${current.workDate} ${change}. Decline this record and record the service again.`,
+          409,
+          'OVERTIME_SERVICE_ATTENDANCE_CHANGED',
+        );
+      }
+      if (day.officialTravel.minutes > 0 || day.officialTravel.sourceIds.length > 0) {
+        throw new OvertimeServiceRecordError(
+          `The Employee was on official travel on ${current.workDate}, so the service cannot be certified.`,
+          422,
+          'OVERTIME_SERVICE_OFFICIAL_TRAVEL',
+        );
+      }
+      assertPhysicalReporting(day.workArrangementVersion.arrangementType, current.workDate);
+      if (input.certifiedMinutes > (current.actualMinutes ?? 0)) {
+        throw new OvertimeServiceRecordError(
+          `Certified time of ${input.certifiedMinutes} minutes exceeds the ${current.actualMinutes} actual minutes.`,
+          422,
+          'OVERTIME_SERVICE_CERTIFIED_EXCEEDS_ACTUAL',
+        );
+      }
+      const [coverage] = await transaction.$queryRaw<Array<{ authorized_hours: Prisma.Decimal }>>(
+        Prisma.sql`SELECT "authorized_hours" FROM "overtime_authority_employees" WHERE "agency_id" = CAST(${context.agencyId} AS uuid) AND "id" = CAST(${current.overtimeAuthorityEmployeeId} AS uuid) FOR UPDATE`,
+      );
+      if (!coverage) throw recordNotFound();
+      const certified = await transaction.overtimeServiceRecord.aggregate({
+        where: {
+          agencyId: context.agencyId,
+          overtimeAuthorityEmployeeId: current.overtimeAuthorityEmployeeId,
+          status: 'CERTIFIED',
+        },
+        _sum: { certifiedMinutes: true },
+      });
+      const alreadyCertified = certified._sum.certifiedMinutes ?? 0;
+      const authorizedMinutes = coverage.authorized_hours.times(60);
+      if (authorizedMinutes.lessThan(alreadyCertified + input.certifiedMinutes)) {
+        throw new OvertimeServiceRecordError(
+          `Certifying ${input.certifiedMinutes} minutes on top of the ${alreadyCertified} already certified exceeds the Employee's ${authorizedMinutes.toString()} authorized minutes under this Overtime Authority.`,
+          422,
+          'OVERTIME_SERVICE_CERTIFIED_EXCEEDS_AUTHORIZED',
+        );
+      }
+      await transaction.overtimeServiceRecord.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: recordId } },
+        data: {
+          status: 'CERTIFIED',
+          certifiedMinutes: input.certifiedMinutes,
+          certifiedByMembershipId: context.membershipId,
+          certifiedAt: new Date(),
+        },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'OVERTIME_SERVICE_CERTIFIED',
+        entityType: 'OvertimeServiceRecord',
+        entityId: recordId,
+        previousStatus: 'FOR_CERTIFICATION',
+        newStatus: 'CERTIFIED',
+        requestId: context.requestId,
+        metadata: {
+          workDate: current.workDate,
+          certifiedMinutes: input.certifiedMinutes,
+          actualMinutes: current.actualMinutes,
+          sourceAttendanceDayId: day.attendanceDayId,
+          attendancePeriodVersionId: day.attendancePeriodVersionId,
+        },
+      });
+      return readRecord(transaction, context.agencyId, recordId);
+    });
+  }
+
+  /**
+   * Move a FOR_CERTIFICATION record to NOT_CERTIFIED, which excludes it from
+   * compensation and frees its Work Date for a new record. No Attendance recheck:
+   * declining is how a record whose Attendance changed leaves the queue. The
+   * decliner is the actor of the Audit Event.
+   */
+  async decline(
+    context: RequestContext,
+    recordId: string,
+    input: OvertimeServiceDeclineInput,
+  ): Promise<OvertimeServiceRecordSummary> {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const current = await lockForDecision(
+        transaction,
+        context,
+        'overtime.service.reject',
+        recordId,
+        'declined',
+      );
+      await transaction.overtimeServiceRecord.update({
+        where: { agencyId_id: { agencyId: context.agencyId, id: recordId } },
+        data: { status: 'NOT_CERTIFIED', declineReason: input.declineReason },
+      });
+      await this.auditWriter.write(transaction, {
+        agencyId: context.agencyId,
+        actorUserId: context.userId,
+        actorMembershipId: context.membershipId,
+        actorType: 'USER',
+        action: 'OVERTIME_SERVICE_DECLINED',
+        entityType: 'OvertimeServiceRecord',
+        entityId: recordId,
+        previousStatus: 'FOR_CERTIFICATION',
+        newStatus: 'NOT_CERTIFIED',
+        requestId: context.requestId,
+        metadata: { workDate: current.workDate, declineReason: input.declineReason },
+      });
+      return readRecord(transaction, context.agencyId, recordId);
+    });
+  }
+}
+
+async function lockRecord(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  recordId: string,
+): Promise<OvertimeServiceRecordSummary> {
+  const locked = await transaction.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT "id" FROM "overtime_service_records" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${recordId} AS uuid) FOR UPDATE`,
+  );
+  if (locked.length !== 1) throw recordNotFound();
+  return readRecord(transaction, agencyId, recordId);
+}
+
+/**
+ * Lock a record for certifying or declining: the permission must reach its
+ * Employee, whatever the grant the actor is not that Employee, and it must await
+ * certification.
+ */
+async function lockForDecision(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  permission: string,
+  recordId: string,
+  verb: 'certified' | 'declined',
+): Promise<OvertimeServiceRecordSummary> {
+  const current = await lockRecord(transaction, context.agencyId, recordId);
+  await assertEmployeeAccess(transaction, context, permission, current.employeeId);
+  const membership = await transaction.agencyMembership.findFirst({
+    where: { agencyId: context.agencyId, id: context.membershipId },
+    select: { employeeId: true },
+  });
+  if (membership?.employeeId === current.employeeId) {
+    throw new OvertimeServiceRecordError(
+      'An Employee cannot certify or decline their own overtime service.',
+      403,
+      'OVERTIME_SERVICE_SELF_CERTIFICATION',
+    );
+  }
+  if (current.status !== 'FOR_CERTIFICATION') {
+    throw new OvertimeServiceRecordError(
+      `Only a FOR_CERTIFICATION Overtime Service Record can be ${verb}; this one is ${current.status}.`,
+      409,
+      'OVERTIME_SERVICE_STATUS_INVALID',
+    );
+  }
+  return current;
+}
+
+/**
+ * COC and Overtime Pay need that the Employee physically reported for work (CSC
+ * MC No. 6, s. 2022). `ONSITE` and `FIELD` duty requires it; `WORK_FROM_HOME` does
+ * not. `HYBRID` is refused because Attendance cannot show that the Employee
+ * physically reported for work on that date. Allowing `FIELD` and refusing
+ * `HYBRID` is a Project Decision (#535), because no source names either type.
+ * Work Arrangement Versions have no type for another fixed place, which earns
+ * neither, or a satellite office, for which no authority was found. Both are
+ * `OTHER`, refused under one code because the type cannot separate them.
+ */
+function assertPhysicalReporting(arrangementType: string, workDate: string): void {
+  if (arrangementType === 'ONSITE' || arrangementType === 'FIELD') return;
+  if (arrangementType === 'OTHER') {
+    throw new OvertimeServiceRecordError(
+      `The Work Arrangement on ${workDate} is OTHER, which does not show that the Employee physically reported for work. Work from another fixed place earns neither COC nor Overtime Pay, and no authority was found for crediting overtime from a satellite office.`,
+      422,
+      'OVERTIME_SERVICE_ARRANGEMENT_NO_AUTHORITY',
+    );
+  }
+  if (arrangementType === 'HYBRID') {
+    throw new OvertimeServiceRecordError(
+      `The Work Arrangement on ${workDate} is HYBRID, so Attendance cannot show that the Employee physically reported for work on that date, and the service cannot be certified.`,
+      422,
+      'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL',
+    );
+  }
+  throw new OvertimeServiceRecordError(
+    `The Work Arrangement on ${workDate} is ${arrangementType}, which does not require physically reporting for work, so the service cannot be certified.`,
+    422,
+    'OVERTIME_SERVICE_ARRANGEMENT_NOT_PHYSICAL',
+  );
 }
 
 async function readRecord(
@@ -262,8 +495,12 @@ async function readRecord(
     actualMinutes: record.actualMinutes,
     sourceAttendanceDayId: record.sourceAttendanceDayId,
     dayClassification: record.dayClassification,
+    certifiedMinutes: record.certifiedMinutes,
+    declineReason: record.declineReason,
     status: record.status as OvertimeServiceStatus,
     recordedByMembershipId: record.recordedByMembershipId,
+    certifiedByMembershipId: record.certifiedByMembershipId,
+    certifiedAt: record.certifiedAt?.toISOString() ?? null,
     createdAt: record.createdAt.toISOString(),
   };
 }
