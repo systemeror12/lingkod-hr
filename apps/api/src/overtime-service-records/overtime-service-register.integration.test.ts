@@ -239,3 +239,87 @@ it.skipIf(!enabled)(
     }
   },
 );
+
+it.skipIf(!enabled)(
+  "keeps reading the register when an Employee's only RENDERED record sits on unusable locked Attendance",
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, agencyId, employeeId, workDate } = fixture;
+    try {
+      const authorityId = await approvedAuthority(admin, {
+        agencyId,
+        requestingUnitId: fixture.unitId,
+        approverMembershipId: fixture.memberships.officer,
+        authorityNo: `OT-ONE-${fixture.suffix}`,
+        workDateFrom: workDate,
+        workDateTo: workDate,
+        employeeIds: [employeeId],
+      });
+      const hr: RequestContext = {
+        ...fixture.administratorContext,
+        permissions: [
+          ...attendanceAdministratorPermissions,
+          ...serviceGrants('AGENCY', [
+            'overtime.service.record',
+            'overtime.service.submit',
+            'overtime.service.reject',
+          ]),
+          { code: 'overtime.authorities.read', scopePolicy: 'AGENCY' },
+        ],
+      };
+      const record = (accomplishment: string) =>
+        service.record(hr, {
+          overtimeAuthorityId: authorityId,
+          employeeId,
+          workDate,
+          claimedHours: '1',
+          accomplishment,
+        });
+      // A declined record reads normally beside the one RENDERED record on the same date.
+      await lockAttendancePeriod(fixture, fixture.administratorContext);
+      const declined = await record('Encoded the backlog of leave cards.');
+      const submitted = await service.submit(hr, declined.id);
+      await service.decline(hr, declined.id, { declineReason: 'Recorded twice.' });
+      const bad = await record('Encoded the remaining leave cards.');
+      // The locked day's snapshot names a Day Rule that does not exist, so it can't be resolved.
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        const day = await transaction.attendanceDay.findUniqueOrThrow({
+          where: { id: fixture.attendanceDayId },
+          select: { ruleSnapshot: true },
+        });
+        await transaction.attendanceDay.update({
+          where: { id: fixture.attendanceDayId },
+          data: {
+            ruleSnapshot: {
+              ...(day.ruleSnapshot as Record<string, unknown>),
+              dayRuleId: '00000000-0000-4000-8000-000000000000',
+            },
+          },
+        });
+      });
+
+      const refusal = (await service.submit(hr, bad.id).catch((error: unknown) => error)) as {
+        code: string;
+        message: string;
+      };
+      expect(refusal.code).toBe('ATTENDANCE_LOCKED_DAY_UNRESOLVED');
+
+      const register = await service.listForAuthority(hr, authorityId);
+      const rows = new Map(register.employees[0]?.records.map((row) => [row.id, row]));
+      expect(rows.get(bad.id)).toMatchObject({
+        status: 'RENDERED',
+        submitBlockedReason: refusal.message,
+      });
+      expect(rows.get(declined.id)).toMatchObject({
+        status: 'NOT_CERTIFIED',
+        declineReason: 'Recorded twice.',
+        actualMinutes: submitted.actualMinutes,
+        submitBlockedReason: null,
+      });
+    } finally {
+      await cleanupAttendanceOvertime(fixture);
+      await admin.$disconnect();
+    }
+  },
+);

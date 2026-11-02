@@ -164,7 +164,7 @@ export class OvertimeServiceRecordsService {
    * Decide, for each Work Date, whether a RENDERED record on it can be submitted:
    * its locked Attendance Day, or the refusal submission gives. One date whose
    * locked Attendance can't be read refuses only that date: a failed batch read
-   * is retried date by date.
+   * is retried date by date, and a failed one-date read is that date's refusal.
    */
   private async submittableDays(
     transaction: Prisma.TransactionClient,
@@ -189,8 +189,14 @@ export class OvertimeServiceRecordsService {
     try {
       (await read(workDates)).forEach(keep);
     } catch (error: unknown) {
-      if (!(error instanceof AttendanceLockedDayError) || workDates.length < 2) throw error;
-      for (const workDate of new Set(workDates)) {
+      if (!(error instanceof AttendanceLockedDayError)) throw error;
+      const dates = [...new Set(workDates)];
+      for (const workDate of dates) {
+        // A one-date batch already failed on that date, so its error is the date's own.
+        if (dates.length === 1) {
+          days.set(workDate, error);
+          continue;
+        }
         try {
           (await read([workDate])).forEach(keep);
         } catch (dateError: unknown) {

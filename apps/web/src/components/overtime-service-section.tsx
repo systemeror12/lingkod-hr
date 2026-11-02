@@ -22,7 +22,11 @@ export interface OvertimeServiceRecord {
   certifiedMinutes: number | null;
   declineReason: string | null;
   status: OvertimeServiceStatus;
-  /** Set on a RENDERED record whose Work Date has no locked Attendance yet. */
+  /**
+   * Set on a RENDERED record that can't be submitted yet, with the refusal submission would give:
+   * no locked Attendance on its Work Date, or a locked Attendance Day that is ambiguous or
+   * unresolved.
+   */
   submitBlockedReason: string | null;
 }
 

@@ -69,8 +69,9 @@ export class OvertimeServiceRecordError extends Error {
 
 /**
  * A record as the authority's Service tab reads it. `submitBlockedReason` is
- * set only on a RENDERED record whose Work Date has no locked Attendance yet,
- * with the refusal submission would give.
+ * set only on a RENDERED record that can't be submitted yet, with the refusal
+ * submission would give: its Work Date has no locked Attendance, or its locked
+ * Attendance Day is ambiguous or unresolved.
  */
 export interface OvertimeServiceRegisterRecord extends OvertimeServiceRecordSummary {
   submitBlockedReason: string | null;
