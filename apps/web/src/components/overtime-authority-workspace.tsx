@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { dateLabel, hoursLabel } from '../lib/overtime-format';
+import { OvertimeServiceSection } from './overtime-service-section';
 import { useRecordNavigation } from './record-navigation';
 import { StateSurface } from './state-surface';
 import { Button } from './ui/button';
@@ -114,6 +116,7 @@ interface UnitOption {
 }
 
 type View = 'tree' | 'form' | 'kanban';
+type FormTab = 'authority' | 'service' | 'history';
 
 const STATUS_DISPLAY: Record<OvertimeAuthorityStatus, StatusDisplay> = {
   DRAFT: { label: 'Draft', tone: 'neutral' },
@@ -210,24 +213,8 @@ function checkedOf(event: { currentTarget: EventTarget }): boolean {
   return (event.currentTarget as unknown as { checked: boolean }).checked;
 }
 
-function hoursLabel(value: string | number): string {
-  const text = typeof value === 'number' ? value.toFixed(4) : value;
-  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
-}
-
 function totalHours(employees: CoveredEmployee[]): string {
   return hoursLabel(employees.reduce((sum, row) => sum + Number(row.authorizedHours), 0));
-}
-
-function dateLabel(value: string): string {
-  const date = new Date(value.includes('T') ? value : `${value}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('en-PH', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'Asia/Manila',
-  });
 }
 
 function instantLabel(value: string): string {
@@ -293,6 +280,10 @@ export function OvertimeAuthorityWorkspace({
   canApprove,
   canReject,
   canListEmployees,
+  canRecordService,
+  canSubmitService,
+  canCertifyService,
+  canDeclineService,
 }: {
   agencyId: string;
   initial: OvertimeAuthorityListResponse;
@@ -304,6 +295,10 @@ export function OvertimeAuthorityWorkspace({
   canReject: boolean;
   /** Preparing needs the Employee and Organization Unit pickers. */
   canListEmployees: boolean;
+  canRecordService: boolean;
+  canSubmitService: boolean;
+  canCertifyService: boolean;
+  canDeclineService: boolean;
 }) {
   const [authorities, setAuthorities] = useState(initial.authorities);
   const [statusFilter, setStatusFilter] = useState<'ALL' | OvertimeAuthorityStatus>('ALL');
@@ -322,7 +317,7 @@ export function OvertimeAuthorityWorkspace({
   const unconfirmedNo = useRef<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [editing, setEditing] = useState(false);
-  const [formTab, setFormTab] = useState<'authority' | 'history'>('authority');
+  const [formTab, setFormTab] = useState<FormTab>('authority');
   const navigation = useRecordNavigation();
   const requestedView = navigation.search.get('view');
   const preparing = canCreate && canListEmployees && navigation.search.get('new') === '1';
@@ -818,7 +813,7 @@ export function OvertimeAuthorityWorkspace({
             {detail && !editing ? (
               <SectionTabs
                 value={formTab}
-                onValueChange={(value) => setFormTab(value as 'authority' | 'history')}
+                onValueChange={(value) => setFormTab(value as FormTab)}
                 className="grid gap-4"
               >
                 <header className="flex flex-wrap items-start justify-between gap-3">
@@ -836,6 +831,7 @@ export function OvertimeAuthorityWorkspace({
                   label="Overtime Authority sections"
                   tabs={[
                     { value: 'authority', label: 'Authority' },
+                    { value: 'service', label: 'Service' },
                     { value: 'history', label: 'History' },
                   ]}
                 />
@@ -854,6 +850,17 @@ export function OvertimeAuthorityWorkspace({
                       setEditing(true);
                     }}
                     act={act}
+                  />
+                </SectionTabPanel>
+                <SectionTabPanel value="service">
+                  <OvertimeServiceSection
+                    authority={detail}
+                    request={request}
+                    disabled={stale !== ''}
+                    canRecord={canRecordService}
+                    canSubmit={canSubmitService}
+                    canCertify={canCertifyService}
+                    canDecline={canDeclineService}
                   />
                 </SectionTabPanel>
                 <SectionTabPanel value="history">

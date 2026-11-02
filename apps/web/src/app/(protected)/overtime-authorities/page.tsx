@@ -53,6 +53,10 @@ export default async function OvertimeAuthoritiesPage() {
       canReview={hasPermission(session, 'overtime.authorities.review')}
       canApprove={hasPermission(session, 'overtime.authorities.approve')}
       canReject={hasPermission(session, 'overtime.authorities.reject')}
+      canRecordService={hasPermission(session, 'overtime.service.record')}
+      canSubmitService={hasPermission(session, 'overtime.service.submit')}
+      canCertifyService={hasPermission(session, 'overtime.service.certify')}
+      canDeclineService={hasPermission(session, 'overtime.service.reject')}
       canListEmployees={
         hasPermission(session, 'personnel.employees.read') &&
         hasPermission(session, 'organization.units.read')

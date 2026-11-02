@@ -951,6 +951,7 @@ async function seed(): Promise<void> {
     await transaction.leaveApplicationDraftDocument.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leaveApplicationDraftPeriod.deleteMany({ where: { agencyId: agency.id } });
     await transaction.leaveApplication.deleteMany({ where: { agencyId: agency.id } });
+    await transaction.overtimeServiceRecord.deleteMany({ where: { agencyId: agency.id } });
     await transaction.overtimeAuthorityEmployee.deleteMany({ where: { agencyId: agency.id } });
     await transaction.overtimeAuthority.deleteMany({ where: { agencyId: agency.id } });
     await transaction.approvalDecision.deleteMany({ where: { agencyId: agency.id } });
