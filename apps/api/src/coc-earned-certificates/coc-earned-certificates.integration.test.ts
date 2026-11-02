@@ -431,6 +431,19 @@ it.skipIf(!enabled)(
         expect(
           (await admin.approvalRequest.findUniqueOrThrow({ where: { id: request.id } })).status,
         ).toBe('RETURNED');
+
+        // The preparer, the request's drafter, cannot resume it through the generic Approval API.
+        await expect(approvals.submit(preparer, request.id)).rejects.toMatchObject({
+          code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+          statusCode: 400,
+        });
+        expect(
+          (await admin.approvalRequest.findUniqueOrThrow({ where: { id: request.id } })).status,
+        ).toBe('RETURNED');
+        expect(
+          (await admin.cocEarnedCertificate.findUniqueOrThrow({ where: { id: draft.id } })).status,
+        ).toBe('DRAFT');
+
         const returnEvent = await admin.auditEvent.findFirstOrThrow({
           where: { entityId: draft.id, action: 'COC_EARNED_CERTIFICATE_RETURNED' },
         });

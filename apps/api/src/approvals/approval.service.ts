@@ -988,7 +988,22 @@ export class ApprovalsService {
     );
     return withDatabaseContext(
       requestDatabaseContext(context, 'approval-transition'),
-      (transaction) => this.submitInTransaction(transaction, context, requestId, rawIdempotencyKey),
+      async (transaction) => {
+        // A domain-opened request is resubmitted only by its owning module,
+        // which moves its subject with it.
+        const subject = await transaction.approvalRequest.findFirst({
+          where: { agencyId: context.agencyId, id: requestId },
+          select: { subjectType: true },
+        });
+        if (subject && DOMAIN_OPENED_SUBJECT_TYPES.has(subject.subjectType)) {
+          throw new ApprovalServiceError(
+            `A ${subject.subjectType} Approval Request is submitted only by its owning module.`,
+            400,
+            'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+          );
+        }
+        return this.submitInTransaction(transaction, context, requestId, rawIdempotencyKey);
+      },
     );
   }
 

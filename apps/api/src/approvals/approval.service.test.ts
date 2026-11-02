@@ -1,11 +1,21 @@
 import type { RequestContext } from '@lingkod-hr/auth';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import {
   approvalCompletionHandler,
   ApprovalCompletionRegistry,
   ApprovalServiceError,
   ApprovalsService,
 } from './approval.service';
+
+// A transaction that only answers the subject-type read; tests that reach
+// further than that belong in approval.integration.test.ts.
+const transaction = vi.hoisted(() => ({
+  approvalRequest: { findFirst: vi.fn() },
+}));
+vi.mock('@lingkod-hr/database', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@lingkod-hr/database')>()),
+  withDatabaseContext: (_context: unknown, work: (client: unknown) => unknown) => work(transaction),
+}));
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const membershipId = '00000000-0000-4000-8000-000000000002';
@@ -70,6 +80,22 @@ it('refuses to open an Overtime Authority request outside the Overtime module', 
     statusCode: 400,
   });
 });
+
+it.each(['OVERTIME_AUTHORITY', 'COC_EARNED_CERTIFICATE'])(
+  'refuses to submit a %s request outside its owning module',
+  async (subjectType) => {
+    transaction.approvalRequest.findFirst.mockResolvedValueOnce({ subjectType });
+    await expect(
+      new ApprovalsService().submit(
+        context([{ code: 'approvals.requests.submit', scopePolicy: 'AGENCY' }]),
+        subjectId,
+      ),
+    ).rejects.toMatchObject({
+      code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+      statusCode: 400,
+    });
+  },
+);
 
 it('uses typed errors for approval workflow failures', () => {
   expect(new ApprovalServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);
