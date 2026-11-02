@@ -156,9 +156,13 @@ export function OvertimeServiceSection({
       const refreshed = (await request(path)) as OvertimeServiceRegister;
       setLoaded((held) => (held?.id === id ? { id, register: refreshed, error: '' } : held));
     } catch {
+      // Only the reload failed: a command that went through is still a success.
       outcome = {
-        kind: 'error',
-        message: `${outcome.message} The service list could not refresh.`,
+        kind: outcome.kind,
+        message:
+          outcome.kind === 'success'
+            ? `${outcome.message.replace(/\.$/, '')}, but the service list could not refresh.`
+            : `${outcome.message} The service list could not refresh.`,
       };
     } finally {
       setNotice(outcome);

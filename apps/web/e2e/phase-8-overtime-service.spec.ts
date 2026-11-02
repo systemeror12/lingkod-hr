@@ -1,6 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { getConfig } from '@lingkod-hr/config';
-import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Browser,
+  type Page,
+  type Route,
+} from '@playwright/test';
 import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 interface MailpitMessagesResponse {
@@ -466,6 +473,27 @@ test('records, submits, certifies, and declines overtime service in the authorit
   await expect(second.getByRole('button', { name: 'Certify service on Mar 11, 2026' })).toHaveCount(
     0,
   );
+
+  // A command that went through stays a success when only the reload fails.
+  let failedReloads = 0;
+  const failReload = async (route: Route) => {
+    if (route.request().method() !== 'GET' || failedReloads > 0) return route.fallback();
+    failedReloads += 1;
+    return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' });
+  };
+  await group.getByRole('button', { name: 'Record service for Alex Rivera' }).click();
+  const unrefreshed = group.getByRole('form', { name: 'Record service for Alex Rivera' });
+  await unrefreshed.getByLabel('Work Date').fill('2026-03-12');
+  await unrefreshed.getByLabel('Claimed hours').fill('1');
+  await unrefreshed.getByLabel('Accomplishment').fill('Boxed the March registers.');
+  await ui.route('**/service-records', failReload);
+  await unrefreshed.getByRole('button', { name: 'Record service' }).click();
+  const caveat =
+    'Service on Mar 12, 2026 was recorded for Alex Rivera, but the service list could not refresh.';
+  await expect(ui.getByRole('status').filter({ hasText: caveat })).toBeVisible();
+  await expect(ui.getByRole('alert').filter({ hasText: 'could not refresh' })).toHaveCount(0);
+  await ui.unroute('**/service-records', failReload);
+  expect(failedReloads).toBe(1);
 
   await ui.context().close();
 });
