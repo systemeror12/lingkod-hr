@@ -5,6 +5,7 @@ import {
   attendanceAdministratorPermissions,
   createAttendanceWorkflowFixture,
   lockAttendancePeriod,
+  manilaDate,
 } from '../attendance-test-fixtures';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
 import { enabled, errorOf } from '../overtime-authorities/overtime-authority-test-fixtures';
@@ -155,6 +156,83 @@ it.skipIf(!enabled)(
           controller.listForAuthority(agencyId, '00000000-0000-4000-8000-000000000000', reader),
         ),
       ).toMatchObject({ status: 404, body: { error: { code: 'OVERTIME_AUTHORITY_NOT_FOUND' } } });
+    } finally {
+      await cleanupAttendanceOvertime(fixture);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'keeps reading the register when one Work Date has unusable locked Attendance, blocking only that record',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, agencyId, employeeId, workDate } = fixture;
+    try {
+      const otherDate = workDate === manilaDate(-1) ? manilaDate(-2) : manilaDate(-1);
+      const dateFrom = [workDate, otherDate].sort()[0]!;
+      const authorityId = await approvedAuthority(admin, {
+        agencyId,
+        requestingUnitId: fixture.unitId,
+        approverMembershipId: fixture.memberships.officer,
+        authorityNo: `OT-BAD-${fixture.suffix}`,
+        workDateFrom: dateFrom,
+        workDateTo: manilaDate(0),
+        employeeIds: [employeeId],
+      });
+      const hr: RequestContext = {
+        ...fixture.administratorContext,
+        permissions: [
+          ...attendanceAdministratorPermissions,
+          ...serviceGrants('AGENCY'),
+          { code: 'overtime.authorities.read', scopePolicy: 'AGENCY' },
+        ],
+      };
+      const record = (date: string) =>
+        service.record(hr, {
+          overtimeAuthorityId: authorityId,
+          employeeId,
+          workDate: date,
+          claimedHours: '1',
+          accomplishment: 'Encoded the backlog of leave cards.',
+        });
+      const bad = await record(workDate);
+      const other = await record(otherDate);
+      await lockAttendancePeriod(fixture, fixture.administratorContext);
+      // The locked day's snapshot names a Day Rule that does not exist, so it can't be resolved.
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        const day = await transaction.attendanceDay.findUniqueOrThrow({
+          where: { id: fixture.attendanceDayId },
+          select: { ruleSnapshot: true },
+        });
+        await transaction.attendanceDay.update({
+          where: { id: fixture.attendanceDayId },
+          data: {
+            ruleSnapshot: {
+              ...(day.ruleSnapshot as Record<string, unknown>),
+              dayRuleId: '00000000-0000-4000-8000-000000000000',
+            },
+          },
+        });
+      });
+
+      const refusal = (await service.submit(hr, bad.id).catch((error: unknown) => error)) as {
+        code: string;
+        message: string;
+      };
+      expect(refusal.code).toBe('ATTENDANCE_LOCKED_DAY_UNRESOLVED');
+      const otherRefusal = (await service
+        .submit(hr, other.id)
+        .catch((error: unknown) => error)) as { code: string; message: string };
+      expect(otherRefusal.code).toBe('OVERTIME_SERVICE_ATTENDANCE_NOT_LOCKED');
+
+      const register = await service.listForAuthority(hr, authorityId);
+      const reasons = new Map(
+        register.employees[0]?.records.map((row) => [row.id, row.submitBlockedReason]),
+      );
+      expect(reasons.get(bad.id)).toBe(refusal.message);
+      expect(reasons.get(other.id)).toBe(otherRefusal.message);
     } finally {
       await cleanupAttendanceOvertime(fixture);
       await admin.$disconnect();

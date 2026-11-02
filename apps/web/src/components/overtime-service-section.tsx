@@ -127,29 +127,37 @@ export function OvertimeServiceSection({
   const current = loaded?.id === authority.id ? loaded : null;
   const register = current?.register ?? null;
 
-  /** Run one command once: a second click while it is in flight does nothing. */
+  /**
+   * Run one command once: a second click while it is in flight does nothing. The register reloads
+   * whatever the API answered, since a refusal often means the record moved on since it was read.
+   */
   async function run(commandPath: string, body: unknown, message: string): Promise<void> {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setNotice(null);
     const id = authority.id;
+    let outcome: { kind: 'success' | 'error'; message: string };
     try {
       await request(commandPath, { method: 'POST', body: JSON.stringify(body ?? {}) });
       setOpen(null);
-      try {
-        const refreshed = (await request(path)) as OvertimeServiceRegister;
-        setLoaded((held) => (held?.id === id ? { id, register: refreshed, error: '' } : held));
-        setNotice({ kind: 'success', message });
-      } catch {
-        setNotice({ kind: 'error', message: `${message} The service list could not refresh.` });
-      }
+      outcome = { kind: 'success', message };
     } catch (failure: unknown) {
-      setNotice({
+      outcome = {
         kind: 'error',
         message: messageOf(failure, 'The overtime service action failed.'),
-      });
+      };
+    }
+    try {
+      const refreshed = (await request(path)) as OvertimeServiceRegister;
+      setLoaded((held) => (held?.id === id ? { id, register: refreshed, error: '' } : held));
+    } catch {
+      outcome = {
+        kind: 'error',
+        message: `${outcome.message} The service list could not refresh.`,
+      };
     } finally {
+      setNotice(outcome);
       busyRef.current = false;
       setBusy(false);
     }
@@ -257,7 +265,9 @@ export function OvertimeServiceSection({
                           )
                         }
                       />
-                      {open?.kind === 'certify' && open.recordId === record.id ? (
+                      {open?.kind === 'certify' &&
+                      open.recordId === record.id &&
+                      record.status === 'FOR_CERTIFICATION' ? (
                         <FormRow>
                           <CertifyForm
                             record={record}
@@ -273,7 +283,9 @@ export function OvertimeServiceSection({
                           />
                         </FormRow>
                       ) : null}
-                      {open?.kind === 'decline' && open.recordId === record.id ? (
+                      {open?.kind === 'decline' &&
+                      open.recordId === record.id &&
+                      record.status === 'FOR_CERTIFICATION' ? (
                         <FormRow>
                           <DeclineForm
                             record={record}

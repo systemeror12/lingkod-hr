@@ -3,6 +3,11 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { AttendanceLockedDaysService } from '../attendance-locked-days/attendance-locked-days.service';
+import {
+  AttendanceLockedDayError,
+  type LockedAttendanceDay,
+  type LockedAttendanceDayResult,
+} from '../attendance-locked-days/attendance-locked-days.types';
 import { requestDatabaseContext } from '../database-context';
 import { manilaToday, resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import {
@@ -111,20 +116,20 @@ export class OvertimeServiceRecordsService {
         select: recordSelect,
       });
       const summaries = records.map(toSummary);
-      const unlocked = new Set<string>();
+      const blocked = new Map<string, string>();
       for (const row of authority.employees) {
         const rendered = summaries
           .filter((record) => record.employeeId === row.employeeId && record.status === 'RENDERED')
           .map((record) => record.workDate);
         if (rendered.length === 0) continue;
-        const days = await this.lockedDays.readInTransaction(
+        const days = await this.submittableDays(
           transaction,
           context.agencyId,
           row.employeeId,
           rendered,
         );
-        for (const day of days) {
-          if (day.status !== 'LOCKED') unlocked.add(`${row.employeeId}:${day.workDate}`);
+        for (const [workDate, day] of days) {
+          if (day instanceof Error) blocked.set(`${row.employeeId}:${workDate}`, day.message);
         }
       }
       return {
@@ -145,15 +150,56 @@ export class OvertimeServiceRecordsService {
             records: own.map((record) => ({
               ...record,
               submitBlockedReason:
-                record.status === 'RENDERED' &&
-                unlocked.has(`${record.employeeId}:${record.workDate}`)
-                  ? attendanceNotLockedReason(record.workDate)
+                record.status === 'RENDERED'
+                  ? (blocked.get(`${record.employeeId}:${record.workDate}`) ?? null)
                   : null,
             })),
           };
         }),
       };
     });
+  }
+
+  /**
+   * Decide, for each Work Date, whether a RENDERED record on it can be submitted:
+   * its locked Attendance Day, or the refusal submission gives. One date whose
+   * locked Attendance can't be read refuses only that date: a failed batch read
+   * is retried date by date.
+   */
+  private async submittableDays(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDates: readonly string[],
+  ): Promise<Map<string, LockedAttendanceDay | Error>> {
+    const days = new Map<string, LockedAttendanceDay | Error>();
+    const keep = (day: LockedAttendanceDayResult) =>
+      days.set(
+        day.workDate,
+        day.status === 'LOCKED'
+          ? day
+          : new OvertimeServiceRecordError(
+              attendanceNotLockedReason(day.workDate),
+              409,
+              'OVERTIME_SERVICE_ATTENDANCE_NOT_LOCKED',
+            ),
+      );
+    const read = (dates: readonly string[]) =>
+      this.lockedDays.readInTransaction(transaction, agencyId, employeeId, dates);
+    try {
+      (await read(workDates)).forEach(keep);
+    } catch (error: unknown) {
+      if (!(error instanceof AttendanceLockedDayError) || workDates.length < 2) throw error;
+      for (const workDate of new Set(workDates)) {
+        try {
+          (await read([workDate])).forEach(keep);
+        } catch (dateError: unknown) {
+          if (!(dateError instanceof AttendanceLockedDayError)) throw dateError;
+          days.set(workDate, dateError);
+        }
+      }
+    }
+    return days;
   }
 
   /**
@@ -287,19 +333,13 @@ export class OvertimeServiceRecordsService {
           'OVERTIME_SERVICE_STATUS_INVALID',
         );
       }
-      const [day] = await this.lockedDays.readInTransaction(
-        transaction,
-        context.agencyId,
-        current.employeeId,
-        [current.workDate],
-      );
-      if (!day || day.status !== 'LOCKED') {
-        throw new OvertimeServiceRecordError(
-          attendanceNotLockedReason(current.workDate),
-          409,
-          'OVERTIME_SERVICE_ATTENDANCE_NOT_LOCKED',
-        );
-      }
+      const day = (
+        await this.submittableDays(transaction, context.agencyId, current.employeeId, [
+          current.workDate,
+        ])
+      ).get(current.workDate);
+      if (!day) throw new Error('The locked Attendance read returned no Work Date.');
+      if (day instanceof Error) throw day;
       const dayClassification = day.holidayClassification ?? day.dayType;
       await transaction.overtimeServiceRecord.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: recordId } },

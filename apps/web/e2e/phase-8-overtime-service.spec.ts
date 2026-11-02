@@ -430,5 +430,42 @@ test('records, submits, certifies, and declines overtime service in the authorit
   // Declining leaves the certified total alone.
   await expect(totals('Certified minutes')).toContainText('90');
 
+  // A refusal reloads the register: a record declined elsewhere shows as declined, without Certify.
+  await group.getByRole('button', { name: 'Record service for Alex Rivera' }).click();
+  const again = group.getByRole('form', { name: 'Record service for Alex Rivera' });
+  await again.getByLabel('Work Date').fill('2026-03-11');
+  await again.getByLabel('Claimed hours').fill('1');
+  await again.getByLabel('Accomplishment').fill('Indexed the March registers.');
+  await again.getByRole('button', { name: 'Record service' }).click();
+  const second = group.getByRole('row').filter({ hasText: 'Indexed the March registers.' });
+  await second
+    .getByRole('button', { name: 'Submit service on Mar 11, 2026 for certification' })
+    .click();
+  await expect(second.locator('th, td').nth(1)).toHaveText('For certification');
+  await withAdmin((admin) =>
+    admin.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+      await transaction.overtimeServiceRecord.updateMany({
+        where: { agencyId: officer.agencyId, accomplishment: 'Indexed the March registers.' },
+        data: { status: 'NOT_CERTIFIED', declineReason: 'Declined in another session.' },
+      });
+    }),
+  );
+  await second.getByRole('button', { name: 'Certify service on Mar 11, 2026' }).click();
+  const stale = group.getByRole('form', { name: 'Certify service on Mar 11, 2026' });
+  await stale.getByLabel('Certified minutes, net of breaks').fill('60');
+  await stale.getByRole('button', { name: 'Certify service' }).click();
+  await expect(
+    ui.getByRole('alert').filter({
+      hasText:
+        'Only a FOR_CERTIFICATION Overtime Service Record can be certified; this one is NOT_CERTIFIED.',
+    }),
+  ).toBeVisible();
+  await expect(second.locator('th, td').nth(1)).toHaveText('Not certified');
+  await expect(second).toContainText('Declined: Declined in another session.');
+  await expect(second.getByRole('button', { name: 'Certify service on Mar 11, 2026' })).toHaveCount(
+    0,
+  );
+
   await ui.context().close();
 });
