@@ -66,3 +66,35 @@ export class OvertimeServiceRecordError extends Error {
     this.name = 'OvertimeServiceRecordError';
   }
 }
+
+/**
+ * A record as the authority's Service tab reads it. `submitBlockedReason` is
+ * set only on a RENDERED record that can't be submitted yet, with the refusal
+ * submission would give: its Work Date has no locked Attendance, or its locked
+ * Attendance Day is ambiguous or unresolved.
+ */
+export interface OvertimeServiceRegisterRecord extends OvertimeServiceRecordSummary {
+  submitBlockedReason: string | null;
+}
+
+/**
+ * One covered Employee's service under an authority. `certifiedMinutes` totals
+ * their CERTIFIED records; `remainingMinutes` is the authorized hours in minutes
+ * less that total, as a decimal string because authorized hours carry four
+ * decimal places.
+ */
+export interface OvertimeServiceRegisterEmployee {
+  overtimeAuthorityEmployeeId: string;
+  employeeId: string;
+  employeeNumber: string;
+  employeeName: string;
+  authorizedHours: string;
+  certifiedMinutes: number;
+  remainingMinutes: string;
+  records: OvertimeServiceRegisterRecord[];
+}
+
+export interface OvertimeServiceRegister {
+  overtimeAuthorityId: string;
+  employees: OvertimeServiceRegisterEmployee[];
+}

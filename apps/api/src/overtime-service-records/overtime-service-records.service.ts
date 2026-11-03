@@ -3,6 +3,11 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { AttendanceLockedDaysService } from '../attendance-locked-days/attendance-locked-days.service';
+import {
+  AttendanceLockedDayError,
+  type LockedAttendanceDay,
+  type LockedAttendanceDayResult,
+} from '../attendance-locked-days/attendance-locked-days.types';
 import { requestDatabaseContext } from '../database-context';
 import { manilaToday, resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import {
@@ -16,6 +21,7 @@ import {
   type OvertimeServiceDeclineInput,
   type OvertimeServiceRecordInput,
   type OvertimeServiceRecordSummary,
+  type OvertimeServiceRegister,
   type OvertimeServiceStatus,
 } from './overtime-service-records.types';
 
@@ -59,6 +65,148 @@ export class OvertimeServiceRecordsService {
     @Inject(AttendanceLockedDaysService)
     private readonly lockedDays: AttendanceLockedDaysService,
   ) {}
+
+  /**
+   * Read an authority's service, grouped by covered Employee in Employee number
+   * order, each Employee's records by Work Date. Reading needs
+   * `overtime.authorities.read` reaching every covered Employee, the reach the
+   * authority's own detail read requires. A RENDERED record's Work Date is
+   * checked against locked Attendance, so the tab can say why it can't be
+   * submitted yet.
+   */
+  async listForAuthority(
+    context: RequestContext,
+    authorityId: string,
+  ): Promise<OvertimeServiceRegister> {
+    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const authority = await transaction.overtimeAuthority.findFirst({
+        where: { agencyId: context.agencyId, id: authorityId },
+        select: {
+          id: true,
+          employees: {
+            orderBy: { employee: { employeeNumber: 'asc' } },
+            select: {
+              id: true,
+              employeeId: true,
+              authorizedHours: true,
+              employee: { select: { employeeNumber: true, legalName: true } },
+            },
+          },
+        },
+      });
+      if (!authority) {
+        throw new OvertimeServiceRecordError(
+          'The Overtime Authority could not be found.',
+          404,
+          'OVERTIME_AUTHORITY_NOT_FOUND',
+        );
+      }
+      await assertEmployeesAccess(
+        transaction,
+        context,
+        'overtime.authorities.read',
+        authority.employees.map((row) => row.employeeId),
+      );
+      const records = await transaction.overtimeServiceRecord.findMany({
+        where: {
+          agencyId: context.agencyId,
+          overtimeAuthorityEmployeeId: { in: authority.employees.map((row) => row.id) },
+        },
+        orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        select: recordSelect,
+      });
+      const summaries = records.map(toSummary);
+      const blocked = new Map<string, string>();
+      for (const row of authority.employees) {
+        const rendered = summaries
+          .filter((record) => record.employeeId === row.employeeId && record.status === 'RENDERED')
+          .map((record) => record.workDate);
+        if (rendered.length === 0) continue;
+        const days = await this.submittableDays(
+          transaction,
+          context.agencyId,
+          row.employeeId,
+          rendered,
+        );
+        for (const [workDate, day] of days) {
+          if (day instanceof Error) blocked.set(`${row.employeeId}:${workDate}`, day.message);
+        }
+      }
+      return {
+        overtimeAuthorityId: authority.id,
+        employees: authority.employees.map((row) => {
+          const own = summaries.filter((record) => record.overtimeAuthorityEmployeeId === row.id);
+          const certifiedMinutes = own
+            .filter((record) => record.status === 'CERTIFIED')
+            .reduce((sum, record) => sum + (record.certifiedMinutes ?? 0), 0);
+          return {
+            overtimeAuthorityEmployeeId: row.id,
+            employeeId: row.employeeId,
+            employeeNumber: row.employee.employeeNumber,
+            employeeName: row.employee.legalName,
+            authorizedHours: row.authorizedHours.toFixed(4),
+            certifiedMinutes,
+            remainingMinutes: row.authorizedHours.times(60).minus(certifiedMinutes).toString(),
+            records: own.map((record) => ({
+              ...record,
+              submitBlockedReason:
+                record.status === 'RENDERED'
+                  ? (blocked.get(`${record.employeeId}:${record.workDate}`) ?? null)
+                  : null,
+            })),
+          };
+        }),
+      };
+    });
+  }
+
+  /**
+   * Decide, for each Work Date, whether a RENDERED record on it can be submitted:
+   * its locked Attendance Day, or the refusal submission gives. One date whose
+   * locked Attendance can't be read refuses only that date: a failed batch read
+   * is retried date by date, and a failed one-date read is that date's refusal.
+   */
+  private async submittableDays(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDates: readonly string[],
+  ): Promise<Map<string, LockedAttendanceDay | Error>> {
+    const days = new Map<string, LockedAttendanceDay | Error>();
+    const keep = (day: LockedAttendanceDayResult) =>
+      days.set(
+        day.workDate,
+        day.status === 'LOCKED'
+          ? day
+          : new OvertimeServiceRecordError(
+              attendanceNotLockedReason(day.workDate),
+              409,
+              'OVERTIME_SERVICE_ATTENDANCE_NOT_LOCKED',
+            ),
+      );
+    const read = (dates: readonly string[]) =>
+      this.lockedDays.readInTransaction(transaction, agencyId, employeeId, dates);
+    try {
+      (await read(workDates)).forEach(keep);
+    } catch (error: unknown) {
+      if (!(error instanceof AttendanceLockedDayError)) throw error;
+      const dates = [...new Set(workDates)];
+      for (const workDate of dates) {
+        // A one-date batch already failed on that date, so its error is the date's own.
+        if (dates.length === 1) {
+          days.set(workDate, error);
+          continue;
+        }
+        try {
+          (await read([workDate])).forEach(keep);
+        } catch (dateError: unknown) {
+          if (!(dateError instanceof AttendanceLockedDayError)) throw dateError;
+          days.set(workDate, dateError);
+        }
+      }
+    }
+    return days;
+  }
 
   /**
    * Create a RENDERED record. The authority must be APPROVED and cover the
@@ -191,19 +339,13 @@ export class OvertimeServiceRecordsService {
           'OVERTIME_SERVICE_STATUS_INVALID',
         );
       }
-      const [day] = await this.lockedDays.readInTransaction(
-        transaction,
-        context.agencyId,
-        current.employeeId,
-        [current.workDate],
-      );
-      if (!day || day.status !== 'LOCKED') {
-        throw new OvertimeServiceRecordError(
-          `Attendance for ${current.workDate} is not locked yet, so its Actual Overtime Hours are not known. Submit once the Attendance Period covering it is locked.`,
-          409,
-          'OVERTIME_SERVICE_ATTENDANCE_NOT_LOCKED',
-        );
-      }
+      const day = (
+        await this.submittableDays(transaction, context.agencyId, current.employeeId, [
+          current.workDate,
+        ])
+      ).get(current.workDate);
+      if (!day) throw new Error('The locked Attendance read returned no Work Date.');
+      if (day instanceof Error) throw day;
       const dayClassification = day.holidayClassification ?? day.dayType;
       await transaction.overtimeServiceRecord.update({
         where: { agencyId_id: { agencyId: context.agencyId, id: recordId } },
@@ -479,6 +621,12 @@ async function readRecord(
     select: recordSelect,
   });
   if (!record) throw recordNotFound();
+  return toSummary(record);
+}
+
+function toSummary(
+  record: Prisma.OvertimeServiceRecordGetPayload<{ select: typeof recordSelect }>,
+): OvertimeServiceRecordSummary {
   return {
     id: record.id,
     agencyId: record.agencyId,
@@ -516,17 +664,32 @@ async function assertEmployeeAccess(
   permission: string,
   employeeId: string,
 ): Promise<void> {
+  await assertEmployeesAccess(transaction, context, permission, [employeeId]);
+}
+
+/** As `assertEmployeeAccess`, for every Employee given, resolving the scope once. */
+async function assertEmployeesAccess(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  permission: string,
+  employeeIds: readonly string[],
+): Promise<void> {
   if (!context.agencyId || !context.userId || !context.membershipId) throw forbidden();
   if (hasPermission(context, permission, { agencyId: context.agencyId })) return;
   const scope = await resolveEmployeeScope(context, permission, transaction);
   if (!scope) throw forbidden();
-  if (!scopeCovers(scope, employeeId)) {
+  if (employeeIds.some((employeeId) => !scopeCovers(scope, employeeId))) {
     throw new OvertimeServiceRecordError(
       'The Employee is outside the scope of the current Agency Membership.',
       403,
       'OVERTIME_SERVICE_SCOPE_FORBIDDEN',
     );
   }
+}
+
+/** Why a RENDERED record can't be submitted yet: its Work Date has no locked Attendance. */
+function attendanceNotLockedReason(workDate: string): string {
+  return `Attendance for ${workDate} is not locked yet, so its Actual Overtime Hours are not known. Submit once the Attendance Period covering it is locked.`;
 }
 
 function notAuthorized(reason: string): OvertimeServiceRecordError {

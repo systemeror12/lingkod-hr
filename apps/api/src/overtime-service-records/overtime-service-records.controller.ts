@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpException,
   Inject,
   Param,
@@ -24,6 +25,7 @@ import { OvertimeServiceRecordsService } from './overtime-service-records.servic
 import {
   OvertimeServiceRecordError,
   type OvertimeServiceRecordSummary,
+  type OvertimeServiceRegister,
 } from './overtime-service-records.types';
 
 function validationFields(issues: readonly { path: PropertyKey[]; message: string }[]) {
@@ -67,6 +69,35 @@ export class OvertimeServiceRecordsController {
     private readonly service: OvertimeServiceRecordsService,
   ) {}
 
+  /** An authority's service by covered Employee, for its Service tab. */
+  @Get(':agencyId/overtime-authorities/:authorityId/service-records')
+  @RequirePermission('overtime.authorities.read')
+  async listForAuthority(
+    @Param('agencyId') agencyId: string,
+    @Param('authorityId') authorityId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<OvertimeServiceRegister> {
+    this.assertAgency(agencyId, context, 'OVERTIME_SERVICE_READ_FORBIDDEN');
+    const parsed = overtimeServiceRecordIdSchema.safeParse(authorityId);
+    if (!parsed.success) {
+      throw new HttpException(
+        {
+          error: {
+            code: 'OVERTIME_AUTHORITY_NOT_FOUND',
+            message: 'The Overtime Authority could not be found.',
+            requestId: context.requestId,
+          },
+        },
+        404,
+      );
+    }
+    try {
+      return await this.service.listForAuthority(context, parsed.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   @Post(':agencyId/overtime-service-records')
   @RequirePermission('overtime.service.record')
   async record(
@@ -74,7 +105,7 @@ export class OvertimeServiceRecordsController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeServiceRecordSummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_SERVICE_WRITE_FORBIDDEN');
     const parsed = overtimeServiceRecordSchema.safeParse(body);
     if (!parsed.success) throw invalidInput(parsed.error.issues, context.requestId);
     try {
@@ -91,7 +122,7 @@ export class OvertimeServiceRecordsController {
     @Param('recordId') recordId: string,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeServiceRecordSummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_SERVICE_WRITE_FORBIDDEN');
     const id = this.parseRecordId(recordId, context);
     try {
       return await this.service.submit(context, id);
@@ -108,7 +139,7 @@ export class OvertimeServiceRecordsController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeServiceRecordSummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_SERVICE_WRITE_FORBIDDEN');
     const id = this.parseRecordId(recordId, context);
     const parsed = overtimeServiceCertificationSchema.safeParse(body);
     if (!parsed.success) throw invalidInput(parsed.error.issues, context.requestId);
@@ -127,7 +158,7 @@ export class OvertimeServiceRecordsController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<OvertimeServiceRecordSummary> {
-    this.assertWriteAgency(agencyId, context);
+    this.assertAgency(agencyId, context, 'OVERTIME_SERVICE_WRITE_FORBIDDEN');
     const id = this.parseRecordId(recordId, context);
     const parsed = overtimeServiceDeclineSchema.safeParse(body);
     if (!parsed.success) throw invalidInput(parsed.error.issues, context.requestId);
@@ -153,13 +184,13 @@ export class OvertimeServiceRecordsController {
     );
   }
 
-  private assertWriteAgency(agencyId: string, context: RequestContext): void {
+  private assertAgency(agencyId: string, context: RequestContext, code: string): void {
     const parsed = agencyIdSchema.safeParse(agencyId);
     if (!parsed.success || parsed.data !== context.agencyId) {
       throw new HttpException(
         {
           error: {
-            code: 'OVERTIME_SERVICE_WRITE_FORBIDDEN',
+            code,
             message: 'The requested Agency is outside the active context.',
             requestId: context.requestId,
           },
