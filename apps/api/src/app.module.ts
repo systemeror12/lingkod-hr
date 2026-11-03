@@ -37,6 +37,7 @@ import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leav
 import { OvertimeAuthoritiesModule } from './overtime-authorities/overtime-authorities.module';
 import { CocAccountsModule } from './coc-accounts/coc-accounts.module';
 import { OvertimeServiceRecordsModule } from './overtime-service-records/overtime-service-records.module';
+import { CocEarnedCertificatesModule } from './coc-earned-certificates/coc-earned-certificates.module';
 
 @Module({
   imports: [
@@ -77,6 +78,7 @@ import { OvertimeServiceRecordsModule } from './overtime-service-records/overtim
     OvertimeAuthoritiesModule,
     CocAccountsModule,
     OvertimeServiceRecordsModule,
+    CocEarnedCertificatesModule,
   ],
   controllers: [HealthController],
 })
