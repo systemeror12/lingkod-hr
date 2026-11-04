@@ -405,7 +405,15 @@ function requestSummary(record: RequestRecord): ApprovalRequestSummary {
 const DOMAIN_OPENED_SUBJECT_TYPES: ReadonlySet<string> = new Set([
   'OVERTIME_AUTHORITY',
   'COC_EARNED_CERTIFICATE',
+  'CTO_REQUEST',
 ]);
+
+/**
+ * Subject types whose earlier route steps also move the subject. Only the final
+ * approval reaches a completion handler, so the generic API refuses every decision
+ * rather than advance the route past a subject that stayed where it was.
+ */
+const MODULE_DECIDED_SUBJECT_TYPES: ReadonlySet<string> = new Set(['CTO_REQUEST']);
 
 function isApprovalSubjectType(
   value: string,
@@ -1223,15 +1231,27 @@ export class ApprovalsService {
     this.assertDecisionReason(decision, rawComments);
     return withDatabaseContext(
       requestDatabaseContext(context, 'approval-transition'),
-      (transaction) =>
-        this.decideInTransaction(
+      async (transaction) => {
+        const subject = await transaction.approvalRequest.findFirst({
+          where: { agencyId: context.agencyId, id: requestId },
+          select: { subjectType: true },
+        });
+        if (subject && MODULE_DECIDED_SUBJECT_TYPES.has(subject.subjectType)) {
+          throw new ApprovalServiceError(
+            `A ${subject.subjectType} Approval Request is decided only by its owning module.`,
+            400,
+            'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+          );
+        }
+        return this.decideInTransaction(
           transaction,
           context,
           requestId,
           decision,
           rawComments,
           rawIdempotencyKey,
-        ),
+        );
+      },
     );
   }
 

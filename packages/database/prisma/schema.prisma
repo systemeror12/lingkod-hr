@@ -169,6 +169,8 @@ model Agency {
   cocEarnedCertificates         CocEarnedCertificate[]
   cocEarnedCertificateLines     CocEarnedCertificateLine[]
   cocLedgerEntries              CocLedgerEntry[]
+  ctoRequests                   CtoRequest[]
+  ctoRequestDates               CtoRequestDate[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -475,6 +477,7 @@ model AgencyMembership {
   cocCertificatesPrepared     CocEarnedCertificate[]  @relation("CocEarnedCertificatePreparer")
   cocCertificatesApproved     CocEarnedCertificate[]  @relation("CocEarnedCertificateApprover")
   cocLedgerEntriesPosted      CocLedgerEntry[]    @relation("CocLedgerEntryPoster")
+  ctoRequestsApproved         CtoRequest[]        @relation("CtoRequestApprover")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -2078,6 +2081,7 @@ model Employee {
   overtimeServiceRecords         OvertimeServiceRecord[]         @relation("OvertimeServiceRecordEmployee")
   cocAccounts                    CocAccount[]                    @relation("CocAccountEmployee")
   cocEarnedCertificates          CocEarnedCertificate[]          @relation("CocEarnedCertificateEmployee")
+  ctoRequests                    CtoRequest[]                    @relation("CtoRequestEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -5369,6 +5373,7 @@ model CocAccount {
   agency        Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
   employee      Employee         @relation("CocAccountEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
   ledgerEntries CocLedgerEntry[] @relation("CocLedgerEntries")
+  ctoRequests   CtoRequest[]     @relation("CtoRequestCocAccount")
 
   @@unique([agencyId, id])
   @@map("coc_accounts")
@@ -5404,4 +5409,45 @@ model CocLedgerEntry {
   @@index([agencyId, cocAccountId, effectiveDate])
   @@index([agencyId, sourceType, sourceId])
   @@map("coc_ledger_entries")
+}
+
+model CtoRequest {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  employeeId             String    @map("employee_id") @db.Uuid
+  cocAccountId           String    @map("coc_account_id") @db.Uuid
+  status                 String
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency     Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee   Employee          @relation("CtoRequestEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  cocAccount CocAccount        @relation("CtoRequestCocAccount", fields: [agencyId, cocAccountId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy AgencyMembership? @relation("CtoRequestApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  dates      CtoRequestDate[]  @relation("CtoRequestDates")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@map("cto_requests")
+}
+
+model CtoRequestDate {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId             String    @map("agency_id") @db.Uuid
+  ctoRequestId         String    @map("cto_request_id") @db.Uuid
+  workDate             DateTime  @map("work_date") @db.Date
+  unit                 String
+  startsAt             DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt               DateTime? @map("ends_at") @db.Timestamptz(6)
+  chargedMinutes       Int       @map("charged_minutes")
+  attendanceCtoInputId String?   @map("attendance_cto_input_id") @db.Uuid
+
+  agency  Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request CtoRequest @relation("CtoRequestDates", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([ctoRequestId, workDate])
+  @@unique([agencyId, id])
+  @@index([agencyId, workDate])
+  @@map("cto_request_dates")
 }
