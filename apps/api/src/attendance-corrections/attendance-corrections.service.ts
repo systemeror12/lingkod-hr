@@ -23,6 +23,12 @@ import { DtrsService } from '../dtrs/dtrs.service';
 import { AttendancePeriodsService } from '../attendance-periods/attendance-periods.service';
 import { AttendancePostedLeaveInputError } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
 import {
+  assertCtoReplacementPlaceableInTransaction,
+  createCtoSuccessorInTransaction,
+} from '../attendance-cto-inputs/attendance-cto-inputs.corrections';
+import { ctoInputFacts } from '../attendance-cto-inputs/attendance-cto-inputs.types';
+import { findLockedWorkDate } from '../attendance-work-date-lock';
+import {
   ATTENDANCE_CORRECTION_AUDIT_WRITER,
   type AttendanceCorrectionAuditWriter,
 } from './attendance-corrections.audit';
@@ -36,11 +42,14 @@ import {
 import {
   ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND,
   ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
+  ATTENDANCE_CORRECTION_CTO_INPUT_ROUTE_CODE,
   ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE,
   ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE,
   ATTENDANCE_CORRECTION_ROUTE_CODE,
   AttendanceCorrectionServiceError,
+  CTO_CANCELLATION_SOURCE_TYPE,
   attendanceCorrectionContextFactSchema,
+  attendanceCorrectionCtoFactSchema,
   attendanceCorrectionEventFactSchema,
   attendanceCorrectionPostedLeaveFactSchema,
   type AttendanceCorrectionAction,
@@ -52,12 +61,15 @@ import {
   type AttendanceCorrectionState,
   type AttendanceCorrectionSummary,
   type AttendanceCorrectionTargetType,
+  type CtoInputHandoffInput,
+  type CtoInputHandoffStatus,
   type PostedLeaveHandoff,
   type PostedLeaveHandoffInput,
   type PostedLeaveHandoffStatus,
   type RequestedAttendanceContextFact,
   type RequestedAttendanceEventFact,
   type RequestedAttendanceFact,
+  type RequestedCtoFact,
   type RequestedPostedLeaveFact,
 } from './attendance-corrections.types';
 
@@ -67,6 +79,7 @@ const CORRECTION_REVIEW_PERMISSIONS = ['attendance.corrections.approve'] as cons
 const CORRECTION_AUTHORIZE_PERMISSIONS = ['attendance.corrections.authorize_locked'] as const;
 const LEAVE_CANCELLATION_SOURCE_TYPE = 'LeaveCancellation';
 const LEAVE_CANCELLATION_DECISION_REASON = 'Leave Cancellation approved.';
+const CTO_CANCELLATION_DECISION_REASON = 'CTO cancellation approved.';
 
 /** A VOID proposes no fact; every VOID fingerprints this same placeholder. */
 const VOID_FACT: RequestedAttendanceEventFact = {
@@ -76,7 +89,7 @@ const VOID_FACT: RequestedAttendanceEventFact = {
   reason: null,
 };
 
-type CorrectionRouteKind = 'OPEN' | 'LOCKED' | 'POSTED_LEAVE';
+type CorrectionRouteKind = 'OPEN' | 'LOCKED' | 'POSTED_LEAVE' | 'CTO_INPUT';
 
 const CORRECTION_ROUTES: Record<CorrectionRouteKind, { code: string; steps: string[] }> = {
   OPEN: { code: ATTENDANCE_CORRECTION_ROUTE_CODE, steps: ['attendance.corrections.approve'] },
@@ -87,6 +100,11 @@ const CORRECTION_ROUTES: Record<CorrectionRouteKind, { code: string; steps: stri
   // The approved Leave Cancellation is the factual review, so only authorization remains.
   POSTED_LEAVE: {
     code: ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE,
+    steps: ['attendance.corrections.authorize_locked'],
+  },
+  // The approved CTO cancellation is the factual review, so only authorization remains.
+  CTO_INPUT: {
+    code: ATTENDANCE_CORRECTION_CTO_INPUT_ROUTE_CODE,
     steps: ['attendance.corrections.authorize_locked'],
   },
 };
@@ -128,6 +146,11 @@ const correctionSelect = {
 } as const;
 
 type CorrectionRecord = Prisma.AttendanceCorrectionGetPayload<{ select: typeof correctionSelect }>;
+
+/** A source module's handoff: its approved cancellation is the factual review. */
+function isHandoffTarget(targetType: string): boolean {
+  return targetType === 'POSTED_LEAVE_INPUT' || targetType === 'CTO_INPUT';
+}
 
 function databaseContext(context: RequestContext) {
   return requestDatabaseContext(context, 'approval-transition');
@@ -808,9 +831,9 @@ export class AttendanceCorrectionsService implements OnModuleInit {
   }
 
   /**
-   * The authorizer of a Leave handoff cannot change the Leave fact. When it
-   * cannot be authorized, they record why; the correction stays pending at
-   * FOR_AUTHORIZATION and the Leave workspace shows the reason.
+   * The authorizer of a Leave or CTO handoff cannot change the source fact. When
+   * it cannot be authorized, they record why; the correction stays pending at
+   * FOR_AUTHORIZATION and the source module shows the reason.
    */
   async recordBlockingReason(
     context: RequestContext,
@@ -838,7 +861,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       }
       await this.lockCorrection(transaction, context.agencyId, correctionId);
       const record = await this.requireCorrection(transaction, context, correctionId);
-      if (record.targetType !== 'POSTED_LEAVE_INPUT' || record.status !== 'FOR_AUTHORIZATION') {
+      if (!isHandoffTarget(record.targetType) || record.status !== 'FOR_AUTHORIZATION') {
         throw this.invalidState(record.status, 'record a blocking reason');
       }
       await this.assertMayAuthorize(transaction, context, record);
@@ -1061,6 +1084,265 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     );
   }
 
+  /**
+   * The COC module's handoff when an approved CTO cancellation changes a CTO
+   * input on a locked Work Date, inside its transaction. Attendance accepts a
+   * CTO_INPUT correction at FOR_AUTHORIZATION: the cancellation is its factual
+   * review, and a different HR Administrator authorizes the Locked Attendance
+   * Adjustment. Locked records change only then. A retry with the same effect
+   * key returns the same correction, and the same key with different facts is a
+   * conflict. An open Work Date is refused, because it does not need a
+   * correction.
+   */
+  async handOffCtoInputInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: CtoInputHandoffInput,
+  ): Promise<{ id: string }> {
+    const { agencyId } = context;
+    const { cancellation } = input;
+    const effectKey = input.effectKey.trim();
+    if (!effectKey) throw this.factInvalid();
+    const reason = cancellation.reason.trim();
+    if (!reason) throw this.reasonRequired();
+    if (input.coverageMode === 'NONE' && (input.startsAt || input.endsAt)) throw this.factInvalid();
+    const requestedAction = input.coverageMode === 'NONE' ? 'VOID' : 'REPLACE';
+
+    // One Employee's CTO inputs change one at a time, so a concurrent retry
+    // sees the committed winner. This is the lock CTO input recording takes.
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${agencyId}:attendance-cto:${input.employeeId}`}, 0))`,
+    );
+    const predecessor = await transaction.attendanceCtoInput.findFirst({
+      where: { agencyId, employeeId: input.employeeId, id: input.predecessorInputId },
+      select: { workDate: true, coverageMode: true, successors: { select: { id: true } } },
+    });
+    if (!predecessor) {
+      throw new AttendanceCorrectionServiceError(
+        'The predecessor is not a CTO input for this Employee.',
+        404,
+        'ATTENDANCE_CORRECTION_CTO_INPUT_NOT_FOUND',
+      );
+    }
+    const workDate = formatDate(predecessor.workDate);
+    const facts =
+      input.coverageMode === 'NONE'
+        ? null
+        : ctoInputFacts({
+            sourceKey: effectKey,
+            employeeId: input.employeeId,
+            sourceType: CTO_CANCELLATION_SOURCE_TYPE,
+            sourceId: cancellation.id,
+            workDate,
+            coverageMode: input.coverageMode,
+            startsAt: input.startsAt,
+            endsAt: input.endsAt,
+          });
+    const fact: RequestedAttendanceFact =
+      input.coverageMode === 'NONE'
+        ? VOID_FACT
+        : {
+            workDate,
+            coverageMode: input.coverageMode,
+            ...(facts?.startsAt ? { startsAt: facts.startsAt.toISOString() } : {}),
+            ...(facts?.endsAt ? { endsAt: facts.endsAt.toISOString() } : {}),
+          };
+    const requestedRecord = facts ? this.factRecordJson('CTO_INPUT', fact) : null;
+
+    // A retry succeeds before any check of today's state, because by now the
+    // route may have changed or the correction may have superseded its target.
+    const existing = await transaction.attendanceCorrection.findFirst({
+      where: { agencyId, effectKey },
+      select: {
+        id: true,
+        employeeId: true,
+        targetId: true,
+        requestedAction: true,
+        requestedRecord: true,
+        decidedByMembershipId: true,
+        evidence: { select: { sourceType: true, sourceId: true } },
+      },
+    });
+    if (existing) {
+      const same =
+        existing.employeeId === input.employeeId &&
+        existing.targetId === input.predecessorInputId &&
+        existing.requestedAction === requestedAction &&
+        existing.decidedByMembershipId === cancellation.approvingOfficialMembershipId &&
+        canonicalJson(existing.requestedRecord) === canonicalJson(requestedRecord) &&
+        existing.evidence.some(
+          (row) =>
+            row.sourceType === CTO_CANCELLATION_SOURCE_TYPE && row.sourceId === cancellation.id,
+        );
+      if (!same) {
+        throw new AttendanceCorrectionServiceError(
+          'The effect key already names a different Attendance Correction.',
+          409,
+          'ATTENDANCE_CORRECTION_EFFECT_KEY_CONFLICT',
+        );
+      }
+      return { id: existing.id };
+    }
+
+    if (predecessor.successors.length > 0) {
+      throw new AttendanceCorrectionServiceError(
+        'The CTO input has already been superseded.',
+        409,
+        'ATTENDANCE_CORRECTION_CTO_INPUT_NOT_CURRENT',
+      );
+    }
+    const locked = await findLockedWorkDate(transaction, agencyId, [workDate]);
+    if (!locked) {
+      throw new AttendanceCorrectionServiceError(
+        'The Work Date is not in a locked Attendance Period, so it needs no Attendance Correction.',
+        409,
+        'ATTENDANCE_CORRECTION_WORK_DATE_NOT_LOCKED',
+        [`WORK_DATE:${workDate}`],
+      );
+    }
+    const pending = await transaction.attendanceCorrection.findFirst({
+      where: { agencyId, targetType: 'CTO_INPUT', targetId: input.predecessorInputId },
+      select: { id: true },
+    });
+    if (pending) {
+      throw new AttendanceCorrectionServiceError(
+        'The CTO input already has an Attendance Correction.',
+        409,
+        'ATTENDANCE_CORRECTION_CTO_INPUT_ALREADY_CORRECTED',
+        [`CORRECTION:${pending.id}`],
+      );
+    }
+    if (facts && input.coverageMode !== 'NONE') {
+      await assertCtoReplacementPlaceableInTransaction(transaction, agencyId, {
+        employeeId: input.employeeId,
+        predecessorInputId: input.predecessorInputId,
+        coverageMode: input.coverageMode,
+        ...facts,
+        coverageWindow: await this.days.workDateCoverageWindowInTransaction(
+          transaction,
+          agencyId,
+          input.employeeId,
+          workDate,
+        ),
+      });
+    }
+    const preview = await this.computePreview(
+      transaction,
+      context,
+      input.employeeId,
+      'CTO_INPUT',
+      requestedAction,
+      input.predecessorInputId,
+      fact,
+    );
+    if (
+      preview.lockedPeriodVersionIds.length === 0 ||
+      preview.days.some((day) => day.periodStatus === 'FINALIZED' && !day.lockedPeriodVersionId)
+    ) {
+      throw new AttendanceCorrectionServiceError(
+        'An affected finalized Attendance Period has no locked version for this Employee to adjust.',
+        409,
+        'ATTENDANCE_CORRECTION_LOCKED_VERSION_REQUIRED',
+      );
+    }
+    const route = await this.resolveCorrectionRoute(transaction, context, 'CTO_INPUT');
+    const now = new Date();
+    const created = await transaction.attendanceCorrection.create({
+      data: {
+        agencyId,
+        employeeId: input.employeeId,
+        initiatedByMembershipId: cancellation.approvingOfficialMembershipId,
+        recordedByMembershipId: context.membershipId,
+        targetType: 'CTO_INPUT',
+        requestedAction,
+        targetId: input.predecessorInputId,
+        status: 'FOR_AUTHORIZATION',
+        ...(requestedRecord ? { requestedRecord } : {}),
+        reason,
+        approvalRouteVersionId: route.id,
+        impactPreview: preview as unknown as Prisma.InputJsonValue,
+        submittedAt: now,
+        decidedByMembershipId: cancellation.approvingOfficialMembershipId,
+        decidedAt: cancellation.approvedAt,
+        decisionReason: CTO_CANCELLATION_DECISION_REASON,
+        excludedDeciderMembershipIds: [cancellation.approvingOfficialMembershipId],
+        effectKey,
+        updatedAt: now,
+      },
+      select: { id: true },
+    });
+    await transaction.attendanceCorrectionEvidence.create({
+      data: {
+        agencyId,
+        attendanceCorrectionId: created.id,
+        documentVersionId: null,
+        sourceType: CTO_CANCELLATION_SOURCE_TYPE,
+        sourceId: cancellation.id,
+      },
+    });
+    const request = await this.approvals.createRequestInTransaction(
+      transaction,
+      context,
+      {
+        routeCode: CORRECTION_ROUTES.CTO_INPUT.code,
+        subjectType: ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE,
+        subjectId: created.id,
+        effectiveDate: manilaToday(),
+      },
+      undefined,
+      route.id,
+    );
+    await this.approvals.submitInTransaction(transaction, context, request.id);
+    await this.auditWriter.write(transaction, {
+      agencyId,
+      actorUserId: context.userId,
+      actorMembershipId: context.membershipId,
+      actorType: 'USER',
+      action: 'ATTENDANCE_CORRECTION_FOR_AUTHORIZATION',
+      entityType: 'AttendanceCorrection',
+      entityId: created.id,
+      previousStatus: null,
+      newStatus: 'FOR_AUTHORIZATION',
+      reason,
+      requestId: context.requestId,
+      metadata: {
+        source: 'CTO_CANCELLATION',
+        ctoCancellationId: cancellation.id,
+        predecessorInputId: input.predecessorInputId,
+        approvalRequestId: request.id,
+        approvalRouteVersionId: route.id,
+        affectedWorkDates: preview.days.map((day) => day.workDate),
+        lockedPeriodVersionIds: preview.lockedPeriodVersionIds,
+        previewFingerprint: preview.fingerprint,
+      },
+    });
+    return { id: created.id };
+  }
+
+  /** Live status of the corrections COC handed off, keyed by correction id. */
+  async ctoInputHandoffStatusesInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    correctionIds: readonly string[],
+  ): Promise<Map<string, CtoInputHandoffStatus>> {
+    if (correctionIds.length === 0) return new Map();
+    const rows = await transaction.attendanceCorrection.findMany({
+      where: { agencyId, id: { in: [...correctionIds] }, targetType: 'CTO_INPUT' },
+      select: { id: true, status: true, blockingReason: true, blockedAt: true },
+    });
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          correctionId: row.id,
+          status: row.status as AttendanceCorrectionState,
+          blockingReason: row.blockingReason,
+          blockedAt: row.blockedAt ? row.blockedAt.toISOString() : null,
+        },
+      ]),
+    );
+  }
+
   async cancel(
     context: RequestContext,
     correctionId: string,
@@ -1192,13 +1474,12 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       unique(storedPreview.days.map((day) => day.attendancePeriodId)),
     );
     const preview = await this.computePreviewFromRecord(transaction, context, record);
-    // A posted-leave correction rests on the approved Leave Cancellation, not
-    // on a reviewer's reading of the preview. An earlier authorization over
-    // the same locked period moves its versions forward, so the authorizer
-    // applies against the current locked versions and the applied preview is
-    // recorded instead.
-    if (record.targetType !== 'POSTED_LEAVE_INPUT')
-      await this.assertPreviewUnchanged(record, preview);
+    // A handed-off correction rests on the approved cancellation, not on a
+    // reviewer's reading of the preview. An earlier authorization over the same
+    // locked period moves its versions forward, so the authorizer applies
+    // against the current locked versions and the applied preview is recorded
+    // instead.
+    if (!isHandoffTarget(record.targetType)) await this.assertPreviewUnchanged(record, preview);
     const locked = preview.lockedPeriodVersionIds.length > 0;
     if (locked && command !== 'AUTHORIZE') {
       throw this.approvalEffectRequired();
@@ -1244,6 +1525,10 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     const successorInputId =
       record.targetType === 'POSTED_LEAVE_INPUT'
         ? await this.createPostedLeaveSuccessor(transaction, context, record, fact)
+        : null;
+    const successorCtoInputId =
+      record.targetType === 'CTO_INPUT'
+        ? await this.createCtoSuccessor(transaction, context, record, fact)
         : null;
     const daysByPeriod = new Map<string, string[]>();
     for (const day of preview.days) {
@@ -1306,7 +1591,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         status: 'APPLIED',
         appliedByMembershipId: context.membershipId,
         appliedAt: now,
-        ...(record.targetType === 'POSTED_LEAVE_INPUT'
+        ...(isHandoffTarget(record.targetType)
           ? { impactPreview: preview as unknown as Prisma.InputJsonValue }
           : {}),
         ...(locked
@@ -1337,6 +1622,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         targetType: record.targetType,
         originalTargetId: record.targetId,
         successorPostedLeaveInputId: successorInputId,
+        successorCtoInputId,
         locked,
         affectedWorkDates: preview.days.map((day) => day.workDate),
         successorAttendanceDayIds: [...successorDayIds.values()],
@@ -1401,6 +1687,50 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         predecessorInputId: predecessor.id,
       },
     );
+    return successor.id;
+  }
+
+  /**
+   * The authorized CTO successor. A VOID withdraws the predecessor's coverage
+   * with a `NONE` successor on the same Work Date.
+   */
+  private async createCtoSuccessor(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    record: CorrectionRecord,
+    fact: RequestedAttendanceFact,
+  ): Promise<string> {
+    const [evidence, predecessor] = await Promise.all([
+      transaction.attendanceCorrectionEvidence.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          attendanceCorrectionId: record.id,
+          sourceType: CTO_CANCELLATION_SOURCE_TYPE,
+        },
+        select: { sourceId: true },
+      }),
+      transaction.attendanceCtoInput.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          id: record.targetId ?? '',
+          employeeId: record.employeeId,
+        },
+        select: { id: true, workDate: true },
+      }),
+    ]);
+    if (!evidence?.sourceId || !predecessor) throw this.factInvalid();
+    const replacement = record.requestedAction === 'VOID' ? null : (fact as RequestedCtoFact);
+    const successor = await createCtoSuccessorInTransaction(transaction, context.agencyId, {
+      sourceKey: `attendance-correction:${record.id}`,
+      employeeId: record.employeeId,
+      sourceType: CTO_CANCELLATION_SOURCE_TYPE,
+      sourceId: evidence.sourceId,
+      predecessorInputId: predecessor.id,
+      workDate: predecessor.workDate,
+      coverageMode: replacement?.coverageMode ?? 'NONE',
+      startsAt: replacement?.startsAt ? new Date(replacement.startsAt) : null,
+      endsAt: replacement?.endsAt ? new Date(replacement.endsAt) : null,
+    });
     return successor.id;
   }
 
@@ -1652,6 +1982,11 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       if (!parsed.success) throw this.factInvalid();
       return parsed.data;
     }
+    if (record.targetType === 'CTO_INPUT') {
+      const parsed = attendanceCorrectionCtoFactSchema.safeParse(record.requestedRecord);
+      if (!parsed.success) throw this.factInvalid();
+      return parsed.data;
+    }
     if (record.targetType === 'ATTENDANCE_EVENT') {
       const parsed = attendanceCorrectionEventFactSchema.safeParse(record.requestedRecord);
       if (!parsed.success) throw this.factInvalid();
@@ -1703,9 +2038,9 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       targetId && requestedAction !== 'ADD'
         ? await this.targetWorkDates(transaction, context, employeeId, targetType, targetId)
         : [];
-    // A posted-leave successor never covers a date outside its predecessor.
+    // A handed-off successor never covers a date outside its predecessor.
     const proposedWorkDates =
-      requestedAction !== 'VOID' && targetType !== 'POSTED_LEAVE_INPUT'
+      requestedAction !== 'VOID' && !isHandoffTarget(targetType)
         ? await this.proposedWorkDates(transaction, context, employeeId, targetType, fact)
         : [];
     const affectedDates = unique([...targetWorkDates, ...proposedWorkDates]).sort();
@@ -1784,12 +2119,11 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         requestedAction,
         targetId,
         fact,
-        // Leave's handoff waits for authorization while open Work Dates keep
+        // A handoff waits for authorization while open Work Dates keep
         // recalculating, so only the locked days bind its preview.
-        days:
-          targetType === 'POSTED_LEAVE_INPUT'
-            ? preview.days.filter((day) => day.lockedPeriodVersionId !== null)
-            : preview.days,
+        days: isHandoffTarget(targetType)
+          ? preview.days.filter((day) => day.lockedPeriodVersionId !== null)
+          : preview.days,
         lockedPeriodVersionIds: preview.lockedPeriodVersionIds,
       }),
     };
@@ -1819,6 +2153,24 @@ export class AttendanceCorrectionsService implements OnModuleInit {
         select: { workDate: true },
       });
       return days.map(({ workDate }) => formatDate(workDate));
+    }
+    if (targetType === 'CTO_INPUT') {
+      const input = await transaction.attendanceCtoInput.findFirst({
+        where: { agencyId: context.agencyId, id: targetId, employeeId },
+        select: { workDate: true },
+      });
+      if (!input) throw this.targetNotFound();
+      // Only a calculated Attendance Day changes when a CTO input changes.
+      const day = await transaction.attendanceDay.findFirst({
+        where: {
+          agencyId: context.agencyId,
+          employeeId,
+          isCurrent: true,
+          workDate: input.workDate,
+        },
+        select: { workDate: true },
+      });
+      return day ? [formatDate(day.workDate)] : [];
     }
     if (targetType === 'ATTENDANCE_EVENT') {
       const event = await transaction.attendanceEvent.findFirst({
@@ -1957,6 +2309,15 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     fact: RequestedAttendanceFact,
   ): Prisma.InputJsonValue {
     if (targetType === 'POSTED_LEAVE_INPUT') return { ...(fact as RequestedPostedLeaveFact) };
+    if (targetType === 'CTO_INPUT') {
+      const record = fact as RequestedCtoFact;
+      return {
+        workDate: record.workDate,
+        coverageMode: record.coverageMode,
+        ...(record.startsAt ? { startsAt: record.startsAt } : {}),
+        ...(record.endsAt ? { endsAt: record.endsAt } : {}),
+      };
+    }
     if (targetType === 'ATTENDANCE_EVENT') {
       const record = fact as RequestedAttendanceEventFact;
       return {
@@ -2064,7 +2425,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     }
     if (record.excludedDeciderMembershipIds.includes(context.membershipId)) {
       throw this.separationRequired(
-        'The Leave Cancellation requester or approvers cannot authorize its Attendance Correction.',
+        'The requester or approvers of the cancellation cannot authorize its Attendance Correction.',
       );
     }
     const subjectMembership = await transaction.agencyMembership.findFirst({
