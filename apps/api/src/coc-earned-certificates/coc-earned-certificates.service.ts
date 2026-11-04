@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { ApprovalsService } from '../approvals/approval.service';
+import { CocAccountsService } from '../coc-accounts/coc-accounts.service';
 import { requestDatabaseContext } from '../database-context';
+import { manilaToday } from '../employee-scope';
 import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
   type OvertimeAuthorityAuditWriter,
@@ -15,6 +17,7 @@ import {
 import {
   assertAgencyGrant,
   assertStatus,
+  cocDayClassification,
   lockCertificate,
   monthBounds,
   readCertificate,
@@ -34,9 +37,9 @@ import {
 const ENTITY_TYPE = 'CocEarnedCertificate';
 
 /**
- * Prepare, submit, return, and discard Certificates of COC Earned
- * (hris-controls, Certificate of COC Earned; ADR 0008). Approval and the COC
- * award are a separate command (#538).
+ * Prepare, submit, return, discard, and approve Certificates of COC Earned
+ * (hris-controls, Certificate of COC Earned; ADR 0008). Approving awards the
+ * COC through the COC module; there is no separate posting step.
  */
 @Injectable()
 export class CocEarnedCertificatesService {
@@ -44,6 +47,7 @@ export class CocEarnedCertificatesService {
     @Inject(OVERTIME_AUTHORITY_AUDIT_WRITER)
     private readonly auditWriter: OvertimeAuthorityAuditWriter,
     @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
+    @Inject(CocAccountsService) private readonly cocAccounts: CocAccountsService,
   ) {}
 
   /**
@@ -206,14 +210,7 @@ export class CocEarnedCertificatesService {
       async (transaction) => {
         const current = await lockCertificate(transaction, context.agencyId, certificateId);
         assertStatus(current, 'FOR_APPROVAL', 'returned');
-        const request = await this.openRequest(transaction, context, certificateId, 'IN_PROGRESS');
-        if (!request) {
-          throw new CocEarnedCertificateServiceError(
-            'The Certificate of COC Earned has no Approval Request awaiting a decision.',
-            409,
-            'COC_EARNED_CERTIFICATE_APPROVAL_REQUEST_MISSING',
-          );
-        }
+        const request = await this.requestAwaitingDecision(transaction, context, certificateId);
         await this.approvals.decideInTransaction(
           transaction,
           context,
@@ -236,6 +233,107 @@ export class CocEarnedCertificatesService {
           'RETURNED',
           { approvalRequestId: request.id },
           input.reason,
+        );
+        return readCertificate(transaction, context.agencyId, certificateId);
+      },
+    );
+  }
+
+  /**
+   * Approve a certificate awaiting approval and award its COC, all in one
+   * transaction: decide the Approval Request, move the certificate to APPROVED,
+   * call the COC module once, then freeze each line's credited and excess
+   * minutes. Any refusal or failure rolls all of it back.
+   *
+   * The certificate lock makes the FOR_APPROVAL to APPROVED transition the one
+   * guarantee of a single award. A retry or a concurrent repeat by the approver
+   * finds it APPROVED and gets the frozen result; anyone else is refused.
+   */
+  async approve(
+    context: RequestContext,
+    certificateId: string,
+  ): Promise<CocEarnedCertificateSummary> {
+    assertAgencyGrant(context, APPROVE_PERMISSION);
+    return withDatabaseContext(
+      requestDatabaseContext(context, 'approval-transition'),
+      async (transaction) => {
+        const current = await lockCertificate(transaction, context.agencyId, certificateId);
+        if (
+          current.status === 'APPROVED' &&
+          current.approvedByMembershipId === context.membershipId
+        ) {
+          return current;
+        }
+        assertStatus(current, 'FOR_APPROVAL', 'approved');
+        await this.assertIndependentApprover(transaction, context, current);
+        const request = await this.requestAwaitingDecision(transaction, context, certificateId);
+        await this.approvals.decideInTransaction(
+          transaction,
+          context,
+          request.id,
+          'APPROVE',
+          undefined,
+          undefined,
+          cocEarnedCertificateEffect,
+        );
+        await transaction.cocEarnedCertificate.update({
+          where: { agencyId_id: { agencyId: context.agencyId, id: certificateId } },
+          data: {
+            status: 'APPROVED',
+            approvedByMembershipId: context.membershipId,
+            approvedAt: new Date(),
+          },
+        });
+        const credit = await this.cocAccounts.awardEarnedCocInTransaction(
+          transaction,
+          context.agencyId,
+          {
+            certificateId,
+            employeeId: current.employeeId,
+            earnedMonth: current.earnedMonth,
+            approvalDate: manilaToday(),
+            approvedByMembershipId: context.membershipId,
+            lines: current.lines.map((line) => ({
+              certificateLineId: line.id,
+              workDate: line.workDate,
+              certifiedMinutes: line.certifiedMinutes,
+              dayClassification: cocDayClassification(line.dayClassification),
+            })),
+          },
+        );
+        // A certificate only now leaving FOR_APPROVAL has no entries of its own.
+        if (credit.replayed) {
+          throw new CocEarnedCertificateServiceError(
+            'The COC ledger already holds entries for this Certificate of COC Earned.',
+            409,
+            'COC_EARNED_CERTIFICATE_ALREADY_AWARDED',
+          );
+        }
+        for (const line of credit.lines) {
+          await transaction.cocEarnedCertificateLine.update({
+            where: { agencyId_id: { agencyId: context.agencyId, id: line.certificateLineId } },
+            data: { creditedMinutes: line.creditedMinutes, excessMinutes: line.excessMinutes },
+          });
+        }
+        await this.audit(
+          transaction,
+          context,
+          certificateId,
+          'FOR_APPROVAL',
+          'APPROVED',
+          'APPROVED',
+          {
+            approvalRequestId: request.id,
+            cocAccountId: credit.cocAccountId,
+            validUntil: credit.validUntil,
+            lines: credit.lines.map((line) => ({
+              certificateLineId: line.certificateLineId,
+              cocMinutes: line.cocMinutes,
+              creditedMinutes: line.creditedMinutes,
+              excessMinutes: line.excessMinutes,
+              ledgerEntryId: line.ledgerEntryId,
+            })),
+          },
         );
         return readCertificate(transaction, context.agencyId, certificateId);
       },
@@ -287,6 +385,44 @@ export class CocEarnedCertificatesService {
     );
   }
 
+  /** The approver is neither the certificate's preparer nor its covered Employee. */
+  private async assertIndependentApprover(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    certificate: CocEarnedCertificateSummary,
+  ): Promise<void> {
+    const membership = await transaction.agencyMembership.findFirst({
+      where: { agencyId: context.agencyId, id: context.membershipId },
+      select: { employeeId: true },
+    });
+    if (
+      certificate.preparedByMembershipId === context.membershipId ||
+      membership?.employeeId === certificate.employeeId
+    ) {
+      throw new CocEarnedCertificateServiceError(
+        'The approver of a Certificate of COC Earned cannot be its preparer or its covered Employee.',
+        403,
+        'COC_EARNED_CERTIFICATE_APPROVER_NOT_INDEPENDENT',
+      );
+    }
+  }
+
+  private async requestAwaitingDecision(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    certificateId: string,
+  ) {
+    const request = await this.openRequest(transaction, context, certificateId, 'IN_PROGRESS');
+    if (!request) {
+      throw new CocEarnedCertificateServiceError(
+        'The Certificate of COC Earned has no Approval Request awaiting a decision.',
+        409,
+        'COC_EARNED_CERTIFICATE_APPROVAL_REQUEST_MISSING',
+      );
+    }
+    return request;
+  }
+
   /** The certificate's one open Approval Request in `status`, if any. */
   private openRequest(
     transaction: Prisma.TransactionClient,
@@ -311,7 +447,7 @@ export class CocEarnedCertificatesService {
     certificateId: string,
     previousStatus: CocEarnedCertificateStatus | null,
     newStatus: CocEarnedCertificateStatus,
-    verb: 'PREPARED' | 'SUBMITTED' | 'RETURNED' | 'DISCARDED',
+    verb: 'PREPARED' | 'SUBMITTED' | 'RETURNED' | 'DISCARDED' | 'APPROVED',
     metadata: Prisma.InputJsonObject,
     reason?: string,
   ): Promise<void> {

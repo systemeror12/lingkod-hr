@@ -8,6 +8,7 @@ import {
   ApprovalsService,
 } from '../approvals/approval.service';
 import { createAdminClient } from '../attendance-test-fixtures';
+import { CocAccountsService } from '../coc-accounts/coc-accounts.service';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
 import {
   addMember,
@@ -31,6 +32,10 @@ const PREPARER_GRANTS: RequestContext['permissions'] = [
   'approvals.requests.submit',
 ].map((code) => ({ code, scopePolicy: 'AGENCY' }));
 
+/** Valid Until is December 31 of the next year, so this month's COC stays awardable. */
+const YEAR = new Date().getUTCFullYear();
+const EARNED_MONTH = `${YEAR}-06`;
+
 const APPROVER_GRANTS: RequestContext['permissions'] = [
   'overtime.coc_certificates.approve',
   'approvals.requests.approve',
@@ -42,7 +47,11 @@ function services() {
   const registry = new ApprovalCompletionRegistry();
   registerCocEarnedCertificateApproval(registry);
   const approvals = new ApprovalsService(approvalAuditWriter, registry);
-  const service = new CocEarnedCertificatesService(overtimeAuthorityAuditWriter, approvals);
+  const service = new CocEarnedCertificatesService(
+    overtimeAuthorityAuditWriter,
+    approvals,
+    new CocAccountsService(),
+  );
   return { approvals, service, controller: new CocEarnedCertificatesController(service) };
 }
 
@@ -90,9 +99,11 @@ function serviceRecord(
     workDate: string;
     status?: 'CERTIFIED' | 'FOR_CERTIFICATION';
     certifiedMinutes?: number;
+    dayClassification?: string;
   },
 ) {
   const status = options.status ?? 'CERTIFIED';
+  const certifiedMinutes = options.certifiedMinutes ?? 120;
   return home.asReplica(async (transaction) => {
     const coverage = await transaction.overtimeAuthorityEmployee.findFirstOrThrow({
       where: { overtimeAuthorityId: options.authorityId, employeeId: options.employeeId },
@@ -105,14 +116,14 @@ function serviceRecord(
         workDate: new Date(options.workDate),
         claimedHours: '2',
         accomplishment: 'Prepared the closing schedules.',
-        actualMinutes: 180,
+        actualMinutes: Math.max(180, certifiedMinutes),
         sourceAttendanceDayId: randomUUID(),
-        dayClassification: 'WORKDAY',
+        dayClassification: options.dayClassification ?? 'WORKDAY',
         status,
         recordedByMembershipId: home.membership.id,
         ...(status === 'CERTIFIED'
           ? {
-              certifiedMinutes: options.certifiedMinutes ?? 120,
+              certifiedMinutes,
               certifiedByMembershipId: home.membership.id,
               certifiedAt: new Date('2026-07-01T00:00:00+08:00'),
             }
@@ -131,6 +142,8 @@ async function setup(label: string) {
     await admin.$transaction(async (transaction) => {
       await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
       const where = { agencyId: { in: [home.agency.id, foreign.agency.id] } };
+      await transaction.cocLedgerEntry.deleteMany({ where });
+      await transaction.cocAccount.deleteMany({ where });
       await transaction.cocEarnedCertificateLine.deleteMany({ where });
       await transaction.cocEarnedCertificate.deleteMany({ where });
     });
@@ -200,6 +213,71 @@ function auditActions(admin: PrismaClient, certificateId: string) {
       select: { action: true, previousStatus: true, newStatus: true, reason: true },
     })
     .then((events) => events.map((event) => event.action));
+}
+
+/** Prepare and submit a certificate for the fixture's member over `lines`. */
+async function submitted(
+  { home, preparer, cocAuthority, service }: Setup,
+  lines: { day: string; certifiedMinutes?: number; dayClassification?: string }[],
+  month = EARNED_MONTH,
+) {
+  for (const { day, ...line } of lines) {
+    await serviceRecord(home, {
+      authorityId: cocAuthority,
+      employeeId: home.member.id,
+      workDate: `${month}-${day}`,
+      ...line,
+    });
+  }
+  const draft = await service.prepare(preparer, {
+    employeeId: home.member.id,
+    earnedMonth: month,
+  });
+  return service.submit(preparer, draft.id);
+}
+
+/** Everything an approval writes, to prove a refusal or failure left none of it. */
+async function approvalTrace(admin: PrismaClient, agencyId: string, certificateId: string) {
+  const certificate = await admin.cocEarnedCertificate.findUniqueOrThrow({
+    where: { id: certificateId },
+    select: {
+      status: true,
+      approvedByMembershipId: true,
+      approvedAt: true,
+      lines: { select: { creditedMinutes: true, excessMinutes: true } },
+    },
+  });
+  const request = await admin.approvalRequest.findFirstOrThrow({
+    where: { subjectType: 'COC_EARNED_CERTIFICATE', subjectId: certificateId },
+    select: { status: true },
+  });
+  return {
+    certificate,
+    requestStatus: request.status,
+    decisions: await admin.approvalDecision.count({ where: { agencyId } }),
+    entries: await admin.cocLedgerEntry.count({ where: { agencyId } }),
+    accounts: await admin.cocAccount.count({ where: { agencyId } }),
+    approvedEvents: await admin.auditEvent.count({
+      where: { entityId: certificateId, action: 'COC_EARNED_CERTIFICATE_APPROVED' },
+    }),
+  };
+}
+
+async function expectNothingApproved(admin: PrismaClient, agencyId: string, certificateId: string) {
+  const trace = await approvalTrace(admin, agencyId, certificateId);
+  expect(trace).toMatchObject({
+    certificate: { status: 'FOR_APPROVAL', approvedByMembershipId: null, approvedAt: null },
+    requestStatus: 'IN_PROGRESS',
+    decisions: 0,
+    entries: 0,
+    accounts: 0,
+    approvedEvents: 0,
+  });
+  expect(
+    trace.certificate.lines.every(
+      (line) => line.creditedMinutes === null && line.excessMinutes === null,
+    ),
+  ).toBe(true);
 }
 
 async function withSetup(label: string, run: (fixture: Setup) => Promise<void>) {
@@ -540,10 +618,17 @@ it.skipIf(!enabled)("keeps each Agency's certificates and Employees to itself", 
       status: 403,
       body: { error: { code: 'COC_EARNED_CERTIFICATE_WRITE_FORBIDDEN' } },
     });
+    expect(
+      await errorOf(controller.approve(home.agency.id, certificate.id, outsider)),
+    ).toMatchObject({
+      status: 403,
+      body: { error: { code: 'COC_EARNED_CERTIFICATE_WRITE_FORBIDDEN' } },
+    });
     // In its own Agency's context, the certificate and the Employee do not exist.
     for (const command of [
       () => controller.submit(foreign.agency.id, certificate.id, outsider),
       () => controller.discard(foreign.agency.id, certificate.id, outsider),
+      () => controller.approve(foreign.agency.id, certificate.id, outsider),
       () => controller.return(foreign.agency.id, certificate.id, { reason: 'Not ours.' }, outsider),
     ]) {
       expect(await errorOf(command())).toMatchObject({
@@ -570,5 +655,317 @@ it.skipIf(!enabled)("keeps each Agency's certificates and Employees to itself", 
     expect(await admin.cocEarnedCertificate.count({ where: { agencyId: foreign.agency.id } })).toBe(
       0,
     );
+  }),
+);
+
+it.skipIf(!enabled)(
+  'approves through the Approval Route, awards COC once, freezes the amounts, and replays a retry',
+  () =>
+    withSetup('approve', async (fixture) => {
+      const { admin, home, approver, controller } = fixture;
+      const certificate = await submitted(fixture, [
+        { day: '03', certifiedMinutes: 120 },
+        { day: '10', certifiedMinutes: 90, dayClassification: 'REST_DAY' },
+        { day: '20', certifiedMinutes: 2000, dayClassification: 'REGULAR_HOLIDAY' },
+      ]);
+
+      const approved = await controller.approve(home.agency.id, certificate.id, approver);
+
+      expect(approved).toMatchObject({
+        status: 'APPROVED',
+        approvedByMembershipId: approver.membershipId,
+      });
+      expect(approved.approvedAt).not.toBeNull();
+      // 1.0 on a workday, 1.5 on a rest day or holiday, and the 2,400-minute
+      // monthly cap leaves the last line 2,145 of its 3,000.
+      expect(approved.lines.map((line) => [line.creditedMinutes, line.excessMinutes])).toEqual([
+        ['120.0', '0.0'],
+        ['135.0', '0.0'],
+        ['2145.0', '855.0'],
+      ]);
+
+      const entries = await admin.cocLedgerEntry.findMany({
+        where: { agencyId: home.agency.id, sourceId: certificate.id },
+        orderBy: { minutes: 'asc' },
+      });
+      expect(
+        entries.map((entry) => [
+          entry.sourceType,
+          entry.sourcePostingKey,
+          entry.minutes.toFixed(1),
+          entry.postedByMembershipId,
+          entry.validUntil.toISOString().slice(0, 10),
+          entry.earnedMonth?.toISOString().slice(0, 10),
+        ]),
+      ).toEqual(
+        approved.lines.map((line) => [
+          'COC_EARNED_CERTIFICATE',
+          line.id,
+          line.creditedMinutes,
+          approver.membershipId,
+          `${YEAR + 1}-12-31`,
+          `${EARNED_MONTH}-01`,
+        ]),
+      );
+
+      const request = await admin.approvalRequest.findFirstOrThrow({
+        where: { subjectType: 'COC_EARNED_CERTIFICATE', subjectId: certificate.id },
+      });
+      expect(request.status).toBe('APPROVED');
+      expect(await auditActions(admin, certificate.id)).toEqual([
+        'COC_EARNED_CERTIFICATE_PREPARED',
+        'COC_EARNED_CERTIFICATE_SUBMITTED',
+        'COC_EARNED_CERTIFICATE_APPROVED',
+      ]);
+      const event = await admin.auditEvent.findFirstOrThrow({
+        where: { entityId: certificate.id, action: 'COC_EARNED_CERTIFICATE_APPROVED' },
+      });
+      expect(event).toMatchObject({
+        actorMembershipId: approver.membershipId,
+        previousStatus: 'FOR_APPROVAL',
+        newStatus: 'APPROVED',
+      });
+      expect(event.metadata).toMatchObject({
+        approvalRequestId: request.id,
+        validUntil: `${YEAR + 1}-12-31`,
+      });
+
+      // A retry returns the first result and writes nothing.
+      const before = await approvalTrace(admin, home.agency.id, certificate.id);
+      expect(await controller.approve(home.agency.id, certificate.id, approver)).toEqual(approved);
+      expect(await approvalTrace(admin, home.agency.id, certificate.id)).toEqual(before);
+
+      // Only the approver retries. Anyone else finds it already decided.
+      const other = await addMember(
+        admin,
+        home,
+        `${Date.now()}-other`,
+        'other',
+        'appointing_authority',
+        APPROVER_GRANTS,
+      );
+      expect(
+        await errorOf(controller.approve(home.agency.id, certificate.id, other)),
+      ).toMatchObject({
+        status: 409,
+        body: { error: { code: 'COC_EARNED_CERTIFICATE_NOT_FOR_APPROVAL' } },
+      });
+
+      // A later certificate past the monthly cap credits nothing, which leaves
+      // no ledger trace, and its retry still awards nothing.
+      const full = await submitted(fixture, [{ day: '25', certifiedMinutes: 60 }]);
+      const uncredited = await controller.approve(home.agency.id, full.id, approver);
+      expect(uncredited.lines.map((line) => [line.creditedMinutes, line.excessMinutes])).toEqual([
+        ['0.0', '60.0'],
+      ]);
+      expect(await controller.approve(home.agency.id, full.id, approver)).toEqual(uncredited);
+      expect(await admin.cocLedgerEntry.count({ where: { sourceId: full.id } })).toBe(0);
+
+      // The approved certificate and its frozen amounts are immutable.
+      await expect(
+        admin.cocEarnedCertificate.update({
+          where: { id: certificate.id },
+          data: { status: 'DRAFT' },
+        }),
+      ).rejects.toThrow(/cannot move from APPROVED to DRAFT/);
+      await expect(
+        admin.cocEarnedCertificateLine.update({
+          where: { id: approved.lines[0]!.id },
+          data: { creditedMinutes: '1.0' },
+        }),
+      ).rejects.toThrow(/line can only be released/);
+    }),
+);
+
+it.skipIf(!enabled)('awards once when two approvals of one certificate race', () =>
+  withSetup('approve-race', async (fixture) => {
+    const { admin, home, approver } = fixture;
+    const certificate = await submitted(fixture, [
+      { day: '03', certifiedMinutes: 120 },
+      { day: '10', certifiedMinutes: 60 },
+    ]);
+
+    const [first, second] = await Promise.all([
+      services().service.approve(approver, certificate.id),
+      services().service.approve(approver, certificate.id),
+    ]);
+
+    expect(second).toEqual(first);
+    expect(first.lines.map((line) => line.creditedMinutes)).toEqual(['120.0', '60.0']);
+    const trace = await approvalTrace(admin, home.agency.id, certificate.id);
+    expect(trace).toMatchObject({
+      requestStatus: 'APPROVED',
+      decisions: 1,
+      entries: 2,
+      accounts: 1,
+      approvedEvents: 1,
+    });
+  }),
+);
+
+it.skipIf(!enabled)('refuses a line on a work suspension with a typed reason per line', () =>
+  withSetup('suspension', async (fixture) => {
+    const { admin, home, approver, controller } = fixture;
+    const certificate = await submitted(fixture, [
+      { day: '03' },
+      { day: '10', dayClassification: 'WORK_SUSPENSION' },
+      { day: '17', dayClassification: 'PARTIAL_DAY_WORK_SUSPENSION' },
+    ]);
+    const [, wholeDay, partialDay] = certificate.lines;
+
+    expect(await errorOf(controller.approve(home.agency.id, certificate.id, approver))).toEqual({
+      status: 409,
+      body: {
+        error: {
+          code: 'COC_WHOLE_DAY_WORK_SUSPENSION',
+          message: 'Service during a work suspension earns no COC.',
+          refusals: [
+            { certificateLineId: wholeDay!.id, code: 'COC_WHOLE_DAY_WORK_SUSPENSION' },
+            { certificateLineId: partialDay!.id, code: 'COC_PARTIAL_DAY_WORK_SUSPENSION' },
+          ],
+          requestId: approver.requestId,
+        },
+      },
+    });
+    await expectNothingApproved(admin, home.agency.id, certificate.id);
+  }),
+);
+
+it.skipIf(!enabled)("refuses approval once the certificate's Valid Until has passed", () =>
+  withSetup('validity', async (fixture) => {
+    const { admin, home, approver, controller } = fixture;
+    const certificate = await submitted(fixture, [{ day: '03' }], `${YEAR - 2}-06`);
+
+    expect(
+      await errorOf(controller.approve(home.agency.id, certificate.id, approver)),
+    ).toMatchObject({ status: 409, body: { error: { code: 'COC_VALIDITY_PASSED' } } });
+    await expectNothingApproved(admin, home.agency.id, certificate.id);
+  }),
+);
+
+it.skipIf(!enabled)(
+  'lets only an independent, assigned approver approve a submitted certificate',
+  () =>
+    withSetup('authority', async (fixture) => {
+      const { admin, home, preparer, approver, controller, service } = fixture;
+      const refused = (status: number, code: string) => ({ status, body: { error: { code } } });
+      const certificate = await submitted(fixture, [{ day: '03' }]);
+
+      // Without the permission.
+      expect(
+        await errorOf(controller.approve(home.agency.id, certificate.id, preparer)),
+      ).toMatchObject(refused(403, 'COC_EARNED_CERTIFICATE_FORBIDDEN'));
+      // The preparer, even holding the permission.
+      const preparerWithGrant = { ...preparer, permissions: APPROVER_GRANTS };
+      expect(
+        await errorOf(controller.approve(home.agency.id, certificate.id, preparerWithGrant)),
+      ).toMatchObject(refused(403, 'COC_EARNED_CERTIFICATE_APPROVER_NOT_INDEPENDENT'));
+      // Holding the permission, but not assigned the route's step.
+      const unassigned = await addMember(
+        admin,
+        home,
+        `${Date.now()}-unassigned`,
+        'unassigned',
+        'appointing_authority',
+        APPROVER_GRANTS,
+      );
+      await expect(service.approve(unassigned, certificate.id)).rejects.toMatchObject({
+        statusCode: 403,
+      });
+      // The covered Employee, though assigned the route's step.
+      const linkApprover = (employeeId: string | null) =>
+        home.asReplica((transaction) =>
+          transaction.agencyMembership.update({
+            where: { id: approver.membershipId },
+            data: { employeeId },
+          }),
+        );
+      await linkApprover(home.member.id);
+      expect(
+        await errorOf(controller.approve(home.agency.id, certificate.id, approver)),
+      ).toMatchObject(refused(403, 'COC_EARNED_CERTIFICATE_APPROVER_NOT_INDEPENDENT'));
+      await expectNothingApproved(admin, home.agency.id, certificate.id);
+
+      // Unlinked, the approver can return it and approve it, but not while it is a draft.
+      await linkApprover(null);
+      await service.return(approver, certificate.id, { reason: 'Recheck June 3.' });
+      expect(
+        await errorOf(controller.approve(home.agency.id, certificate.id, approver)),
+      ).toMatchObject(refused(409, 'COC_EARNED_CERTIFICATE_NOT_FOR_APPROVAL'));
+      await service.submit(preparer, certificate.id);
+      expect((await service.approve(approver, certificate.id)).status).toBe('APPROVED');
+    }),
+);
+
+it.skipIf(!enabled)('rolls back the approval and the award when a later step fails', () =>
+  withSetup('rollback', async (fixture) => {
+    const { admin, home, approver, approvals } = fixture;
+    const certificate = await submitted(fixture, [{ day: '03' }]);
+    const failing = new CocEarnedCertificatesService(
+      {
+        write: async (transaction, event) => {
+          if (event.action === 'COC_EARNED_CERTIFICATE_APPROVED') {
+            throw new Error('The audit store is unavailable.');
+          }
+          await overtimeAuthorityAuditWriter.write(transaction, event);
+        },
+      },
+      approvals,
+      new CocAccountsService(),
+    );
+
+    await expect(failing.approve(approver, certificate.id)).rejects.toThrow(
+      'The audit store is unavailable.',
+    );
+    await expectNothingApproved(admin, home.agency.id, certificate.id);
+
+    // Only approval freezes amounts, so a line awaiting approval refuses them.
+    await expect(
+      admin.cocEarnedCertificateLine.update({
+        where: { id: certificate.lines[0]!.id },
+        data: { creditedMinutes: '120.0', excessMinutes: '0.0' },
+      }),
+    ).rejects.toThrow(/line can only be released/);
+
+    // The certificate is still approvable once the failure clears.
+    const approved = await fixture.service.approve(approver, certificate.id);
+    expect(approved.lines.map((line) => line.creditedMinutes)).toEqual(['120.0']);
+  }),
+);
+
+it.skipIf(!enabled)('refuses to approve a certificate the ledger already holds entries for', () =>
+  withSetup('awarded', async (fixture) => {
+    const { admin, home, approver, service } = fixture;
+    const certificate = await submitted(fixture, [{ day: '03' }]);
+    const [line] = certificate.lines;
+    const award = {
+      certificateId: certificate.id,
+      employeeId: home.member.id,
+      earnedMonth: `${EARNED_MONTH}-01`,
+      approvalDate: `${YEAR}-06-30`,
+      approvedByMembershipId: approver.membershipId,
+      lines: [
+        {
+          certificateLineId: line!.id,
+          workDate: line!.workDate,
+          certifiedMinutes: line!.certifiedMinutes,
+          dayClassification: 'WORKDAY' as const,
+        },
+      ],
+    };
+    await home.asReplica((transaction) =>
+      new CocAccountsService().awardEarnedCocInTransaction(transaction, home.agency.id, award),
+    );
+
+    await expect(service.approve(approver, certificate.id)).rejects.toMatchObject({
+      code: 'COC_EARNED_CERTIFICATE_ALREADY_AWARDED',
+    });
+    const trace = await approvalTrace(admin, home.agency.id, certificate.id);
+    expect(trace).toMatchObject({
+      certificate: { status: 'FOR_APPROVAL' },
+      requestStatus: 'IN_PROGRESS',
+      decisions: 0,
+      entries: 1,
+    });
   }),
 );

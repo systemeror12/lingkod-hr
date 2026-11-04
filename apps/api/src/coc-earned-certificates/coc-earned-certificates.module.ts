@@ -2,6 +2,7 @@ import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 import { ApprovalModule } from '../approvals/approval.module';
 import { ApprovalCompletionRegistry } from '../approvals/approval.service';
 import { AuthModule } from '../auth/auth.module';
+import { CocAccountsModule } from '../coc-accounts/coc-accounts.module';
 import {
   OVERTIME_AUTHORITY_AUDIT_WRITER,
   overtimeAuthorityAuditWriter,
@@ -12,7 +13,7 @@ import { CocEarnedCertificatesService } from './coc-earned-certificates.service'
 
 /** Certificates of COC Earned, part of the Overtime module (ADR 0008). */
 @Module({
-  imports: [AuthModule, ApprovalModule],
+  imports: [AuthModule, ApprovalModule, CocAccountsModule],
   controllers: [CocEarnedCertificatesController],
   providers: [
     CocEarnedCertificatesService,

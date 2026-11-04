@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import type { CocDayClassification } from '../coc-accounts/coc-earning-rule';
 import {
   CocEarnedCertificateServiceError,
   type CocEarnedCertificateStatus,
@@ -73,6 +74,15 @@ export async function readCertificate(
       releasedAt: line.releasedAt?.toISOString() ?? null,
     })),
   };
+}
+
+/**
+ * A line's day classification in the COC module's terms. A service record
+ * stores a Day Rule `REST` day as `REST_DAY`; every other value already matches.
+ * The COC module refuses a value it does not recognize.
+ */
+export function cocDayClassification(dayClassification: string | null): CocDayClassification {
+  return (dayClassification === 'REST_DAY' ? 'REST' : dayClassification) as CocDayClassification;
 }
 
 /** Lock one certificate for a command and return it. */
