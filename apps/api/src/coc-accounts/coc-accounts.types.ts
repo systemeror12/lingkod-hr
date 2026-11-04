@@ -52,6 +52,12 @@ export interface CocReversalResult {
   expiryEntryId: string | null;
 }
 
+/** What one Valid Until still holds, in tenths of a minute. */
+export interface CocAvailable {
+  validUntil: string;
+  tenths: number;
+}
+
 /** One certified Overtime Service Record on a Certificate of COC Earned. */
 export interface CocEarnedCertificateLine {
   certificateLineId: string;

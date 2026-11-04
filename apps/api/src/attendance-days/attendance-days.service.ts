@@ -303,6 +303,22 @@ function wholeWorkDateCoverageWindow(
   );
 }
 
+/**
+ * Every calendar date the Day's expected duty reaches, so an overnight shift
+ * sees a holiday on its second date. `holidayEntries` keeps the Work Date alone
+ * because Leave counts working days from it.
+ */
+function dutyDateHolidays(resolution: AttendanceResolution, workDate: string) {
+  const dutyDates = resolution.dayRule.endNextCalendarDay
+    ? [workDate, addDateValueDays(workDate, 1)]
+    : [workDate];
+  return new Map(
+    resolution.holidayCalendarVersion.entries
+      .filter((entry) => dutyDates.includes(entry.holidayDate))
+      .map((entry) => [entry.holidayDate, entry.dayType]),
+  );
+}
+
 function resolutionFingerprint(
   employeeId: string,
   workDate: string,
@@ -648,6 +664,54 @@ export class AttendanceDaysService {
       throw error;
     }
     return wholeWorkDateCoverageWindow(resolution, workDate);
+  }
+
+  /**
+   * One Work Date's expected-duty minutes under the Employee's Work Schedule
+   * Version, as the calculation counts them: zero on a REST Day Rule or a
+   * Non-Working Holiday, and without breaks. Given a timed interval, also the
+   * minutes the calculation would place from it as CTO, or null when it would leave
+   * the interval unplaced. A flexible Day is judged with no Attendance Events, since
+   * CTO precedes the date; events that later anchor it elsewhere can still unplace
+   * the interval, which the Day reports as `UNPLACED_CTO_INPUT`. Null when the
+   * Employee's schedule for the date cannot be resolved.
+   */
+  async expectedDutyInTransaction(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    employeeId: string,
+    workDate: string,
+    timed?: { startsAt: Date; endsAt: Date },
+  ): Promise<{ minutes: number; timedCtoMinutes: number | null } | null> {
+    let resolution: AttendanceResolution;
+    try {
+      resolution = await this.assignments.resolveForWorkDateInTransaction(
+        transaction,
+        agencyId,
+        employeeId,
+        workDate,
+      );
+    } catch (error: unknown) {
+      if (error instanceof AttendanceExceptionError) return null;
+      throw error;
+    }
+    const calculate = (coverage: AttendanceCalculationCoverage[]) =>
+      calculateAttendanceDay({
+        timezone: resolution.workScheduleVersion.timezone,
+        workDate,
+        dayRule: resolution.dayRule,
+        events: [],
+        coverage,
+        holidayClassifications: dutyDateHolidays(resolution, workDate),
+      });
+    const minutes = calculate([]).totals.expectedMinutes;
+    if (!timed) return { minutes, timedCtoMinutes: null };
+    const inputId = 'candidate';
+    const result = calculate([
+      { sourceType: 'CTO_INPUT', sourceId: inputId, coverageType: 'CTO', ...timed },
+    ]);
+    const placed = unplacedCtoInputIds(result.segments, [{ inputId, timed: true }]).length === 0;
+    return { minutes, timedCtoMinutes: placed ? result.totals.ctoMinutes : null };
   }
 
   /**
@@ -1211,17 +1275,7 @@ export class AttendanceDaysService {
         });
       }
     }
-    // Every calendar date the Day's expected duty reaches, so an overnight shift
-    // sees a holiday on its second date. `holidayEntries` keeps the Work Date
-    // alone because Leave counts working days from it.
-    const dutyDates = dayRule.endNextCalendarDay
-      ? [workDate, addDateValueDays(workDate, 1)]
-      : [workDate];
-    const holidayClassifications = new Map(
-      resolution.holidayCalendarVersion.entries
-        .filter((entry) => dutyDates.includes(entry.holidayDate))
-        .map((entry) => [entry.holidayDate, entry.dayType]),
-    );
+    const holidayClassifications = dutyDateHolidays(resolution, workDate);
     const calculate = () =>
       calculateAttendanceDay({
         timezone,

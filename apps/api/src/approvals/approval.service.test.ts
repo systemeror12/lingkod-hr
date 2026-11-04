@@ -81,7 +81,7 @@ it('refuses to open an Overtime Authority request outside the Overtime module', 
   });
 });
 
-it.each(['OVERTIME_AUTHORITY', 'COC_EARNED_CERTIFICATE'])(
+it.each(['OVERTIME_AUTHORITY', 'COC_EARNED_CERTIFICATE', 'CTO_REQUEST'])(
   'refuses to submit a %s request outside its owning module',
   async (subjectType) => {
     transaction.approvalRequest.findFirst.mockResolvedValueOnce({ subjectType });
@@ -96,6 +96,19 @@ it.each(['OVERTIME_AUTHORITY', 'COC_EARNED_CERTIFICATE'])(
     });
   },
 );
+
+it('refuses to decide a CTO Request outside its owning module', async () => {
+  transaction.approvalRequest.findFirst.mockResolvedValueOnce({ subjectType: 'CTO_REQUEST' });
+  await expect(
+    new ApprovalsService().approve(
+      context([{ code: 'approvals.requests.approve', scopePolicy: 'AGENCY' }]),
+      subjectId,
+    ),
+  ).rejects.toMatchObject({
+    code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+    statusCode: 400,
+  });
+});
 
 it('uses typed errors for approval workflow failures', () => {
   expect(new ApprovalServiceError('message', 409, 'CODE')).toBeInstanceOf(Error);

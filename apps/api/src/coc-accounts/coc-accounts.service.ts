@@ -16,6 +16,7 @@ import {
   fromCocDate,
   toCocDate,
   type CocEarnedCertificate,
+  type CocAvailable,
   type CocEarnedCertificateCredit,
   type CocBalance,
 } from './coc-accounts.types';
@@ -211,6 +212,38 @@ export class CocAccountsService {
       })),
       totalMinutes: formatCocMinutes(byValidUntil.reduce((sum, group) => sum + group.tenths, 0)),
     };
+  }
+
+  /**
+   * Lock an account for a CTO command and read what each Valid Until on or after
+   * `from` still holds: every entry, whatever its effective date, so future-dated
+   * uses are already netted (hris-controls, COC Ledger Entry). Whether COC is valid
+   * on a given Work Date is the caller's draw to make. Null unless the account is
+   * active.
+   */
+  async lockAndReadAvailableInTransaction(
+    transaction: Transaction,
+    agencyId: string,
+    cocAccountId: string,
+    from: string,
+  ): Promise<CocAvailable[] | null> {
+    const [account] = await transaction.$queryRaw<{ status: string }[]>`
+      SELECT "status" FROM "coc_accounts"
+      WHERE "agency_id" = CAST(${agencyId} AS uuid)
+        AND "id" = CAST(${cocAccountId} AS uuid)
+      FOR NO KEY UPDATE
+    `;
+    if (account?.status !== 'ACTIVE') return null;
+    const groups = await transaction.cocLedgerEntry.groupBy({
+      by: ['validUntil'],
+      where: { agencyId, cocAccountId, validUntil: { gte: toCocDate(from, 'Work Date') } },
+      _sum: { minutes: true },
+      orderBy: { validUntil: 'asc' },
+    });
+    return groups.map((group) => ({
+      validUntil: fromCocDate(group.validUntil),
+      tenths: tenths(group._sum.minutes),
+    }));
   }
 
   /** Refuse a malformed award, a passed Valid Until, or service during a suspension. */
