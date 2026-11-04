@@ -413,7 +413,7 @@ Correction request without overwriting raw events
 | agency_id                  | uuid         | No    | FK agencies                | Tenant                                                                                         |
 | employee_id                | uuid         | No    | FK employees               | Subject                                                                                        |
 | initiated_by_membership_id | uuid         | No    | FK agency_memberships      | Employee or scoped HR Administrator                                                            |
-| target_type                | enum         | No    |                            | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT, POSTED_LEAVE_INPUT                                       |
+| target_type                | enum         | No    |                            | ATTENDANCE_EVENT, ATTENDANCE_CONTEXT, POSTED_LEAVE_INPUT, CTO_INPUT                            |
 | requested_action           | enum         | No    |                            | ADD, REPLACE, VOID                                                                             |
 | target_id                  | uuid         | Yes   |                            | Existing target for replace or void                                                            |
 | status                     | enum         | No    |                            | DRAFT, SUBMITTED, NEEDS_INFORMATION, APPROVED, FOR_AUTHORIZATION, REJECTED, CANCELLED, APPLIED |
@@ -432,6 +432,7 @@ Correction request without overwriting raw events
 - Approval binds the impact preview. Open-period approval and application are atomic; a post-lock approval requires a different HR Administrator to authorize application.
 - Application preserves the original event or context and creates immutable effect rows and successor versions for every affected Work Date. A correction may span Attendance Periods.
 - `POSTED_LEAVE_INPUT` corrections originate only from an applied Leave Cancellation over a locked Work Date. The approved cancellation is the factual basis; the correction enters `FOR_AUTHORIZATION` for a different HR Administrator and cannot alter the Leave fact.
+- `CTO_INPUT` corrections follow the same rules, originating only from an approved CTO cancellation over a locked Work Date, and cannot alter the CTO fact.
 
 **Deletion behavior:** Retain.
 

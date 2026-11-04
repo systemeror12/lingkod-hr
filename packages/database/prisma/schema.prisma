@@ -3961,6 +3961,8 @@ model AttendanceCorrection {
   blockingReason           String?   @map("blocking_reason")
   blockedByMembershipId    String?   @map("blocked_by_membership_id") @db.Uuid
   blockedAt                DateTime? @map("blocked_at") @db.Timestamptz(6)
+  /// Stable key of a `CTO_INPUT` handoff, required only for that target type.
+  effectKey                String?   @map("effect_key")
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion               Int       @default(1) @map("row_version")
@@ -3979,6 +3981,7 @@ model AttendanceCorrection {
   lockedAdjustment LockedAttendanceAdjustment?
 
   @@unique([agencyId, id])
+  @@unique([agencyId, effectKey], map: "attendance_corrections_effect_key_key")
   @@index([agencyId, employeeId, status])
   @@index([agencyId, status, submittedAt])
   @@map("attendance_corrections")

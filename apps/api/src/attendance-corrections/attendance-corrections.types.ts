@@ -10,12 +10,18 @@ import {
   POSTED_LEAVE_UNIT_CODES,
   type CreatePostedLeaveInput,
 } from '../attendance-posted-leave-inputs/attendance-posted-leave-inputs.types';
+import {
+  CTO_COVERAGE_MODES,
+  type CtoCoverageMode,
+} from '../attendance-cto-inputs/attendance-cto-inputs.types';
 
 export const ATTENDANCE_CORRECTION_TARGET_TYPES = [
   'ATTENDANCE_EVENT',
   'ATTENDANCE_CONTEXT',
   // Raised only by Leave when a cancellation changes posted leave on a locked Work Date.
   'POSTED_LEAVE_INPUT',
+  // Raised only by the COC module when a CTO cancellation changes a CTO input on a locked Work Date.
+  'CTO_INPUT',
 ] as const;
 export type AttendanceCorrectionTargetType = (typeof ATTENDANCE_CORRECTION_TARGET_TYPES)[number];
 
@@ -37,6 +43,8 @@ export type AttendanceCorrectionState = (typeof ATTENDANCE_CORRECTION_STATES)[nu
 export const ATTENDANCE_CORRECTION_ROUTE_CODE = 'ATTENDANCE_CORRECTION';
 export const ATTENDANCE_CORRECTION_LOCKED_ROUTE_CODE = 'ATTENDANCE_CORRECTION_LOCKED';
 export const ATTENDANCE_CORRECTION_POSTED_LEAVE_ROUTE_CODE = 'ATTENDANCE_CORRECTION_POSTED_LEAVE';
+export const ATTENDANCE_CORRECTION_CTO_INPUT_ROUTE_CODE = 'ATTENDANCE_CORRECTION_CTO_INPUT';
+export const CTO_CANCELLATION_SOURCE_TYPE = 'CtoCancellation';
 export const ATTENDANCE_CORRECTION_APPROVAL_SUBJECT_TYPE = 'ATTENDANCE_CORRECTION';
 export const ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND = 'ATTENDANCE_CORRECTION';
 
@@ -80,8 +88,19 @@ export interface RequestedPostedLeaveFact {
   allocationKind: (typeof POSTED_LEAVE_ALLOCATION_KINDS)[number];
 }
 
+/** The successor CTO input a REPLACE asks Attendance to create, on the same Work Date. */
+export interface RequestedCtoFact {
+  workDate: string;
+  coverageMode: CtoCoverageMode;
+  startsAt?: string | undefined;
+  endsAt?: string | undefined;
+}
+
 export type RequestedAttendanceFact =
-  RequestedAttendanceEventFact | RequestedAttendanceContextFact | RequestedPostedLeaveFact;
+  | RequestedAttendanceEventFact
+  | RequestedAttendanceContextFact
+  | RequestedPostedLeaveFact
+  | RequestedCtoFact;
 
 /**
  * Leave's request to change posted leave after an approved Leave Cancellation.
@@ -113,6 +132,33 @@ export interface PostedLeaveHandoffStatus {
   blockingReason: string | null;
   blockedAt: string | null;
 }
+
+/**
+ * The COC module's request to change a CTO input on a locked Work Date after an
+ * approved CTO cancellation, its factual basis. `coverageMode` is the coverage
+ * that remains: `NONE` voids the input, and otherwise the input is replaced on
+ * the same Work Date. The Approving Official is named so they cannot authorize
+ * the Locked Attendance Adjustment.
+ */
+export interface CtoInputHandoffInput {
+  /** Stable key the cancellation derives per Work Date, so a retry returns the same correction. */
+  effectKey: string;
+  employeeId: string;
+  predecessorInputId: string;
+  coverageMode: CtoCoverageMode | 'NONE';
+  /** ISO instants of the timed interval; required for `TIMED`, absent otherwise. */
+  startsAt?: string | undefined;
+  endsAt?: string | undefined;
+  cancellation: {
+    id: string;
+    approvingOfficialMembershipId: string;
+    approvedAt: Date;
+    reason: string;
+  };
+}
+
+/** The live status COC shows for a handed-off correction, including any blocking reason. */
+export type CtoInputHandoffStatus = PostedLeaveHandoffStatus;
 
 /**
  * Evidence linked to a Correction. Readers without
@@ -311,6 +357,15 @@ export const attendanceCorrectionPostedLeaveFactSchema = z
     unitCode: z.enum(POSTED_LEAVE_UNIT_CODES),
     quantity: z.number().positive(),
     allocationKind: z.enum(POSTED_LEAVE_ALLOCATION_KINDS),
+  })
+  .strict();
+
+export const attendanceCorrectionCtoFactSchema = z
+  .object({
+    workDate: z.string().date(),
+    coverageMode: z.enum(CTO_COVERAGE_MODES),
+    startsAt: z.string().datetime({ offset: true }).optional(),
+    endsAt: z.string().datetime({ offset: true }).optional(),
   })
   .strict();
 

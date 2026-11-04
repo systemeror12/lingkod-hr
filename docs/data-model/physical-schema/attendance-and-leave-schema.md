@@ -602,7 +602,7 @@ CREATE TABLE attendance_corrections (
   initiated_by_membership_id uuid NOT NULL,
   recorded_by_membership_id uuid NOT NULL,
   target_type text NOT NULL
-    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT')),
+    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT','CTO_INPUT')),
   requested_action text NOT NULL CHECK (requested_action IN ('ADD','REPLACE','VOID')),
   target_id uuid,
   status text NOT NULL
@@ -626,14 +626,22 @@ CREATE TABLE attendance_corrections (
   blocking_reason text,
   blocked_by_membership_id uuid,
   blocked_at timestamptz,
+  effect_key text,
+  UNIQUE (agency_id, effect_key),
   CHECK (
     (blocking_reason IS NULL AND blocked_by_membership_id IS NULL AND blocked_at IS NULL)
-    OR (target_type = 'POSTED_LEAVE_INPUT' AND btrim(blocking_reason) <> ''
+    OR (target_type IN ('POSTED_LEAVE_INPUT','CTO_INPUT') AND btrim(blocking_reason) <> ''
       AND blocked_by_membership_id IS NOT NULL AND blocked_at IS NOT NULL)
   ),
   CHECK (
     target_type <> 'POSTED_LEAVE_INPUT'
     OR (requested_action IN ('REPLACE','VOID') AND decided_by_membership_id IS NOT NULL)
+  ),
+  CHECK (
+    (target_type = 'CTO_INPUT') = (effect_key IS NOT NULL)
+    AND (target_type <> 'CTO_INPUT'
+      OR (requested_action IN ('REPLACE','VOID') AND decided_by_membership_id IS NOT NULL
+        AND btrim(effect_key) <> ''))
   ),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
@@ -678,7 +686,7 @@ CREATE TABLE attendance_correction_effects (
   attendance_correction_id uuid NOT NULL,
   effect_action text NOT NULL CHECK (effect_action IN ('ADD','REPLACE','VOID')),
   target_type text NOT NULL
-    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT')),
+    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT','CTO_INPUT')),
   original_target_id uuid,
   replacement_record jsonb,
   applied_by_membership_id uuid NOT NULL,
@@ -737,6 +745,8 @@ Applied correction transaction:
 
 An approved correction may produce an Attendance Exception. The effect remains applied, but the affected Employee Attendance Submission becomes stale and no successor period may enter review until the exception is resolved. The input boundary forbids hard deletion or in-place mutation of the target record.
 A `POSTED_LEAVE_INPUT` correction is created only by Leave through the Attendance application service when an applied Leave Cancellation changes posted leave on a Work Date in a locked period. It `REPLACE`s the posted-leave input with the retained successor or `VOID`s it, and its evidence row references the Leave Cancellation as its authoritative source. The approved Leave Cancellation is its factual basis, so it enters at `FOR_AUTHORIZATION` without a second factual review. A different HR Administrator from the cancellation's requester and approvers authorizes it through the ordinary Locked Attendance Adjustment, which produces the successor Attendance Day and Attendance Period Versions, corrected DTRs, and adjustment publication. Attendance cannot change the Leave fact. The authorizer may only authorize or record a blocking reason, which Leave shows as the handoff's current status. Because no reviewer read its impact preview, authorization applies against the period's current locked versions, which an earlier authorization may have moved forward, and records the preview it applied.
+
+A `CTO_INPUT` correction follows the same rules. It is created only by the COC module through the Attendance application service, when an approved CTO cancellation changes a CTO input on a Work Date in a locked period, and its evidence row references the CTO cancellation. It `REPLACE`s the input on the same Work Date or `VOID`s it with a `NONE` successor, and the requested replacement must be placeable when it is accepted. A different HR Administrator from the cancellation's Approving Official and the Employee authorizes it, or records a blocking reason that COC reads as the handoff's current status. The stable `effect_key` makes a retry return the same correction, including after authorization; the same key with different facts is a conflict. A partial unique index on `(agency_id, target_id) WHERE target_type = 'CTO_INPUT'` lets one CTO input be corrected at most once. An open Work Date is refused with `ATTENDANCE_CORRECTION_WORK_DATE_NOT_LOCKED`, and a missing `ATTENDANCE_CORRECTION_CTO_INPUT` route with `APPROVAL_ROUTE_RESOLUTION_FAILED`.
 
 ---
 
