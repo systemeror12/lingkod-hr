@@ -10,8 +10,10 @@ import {
 } from '../attendance-work-date-lock';
 import {
   AttendanceCtoInputError,
+  assertValidVoidCtoInput,
   ctoInputFacts,
   type RecordCtoInput,
+  type VoidCtoInput,
 } from './attendance-cto-inputs.types';
 
 /**
@@ -196,5 +198,103 @@ export class AttendanceCtoInputsService {
       input.workDate,
     );
     return { id: created.id };
+  }
+
+  /**
+   * Withdraw a current CTO input inside the caller-owned transaction: create its
+   * `NONE` successor, leaving the input itself untouched, and recalculate the
+   * Employee's current Attendance Day for the Work Date, when one exists. A retry
+   * with the same source key returns the existing successor, even once the Work
+   * Date is locked; the same key with different facts is a conflict. A Work Date
+   * in a finalized Attendance Period is refused, because Attendance Correction
+   * owns that change.
+   */
+  async voidInTransaction(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    input: VoidCtoInput,
+  ): Promise<{ id: string }> {
+    const { agencyId } = context;
+    assertValidVoidCtoInput(input);
+
+    // The same per-Employee lock recordInTransaction takes, so a concurrent void
+    // or new input sees the committed winner.
+    await transaction.$queryRaw(
+      Prisma.sql`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${agencyId}:attendance-cto:${input.employeeId}`}, 0))`,
+    );
+
+    const existing = await transaction.attendanceCtoInput.findFirst({
+      where: { agencyId, sourceKey: input.sourceKey },
+    });
+    if (existing) {
+      const same =
+        existing.employeeId === input.employeeId &&
+        existing.sourceType === input.sourceType &&
+        existing.sourceId === input.sourceId &&
+        existing.coverageMode === 'NONE' &&
+        existing.predecessorInputId === input.predecessorInputId;
+      if (!same) {
+        throw new AttendanceCtoInputError(
+          'The source key already names a different CTO input.',
+          409,
+          'CTO_INPUT_SOURCE_KEY_CONFLICT',
+        );
+      }
+      return { id: existing.id };
+    }
+
+    const predecessor = await transaction.attendanceCtoInput.findFirst({
+      where: { agencyId, employeeId: input.employeeId, id: input.predecessorInputId },
+      select: {
+        workDate: true,
+        coverageMode: true,
+        successors: { select: { id: true }, take: 1 },
+      },
+    });
+    if (!predecessor) {
+      throw new AttendanceCtoInputError(
+        'The predecessor is not a CTO input for this Employee.',
+        404,
+        'CTO_INPUT_PREDECESSOR_NOT_FOUND',
+      );
+    }
+    if (predecessor.coverageMode === 'NONE' || predecessor.successors.length > 0) {
+      throw new AttendanceCtoInputError(
+        'The CTO input is no longer current, so it cannot be voided.',
+        409,
+        'CTO_INPUT_ALREADY_SUPERSEDED',
+      );
+    }
+
+    const workDate = predecessor.workDate.toISOString().slice(0, 10);
+    const locked = await findLockedWorkDate(transaction, agencyId, [workDate]);
+    if (locked) {
+      throw new AttendanceCtoInputError(
+        lockedWorkDateMessage(locked),
+        409,
+        ATTENDANCE_WORK_DATE_LOCKED,
+      );
+    }
+
+    const successor = await transaction.attendanceCtoInput.create({
+      data: {
+        agencyId,
+        employeeId: input.employeeId,
+        sourceKey: input.sourceKey,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        workDate: predecessor.workDate,
+        coverageMode: 'NONE',
+        predecessorInputId: input.predecessorInputId,
+      },
+      select: { id: true },
+    });
+    await this.days.recalculateCurrentWorkDateInTransaction(
+      transaction,
+      context,
+      input.employeeId,
+      workDate,
+    );
+    return { id: successor.id };
   }
 }

@@ -8,8 +8,9 @@ import {
   manilaInstant,
   type AttendanceWorkflowFixture,
 } from '../attendance-test-fixtures';
+import { ctoCoverageInTransaction } from './attendance-cto-inputs.coverage';
 import { AttendanceCtoInputsService } from './attendance-cto-inputs.service';
-import type { RecordCtoInput } from './attendance-cto-inputs.types';
+import type { RecordCtoInput, VoidCtoInput } from './attendance-cto-inputs.types';
 
 const enabled = process.env.DATABASE_E2E === 'true';
 
@@ -614,6 +615,365 @@ it.skipIf(!enabled)(
           exceptionType: 'UNPLACED_CTO_INPUT',
           details: expect.objectContaining({ ctoInputId: recorded.id }),
         }),
+      );
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceCtoInput.deleteMany({ where: { agencyId } });
+      });
+      await cleanupAttendanceWorkflowAgency(admin, agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'voids a CTO input with a linked successor, recalculates its open Day, and creates nothing new on a retry',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services, agencyId, employeeId, workDate } = fixture;
+    const context = fixture.administratorContext;
+    const cto = new AttendanceCtoInputsService(services.days);
+    const foreignAgency = await admin.agency.create({
+      data: {
+        code: `CTO-V-${fixture.suffix}`,
+        name: 'Attendance CTO Void Foreign Agency',
+        agencyType: 'NGA',
+        status: 'ACTIVE',
+      },
+    });
+    const inAgency = <T>(
+      run: (transaction: Parameters<Parameters<typeof withDatabaseContext>[1]>[0]) => Promise<T>,
+    ) => withDatabaseContext({ agencyId, membershipId: context.membershipId }, run);
+    const record = (input: RecordCtoInput) =>
+      inAgency((transaction) => cto.recordInTransaction(transaction, context, input));
+    const voidInput = (input: VoidCtoInput) =>
+      inAgency((transaction) => cto.voidInTransaction(transaction, context, input));
+    const detail = async () => {
+      const [day] = await services.days.list(context, {
+        employeeId,
+        workDateFrom: workDate,
+        workDateTo: workDate,
+      });
+      return services.days.findById(context, day!.id);
+    };
+    const count = () => admin.attendanceCtoInput.count({ where: { agencyId } });
+    const timed: RecordCtoInput = {
+      employeeId,
+      sourceType: 'CtoRequest',
+      sourceId: employeeId,
+      sourceKey: `${fixture.suffix}-timed`,
+      workDate,
+      coverageMode: 'TIMED',
+      startsAt: manilaInstant(workDate, '16:00').toISOString(),
+      endsAt: manilaInstant(workDate, '17:00').toISOString(),
+    };
+
+    try {
+      const original = await record(timed);
+      const before = await admin.attendanceCtoInput.findUniqueOrThrow({
+        where: { id: original.id },
+      });
+      expect((await detail()).day.totals).toMatchObject({ undertimeMinutes: 0, ctoMinutes: 60 });
+
+      const cancellation: VoidCtoInput = {
+        sourceKey: `${fixture.suffix}-void`,
+        employeeId,
+        predecessorInputId: original.id,
+        sourceType: 'CtoCancellation',
+        sourceId: agencyId,
+      };
+      const successor = await voidInput(cancellation);
+
+      // The original is untouched; the successor links to it and carries no coverage.
+      expect(
+        await admin.attendanceCtoInput.findUniqueOrThrow({ where: { id: original.id } }),
+      ).toEqual(before);
+      expect(
+        await admin.attendanceCtoInput.findUniqueOrThrow({ where: { id: successor.id } }),
+      ).toMatchObject({
+        agencyId,
+        employeeId,
+        sourceKey: cancellation.sourceKey,
+        sourceType: 'CtoCancellation',
+        sourceId: agencyId,
+        workDate: before.workDate,
+        coverageMode: 'NONE',
+        startsAt: null,
+        endsAt: null,
+        predecessorInputId: original.id,
+      });
+
+      // The open Day returns to its 60 undertime minutes without the CTO.
+      const voided = await detail();
+      const version = voided.day.calculationVersion;
+      expect(version).toBe(3);
+      expect(voided.day.totals).toMatchObject({ undertimeMinutes: 60, ctoMinutes: 0 });
+      expect(voided.segments.some((segment) => segment.coverageType === 'CTO')).toBe(false);
+      expect(voided.day.ruleSnapshot.coverageSources).not.toContainEqual(
+        expect.objectContaining({ sourceType: 'CTO_INPUT' }),
+      );
+
+      // A retry with the same effect key creates nothing and leaves the Day alone.
+      expect(await voidInput(cancellation)).toEqual(successor);
+      expect(await count()).toBe(2);
+      expect((await detail()).day.calculationVersion).toBe(version);
+
+      // The same effect key with different facts is a conflict, in either command.
+      for (const different of [
+        { ...cancellation, sourceId: employeeId },
+        { ...cancellation, sourceType: 'Other' },
+        { ...cancellation, predecessorInputId: successor.id },
+      ]) {
+        await expect(voidInput(different)).rejects.toMatchObject({
+          code: 'CTO_INPUT_SOURCE_KEY_CONFLICT',
+          statusCode: 409,
+        });
+      }
+      await expect(
+        voidInput({ ...cancellation, sourceKey: timed.sourceKey }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_SOURCE_KEY_CONFLICT' });
+      await expect(record({ ...timed, sourceKey: cancellation.sourceKey })).rejects.toMatchObject({
+        code: 'CTO_INPUT_SOURCE_KEY_CONFLICT',
+      });
+
+      // An input has one successor, and a void has nothing left to withdraw.
+      await expect(
+        voidInput({ ...cancellation, sourceKey: `${fixture.suffix}-void-again` }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_ALREADY_SUPERSEDED', statusCode: 409 });
+      await expect(
+        voidInput({
+          ...cancellation,
+          sourceKey: `${fixture.suffix}-void-void`,
+          predecessorInputId: successor.id,
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_ALREADY_SUPERSEDED' });
+
+      // The predecessor must be this Employee's input in this Agency.
+      await expect(
+        voidInput({
+          ...cancellation,
+          sourceKey: `${fixture.suffix}-void-unknown`,
+          predecessorInputId: agencyId,
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_PREDECESSOR_NOT_FOUND', statusCode: 404 });
+      await expect(
+        voidInput({
+          ...cancellation,
+          sourceKey: `${fixture.suffix}-void-other-employee`,
+          employeeId: agencyId,
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_PREDECESSOR_NOT_FOUND' });
+      await expect(
+        withDatabaseContext({ agencyId: foreignAgency.id }, (transaction) =>
+          cto.voidInTransaction(
+            transaction,
+            { ...context, agencyId: foreignAgency.id },
+            { ...cancellation, sourceKey: `${fixture.suffix}-void-foreign` },
+          ),
+        ),
+      ).rejects.toMatchObject({ code: 'CTO_INPUT_PREDECESSOR_NOT_FOUND' });
+      expect(await count()).toBe(2);
+
+      // The voided coverage no longer blocks new CTO, which can itself be voided.
+      const replacement = await record({ ...timed, sourceKey: `${fixture.suffix}-replacement` });
+      expect((await detail()).day.totals).toMatchObject({ undertimeMinutes: 0, ctoMinutes: 60 });
+
+      // Concurrent voids agree: one key yields one successor, and two keys cannot both win.
+      const raced = { ...cancellation, predecessorInputId: replacement.id };
+      const sameKey = { ...raced, sourceKey: `${fixture.suffix}-race` };
+      const [left, right] = await Promise.all([voidInput(sameKey), voidInput(sameKey)]);
+      expect(left).toEqual(right);
+      expect(await count()).toBe(4);
+      const third = await record({ ...timed, sourceKey: `${fixture.suffix}-third` });
+      const outcomes = await Promise.allSettled(
+        ['one', 'two'].map((key) =>
+          voidInput({
+            ...raced,
+            predecessorInputId: third.id,
+            sourceKey: `${fixture.suffix}-race-${key}`,
+          }),
+        ),
+      );
+      expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      expect(outcomes.find(({ status }) => status === 'rejected')).toMatchObject({
+        reason: { code: 'CTO_INPUT_ALREADY_SUPERSEDED' },
+      });
+      expect(await count()).toBe(6);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceCtoInput.deleteMany({ where: { agencyId } });
+        await transaction.agency.delete({ where: { id: foreignAgency.id } });
+      });
+      await cleanupAttendanceWorkflowAgency(admin, agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'refuses to void a CTO input on a locked Work Date with the typed error, while a retry still returns its successor',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services, agencyId, employeeId, workDate } = fixture;
+    const context = fixture.administratorContext;
+    const cto = new AttendanceCtoInputsService(services.days);
+    const inAgency = <T>(
+      run: (transaction: Parameters<Parameters<typeof withDatabaseContext>[1]>[0]) => Promise<T>,
+    ) => withDatabaseContext({ agencyId, membershipId: context.membershipId }, run);
+    const record = (input: RecordCtoInput) =>
+      inAgency((transaction) => cto.recordInTransaction(transaction, context, input));
+    const voidInput = (input: VoidCtoInput) =>
+      inAgency((transaction) => cto.voidInTransaction(transaction, context, input));
+    const timed: RecordCtoInput = {
+      employeeId,
+      sourceType: 'CtoRequest',
+      sourceId: employeeId,
+      sourceKey: `${fixture.suffix}-voided`,
+      workDate,
+      coverageMode: 'TIMED',
+      startsAt: manilaInstant(workDate, '16:00').toISOString(),
+      endsAt: manilaInstant(workDate, '17:00').toISOString(),
+    };
+    const cancellation = { employeeId, sourceType: 'CtoCancellation', sourceId: agencyId };
+
+    try {
+      const voided = await record(timed);
+      const earlierVoid: VoidCtoInput = {
+        ...cancellation,
+        sourceKey: `${fixture.suffix}-earlier-void`,
+        predecessorInputId: voided.id,
+      };
+      const successor = await voidInput(earlierVoid);
+      const current = await record({ ...timed, sourceKey: `${fixture.suffix}-current` });
+
+      await activateLockRoute(fixture);
+      const submission = await services.submissions.create(fixture.employeeContext, {
+        attendancePeriodId: fixture.periodId,
+      });
+      await services.submissions.submit(fixture.employeeContext, submission.submission.id);
+      await services.submissions.approve(fixture.officerContext, submission.submission.id, {});
+      const submitted = await services.periods.submitForReview(context, fixture.periodId);
+      await services.periods.approve(fixture.officerContext, submitted.version.id, {});
+      await services.periods.lock(await createSecondAdministrator(fixture), submitted.version.id);
+      const [lockedDay] = await services.days.list(context, {
+        employeeId,
+        workDateFrom: workDate,
+        workDateTo: workDate,
+      });
+
+      await expect(
+        voidInput({
+          ...cancellation,
+          sourceKey: `${fixture.suffix}-locked-void`,
+          predecessorInputId: current.id,
+        }),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_WORK_DATE_LOCKED', statusCode: 409 });
+      expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(3);
+      const [after] = await services.days.list(context, {
+        employeeId,
+        workDateFrom: workDate,
+        workDateTo: workDate,
+      });
+      expect(after!.calculationVersion).toBe(lockedDay!.calculationVersion);
+      expect(
+        await inAgency((transaction) =>
+          ctoCoverageInTransaction(transaction, agencyId, employeeId, workDate),
+        ),
+      ).toEqual([expect.objectContaining({ inputId: current.id })]);
+
+      // The earlier void already took effect, so its retry is not a new change.
+      expect(await voidInput(earlierVoid)).toEqual(successor);
+      expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(3);
+    } finally {
+      await admin.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe("SET LOCAL session_replication_role = 'replica'");
+        await transaction.attendanceCtoInput.deleteMany({ where: { agencyId } });
+      });
+      await cleanupAttendanceWorkflowAgency(admin, agencyId, fixture.suffix);
+      await admin.$disconnect();
+    }
+  },
+);
+
+it.skipIf(!enabled)(
+  'voids CTO with no Attendance Day yet, and clears the blocking exception of CTO the calculation could not place',
+  async () => {
+    const fixture = await createAttendanceWorkflowFixture();
+    const { admin, services, agencyId, employeeId, workDate } = fixture;
+    const context = fixture.administratorContext;
+    const cto = new AttendanceCtoInputsService(services.days);
+    const inAgency = <T>(
+      run: (transaction: Parameters<Parameters<typeof withDatabaseContext>[1]>[0]) => Promise<T>,
+    ) => withDatabaseContext({ agencyId, membershipId: context.membershipId }, run);
+    const base = { employeeId, sourceType: 'CtoRequest', sourceId: employeeId };
+    const cancellation = { sourceType: 'CtoCancellation', sourceId: agencyId };
+
+    try {
+      // No Attendance Day exists yet, so nothing is calculated for the Work Date.
+      const dayless = shiftDate(workDate, -7);
+      const uncalculated = await inAgency((transaction) =>
+        cto.recordInTransaction(transaction, context, {
+          ...base,
+          sourceKey: `${fixture.suffix}-dayless`,
+          workDate: dayless,
+          coverageMode: 'WHOLE_WORK_DATE',
+        }),
+      );
+      await inAgency((transaction) =>
+        cto.voidInTransaction(transaction, context, {
+          ...cancellation,
+          employeeId,
+          sourceKey: `${fixture.suffix}-dayless-void`,
+          predecessorInputId: uncalculated.id,
+        }),
+      );
+      expect(
+        await admin.attendanceDay.count({
+          where: { agencyId, employeeId, workDate: new Date(`${dayless}T00:00:00.000Z`) },
+        }),
+      ).toBe(0);
+
+      // The fixture calendar's Christmas Day is a Friday, so Thursday's overnight
+      // duty stops at midnight: CTO after midnight is placed nowhere.
+      const nightEmployeeId = await createOvernightEmployee(fixture);
+      const eveDate = '2026-12-24';
+      const unplaced = await inAgency((transaction) =>
+        cto.recordInTransaction(transaction, context, {
+          ...base,
+          employeeId: nightEmployeeId,
+          workDate: eveDate,
+          sourceKey: `${fixture.suffix}-into-holiday`,
+          coverageMode: 'TIMED',
+          startsAt: manilaInstant('2026-12-25', '02:00').toISOString(),
+          endsAt: manilaInstant('2026-12-25', '06:00').toISOString(),
+        }),
+      );
+      const calculated = await services.days.calculate(context, {
+        periodCode: `CTO-EVE-${fixture.suffix.slice(0, 12)}`,
+        dateFrom: eveDate,
+        dateTo: eveDate,
+        employeeIds: [nightEmployeeId],
+      });
+      expect(calculated.days[0]?.exceptionTypes).toContain('UNPLACED_CTO_INPUT');
+
+      await inAgency((transaction) =>
+        cto.voidInTransaction(transaction, context, {
+          ...cancellation,
+          employeeId: nightEmployeeId,
+          sourceKey: `${fixture.suffix}-into-holiday-void`,
+          predecessorInputId: unplaced.id,
+        }),
+      );
+      const [eve] = await services.days.list(context, {
+        employeeId: nightEmployeeId,
+        workDateFrom: eveDate,
+        workDateTo: eveDate,
+      });
+      const eveDetail = await services.days.findById(context, eve!.id);
+      expect(eveDetail.exceptions).not.toContainEqual(
+        expect.objectContaining({ exceptionType: 'UNPLACED_CTO_INPUT' }),
       );
     } finally {
       await admin.$transaction(async (transaction) => {

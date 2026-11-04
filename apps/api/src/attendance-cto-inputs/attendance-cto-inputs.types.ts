@@ -20,6 +20,17 @@ export interface RecordCtoInput {
   endsAt?: string | undefined;
 }
 
+/** The withdrawal of one current CTO input, as a CTO cancellation hands it to Attendance. */
+export interface VoidCtoInput {
+  /** Stable effect key the cancellation derives per Work Date, so a retry returns the same successor. */
+  sourceKey: string;
+  employeeId: string;
+  predecessorInputId: string;
+  /** The cancellation record the successor traces back to. */
+  sourceType: string;
+  sourceId: string;
+}
+
 /** A current CTO input covering one Work Date. A `null` interval covers the whole Work Date. */
 export interface CtoDayCoverage {
   inputId: string;
@@ -54,6 +65,11 @@ function toInstant(value: string | undefined): Date | null {
   const instant = new Date(value);
   if (Number.isNaN(instant.getTime())) throw invalid('Enter a valid CTO interval.');
   return instant;
+}
+
+export function assertValidVoidCtoInput(input: VoidCtoInput): void {
+  if (input.sourceKey.trim().length === 0) throw invalid('A stable source key is required.');
+  if (input.sourceType.trim().length === 0) throw invalid('A CTO source reference is required.');
 }
 
 /** The validated facts a CTO input stores, or a `CTO_INPUT_INVALID` error. */
