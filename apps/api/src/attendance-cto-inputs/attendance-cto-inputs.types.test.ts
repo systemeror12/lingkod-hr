@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { ctoInputFacts, type RecordCtoInput } from './attendance-cto-inputs.types';
+import {
+  assertValidVoidCtoInput,
+  ctoInputFacts,
+  type RecordCtoInput,
+} from './attendance-cto-inputs.types';
 
 const whole: RecordCtoInput = {
   sourceKey: 'cto-request-1:2026-01-05',
@@ -42,6 +46,29 @@ describe('ctoInputFacts', () => {
   ])('rejects %s', (_label, input, message) => {
     expect(() => ctoInputFacts(input)).toThrow(message);
     expect(() => ctoInputFacts(input)).toThrow(
+      expect.objectContaining({ code: 'CTO_INPUT_INVALID' }),
+    );
+  });
+});
+
+describe('assertValidVoidCtoInput', () => {
+  const voidInput = {
+    sourceKey: 'cto-cancellation-1:2026-01-05',
+    employeeId: whole.employeeId,
+    predecessorInputId: '00000000-0000-4000-8000-000000000003',
+    sourceType: 'CtoCancellation',
+    sourceId: '00000000-0000-4000-8000-000000000004',
+  };
+
+  it('accepts a void naming its effect key and source', () => {
+    expect(() => assertValidVoidCtoInput(voidInput)).not.toThrow();
+  });
+
+  it.each([
+    ['a blank effect key', { ...voidInput, sourceKey: '  ' }],
+    ['a blank source type', { ...voidInput, sourceType: '' }],
+  ])('rejects %s', (_label, input) => {
+    expect(() => assertValidVoidCtoInput(input)).toThrow(
       expect.objectContaining({ code: 'CTO_INPUT_INVALID' }),
     );
   });
