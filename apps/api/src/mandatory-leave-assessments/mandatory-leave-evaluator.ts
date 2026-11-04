@@ -352,8 +352,7 @@ export function evaluateMandatoryLeave(
       // A line inside the year counts its net quantity even when its dates
       // cannot be placed; a line crossing the year needs every date placed.
       const netDates = placeNetWorkingDates(line);
-      const countedDates =
-        netDates?.filter((date) => date >= yearStart && date <= yearEnd) ?? null;
+      const countedDates = netDates?.filter((date) => date >= yearStart && date <= yearEnd) ?? null;
       if (!countedDates && (line.dateFrom < yearStart || line.dateTo > yearEnd)) {
         unattributable.push(line.lineId);
         continue;
