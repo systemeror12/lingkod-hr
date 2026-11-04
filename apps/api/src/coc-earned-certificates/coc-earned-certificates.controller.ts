@@ -14,6 +14,7 @@ import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
+import { CocServiceError } from '../coc-accounts/coc-accounts.types';
 import {
   cocEarnedCertificateIdSchema,
   cocEarnedCertificatePrepareSchema,
@@ -38,6 +39,19 @@ function translateServiceError(error: unknown, requestId: string): never {
   if (error instanceof CocEarnedCertificateServiceError || error instanceof ApprovalServiceError) {
     throw new HttpException(
       { error: { code: error.code, message: error.message, requestId } },
+      error.statusCode,
+    );
+  }
+  if (error instanceof CocServiceError) {
+    throw new HttpException(
+      {
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(error.refusals.length > 0 ? { refusals: error.refusals } : {}),
+          requestId,
+        },
+      },
       error.statusCode,
     );
   }
@@ -97,6 +111,21 @@ export class CocEarnedCertificatesController {
     if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     try {
       return await this.service.return(context, id, parsed.data);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/coc-earned-certificates/:certificateId/approve')
+  @RequirePermission('overtime.coc_certificates.approve')
+  async approve(
+    @Param('agencyId') agencyId: string,
+    @Param('certificateId') certificateId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CocEarnedCertificateSummary> {
+    const id = this.certificateId(agencyId, certificateId, context);
+    try {
+      return await this.service.approve(context, id);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
