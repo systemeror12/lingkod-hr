@@ -3981,6 +3981,7 @@ model AttendanceCorrection {
   evidence       AttendanceCorrectionEvidence[] @relation("AttendanceCorrectionEvidence")
   effect         AttendanceCorrectionEffect?
   lockedAdjustment LockedAttendanceAdjustment?
+  ctoRequestDates  CtoRequestDate[]            @relation("CtoRequestDateCorrection")
 
   @@unique([agencyId, id])
   @@unique([agencyId, effectKey], map: "attendance_corrections_effect_key_key")
@@ -5449,10 +5450,12 @@ model CtoRequestDate {
   chargedMinutes               Int       @map("charged_minutes")
   attendanceCtoInputId         String?   @map("attendance_cto_input_id") @db.Uuid
   cancelledByCtoCancellationId String?   @map("cancelled_by_cto_cancellation_id") @db.Uuid
+  attendanceCorrectionId       String?   @map("attendance_correction_id") @db.Uuid
 
-  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  request     CtoRequest       @relation("CtoRequestDates", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
-  cancelledBy CtoCancellation? @relation("CtoCancellationDates", fields: [agencyId, cancelledByCtoCancellationId], references: [agencyId, id], onDelete: Restrict)
+  agency               Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request              CtoRequest            @relation("CtoRequestDates", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+  cancelledBy          CtoCancellation?      @relation("CtoCancellationDates", fields: [agencyId, cancelledByCtoCancellationId], references: [agencyId, id], onDelete: Restrict)
+  attendanceCorrection AttendanceCorrection? @relation("CtoRequestDateCorrection", fields: [agencyId, attendanceCorrectionId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([ctoRequestId, workDate])
   @@unique([agencyId, id])
