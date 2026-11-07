@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import {
   approvalAuditWriter,
   ApprovalCompletionRegistry,
@@ -13,6 +13,7 @@ import {
   manilaDate,
   type AttendanceWorkflowFixture,
 } from '../attendance-test-fixtures';
+import { AttendanceCtoInputsService } from '../attendance-cto-inputs/attendance-cto-inputs.service';
 import { CocAccountsService } from '../coc-accounts/coc-accounts.service';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
 import {
@@ -24,12 +25,14 @@ import {
   giveRole,
 } from '../overtime-authorities/overtime-authority-test-fixtures';
 import { cleanupAttendanceOvertime } from '../overtime-service-records/overtime-service-test-fixtures';
+import { ApproveCtoRequestService } from './approve-cto-request.service';
 import { CreateCtoRequestService } from './create-cto-request.service';
 import { registerCtoRequestApproval } from './cto-request-approval';
 import { CtoRequestsController } from './cto-requests.controller';
 import type { CtoRequestDateInput } from './cto-requests.types';
 import { DiscardCtoRequestService } from './discard-cto-request.service';
 import { RecommendCtoRequestService } from './recommend-cto-request.service';
+import { RejectCtoRequestService } from './reject-cto-request.service';
 import { ReturnCtoRequestService } from './return-cto-request.service';
 import { SubmitCtoRequestService } from './submit-cto-request.service';
 import { WithdrawCtoRequestService } from './withdraw-cto-request.service';
@@ -60,7 +63,11 @@ const SUPERVISOR_GRANTS = grantsOf('DIRECT_REPORTS', [
   'overtime.cto.recommend',
   'overtime.cto.return',
 ]);
-const OFFICIAL_GRANTS = grantsOf('AGENCY', ['overtime.cto.return']);
+const OFFICIAL_GRANTS = grantsOf('AGENCY', [
+  'overtime.cto.return',
+  'overtime.cto.approve',
+  'overtime.cto.reject',
+]);
 
 function services(fixture: AttendanceWorkflowFixture) {
   const registry = new ApprovalCompletionRegistry();
@@ -75,6 +82,14 @@ function services(fixture: AttendanceWorkflowFixture) {
   const withdraw = new WithdrawCtoRequestService(audit, approvals);
   const recommend = new RecommendCtoRequestService(audit, approvals);
   const returnRequest = new ReturnCtoRequestService(audit, approvals);
+  const approve = new ApproveCtoRequestService(
+    audit,
+    approvals,
+    days,
+    coc,
+    new AttendanceCtoInputsService(days),
+  );
+  const reject = new RejectCtoRequestService(audit, approvals);
   return {
     approvals,
     create,
@@ -83,6 +98,8 @@ function services(fixture: AttendanceWorkflowFixture) {
     withdraw,
     recommend,
     returnRequest,
+    approve,
+    reject,
     controller: new CtoRequestsController(
       create,
       discard,
@@ -90,6 +107,8 @@ function services(fixture: AttendanceWorkflowFixture) {
       withdraw,
       recommend,
       returnRequest,
+      approve,
+      reject,
     ),
   };
 }
@@ -409,6 +428,7 @@ async function setup() {
   const teardown = async () => {
     await asReplica(async (transaction) => {
       const where = { agencyId };
+      await transaction.attendanceCtoInput.deleteMany({ where });
       await transaction.ctoRequestDate.deleteMany({ where });
       await transaction.ctoRequest.deleteMany({ where });
       await transaction.cocLedgerEntry.deleteMany({ where });
@@ -439,6 +459,7 @@ async function setup() {
     credit,
     futureUse,
     onSchedule,
+    asReplica,
     day: workWeek(),
     teardown,
     ...services(fixture),
@@ -474,7 +495,7 @@ function approvalRequests(fixture: Setup, requestId: string) {
   });
 }
 
-it.skipIf(!enabled)('adds forced RLS and the ticket grants', () =>
+it.skipIf(!enabled)('adds forced RLS and the baseline decision grants', () =>
   withSetup(async ({ admin }) => {
     const tables = await admin.$queryRaw<
       Array<{ relname: string; relrowsecurity: boolean; relforcerowsecurity: boolean }>
@@ -486,8 +507,12 @@ it.skipIf(!enabled)('adds forced RLS and the ticket grants', () =>
         permission: { code: { in: ['overtime.cto.approve', 'overtime.cto.reject'] } },
         role: { agencyId: null },
       },
+      select: { scopePolicy: true, role: { select: { code: true } } },
     });
-    expect(granted).toEqual([]);
+    expect(granted).toEqual([
+      { scopePolicy: 'AGENCY', role: { code: 'appointing_authority' } },
+      { scopePolicy: 'AGENCY', role: { code: 'appointing_authority' } },
+    ]);
   }),
 );
 
@@ -1123,5 +1148,522 @@ it.skipIf(!enabled)('validates input at the controller', () =>
       controller.return(agencyId, randomUUID(), { comment: '   ' }, supervisor.context),
     );
     expect((await errorOf(controller.submit(agencyId, 'not-a-uuid', employee))).status).toBe(404);
+  }),
+);
+
+/** A request of the fixture Employee, submitted and recommended. */
+async function forApproval(fixture: Setup, dates: CtoRequestDateInput[]) {
+  const { create, submit, recommend, employee, employeeId, supervisor } = fixture;
+  const draft = await create.execute(employee, { employeeId, dates });
+  await submit.execute(employee, draft.id);
+  await recommend.execute(supervisor.context, draft.id, {});
+  return draft.id;
+}
+
+function ledgerEntries(fixture: Setup, requestId: string) {
+  return fixture.admin.cocLedgerEntry.findMany({
+    where: { agencyId: fixture.agencyId, sourceType: 'CTO_REQUEST', sourceId: requestId },
+    orderBy: { sourcePostingKey: 'asc' },
+  });
+}
+
+/** Everything approval writes is absent, and the route still awaits its second step. */
+async function expectNothingPosted(fixture: Setup, requestId: string) {
+  const { admin, agencyId } = fixture;
+  const request = await admin.ctoRequest.findUniqueOrThrow({
+    where: { id: requestId },
+    include: { dates: true },
+  });
+  expect(request.status).toBe('FOR_APPROVAL');
+  expect(request.approvedAt).toBeNull();
+  expect(request.dates.every((date) => date.attendanceCtoInputId === null)).toBe(true);
+  expect(await ledgerEntries(fixture, requestId)).toEqual([]);
+  expect(await admin.attendanceCtoInput.count({ where: { agencyId, sourceId: requestId } })).toBe(
+    0,
+  );
+  expect(await approvalRequests(fixture, requestId)).toMatchObject([
+    { status: 'IN_PROGRESS', currentStepNo: 2 },
+  ]);
+  expect(await auditActions(fixture, requestId)).not.toContain('CTO_REQUEST_APPROVED');
+}
+
+/** A FINALIZED Attendance Period over these dates, standing in for a locked one. */
+async function lockedPeriod(fixture: Setup, from: string, to: string) {
+  const { admin, agencyId, asReplica } = fixture;
+  const period = await admin.attendancePeriod.create({
+    data: {
+      agencyId,
+      code: `CTO-LOCK-${randomUUID()}`,
+      dateFrom: new Date(from),
+      dateTo: new Date(to),
+    },
+  });
+  const setStatus = (status: string) =>
+    asReplica((transaction) =>
+      transaction.attendancePeriod.update({ where: { id: period.id }, data: { status } }),
+    );
+  await setStatus('FINALIZED');
+  return { unlock: () => setStatus('OPEN') };
+}
+
+it.skipIf(!enabled)(
+  'approves by posting usage across two Valid Until dates and an Attendance input per Work Date',
+  () =>
+    withSetup(async (fixture) => {
+      const { approve, official, employeeId, credit, day, admin, agencyId } = fixture;
+      const year = Number(day(0).slice(0, 4));
+      const accountId = await credit(employeeId, 300, year);
+      await credit(employeeId, 4800, year + 1);
+      const requestId = await forApproval(fixture, [whole(day(0)), half(day(1), '08:00', '12:00')]);
+
+      const approved = await approve.execute(official.context, requestId, {
+        comment: 'Service needs are met.',
+      });
+
+      expect(approved.status).toBe('APPROVED');
+      expect(approved.approvedByMembershipId).toBe(official.context.membershipId);
+      expect(approved.approvedAt).not.toBeNull();
+
+      const entries = await ledgerEntries(fixture, requestId);
+      expect(
+        entries.map((entry) => ({
+          minutes: entry.minutes.toFixed(1),
+          effectiveDate: entry.effectiveDate.toISOString().slice(0, 10),
+          validUntil: entry.validUntil.toISOString().slice(0, 10),
+          sourcePostingKey: entry.sourcePostingKey,
+          ruleCode: entry.ruleCode,
+          postedByMembershipId: entry.postedByMembershipId,
+          cocAccountId: entry.cocAccountId,
+        })),
+      ).toEqual(
+        [
+          { workDate: day(0), year, minutes: '-300.0' },
+          { workDate: day(0), year: year + 1, minutes: '-180.0' },
+          { workDate: day(1), year: year + 1, minutes: '-240.0' },
+        ].map(({ workDate, year: validYear, minutes }) => ({
+          minutes,
+          effectiveDate: workDate,
+          validUntil: `${validYear}-12-31`,
+          sourcePostingKey: `${workDate}:${validYear}-12-31`,
+          ruleCode: 'JC2_2004_CTO_AVAILMENT',
+          postedByMembershipId: official.context.membershipId,
+          cocAccountId: accountId,
+        })),
+      );
+
+      const inputs = await admin.attendanceCtoInput.findMany({
+        where: { agencyId, sourceType: 'CtoRequest', sourceId: requestId },
+        orderBy: { workDate: 'asc' },
+      });
+      expect(inputs.map((input) => input.coverageMode)).toEqual(['WHOLE_WORK_DATE', 'TIMED']);
+      expect(inputs[1]!.startsAt!.toISOString()).toBe(approved.dates[1]!.startsAt);
+      expect(approved.dates.map((date) => date.attendanceCtoInputId)).toEqual(
+        inputs.map((input) => input.id),
+      );
+
+      expect(await approvalRequests(fixture, requestId)).toMatchObject([
+        { status: 'APPROVED', currentStepNo: null },
+      ]);
+      const event = await admin.auditEvent.findFirstOrThrow({
+        where: { action: 'CTO_REQUEST_APPROVED', entityId: requestId },
+      });
+      expect(event).toMatchObject({
+        actorMembershipId: official.context.membershipId,
+        previousStatus: 'FOR_APPROVAL',
+        newStatus: 'APPROVED',
+        reason: 'Service needs are met.',
+      });
+      expect(event.metadata).toMatchObject({
+        entries: entries.map((entry) => ({ id: entry.id })),
+        inputs: inputs.map((input) => ({ attendanceCtoInputId: input.id })),
+      });
+
+      // Approved is final here: only #324's cancellation moves it on.
+      await expect(approve.execute(official.context, requestId, {})).rejects.toMatchObject({
+        code: 'CTO_REQUEST_STATUS_INVALID',
+      });
+      await expect(
+        fixture.reject.execute(official.context, requestId, { reason: 'Too late.' }),
+      ).rejects.toMatchObject({ code: 'CTO_REQUEST_STATUS_INVALID' });
+    }),
+);
+
+/** Run with the clock at this instant, to stand on a Work Date's Asia/Manila date. */
+async function at<T>(instant: string, run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  vi.setSystemTime(new Date(instant));
+  try {
+    return await run();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+it.skipIf(!enabled)('approves a Work Date of today and refuses one before today', () =>
+  withSetup(async (fixture) => {
+    const { approve, reject, controller, official, employeeId, credit, day, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+    // Half past midnight in Manila is still the Work Date by UTC, so a UTC date would allow it.
+    const justPassed = `${day(1)}T00:30:00+08:00`;
+
+    await at(justPassed, async () => {
+      await expect(
+        approve.execute(official.context, requestId, {}, 'approve-today'),
+      ).rejects.toMatchObject({ code: 'CTO_WORK_DATE_PASSED', statusCode: 409 });
+      const refused = await errorOf(
+        controller.approve(agencyId, requestId, {}, undefined, official.context),
+      );
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({ error: { code: 'CTO_WORK_DATE_PASSED' } });
+    });
+    await expectNothingPosted(fixture, requestId);
+
+    // A refusal does not spend the key, and the last minutes of the Work Date are still today.
+    const approved = await at(`${day(0)}T23:30:00+08:00`, () =>
+      approve.execute(official.context, requestId, {}, 'approve-today'),
+    );
+    expect(approved.status).toBe('APPROVED');
+    expect(await ledgerEntries(fixture, requestId)).toHaveLength(1);
+
+    // A recorded approval still returns its first result once its date has passed.
+    await at(justPassed, async () => {
+      expect(await approve.execute(official.context, requestId, {}, 'approve-today')).toEqual(
+        approved,
+      );
+    });
+    expect(await ledgerEntries(fixture, requestId)).toHaveLength(1);
+
+    // Any passed date refuses the whole request, and rejecting one stays allowed.
+    const spanning = await forApproval(fixture, [whole(day(1)), whole(day(2))]);
+    await at(`${day(2)}T09:00:00+08:00`, async () => {
+      await expect(approve.execute(official.context, spanning, {})).rejects.toMatchObject({
+        code: 'CTO_WORK_DATE_PASSED',
+      });
+      await expectNothingPosted(fixture, spanning);
+      const rejected = await reject.execute(official.context, spanning, { reason: 'Too late.' });
+      expect(rejected.status).toBe('REJECTED');
+    });
+  }),
+);
+
+it.skipIf(!enabled)('recalculates the current Attendance Day of an approved Work Date', () =>
+  withSetup(async (fixture) => {
+    const { approve, official, employeeId, credit, admin, agencyId, day } = fixture;
+    const workDate = day(0);
+    await credit(employeeId, 4800);
+    await fixture.fixture.services.days.calculate(fixture.fixture.administratorContext, {
+      periodCode: `CTO-DAY-${randomUUID()}`,
+      dateFrom: workDate,
+      dateTo: workDate,
+      employeeIds: [employeeId],
+    });
+    const dayOf = () =>
+      admin.attendanceDay.findFirstOrThrow({
+        where: { agencyId, employeeId, workDate: new Date(workDate), isCurrent: true },
+        select: { calculationVersion: true },
+      });
+    const before = await dayOf();
+    const requestId = await forApproval(fixture, [whole(workDate)]);
+
+    await approve.execute(official.context, requestId, {});
+
+    expect((await dayOf()).calculationVersion).toBe(before.calculationVersion + 1);
+  }),
+);
+
+it.skipIf(!enabled)('lets one of two racing approvals take the last COC on an account', () =>
+  withSetup(async (fixture) => {
+    const { approve, official, employeeId, credit, day, admin, agencyId } = fixture;
+    const accountId = await credit(employeeId, 480);
+    // Nothing is reserved before approval, so both pass submission on the same COC.
+    const first = await forApproval(fixture, [whole(day(0))]);
+    const second = await forApproval(fixture, [whole(day(1))]);
+
+    const results = await Promise.allSettled([
+      approve.execute(official.context, first, {}),
+      approve.execute(official.context, second, {}),
+    ]);
+
+    const won = results.filter((result) => result.status === 'fulfilled');
+    const lost = results.filter((result) => result.status === 'rejected');
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect((lost[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: 'CTO_COC_INSUFFICIENT',
+      statusCode: 422,
+    });
+    const balance = await admin.cocLedgerEntry.aggregate({
+      where: { agencyId, cocAccountId: accountId },
+      _sum: { minutes: true },
+    });
+    expect(balance._sum.minutes!.toNumber()).toBe(0);
+    const winner = (won[0] as PromiseFulfilledResult<{ id: string }>).value.id;
+    await expectNothingPosted(fixture, winner === first ? second : first);
+  }),
+);
+
+it.skipIf(!enabled)(
+  'refuses a locked Work Date with a typed reason and rolls back what earlier dates wrote',
+  () =>
+    withSetup(async (fixture) => {
+      const { approve, controller, official, employeeId, credit, day, agencyId } = fixture;
+      await credit(employeeId, 4800);
+      const requestId = await forApproval(fixture, [whole(day(0)), whole(day(1))]);
+      // Only the second date is locked, so the first date's entry and input are written.
+      const period = await lockedPeriod(fixture, day(1), day(1));
+
+      await expect(
+        approve.execute(official.context, requestId, {}, 'approve-once'),
+      ).rejects.toMatchObject({ code: 'ATTENDANCE_WORK_DATE_LOCKED', statusCode: 409 });
+      await expectNothingPosted(fixture, requestId);
+      const refused = await errorOf(
+        controller.approve(agencyId, requestId, {}, 'approve-once', official.context),
+      );
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({ error: { code: 'ATTENDANCE_WORK_DATE_LOCKED' } });
+
+      // A refusal does not spend the key: the request can still be approved with it.
+      await period.unlock();
+      const approved = await approve.execute(official.context, requestId, {}, 'approve-once');
+      expect(approved.status).toBe('APPROVED');
+    }),
+);
+
+it.skipIf(!enabled)('rolls back when Attendance refuses overlapping posted leave', () =>
+  withSetup(async (fixture) => {
+    const { approve, official, employeeId, credit, day, admin, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0)), whole(day(1))]);
+    // Posted leave arrives after recommendation, on the second date only.
+    await admin.attendancePostedLeaveInput.create({
+      data: {
+        agencyId,
+        employeeId,
+        sourceKey: randomUUID(),
+        sourceType: 'LeavePosting',
+        sourceId: randomUUID(),
+        dateFrom: new Date(day(1)),
+        dateTo: new Date(day(1)),
+        unitCode: 'WORKING_DAY',
+        quantity: 1,
+        allocationKind: 'LEAVE_WITHOUT_PAY',
+      },
+    });
+
+    await expect(approve.execute(official.context, requestId, {})).rejects.toMatchObject({
+      code: 'CTO_INPUT_OVERLAPS_POSTED_LEAVE',
+    });
+    await expectNothingPosted(fixture, requestId);
+  }),
+);
+
+it.skipIf(!enabled)('rechecks the COC and the charge when approving', () =>
+  withSetup(async (fixture) => {
+    const { approve, official, employeeId, credit, day, admin, agencyId, asReplica } = fixture;
+    const accountId = await credit(employeeId, 480);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+
+    // COC adjusted away after submission.
+    const adjustmentId = randomUUID();
+    const version = await admin.documentVersion.findFirstOrThrow({
+      where: { agencyId },
+      select: { id: true },
+    });
+    const { validUntil } = await admin.cocLedgerEntry.findFirstOrThrow({
+      where: { cocAccountId: accountId },
+    });
+    await admin.cocLedgerEntry.create({
+      data: {
+        id: adjustmentId,
+        agencyId,
+        cocAccountId: accountId,
+        minutes: -1,
+        effectiveDate: new Date(day(0)),
+        validUntil,
+        sourceType: 'COC_ADJUSTMENT',
+        sourceId: adjustmentId,
+        sourcePostingKey: 'ADJUSTMENT',
+        ruleCode: 'TEST',
+        reason: 'Test.',
+        supportingDocumentVersionId: version.id,
+        postedByMembershipId: fixture.fixture.memberships.administrator,
+      },
+    });
+    await expect(approve.execute(official.context, requestId, {})).rejects.toMatchObject({
+      code: 'CTO_COC_INSUFFICIENT',
+    });
+    await expectNothingPosted(fixture, requestId);
+
+    // The charge the route reviewed no longer matches the schedule.
+    await credit(employeeId, 4800);
+    await asReplica((transaction) =>
+      transaction.ctoRequestDate.updateMany({
+        where: { ctoRequestId: requestId },
+        data: { chargedMinutes: 240 },
+      }),
+    );
+    await expect(approve.execute(official.context, requestId, {})).rejects.toMatchObject({
+      code: 'CTO_CHARGE_CHANGED',
+      statusCode: 409,
+    });
+    await expectNothingPosted(fixture, requestId);
+  }),
+);
+
+it.skipIf(!enabled)('returns the first result to a retry with the same idempotency key', () =>
+  withSetup(async (fixture) => {
+    const { approve, official, employeeId, credit, day, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+    const once = { comment: 'Approved.' };
+
+    const [first, concurrent] = await Promise.all([
+      approve.execute(official.context, requestId, once, 'retry-key'),
+      approve.execute(official.context, requestId, once, 'retry-key'),
+    ]);
+    const retried = await approve.execute(official.context, requestId, once, 'retry-key');
+
+    expect(concurrent).toEqual(first);
+    expect(retried).toEqual(first);
+    expect(await ledgerEntries(fixture, requestId)).toHaveLength(1);
+    expect(
+      await fixture.admin.attendanceCtoInput.count({ where: { agencyId, sourceId: requestId } }),
+    ).toBe(1);
+    expect(
+      (await auditActions(fixture, requestId)).filter((a) => a === 'CTO_REQUEST_APPROVED'),
+    ).toHaveLength(1);
+
+    // The key names this decision: changing its reason or its actor is refused.
+    const conflict = { code: 'CTO_REQUEST_IDEMPOTENCY_CONFLICT', statusCode: 409 };
+    await expect(
+      approve.execute(official.context, requestId, { comment: 'Other.' }, 'retry-key'),
+    ).rejects.toMatchObject(conflict);
+    await expect(
+      approve.execute(
+        { ...fixture.supervisor.context, permissions: OFFICIAL_GRANTS },
+        requestId,
+        once,
+        'retry-key',
+      ),
+    ).rejects.toMatchObject(conflict);
+  }),
+);
+
+it.skipIf(!enabled)('rejects with a reason and writes nothing to the ledger', () =>
+  withSetup(async (fixture) => {
+    const { reject, controller, official, employeeId, credit, day, admin, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+
+    for (const body of [{}, { reason: '   ' }]) {
+      const refused = await errorOf(
+        controller.reject(agencyId, requestId, body, undefined, official.context),
+      );
+      expect(refused.status).toBe(400);
+    }
+
+    const rejected = await reject.execute(
+      official.context,
+      requestId,
+      { reason: 'Service needs.' },
+      'reject-key',
+    );
+    expect(rejected.status).toBe('REJECTED');
+    expect(rejected.approvedAt).toBeNull();
+    expect(await ledgerEntries(fixture, requestId)).toEqual([]);
+    expect(await admin.attendanceCtoInput.count({ where: { agencyId } })).toBe(0);
+    expect(await approvalRequests(fixture, requestId)).toMatchObject([{ status: 'REJECTED' }]);
+    expect(
+      await admin.auditEvent.findFirstOrThrow({
+        where: { action: 'CTO_REQUEST_REJECTED', entityId: requestId },
+      }),
+    ).toMatchObject({ reason: 'Service needs.', newStatus: 'REJECTED' });
+
+    expect(
+      await reject.execute(official.context, requestId, { reason: 'Service needs.' }, 'reject-key'),
+    ).toEqual(rejected);
+
+    // A rejected request frees its Work Date.
+    await forApproval(fixture, [whole(day(0))]);
+  }),
+);
+
+it.skipIf(!enabled)('requires each permission, the second step, and a separate approver', () =>
+  withSetup(async (fixture) => {
+    const { approve, reject, create, submit, official, employee, employeeId } = fixture;
+    const { credit, day, supervisor } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+    const only = (code: string): RequestContext => ({
+      ...official.context,
+      permissions: grantsOf('AGENCY', [code]),
+    });
+    const forbidden = { code: 'CTO_REQUEST_FORBIDDEN', statusCode: 403 };
+
+    await expect(approve.execute(only('overtime.cto.reject'), requestId, {})).rejects.toMatchObject(
+      forbidden,
+    );
+    await expect(
+      reject.execute(only('overtime.cto.approve'), requestId, { reason: 'No.' }),
+    ).rejects.toMatchObject(forbidden);
+
+    // The Employee cannot decide their own request, whatever they are granted.
+    const own: RequestContext = { ...employee, permissions: OFFICIAL_GRANTS };
+    const self = { code: 'CTO_REQUEST_SELF_DECISION', statusCode: 403 };
+    await expect(approve.execute(own, requestId, {})).rejects.toMatchObject(self);
+    await expect(reject.execute(own, requestId, { reason: 'No.' })).rejects.toMatchObject(self);
+
+    // A grant is not the route step: only the assigned Approving Official decides it.
+    const supervising = { ...supervisor.context, permissions: OFFICIAL_GRANTS };
+    await expect(approve.execute(supervising, requestId, {})).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    await expectNothingPosted(fixture, requestId);
+
+    // A request not yet recommended cannot be decided.
+    const submitted = await create.execute(employee, { employeeId, dates: [whole(day(1))] });
+    await submit.execute(employee, submitted.id);
+    await expect(approve.execute(official.context, submitted.id, {})).rejects.toMatchObject({
+      code: 'CTO_REQUEST_STATUS_INVALID',
+    });
+    await expect(
+      reject.execute(official.context, submitted.id, { reason: 'No.' }),
+    ).rejects.toMatchObject({ code: 'CTO_REQUEST_STATUS_INVALID' });
+  }),
+);
+
+it.skipIf(!enabled)('keeps approval and rejection inside their Agency', () =>
+  withSetup(async (fixture) => {
+    const { approve, reject, controller, employeeId, credit, day, admin, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+    const suffix = `${fixture.fixture.suffix}-foreign`;
+    const foreign = await createAgency(admin, suffix, 'CTOD');
+    try {
+      const outsider = context(
+        foreign.agency.id,
+        foreign.user.id,
+        foreign.membership.id,
+        OFFICIAL_GRANTS,
+      );
+      const notFound = { code: 'CTO_REQUEST_NOT_FOUND', statusCode: 404 };
+      await expect(approve.execute(outsider, requestId, {})).rejects.toMatchObject(notFound);
+      await expect(
+        reject.execute(outsider, requestId, { reason: 'Across Agencies.' }),
+      ).rejects.toMatchObject(notFound);
+      const crossPath = { status: 403 };
+      expect(
+        await errorOf(controller.approve(agencyId, requestId, {}, undefined, outsider)),
+      ).toMatchObject(crossPath);
+      expect(
+        await errorOf(
+          controller.reject(agencyId, requestId, { reason: 'No.' }, undefined, outsider),
+        ),
+      ).toMatchObject(crossPath);
+    } finally {
+      await cleanup(admin, [foreign.agency.id], suffix);
+    }
+    await expectNothingPosted(fixture, requestId);
   }),
 );

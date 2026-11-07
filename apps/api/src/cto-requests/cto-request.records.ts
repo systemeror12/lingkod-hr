@@ -127,7 +127,7 @@ export async function assertNotOwnRequest(
   });
   if (membership?.employeeId === employeeId) {
     throw new CtoRequestError(
-      'An Employee cannot recommend or return their own CTO Request.',
+      'An Employee cannot decide their own CTO Request.',
       403,
       'CTO_REQUEST_SELF_DECISION',
     );
@@ -146,6 +146,42 @@ export function assertStatus(
       'CTO_REQUEST_STATUS_INVALID',
     );
   }
+}
+
+/**
+ * Whether this actor already made this decision under this idempotency key, so a
+ * retry returns the request and writes nothing. Run under the request lock. Another
+ * actor or a different reason under the same key is a conflict.
+ */
+export async function decisionAlreadyRecorded(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  decision: {
+    action: 'CTO_REQUEST_APPROVED' | 'CTO_REQUEST_REJECTED';
+    requestId: string;
+    idempotencyKey: string | undefined;
+    reason: string | null;
+  },
+): Promise<boolean> {
+  if (!decision.idempotencyKey) return false;
+  const event = await transaction.auditEvent.findFirst({
+    where: {
+      agencyId: context.agencyId,
+      action: decision.action,
+      entityId: decision.requestId,
+      idempotencyKey: decision.idempotencyKey,
+    },
+    select: { actorMembershipId: true, reason: true },
+  });
+  if (!event) return false;
+  if (event.actorMembershipId !== context.membershipId || event.reason !== decision.reason) {
+    throw new CtoRequestError(
+      'This Idempotency-Key was used for a different CTO Request decision.',
+      409,
+      'CTO_REQUEST_IDEMPOTENCY_CONFLICT',
+    );
+  }
+  return true;
 }
 
 /** The stored dates as the input they were created from. */

@@ -3,6 +3,8 @@ import { CTO_MAX_WORK_DATES } from './cto-requests.types';
 
 export const ctoRequestIdSchema = z.string().uuid();
 
+export const ctoRequestIdempotencyKeySchema = z.string().trim().min(1).max(200);
+
 const workDateSchema = z.string().date();
 
 const ctoRequestDateSchema = z
@@ -40,4 +42,12 @@ export const ctoRequestRecommendSchema = z
 
 export const ctoRequestReturnSchema = z
   .object({ comment: z.string().trim().min(1).max(2000) })
+  .strict();
+
+export const ctoRequestApproveSchema = z
+  .object({ comment: z.string().trim().min(1).max(2000).optional() })
+  .strict();
+
+export const ctoRequestRejectSchema = z
+  .object({ reason: z.string().trim().min(1, 'Enter a reason for rejecting.').max(2000) })
   .strict();

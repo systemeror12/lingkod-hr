@@ -307,6 +307,8 @@ Create:
 
 Attach immutable trigger to COC ledger.
 
+Grant `overtime.cto.approve` and `overtime.cto.reject` after the CTO Request tables, which add their catalog rows.
+
 ---
 
 ## 13. Phase 10 — Payroll

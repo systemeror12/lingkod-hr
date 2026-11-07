@@ -1,4 +1,4 @@
-import type { CocAvailable } from '../coc-accounts/coc-accounts.types';
+import type { CocAvailable, CocDraw } from '../coc-accounts/coc-accounts.types';
 
 /** The calendar dates strictly between two `YYYY-MM-DD` dates, earliest first. */
 export function* datesBetween(from: string, to: string): Generator<string> {
@@ -11,31 +11,47 @@ export function* datesBetween(from: string, to: string): Generator<string> {
   }
 }
 
+/** One Work Date draws from at most two Valid Until dates (ADR 0009). */
+const MAX_DRAWS_PER_WORK_DATE = 2;
+
 /**
- * The first Work Date the available COC can't cover, or null. Walks the dates in
- * order, each drawing first from the earliest-expiring COC still valid on it
- * (hris-controls, COC Ledger Entry). COC past its Valid Until never covers a date,
- * and what an earlier date draws is gone for later ones.
+ * Draw the dates' charges from the available COC, in Work Date order: each draws
+ * first from the earliest-expiring COC still valid on it (hris-controls, COC Ledger
+ * Entry). COC past its Valid Until never covers a date, and what an earlier date
+ * draws is gone for later ones. `uncovered` names the first date the COC can't cover,
+ * and the draws then stop.
  */
-export function firstUncoveredWorkDate(
+export function drawCtoUsage(
   available: readonly CocAvailable[],
   dates: readonly { workDate: string; chargedMinutes: number }[],
-): string | null {
+): { draws: CocDraw[]; uncovered: string | null } {
   const remaining = [...available]
     .sort((left, right) => left.validUntil.localeCompare(right.validUntil))
     .map((bucket) => ({ ...bucket }));
+  const draws: CocDraw[] = [];
   for (const { workDate, chargedMinutes } of [...dates].sort((left, right) =>
     left.workDate.localeCompare(right.workDate),
   )) {
     let due = chargedMinutes * 10;
-    for (const bucket of remaining) {
-      if (bucket.validUntil < workDate || bucket.tenths <= 0) continue;
-      const drawn = Math.min(due, bucket.tenths);
-      bucket.tenths -= drawn;
-      due -= drawn;
-      if (due === 0) break;
+    const sources = remaining
+      .filter((bucket) => bucket.validUntil >= workDate && bucket.tenths > 0)
+      .slice(0, MAX_DRAWS_PER_WORK_DATE);
+    for (const bucket of sources) {
+      const tenths = Math.min(due, bucket.tenths);
+      if (tenths === 0) break;
+      bucket.tenths -= tenths;
+      due -= tenths;
+      draws.push({ workDate, validUntil: bucket.validUntil, tenths });
     }
-    if (due > 0) return workDate;
+    if (due > 0) return { draws, uncovered: workDate };
   }
-  return null;
+  return { draws, uncovered: null };
+}
+
+/** The first Work Date the available COC can't cover, or null. */
+export function firstUncoveredWorkDate(
+  available: readonly CocAvailable[],
+  dates: readonly { workDate: string; chargedMinutes: number }[],
+): string | null {
+  return drawCtoUsage(available, dates).uncovered;
 }
