@@ -11,6 +11,7 @@ import {
   type OvertimeAuthorityAuditWriter,
 } from './overtime-authorities.audit';
 import {
+  OVERTIME_PAY_UNAVAILABLE_REASON,
   OvertimeAuthorityServiceError,
   type OvertimeAuthorityApproveInput,
   type OvertimeAuthoritySummary,
@@ -57,7 +58,7 @@ export class ApproveOvertimeAuthorityService {
         await assertNotPreparer(transaction, context, authorityId);
         if (input.compensationMethod === 'OVERTIME_PAY') {
           throw new OvertimeAuthorityServiceError(
-            'Overtime pay cannot be approved until Payroll accepts Overtime Pay Inputs (#347). Approve it as COC or reject it.',
+            `${OVERTIME_PAY_UNAVAILABLE_REASON} Approve it as COC or reject it.`,
             409,
             'OVERTIME_AUTHORITY_OVERTIME_PAY_BLOCKED_BY_PAYROLL',
           );

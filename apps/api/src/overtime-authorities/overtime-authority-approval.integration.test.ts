@@ -2,7 +2,10 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { expect, it } from 'vitest';
 import { createAdminClient } from '../attendance-test-fixtures';
 import { requestDatabaseContext } from '../database-context';
-import type { EligibilitySnapshot } from './overtime-authorities.types';
+import {
+  OVERTIME_PAY_UNAVAILABLE_REASON,
+  type EligibilitySnapshot,
+} from './overtime-authorities.types';
 import {
   addMember,
   APPROVER_GRANTS,
@@ -399,7 +402,12 @@ it.skipIf(!enabled)(
         ),
       ).toMatchObject({
         status: 409,
-        body: { error: { code: 'OVERTIME_AUTHORITY_OVERTIME_PAY_BLOCKED_BY_PAYROLL' } },
+        body: {
+          error: {
+            code: 'OVERTIME_AUTHORITY_OVERTIME_PAY_BLOCKED_BY_PAYROLL',
+            message: expect.stringContaining(OVERTIME_PAY_UNAVAILABLE_REASON),
+          },
+        },
       });
 
       const approved = await f.controller.approve(

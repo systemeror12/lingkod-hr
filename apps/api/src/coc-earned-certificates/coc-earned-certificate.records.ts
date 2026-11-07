@@ -11,6 +11,7 @@ const certificateSelect = {
   id: true,
   agencyId: true,
   employeeId: true,
+  employee: { select: { employeeNumber: true, legalName: true } },
   earnedMonth: true,
   status: true,
   preparedByMembershipId: true,
@@ -31,6 +32,10 @@ const certificateSelect = {
   },
 } as const;
 
+type CertificateRecord = Prisma.CocEarnedCertificateGetPayload<{
+  select: typeof certificateSelect;
+}>;
+
 function formatDate(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -43,20 +48,13 @@ export function monthBounds(earnedMonth: string): { from: Date; to: Date } {
   return { from, to };
 }
 
-export async function readCertificate(
-  transaction: Prisma.TransactionClient,
-  agencyId: string,
-  certificateId: string,
-): Promise<CocEarnedCertificateSummary> {
-  const record = await transaction.cocEarnedCertificate.findFirst({
-    where: { agencyId, id: certificateId },
-    select: certificateSelect,
-  });
-  if (!record) throw certificateNotFound();
+function summary(record: CertificateRecord): CocEarnedCertificateSummary {
   return {
     id: record.id,
     agencyId: record.agencyId,
     employeeId: record.employeeId,
+    employeeNumber: record.employee.employeeNumber,
+    employeeName: record.employee.legalName,
     earnedMonth: formatDate(record.earnedMonth),
     status: record.status as CocEarnedCertificateStatus,
     preparedByMembershipId: record.preparedByMembershipId,
@@ -74,6 +72,33 @@ export async function readCertificate(
       releasedAt: line.releasedAt?.toISOString() ?? null,
     })),
   };
+}
+
+export async function readCertificate(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  certificateId: string,
+): Promise<CocEarnedCertificateSummary> {
+  const record = await transaction.cocEarnedCertificate.findFirst({
+    where: { agencyId, id: certificateId },
+    select: certificateSelect,
+  });
+  if (!record) throw certificateNotFound();
+  return summary(record);
+}
+
+/** The Agency's certificates, latest earned month first. */
+export async function findCertificates(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  status: CocEarnedCertificateStatus | undefined,
+): Promise<CocEarnedCertificateSummary[]> {
+  const records = await transaction.cocEarnedCertificate.findMany({
+    where: { agencyId, ...(status ? { status } : {}) },
+    orderBy: [{ earnedMonth: 'desc' }, { createdAt: 'desc' }],
+    select: certificateSelect,
+  });
+  return records.map(summary);
 }
 
 /**
@@ -99,15 +124,17 @@ export async function lockCertificate(
 }
 
 /**
- * Require an Agency-wide grant of `permission`. hris-controls §6.9 gives the
- * certificate permissions only `A` and `C` cells, both Agency-wide.
+ * Require an Agency-wide grant of any of `permissions`. hris-controls §6.9 gives
+ * the certificate permissions only `A` and `C` cells, both Agency-wide.
  */
-export function assertAgencyGrant(context: RequestContext, permission: string): void {
+export function assertAgencyGrant(context: RequestContext, ...permissions: string[]): void {
   if (
     !context.agencyId ||
     !context.userId ||
     !context.membershipId ||
-    !hasPermission(context, permission, { agencyId: context.agencyId })
+    !permissions.some((permission) =>
+      hasPermission(context, permission, { agencyId: context.agencyId }),
+    )
   ) {
     throw new CocEarnedCertificateServiceError(
       'The current Agency Membership cannot act on Certificates of COC Earned.',

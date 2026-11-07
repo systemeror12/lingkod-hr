@@ -11,6 +11,13 @@ export type OvertimeAuthorityStatus = (typeof OVERTIME_AUTHORITY_STATUSES)[numbe
 export const COMPENSATION_METHODS = ['COC', 'OVERTIME_PAY'] as const;
 export type CompensationMethod = (typeof COMPENSATION_METHODS)[number];
 
+/**
+ * Why overtime pay cannot be approved until Payroll accepts its inputs (#347).
+ * The one source of what the register states and the approval refusal says.
+ */
+export const OVERTIME_PAY_UNAVAILABLE_REASON =
+  'Overtime pay cannot be approved until Payroll accepts Overtime Pay Inputs.';
+
 /** The shared Approval Route an Overtime Authority is approved through. */
 export const OVERTIME_AUTHORITY_ROUTE_CODE = 'OVERTIME_AUTHORITY';
 export const OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE = 'OVERTIME_AUTHORITY';
@@ -161,6 +168,8 @@ export interface OvertimeAuthorityRecord extends OvertimeAuthoritySummary {
   /** When the authority last changed: its latest Audit Event. */
   updatedAt: string;
   pendingAction: OvertimeAuthorityPendingAction | null;
+  /** Why overtime pay is unavailable; `null` once it can be approved. */
+  overtimePayUnavailableReason: string | null;
 }
 
 export interface OvertimeAuthorityListResponse {

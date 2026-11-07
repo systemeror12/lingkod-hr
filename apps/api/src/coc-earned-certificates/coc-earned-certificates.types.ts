@@ -25,12 +25,18 @@ export interface CocEarnedCertificateReturnInput {
   reason: string;
 }
 
+export interface CocEarnedCertificateListFilter {
+  status?: CocEarnedCertificateStatus | undefined;
+}
+
 export interface CocEarnedCertificateLineSummary {
   id: string;
   overtimeServiceRecordId: string;
   workDate: string;
   dayClassification: string | null;
+  /** Certified Overtime Hours as whole minutes, before the ratio. */
   certifiedMinutes: number;
+  /** COC after the ratio, frozen at approval; `null` until then. */
   creditedMinutes: string | null;
   excessMinutes: string | null;
   releasedAt: string | null;
@@ -40,6 +46,8 @@ export interface CocEarnedCertificateSummary {
   id: string;
   agencyId: string;
   employeeId: string;
+  employeeNumber: string;
+  employeeName: string;
   /** The first day of the earned month, `YYYY-MM-DD`. */
   earnedMonth: string;
   status: CocEarnedCertificateStatus;
@@ -48,6 +56,10 @@ export interface CocEarnedCertificateSummary {
   approvedAt: string | null;
   createdAt: string;
   lines: CocEarnedCertificateLineSummary[];
+}
+
+export interface CocEarnedCertificateListResponse {
+  certificates: CocEarnedCertificateSummary[];
 }
 
 export class CocEarnedCertificateServiceError extends Error {
