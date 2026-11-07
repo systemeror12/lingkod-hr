@@ -24,6 +24,15 @@ export const COC_REVERSAL_SOURCE_TYPE = 'COC_REVERSAL';
  */
 export const COC_CORRECTION_RULE_CODE = 'HRIS_CONTROL_COC_CORRECTION';
 
+/**
+ * The ledger source of a CTO use; its source is the CTO Request and its posting key
+ * the Work Date and Valid Until.
+ */
+export const COC_CTO_USAGE_SOURCE_TYPE = 'CTO_REQUEST';
+
+/** The national rule a CTO use applies: JC 2, s. 2004 item 5.9. */
+export const COC_CTO_USAGE_RULE_CODE = 'JC2_2004_CTO_AVAILMENT';
+
 export interface CocAdjustmentInput {
   /** Negative, at one decimal place. */
   minutes: string;
@@ -56,6 +65,21 @@ export interface CocReversalResult {
 export interface CocAvailable {
   validUntil: string;
   tenths: number;
+}
+
+/** What one Work Date takes from one Valid Until, in tenths of a minute. */
+export interface CocDraw {
+  workDate: string;
+  validUntil: string;
+  tenths: number;
+}
+
+/** A CTO Request's approved usage, drawn from what the account lock read. */
+export interface CocCtoUsage {
+  cocAccountId: string;
+  ctoRequestId: string;
+  postedByMembershipId: string;
+  draws: CocDraw[];
 }
 
 /** One certified Overtime Service Record on a Certificate of COC Earned. */

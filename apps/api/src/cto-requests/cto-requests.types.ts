@@ -22,6 +22,9 @@ export const CTO_MAX_WORK_DATES = 5;
 export const CTO_REQUEST_ROUTE_CODE = 'CTO_REQUEST';
 export const CTO_REQUEST_APPROVAL_SUBJECT_TYPE = 'CTO_REQUEST';
 
+/** The source an Attendance CTO input names for an approved Work Date. */
+export const CTO_ATTENDANCE_SOURCE_TYPE = 'CtoRequest';
+
 export const CREATE_PERMISSION = 'overtime.cto.create';
 export const SUBMIT_PERMISSION = 'overtime.cto.submit';
 export const WITHDRAW_PERMISSION = 'overtime.cto.withdraw';
@@ -46,6 +49,14 @@ export interface CtoRequestRecommendInput {
 
 export interface CtoRequestReturnInput {
   comment: string;
+}
+
+export interface CtoRequestApproveInput {
+  comment?: string | undefined;
+}
+
+export interface CtoRequestRejectInput {
+  reason: string;
 }
 
 export interface CtoRequestDateSummary {

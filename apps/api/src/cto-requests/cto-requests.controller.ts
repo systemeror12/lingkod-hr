@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Headers,
   HttpException,
   Inject,
   Param,
@@ -10,21 +11,29 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { ApprovalServiceError } from '../approvals/approval.service';
+import { AttendanceCtoInputError } from '../attendance-cto-inputs/attendance-cto-inputs.types';
+import { AttendanceDayServiceError } from '../attendance-days/attendance-days.types';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
+import { ApproveCtoRequestService } from './approve-cto-request.service';
 import { CreateCtoRequestService } from './create-cto-request.service';
 import {
+  ctoRequestApproveSchema,
   ctoRequestCreateSchema,
+  ctoRequestIdempotencyKeySchema,
   ctoRequestIdSchema,
   ctoRequestRecommendSchema,
+  ctoRequestRejectSchema,
   ctoRequestReturnSchema,
 } from './cto-requests.schemas';
 import {
+  APPROVE_PERMISSION,
   CREATE_PERMISSION,
   CtoRequestError,
   RECOMMEND_PERMISSION,
+  REJECT_PERMISSION,
   RETURN_PERMISSION,
   SUBMIT_PERMISSION,
   WITHDRAW_PERMISSION,
@@ -32,6 +41,7 @@ import {
 } from './cto-requests.types';
 import { DiscardCtoRequestService } from './discard-cto-request.service';
 import { RecommendCtoRequestService } from './recommend-cto-request.service';
+import { RejectCtoRequestService } from './reject-cto-request.service';
 import { ReturnCtoRequestService } from './return-cto-request.service';
 import { SubmitCtoRequestService } from './submit-cto-request.service';
 import { WithdrawCtoRequestService } from './withdraw-cto-request.service';
@@ -46,7 +56,12 @@ function validationFields(issues: readonly { path: PropertyKey[]; message: strin
 }
 
 function translateServiceError(error: unknown, requestId: string): never {
-  if (error instanceof CtoRequestError || error instanceof ApprovalServiceError) {
+  if (
+    error instanceof CtoRequestError ||
+    error instanceof ApprovalServiceError ||
+    error instanceof AttendanceCtoInputError ||
+    error instanceof AttendanceDayServiceError
+  ) {
     throw new HttpException(
       { error: { code: error.code, message: error.message, requestId } },
       error.statusCode,
@@ -66,6 +81,8 @@ export class CtoRequestsController {
     @Inject(RecommendCtoRequestService)
     private readonly recommendService: RecommendCtoRequestService,
     @Inject(ReturnCtoRequestService) private readonly returnService: ReturnCtoRequestService,
+    @Inject(ApproveCtoRequestService) private readonly approveService: ApproveCtoRequestService,
+    @Inject(RejectCtoRequestService) private readonly rejectService: RejectCtoRequestService,
   ) {}
 
   @Post(':agencyId/cto-requests')
@@ -166,6 +183,46 @@ export class CtoRequestsController {
     }
   }
 
+  @Post(':agencyId/cto-requests/:requestId/approve')
+  @RequirePermission(APPROVE_PERMISSION)
+  async approve(
+    @Param('agencyId') agencyId: string,
+    @Param('requestId') requestId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CtoRequestSummary> {
+    const id = this.requestId(agencyId, requestId, context);
+    const parsed = ctoRequestApproveSchema.safeParse(body ?? {});
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.approveService.execute(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/cto-requests/:requestId/reject')
+  @RequirePermission(REJECT_PERMISSION)
+  async reject(
+    @Param('agencyId') agencyId: string,
+    @Param('requestId') requestId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CtoRequestSummary> {
+    const id = this.requestId(agencyId, requestId, context);
+    const parsed = ctoRequestRejectSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.rejectService.execute(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   private requestId(agencyId: string, requestId: string, context: RequestContext): string {
     this.assertAgency(agencyId, context);
     const parsed = ctoRequestIdSchema.safeParse(requestId);
@@ -182,6 +239,22 @@ export class CtoRequestsController {
       );
     }
     return parsed.data;
+  }
+
+  private parseIdempotencyKey(
+    value: string | undefined,
+    context: RequestContext,
+  ): string | undefined {
+    if (value === undefined) return undefined;
+    const parsed = ctoRequestIdempotencyKeySchema.safeParse(value);
+    if (parsed.success) return parsed.data;
+    throw new BadRequestException({
+      error: {
+        code: 'INVALID_IDEMPOTENCY_KEY',
+        message: 'Enter a valid Idempotency-Key.',
+        requestId: context.requestId,
+      },
+    });
   }
 
   private assertAgency(agencyId: string, context: RequestContext): void {

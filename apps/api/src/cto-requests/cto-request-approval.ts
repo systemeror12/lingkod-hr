@@ -20,9 +20,12 @@ import {
  * Keep the generic Approval API from closing route work under a request that still
  * awaits it: cancelling is allowed only once the module has closed the request, or
  * while it sits returned as a DRAFT. The generic API cannot decide a CTO Request at
- * all (`MODULE_DECIDED_SUBJECT_TYPES`).
+ * all (`MODULE_DECIDED_SUBJECT_TYPES`), so the only final approval is the module's
+ * own, whose service takes the effect in the same transaction. Its handler has
+ * nothing left to do.
  */
 export function registerCtoRequestApproval(registry: ApprovalCompletionRegistry): void {
+  registry.register(CTO_REQUEST_APPROVAL_SUBJECT_TYPE, async () => {});
   registry.registerCancel(
     CTO_REQUEST_APPROVAL_SUBJECT_TYPE,
     async (transaction, _context, request) => {

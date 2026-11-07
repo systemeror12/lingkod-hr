@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { datesBetween, firstUncoveredWorkDate } from './cto-request-rule';
+import { datesBetween, drawCtoUsage, firstUncoveredWorkDate } from './cto-request-rule';
 
 const date = (workDate: string, chargedMinutes = 480) => ({ workDate, chargedMinutes });
 
@@ -74,5 +74,55 @@ describe('firstUncoveredWorkDate', () => {
         [date('2026-12-30')],
       ),
     ).toBeNull();
+  });
+});
+
+describe('drawCtoUsage', () => {
+  it('draws the earliest Valid Until first and splits a date across two', () => {
+    expect(
+      drawCtoUsage(
+        [
+          { validUntil: '2027-12-31', tenths: 9600 },
+          { validUntil: '2026-12-31', tenths: 3000 },
+        ],
+        [date('2026-12-15'), date('2026-12-14')],
+      ),
+    ).toEqual({
+      draws: [
+        { workDate: '2026-12-14', validUntil: '2026-12-31', tenths: 3000 },
+        { workDate: '2026-12-14', validUntil: '2027-12-31', tenths: 1800 },
+        { workDate: '2026-12-15', validUntil: '2027-12-31', tenths: 4800 },
+      ],
+      uncovered: null,
+    });
+  });
+
+  it('skips COC past its Valid Until on the date and an emptied Valid Until', () => {
+    expect(
+      drawCtoUsage(
+        [
+          { validUntil: '2026-12-31', tenths: 4800 },
+          { validUntil: '2027-12-31', tenths: 0 },
+          { validUntil: '2028-12-31', tenths: 4800 },
+        ],
+        [date('2027-01-04')],
+      ),
+    ).toEqual({
+      draws: [{ workDate: '2027-01-04', validUntil: '2028-12-31', tenths: 4800 }],
+      uncovered: null,
+    });
+  });
+
+  it('refuses a date that would need a third Valid Until', () => {
+    expect(
+      drawCtoUsage(
+        [
+          { validUntil: '2026-12-31', tenths: 100 },
+          { validUntil: '2027-12-31', tenths: 100 },
+          { validUntil: '2028-12-31', tenths: 9600 },
+        ],
+        [date('2026-12-14')],
+      ).uncovered,
+    ).toBe('2026-12-14');
   });
 });

@@ -12,11 +12,14 @@ import {
 } from './coc-earning-rule';
 import {
   COC_CERTIFICATE_SOURCE_TYPE,
+  COC_CTO_USAGE_RULE_CODE,
+  COC_CTO_USAGE_SOURCE_TYPE,
   CocServiceError,
   fromCocDate,
   toCocDate,
   type CocEarnedCertificate,
   type CocAvailable,
+  type CocCtoUsage,
   type CocEarnedCertificateCredit,
   type CocBalance,
 } from './coc-accounts.types';
@@ -244,6 +247,40 @@ export class CocAccountsService {
       validUntil: fromCocDate(group.validUntil),
       tenths: tenths(group._sum.minutes),
     }));
+  }
+
+  /**
+   * Post a CTO Request's approved usage: one negative entry per Work Date and Valid
+   * Until, effective on the Work Date, so a cancellation reverses only its dates. The
+   * caller holds the lock from `lockAndReadAvailableInTransaction` and draws within
+   * what it returned.
+   */
+  async postCtoUsageInTransaction(
+    transaction: Transaction,
+    agencyId: string,
+    usage: CocCtoUsage,
+  ): Promise<{ id: string; workDate: string; validUntil: string; minutes: string }[]> {
+    const entries = [];
+    for (const { workDate, validUntil, tenths: drawn } of usage.draws) {
+      const minutes = formatCocMinutes(-drawn);
+      const { id } = await transaction.cocLedgerEntry.create({
+        data: {
+          agencyId,
+          cocAccountId: usage.cocAccountId,
+          minutes: new Prisma.Decimal(minutes),
+          effectiveDate: toCocDate(workDate, 'Work Date'),
+          validUntil: toCocDate(validUntil, 'Valid Until'),
+          sourceType: COC_CTO_USAGE_SOURCE_TYPE,
+          sourceId: usage.ctoRequestId,
+          sourcePostingKey: `${workDate}:${validUntil}`,
+          ruleCode: COC_CTO_USAGE_RULE_CODE,
+          postedByMembershipId: usage.postedByMembershipId,
+        },
+        select: { id: true },
+      });
+      entries.push({ id, workDate, validUntil, minutes });
+    }
+    return entries;
   }
 
   /** Refuse a malformed award, a passed Valid Until, or service during a suspension. */
