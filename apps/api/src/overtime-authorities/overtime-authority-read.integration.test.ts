@@ -2,6 +2,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { expect, it } from 'vitest';
 import { createAdminClient } from '../attendance-test-fixtures';
+import { OVERTIME_PAY_UNAVAILABLE_REASON } from './overtime-authorities.types';
 import {
   addMember,
   APPROVER_GRANTS,
@@ -122,6 +123,12 @@ it.skipIf(!enabled)(
 
       const all = await controller.list(home.agency.id, {}, hr);
       expect(all.authorities.map((row) => row.authorityNo).sort()).toEqual(['READ-1', 'READ-2']);
+      // List and detail state why overtime pay is unavailable, naming Payroll.
+      expect(OVERTIME_PAY_UNAVAILABLE_REASON).toContain('Payroll');
+      for (const row of all.authorities) {
+        expect(row.overtimePayUnavailableReason).toBe(OVERTIME_PAY_UNAVAILABLE_REASON);
+      }
+      expect(detail.overtimePayUnavailableReason).toBe(OVERTIME_PAY_UNAVAILABLE_REASON);
       const onlyRejected = await controller.list(home.agency.id, { status: 'REJECTED' }, hr);
       expect(onlyRejected.authorities.map((row) => row.authorityNo)).toEqual(['READ-2']);
       expect(await errorOf(controller.list(home.agency.id, { status: 'LOST' }, hr))).toMatchObject({

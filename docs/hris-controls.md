@@ -839,7 +839,7 @@ REJECTED
 CANCELLED
 ```
 
-An approved authority is in effect from the later of its Asia/Manila approval date and its first Work Date, through its last Work Date, and has ended after that. Both are derived from those dates, so no System job changes its status. The Approving Official fixes its compensation method, `COC` or `OVERTIME_PAY`, when approving it, as the agency head decides the manner of compensation for each authority (JC 2, s. 2015 items 3.2, 3.3, 5.3). `OVERTIME_PAY` is refused with a typed blocking reason naming Payroll until #347 adds the Payroll Input. COC uses no funds, so a funding reference is required only for `OVERTIME_PAY`. No source allows service rendered without prior authority to be ratified, so none is.
+An approved authority is in effect from the later of its Asia/Manila approval date and its first Work Date, through its last Work Date, and has ended after that. Both are derived from those dates, so no System job changes its status. The Approving Official fixes its compensation method, `COC` or `OVERTIME_PAY`, when approving it, as the agency head decides the manner of compensation for each authority (JC 2, s. 2015 items 3.2, 3.3, 5.3). `OVERTIME_PAY` is refused with a typed blocking reason naming Payroll until #347 adds the Payroll Input, and authority list and detail responses state the same reason. COC uses no funds, so a funding reference is required only for `OVERTIME_PAY`. No source allows service rendered without prior authority to be ratified, so none is.
 
 | Current    | Action                | Next       | Actor                             | Permission                     | Validations                                                                                                         | Side effects                                                              |
 | ---------- | --------------------- | ---------- | --------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -916,6 +916,8 @@ The COC module applies the earning ratio, caps, and validity. For each line, Ove
 | DRAFT        | Discard | DISCARDED    | HR Administrator   | `overtime.coc_certificates.prepare` | Not submitted                                                                               | Release its lines                                                                                 |
 
 An approved certificate is immutable. Its COC is corrected only by a COC adjustment or reversal.
+
+Reading a certificate needs `overtime.coc_certificates.prepare` or `overtime.coc_certificates.approve`, granted Agency-wide, so an approver can find a certificate someone else prepared. No source sets this; it is a Project Decision (#576). There is no separate certificate read permission, and holding only `overtime.coc.read` does not read certificates.
 ---
 
 ## 5.18 COC Ledger Entry
@@ -936,6 +938,8 @@ The ratios, caps, validity, CTO blocks, and five-day limit are national rules in
 New credit comes only from a Certificate of COC Earned (ADR 0008). Credit returns only when a negative entry is reversed, such as an adjustment or an expiry posted in error; CTO usage returns through CTO cancellation. A reversal that restores COC whose Valid Until has already passed is followed by an expiry in the same transaction. A repeated expiry run finds nothing remaining and posts nothing. A first run that comes late posts the remainder once, effective the day after Valid Until. COC a reversal restores expires again as a new entry. Nobody adjusts or reverses entries on their own account, and a closed account is neither adjusted nor reversed. The worker checks hourly by the Asia/Manila date. Finding due expiries is a deliberate exception to Agency isolation: one function returns identifiers and dates from every Agency to the runtime role (`hris_app`, shared by the API and the worker), and each posting still runs in its Agency's context. Each expiry records a `COC_EXPIRED` audit event with actor type `SYSTEM`.
 
 A balance as of a date counts entries effective on or before it whose Valid Until is on or after it, so COC past its Valid Until never counts, even before its expiry entry is posted. Expiry and forfeiture entries carry the Valid Until of the COC they remove, so the filter never double-counts a removal. The available balance for a CTO date also subtracts future-dated uses.
+
+Reading an Employee's balance needs `overtime.coc.read` within the reader's scope, and takes today's Asia/Manila date as its cutoff. An Employee with no active account reads as a zero balance with no account, and reading opens none.
 
 No authority addresses these, so none has an automatic effect, and any change is an authority-backed adjustment:
 

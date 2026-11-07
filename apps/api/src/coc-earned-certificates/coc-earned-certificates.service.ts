@@ -18,6 +18,7 @@ import {
   assertAgencyGrant,
   assertStatus,
   cocDayClassification,
+  findCertificates,
   lockCertificate,
   monthBounds,
   readCertificate,
@@ -29,6 +30,7 @@ import {
   CocEarnedCertificateServiceError,
   PREPARE_PERMISSION,
   type CocEarnedCertificatePrepareInput,
+  type CocEarnedCertificateListFilter,
   type CocEarnedCertificateReturnInput,
   type CocEarnedCertificateStatus,
   type CocEarnedCertificateSummary,
@@ -49,6 +51,33 @@ export class CocEarnedCertificatesService {
     @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
     @Inject(CocAccountsService) private readonly cocAccounts: CocAccountsService,
   ) {}
+
+  /**
+   * List the Agency's certificates. Reads take `.prepare` or `.approve`, so an
+   * approver can find one someone else prepared (hris-controls, Certificate of
+   * COC Earned). The guard's `@RequirePermission` means all of its permissions,
+   * so this check is the route's permission check.
+   */
+  async list(
+    context: RequestContext,
+    filter: CocEarnedCertificateListFilter,
+  ): Promise<CocEarnedCertificateSummary[]> {
+    assertAgencyGrant(context, PREPARE_PERMISSION, APPROVE_PERMISSION);
+    return withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      findCertificates(transaction, context.agencyId, filter.status),
+    );
+  }
+
+  /** Read one certificate, under the same check as `list`. */
+  async detail(
+    context: RequestContext,
+    certificateId: string,
+  ): Promise<CocEarnedCertificateSummary> {
+    assertAgencyGrant(context, PREPARE_PERMISSION, APPROVE_PERMISSION);
+    return withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      readCertificate(transaction, context.agencyId, certificateId),
+    );
+  }
 
   /**
    * Prepare a DRAFT for one Employee and calendar month. Its lines are every

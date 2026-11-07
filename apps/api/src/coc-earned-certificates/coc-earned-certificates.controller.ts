@@ -2,10 +2,12 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpException,
   Inject,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -17,14 +19,19 @@ import { PermissionGuard } from '../auth/permission.guard';
 import { CocServiceError } from '../coc-accounts/coc-accounts.types';
 import {
   cocEarnedCertificateIdSchema,
+  cocEarnedCertificateListSchema,
   cocEarnedCertificatePrepareSchema,
   cocEarnedCertificateReturnSchema,
 } from './coc-earned-certificates.schemas';
 import { CocEarnedCertificatesService } from './coc-earned-certificates.service';
 import {
   CocEarnedCertificateServiceError,
+  type CocEarnedCertificateListResponse,
   type CocEarnedCertificateSummary,
 } from './coc-earned-certificates.types';
+
+const READ_FORBIDDEN = 'COC_EARNED_CERTIFICATE_READ_FORBIDDEN';
+const WRITE_FORBIDDEN = 'COC_EARNED_CERTIFICATE_WRITE_FORBIDDEN';
 
 function validationFields(issues: readonly { path: PropertyKey[]; message: string }[]) {
   const fields: Record<string, string> = {};
@@ -66,6 +73,38 @@ export class CocEarnedCertificatesController {
     private readonly service: CocEarnedCertificatesService,
   ) {}
 
+  /** Needs `.prepare` or `.approve`, which the service checks. */
+  @Get(':agencyId/coc-earned-certificates')
+  async list(
+    @Param('agencyId') agencyId: string,
+    @Query() query: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CocEarnedCertificateListResponse> {
+    this.assertAgency(agencyId, context, READ_FORBIDDEN);
+    const parsed = cocEarnedCertificateListSchema.safeParse(query ?? {});
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return { certificates: await this.service.list(context, parsed.data) };
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  /** Needs `.prepare` or `.approve`, which the service checks. */
+  @Get(':agencyId/coc-earned-certificates/:certificateId')
+  async detail(
+    @Param('agencyId') agencyId: string,
+    @Param('certificateId') certificateId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CocEarnedCertificateSummary> {
+    const id = this.certificateId(agencyId, certificateId, context, READ_FORBIDDEN);
+    try {
+      return await this.service.detail(context, id);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
   @Post(':agencyId/coc-earned-certificates')
   @RequirePermission('overtime.coc_certificates.prepare')
   async prepare(
@@ -73,7 +112,7 @@ export class CocEarnedCertificatesController {
     @Body() body: unknown,
     @CurrentContext() context: RequestContext,
   ): Promise<CocEarnedCertificateSummary> {
-    this.assertAgency(agencyId, context);
+    this.assertAgency(agencyId, context, WRITE_FORBIDDEN);
     const parsed = cocEarnedCertificatePrepareSchema.safeParse(body);
     if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
     try {
@@ -146,8 +185,13 @@ export class CocEarnedCertificatesController {
     }
   }
 
-  private certificateId(agencyId: string, certificateId: string, context: RequestContext): string {
-    this.assertAgency(agencyId, context);
+  private certificateId(
+    agencyId: string,
+    certificateId: string,
+    context: RequestContext,
+    forbiddenCode = WRITE_FORBIDDEN,
+  ): string {
+    this.assertAgency(agencyId, context, forbiddenCode);
     const parsed = cocEarnedCertificateIdSchema.safeParse(certificateId);
     if (!parsed.success) {
       throw new HttpException(
@@ -164,13 +208,13 @@ export class CocEarnedCertificatesController {
     return parsed.data;
   }
 
-  private assertAgency(agencyId: string, context: RequestContext): void {
+  private assertAgency(agencyId: string, context: RequestContext, forbiddenCode: string): void {
     const parsed = agencyIdSchema.safeParse(agencyId);
     if (!parsed.success || parsed.data !== context.agencyId) {
       throw new HttpException(
         {
           error: {
-            code: 'COC_EARNED_CERTIFICATE_WRITE_FORBIDDEN',
+            code: forbiddenCode,
             message: 'The requested Agency is outside the active context.',
             requestId: context.requestId,
           },

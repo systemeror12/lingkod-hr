@@ -969,3 +969,137 @@ it.skipIf(!enabled)('refuses to approve a certificate the ledger already holds e
     });
   }),
 );
+
+it.skipIf(!enabled)(
+  'lists and reads certificates for a preparer or an approver, with each line as the API holds it',
+  () =>
+    withSetup('read', async (fixture) => {
+      const { admin, home, foreign, preparer, approver, controller, service } = fixture;
+      const submittedCertificate = await submitted(fixture, [
+        { day: '03', certifiedMinutes: 2000 },
+        { day: '20', certifiedMinutes: 500 },
+      ]);
+      await serviceRecord(home, {
+        authorityId: fixture.cocAuthority,
+        employeeId: home.chief.id,
+        workDate: `${EARNED_MONTH}-05`,
+      });
+      const draft = await service.prepare(preparer, {
+        employeeId: home.chief.id,
+        earnedMonth: EARNED_MONTH,
+      });
+
+      // An approver finds a certificate someone else prepared, before it credits anything.
+      const awaiting = await controller.list(home.agency.id, { status: 'FOR_APPROVAL' }, approver);
+      expect(awaiting.certificates.map((row) => row.id)).toEqual([submittedCertificate.id]);
+      expect(awaiting.certificates[0]).toMatchObject({
+        employeeId: home.member.id,
+        employeeNumber: home.member.employeeNumber,
+        employeeName: home.member.legalName,
+        preparedByMembershipId: preparer.membershipId,
+        status: 'FOR_APPROVAL',
+      });
+      expect(
+        awaiting.certificates[0]?.lines.map((line) => [
+          line.certifiedMinutes,
+          line.creditedMinutes,
+          line.excessMinutes,
+        ]),
+      ).toEqual([
+        [2000, null, null],
+        [500, null, null],
+      ]);
+
+      // A preparer holds only `.prepare`, and an approver only `.approve`; each reads all.
+      for (const reader of [preparer, approver]) {
+        const all = await controller.list(home.agency.id, {}, reader);
+        expect(all.certificates.map((row) => row.id).sort()).toEqual(
+          [submittedCertificate.id, draft.id].sort(),
+        );
+        expect(await controller.detail(home.agency.id, draft.id, reader)).toMatchObject({
+          employeeNumber: home.chief.employeeNumber,
+          employeeName: home.chief.legalName,
+          status: 'DRAFT',
+        });
+      }
+
+      // After approval, each line shows what was frozen: 2,400 minutes is the monthly cap.
+      await controller.approve(home.agency.id, submittedCertificate.id, approver);
+      const approved = await controller.detail(home.agency.id, submittedCertificate.id, preparer);
+      expect(
+        approved.lines.map((line) => [
+          line.certifiedMinutes,
+          line.creditedMinutes,
+          line.excessMinutes,
+        ]),
+      ).toEqual([
+        [2000, '2000.0', '0.0'],
+        [500, '400.0', '100.0'],
+      ]);
+      const onlyApproved = await controller.list(home.agency.id, { status: 'APPROVED' }, preparer);
+      expect(onlyApproved.certificates.map((row) => row.id)).toEqual([submittedCertificate.id]);
+      expect(
+        await errorOf(controller.list(home.agency.id, { status: 'LOST' }, preparer)),
+      ).toMatchObject({ status: 400, body: { error: { code: 'INVALID_INPUT' } } });
+      expect(
+        await errorOf(controller.detail(home.agency.id, 'not-a-uuid', preparer)),
+      ).toMatchObject({
+        status: 404,
+        body: { error: { code: 'COC_EARNED_CERTIFICATE_NOT_FOUND' } },
+      });
+
+      // Neither `overtime.coc.read` nor a grant short of Agency-wide reads a certificate.
+      const refused: RequestContext['permissions'][] = [
+        [],
+        [{ code: 'overtime.coc.read', scopePolicy: 'AGENCY' }],
+        [{ code: 'overtime.coc_certificates.approve', scopePolicy: 'DIRECT_REPORTS' }],
+        [{ code: 'overtime.coc_certificates.prepare', scopePolicy: 'OWN' }],
+      ];
+      for (const permissions of refused) {
+        const actor = context(home.agency.id, home.user.id, home.membership.id, permissions);
+        for (const read of [
+          controller.list(home.agency.id, {}, actor),
+          controller.detail(home.agency.id, draft.id, actor),
+        ]) {
+          expect(await errorOf(read)).toMatchObject({
+            status: 403,
+            body: { error: { code: 'COC_EARNED_CERTIFICATE_FORBIDDEN' } },
+          });
+        }
+      }
+
+      // Another Agency reads neither the home register nor a home certificate.
+      const foreignPreparer = context(
+        foreign.agency.id,
+        foreign.user.id,
+        foreign.membership.id,
+        PREPARER_GRANTS,
+      );
+      expect(await errorOf(controller.list(home.agency.id, {}, foreignPreparer))).toMatchObject({
+        status: 403,
+        body: { error: { code: 'COC_EARNED_CERTIFICATE_READ_FORBIDDEN' } },
+      });
+      expect(
+        await errorOf(controller.detail(home.agency.id, draft.id, foreignPreparer)),
+      ).toMatchObject({
+        status: 403,
+        body: { error: { code: 'COC_EARNED_CERTIFICATE_READ_FORBIDDEN' } },
+      });
+      expect(
+        await errorOf(controller.detail(foreign.agency.id, draft.id, foreignPreparer)),
+      ).toMatchObject({
+        status: 404,
+        body: { error: { code: 'COC_EARNED_CERTIFICATE_NOT_FOUND' } },
+      });
+      expect((await controller.list(foreign.agency.id, {}, foreignPreparer)).certificates).toEqual(
+        [],
+      );
+
+      // A read leaves no Audit Event behind.
+      const audits = await admin.auditEvent.count({ where: { agencyId: home.agency.id } });
+      await controller.list(home.agency.id, {}, approver);
+      await controller.detail(home.agency.id, draft.id, approver);
+      expect(await admin.auditEvent.count({ where: { agencyId: home.agency.id } })).toBe(audits);
+    }),
+  120_000,
+);

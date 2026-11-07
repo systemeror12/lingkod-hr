@@ -5,6 +5,7 @@ import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import {
   OVERTIME_AUTHORITY_APPROVAL_SUBJECT_TYPE,
+  OVERTIME_PAY_UNAVAILABLE_REASON,
   type OvertimeAuthorityDetail,
   type OvertimeAuthorityPendingAction,
   type OvertimeAuthorityRecord,
@@ -123,7 +124,7 @@ export class ReadOvertimeAuthoritiesService {
   }
 }
 
-/** Add the unit name, last change, and pending action the register shows. */
+/** Add the unit name, last change, pending action, and overtime pay state the register shows. */
 async function registerRecords(
   transaction: Prisma.TransactionClient,
   agencyId: string,
@@ -176,6 +177,7 @@ async function registerRecords(
     requestingUnitName: unitNames.get(authority.requestingUnitId) ?? authority.requestingUnitId,
     updatedAt: (changedAt.get(authority.id) ?? new Date(authority.createdAt)).toISOString(),
     pendingAction: pendingAction(authority.status, assignees.get(authority.id) ?? null),
+    overtimePayUnavailableReason: OVERTIME_PAY_UNAVAILABLE_REASON,
   }));
 }
 
