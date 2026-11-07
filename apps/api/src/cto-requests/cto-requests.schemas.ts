@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CTO_MAX_WORK_DATES } from './cto-requests.types';
+import { CTO_CANCELLATION_KINDS, CTO_MAX_WORK_DATES } from './cto-requests.types';
 
 export const ctoRequestIdSchema = z.string().uuid();
 
@@ -50,4 +50,17 @@ export const ctoRequestApproveSchema = z
 
 export const ctoRequestRejectSchema = z
   .object({ reason: z.string().trim().min(1, 'Enter a reason for rejecting.').max(2000) })
+  .strict();
+
+export const ctoRequestCancelSchema = z
+  .object({
+    kind: z.enum(CTO_CANCELLATION_KINDS),
+    reason: z.string().trim().min(1, 'Enter a reason for cancelling.').max(2000),
+    workDates: z
+      .array(workDateSchema)
+      .min(1)
+      .max(CTO_MAX_WORK_DATES)
+      .refine((dates) => new Set(dates).size === dates.length, 'Name each Work Date once.')
+      .optional(),
+  })
   .strict();

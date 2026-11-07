@@ -26,6 +26,7 @@ import {
 } from '../overtime-authorities/overtime-authority-test-fixtures';
 import { cleanupAttendanceOvertime } from '../overtime-service-records/overtime-service-test-fixtures';
 import { ApproveCtoRequestService } from './approve-cto-request.service';
+import { CancelCtoRequestService } from './cancel-cto-request.service';
 import { CreateCtoRequestService } from './create-cto-request.service';
 import { registerCtoRequestApproval } from './cto-request-approval';
 import { CtoRequestsController } from './cto-requests.controller';
@@ -67,6 +68,7 @@ const OFFICIAL_GRANTS = grantsOf('AGENCY', [
   'overtime.cto.return',
   'overtime.cto.approve',
   'overtime.cto.reject',
+  'overtime.cto.cancel',
 ]);
 
 function services(fixture: AttendanceWorkflowFixture) {
@@ -82,14 +84,10 @@ function services(fixture: AttendanceWorkflowFixture) {
   const withdraw = new WithdrawCtoRequestService(audit, approvals);
   const recommend = new RecommendCtoRequestService(audit, approvals);
   const returnRequest = new ReturnCtoRequestService(audit, approvals);
-  const approve = new ApproveCtoRequestService(
-    audit,
-    approvals,
-    days,
-    coc,
-    new AttendanceCtoInputsService(days),
-  );
+  const attendance = new AttendanceCtoInputsService(days);
+  const approve = new ApproveCtoRequestService(audit, approvals, days, coc, attendance);
   const reject = new RejectCtoRequestService(audit, approvals);
+  const cancel = new CancelCtoRequestService(audit, coc, attendance);
   return {
     approvals,
     create,
@@ -100,6 +98,8 @@ function services(fixture: AttendanceWorkflowFixture) {
     returnRequest,
     approve,
     reject,
+    cancel,
+    coc,
     controller: new CtoRequestsController(
       create,
       discard,
@@ -109,6 +109,7 @@ function services(fixture: AttendanceWorkflowFixture) {
       returnRequest,
       approve,
       reject,
+      cancel,
     ),
   };
 }
@@ -430,6 +431,7 @@ async function setup() {
       const where = { agencyId };
       await transaction.attendanceCtoInput.deleteMany({ where });
       await transaction.ctoRequestDate.deleteMany({ where });
+      await transaction.ctoCancellation.deleteMany({ where });
       await transaction.ctoRequest.deleteMany({ where });
       await transaction.cocLedgerEntry.deleteMany({ where });
       await transaction.cocAccount.deleteMany({ where });
@@ -1665,5 +1667,468 @@ it.skipIf(!enabled)('keeps approval and rejection inside their Agency', () =>
       await cleanup(admin, [foreign.agency.id], suffix);
     }
     await expectNothingPosted(fixture, requestId);
+  }),
+);
+
+/** A request of the fixture Employee, approved by the Approving Official. */
+async function approved(fixture: Setup, dates: CtoRequestDateInput[]) {
+  const requestId = await forApproval(fixture, dates);
+  return fixture.approve.execute(fixture.official.context, requestId, {});
+}
+
+function cancellationEntries(fixture: Setup, requestId: string) {
+  return fixture.admin.cocLedgerEntry.findMany({
+    where: {
+      agencyId: fixture.agencyId,
+      sourceType: 'CTO_CANCELLATION',
+      reversesEntry: { sourceType: 'CTO_REQUEST', sourceId: requestId },
+    },
+    orderBy: { sourcePostingKey: 'asc' },
+  });
+}
+
+/** The request is still as approval left it: no cancellation and nothing returned. */
+async function expectNothingCancelled(fixture: Setup, request: { id: string }) {
+  const { admin, agencyId } = fixture;
+  const stored = await admin.ctoRequest.findUniqueOrThrow({
+    where: { id: request.id },
+    include: { dates: true },
+  });
+  expect(stored.status).toBe('APPROVED');
+  expect(stored.dates.every((date) => date.cancelledByCtoCancellationId === null)).toBe(true);
+  expect(await admin.ctoCancellation.count({ where: { agencyId, ctoRequestId: request.id } })).toBe(
+    0,
+  );
+  expect(await cancellationEntries(fixture, request.id)).toEqual([]);
+  expect(
+    await admin.attendanceCtoInput.count({ where: { agencyId, sourceType: 'CtoCancellation' } }),
+  ).toBe(0);
+  expect(await auditActions(fixture, request.id)).not.toContain('CTO_REQUEST_CANCELLED');
+}
+
+it.skipIf(!enabled)('adds cto_cancellations with forced RLS and the baseline cancel grant', () =>
+  withSetup(async ({ admin }) => {
+    const [table] = await admin.$queryRaw<
+      Array<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>
+    >`SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'cto_cancellations'`;
+    expect(table).toEqual({ relrowsecurity: true, relforcerowsecurity: true });
+    const granted = await admin.rolePermission.findMany({
+      where: { permission: { code: 'overtime.cto.cancel' }, role: { agencyId: null } },
+      select: { scopePolicy: true, role: { select: { code: true } } },
+    });
+    expect(granted).toEqual([{ scopePolicy: 'AGENCY', role: { code: 'appointing_authority' } }]);
+  }),
+);
+
+it.skipIf(!enabled)(
+  'recalls one Work Date, reversing its usage and superseding its input, then cancels the rest',
+  () =>
+    withSetup(async (fixture) => {
+      const { cancel, coc, official, employeeId, credit, day, admin, agencyId } = fixture;
+      const year = Number(day(0).slice(0, 4));
+      const accountId = await credit(employeeId, 300, year);
+      await credit(employeeId, 4800, year + 1);
+      const request = await approved(fixture, [whole(day(0)), half(day(1), '08:00', '12:00')]);
+      const uses = await ledgerEntries(fixture, request.id);
+      const [first, second] = request.dates;
+
+      const recalled = await cancel.execute(
+        official.context,
+        request.id,
+        { kind: 'RECALL', reason: 'Exigency of the service.', workDates: [day(0)] },
+        'recall-key',
+      );
+
+      expect(recalled.status).toBe('APPROVED');
+      const cancellation = await admin.ctoCancellation.findFirstOrThrow({
+        where: { agencyId, ctoRequestId: request.id },
+      });
+      expect(cancellation).toMatchObject({
+        kind: 'RECALL',
+        reason: 'Exigency of the service.',
+        cancelledByMembershipId: official.context.membershipId,
+      });
+      expect(recalled.dates.map((date) => date.cancelledByCtoCancellationId)).toEqual([
+        cancellation.id,
+        null,
+      ]);
+
+      // The Work Date's two uses are reversed exactly, each restoring its own Valid Until.
+      const dayUses = uses.filter((use) => use.effectiveDate.toISOString().startsWith(day(0)));
+      expect(dayUses).toHaveLength(2);
+      const reversals = await cancellationEntries(fixture, request.id);
+      expect(
+        reversals.map((entry) => ({
+          minutes: entry.minutes.toFixed(1),
+          effectiveDate: entry.effectiveDate,
+          validUntil: entry.validUntil,
+          reversesEntryId: entry.reversesEntryId,
+          sourceId: entry.sourceId,
+          sourcePostingKey: entry.sourcePostingKey,
+          ruleCode: entry.ruleCode,
+          postedByMembershipId: entry.postedByMembershipId,
+          cocAccountId: entry.cocAccountId,
+        })),
+      ).toEqual(
+        [...dayUses]
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((use) => ({
+            minutes: use.minutes.negated().toFixed(1),
+            effectiveDate: use.effectiveDate,
+            validUntil: use.validUntil,
+            reversesEntryId: use.id,
+            sourceId: cancellation.id,
+            sourcePostingKey: use.id,
+            ruleCode: 'JC2_2004_CTO_AVAILMENT',
+            postedByMembershipId: official.context.membershipId,
+            cocAccountId: accountId,
+          })),
+      );
+
+      // The Work Date's balance is whole again, and the use stays in the ledger as recorded.
+      const balance = await withDatabaseContext({ agencyId }, (transaction) =>
+        coc.readBalanceInTransaction(transaction, agencyId, employeeId, day(0)),
+      );
+      expect(balance.byValidUntil).toEqual([
+        { validUntil: `${year}-12-31`, minutes: '300.0' },
+        { validUntil: `${year + 1}-12-31`, minutes: '4800.0' },
+      ]);
+      const recorded = await admin.cocLedgerEntry.aggregate({
+        where: {
+          agencyId,
+          cocAccountId: accountId,
+          postedAt: { lt: cancellation.cancelledAt },
+          effectiveDate: { lte: new Date(day(0)) },
+          validUntil: { gte: new Date(day(0)) },
+        },
+        _sum: { minutes: true },
+      });
+      expect(recorded._sum.minutes!.toFixed(1)).toBe('4620.0');
+
+      // Attendance withdraws the Work Date's coverage with a NONE successor.
+      const successors = await admin.attendanceCtoInput.findMany({
+        where: { agencyId, sourceType: 'CtoCancellation', sourceId: cancellation.id },
+      });
+      expect(successors).toMatchObject([
+        {
+          coverageMode: 'NONE',
+          predecessorInputId: first!.attendanceCtoInputId,
+          workDate: new Date(day(0)),
+        },
+      ]);
+      expect(
+        await admin.attendanceCtoInput.count({
+          where: { predecessorInputId: second!.attendanceCtoInputId },
+        }),
+      ).toBe(0);
+
+      const event = await admin.auditEvent.findFirstOrThrow({
+        where: { action: 'CTO_REQUEST_CANCELLED', entityId: request.id },
+      });
+      expect(event).toMatchObject({
+        actorMembershipId: official.context.membershipId,
+        previousStatus: 'APPROVED',
+        newStatus: 'APPROVED',
+        reason: 'Exigency of the service.',
+        idempotencyKey: 'recall-key',
+      });
+      expect(event.metadata).toMatchObject({
+        ctoCancellationId: cancellation.id,
+        kind: 'RECALL',
+        workDates: [day(0)],
+        expiryEntryIds: [],
+        inputs: [{ workDate: day(0), attendanceCtoInputId: successors[0]!.id }],
+      });
+
+      // A recalled date cannot be cancelled again, and is free for a new request.
+      await expect(
+        cancel.execute(official.context, request.id, {
+          kind: 'RECALL',
+          reason: 'Again.',
+          workDates: [day(0)],
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_WORK_DATE_ALREADY_CANCELLED', statusCode: 409 });
+      await expect(
+        cancel.execute(official.context, request.id, {
+          kind: 'RECALL',
+          reason: 'Not on it.',
+          workDates: [day(2)],
+        }),
+      ).rejects.toMatchObject({ code: 'CTO_WORK_DATE_NOT_ON_REQUEST', statusCode: 422 });
+
+      // Cancelling the whole request takes only what remains, and closes it.
+      const cancelled = await cancel.execute(official.context, request.id, {
+        kind: 'EMPLOYEE_REQUEST',
+        reason: 'The Employee asked to report for work.',
+      });
+      expect(cancelled.status).toBe('CANCELLED');
+      expect(cancelled.dates.every((date) => date.cancelledByCtoCancellationId !== null)).toBe(
+        true,
+      );
+      expect(await cancellationEntries(fixture, request.id)).toHaveLength(3);
+      const all = await admin.cocLedgerEntry.aggregate({
+        where: { agencyId, cocAccountId: accountId },
+        _sum: { minutes: true },
+      });
+      expect(all._sum.minutes!.toFixed(1)).toBe('5100.0');
+      await expect(
+        cancel.execute(official.context, request.id, { kind: 'RECALL', reason: 'Closed.' }),
+      ).rejects.toMatchObject({ code: 'CTO_REQUEST_STATUS_INVALID' });
+
+      const again = await approved(fixture, [whole(day(0))]);
+      expect(again.status).toBe('APPROVED');
+    }),
+);
+
+it.skipIf(!enabled)(
+  'expires restored COC whose Valid Until has passed, in the same transaction',
+  () =>
+    withSetup(async (fixture) => {
+      const { cancel, official, employeeId, credit, day, admin, agencyId } = fixture;
+      const year = Number(day(0).slice(0, 4));
+      const accountId = await credit(employeeId, 480, year);
+      const request = await approved(fixture, [whole(day(0))]);
+
+      // Cancelled once the COC's Valid Until has passed: it comes back only to expire.
+      const result = await at(`${year + 1}-01-05T09:00:00+08:00`, () =>
+        cancel.execute(official.context, request.id, {
+          kind: 'EMPLOYEE_REQUEST',
+          reason: 'The Employee did not take the CTO.',
+        }),
+      );
+
+      expect(result.status).toBe('CANCELLED');
+      const [reversal] = await cancellationEntries(fixture, request.id);
+      expect(reversal!.minutes.toFixed(1)).toBe('480.0');
+      const expiry = await admin.cocLedgerEntry.findFirstOrThrow({
+        where: { agencyId, cocAccountId: accountId, sourceType: 'COC_EXPIRY' },
+      });
+      expect(expiry).toMatchObject({
+        sourcePostingKey: `${year}-12-31`,
+        effectiveDate: new Date(`${year + 1}-01-01`),
+        validUntil: new Date(`${year}-12-31`),
+      });
+      expect(expiry.minutes.toFixed(1)).toBe('-480.0');
+      const event = await admin.auditEvent.findFirstOrThrow({
+        where: { action: 'CTO_REQUEST_CANCELLED', entityId: request.id },
+      });
+      expect(event.metadata).toMatchObject({ expiryEntryIds: [expiry.id] });
+      const remaining = await admin.cocLedgerEntry.aggregate({
+        where: { agencyId, cocAccountId: accountId },
+        _sum: { minutes: true },
+      });
+      expect(remaining._sum.minutes!.toNumber()).toBe(0);
+    }),
+);
+
+it.skipIf(!enabled)('refuses a locked Work Date with a typed reason before writing anything', () =>
+  withSetup(async (fixture) => {
+    const { cancel, controller, official, employeeId, credit, day, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const request = await approved(fixture, [whole(day(0)), whole(day(1))]);
+    const period = await lockedPeriod(fixture, day(1), day(1));
+    const input = { kind: 'RECALL' as const, reason: 'Exigency of the service.' };
+
+    await expect(
+      cancel.execute(official.context, request.id, input, 'cancel-once'),
+    ).rejects.toMatchObject({ code: 'ATTENDANCE_WORK_DATE_LOCKED', statusCode: 409 });
+    await expectNothingCancelled(fixture, request);
+    const refused = await errorOf(
+      controller.cancel(agencyId, request.id, input, 'cancel-once', official.context),
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ error: { code: 'ATTENDANCE_WORK_DATE_LOCKED' } });
+
+    // The open date alone can be recalled, and a refusal does not spend the key.
+    const partial = await cancel.execute(official.context, request.id, {
+      ...input,
+      workDates: [day(0)],
+    });
+    expect(partial.status).toBe('APPROVED');
+    await period.unlock();
+    const cancelled = await cancel.execute(official.context, request.id, input, 'cancel-once');
+    expect(cancelled.status).toBe('CANCELLED');
+  }),
+);
+
+it.skipIf(!enabled)('rolls back every reversal and input when a later Work Date fails', () =>
+  withSetup(async (fixture) => {
+    const { cancel, official, employeeId, credit, day, admin, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const request = await approved(fixture, [whole(day(0)), whole(day(1))]);
+    // The second date's input is superseded behind the request's back, so Attendance
+    // refuses it after the ledger and the first date are written.
+    await admin.attendanceCtoInput.create({
+      data: {
+        agencyId,
+        employeeId,
+        sourceKey: randomUUID(),
+        sourceType: 'Test',
+        sourceId: randomUUID(),
+        workDate: new Date(day(1)),
+        coverageMode: 'NONE',
+        predecessorInputId: request.dates[1]!.attendanceCtoInputId,
+      },
+    });
+
+    await expect(
+      cancel.execute(official.context, request.id, { kind: 'RECALL', reason: 'Recall.' }),
+    ).rejects.toMatchObject({ code: 'CTO_INPUT_ALREADY_SUPERSEDED' });
+    await expectNothingCancelled(fixture, request);
+  }),
+);
+
+it.skipIf(!enabled)('returns the first result to a retry with the same idempotency key', () =>
+  withSetup(async (fixture) => {
+    const { cancel, official, employeeId, credit, day, admin, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const request = await approved(fixture, [whole(day(0)), whole(day(1))]);
+    const once = { kind: 'RECALL' as const, reason: 'Recall.', workDates: [day(0)] };
+
+    const [first, concurrent] = await Promise.all([
+      cancel.execute(official.context, request.id, once, 'cancel-key'),
+      cancel.execute(official.context, request.id, once, 'cancel-key'),
+    ]);
+    const retried = await cancel.execute(official.context, request.id, once, 'cancel-key');
+
+    expect(concurrent).toEqual(first);
+    expect(retried).toEqual(first);
+    expect(await admin.ctoCancellation.count({ where: { agencyId } })).toBe(1);
+    expect(await cancellationEntries(fixture, request.id)).toHaveLength(1);
+    expect(
+      await admin.attendanceCtoInput.count({ where: { agencyId, sourceType: 'CtoCancellation' } }),
+    ).toBe(1);
+
+    // The key names this cancellation: another reason, kind, date, or actor is refused.
+    const conflict = { code: 'CTO_REQUEST_IDEMPOTENCY_CONFLICT', statusCode: 409 };
+    for (const other of [
+      { ...once, reason: 'Other.' },
+      { ...once, kind: 'EMPLOYEE_REQUEST' as const },
+      { ...once, workDates: [day(1)] },
+    ]) {
+      await expect(
+        cancel.execute(official.context, request.id, other, 'cancel-key'),
+      ).rejects.toMatchObject(conflict);
+    }
+    await expect(
+      cancel.execute(
+        { ...fixture.supervisor.context, permissions: OFFICIAL_GRANTS },
+        request.id,
+        once,
+        'cancel-key',
+      ),
+    ).rejects.toMatchObject(conflict);
+  }),
+);
+
+it.skipIf(!enabled)(
+  'requires the permission, a kind and reason, and a canceller not the Employee',
+  () =>
+    withSetup(async (fixture) => {
+      const { cancel, controller, official, employee, employeeId, credit, day, agencyId } = fixture;
+      await credit(employeeId, 4800);
+      const request = await approved(fixture, [whole(day(0))]);
+      const input = { kind: 'RECALL' as const, reason: 'Recall.' };
+
+      for (const body of [
+        {},
+        { kind: 'RECALL' },
+        { kind: 'RECALL', reason: '   ' },
+        { kind: 'RESCHEDULE', reason: 'Later.' },
+        { ...input, workDates: [] },
+        { ...input, workDates: [day(0), day(0)] },
+      ]) {
+        const refused = await errorOf(
+          controller.cancel(agencyId, request.id, body, undefined, official.context),
+        );
+        expect(refused.status).toBe(400);
+      }
+
+      const only = (code: string): RequestContext => ({
+        ...official.context,
+        permissions: grantsOf('AGENCY', [code]),
+      });
+      await expect(
+        cancel.execute(only('overtime.cto.approve'), request.id, input),
+      ).rejects.toMatchObject({ code: 'CTO_REQUEST_FORBIDDEN', statusCode: 403 });
+      await expect(
+        cancel.execute({ ...employee, permissions: OFFICIAL_GRANTS }, request.id, input),
+      ).rejects.toMatchObject({ code: 'CTO_REQUEST_SELF_DECISION', statusCode: 403 });
+
+      // Only approved CTO is cancelled; before approval the Employee withdraws instead.
+      const pending = await forApproval(fixture, [whole(day(1))]);
+      await expect(cancel.execute(official.context, pending, input)).rejects.toMatchObject({
+        code: 'CTO_REQUEST_STATUS_INVALID',
+      });
+
+      const suffix = `${fixture.fixture.suffix}-cancel`;
+      const foreign = await createAgency(fixture.admin, suffix, 'CTOC');
+      try {
+        const outsider = context(
+          foreign.agency.id,
+          foreign.user.id,
+          foreign.membership.id,
+          OFFICIAL_GRANTS,
+        );
+        await expect(cancel.execute(outsider, request.id, input)).rejects.toMatchObject({
+          code: 'CTO_REQUEST_NOT_FOUND',
+          statusCode: 404,
+        });
+      } finally {
+        await cleanup(fixture.admin, [foreign.agency.id], suffix);
+      }
+      await expectNothingCancelled(fixture, request);
+    }),
+);
+
+it.skipIf(!enabled)('guards cancellations and cancelled dates in the database', () =>
+  withSetup(async (fixture) => {
+    const { official, employeeId, credit, day, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const request = await approved(fixture, [whole(day(0)), whole(day(1))]);
+    const pending = await forApproval(fixture, [whole(day(2))]);
+    const asOfficial = <T>(write: (transaction: Prisma.TransactionClient) => Promise<T>) =>
+      withDatabaseContext({ agencyId, membershipId: official.context.membershipId }, write);
+    const record = (ctoRequestId: string) =>
+      asOfficial((transaction) =>
+        transaction.ctoCancellation.create({
+          data: {
+            agencyId,
+            ctoRequestId,
+            kind: 'RECALL',
+            reason: 'Recall.',
+            cancelledByMembershipId: official.context.membershipId,
+          },
+        }),
+      );
+    await expect(record(pending)).rejects.toThrow(/Only an APPROVED CTO Request is cancelled/);
+    const cancellation = await record(request.id);
+    // hris_app has no update or delete policy; the trigger refuses even the owner.
+    await expect(
+      fixture.admin.ctoCancellation.update({
+        where: { id: cancellation.id },
+        data: { reason: 'Rewritten.' },
+      }),
+    ).rejects.toThrow(/CTO Cancellations are final/);
+    // An APPROVED request closes only once every date is cancelled.
+    await expect(
+      asOfficial((transaction) =>
+        transaction.ctoRequest.update({ where: { id: request.id }, data: { status: 'CANCELLED' } }),
+      ),
+    ).rejects.toThrow(/only once every Work Date is cancelled/);
+    const mark = (dateId: string, cancellationId: string | null) =>
+      asOfficial((transaction) =>
+        transaction.ctoRequestDate.update({
+          where: { id: dateId },
+          data: { cancelledByCtoCancellationId: cancellationId },
+        }),
+      );
+    const [first] = request.dates;
+    await mark(first!.id, cancellation.id);
+    await expect(mark(first!.id, null)).rejects.toThrow(/cancelled once/);
+    const pendingDate = await fixture.admin.ctoRequestDate.findFirstOrThrow({
+      where: { ctoRequestId: pending },
+    });
+    await expect(mark(pendingDate.id, cancellation.id)).rejects.toThrow(/cancelled once/);
   }),
 );

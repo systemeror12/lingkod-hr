@@ -12,6 +12,7 @@ import {
 } from './coc-earning-rule';
 import {
   COC_CERTIFICATE_SOURCE_TYPE,
+  COC_CTO_CANCELLATION_SOURCE_TYPE,
   COC_CTO_USAGE_RULE_CODE,
   COC_CTO_USAGE_SOURCE_TYPE,
   CocServiceError,
@@ -20,6 +21,8 @@ import {
   type CocEarnedCertificate,
   type CocAvailable,
   type CocCtoUsage,
+  type CocCtoUsageReversal,
+  type CocCtoUsageReversalResult,
   type CocEarnedCertificateCredit,
   type CocBalance,
 } from './coc-accounts.types';
@@ -281,6 +284,81 @@ export class CocAccountsService {
       entries.push({ id, workDate, validUntil, minutes });
     }
     return entries;
+  }
+
+  /**
+   * Return a CTO cancellation's COC: exactly reverse every usage entry the request
+   * posted on each cancelled Work Date, effective on that date and restoring its
+   * Valid Until. The use stays in the ledger, so a read of the entries posted before
+   * the cancellation still shows it. COC restored to a Valid Until already passed by
+   * `asOf` expires again in this transaction (hris-controls §5.18). The caller holds
+   * the account lock, and marks each date cancelled so it is reversed once.
+   */
+  async reverseCtoUsageInTransaction(
+    transaction: Transaction,
+    agencyId: string,
+    reversal: CocCtoUsageReversal,
+  ): Promise<CocCtoUsageReversalResult> {
+    const uses = await transaction.cocLedgerEntry.findMany({
+      where: {
+        agencyId,
+        cocAccountId: reversal.cocAccountId,
+        sourceType: COC_CTO_USAGE_SOURCE_TYPE,
+        sourceId: reversal.ctoRequestId,
+        effectiveDate: { in: reversal.workDates.map((date) => toCocDate(date, 'Work Date')) },
+      },
+      orderBy: { sourcePostingKey: 'asc' },
+      select: { id: true, minutes: true, effectiveDate: true, validUntil: true },
+    });
+    const missing = reversal.workDates.find(
+      (date) => !uses.some((use) => fromCocDate(use.effectiveDate) === date),
+    );
+    if (missing) {
+      throw new CocServiceError(
+        `The CTO Request has no COC usage on ${missing} to return.`,
+        409,
+        'COC_CTO_USAGE_NOT_FOUND',
+      );
+    }
+
+    const entries = [];
+    for (const use of uses) {
+      const { id } = await transaction.cocLedgerEntry.create({
+        data: {
+          agencyId,
+          cocAccountId: reversal.cocAccountId,
+          minutes: use.minutes.negated(),
+          effectiveDate: use.effectiveDate,
+          validUntil: use.validUntil,
+          sourceType: COC_CTO_CANCELLATION_SOURCE_TYPE,
+          sourceId: reversal.ctoCancellationId,
+          sourcePostingKey: use.id,
+          ruleCode: COC_CTO_USAGE_RULE_CODE,
+          reason: reversal.reason,
+          reversesEntryId: use.id,
+          postedByMembershipId: reversal.postedByMembershipId,
+        },
+        select: { id: true },
+      });
+      entries.push({
+        id,
+        reversesEntryId: use.id,
+        workDate: fromCocDate(use.effectiveDate),
+        validUntil: fromCocDate(use.validUntil),
+        minutes: use.minutes.negated().toFixed(1),
+      });
+    }
+
+    const expiryEntryIds = [];
+    for (const validUntil of new Set(entries.map((entry) => entry.validUntil))) {
+      const expiry = await this.expireCocInTransaction(transaction, agencyId, {
+        cocAccountId: reversal.cocAccountId,
+        validUntil,
+        asOf: reversal.asOf,
+      });
+      if (expiry) expiryEntryIds.push(expiry);
+    }
+    return { entries, expiryEntryIds };
   }
 
   /** Refuse a malformed award, a passed Valid Until, or service during a suspension. */

@@ -171,6 +171,7 @@ model Agency {
   cocLedgerEntries              CocLedgerEntry[]
   ctoRequests                   CtoRequest[]
   ctoRequestDates               CtoRequestDate[]
+  ctoCancellations              CtoCancellation[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -478,6 +479,7 @@ model AgencyMembership {
   cocCertificatesApproved     CocEarnedCertificate[]  @relation("CocEarnedCertificateApprover")
   cocLedgerEntriesPosted      CocLedgerEntry[]    @relation("CocLedgerEntryPoster")
   ctoRequestsApproved         CtoRequest[]        @relation("CtoRequestApprover")
+  ctoCancellations            CtoCancellation[]   @relation("CtoCancellationCanceller")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -5424,11 +5426,12 @@ model CtoRequest {
   approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
   createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  agency     Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  employee   Employee          @relation("CtoRequestEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
-  cocAccount CocAccount        @relation("CtoRequestCocAccount", fields: [agencyId, cocAccountId], references: [agencyId, id], onDelete: Restrict)
-  approvedBy AgencyMembership? @relation("CtoRequestApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
-  dates      CtoRequestDate[]  @relation("CtoRequestDates")
+  agency        Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee      Employee          @relation("CtoRequestEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  cocAccount    CocAccount        @relation("CtoRequestCocAccount", fields: [agencyId, cocAccountId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy    AgencyMembership? @relation("CtoRequestApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  dates         CtoRequestDate[]  @relation("CtoRequestDates")
+  cancellations CtoCancellation[] @relation("CtoRequestCancellations")
 
   @@unique([agencyId, id])
   @@index([agencyId, employeeId, status])
@@ -5436,21 +5439,42 @@ model CtoRequest {
 }
 
 model CtoRequestDate {
-  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  agencyId             String    @map("agency_id") @db.Uuid
-  ctoRequestId         String    @map("cto_request_id") @db.Uuid
-  workDate             DateTime  @map("work_date") @db.Date
-  unit                 String
-  startsAt             DateTime? @map("starts_at") @db.Timestamptz(6)
-  endsAt               DateTime? @map("ends_at") @db.Timestamptz(6)
-  chargedMinutes       Int       @map("charged_minutes")
-  attendanceCtoInputId String?   @map("attendance_cto_input_id") @db.Uuid
+  id                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String    @map("agency_id") @db.Uuid
+  ctoRequestId                 String    @map("cto_request_id") @db.Uuid
+  workDate                     DateTime  @map("work_date") @db.Date
+  unit                         String
+  startsAt                     DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt                       DateTime? @map("ends_at") @db.Timestamptz(6)
+  chargedMinutes               Int       @map("charged_minutes")
+  attendanceCtoInputId         String?   @map("attendance_cto_input_id") @db.Uuid
+  cancelledByCtoCancellationId String?   @map("cancelled_by_cto_cancellation_id") @db.Uuid
 
-  agency  Agency     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
-  request CtoRequest @relation("CtoRequestDates", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request     CtoRequest       @relation("CtoRequestDates", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+  cancelledBy CtoCancellation? @relation("CtoCancellationDates", fields: [agencyId, cancelledByCtoCancellationId], references: [agencyId, id], onDelete: Restrict)
 
   @@unique([ctoRequestId, workDate])
   @@unique([agencyId, id])
   @@index([agencyId, workDate])
   @@map("cto_request_dates")
+}
+
+model CtoCancellation {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  ctoRequestId            String   @map("cto_request_id") @db.Uuid
+  kind                    String
+  reason                  String
+  cancelledByMembershipId String   @map("cancelled_by_membership_id") @db.Uuid
+  cancelledAt             DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(6)
+
+  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request     CtoRequest       @relation("CtoRequestCancellations", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+  cancelledBy AgencyMembership @relation("CtoCancellationCanceller", fields: [agencyId, cancelledByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  dates       CtoRequestDate[] @relation("CtoCancellationDates")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, ctoRequestId])
+  @@map("cto_cancellations")
 }

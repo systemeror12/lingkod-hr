@@ -33,6 +33,7 @@ const requestSelect = {
       endsAt: true,
       chargedMinutes: true,
       attendanceCtoInputId: true,
+      cancelledByCtoCancellationId: true,
     },
   },
 } as const;
@@ -69,6 +70,7 @@ export async function readRequest(
       endsAt: date.endsAt?.toISOString() ?? null,
       chargedMinutes: date.chargedMinutes,
       attendanceCtoInputId: date.attendanceCtoInputId,
+      cancelledByCtoCancellationId: date.cancelledByCtoCancellationId,
     })),
   };
 }
@@ -151,16 +153,18 @@ export function assertStatus(
 /**
  * Whether this actor already made this decision under this idempotency key, so a
  * retry returns the request and writes nothing. Run under the request lock. Another
- * actor or a different reason under the same key is a conflict.
+ * actor, a different reason, or a different `fingerprint` of the decision's other
+ * inputs under the same key is a conflict.
  */
 export async function decisionAlreadyRecorded(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
   decision: {
-    action: 'CTO_REQUEST_APPROVED' | 'CTO_REQUEST_REJECTED';
+    action: 'CTO_REQUEST_APPROVED' | 'CTO_REQUEST_REJECTED' | 'CTO_REQUEST_CANCELLED';
     requestId: string;
     idempotencyKey: string | undefined;
     reason: string | null;
+    fingerprint?: string;
   },
 ): Promise<boolean> {
   if (!decision.idempotencyKey) return false;
@@ -171,10 +175,15 @@ export async function decisionAlreadyRecorded(
       entityId: decision.requestId,
       idempotencyKey: decision.idempotencyKey,
     },
-    select: { actorMembershipId: true, reason: true },
+    select: { actorMembershipId: true, reason: true, metadata: true },
   });
   if (!event) return false;
-  if (event.actorMembershipId !== context.membershipId || event.reason !== decision.reason) {
+  const metadata = event.metadata as Prisma.JsonObject | null;
+  if (
+    event.actorMembershipId !== context.membershipId ||
+    event.reason !== decision.reason ||
+    (decision.fingerprint !== undefined && metadata?.fingerprint !== decision.fingerprint)
+  ) {
     throw new CtoRequestError(
       'This Idempotency-Key was used for a different CTO Request decision.',
       409,
@@ -306,11 +315,11 @@ async function assertConsecutive(
 }
 
 /**
- * Refuse a Work Date already on one of the Employee's live requests. A DRAFT is not
- * live, so the request being submitted never finds itself. Submission holds the COC
- * Account lock across this read and its status change, so two submissions can't
- * both pass. Creating a draft reads without the lock, to refuse early. #549 adds its
- * uncancelled-date filter here.
+ * Refuse a Work Date already uncancelled on one of the Employee's live requests. A
+ * DRAFT is not live, so the request being submitted never finds itself, and a
+ * cancelled date is free for a new request. Submission holds the COC Account lock
+ * across this read and its status change, so two submissions can't both pass.
+ * Creating a draft reads without the lock, to refuse early.
  */
 export async function assertWorkDatesNotLive(
   transaction: Prisma.TransactionClient,
@@ -322,6 +331,7 @@ export async function assertWorkDatesNotLive(
     where: {
       agencyId,
       workDate: { in: workDates.map(toDatabaseDate) },
+      cancelledByCtoCancellationId: null,
       request: { employeeId, status: { in: [...CTO_LIVE_STATUSES] } },
     },
     orderBy: { workDate: 'asc' },

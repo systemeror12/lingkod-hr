@@ -33,6 +33,13 @@ export const COC_CTO_USAGE_SOURCE_TYPE = 'CTO_REQUEST';
 /** The national rule a CTO use applies: JC 2, s. 2004 item 5.9. */
 export const COC_CTO_USAGE_RULE_CODE = 'JC2_2004_CTO_AVAILMENT';
 
+/**
+ * The ledger source of a CTO cancellation's reversal of one usage entry; its source
+ * is the cancellation and its posting key the reversed entry. It applies the same
+ * rule as the use it returns.
+ */
+export const COC_CTO_CANCELLATION_SOURCE_TYPE = 'CTO_CANCELLATION';
+
 export interface CocAdjustmentInput {
   /** Negative, at one decimal place. */
   minutes: string;
@@ -80,6 +87,30 @@ export interface CocCtoUsage {
   ctoRequestId: string;
   postedByMembershipId: string;
   draws: CocDraw[];
+}
+
+/** A CTO cancellation's return of the usage posted on its cancelled Work Dates. */
+export interface CocCtoUsageReversal {
+  cocAccountId: string;
+  ctoRequestId: string;
+  ctoCancellationId: string;
+  workDates: string[];
+  reason: string;
+  postedByMembershipId: string;
+  /** Today's Asia/Manila date: restored COC whose Valid Until is before it expires again. */
+  asOf: string;
+}
+
+export interface CocCtoUsageReversalResult {
+  entries: {
+    id: string;
+    reversesEntryId: string;
+    workDate: string;
+    validUntil: string;
+    minutes: string;
+  }[];
+  /** The expiries that followed in the same transaction, one per passed Valid Until. */
+  expiryEntryIds: string[];
 }
 
 /** One certified Overtime Service Record on a Certificate of COC Earned. */
@@ -175,7 +206,8 @@ export type CocRefusalCode =
   | 'COC_INSUFFICIENT_BALANCE'
   | 'COC_EVIDENCE_FORBIDDEN'
   | 'COC_EVIDENCE_INVALID'
-  | 'COC_IDEMPOTENCY_CONFLICT';
+  | 'COC_IDEMPOTENCY_CONFLICT'
+  | 'COC_CTO_USAGE_NOT_FOUND';
 
 export class CocServiceError extends Error {
   constructor(

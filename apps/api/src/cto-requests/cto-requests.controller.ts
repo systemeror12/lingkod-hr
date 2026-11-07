@@ -13,14 +13,17 @@ import type { RequestContext } from '@lingkod-hr/auth';
 import { ApprovalServiceError } from '../approvals/approval.service';
 import { AttendanceCtoInputError } from '../attendance-cto-inputs/attendance-cto-inputs.types';
 import { AttendanceDayServiceError } from '../attendance-days/attendance-days.types';
+import { CocServiceError } from '../coc-accounts/coc-accounts.types';
 import { CurrentContext, RequirePermission } from '../auth/auth.decorators';
 import { AuthGuard } from '../auth/auth.guard';
 import { agencyIdSchema } from '../auth/auth.schemas';
 import { PermissionGuard } from '../auth/permission.guard';
 import { ApproveCtoRequestService } from './approve-cto-request.service';
+import { CancelCtoRequestService } from './cancel-cto-request.service';
 import { CreateCtoRequestService } from './create-cto-request.service';
 import {
   ctoRequestApproveSchema,
+  ctoRequestCancelSchema,
   ctoRequestCreateSchema,
   ctoRequestIdempotencyKeySchema,
   ctoRequestIdSchema,
@@ -30,6 +33,7 @@ import {
 } from './cto-requests.schemas';
 import {
   APPROVE_PERMISSION,
+  CANCEL_PERMISSION,
   CREATE_PERMISSION,
   CtoRequestError,
   RECOMMEND_PERMISSION,
@@ -60,7 +64,8 @@ function translateServiceError(error: unknown, requestId: string): never {
     error instanceof CtoRequestError ||
     error instanceof ApprovalServiceError ||
     error instanceof AttendanceCtoInputError ||
-    error instanceof AttendanceDayServiceError
+    error instanceof AttendanceDayServiceError ||
+    error instanceof CocServiceError
   ) {
     throw new HttpException(
       { error: { code: error.code, message: error.message, requestId } },
@@ -83,6 +88,7 @@ export class CtoRequestsController {
     @Inject(ReturnCtoRequestService) private readonly returnService: ReturnCtoRequestService,
     @Inject(ApproveCtoRequestService) private readonly approveService: ApproveCtoRequestService,
     @Inject(RejectCtoRequestService) private readonly rejectService: RejectCtoRequestService,
+    @Inject(CancelCtoRequestService) private readonly cancelService: CancelCtoRequestService,
   ) {}
 
   @Post(':agencyId/cto-requests')
@@ -218,6 +224,26 @@ export class CtoRequestsController {
     const key = this.parseIdempotencyKey(idempotencyKey, context);
     try {
       return await this.rejectService.execute(context, id, parsed.data, key);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Post(':agencyId/cto-requests/:requestId/cancel')
+  @RequirePermission(CANCEL_PERMISSION)
+  async cancel(
+    @Param('agencyId') agencyId: string,
+    @Param('requestId') requestId: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CtoRequestSummary> {
+    const id = this.requestId(agencyId, requestId, context);
+    const parsed = ctoRequestCancelSchema.safeParse(body);
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    const key = this.parseIdempotencyKey(idempotencyKey, context);
+    try {
+      return await this.cancelService.execute(context, id, parsed.data, key);
     } catch (error: unknown) {
       translateServiceError(error, context.requestId);
     }
