@@ -329,8 +329,11 @@ export function OvertimeAuthorityWorkspace({
   const unconfirmedNo = useRef<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [editing, setEditing] = useState(false);
-  const [formTab, setFormTab] = useState<FormTab>('authority');
   const navigation = useRecordNavigation();
+  // A COC ledger entry links straight to the Compensation tab of the authority it credits.
+  const [formTab, setFormTab] = useState<FormTab>(
+    navigation.search.get('tab') === 'compensation' ? 'compensation' : 'authority',
+  );
   const requestedView = navigation.search.get('view');
   const preparing = canCreate && canListEmployees && navigation.search.get('new') === '1';
   const view: View =

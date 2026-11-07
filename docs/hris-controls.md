@@ -941,6 +941,8 @@ A balance as of a date counts entries effective on or before it whose Valid Unti
 
 Reading an Employee's balance needs `overtime.coc.read` within the reader's scope, and takes today's Asia/Manila date as its cutoff. An Employee with no active account reads as a zero balance with no account, and reading opens none.
 
+Listing COC Accounts and reading an account's ledger entries need the same `overtime.coc.read` within the reader's scope, so an Employee holding the own-record grant sees only their own account and ledger. A ledger entry shows the entry it reverses and the entry that reversed it.
+
 No authority addresses these, so none has an automatic effect, and any change is an authority-backed adjustment:
 
 - the balance after promotion to a position ineligible for overtime (JC 2, s. 2004 item 5.7.3 withholds retention but states no result); Overtime eligibility already stops new earning;
