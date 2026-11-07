@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { dateLabel, hoursLabel } from '../lib/overtime-format';
+import { OvertimeCompensationSection } from './overtime-compensation-section';
 import { OvertimeServiceSection } from './overtime-service-section';
 import { useRecordNavigation } from './record-navigation';
 import { StateSurface } from './state-surface';
@@ -73,6 +74,8 @@ export interface OvertimeAuthority {
     role: 'PREPARER' | 'REVIEWER' | 'APPROVING_OFFICIAL';
     assigneeName: string | null;
   } | null;
+  /** The API's reason overtime pay is unavailable; `null` once it can be approved. */
+  overtimePayUnavailableReason: string | null;
   employees: CoveredEmployee[];
 }
 
@@ -116,7 +119,7 @@ interface UnitOption {
 }
 
 type View = 'tree' | 'form' | 'kanban';
-type FormTab = 'authority' | 'service' | 'history';
+type FormTab = 'authority' | 'service' | 'compensation' | 'history';
 
 const STATUS_DISPLAY: Record<OvertimeAuthorityStatus, StatusDisplay> = {
   DRAFT: { label: 'Draft', tone: 'neutral' },
@@ -284,6 +287,10 @@ export function OvertimeAuthorityWorkspace({
   canSubmitService,
   canCertifyService,
   canDeclineService,
+  canReadCocBalance,
+  canReadCocCertificates,
+  canPrepareCocCertificates,
+  canApproveCocCertificates,
 }: {
   agencyId: string;
   initial: OvertimeAuthorityListResponse;
@@ -299,6 +306,11 @@ export function OvertimeAuthorityWorkspace({
   canSubmitService: boolean;
   canCertifyService: boolean;
   canDeclineService: boolean;
+  canReadCocBalance: boolean;
+  /** Certificates are read with `.prepare` or `.approve`; there is no separate read grant. */
+  canReadCocCertificates: boolean;
+  canPrepareCocCertificates: boolean;
+  canApproveCocCertificates: boolean;
 }) {
   const [authorities, setAuthorities] = useState(initial.authorities);
   const [statusFilter, setStatusFilter] = useState<'ALL' | OvertimeAuthorityStatus>('ALL');
@@ -832,6 +844,7 @@ export function OvertimeAuthorityWorkspace({
                   tabs={[
                     { value: 'authority', label: 'Authority' },
                     { value: 'service', label: 'Service' },
+                    { value: 'compensation', label: 'Compensation' },
                     { value: 'history', label: 'History' },
                   ]}
                 />
@@ -861,6 +874,17 @@ export function OvertimeAuthorityWorkspace({
                     canSubmit={canSubmitService}
                     canCertify={canCertifyService}
                     canDecline={canDeclineService}
+                  />
+                </SectionTabPanel>
+                <SectionTabPanel value="compensation">
+                  <OvertimeCompensationSection
+                    authority={detail}
+                    request={request}
+                    disabled={stale !== ''}
+                    canReadBalance={canReadCocBalance}
+                    canReadCertificates={canReadCocCertificates}
+                    canPrepare={canPrepareCocCertificates}
+                    canApprove={canApproveCocCertificates}
                   />
                 </SectionTabPanel>
                 <SectionTabPanel value="history">
@@ -925,6 +949,11 @@ function AuthoritySection({
             {detail.approvedAt ? 'Approved method' : 'Proposed method'}
           </dt>
           <dd className="m-0 text-ink">{METHOD_LABEL[detail.compensationMethod]}</dd>
+          {detail.compensationMethod === 'OVERTIME_PAY' && detail.overtimePayUnavailableReason ? (
+            <dd className="m-0 text-caption text-warning">
+              Unavailable: {detail.overtimePayUnavailableReason}
+            </dd>
+          ) : null}
         </div>
         <div>
           <dt className="text-caption text-ink-muted">Funding reference</dt>
@@ -1230,6 +1259,11 @@ function DecisionForm({
               <option value="COC">{METHOD_LABEL.COC}</option>
               <option value="OVERTIME_PAY">{METHOD_LABEL.OVERTIME_PAY}</option>
             </select>
+            {method === 'OVERTIME_PAY' && detail.overtimePayUnavailableReason ? (
+              <span className="text-caption font-normal text-warning">
+                Unavailable: {detail.overtimePayUnavailableReason}
+              </span>
+            ) : null}
           </Field>
           <Field label="Approval comments (optional)">
             <textarea
@@ -1479,6 +1513,11 @@ function DraftForm({
               <option value="COC">{METHOD_LABEL.COC}</option>
               <option value="OVERTIME_PAY">{METHOD_LABEL.OVERTIME_PAY}</option>
             </select>
+            {method === 'OVERTIME_PAY' && initial?.overtimePayUnavailableReason ? (
+              <span className="text-caption font-normal text-warning">
+                Unavailable: {initial?.overtimePayUnavailableReason}
+              </span>
+            ) : null}
           </Field>
           <Field
             label={method === 'OVERTIME_PAY' ? 'Funding reference' : 'Funding reference (optional)'}
