@@ -8,8 +8,12 @@ import {
   ApprovalCompletionRegistry,
   ApprovalsService,
 } from '../approvals/approval.service';
+import { attendanceCorrectionAuditWriter } from '../attendance-corrections/attendance-corrections.audit';
+import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
+import { ATTENDANCE_CORRECTION_CTO_INPUT_ROUTE_CODE } from '../attendance-corrections/attendance-corrections.types';
 import {
   createAttendanceWorkflowFixture,
+  lockAttendancePeriod,
   manilaDate,
   type AttendanceWorkflowFixture,
 } from '../attendance-test-fixtures';
@@ -26,7 +30,7 @@ import {
 } from '../overtime-authorities/overtime-authority-test-fixtures';
 import { cleanupAttendanceOvertime } from '../overtime-service-records/overtime-service-test-fixtures';
 import { ApproveCtoRequestService } from './approve-cto-request.service';
-import { CancelCtoRequestService } from './cancel-cto-request.service';
+import { CancelCtoRequestService, ctoCancellationEffectKey } from './cancel-cto-request.service';
 import { CreateCtoRequestService } from './create-cto-request.service';
 import { registerCtoRequestApproval } from './cto-request-approval';
 import { CtoRequestsController } from './cto-requests.controller';
@@ -87,7 +91,19 @@ function services(fixture: AttendanceWorkflowFixture) {
   const attendance = new AttendanceCtoInputsService(days);
   const approve = new ApproveCtoRequestService(audit, approvals, days, coc, attendance);
   const reject = new RejectCtoRequestService(audit, approvals);
-  const cancel = new CancelCtoRequestService(audit, coc, attendance);
+  const { services: attendanceServices } = fixture;
+  const corrections = new AttendanceCorrectionsService(
+    attendanceCorrectionAuditWriter,
+    approvals,
+    registry,
+    days,
+    attendanceServices.attendance,
+    attendanceServices.documents,
+    attendanceServices.dtrs,
+    attendanceServices.periods,
+  );
+  corrections.onModuleInit();
+  const cancel = new CancelCtoRequestService(audit, coc, attendance, corrections);
   return {
     approvals,
     create,
@@ -100,6 +116,7 @@ function services(fixture: AttendanceWorkflowFixture) {
     reject,
     cancel,
     coc,
+    corrections,
     controller: new CtoRequestsController(
       create,
       discard,
@@ -458,6 +475,7 @@ async function setup() {
     supervisor,
     official,
     peer,
+    person,
     credit,
     futureUse,
     onSchedule,
@@ -1921,23 +1939,206 @@ it.skipIf(!enabled)(
     }),
 );
 
-it.skipIf(!enabled)('refuses a locked Work Date with a typed reason before writing anything', () =>
+it.skipIf(!enabled)(
+  "hands a locked Work Date to Attendance and supersedes the next open one in one cancellation, after Attendance's refusal blocks it",
+  () =>
+    withSetup(async (fixture) => {
+      const { cancel, corrections, controller, official, employeeId, credit, admin, agencyId } =
+        fixture;
+      // The fixture period holds only its Work Date, so the next weekday stays open.
+      const locked = fixture.fixture.workDate;
+      const next = new Date(`${locked}T00:00:00.000Z`);
+      do next.setUTCDate(next.getUTCDate() + 1);
+      while ([0, 6].includes(next.getUTCDay()));
+      const open = next.toISOString().slice(0, 10);
+      await credit(employeeId, 4800);
+      // CTO is approved before it is taken, then the period is locked.
+      const request = await at(`${locked}T07:00:00+08:00`, () =>
+        approved(fixture, [whole(locked), whole(open)]),
+      );
+      const uses = await ledgerEntries(fixture, request.id);
+      // Only the Employee is in the period's population: the other members' schedules start after it.
+      await fixture.asReplica((transaction) =>
+        transaction.scheduleAssignment.updateMany({
+          where: { agencyId, employeeId: { not: employeeId } },
+          data: { effectiveFrom: new Date(open) },
+        }),
+      );
+      await lockAttendancePeriod(fixture.fixture, fixture.fixture.administratorContext);
+      const [lockedDate, openDate] = request.dates;
+      // The handoff opens an Attendance approval, so the canceller also reads routes and opens requests.
+      const canceller: RequestContext = {
+        ...official.context,
+        permissions: [
+          ...OFFICIAL_GRANTS,
+          ...grantsOf('AGENCY', ['approvals.routes.read', 'approvals.requests.create']),
+        ],
+      };
+      const input = { kind: 'RECALL' as const, reason: 'Exigency of the service.' };
+
+      // No CTO_INPUT correction route exists yet: Attendance refuses, and nothing is written.
+      await expect(
+        cancel.execute(canceller, request.id, input, 'locked-key'),
+      ).rejects.toMatchObject({
+        code: 'CTO_CANCELLATION_ATTENDANCE_REFUSED',
+        statusCode: 409,
+        reasons: ['APPROVAL_ROUTE_RESOLUTION_FAILED', `WORK_DATE:${locked}`],
+      });
+      const refused = await errorOf(
+        controller.cancel(agencyId, request.id, input, 'locked-key', canceller),
+      );
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({
+        error: {
+          code: 'CTO_CANCELLATION_ATTENDANCE_REFUSED',
+          reasons: ['APPROVAL_ROUTE_RESOLUTION_FAILED', `WORK_DATE:${locked}`],
+        },
+      });
+      await expectNothingCancelled(fixture, request);
+      expect(await admin.attendanceCorrection.count({ where: { agencyId } })).toBe(0);
+
+      const { services } = fixture.fixture;
+      const authorizer = await fixture.person(
+        'Authorizer',
+        'hrmo_administrator',
+        grantsOf('AGENCY', ['attendance.corrections.authorize_locked', 'attendance.days.read']),
+      );
+      const route = await services.approvals.createRoute(fixture.fixture.administratorContext, {
+        routeCode: ATTENDANCE_CORRECTION_CTO_INPUT_ROUTE_CODE,
+        domain: 'ATTENDANCE',
+        versionNo: 1,
+        effectiveFrom: manilaDate(-30),
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'attendance.corrections.authorize_locked',
+              assignment: {
+                kind: 'MEMBERSHIP',
+                membershipId: authorizer.context.membershipId,
+              },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      });
+      await services.approvals.activateRoute(
+        fixture.fixture.administratorContext,
+        route.id,
+        'Activate the CTO handoff route.',
+      );
+
+      // The same command, retried under the same key, now completes the cancellation.
+      const cancelled = await cancel.execute(canceller, request.id, input, 'locked-key');
+      expect(cancelled.status).toBe('CANCELLED');
+      const cancellation = await admin.ctoCancellation.findFirstOrThrow({
+        where: { agencyId, ctoRequestId: request.id },
+      });
+
+      // The ledger reverses every use of both dates, as for an open period.
+      const reversals = await cancellationEntries(fixture, request.id);
+      expect(
+        reversals
+          .map((entry) => [entry.reversesEntryId, entry.minutes.toFixed(1), entry.sourceId])
+          .sort(),
+      ).toEqual(
+        uses.map((use) => [use.id, use.minutes.negated().toFixed(1), cancellation.id]).sort(),
+      );
+
+      // The locked date waits on a CTO_INPUT correction; the open one gets a NONE successor.
+      const correctionId = cancelled.dates[0]!.attendanceCorrectionId!;
+      expect(cancelled.dates.map((date) => date.attendanceCorrectionId)).toEqual([
+        correctionId,
+        null,
+      ]);
+      const correction = await admin.attendanceCorrection.findUniqueOrThrow({
+        where: { id: correctionId },
+        include: { evidence: true },
+      });
+      expect(correction).toMatchObject({
+        targetType: 'CTO_INPUT',
+        requestedAction: 'VOID',
+        targetId: lockedDate!.attendanceCtoInputId,
+        status: 'FOR_AUTHORIZATION',
+        effectKey: ctoCancellationEffectKey(cancellation.id, locked),
+        initiatedByMembershipId: canceller.membershipId,
+        excludedDeciderMembershipIds: [canceller.membershipId],
+        reason: input.reason,
+      });
+      expect(correction.evidence).toMatchObject([
+        { sourceType: 'CtoCancellation', sourceId: cancellation.id },
+      ]);
+      expect(
+        await admin.attendanceCtoInput.count({
+          where: { predecessorInputId: lockedDate!.attendanceCtoInputId },
+        }),
+      ).toBe(0);
+      const successor = await admin.attendanceCtoInput.findFirstOrThrow({
+        where: { predecessorInputId: openDate!.attendanceCtoInputId },
+      });
+      expect(successor).toMatchObject({ coverageMode: 'NONE', sourceId: cancellation.id });
+      const event = await admin.auditEvent.findFirstOrThrow({
+        where: { action: 'CTO_REQUEST_CANCELLED', entityId: request.id },
+      });
+      expect(event.metadata).toMatchObject({
+        inputs: [
+          { workDate: locked, attendanceCorrectionId: correctionId },
+          { workDate: open, attendanceCtoInputId: successor.id },
+        ],
+      });
+
+      // The request reads Attendance's own status for the date, including a blocking reason.
+      await corrections.recordBlockingReason(
+        authorizer.context,
+        correctionId,
+        'The recall order is unsigned.',
+      );
+      const statuses = await withDatabaseContext({ agencyId }, (transaction) =>
+        corrections.ctoInputHandoffStatusesInTransaction(transaction, agencyId, [correctionId]),
+      );
+      expect(statuses.get(correctionId)).toMatchObject({
+        status: 'FOR_AUTHORIZATION',
+        blockingReason: 'The recall order is unsigned.',
+      });
+
+      // A replay writes nothing more.
+      expect(await cancel.execute(canceller, request.id, input, 'locked-key')).toEqual(cancelled);
+      expect(await admin.attendanceCorrection.count({ where: { agencyId } })).toBe(1);
+      expect(await cancellationEntries(fixture, request.id)).toHaveLength(uses.length);
+
+      // A date names its own input's correction once, as it is cancelled.
+      const asCanceller = <T>(write: (transaction: Prisma.TransactionClient) => Promise<T>) =>
+        withDatabaseContext({ agencyId, membershipId: canceller.membershipId }, write);
+      for (const [dateId, attendanceCorrectionId] of [
+        [lockedDate!.id, null],
+        [openDate!.id, correctionId],
+      ] as const) {
+        await expect(
+          asCanceller((transaction) =>
+            transaction.ctoRequestDate.update({
+              where: { id: dateId },
+              data: { attendanceCorrectionId },
+            }),
+          ),
+        ).rejects.toThrow(/names the Attendance Correction of its own CTO input once/);
+      }
+    }),
+);
+
+it.skipIf(!enabled)('blocks the whole cancellation when Attendance refuses a locked date', () =>
   withSetup(async (fixture) => {
-    const { cancel, controller, official, employeeId, credit, day, agencyId } = fixture;
+    const { cancel, official, employeeId, credit, day } = fixture;
     await credit(employeeId, 4800);
     const request = await approved(fixture, [whole(day(0)), whole(day(1))]);
+    // A FINALIZED period with no locked version for the Employee: Attendance refuses.
     const period = await lockedPeriod(fixture, day(1), day(1));
     const input = { kind: 'RECALL' as const, reason: 'Exigency of the service.' };
 
     await expect(
       cancel.execute(official.context, request.id, input, 'cancel-once'),
-    ).rejects.toMatchObject({ code: 'ATTENDANCE_WORK_DATE_LOCKED', statusCode: 409 });
+    ).rejects.toMatchObject({ code: 'CTO_CANCELLATION_ATTENDANCE_REFUSED', statusCode: 409 });
     await expectNothingCancelled(fixture, request);
-    const refused = await errorOf(
-      controller.cancel(agencyId, request.id, input, 'cancel-once', official.context),
-    );
-    expect(refused.status).toBe(409);
-    expect(refused.body).toMatchObject({ error: { code: 'ATTENDANCE_WORK_DATE_LOCKED' } });
 
     // The open date alone can be recalled, and a refusal does not spend the key.
     const partial = await cancel.execute(official.context, request.id, {

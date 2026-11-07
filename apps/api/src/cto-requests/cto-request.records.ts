@@ -34,6 +34,7 @@ const requestSelect = {
       chargedMinutes: true,
       attendanceCtoInputId: true,
       cancelledByCtoCancellationId: true,
+      attendanceCorrectionId: true,
     },
   },
 } as const;
@@ -71,6 +72,7 @@ export async function readRequest(
       chargedMinutes: date.chargedMinutes,
       attendanceCtoInputId: date.attendanceCtoInputId,
       cancelledByCtoCancellationId: date.cancelledByCtoCancellationId,
+      attendanceCorrectionId: date.attendanceCorrectionId,
     })),
   };
 }
