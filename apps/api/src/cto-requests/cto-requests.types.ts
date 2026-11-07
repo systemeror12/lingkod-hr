@@ -32,6 +32,15 @@ export const RECOMMEND_PERMISSION = 'overtime.cto.recommend';
 export const RETURN_PERMISSION = 'overtime.cto.return';
 export const APPROVE_PERMISSION = 'overtime.cto.approve';
 export const REJECT_PERMISSION = 'overtime.cto.reject';
+export const CANCEL_PERMISSION = 'overtime.cto.cancel';
+
+/**
+ * Why approved CTO is cancelled: the Head of Office's recall in the exigency of the
+ * service (JC 2, s. 2004 item 5.9.3), or the Employee's request made outside the
+ * system (hris-controls §5.19).
+ */
+export const CTO_CANCELLATION_KINDS = ['RECALL', 'EMPLOYEE_REQUEST'] as const;
+export type CtoCancellationKind = (typeof CTO_CANCELLATION_KINDS)[number];
 
 export type CtoRequestDateInput =
   | { workDate: string; unit: 'WHOLE' }
@@ -59,6 +68,13 @@ export interface CtoRequestRejectInput {
   reason: string;
 }
 
+export interface CtoRequestCancelInput {
+  kind: CtoCancellationKind;
+  reason: string;
+  /** The Work Dates to cancel; every uncancelled one when omitted. */
+  workDates?: string[] | undefined;
+}
+
 export interface CtoRequestDateSummary {
   id: string;
   workDate: string;
@@ -67,6 +83,7 @@ export interface CtoRequestDateSummary {
   endsAt: string | null;
   chargedMinutes: number;
   attendanceCtoInputId: string | null;
+  cancelledByCtoCancellationId: string | null;
 }
 
 export interface CtoRequestSummary {

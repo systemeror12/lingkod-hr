@@ -307,7 +307,7 @@ Create:
 
 Attach immutable trigger to COC ledger.
 
-Grant `overtime.cto.approve` and `overtime.cto.reject` after the CTO Request tables, which add their catalog rows.
+Grant `overtime.cto.approve` and `overtime.cto.reject` after the CTO Request tables, which add their catalog rows. `cto_cancellations` adds `cto_request_dates.cancelled_by_cto_cancellation_id` with its foreign key, the `overtime.cto.cancel` catalog row, and its grant.
 
 ---
 

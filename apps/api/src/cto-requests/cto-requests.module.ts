@@ -10,6 +10,7 @@ import {
   overtimeAuthorityAuditWriter,
 } from '../overtime-authorities/overtime-authorities.audit';
 import { ApproveCtoRequestService } from './approve-cto-request.service';
+import { CancelCtoRequestService } from './cancel-cto-request.service';
 import { CreateCtoRequestService } from './create-cto-request.service';
 import { registerCtoRequestApproval } from './cto-request-approval';
 import { CtoRequestsController } from './cto-requests.controller';
@@ -39,6 +40,7 @@ import { WithdrawCtoRequestService } from './withdraw-cto-request.service';
     ReturnCtoRequestService,
     ApproveCtoRequestService,
     RejectCtoRequestService,
+    CancelCtoRequestService,
     { provide: OVERTIME_AUTHORITY_AUDIT_WRITER, useValue: overtimeAuthorityAuditWriter },
   ],
 })

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { datesBetween, drawCtoUsage, firstUncoveredWorkDate } from './cto-request-rule';
+import {
+  datesBetween,
+  datesToCancel,
+  drawCtoUsage,
+  firstUncoveredWorkDate,
+} from './cto-request-rule';
 
 const date = (workDate: string, chargedMinutes = 480) => ({ workDate, chargedMinutes });
 
@@ -124,5 +129,35 @@ describe('drawCtoUsage', () => {
         [date('2026-12-14')],
       ).uncovered,
     ).toBe('2026-12-14');
+  });
+});
+
+describe('datesToCancel', () => {
+  const dates = [
+    { workDate: '2027-01-04', cancelledByCtoCancellationId: 'earlier' },
+    { workDate: '2027-01-05', cancelledByCtoCancellationId: null },
+    { workDate: '2027-01-06', cancelledByCtoCancellationId: null },
+  ];
+
+  it('takes every uncancelled date when none are named', () => {
+    expect(datesToCancel(dates, undefined).map((date) => date.workDate)).toEqual([
+      '2027-01-05',
+      '2027-01-06',
+    ]);
+  });
+
+  it('takes only the named dates, in Work Date order', () => {
+    expect(datesToCancel(dates, ['2027-01-06', '2027-01-05']).map((date) => date.workDate)).toEqual(
+      ['2027-01-05', '2027-01-06'],
+    );
+  });
+
+  it('refuses a date not on the request or already cancelled', () => {
+    expect(() => datesToCancel(dates, ['2027-01-07'])).toThrow(
+      expect.objectContaining({ code: 'CTO_WORK_DATE_NOT_ON_REQUEST', statusCode: 422 }),
+    );
+    expect(() => datesToCancel(dates, ['2027-01-05', '2027-01-04'])).toThrow(
+      expect.objectContaining({ code: 'CTO_WORK_DATE_ALREADY_CANCELLED', statusCode: 409 }),
+    );
   });
 });
