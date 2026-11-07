@@ -52,6 +52,26 @@ export async function readRequest(
     select: requestSelect,
   });
   if (!record) throw requestNotFound();
+  return toSummary(record);
+}
+
+/** The Agency's requests matching `where`, newest first. */
+export async function findRequests(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  where: Prisma.CtoRequestWhereInput,
+): Promise<CtoRequestSummary[]> {
+  const records = await transaction.ctoRequest.findMany({
+    where: { ...where, agencyId },
+    orderBy: { createdAt: 'desc' },
+    select: requestSelect,
+  });
+  return records.map(toSummary);
+}
+
+function toSummary(
+  record: Prisma.CtoRequestGetPayload<{ select: typeof requestSelect }>,
+): CtoRequestSummary {
   return {
     id: record.id,
     agencyId: record.agencyId,

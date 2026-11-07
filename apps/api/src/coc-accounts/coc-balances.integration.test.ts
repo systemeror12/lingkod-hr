@@ -164,6 +164,14 @@ it.skipIf(!enabled)(
             { validUntil: later.validUntil, minutes: '90.0' },
           ],
           totalMinutes: '150.0',
+          // Nothing is used, so all of it is available to CTO.
+          available: {
+            byValidUntil: [
+              { validUntil: earlier.validUntil, minutes: '60.0' },
+              { validUntil: later.validUntil, minutes: '90.0' },
+            ],
+            totalMinutes: '150.0',
+          },
         });
       }
     }),
@@ -198,6 +206,20 @@ it.skipIf(!enabled)('lets an Employee read only their own balance', () =>
     // A Membership with no linked Employee has no own record to read.
     const unlinked = await member(admin, home, suffix, 'employee');
     expect(await errorOf(controller.read(home.agency.id, home.member.id, unlinked))).toMatchObject({
+      status: 403,
+      body: { error: { code: 'COC_BALANCE_FORBIDDEN' } },
+    });
+    // The own route names the linked Employee, so the caller needn't know their id (#545).
+    expect(await controller.readOwn(home.agency.id, own)).toMatchObject({
+      employeeId: home.member.id,
+      totalMinutes: '60.0',
+      available: { totalMinutes: '60.0' },
+    });
+    expect(await errorOf(controller.readOwn(home.agency.id, unlinked))).toMatchObject({
+      status: 404,
+      body: { error: { code: 'COC_EMPLOYEE_NOT_LINKED' } },
+    });
+    expect(await errorOf(controller.readOwn(randomUUID(), own))).toMatchObject({
       status: 403,
       body: { error: { code: 'COC_BALANCE_FORBIDDEN' } },
     });
@@ -253,6 +275,7 @@ it.skipIf(!enabled)('reads a zero balance with no account, and a read writes not
       asOf: manilaToday(),
       byValidUntil: [],
       totalMinutes: '0.0',
+      available: { byValidUntil: [], totalMinutes: '0.0' },
     });
     expect(await trace()).toEqual(empty);
     expect(empty.accounts).toEqual([]);

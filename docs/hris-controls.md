@@ -939,7 +939,7 @@ New credit comes only from a Certificate of COC Earned (ADR 0008). Credit return
 
 A balance as of a date counts entries effective on or before it whose Valid Until is on or after it, so COC past its Valid Until never counts, even before its expiry entry is posted. Expiry and forfeiture entries carry the Valid Until of the COC they remove, so the filter never double-counts a removal. The available balance for a CTO date also subtracts future-dated uses.
 
-Reading an Employee's balance needs `overtime.coc.read` within the reader's scope, and takes today's Asia/Manila date as its cutoff. An Employee with no active account reads as a zero balance with no account, and reading opens none.
+Reading an Employee's balance needs `overtime.coc.read` within the reader's scope, and takes today's Asia/Manila date as its cutoff. The same read returns the COC available to CTO from today by Valid Until, net of future-dated uses. An Employee with no active account reads as a zero balance with no account, and reading opens none.
 
 No authority addresses these, so none has an automatic effect, and any change is an authority-backed adjustment:
 
@@ -977,6 +977,8 @@ Approval posts the usage and creates one Attendance CTO input per Work Date in t
 | FOR_APPROVAL            | Reject    | REJECTED                               | Approving Official                   | `overtime.cto.reject`    | Reason required                                                                                                                           | Notify Employee                                                                                             |
 | DRAFT                   | Discard   | CANCELLED                              | Employee (own) / Leave Administrator | `overtime.cto.create`    | Not submitted                                                                                                                             | Close                                                                                                       |
 | APPROVED                | Cancel    | CANCELLED, or APPROVED if dates remain | Approving Official                   | `overtime.cto.cancel`    | Kind `RECALL` or `EMPLOYEE_REQUEST`; reason required; whole request or named Work Dates                                                   | Reverse the cancelled dates' usage entries; supersede each cancelled date's input, or hand off a locked one |
+
+Reading a CTO Request needs `overtime.coc.read` within the reader's scope: an Employee reads their own, a Supervisor their direct reports', and a role §6.9 grants it Agency-wide reads every request. No source sets this; it is a Project Decision (#545). There is no separate CTO read permission, and holding a CTO decision permission alone does not read requests. Payroll Preparers and Internal Auditors read CTO Requests as a side effect of holding `overtime.coc.read`.
 
 The Head of Office may recall approved CTO in the exigency of the service (JC 2, s. 2004 item 5.9.3), so recall is a cancellation by the Approving Official. An Employee asks for cancellation outside the system. A reschedule is a new CTO Request, and a cancelled Work Date is free for one.
 

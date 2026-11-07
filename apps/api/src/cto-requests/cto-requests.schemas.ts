@@ -1,7 +1,18 @@
 import { z } from 'zod';
-import { CTO_CANCELLATION_KINDS, CTO_MAX_WORK_DATES } from './cto-requests.types';
+import {
+  CTO_CANCELLATION_KINDS,
+  CTO_MAX_WORK_DATES,
+  CTO_REQUEST_STATUSES,
+} from './cto-requests.types';
 
 export const ctoRequestIdSchema = z.string().uuid();
+
+export const ctoRequestListSchema = z
+  .object({
+    status: z.enum(CTO_REQUEST_STATUSES).optional(),
+    search: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
 
 export const ctoRequestIdempotencyKeySchema = z.string().trim().min(1).max(200);
 

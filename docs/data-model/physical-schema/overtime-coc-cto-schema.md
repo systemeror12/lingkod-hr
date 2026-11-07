@@ -272,7 +272,7 @@ WHERE agency_id = $1 AND coc_account_id = $2
 GROUP BY valid_until;
 ```
 
-The 120-hour cap reads it as of the certificate's approval date. A certificate approval dated before the account's latest certificate entry is refused, so a back-dated award cannot raise the balance under a later award's cap. Service on or before a `CLOSED` account's `closed_at` belongs to the forfeited period and is refused rather than opening a new account. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date. The balance read route takes today's Asia/Manila date as the cutoff, needs `overtime.coc.read`, and writes nothing.
+The 120-hour cap reads it as of the certificate's approval date. A certificate approval dated before the account's latest certificate entry is refused, so a back-dated award cannot raise the balance under a later award's cap. Service on or before a `CLOSED` account's `closed_at` belongs to the forfeited period and is refused rather than opening a new account. The balance available for a CTO date reads all entries, including future-dated uses, for `valid_until` on or after that date. The balance read route takes today's Asia/Manila date as the cutoff, needs `overtime.coc.read`, and writes nothing. It also returns what is available to CTO from today, read the same way approval reads it, without the lock.
 
 ---
 

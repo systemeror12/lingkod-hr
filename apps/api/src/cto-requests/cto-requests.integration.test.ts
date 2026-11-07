@@ -15,6 +15,7 @@ import {
 } from '../attendance-test-fixtures';
 import { AttendanceCtoInputsService } from '../attendance-cto-inputs/attendance-cto-inputs.service';
 import { CocAccountsService } from '../coc-accounts/coc-accounts.service';
+import { CocBalancesService } from '../coc-accounts/coc-balances.service';
 import { overtimeAuthorityAuditWriter } from '../overtime-authorities/overtime-authorities.audit';
 import {
   cleanup,
@@ -32,6 +33,7 @@ import { registerCtoRequestApproval } from './cto-request-approval';
 import { CtoRequestsController } from './cto-requests.controller';
 import type { CtoRequestDateInput } from './cto-requests.types';
 import { DiscardCtoRequestService } from './discard-cto-request.service';
+import { ReadCtoRequestsService } from './read-cto-requests.service';
 import { RecommendCtoRequestService } from './recommend-cto-request.service';
 import { RejectCtoRequestService } from './reject-cto-request.service';
 import { ReturnCtoRequestService } from './return-cto-request.service';
@@ -88,6 +90,7 @@ function services(fixture: AttendanceWorkflowFixture) {
   const approve = new ApproveCtoRequestService(audit, approvals, days, coc, attendance);
   const reject = new RejectCtoRequestService(audit, approvals);
   const cancel = new CancelCtoRequestService(audit, coc, attendance);
+  const read = new ReadCtoRequestsService();
   return {
     approvals,
     create,
@@ -100,6 +103,8 @@ function services(fixture: AttendanceWorkflowFixture) {
     reject,
     cancel,
     coc,
+    read,
+    balances: new CocBalancesService(coc),
     controller: new CtoRequestsController(
       create,
       discard,
@@ -110,6 +115,7 @@ function services(fixture: AttendanceWorkflowFixture) {
       approve,
       reject,
       cancel,
+      read,
     ),
   };
 }
@@ -2131,4 +2137,123 @@ it.skipIf(!enabled)('guards cancellations and cancelled dates in the database', 
     });
     await expect(mark(pendingDate.id, cancellation.id)).rejects.toThrow(/cancelled once/);
   }),
+);
+
+/** The context with `overtime.coc.read` added at one scope, the grant CTO reads need. */
+function reader(base: RequestContext, scopePolicy: 'AGENCY' | 'DIRECT_REPORTS' | 'OWN') {
+  return {
+    ...base,
+    permissions: [...base.permissions, ...grantsOf(scopePolicy, ['overtime.coc.read'])],
+  };
+}
+
+it.skipIf(!enabled)(
+  'reads CTO Requests with overtime.coc.read within the reader’s scope (#545)',
+  () =>
+    withSetup(async (fixture) => {
+      const { read, controller, create, employee, employeeId, peer, supervisor, official } =
+        fixture;
+      const { agencyId, credit, day } = fixture;
+      await credit(employeeId, 4800);
+      await credit(peer.employeeId, 4800);
+      const own = await create.execute(employee, { employeeId, dates: [whole(day(0))] });
+      const theirs = await create.execute(peer.context, {
+        employeeId: peer.employeeId,
+        dates: [half(day(1), '08:00', '12:00')],
+      });
+      const ids = (rows: Array<{ id: string }>) => rows.map((row) => row.id).sort();
+
+      // An Employee reads only their own; a direct-report Supervisor and an Agency grant
+      // read both.
+      expect(ids(await read.list(reader(employee, 'OWN'), {}))).toEqual([own.id]);
+      expect(ids(await read.list(reader(supervisor.context, 'DIRECT_REPORTS'), {}))).toEqual(
+        [own.id, theirs.id].sort(),
+      );
+      expect(ids(await read.list(reader(official.context, 'AGENCY'), {}))).toEqual(
+        [own.id, theirs.id].sort(),
+      );
+      await expect(read.detail(reader(employee, 'OWN'), theirs.id)).rejects.toMatchObject({
+        statusCode: 403,
+        code: 'CTO_REQUEST_SCOPE_FORBIDDEN',
+      });
+
+      // Deciding grants alone do not read: there is no separate CTO read permission.
+      await expect(read.list(official.context, {})).rejects.toMatchObject({
+        statusCode: 403,
+        code: 'CTO_REQUEST_READ_FORBIDDEN',
+      });
+
+      // Status and Employee search filter the list.
+      const agencyReader = reader(official.context, 'AGENCY');
+      const [listed] = (await controller.list(agencyId, { search: 'cto peer' }, agencyReader))
+        .requests;
+      expect(listed).toMatchObject({
+        id: theirs.id,
+        employeeName: 'CTO Peer',
+        status: 'DRAFT',
+        pendingAction: { role: 'REQUESTER', assigneeName: null },
+        dates: [{ workDate: day(1), unit: 'HALF', chargedMinutes: 240 }],
+      });
+      expect(await read.list(agencyReader, { status: 'SUBMITTED' })).toEqual([]);
+      expect(
+        (await errorOf(controller.list(agencyId, { status: 'POSTED' }, agencyReader))).status,
+      ).toBe(400);
+      expect((await errorOf(controller.list(randomUUID(), {}, agencyReader))).body).toMatchObject({
+        error: { code: 'CTO_REQUEST_READ_FORBIDDEN' },
+      });
+      expect((await errorOf(controller.detail(agencyId, 'not-a-uuid', agencyReader))).status).toBe(
+        404,
+      );
+    }),
+);
+
+it.skipIf(!enabled)(
+  'reads a decided request with its decisions, Attendance inputs, and history (#545)',
+  () =>
+    withSetup(async (fixture) => {
+      const { read, create, submit, recommend, approve, employee, employeeId } = fixture;
+      const { supervisor, official, credit, day } = fixture;
+      await credit(employeeId, 4800);
+      const draft = await create.execute(employee, { employeeId, dates: [whole(day(0))] });
+      await submit.execute(employee, draft.id);
+      const awaiting = await read.detail(reader(employee, 'OWN'), draft.id);
+      expect(awaiting.pendingAction).toMatchObject({ role: 'SUPERVISOR' });
+      await recommend.execute(supervisor.context, draft.id, { comment: 'Service allows it.' });
+      expect((await read.detail(reader(employee, 'OWN'), draft.id)).pendingAction).toMatchObject({
+        role: 'APPROVING_OFFICIAL',
+      });
+      await approve.execute(official.context, draft.id, { comment: 'Approved.' });
+
+      const detail = await read.detail(reader(employee, 'OWN'), draft.id);
+      expect(detail).toMatchObject({ status: 'APPROVED', pendingAction: null });
+      expect(detail.dates[0]!.attendanceCtoInputId).not.toBeNull();
+      expect(detail.decisions).toMatchObject([
+        { stepNo: 1, comments: 'Service allows it.', decidedByName: 'CTO Supervisor' },
+        { stepNo: 2, comments: 'Approved.', decidedByName: 'CTO Official' },
+      ]);
+      expect(detail.history.map((entry) => entry.action)).toEqual(
+        await auditActions(fixture, draft.id),
+      );
+      expect(detail.history.at(-1)).toMatchObject({ action: 'CTO_REQUEST_APPROVED' });
+    }),
+);
+
+it.skipIf(!enabled)(
+  'shows COC available to CTO net of future-dated uses beside the balance as of today (#545)',
+  () =>
+    withSetup(async (fixture) => {
+      const { balances, employee, employeeId, credit, day } = fixture;
+      const validUntil = `${Number(manilaDate(0).slice(0, 4)) + 1}-12-31`;
+      await credit(employeeId, 4800);
+      await approved(fixture, [whole(day(0))]);
+
+      const read = await balances.read(reader(employee, 'OWN'), employeeId);
+      // The approved CTO is dated in the future, so today's balance still holds it.
+      expect(read.totalMinutes).toBe('4800.0');
+      // What CTO can still draw from today nets it.
+      expect(read.available).toEqual({
+        byValidUntil: [{ validUntil, minutes: '4320.0' }],
+        totalMinutes: '4320.0',
+      });
+    }),
 );

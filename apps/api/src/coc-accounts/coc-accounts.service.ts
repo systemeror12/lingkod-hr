@@ -240,6 +240,20 @@ export class CocAccountsService {
       FOR NO KEY UPDATE
     `;
     if (account?.status !== 'ACTIVE') return null;
+    return this.readAvailableInTransaction(transaction, agencyId, cocAccountId, from);
+  }
+
+  /**
+   * What each Valid Until on or after `from` still holds, reading every entry whatever
+   * its effective date, so future-dated uses are already netted. CTO approval reads it
+   * under the account lock; the balance read shows it unlocked, as of today.
+   */
+  async readAvailableInTransaction(
+    transaction: Transaction,
+    agencyId: string,
+    cocAccountId: string,
+    from: string,
+  ): Promise<CocAvailable[]> {
     const groups = await transaction.cocLedgerEntry.groupBy({
       by: ['validUntil'],
       where: { agencyId, cocAccountId, validUntil: { gte: toCocDate(from, 'Work Date') } },

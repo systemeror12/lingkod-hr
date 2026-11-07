@@ -185,11 +185,25 @@ export interface CocBalance {
   totalMinutes: string;
 }
 
+/**
+ * The balance read: the balance as of today, and what CTO can still draw from today
+ * on, net of every use including future-dated ones (hris-controls §5.18).
+ */
+export interface CocBalanceRead extends CocBalance {
+  available: { byValidUntil: { validUntil: string; minutes: string }[]; totalMinutes: string };
+}
+
+/** The caller's own balance read, naming the Employee their Membership is linked to. */
+export interface CocOwnBalanceRead extends CocBalanceRead {
+  employeeId: string;
+}
+
 export type CocRefusalCode =
   | CocEarningRefusalCode
   | 'COC_AWARD_INVALID'
   | 'COC_VALIDITY_PASSED'
   | 'COC_EMPLOYEE_NOT_FOUND'
+  | 'COC_EMPLOYEE_NOT_LINKED'
   | 'COC_BALANCE_FORBIDDEN'
   | 'COC_AWARD_REPLAY_MISMATCH'
   | 'COC_CERTIFICATE_OF_ANOTHER_EMPLOYEE'

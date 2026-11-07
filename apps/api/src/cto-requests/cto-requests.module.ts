@@ -15,6 +15,7 @@ import { CreateCtoRequestService } from './create-cto-request.service';
 import { registerCtoRequestApproval } from './cto-request-approval';
 import { CtoRequestsController } from './cto-requests.controller';
 import { DiscardCtoRequestService } from './discard-cto-request.service';
+import { ReadCtoRequestsService } from './read-cto-requests.service';
 import { RecommendCtoRequestService } from './recommend-cto-request.service';
 import { RejectCtoRequestService } from './reject-cto-request.service';
 import { ReturnCtoRequestService } from './return-cto-request.service';
@@ -41,6 +42,7 @@ import { WithdrawCtoRequestService } from './withdraw-cto-request.service';
     ApproveCtoRequestService,
     RejectCtoRequestService,
     CancelCtoRequestService,
+    ReadCtoRequestsService,
     { provide: OVERTIME_AUTHORITY_AUDIT_WRITER, useValue: overtimeAuthorityAuditWriter },
   ],
 })
