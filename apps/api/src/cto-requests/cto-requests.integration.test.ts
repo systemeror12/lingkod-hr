@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import {
   approvalAuditWriter,
   ApprovalCompletionRegistry,
@@ -1288,11 +1288,76 @@ it.skipIf(!enabled)(
     }),
 );
 
+/** Run with the clock at this instant, to stand on a Work Date's Asia/Manila date. */
+async function at<T>(instant: string, run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  vi.setSystemTime(new Date(instant));
+  try {
+    return await run();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+it.skipIf(!enabled)('approves a Work Date of today and refuses one before today', () =>
+  withSetup(async (fixture) => {
+    const { approve, reject, controller, official, employeeId, credit, day, agencyId } = fixture;
+    await credit(employeeId, 4800);
+    const requestId = await forApproval(fixture, [whole(day(0))]);
+    // Half past midnight in Manila is still the Work Date by UTC, so a UTC date would allow it.
+    const justPassed = `${day(1)}T00:30:00+08:00`;
+
+    await at(justPassed, async () => {
+      await expect(
+        approve.execute(official.context, requestId, {}, 'approve-today'),
+      ).rejects.toMatchObject({ code: 'CTO_WORK_DATE_PASSED', statusCode: 409 });
+      const refused = await errorOf(
+        controller.approve(agencyId, requestId, {}, undefined, official.context),
+      );
+      expect(refused.status).toBe(409);
+      expect(refused.body).toMatchObject({ error: { code: 'CTO_WORK_DATE_PASSED' } });
+    });
+    await expectNothingPosted(fixture, requestId);
+
+    // A refusal does not spend the key, and the last minutes of the Work Date are still today.
+    const approved = await at(`${day(0)}T23:30:00+08:00`, () =>
+      approve.execute(official.context, requestId, {}, 'approve-today'),
+    );
+    expect(approved.status).toBe('APPROVED');
+    expect(await ledgerEntries(fixture, requestId)).toHaveLength(1);
+
+    // A recorded approval still returns its first result once its date has passed.
+    await at(justPassed, async () => {
+      expect(await approve.execute(official.context, requestId, {}, 'approve-today')).toEqual(
+        approved,
+      );
+    });
+    expect(await ledgerEntries(fixture, requestId)).toHaveLength(1);
+
+    // Any passed date refuses the whole request, and rejecting one stays allowed.
+    const spanning = await forApproval(fixture, [whole(day(1)), whole(day(2))]);
+    await at(`${day(2)}T09:00:00+08:00`, async () => {
+      await expect(approve.execute(official.context, spanning, {})).rejects.toMatchObject({
+        code: 'CTO_WORK_DATE_PASSED',
+      });
+      await expectNothingPosted(fixture, spanning);
+      const rejected = await reject.execute(official.context, spanning, { reason: 'Too late.' });
+      expect(rejected.status).toBe('REJECTED');
+    });
+  }),
+);
+
 it.skipIf(!enabled)('recalculates the current Attendance Day of an approved Work Date', () =>
   withSetup(async (fixture) => {
-    const { approve, official, employeeId, credit, admin, agencyId } = fixture;
-    const workDate = fixture.fixture.workDate;
+    const { approve, official, employeeId, credit, admin, agencyId, day } = fixture;
+    const workDate = day(0);
     await credit(employeeId, 4800);
+    await fixture.fixture.services.days.calculate(fixture.fixture.administratorContext, {
+      periodCode: `CTO-DAY-${randomUUID()}`,
+      dateFrom: workDate,
+      dateTo: workDate,
+      employeeIds: [employeeId],
+    });
     const dayOf = () =>
       admin.attendanceDay.findFirstOrThrow({
         where: { agencyId, employeeId, workDate: new Date(workDate), isCurrent: true },

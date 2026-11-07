@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { ApprovalsService } from '../approvals/approval.service';
+import { manilaToday } from '../attendance-configuration/attendance-configuration.types';
 import { AttendanceCtoInputsService } from '../attendance-cto-inputs/attendance-cto-inputs.service';
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import { CocAccountsService } from '../coc-accounts/coc-accounts.service';
@@ -33,12 +34,28 @@ import {
   type CtoRequestSummary,
 } from './cto-requests.types';
 
+function assertNoPassedWorkDate(current: CtoRequestSummary): void {
+  const today = manilaToday();
+  const passed = current.dates.find((date) => date.workDate < today);
+  if (passed) {
+    throw new CtoRequestError(
+      `Work Date ${passed.workDate} has passed, and CTO must be approved before it is taken.`,
+      409,
+      'CTO_WORK_DATE_PASSED',
+    );
+  }
+}
+
 /**
  * The Approving Official approves a FOR_APPROVAL request. In one transaction this
  * decides the route's last step, posts the COC usage, and asks Attendance for one
  * CTO input per Work Date (ADR 0009), so any refusal leaves the request FOR_APPROVAL
  * with nothing written. A retry with the same `Idempotency-Key` returns the request
  * and writes nothing, since the request lock makes it wait for the first attempt.
+ *
+ * CTO must be approved before it is taken (JC 2, s. 2004 item 5.9.3), so a Work Date
+ * before today by the Asia/Manila date refuses approval, and today's does not. The
+ * replay check runs first, so a recorded approval still returns once its dates pass.
  */
 @Injectable()
 export class ApproveCtoRequestService {
@@ -72,6 +89,7 @@ export class ApproveCtoRequestService {
         });
         if (replayed) return readRequest(transaction, agencyId, requestId);
         assertStatus(current, ['FOR_APPROVAL'], 'approved');
+        assertNoPassedWorkDate(current);
         const open = await openApprovalRequest(transaction, agencyId, requestId, 'IN_PROGRESS');
         if (!open) throw approvalRequestMissing();
         await this.approvals.decideInTransaction(
