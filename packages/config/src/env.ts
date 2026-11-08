@@ -1,9 +1,23 @@
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
 import { parseProtectedValueKey } from './protected-values';
 
-loadDotenv({ path: resolve(__dirname, '../../../.env') });
+/**
+ * Returns the `.env` path beside the nearest `pnpm-workspace.yaml` at or above
+ * `directory`. Starts from the working directory, not `__dirname`, because the
+ * Next server bundles this package and rewrites `__dirname` to a virtual path.
+ */
+export function findRootEnvFile(directory = process.cwd()): string | undefined {
+  for (let current = directory; ; current = dirname(current)) {
+    if (existsSync(join(current, 'pnpm-workspace.yaml'))) return join(current, '.env');
+    if (dirname(current) === current) return undefined;
+  }
+}
+
+const rootEnvFile = findRootEnvFile();
+if (rootEnvFile) loadDotenv({ path: rootEnvFile });
 
 const localDefaults = {
   API_PORT: '3001',
