@@ -5,7 +5,9 @@ import {
   ATTENDANCE_EXPECTED_END_RULE,
   calculateAttendanceDay,
   fingerprintAttendanceDayInput,
+  unplacedCtoInputIds,
   wholeWorkDateCoverageIntervals,
+  withinIntervals,
   type AttendanceCalculationEvent,
   type AttendanceCalculationCoverage,
   type AttendanceDayCalculationInput,
@@ -243,6 +245,33 @@ it('classifies internal uncovered expected minutes as absence', () => {
   const internal = result.segments.filter((segment) => segment.coverageType === 'UNCOVERED');
   expect(internal).toHaveLength(2);
   expect(internal.every((segment) => segment.deficitType === 'ABSENCE')).toBe(true);
+});
+
+it('places CTO as paid coverage with no deficit', () => {
+  const result = calculateAttendanceDay(
+    input({
+      events: [at('13:00', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+      coverage: [
+        coverage({
+          sourceId: 'cto-1',
+          sourceType: 'CTO_INPUT',
+          coverageType: 'CTO',
+          startsAt: manila('08:00'),
+          endsAt: manila('13:00'),
+        }),
+      ],
+    }),
+  );
+
+  expect(result.exceptions).toEqual([]);
+  expect(result.totals.coverageMinutes).toBe(540);
+  expect(result.totals.ctoMinutes).toBe(300);
+  expect(result.totals).toMatchObject({ lateMinutes: 0, undertimeMinutes: 0, absenceMinutes: 0 });
+  expect(result.segments[0]).toMatchObject({
+    coverageType: 'CTO',
+    deficitType: null,
+    sources: [{ sourceType: 'CTO_INPUT', id: 'cto-1' }],
+  });
 });
 
 it('counts posted leave and worked time as one union without double counting', () => {
@@ -646,6 +675,98 @@ it('anchors a flexible day on its latest permitted start when nothing qualifies'
   expect(result.totals.coverageMinutes).toBe(180);
   expect(result.totals.undertimeMinutes).toBe(240);
   expect(result.totals.absenceMinutes).toBe(0);
+});
+
+it('anchors a flexible day on timed CTO before time-in, unlike posted leave', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '17:00',
+    requiredMinutes: 420,
+    breaks: [lunchBreak],
+  });
+  const morning = (sourceType: 'CTO_INPUT' | 'POSTED_LEAVE') =>
+    calculateAttendanceDay(
+      input({
+        dayRule: flexible,
+        events: [at('09:30', 'TIME_IN'), at('17:00', 'TIME_OUT')],
+        coverage: [
+          coverage({
+            sourceId: `${sourceType}-1`,
+            sourceType,
+            coverageType: sourceType === 'CTO_INPUT' ? 'CTO' : 'POSTED_LEAVE',
+            startsAt: manila('07:30'),
+            endsAt: manila('09:30'),
+          }),
+        ],
+      }),
+    );
+  const firstExpected = (result: ReturnType<typeof calculateAttendanceDay>) =>
+    wallSegments({
+      segments: result.segments.filter((segment) => segment.dutyRelation === 'EXPECTED'),
+    })[0];
+
+  // Timed CTO is a qualifying interval, so it anchors the start at 07:30.
+  const cto = morning('CTO_INPUT');
+  expect(firstExpected(cto)).toEqual(['07:30', '09:30']);
+  expect(cto.totals).toMatchObject({ expectedMinutes: 420, ctoMinutes: 120, lateMinutes: 0 });
+
+  // Posted leave never anchors, so the start clamps to the latest permitted 09:00.
+  const leave = morning('POSTED_LEAVE');
+  expect(firstExpected(leave)).toEqual(['09:00', '09:30']);
+  expect(leave.totals).toMatchObject({ expectedMinutes: 420, lateMinutes: 0 });
+});
+
+it('leaves timed CTO unplaced when an early flexible time-in ends expected duty before it', () => {
+  const flexible = dayRule({
+    ruleType: 'FLEXIBLE',
+    dutyStartTime: null,
+    earliestStartTime: '07:00',
+    latestStartTime: '09:00',
+    dutyEndTime: '18:00',
+    requiredMinutes: 480,
+    breaks: [lunchBreak],
+  });
+  const timed = calculateAttendanceDay(
+    input({
+      dayRule: flexible,
+      events: [at('07:00', 'TIME_IN'), at('16:00', 'TIME_OUT')],
+      coverage: [
+        coverage({
+          sourceId: 'cto-pm',
+          sourceType: 'CTO_INPUT',
+          coverageType: 'CTO',
+          startsAt: manila('16:00'),
+          endsAt: manila('18:00'),
+        }),
+      ],
+    }),
+  );
+  // The 07:00 time-in anchors expected duty to 07:00-16:00, so the CTO lies outside it.
+  expect(timed.totals.ctoMinutes).toBe(120);
+  expect(unplacedCtoInputIds(timed.segments, [{ inputId: 'cto-pm', timed: true }])).toEqual([
+    'cto-pm',
+  ]);
+
+  // Whole-day CTO covers the earliest start through duty end, wider than expected duty.
+  const whole = calculateAttendanceDay(
+    input({
+      dayRule: flexible,
+      coverage: wholeWorkDateCoverageIntervals(flexible, WORK_DATE, TIMEZONE).map((interval) =>
+        coverage({
+          sourceId: 'cto-day',
+          sourceType: 'CTO_INPUT',
+          coverageType: 'CTO',
+          ...interval,
+        }),
+      ),
+    }),
+  );
+  expect(whole.segments.some((segment) => segment.dutyRelation === 'OUTSIDE_SCHEDULE')).toBe(true);
+  expect(unplacedCtoInputIds(whole.segments, [{ inputId: 'cto-day', timed: false }])).toEqual([]);
+  expect(unplacedCtoInputIds([], [{ inputId: 'cto-rest', timed: false }])).toEqual(['cto-rest']);
 });
 
 it('reports missing, duplicate, and out-of-order events without inventing time', () => {
@@ -1082,6 +1203,29 @@ it('places a whole-day posted leave from the latest permitted flexible start', (
     absenceMinutes: 0,
   });
   expect(result.segments.filter((segment) => segment.coverageType === 'UNCOVERED')).toEqual([]);
+});
+
+it('reads an interval as inside expected duty only when no instant falls outside it', () => {
+  const at = (hour: number) => new Date(Date.UTC(2026, 0, 5, hour));
+  const duty = [
+    { startsAt: at(13), endsAt: at(17) },
+    { startsAt: at(8), endsAt: at(12) },
+  ];
+  expect(withinIntervals(duty, { startsAt: at(8), endsAt: at(12) })).toBe(true);
+  expect(withinIntervals(duty, { startsAt: at(14), endsAt: at(17) })).toBe(true);
+  expect(withinIntervals(duty, { startsAt: at(11), endsAt: at(14) })).toBe(false);
+  expect(withinIntervals(duty, { startsAt: at(16), endsAt: at(18) })).toBe(false);
+  expect(withinIntervals(duty, { startsAt: at(7), endsAt: at(9) })).toBe(false);
+  expect(withinIntervals([], { startsAt: at(8), endsAt: at(9) })).toBe(false);
+  expect(
+    withinIntervals(
+      [
+        { startsAt: at(8), endsAt: at(12) },
+        { startsAt: at(12), endsAt: at(17) },
+      ],
+      { startsAt: at(11), endsAt: at(13) },
+    ),
+  ).toBe(true);
 });
 
 it('covers no interval on a rest day or an incomplete Day Rule', () => {

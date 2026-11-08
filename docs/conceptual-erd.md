@@ -530,10 +530,9 @@ erDiagram
 
     OVERTIME_AUTHORITY ||--o{ OVERTIME_SERVICE_RECORD : governs
     EMPLOYEE ||--o{ OVERTIME_SERVICE_RECORD : renders
-    OVERTIME_SERVICE_RECORD ||--o| OVERTIME_COMPENSATION_DECISION : resolved_by
-
-    OVERTIME_COMPENSATION_DECISION ||--o| PAYROLL_INPUT : may_create
-    OVERTIME_COMPENSATION_DECISION ||--o| COC_LEDGER_ENTRY : may_create
+    OVERTIME_SERVICE_RECORD ||--o{ COC_EARNED_CERTIFICATE_LINE : credited_by
+    COC_EARNED_CERTIFICATE ||--|{ COC_EARNED_CERTIFICATE_LINE : contains
+    COC_EARNED_CERTIFICATE ||--o{ COC_LEDGER_ENTRY : awards
 
     EMPLOYEE ||--o{ COC_ACCOUNT : holds
     COC_ACCOUNT ||--o{ COC_LEDGER_ENTRY : records
@@ -541,15 +540,16 @@ erDiagram
     EMPLOYEE ||--o{ CTO_REQUEST : submits
 ```
 
-| Entity                           | Purpose                                          |
-| -------------------------------- | ------------------------------------------------ |
-| `OVERTIME_AUTHORITY`             | Prior authorization for overtime                 |
-| `OVERTIME_AUTHORITY_EMPLOYEE`    | Covered employee list                            |
-| `OVERTIME_SERVICE_RECORD`        | Actual rendered service                          |
-| `OVERTIME_COMPENSATION_DECISION` | OT pay, COC, or non-compensable decision         |
-| `COC_ACCOUNT`                    | Compensatory Overtime Credit account             |
-| `COC_LEDGER_ENTRY`               | Earned, used, adjusted, expired, or reversed COC |
-| `CTO_REQUEST`                    | Request to use COC as compensatory time off      |
+| Entity                        | Purpose                                          |
+| ----------------------------- | ------------------------------------------------ |
+| `OVERTIME_AUTHORITY`          | Prior authorization for overtime                 |
+| `OVERTIME_AUTHORITY_EMPLOYEE` | Covered employee list                            |
+| `OVERTIME_SERVICE_RECORD`     | Actual rendered service                          |
+| `COC_EARNED_CERTIFICATE`      | Monthly award of COC for one Employee            |
+| `COC_EARNED_CERTIFICATE_LINE` | One certified service record on a certificate    |
+| `COC_ACCOUNT`                 | Compensatory Overtime Credit account             |
+| `COC_LEDGER_ENTRY`            | Earned, used, adjusted, expired, or reversed COC |
+| `CTO_REQUEST`                 | Request to use COC as compensatory time off      |
 
 ---
 

@@ -29,6 +29,7 @@ export const ATTENDANCE_DAY_EXCEPTION_TYPES = [
   'CONFLICTING_COVERAGE',
   'INCOMPLETE_COVERAGE_INPUT',
   'AMBIGUOUS_LEAVE_QUANTITY',
+  'UNPLACED_CTO_INPUT',
 ] as const;
 export type AttendanceDayExceptionType = (typeof ATTENDANCE_DAY_EXCEPTION_TYPES)[number];
 
@@ -45,6 +46,7 @@ export const ATTENDANCE_COVERAGE_TYPES = [
   'TRAINING',
   'APPROVED_ABSENCE',
   'POSTED_LEAVE',
+  'CTO',
   'UNCOVERED',
 ] as const;
 export type AttendanceCoverageType = (typeof ATTENDANCE_COVERAGE_TYPES)[number];
@@ -58,7 +60,7 @@ export interface AttendanceCalculationEvent {
 }
 
 export interface AttendanceCalculationCoverage {
-  sourceType: 'ATTENDANCE_CONTEXT' | 'POSTED_LEAVE';
+  sourceType: 'ATTENDANCE_CONTEXT' | 'POSTED_LEAVE' | 'CTO_INPUT';
   sourceId: string;
   coverageType: Exclude<AttendanceCoverageType, 'WORKED' | 'UNCOVERED'>;
   startsAt: Date;
@@ -116,6 +118,7 @@ export interface AttendanceCalculationTotals {
   trainingMinutes: number;
   approvedAbsenceMinutes: number;
   postedLeaveMinutes: number;
+  ctoMinutes: number;
   outsideScheduleMinutes: number;
   statutoryNightWindowMinutes: number;
 }
@@ -157,6 +160,7 @@ const COVERAGE_TOTAL_KEYS: Partial<
   TRAINING: 'trainingMinutes',
   APPROVED_ABSENCE: 'approvedAbsenceMinutes',
   POSTED_LEAVE: 'postedLeaveMinutes',
+  CTO: 'ctoMinutes',
 };
 
 /**
@@ -309,11 +313,11 @@ function materializeDayRule(
 }
 
 /**
- * Cover one whole Work Date for posted leave or an Attendance Context that
- * carries no clock time. A fixed Day Rule covers its duty window; a flexible
- * Day Rule covers its earliest permitted start through the duty end so the
- * interval still qualifies as coverage without anchoring the flexible start by
- * itself. Scheduled unpaid breaks are not expected duty, so they stay outside
+ * Cover one whole Work Date for posted leave, whole-day CTO, or an Attendance
+ * Context that carries no clock time. A fixed Day Rule covers its duty window;
+ * a flexible Day Rule covers its earliest permitted start through the duty end
+ * so the interval still qualifies as coverage without anchoring the flexible
+ * start by itself. Scheduled unpaid breaks are not expected duty, so they stay outside
  * the covered intervals.
  */
 export function wholeWorkDateCoverageIntervals(
@@ -328,6 +332,49 @@ export function wholeWorkDateCoverageIntervals(
     startsAt: instantOf(interval.start),
     endsAt: instantOf(interval.end),
   }));
+}
+
+/** Whether every instant of `interval` lies inside the union of `intervals`. */
+export function withinIntervals(
+  intervals: readonly { startsAt: Date; endsAt: Date }[],
+  interval: { startsAt: Date; endsAt: Date },
+): boolean {
+  let reached = interval.startsAt.getTime();
+  const end = interval.endsAt.getTime();
+  for (const candidate of [...intervals].sort(
+    (left, right) => left.startsAt.getTime() - right.startsAt.getTime(),
+  )) {
+    if (candidate.startsAt.getTime() > reached) break;
+    reached = Math.max(reached, candidate.endsAt.getTime());
+    if (reached >= end) return true;
+  }
+  return false;
+}
+
+/**
+ * CTO inputs a calculated Day leaves unpaid, since Payroll publishes only
+ * `EXPECTED` coverage. Any input placed on no expected minute is unplaced, and a
+ * timed input also when any of its minutes falls outside expected duty. A
+ * whole-day input spans the coverage window, which a flexible Day Rule makes
+ * wider than expected duty, so its outside minutes alone do not unplace it.
+ */
+export function unplacedCtoInputIds(
+  segments: readonly AttendanceCalculationSegment[],
+  inputs: readonly { inputId: string; timed: boolean }[],
+): string[] {
+  return inputs
+    .filter(({ inputId, timed }) => {
+      const placed = segments.filter((segment) =>
+        segment.sources.some(
+          (source) => source.sourceType === 'CTO_INPUT' && source.id === inputId,
+        ),
+      );
+      return (
+        !placed.some((segment) => segment.dutyRelation === 'EXPECTED') ||
+        (timed && placed.some((segment) => segment.dutyRelation === 'OUTSIDE_SCHEDULE'))
+      );
+    })
+    .map(({ inputId }) => inputId);
 }
 
 /**
@@ -540,6 +587,7 @@ export function calculateAttendanceDay(
     trainingMinutes: 0,
     approvedAbsenceMinutes: 0,
     postedLeaveMinutes: 0,
+    ctoMinutes: 0,
     outsideScheduleMinutes: 0,
     statutoryNightWindowMinutes: 0,
   };
@@ -665,7 +713,7 @@ export function calculateAttendanceDay(
     exceptions.push({
       type: 'CONFLICTING_COVERAGE',
       message:
-        'Worked time, Attendance Context, and posted leave classify overlapping minutes differently.',
+        'Worked time, Attendance Context, posted leave, and CTO classify overlapping minutes differently.',
       details: {
         workDate,
         conflictingTypes: [...conflictingTypes].sort(),

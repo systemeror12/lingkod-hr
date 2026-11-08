@@ -34,6 +34,11 @@ import { MandatoryLeaveAssessmentsModule } from './mandatory-leave-assessments/m
 import { LeaveApplicationsModule } from './leave-applications/leave-applications.module';
 import { LeaveMonetizationModule } from './leave-monetization/leave-monetization.module';
 import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leave-inputs.module';
+import { OvertimeAuthoritiesModule } from './overtime-authorities/overtime-authorities.module';
+import { CocAccountsModule } from './coc-accounts/coc-accounts.module';
+import { OvertimeServiceRecordsModule } from './overtime-service-records/overtime-service-records.module';
+import { CocEarnedCertificatesModule } from './coc-earned-certificates/coc-earned-certificates.module';
+import { CtoRequestsModule } from './cto-requests/cto-requests.module';
 
 @Module({
   imports: [
@@ -71,6 +76,11 @@ import { TerminalLeaveInputsModule } from './terminal-leave-inputs/terminal-leav
     LeaveApplicationsModule,
     LeaveMonetizationModule,
     TerminalLeaveInputsModule,
+    OvertimeAuthoritiesModule,
+    CocAccountsModule,
+    OvertimeServiceRecordsModule,
+    CocEarnedCertificatesModule,
+    CtoRequestsModule,
   ],
   controllers: [HealthController],
 })

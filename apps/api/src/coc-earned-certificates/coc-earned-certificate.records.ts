@@ -1,0 +1,167 @@
+import { Prisma } from '@prisma/client';
+import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import type { CocDayClassification } from '../coc-accounts/coc-earning-rule';
+import {
+  CocEarnedCertificateServiceError,
+  type CocEarnedCertificateStatus,
+  type CocEarnedCertificateSummary,
+} from './coc-earned-certificates.types';
+
+const certificateSelect = {
+  id: true,
+  agencyId: true,
+  employeeId: true,
+  employee: { select: { employeeNumber: true, legalName: true } },
+  earnedMonth: true,
+  status: true,
+  preparedByMembershipId: true,
+  approvedByMembershipId: true,
+  approvedAt: true,
+  createdAt: true,
+  lines: {
+    orderBy: { serviceRecord: { workDate: 'asc' as const } },
+    select: {
+      id: true,
+      overtimeServiceRecordId: true,
+      certifiedMinutes: true,
+      creditedMinutes: true,
+      excessMinutes: true,
+      releasedAt: true,
+      serviceRecord: { select: { workDate: true, dayClassification: true } },
+    },
+  },
+} as const;
+
+type CertificateRecord = Prisma.CocEarnedCertificateGetPayload<{
+  select: typeof certificateSelect;
+}>;
+
+function formatDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+/** The first day of a `YYYY-MM` month and of the month after it, as database dates. */
+export function monthBounds(earnedMonth: string): { from: Date; to: Date } {
+  const from = new Date(`${earnedMonth}-01T00:00:00.000Z`);
+  const to = new Date(from);
+  to.setUTCMonth(to.getUTCMonth() + 1);
+  return { from, to };
+}
+
+function summary(record: CertificateRecord): CocEarnedCertificateSummary {
+  return {
+    id: record.id,
+    agencyId: record.agencyId,
+    employeeId: record.employeeId,
+    employeeNumber: record.employee.employeeNumber,
+    employeeName: record.employee.legalName,
+    earnedMonth: formatDate(record.earnedMonth),
+    status: record.status as CocEarnedCertificateStatus,
+    preparedByMembershipId: record.preparedByMembershipId,
+    approvedByMembershipId: record.approvedByMembershipId,
+    approvedAt: record.approvedAt?.toISOString() ?? null,
+    createdAt: record.createdAt.toISOString(),
+    lines: record.lines.map((line) => ({
+      id: line.id,
+      overtimeServiceRecordId: line.overtimeServiceRecordId,
+      workDate: formatDate(line.serviceRecord.workDate),
+      dayClassification: line.serviceRecord.dayClassification,
+      certifiedMinutes: line.certifiedMinutes,
+      creditedMinutes: line.creditedMinutes?.toFixed(1) ?? null,
+      excessMinutes: line.excessMinutes?.toFixed(1) ?? null,
+      releasedAt: line.releasedAt?.toISOString() ?? null,
+    })),
+  };
+}
+
+export async function readCertificate(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  certificateId: string,
+): Promise<CocEarnedCertificateSummary> {
+  const record = await transaction.cocEarnedCertificate.findFirst({
+    where: { agencyId, id: certificateId },
+    select: certificateSelect,
+  });
+  if (!record) throw certificateNotFound();
+  return summary(record);
+}
+
+/** The Agency's certificates, latest earned month first. */
+export async function findCertificates(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  status: CocEarnedCertificateStatus | undefined,
+): Promise<CocEarnedCertificateSummary[]> {
+  const records = await transaction.cocEarnedCertificate.findMany({
+    where: { agencyId, ...(status ? { status } : {}) },
+    orderBy: [{ earnedMonth: 'desc' }, { createdAt: 'desc' }],
+    select: certificateSelect,
+  });
+  return records.map(summary);
+}
+
+/**
+ * A line's day classification in the COC module's terms. A service record
+ * stores a Day Rule `REST` day as `REST_DAY`; every other value already matches.
+ * The COC module refuses a value it does not recognize.
+ */
+export function cocDayClassification(dayClassification: string | null): CocDayClassification {
+  return (dayClassification === 'REST_DAY' ? 'REST' : dayClassification) as CocDayClassification;
+}
+
+/** Lock one certificate for a command and return it. */
+export async function lockCertificate(
+  transaction: Prisma.TransactionClient,
+  agencyId: string,
+  certificateId: string,
+): Promise<CocEarnedCertificateSummary> {
+  const rows = await transaction.$queryRaw<Array<{ id: string }>>(
+    Prisma.sql`SELECT "id" FROM "coc_earned_certificates" WHERE "agency_id" = CAST(${agencyId} AS uuid) AND "id" = CAST(${certificateId} AS uuid) FOR UPDATE`,
+  );
+  if (rows.length !== 1) throw certificateNotFound();
+  return readCertificate(transaction, agencyId, certificateId);
+}
+
+/**
+ * Require an Agency-wide grant of any of `permissions`. hris-controls §6.9 gives
+ * the certificate permissions only `A` and `C` cells, both Agency-wide.
+ */
+export function assertAgencyGrant(context: RequestContext, ...permissions: string[]): void {
+  if (
+    !context.agencyId ||
+    !context.userId ||
+    !context.membershipId ||
+    !permissions.some((permission) =>
+      hasPermission(context, permission, { agencyId: context.agencyId }),
+    )
+  ) {
+    throw new CocEarnedCertificateServiceError(
+      'The current Agency Membership cannot act on Certificates of COC Earned.',
+      403,
+      'COC_EARNED_CERTIFICATE_FORBIDDEN',
+    );
+  }
+}
+
+export function assertStatus(
+  certificate: CocEarnedCertificateSummary,
+  expected: CocEarnedCertificateStatus,
+  action: string,
+): void {
+  if (certificate.status !== expected) {
+    throw new CocEarnedCertificateServiceError(
+      `Only a ${expected} Certificate of COC Earned can be ${action}; this one is ${certificate.status}.`,
+      409,
+      `COC_EARNED_CERTIFICATE_NOT_${expected}`,
+    );
+  }
+}
+
+export function certificateNotFound(): CocEarnedCertificateServiceError {
+  return new CocEarnedCertificateServiceError(
+    'The Certificate of COC Earned could not be found.',
+    404,
+    'COC_EARNED_CERTIFICATE_NOT_FOUND',
+  );
+}

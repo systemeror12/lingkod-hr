@@ -118,6 +118,7 @@ it('orders every stage along the personnel lifecycle', () => {
     'personnel.employees.read',
     'attendance.events.read',
     'leave.types.read',
+    'overtime.authorities.read',
   ]);
 
   const { groups } = navigationGroups(authorizedDestinations(administrator));

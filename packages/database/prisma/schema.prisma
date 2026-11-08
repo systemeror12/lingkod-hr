@@ -162,6 +162,16 @@ model Agency {
   terminalLeaveInputSnapshots   TerminalLeaveInputSnapshot[]
   terminalLeaveInputLines       TerminalLeaveInputSnapshotLine[]
   mandatoryLeaveAssessments     MandatoryLeaveAssessment[]
+  overtimeAuthorities           OvertimeAuthority[]
+  overtimeAuthorityEmployees    OvertimeAuthorityEmployee[]
+  overtimeServiceRecords        OvertimeServiceRecord[]
+  cocAccounts                   CocAccount[]
+  cocEarnedCertificates         CocEarnedCertificate[]
+  cocEarnedCertificateLines     CocEarnedCertificateLine[]
+  cocLedgerEntries              CocLedgerEntry[]
+  ctoRequests                   CtoRequest[]
+  ctoRequestDates               CtoRequestDate[]
+  ctoCancellations              CtoCancellation[]
   terminalLeaveInputOutcomes    TerminalLeaveInputHandoffOutcome[]
   attendancePeriods             AttendancePeriod[]
   attendanceDays                AttendanceDay[]
@@ -233,6 +243,7 @@ model OrganizationUnit {
   personnelBaselines        PersonnelBaseline[]        @relation("PersonnelBaselineOrganizationUnit")
   personnelActionTargets    PersonnelActionVersion[]   @relation("PersonnelActionTargetOrganizationUnit")
   requestsToFill            RequestToFill[]            @relation("RequestToFillRequestingUnit")
+  overtimeAuthorities       OvertimeAuthority[]        @relation("OvertimeAuthorityRequestingUnit")
 
   @@unique([agencyId, id])
   @@unique([agencyId, code])
@@ -461,6 +472,14 @@ model AgencyMembership {
   assessedTerminalLeaveInputs            TerminalLeaveInputAssessment[]       @relation("TerminalLeaveInputAssessmentAssessor")
 
   leavePostings LeavePosting[] @relation("LeavePostingPoster")
+  overtimeAuthoritiesApproved OvertimeAuthority[] @relation("OvertimeAuthorityApprover")
+  overtimeServiceRecorded     OvertimeServiceRecord[] @relation("OvertimeServiceRecordRecorder")
+  overtimeServiceCertified    OvertimeServiceRecord[] @relation("OvertimeServiceRecordCertifier")
+  cocCertificatesPrepared     CocEarnedCertificate[]  @relation("CocEarnedCertificatePreparer")
+  cocCertificatesApproved     CocEarnedCertificate[]  @relation("CocEarnedCertificateApprover")
+  cocLedgerEntriesPosted      CocLedgerEntry[]    @relation("CocLedgerEntryPoster")
+  ctoRequestsApproved         CtoRequest[]        @relation("CtoRequestApprover")
+  ctoCancellations            CtoCancellation[]   @relation("CtoCancellationCanceller")
 
   @@unique([agencyId, id])
   @@unique([agencyId, id, userId])
@@ -1769,6 +1788,7 @@ model DocumentVersion {
   leaveAccountOpeningEvidenceVersions              LeaveAccountOpening[]                 @relation("LeaveAccountOpeningEvidenceVersion")
   leaveLedgerAdjustmentAuthorityVersions           LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentAuthorityVersion")
   leaveLedgerAdjustmentEvidenceVersions            LeaveLedgerAdjustment[]               @relation("LeaveLedgerAdjustmentEvidenceVersion")
+  cocLedgerEntrySupportingVersions                 CocLedgerEntry[]                      @relation("CocLedgerEntrySupportingDocument")
   leaveApplicationDraftDocumentVersions            LeaveApplicationDraftDocument[]       @relation("LeaveApplicationDraftDocumentVersion")
   leaveApplicationVersionDocuments                 LeaveApplicationVersionDocument[]     @relation("LeaveApplicationVersionDocumentVersion")
   leaveCancellationDocuments                       LeaveCancellationDocument[]           @relation("LeaveCancellationDocumentVersion")
@@ -2048,6 +2068,7 @@ model Employee {
   leaveApplications      LeaveApplication[]      @relation("LeaveApplicationEmployee")
   attendanceContexts     AttendanceContext[]     @relation("AttendanceContextEmployee")
   attendancePostedLeaveInputs AttendancePostedLeaveInput[] @relation("AttendancePostedLeaveInputEmployee")
+  attendanceCtoInputs    AttendanceCtoInput[]    @relation("AttendanceCtoInputEmployee")
   attendanceEvents       AttendanceEvent[]       @relation("AttendanceEventEmployee")
   attendanceDays         AttendanceDay[]         @relation("AttendanceDayEmployee")
   attendanceSubmissions  EmployeeAttendanceSubmission[] @relation("EmployeeAttendanceSubmissionEmployee")
@@ -2058,6 +2079,11 @@ model Employee {
   monetizationEarningInputs PayrollMonetizationEarningInput[] @relation("PayrollMonetizationEarningInputEmployee")
   terminalLeaveInputAssessments  TerminalLeaveInputAssessment[]  @relation("TerminalLeaveInputAssessmentEmployee")
   mandatoryLeaveAssessments      MandatoryLeaveAssessment[]      @relation("MandatoryLeaveAssessmentEmployee")
+  overtimeAuthorityCoverage      OvertimeAuthorityEmployee[]     @relation("OvertimeAuthorityEmployeeEmployee")
+  overtimeServiceRecords         OvertimeServiceRecord[]         @relation("OvertimeServiceRecordEmployee")
+  cocAccounts                    CocAccount[]                    @relation("CocAccountEmployee")
+  cocEarnedCertificates          CocEarnedCertificate[]          @relation("CocEarnedCertificateEmployee")
+  ctoRequests                    CtoRequest[]                    @relation("CtoRequestEmployee")
 
   @@unique([agencyId, id])
   @@unique([agencyId, employeeNumber])
@@ -3586,6 +3612,32 @@ model AttendancePostedLeaveInput {
   @@map("attendance_posted_leave_inputs")
 }
 
+model AttendanceCtoInput {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId           String    @map("agency_id") @db.Uuid
+  employeeId         String    @map("employee_id") @db.Uuid
+  sourceKey          String    @map("source_key")
+  sourceType         String    @map("source_type")
+  sourceId           String    @map("source_id") @db.Uuid
+  workDate           DateTime  @map("work_date") @db.Date
+  coverageMode       String    @map("coverage_mode")
+  startsAt           DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt             DateTime? @map("ends_at") @db.Timestamptz(6)
+  predecessorInputId String?   @map("predecessor_input_id") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  employee    Employee             @relation("AttendanceCtoInputEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  predecessor AttendanceCtoInput?  @relation("AttendanceCtoInputSuccession", fields: [agencyId, employeeId, predecessorInputId], references: [agencyId, employeeId, id], onDelete: Restrict, map: "attendance_cto_inputs_predecessor_fkey")
+  successors  AttendanceCtoInput[] @relation("AttendanceCtoInputSuccession")
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, employeeId, id], map: "attendance_cto_inputs_employee_id_key")
+  @@unique([agencyId, sourceKey])
+  @@unique([agencyId, predecessorInputId])
+  @@index([agencyId, employeeId, workDate], map: "attendance_cto_inputs_employee_work_date_idx")
+  @@map("attendance_cto_inputs")
+}
+
 model AttendanceWebClockVersion {
   id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agencyId                String   @map("agency_id") @db.Uuid
@@ -3671,6 +3723,7 @@ model AttendanceDay {
   trainingMinutes            Int       @default(0) @map("training_minutes")
   approvedAbsenceMinutes     Int       @default(0) @map("approved_absence_minutes")
   postedLeaveMinutes         Int       @default(0) @map("posted_leave_minutes")
+  ctoMinutes                 Int       @default(0) @map("cto_minutes")
   outsideScheduleMinutes     Int       @default(0) @map("outside_schedule_minutes")
   statutoryNightWindowMinutes Int      @default(0) @map("statutory_night_window_minutes")
   calculationVersion         Int       @default(1) @map("calculation_version")
@@ -3691,6 +3744,7 @@ model AttendanceDay {
   submissionDays         EmployeeAttendanceSubmissionDay[] @relation("EmployeeAttendanceSubmissionDayAttendanceDay")
   periodVersionDays      AttendancePeriodVersionDay[]      @relation("AttendancePeriodVersionDayAttendanceDay")
   payrollFacts           AttendancePayrollFact[]            @relation("AttendancePayrollFactAttendanceDay")
+  overtimeServiceRecords OvertimeServiceRecord[]            @relation("OvertimeServiceRecordSourceDay")
 
   @@unique([attendancePeriodId, employeeId, workDate, calculationVersion])
   @@unique([agencyId, id])
@@ -3909,6 +3963,8 @@ model AttendanceCorrection {
   blockingReason           String?   @map("blocking_reason")
   blockedByMembershipId    String?   @map("blocked_by_membership_id") @db.Uuid
   blockedAt                DateTime? @map("blocked_at") @db.Timestamptz(6)
+  /// Stable key of a `CTO_INPUT` handoff, required only for that target type.
+  effectKey                String?   @map("effect_key")
   createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
   rowVersion               Int       @default(1) @map("row_version")
@@ -3925,8 +3981,10 @@ model AttendanceCorrection {
   evidence       AttendanceCorrectionEvidence[] @relation("AttendanceCorrectionEvidence")
   effect         AttendanceCorrectionEffect?
   lockedAdjustment LockedAttendanceAdjustment?
+  ctoRequestDates  CtoRequestDate[]            @relation("CtoRequestDateCorrection")
 
   @@unique([agencyId, id])
+  @@unique([agencyId, effectKey], map: "attendance_corrections_effect_key_key")
   @@index([agencyId, employeeId, status])
   @@index([agencyId, status, submittedAt])
   @@map("attendance_corrections")
@@ -5185,4 +5243,241 @@ model MandatoryLeaveAssessment {
   @@unique([agencyId, id])
   @@index([agencyId, employeeId, assessmentYear, assessedAt(sort: Desc)])
   @@map("mandatory_leave_assessments")
+}
+
+model OvertimeAuthority {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  requestingUnitId       String    @map("requesting_unit_id") @db.Uuid
+  authorityNo            String    @map("authority_no") @db.Citext
+  purpose                String
+  workDateFrom           DateTime  @map("work_date_from") @db.Date
+  workDateTo             DateTime  @map("work_date_to") @db.Date
+  compensationMethod     String    @map("compensation_method")
+  fundingReference       String?   @map("funding_reference")
+  status                 String
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency         Agency                      @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  requestingUnit OrganizationUnit            @relation("OvertimeAuthorityRequestingUnit", fields: [agencyId, requestingUnitId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy     AgencyMembership?           @relation("OvertimeAuthorityApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  employees      OvertimeAuthorityEmployee[] @relation("OvertimeAuthorityEmployees")
+
+  @@unique([agencyId, authorityNo])
+  @@unique([agencyId, id])
+  @@index([agencyId, status, workDateFrom])
+  @@map("overtime_authorities")
+}
+
+model OvertimeAuthorityEmployee {
+  id                  String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId            String  @map("agency_id") @db.Uuid
+  overtimeAuthorityId String  @map("overtime_authority_id") @db.Uuid
+  employeeId          String  @map("employee_id") @db.Uuid
+  authorizedHours     Decimal @map("authorized_hours") @db.Decimal(12, 4)
+  taskDescription     String? @map("task_description")
+  eligibilitySnapshot Json?   @map("eligibility_snapshot")
+
+  agency    Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  authority OvertimeAuthority @relation("OvertimeAuthorityEmployees", fields: [agencyId, overtimeAuthorityId], references: [agencyId, id], onDelete: Restrict)
+  employee  Employee          @relation("OvertimeAuthorityEmployeeEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+
+  serviceRecords OvertimeServiceRecord[] @relation("OvertimeServiceRecordCoverage")
+
+  @@unique([overtimeAuthorityId, employeeId])
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId])
+  @@map("overtime_authority_employees")
+}
+
+/// At most one per Employee and Work Date that is not NOT_CERTIFIED, by the
+/// partial unique index `overtime_service_one_live_per_date_uq`
+/// (migration 0136), which Prisma cannot express.
+model OvertimeServiceRecord {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String    @map("agency_id") @db.Uuid
+  overtimeAuthorityEmployeeId String    @map("overtime_authority_employee_id") @db.Uuid
+  employeeId                  String    @map("employee_id") @db.Uuid
+  workDate                    DateTime  @map("work_date") @db.Date
+  claimedHours                Decimal   @map("claimed_hours") @db.Decimal(12, 4)
+  accomplishment              String
+  actualMinutes               Int?      @map("actual_minutes")
+  sourceAttendanceDayId       String?   @map("source_attendance_day_id") @db.Uuid
+  dayClassification           String?   @map("day_classification")
+  certifiedMinutes            Int?      @map("certified_minutes")
+  declineReason               String?   @map("decline_reason")
+  status                      String
+  recordedByMembershipId      String    @map("recorded_by_membership_id") @db.Uuid
+  certifiedByMembershipId     String?   @map("certified_by_membership_id") @db.Uuid
+  certifiedAt                 DateTime? @map("certified_at") @db.Timestamptz(6)
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency              Agency                    @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  authorityEmployee   OvertimeAuthorityEmployee @relation("OvertimeServiceRecordCoverage", fields: [agencyId, overtimeAuthorityEmployeeId], references: [agencyId, id], onDelete: Restrict)
+  employee            Employee                  @relation("OvertimeServiceRecordEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  sourceAttendanceDay AttendanceDay?            @relation("OvertimeServiceRecordSourceDay", fields: [agencyId, sourceAttendanceDayId], references: [agencyId, id], onDelete: Restrict)
+  recordedBy          AgencyMembership          @relation("OvertimeServiceRecordRecorder", fields: [agencyId, recordedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  certifiedBy         AgencyMembership?         @relation("OvertimeServiceRecordCertifier", fields: [agencyId, certifiedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  cocCertificateLines CocEarnedCertificateLine[] @relation("CocEarnedCertificateLineRecord")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, overtimeAuthorityEmployeeId])
+  @@map("overtime_service_records")
+}
+
+model CocEarnedCertificate {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  employeeId             String    @map("employee_id") @db.Uuid
+  earnedMonth            DateTime  @map("earned_month") @db.Date
+  status                 String
+  preparedByMembershipId String    @map("prepared_by_membership_id") @db.Uuid
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency     Agency                     @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee   Employee                   @relation("CocEarnedCertificateEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  preparedBy AgencyMembership           @relation("CocEarnedCertificatePreparer", fields: [agencyId, preparedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy AgencyMembership?          @relation("CocEarnedCertificateApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  lines      CocEarnedCertificateLine[] @relation("CocEarnedCertificateLines")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, earnedMonth])
+  @@map("coc_earned_certificates")
+}
+
+model CocEarnedCertificateLine {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String    @map("agency_id") @db.Uuid
+  cocEarnedCertificateId  String    @map("coc_earned_certificate_id") @db.Uuid
+  overtimeServiceRecordId String    @map("overtime_service_record_id") @db.Uuid
+  certifiedMinutes        Int       @map("certified_minutes")
+  creditedMinutes         Decimal?  @map("credited_minutes") @db.Decimal(12, 1)
+  excessMinutes           Decimal?  @map("excess_minutes") @db.Decimal(12, 1)
+  releasedAt              DateTime? @map("released_at") @db.Timestamptz(6)
+
+  agency        Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  certificate   CocEarnedCertificate  @relation("CocEarnedCertificateLines", fields: [agencyId, cocEarnedCertificateId], references: [agencyId, id], onDelete: Restrict)
+  serviceRecord OvertimeServiceRecord @relation("CocEarnedCertificateLineRecord", fields: [agencyId, overtimeServiceRecordId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([cocEarnedCertificateId, overtimeServiceRecordId])
+  @@unique([agencyId, id])
+  @@map("coc_earned_certificate_lines")
+}
+
+model CocAccount {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId   String    @map("agency_id") @db.Uuid
+  employeeId String    @map("employee_id") @db.Uuid
+  status     String
+  openedAt   DateTime  @map("opened_at") @db.Date
+  closedAt   DateTime? @map("closed_at") @db.Date
+
+  agency        Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee      Employee         @relation("CocAccountEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  ledgerEntries CocLedgerEntry[] @relation("CocLedgerEntries")
+  ctoRequests   CtoRequest[]     @relation("CtoRequestCocAccount")
+
+  @@unique([agencyId, id])
+  @@map("coc_accounts")
+}
+
+model CocLedgerEntry {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                    String    @map("agency_id") @db.Uuid
+  cocAccountId                String    @map("coc_account_id") @db.Uuid
+  minutes                     Decimal   @db.Decimal(12, 1)
+  effectiveDate               DateTime  @map("effective_date") @db.Date
+  validUntil                  DateTime  @map("valid_until") @db.Date
+  earnedMonth                 DateTime? @map("earned_month") @db.Date
+  sourceType                  String    @map("source_type") @db.Citext
+  sourceId                    String    @map("source_id") @db.Uuid
+  sourcePostingKey            String    @map("source_posting_key") @db.Citext
+  ruleCode                    String    @map("rule_code")
+  reason                      String?
+  supportingDocumentVersionId String?   @map("supporting_document_version_id") @db.Uuid
+  reversesEntryId             String?   @map("reverses_entry_id") @db.Uuid
+  postedAt                    DateTime  @default(now()) @map("posted_at") @db.Timestamptz(6)
+  postedByMembershipId        String?   @map("posted_by_membership_id") @db.Uuid
+
+  agency                    Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  cocAccount                CocAccount        @relation("CocLedgerEntries", fields: [agencyId, cocAccountId], references: [agencyId, id], onDelete: Restrict)
+  supportingDocumentVersion DocumentVersion?  @relation("CocLedgerEntrySupportingDocument", fields: [agencyId, supportingDocumentVersionId], references: [agencyId, id], onDelete: Restrict)
+  reversesEntry             CocLedgerEntry?   @relation("CocLedgerEntryReversal", fields: [agencyId, reversesEntryId], references: [agencyId, id], onDelete: Restrict)
+  reversedByEntry           CocLedgerEntry[]  @relation("CocLedgerEntryReversal")
+  postedBy                  AgencyMembership? @relation("CocLedgerEntryPoster", fields: [agencyId, postedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([agencyId, id])
+  @@unique([agencyId, cocAccountId, sourceType, sourceId, sourcePostingKey])
+  @@index([agencyId, cocAccountId, effectiveDate])
+  @@index([agencyId, sourceType, sourceId])
+  @@map("coc_ledger_entries")
+}
+
+model CtoRequest {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId               String    @map("agency_id") @db.Uuid
+  employeeId             String    @map("employee_id") @db.Uuid
+  cocAccountId           String    @map("coc_account_id") @db.Uuid
+  status                 String
+  approvedByMembershipId String?   @map("approved_by_membership_id") @db.Uuid
+  approvedAt             DateTime? @map("approved_at") @db.Timestamptz(6)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agency        Agency            @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  employee      Employee          @relation("CtoRequestEmployee", fields: [agencyId, employeeId], references: [agencyId, id], onDelete: Restrict)
+  cocAccount    CocAccount        @relation("CtoRequestCocAccount", fields: [agencyId, cocAccountId], references: [agencyId, id], onDelete: Restrict)
+  approvedBy    AgencyMembership? @relation("CtoRequestApprover", fields: [agencyId, approvedByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  dates         CtoRequestDate[]  @relation("CtoRequestDates")
+  cancellations CtoCancellation[] @relation("CtoRequestCancellations")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, employeeId, status])
+  @@map("cto_requests")
+}
+
+model CtoRequestDate {
+  id                           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                     String    @map("agency_id") @db.Uuid
+  ctoRequestId                 String    @map("cto_request_id") @db.Uuid
+  workDate                     DateTime  @map("work_date") @db.Date
+  unit                         String
+  startsAt                     DateTime? @map("starts_at") @db.Timestamptz(6)
+  endsAt                       DateTime? @map("ends_at") @db.Timestamptz(6)
+  chargedMinutes               Int       @map("charged_minutes")
+  attendanceCtoInputId         String?   @map("attendance_cto_input_id") @db.Uuid
+  cancelledByCtoCancellationId String?   @map("cancelled_by_cto_cancellation_id") @db.Uuid
+  attendanceCorrectionId       String?   @map("attendance_correction_id") @db.Uuid
+
+  agency               Agency                @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request              CtoRequest            @relation("CtoRequestDates", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+  cancelledBy          CtoCancellation?      @relation("CtoCancellationDates", fields: [agencyId, cancelledByCtoCancellationId], references: [agencyId, id], onDelete: Restrict)
+  attendanceCorrection AttendanceCorrection? @relation("CtoRequestDateCorrection", fields: [agencyId, attendanceCorrectionId], references: [agencyId, id], onDelete: Restrict)
+
+  @@unique([ctoRequestId, workDate])
+  @@unique([agencyId, id])
+  @@index([agencyId, workDate])
+  @@map("cto_request_dates")
+}
+
+model CtoCancellation {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agencyId                String   @map("agency_id") @db.Uuid
+  ctoRequestId            String   @map("cto_request_id") @db.Uuid
+  kind                    String
+  reason                  String
+  cancelledByMembershipId String   @map("cancelled_by_membership_id") @db.Uuid
+  cancelledAt             DateTime @default(now()) @map("cancelled_at") @db.Timestamptz(6)
+
+  agency      Agency           @relation(fields: [agencyId], references: [id], onDelete: Restrict)
+  request     CtoRequest       @relation("CtoRequestCancellations", fields: [agencyId, ctoRequestId], references: [agencyId, id], onDelete: Restrict)
+  cancelledBy AgencyMembership @relation("CtoCancellationCanceller", fields: [agencyId, cancelledByMembershipId], references: [agencyId, id], onDelete: Restrict)
+  dates       CtoRequestDate[] @relation("CtoCancellationDates")
+
+  @@unique([agencyId, id])
+  @@index([agencyId, ctoRequestId])
+  @@map("cto_cancellations")
 }

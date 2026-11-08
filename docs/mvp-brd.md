@@ -990,17 +990,16 @@ Overtime service shall begin with an approved authority containing:
 
 ## OT-002 Actual service
 
-Actual overtime shall be validated against approved attendance or certified accomplishment.
+Actual overtime shall be validated against both locked attendance and certified accomplishment. Actual Overtime Hours are the outside-schedule worked minutes of the locked Attendance Day version for the Work Date. Certified Overtime Hours shall not exceed them, and an Employee's certified hours under an authority shall not exceed the hours it authorized. The certifier shall not be the Employee who rendered the service.
 
 ## OT-003 Compensation method
 
-The system shall classify the approved outcome as:
+The approving official shall fix the compensation method on each Overtime Authority as either:
 
-- overtime pay;
-- Compensatory Overtime Credit (COC);
-- Compensatory Time-Off (CTO);
-- non-compensable;
-- for further review.
+- Compensatory Overtime Credit (COC), the general rule; or
+- overtime pay, the exception.
+
+CTO is a later use of COC, not a compensation method. No source names authorized and certified overtime that earns neither, so service that should not be compensated is declined at certification with a reason. Overtime pay shall be refused with a reason naming Payroll until Payroll Inputs for it exist. COC shall be awarded only through an approved monthly Certificate of COC Earned. Authorities: [overtime-coc-cto-authorities.md](research/overtime-coc-cto-authorities.md).
 
 ## OT-004 COC ledger
 

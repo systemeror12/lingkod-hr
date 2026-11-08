@@ -547,6 +547,48 @@ export async function createAttendanceWorkflowFixture(
   };
 }
 
+/** Lock the fixture's period through the ordinary submission, review, and lock workflow. */
+export async function lockAttendancePeriod(
+  fixture: AttendanceWorkflowFixture,
+  locker: RequestContext,
+): Promise<string> {
+  const { services } = fixture;
+  const route = await services.approvals.createRoute(fixture.administratorContext, {
+    routeCode: 'DTR-PERIOD-LOCK',
+    domain: 'ATTENDANCE',
+    versionNo: 1,
+    effectiveFrom: manilaDate(-30),
+    stepDefinition: {
+      steps: [
+        {
+          stepNo: 1,
+          stepMode: 'SEQUENTIAL',
+          requiredPermission: 'attendance.periods.approve',
+          assignment: { kind: 'MEMBERSHIP', membershipId: fixture.memberships.officer },
+          requiresSeparateReview: false,
+        },
+      ],
+    },
+  });
+  await services.approvals.activateRoute(
+    fixture.administratorContext,
+    route.id,
+    'Activate the Attendance Period lock route.',
+  );
+  const submission = await services.submissions.create(fixture.employeeContext, {
+    attendancePeriodId: fixture.periodId,
+  });
+  await services.submissions.submit(fixture.employeeContext, submission.submission.id);
+  await services.submissions.approve(fixture.officerContext, submission.submission.id, {});
+  const submitted = await services.periods.submitForReview(
+    fixture.administratorContext,
+    fixture.periodId,
+  );
+  await services.periods.approve(fixture.officerContext, submitted.version.id, {});
+  await services.periods.lock(locker, submitted.version.id);
+  return submitted.version.id;
+}
+
 export async function cleanupAttendanceWorkflowAgency(
   admin: PrismaClient,
   agencyId: string,

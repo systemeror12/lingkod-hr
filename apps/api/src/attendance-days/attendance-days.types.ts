@@ -69,6 +69,7 @@ export interface AttendanceDayTotalsSummary {
   trainingMinutes: number;
   approvedAbsenceMinutes: number;
   postedLeaveMinutes: number;
+  ctoMinutes: number;
   outsideScheduleMinutes: number;
   statutoryNightWindowMinutes: number;
 }

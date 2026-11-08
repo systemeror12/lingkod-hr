@@ -424,6 +424,7 @@ CREATE TABLE attendance_days (
   training_minutes integer NOT NULL DEFAULT 0 CHECK (training_minutes >= 0),
   approved_absence_minutes integer NOT NULL DEFAULT 0 CHECK (approved_absence_minutes >= 0),
   posted_leave_minutes integer NOT NULL DEFAULT 0 CHECK (posted_leave_minutes >= 0),
+  cto_minutes integer NOT NULL DEFAULT 0 CHECK (cto_minutes >= 0),
   outside_schedule_minutes integer NOT NULL DEFAULT 0 CHECK (outside_schedule_minutes >= 0),
   statutory_night_window_minutes integer NOT NULL DEFAULT 0 CHECK (statutory_night_window_minutes >= 0),
   calculation_version integer NOT NULL DEFAULT 1 CHECK (calculation_version > 0),
@@ -461,7 +462,7 @@ CREATE TABLE attendance_day_segments (
   duty_relation text NOT NULL CHECK (duty_relation IN ('EXPECTED','OUTSIDE_SCHEDULE')),
   coverage_type text NOT NULL CHECK (coverage_type IN (
     'WORKED','OFFICIAL_BUSINESS','OFFICIAL_TRAVEL','TRAINING',
-    'APPROVED_ABSENCE','POSTED_LEAVE','UNCOVERED'
+    'APPROVED_ABSENCE','POSTED_LEAVE','CTO','UNCOVERED'
   )),
   deficit_type text CHECK (deficit_type IN ('TARDINESS','UNDERTIME','ABSENCE')),
   holiday_classification text,
@@ -548,7 +549,40 @@ CREATE TABLE attendance_posted_leave_inputs (
 
 `attendance_posted_leave_inputs` is Attendance's immutable record of posted leave. Leave Posting creates one input per posted allocation line through the Attendance application service, inside its own authoritative transaction, and retains the returned identifier. The stable `source_key` makes a retry return the existing input. `source_type` and `source_id` name the Leave source. Leave without pay and non-credit leave never touch the ledger, so every allocation kind reaches Attendance through its own input. A successor input names its predecessor, which must belong to the same Employee and can have only one successor; only an input with no successor is current and contributes coverage. A zero-quantity successor withdraws its predecessor's coverage; only a successor may be zero. Inputs are never updated or deleted. Attendance Day calculation reads current inputs and places whole Work Date `POSTED_LEAVE` coverage. It never reads the Leave Ledger. A quantity it cannot place, such as a fraction of a day, minutes, a source-defined unit, or working days that do not equal the working dates of their range under the Employee's schedule, becomes a blocking `AMBIGUOUS_LEAVE_QUANTITY` exception rather than an assumed interval. Working-day inputs from one source sharing one date range, such as a posting's lines split between charged leave and leave without pay, are counted together; inputs from separate sources are never combined. A range whose schedule cannot be resolved fails closed. A REST day or non-working holiday inside a placeable range receives no leave coverage, matching Leave's working-day count.
 
-Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, and posted-leave intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
+```sql
+CREATE TABLE attendance_cto_inputs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
+  employee_id uuid NOT NULL,
+  source_key text NOT NULL CHECK (btrim(source_key) <> ''),
+  source_type text NOT NULL CHECK (btrim(source_type) <> ''),
+  source_id uuid NOT NULL,
+  work_date date NOT NULL,
+  coverage_mode text NOT NULL CHECK (coverage_mode IN ('WHOLE_WORK_DATE','TIMED','NONE')),
+  starts_at timestamptz,
+  ends_at timestamptz,
+  predecessor_input_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    (coverage_mode = 'WHOLE_WORK_DATE' AND starts_at IS NULL AND ends_at IS NULL)
+    OR (coverage_mode = 'TIMED' AND starts_at IS NOT NULL AND ends_at IS NOT NULL
+        AND ends_at > starts_at)
+    OR (coverage_mode = 'NONE' AND predecessor_input_id IS NOT NULL
+        AND starts_at IS NULL AND ends_at IS NULL)
+  ),
+  FOREIGN KEY (agency_id, employee_id) REFERENCES employees (agency_id, id),
+  FOREIGN KEY (agency_id, employee_id, predecessor_input_id)
+    REFERENCES attendance_cto_inputs (agency_id, employee_id, id),
+  UNIQUE (agency_id, id),
+  UNIQUE (agency_id, employee_id, id),
+  UNIQUE (agency_id, source_key),
+  UNIQUE (agency_id, predecessor_input_id)
+);
+```
+
+`attendance_cto_inputs` is Attendance's immutable record of approved CTO, following `attendance_posted_leave_inputs`. CTO Request approval creates one input per Work Date through the Attendance application service, and a retry with the same `source_key` returns the existing input. Only an input with no successor is current. A `NONE` successor withdraws coverage, and only a successor may be `NONE`. Attendance Day calculation places current inputs as `CTO` coverage: the Work Date's whole coverage window, or the timed interval. CTO pays expected duty only, as the CTO Request controls in `docs/hris-controls.md` require: a Work Date without expected duty, such as a REST day or a non-working holiday, is refused in either mode, and a timed interval must lie inside the Work Date's expected duty, which an overnight Day Rule extends past midnight and which excludes scheduled unpaid breaks. A Work Date whose schedule cannot be resolved is refused. Recording can check only the Work Date's coverage window, so the calculated Day decides placement: a timed input with any minute outside the calculated expected duty, or any input on no expected minute, is placed nowhere and becomes a blocking `UNPLACED_CTO_INPUT` exception, as an unplaceable posted-leave quantity does. A later schedule change, an early flexible start that ends expected duty sooner, or a Non-Working Holiday after midnight can each cause it. The coverage is paid time with no deficit, stored as the Day's `cto_minutes`, and published as its own Attendance Payroll Fact classification that period lock reconciles against that total. Creating or superseding an input on a Work Date in a locked period is refused. A cancellation there becomes a `CTO_INPUT` Attendance Correction, which extends `target_type` with the same rules as `POSTED_LEAVE_INPUT`: created only by the COC module, entering at `FOR_AUTHORIZATION` with the approved CTO cancellation as its evidence, and authorized by a different HR Administrator through the ordinary Locked Attendance Adjustment (#548).
+
+Add a no-overlap exclusion constraint for Attendance Day Segments within one calculation version. All Attendance Exceptions in the MVP block approval. Worked, Attendance Context, posted-leave, and CTO intervals form a union so overlapping minutes count once; conflicting context or leave classifications create an exception rather than an assumed precedence. A fully uncovered expected Work Date is absence; otherwise leading uncovered minutes are tardiness, trailing uncovered minutes are undertime, and internal uncovered minutes are absence.
 
 Segment boundaries are whole minutes, while Attendance Event and Attendance Context timestamps keep their seconds. Calculation counts Fully Covered Minutes (ADR 0005): a timed interval starts at the first whole minute at or after its raw start and ends at the last whole minute at or before its raw end, so no segment starts before or ends after its raw source. `rule_snapshot.minuteRule` records `FULLY_COVERED_MINUTE`, and the input fingerprint includes it.
 
@@ -568,7 +602,7 @@ CREATE TABLE attendance_corrections (
   initiated_by_membership_id uuid NOT NULL,
   recorded_by_membership_id uuid NOT NULL,
   target_type text NOT NULL
-    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT')),
+    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT','CTO_INPUT')),
   requested_action text NOT NULL CHECK (requested_action IN ('ADD','REPLACE','VOID')),
   target_id uuid,
   status text NOT NULL
@@ -592,14 +626,22 @@ CREATE TABLE attendance_corrections (
   blocking_reason text,
   blocked_by_membership_id uuid,
   blocked_at timestamptz,
+  effect_key text,
+  UNIQUE (agency_id, effect_key),
   CHECK (
     (blocking_reason IS NULL AND blocked_by_membership_id IS NULL AND blocked_at IS NULL)
-    OR (target_type = 'POSTED_LEAVE_INPUT' AND btrim(blocking_reason) <> ''
+    OR (target_type IN ('POSTED_LEAVE_INPUT','CTO_INPUT') AND btrim(blocking_reason) <> ''
       AND blocked_by_membership_id IS NOT NULL AND blocked_at IS NOT NULL)
   ),
   CHECK (
     target_type <> 'POSTED_LEAVE_INPUT'
     OR (requested_action IN ('REPLACE','VOID') AND decided_by_membership_id IS NOT NULL)
+  ),
+  CHECK (
+    (target_type = 'CTO_INPUT') = (effect_key IS NOT NULL)
+    AND (target_type <> 'CTO_INPUT'
+      OR (requested_action IN ('REPLACE','VOID') AND decided_by_membership_id IS NOT NULL
+        AND btrim(effect_key) <> ''))
   ),
   FOREIGN KEY (agency_id, employee_id)
     REFERENCES employees (agency_id, id),
@@ -644,7 +686,7 @@ CREATE TABLE attendance_correction_effects (
   attendance_correction_id uuid NOT NULL,
   effect_action text NOT NULL CHECK (effect_action IN ('ADD','REPLACE','VOID')),
   target_type text NOT NULL
-    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT')),
+    CHECK (target_type IN ('ATTENDANCE_EVENT','ATTENDANCE_CONTEXT','POSTED_LEAVE_INPUT','CTO_INPUT')),
   original_target_id uuid,
   replacement_record jsonb,
   applied_by_membership_id uuid NOT NULL,
@@ -703,6 +745,8 @@ Applied correction transaction:
 
 An approved correction may produce an Attendance Exception. The effect remains applied, but the affected Employee Attendance Submission becomes stale and no successor period may enter review until the exception is resolved. The input boundary forbids hard deletion or in-place mutation of the target record.
 A `POSTED_LEAVE_INPUT` correction is created only by Leave through the Attendance application service when an applied Leave Cancellation changes posted leave on a Work Date in a locked period. It `REPLACE`s the posted-leave input with the retained successor or `VOID`s it, and its evidence row references the Leave Cancellation as its authoritative source. The approved Leave Cancellation is its factual basis, so it enters at `FOR_AUTHORIZATION` without a second factual review. A different HR Administrator from the cancellation's requester and approvers authorizes it through the ordinary Locked Attendance Adjustment, which produces the successor Attendance Day and Attendance Period Versions, corrected DTRs, and adjustment publication. Attendance cannot change the Leave fact. The authorizer may only authorize or record a blocking reason, which Leave shows as the handoff's current status. Because no reviewer read its impact preview, authorization applies against the period's current locked versions, which an earlier authorization may have moved forward, and records the preview it applied.
+
+A `CTO_INPUT` correction follows the same rules. It is created only by the COC module through the Attendance application service, when an approved CTO cancellation changes a CTO input on a Work Date in a locked period, and its evidence row references the CTO cancellation. It `REPLACE`s the input on the same Work Date or `VOID`s it with a `NONE` successor, and the requested replacement must be placeable when it is accepted. A different HR Administrator from the cancellation's Approving Official and the Employee authorizes it, or records a blocking reason that COC reads as the handoff's current status. The stable `effect_key` makes a retry return the same correction, including after authorization; the same key with different facts is a conflict. A partial unique index on `(agency_id, target_id) WHERE target_type = 'CTO_INPUT'` lets one CTO input be corrected at most once. An open Work Date is refused with `ATTENDANCE_CORRECTION_WORK_DATE_NOT_LOCKED`, and a missing `ATTENDANCE_CORRECTION_CTO_INPUT` route with `APPROVAL_ROUTE_RESOLUTION_FAILED`.
 
 ---
 
@@ -768,7 +812,7 @@ CREATE TABLE attendance_payroll_facts (
   work_date date NOT NULL,
   fact_type text NOT NULL CHECK (fact_type IN (
     'EXPECTED','WORKED','OFFICIAL_BUSINESS','OFFICIAL_TRAVEL','TRAINING',
-    'APPROVED_ABSENCE','POSTED_LEAVE','TARDINESS','UNDERTIME','ABSENCE'
+    'APPROVED_ABSENCE','POSTED_LEAVE','CTO','TARDINESS','UNDERTIME','ABSENCE'
   )),
   holiday_classification text,
   stable_source_key text NOT NULL,

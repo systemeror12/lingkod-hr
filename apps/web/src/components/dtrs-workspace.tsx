@@ -60,7 +60,19 @@ interface DtrManifestDay {
   status: string;
   totals: { expectedMinutes: number; workedMinutes: number; lateMinutes: number };
   presentation: DtrPresentationEntry[];
+  segments: Array<{ startsAt: string; endsAt: string; coverageType: string }>;
   exceptions: Array<{ id: string; exceptionType: string; status: string }>;
+}
+
+/** Minutes of the day Attendance covers with approved CTO. */
+function ctoMinutes(day: DtrManifestDay): number {
+  return day.segments
+    .filter((segment) => segment.coverageType === 'CTO')
+    .reduce(
+      (sum, segment) =>
+        sum + (new Date(segment.endsAt).getTime() - new Date(segment.startsAt).getTime()) / 60_000,
+      0,
+    );
 }
 
 interface DtrManifest {
@@ -504,6 +516,11 @@ export function DtrsWorkspace(props: DtrsWorkspaceProps) {
                             ))}
                           </ul>
                         )}
+                        {ctoMinutes(day) > 0 ? (
+                          <span className="mt-1 block text-ink">
+                            CTO {timeLabel(ctoMinutes(day))}
+                          </span>
+                        ) : null}
                         {openExceptions.length > 0 ? (
                           <span className="mt-1 block font-[600] text-danger">
                             {openExceptions.map((exception) => exception.exceptionType).join(', ')}

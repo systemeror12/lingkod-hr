@@ -654,6 +654,48 @@ _Avoid_: Terminal benefit eligibility, terminal payment approval
 An immutable Leave-owned preservation of the exact separation, service, account-balance, ledger-cutoff, authority, evidence, and salary-source references needed for a later terminal-leave claim and calculation.
 _Avoid_: Terminal leave computation, Payroll Input, leave ledger posting
 
+## Overtime and COC
+
+**Overtime Authority**:
+The prior, per-case authorization by an Approving Official for named Appointed Personnel to render overtime on stated Work Dates, for a stated purpose and up to authorized hours, together with the compensation method, COC or overtime pay, fixed at approval.
+_Avoid_: Office order, OT request, overtime approval
+
+**Overtime Service Record**:
+One covered Employee's claim of overtime service on one Work Date under an Overtime Authority, with its accomplishment, Actual Overtime Hours, and certification outcome.
+_Avoid_: Rendered service, OT claim, overtime entry
+
+**Actual Overtime Hours**:
+The outside-schedule worked time of the Attendance Day version in the latest locked Attendance Period Version for one Employee and Work Date. It caps certification, and Overtime never edits it.
+_Avoid_: Candidate hours, claimed hours, overtime minutes
+
+**Certified Overtime Hours**:
+The hours a certifier other than the Employee attests were rendered as overtime, net of breaks, within the Actual Overtime Hours and the Employee's authorized hours.
+_Avoid_: Approved hours, credited hours
+
+**Certificate of COC Earned**:
+The monthly award, prepared by HR and approved by an Approving Official, that credits COC for one Employee's Certified Overtime Hours on Work Dates in one calendar month. It is the only way COC is earned.
+_Avoid_: Compensation decision, COC award, COC posting
+
+**Compensatory Overtime Credit (COC)**:
+Hours of credit an Employee earns for certified overtime without overtime pay, usable only as Compensatory Time-Off within its validity and never converted to cash or leave credits.
+_Avoid_: Overtime credit, comp time, CTO balance
+
+**COC Account**:
+A record for one Employee and one continuous period of employment in the Agency whose COC balance is derived from its COC Ledger Entries. The first award opens it; separation or transfer out forfeits its balance and closes it.
+_Avoid_: COC balance field, CTO account
+
+**COC Ledger Entry**:
+An immutable, source-linked posting that changes one COC Account by a signed number of minutes on an effective date, against the COC sharing one Valid Until date. Corrections use linked reversals or adjustments rather than editing an entry.
+_Avoid_: COC entry type, CTO deduction, lot
+
+**Compensatory Time-Off (CTO)**:
+Whole or half Work Dates of expected duty an Employee is excused from with full pay and benefits, approved in advance and charged against unexpired COC.
+_Avoid_: Leave, COC, offset
+
+**CTO Request**:
+An Employee's request for CTO on named Work Dates. Its approval by an Approving Official posts the COC usage and the Attendance coverage at once; an approved CTO is withdrawn only by that official's cancellation or recall.
+_Avoid_: CTO application, COC reservation, posted CTO
+
 ## Workforce Relationships
 
 **JO/COS Worker**:

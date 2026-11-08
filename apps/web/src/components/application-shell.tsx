@@ -22,6 +22,7 @@ const iconPaths: Record<LifecycleStage | 'Work queue', string> = {
   Personnel: 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 21a8 8 0 0 1 16 0',
   'Time & attendance': 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17ZM12 7.5V12l3 2',
   Leave: 'M4 5h16v15H4zM8 3v4M16 3v4M4 10h16',
+  Overtime: 'M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM12 9v4h3M10 2h4',
   Oversight: 'M12 3 19 6v5c0 4.5-2.9 8-7 10-4.1-2-7-5.5-7-10V6l7-3ZM9 12l2 2 4-4',
 };
 

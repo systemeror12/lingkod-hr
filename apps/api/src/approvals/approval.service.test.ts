@@ -1,10 +1,21 @@
 import type { RequestContext } from '@lingkod-hr/auth';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import {
   approvalCompletionHandler,
+  ApprovalCompletionRegistry,
   ApprovalServiceError,
   ApprovalsService,
 } from './approval.service';
+
+// A transaction that only answers the subject-type read; tests that reach
+// further than that belong in approval.integration.test.ts.
+const transaction = vi.hoisted(() => ({
+  approvalRequest: { findFirst: vi.fn() },
+}));
+vi.mock('@lingkod-hr/database', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@lingkod-hr/database')>()),
+  withDatabaseContext: (_context: unknown, work: (client: unknown) => unknown) => work(transaction),
+}));
 
 const agencyId = '00000000-0000-4000-8000-000000000001';
 const membershipId = '00000000-0000-4000-8000-000000000002';
@@ -51,6 +62,47 @@ it('rejects Recruitment-owned decisions from the generic approval service', asyn
         ...createInput,
         subjectType: 'SELECTION_DECISION' as never,
       },
+    ),
+  ).rejects.toMatchObject({
+    code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+    statusCode: 400,
+  });
+});
+
+it('refuses to open an Overtime Authority request outside the Overtime module', async () => {
+  await expect(
+    new ApprovalsService().createRequest(
+      context([{ code: 'approvals.requests.create', scopePolicy: 'AGENCY' }]),
+      { routeCode: 'OVERTIME_AUTHORITY', subjectId, subjectType: 'OVERTIME_AUTHORITY' },
+    ),
+  ).rejects.toMatchObject({
+    code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+    statusCode: 400,
+  });
+});
+
+it.each(['OVERTIME_AUTHORITY', 'COC_EARNED_CERTIFICATE', 'CTO_REQUEST'])(
+  'refuses to submit a %s request outside its owning module',
+  async (subjectType) => {
+    transaction.approvalRequest.findFirst.mockResolvedValueOnce({ subjectType });
+    await expect(
+      new ApprovalsService().submit(
+        context([{ code: 'approvals.requests.submit', scopePolicy: 'AGENCY' }]),
+        subjectId,
+      ),
+    ).rejects.toMatchObject({
+      code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
+      statusCode: 400,
+    });
+  },
+);
+
+it('refuses to decide a CTO Request outside its owning module', async () => {
+  transaction.approvalRequest.findFirst.mockResolvedValueOnce({ subjectType: 'CTO_REQUEST' });
+  await expect(
+    new ApprovalsService().approve(
+      context([{ code: 'approvals.requests.approve', scopePolicy: 'AGENCY' }]),
+      subjectId,
     ),
   ).rejects.toMatchObject({
     code: 'APPROVAL_DOMAIN_RECORD_FORBIDDEN',
@@ -106,4 +158,25 @@ it('rejects malformed approval list cursors before opening PostgreSQL', async ()
       statusCode: 400,
     },
   );
+});
+
+it('runs a cancel guard only for the subject type it was registered for', async () => {
+  const registry = new ApprovalCompletionRegistry();
+  registry.registerCancel('ATTENDANCE_CORRECTION', async () => {
+    throw new ApprovalServiceError('Refused.', 409, 'CANCEL_REFUSED');
+  });
+  const request = (subjectType: string) => ({
+    approvalRequestId: subjectId,
+    agencyId,
+    subjectType,
+    subjectId,
+    routeVersionId: subjectId,
+  });
+  const transaction = {} as never;
+  await expect(
+    registry.onCancel(transaction, context([]), request('ATTENDANCE_CORRECTION')),
+  ).rejects.toMatchObject({ code: 'CANCEL_REFUSED' });
+  await expect(
+    registry.onCancel(transaction, context([]), request('LEAVE_APPLICATION')),
+  ).resolves.toBeUndefined();
 });

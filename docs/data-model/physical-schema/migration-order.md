@@ -299,12 +299,15 @@ Create:
 3. `overtime_service_records`
 4. `coc_accounts`
 5. `coc_ledger_entries`
-6. `cto_requests`
-7. `overtime_compensation_decisions`
-
-Defer payroll-input foreign keys until payroll is created.
+6. `coc_earned_certificates`
+7. `coc_earned_certificate_lines`
+8. `cto_requests`
+9. `cto_cancellations`
+10. `cto_request_dates`, after `attendance_cto_inputs`
 
 Attach immutable trigger to COC ledger.
+
+Grant `overtime.cto.approve` and `overtime.cto.reject` after the CTO Request tables, which add their catalog rows. `cto_cancellations` adds `cto_request_dates.cancelled_by_cto_cancellation_id` with its foreign key, the `overtime.cto.cancel` catalog row, and its grant. `cto_request_dates.attendance_correction_id` follows `cto_cancellations` and `attendance_corrections`, with its foreign key and the trigger that sets it once, as the date is cancelled.
 
 ---
 

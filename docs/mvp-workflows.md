@@ -536,27 +536,30 @@ Input.
 ```mermaid
 flowchart TD
     A[Office identifies need for overtime service] --> B[Prepare overtime authority]
-    B --> C[Specify employees, dates, purpose, expected hours, and compensation method]
-    C --> D[Validate necessity, eligibility, and funding]
+    B --> C[Specify Appointed Personnel, Work Dates, purpose, authorized hours, and proposed method]
+    C --> D[Review necessity and eligibility; attest facts the system does not hold]
     D --> E{Approved before service?}
-    E -- No --> F[No compensable authority unless exceptional rule applies]
-    E -- Yes --> G[Employees render authorized service]
-    G --> H[Capture attendance and accomplishment certification]
-    H --> I[Compare authorized and actual hours]
-    I --> J[Apply applicable CSC-DBM and agency rules]
-    J --> K{Approved outcome}
-    K -- Overtime pay --> L[Create payroll input]
-    K -- COC --> M[Create COC ledger credit]
-    K -- Non-compensable --> N[Record reason]
+    E -- No --> F[No service can be recorded]
+    E -- Yes --> E2[Approving Official fixes COC or overtime pay and snapshots eligibility]
+    E2 --> G[Employees render authorized service]
+    G --> H[Record claimed hours and accomplishment]
+    H --> I[Read Actual Overtime Hours from locked Attendance]
+    I --> J{Certifier certifies?}
+    J -- No --> N[Record reason; NOT_CERTIFIED]
+    J -- Yes --> K{Method}
+    K -- Overtime pay --> L[Payroll Input, refused until Payroll supports it]
+    K -- COC --> M1[HR prepares monthly Certificate of COC Earned]
+    M1 --> M2[Approving Official approves certificate]
+    M2 --> M[COC module credits COC, applying ratio, caps, and validity]
     M --> O[Employee later requests CTO]
     O --> P[Check COC balance and service needs]
     P --> Q{Supervisor and authorized official approve?}
     Q -- No --> R[Reject CTO request]
-    Q -- Yes --> S[Create COC usage entry]
-    S --> T[Update attendance as approved CTO]
+    Q -- Yes --> S[Approval posts COC usage by Valid Until]
+    S --> T[Same transaction creates Attendance CTO inputs]
 ```
 
-Requested, authorized, actual, credited, used, and paid values are stored separately.
+Claimed, authorized, actual, certified, credited, used, and paid values are stored separately.
 
 ---
 
