@@ -713,12 +713,14 @@ test('denies the workspace to a Membership without the read permission', async (
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   // The seeded Context Reader holds only the Payroll Preparer role, which §6.9 gives no authority
-  // read; its `overtime.coc.read` leaves COC Accounts as the stage's only destination.
+  // read; its `overtime.coc.read` leaves COC Accounts and CTO Requests (hris-controls §5.19, #545)
+  // as the stage's only destinations.
   await signIn(page, 'context.reader@example.test');
   await page.goto('/overtime-authorities');
   await expect(page.getByRole('heading', { name: 'You can’t open this page' })).toBeVisible();
   const navigation = page.getByRole('navigation', { name: 'Primary' });
   await navigation.getByRole('button', { name: 'Overtime', exact: true }).click();
   await expect(navigation.getByRole('link', { name: 'COC Accounts', exact: true })).toBeVisible();
+  await expect(navigation.getByRole('link', { name: 'CTO Requests', exact: true })).toBeVisible();
   await expect(navigation.getByRole('link', { name: 'Overtime Authorities' })).toHaveCount(0);
 });

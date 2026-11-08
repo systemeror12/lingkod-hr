@@ -33,6 +33,11 @@ export const RETURN_PERMISSION = 'overtime.cto.return';
 export const APPROVE_PERMISSION = 'overtime.cto.approve';
 export const REJECT_PERMISSION = 'overtime.cto.reject';
 export const CANCEL_PERMISSION = 'overtime.cto.cancel';
+/**
+ * Reading a CTO Request needs `overtime.coc.read` within the reader's scope; there is
+ * no separate CTO read permission (hris-controls §5.19, Project Decision #545).
+ */
+export const READ_PERMISSION = 'overtime.coc.read';
 
 /**
  * Why approved CTO is cancelled: the Head of Office's recall in the exigency of the
@@ -97,6 +102,53 @@ export interface CtoRequestSummary {
   createdAt: string;
   totalChargedMinutes: number;
   dates: CtoRequestDateSummary[];
+}
+
+export interface CtoRequestListFilter {
+  status?: CtoRequestStatus | undefined;
+  /** Matches the Employee's name or number. */
+  search?: string | undefined;
+}
+
+/** Who acts next on an open request, and the assigned approver once there is one. */
+export interface CtoRequestPendingAction {
+  role: 'REQUESTER' | 'SUPERVISOR' | 'APPROVING_OFFICIAL';
+  assigneeName: string | null;
+}
+
+export interface CtoRequestRecord extends CtoRequestSummary {
+  employeeNumber: string;
+  employeeName: string;
+  pendingAction: CtoRequestPendingAction | null;
+}
+
+/** One decision on one of the request's Approval Requests, oldest first. */
+export interface CtoRequestDecision {
+  id: string;
+  stepNo: number;
+  decision: string;
+  comments: string | null;
+  decidedByName: string | null;
+  decidedAt: string;
+}
+
+export interface CtoRequestHistoryEntry {
+  id: string;
+  action: string;
+  previousStatus: string | null;
+  newStatus: string | null;
+  reason: string | null;
+  actorName: string | null;
+  occurredAt: string;
+}
+
+export interface CtoRequestDetail extends CtoRequestRecord {
+  decisions: CtoRequestDecision[];
+  history: CtoRequestHistoryEntry[];
+}
+
+export interface CtoRequestListResponse {
+  requests: CtoRequestRecord[];
 }
 
 export class CtoRequestError extends Error {

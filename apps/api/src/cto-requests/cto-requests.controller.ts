@@ -2,11 +2,13 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   Headers,
   HttpException,
   Inject,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import type { RequestContext } from '@lingkod-hr/auth';
@@ -27,6 +29,7 @@ import {
   ctoRequestCreateSchema,
   ctoRequestIdempotencyKeySchema,
   ctoRequestIdSchema,
+  ctoRequestListSchema,
   ctoRequestRecommendSchema,
   ctoRequestRejectSchema,
   ctoRequestReturnSchema,
@@ -36,14 +39,18 @@ import {
   CANCEL_PERMISSION,
   CREATE_PERMISSION,
   CtoRequestError,
+  READ_PERMISSION,
   RECOMMEND_PERMISSION,
   REJECT_PERMISSION,
   RETURN_PERMISSION,
   SUBMIT_PERMISSION,
   WITHDRAW_PERMISSION,
+  type CtoRequestDetail,
+  type CtoRequestListResponse,
   type CtoRequestSummary,
 } from './cto-requests.types';
 import { DiscardCtoRequestService } from './discard-cto-request.service';
+import { ReadCtoRequestsService } from './read-cto-requests.service';
 import { RecommendCtoRequestService } from './recommend-cto-request.service';
 import { RejectCtoRequestService } from './reject-cto-request.service';
 import { ReturnCtoRequestService } from './return-cto-request.service';
@@ -89,7 +96,41 @@ export class CtoRequestsController {
     @Inject(ApproveCtoRequestService) private readonly approveService: ApproveCtoRequestService,
     @Inject(RejectCtoRequestService) private readonly rejectService: RejectCtoRequestService,
     @Inject(CancelCtoRequestService) private readonly cancelService: CancelCtoRequestService,
+    @Inject(ReadCtoRequestsService) private readonly readService: ReadCtoRequestsService,
   ) {}
+
+  /** Needs `overtime.coc.read`; the service limits the list to the reader's scope. */
+  @Get(':agencyId/cto-requests')
+  @RequirePermission(READ_PERMISSION)
+  async list(
+    @Param('agencyId') agencyId: string,
+    @Query() query: unknown,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CtoRequestListResponse> {
+    this.assertAgency(agencyId, context, 'CTO_REQUEST_READ_FORBIDDEN');
+    const parsed = ctoRequestListSchema.safeParse(query ?? {});
+    if (!parsed.success) throw this.invalidInput(parsed.error.issues, context);
+    try {
+      return { requests: await this.readService.list(context, parsed.data) };
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
+
+  @Get(':agencyId/cto-requests/:requestId')
+  @RequirePermission(READ_PERMISSION)
+  async detail(
+    @Param('agencyId') agencyId: string,
+    @Param('requestId') requestId: string,
+    @CurrentContext() context: RequestContext,
+  ): Promise<CtoRequestDetail> {
+    const id = this.requestId(agencyId, requestId, context, 'CTO_REQUEST_READ_FORBIDDEN');
+    try {
+      return await this.readService.detail(context, id);
+    } catch (error: unknown) {
+      translateServiceError(error, context.requestId);
+    }
+  }
 
   @Post(':agencyId/cto-requests')
   @RequirePermission(CREATE_PERMISSION)
@@ -249,8 +290,13 @@ export class CtoRequestsController {
     }
   }
 
-  private requestId(agencyId: string, requestId: string, context: RequestContext): string {
-    this.assertAgency(agencyId, context);
+  private requestId(
+    agencyId: string,
+    requestId: string,
+    context: RequestContext,
+    forbiddenCode = 'CTO_REQUEST_WRITE_FORBIDDEN',
+  ): string {
+    this.assertAgency(agencyId, context, forbiddenCode);
     const parsed = ctoRequestIdSchema.safeParse(requestId);
     if (!parsed.success) {
       throw new HttpException(
@@ -283,13 +329,17 @@ export class CtoRequestsController {
     });
   }
 
-  private assertAgency(agencyId: string, context: RequestContext): void {
+  private assertAgency(
+    agencyId: string,
+    context: RequestContext,
+    code = 'CTO_REQUEST_WRITE_FORBIDDEN',
+  ): void {
     const parsed = agencyIdSchema.safeParse(agencyId);
     if (!parsed.success || parsed.data !== context.agencyId) {
       throw new HttpException(
         {
           error: {
-            code: 'CTO_REQUEST_WRITE_FORBIDDEN',
+            code,
             message: 'The requested Agency is outside the active context.',
             requestId: context.requestId,
           },
