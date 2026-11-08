@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
+import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
 import { requestDatabaseContext } from '../database-context';
 import { resolveEmployeeScope, scopeCovers, type EmployeeScope } from '../employee-scope';
 import { findRequests, readRequest } from './cto-request.records';
@@ -22,10 +23,17 @@ const ENTITY_TYPE = 'CtoRequest';
 /**
  * Read CTO Requests with `overtime.coc.read` within the reader's scope: an Employee
  * reads their own, a Supervisor their direct reports', and an Agency grant every
- * request (hris-controls §5.19, Project Decision #545). Reading writes nothing.
+ * request (hris-controls §5.19, Project Decision #545). A cancelled Work Date handed to
+ * Attendance carries that correction's live status from Attendance, not the request's.
+ * Reading writes nothing.
  */
 @Injectable()
 export class ReadCtoRequestsService {
+  constructor(
+    @Inject(AttendanceCorrectionsService)
+    private readonly corrections: AttendanceCorrectionsService,
+  ) {}
+
   async list(context: RequestContext, filter: CtoRequestListFilter): Promise<CtoRequestRecord[]> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const scope = await readScope(transaction, context);
@@ -43,7 +51,7 @@ export class ReadCtoRequestsService {
             }
           : {}),
       });
-      return registerRecords(transaction, context.agencyId, requests);
+      return this.registerRecords(transaction, context.agencyId, requests);
     });
   }
 
@@ -59,7 +67,7 @@ export class ReadCtoRequestsService {
           'CTO_REQUEST_SCOPE_FORBIDDEN',
         );
       }
-      const [record] = await registerRecords(transaction, context.agencyId, [request]);
+      const [record] = await this.registerRecords(transaction, context.agencyId, [request]);
       if (!record) throw new Error('The CTO Request record was not built.');
       const [decisions, events] = await Promise.all([
         transaction.approvalDecision.findMany({
@@ -118,6 +126,72 @@ export class ReadCtoRequestsService {
       };
     });
   }
+
+  /** Add the Employee, who acts next on an open request, and each handed-off date's status. */
+  private async registerRecords(
+    transaction: Prisma.TransactionClient,
+    agencyId: string,
+    requests: CtoRequestSummary[],
+  ): Promise<CtoRequestRecord[]> {
+    if (requests.length === 0) return [];
+    const correctionIds = requests.flatMap((row) =>
+      row.dates.flatMap((date) =>
+        date.attendanceCorrectionId ? [date.attendanceCorrectionId] : [],
+      ),
+    );
+    const [employees, approvals, handoffs] = await Promise.all([
+      transaction.employee.findMany({
+        where: { agencyId, id: { in: [...new Set(requests.map((row) => row.employeeId))] } },
+        select: { id: true, employeeNumber: true, legalName: true },
+      }),
+      transaction.approvalRequest.findMany({
+        where: {
+          agencyId,
+          subjectType: CTO_REQUEST_APPROVAL_SUBJECT_TYPE,
+          subjectId: {
+            in: requests
+              .filter((row) => row.status === 'SUBMITTED' || row.status === 'FOR_APPROVAL')
+              .map((row) => row.id),
+          },
+          status: 'IN_PROGRESS',
+        },
+        select: {
+          subjectId: true,
+          currentStepNo: true,
+          steps: {
+            select: {
+              stepNo: true,
+              assignedMembership: { select: { user: { select: { displayName: true } } } },
+            },
+          },
+        },
+      }),
+      this.corrections.ctoInputHandoffStatusesInTransaction(transaction, agencyId, correctionIds),
+    ]);
+    const byId = new Map(employees.map((employee) => [employee.id, employee]));
+    const assignees = new Map(
+      approvals.map((approval) => [
+        approval.subjectId,
+        approval.steps.find((step) => step.stepNo === approval.currentStepNo)?.assignedMembership
+          ?.user.displayName ?? null,
+      ]),
+    );
+    return requests.map((request) => {
+      const employee = byId.get(request.employeeId);
+      return {
+        ...request,
+        employeeNumber: employee?.employeeNumber ?? '',
+        employeeName: employee?.legalName ?? request.employeeId,
+        pendingAction: pendingAction(request.status, assignees.get(request.id) ?? null),
+        dates: request.dates.map((date) => ({
+          ...date,
+          attendanceHandoff: date.attendanceCorrectionId
+            ? (handoffs.get(date.attendanceCorrectionId) ?? null)
+            : null,
+        })),
+      };
+    });
+  }
 }
 
 async function readScope(
@@ -133,60 +207,6 @@ async function readScope(
     );
   }
   return scope;
-}
-
-/** Add the Employee and, for an open request, who acts next. */
-async function registerRecords(
-  transaction: Prisma.TransactionClient,
-  agencyId: string,
-  requests: CtoRequestSummary[],
-): Promise<CtoRequestRecord[]> {
-  if (requests.length === 0) return [];
-  const [employees, approvals] = await Promise.all([
-    transaction.employee.findMany({
-      where: { agencyId, id: { in: [...new Set(requests.map((row) => row.employeeId))] } },
-      select: { id: true, employeeNumber: true, legalName: true },
-    }),
-    transaction.approvalRequest.findMany({
-      where: {
-        agencyId,
-        subjectType: CTO_REQUEST_APPROVAL_SUBJECT_TYPE,
-        subjectId: {
-          in: requests
-            .filter((row) => row.status === 'SUBMITTED' || row.status === 'FOR_APPROVAL')
-            .map((row) => row.id),
-        },
-        status: 'IN_PROGRESS',
-      },
-      select: {
-        subjectId: true,
-        currentStepNo: true,
-        steps: {
-          select: {
-            stepNo: true,
-            assignedMembership: { select: { user: { select: { displayName: true } } } },
-          },
-        },
-      },
-    }),
-  ]);
-  const byId = new Map(employees.map((employee) => [employee.id, employee]));
-  const assignees = new Map(
-    approvals.map((approval) => [
-      approval.subjectId,
-      approval.steps.find((step) => step.stepNo === approval.currentStepNo)?.assignedMembership
-        ?.user.displayName ?? null,
-    ]),
-  );
-  return requests.map((request) => {
-    const employee = byId.get(request.employeeId);
-    return {
-      ...request,
-      employeeNumber: employee?.employeeNumber ?? '',
-      employeeName: employee?.legalName ?? request.employeeId,
-      pendingAction: pendingAction(request.status, assignees.get(request.id) ?? null),
-    };
-  });
 }
 
 function pendingAction(

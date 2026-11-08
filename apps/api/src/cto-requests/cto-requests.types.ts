@@ -1,3 +1,5 @@
+import type { CtoInputHandoffStatus } from '../attendance-corrections/attendance-corrections.types';
+
 export const CTO_REQUEST_STATUSES = [
   'DRAFT',
   'SUBMITTED',
@@ -121,10 +123,16 @@ export interface CtoRequestPendingAction {
   assigneeName: string | null;
 }
 
-export interface CtoRequestRecord extends CtoRequestSummary {
+/** A read Work Date, with Attendance's live status for a locked date's correction. */
+export interface CtoRequestRecordDate extends CtoRequestDateSummary {
+  attendanceHandoff: CtoInputHandoffStatus | null;
+}
+
+export interface CtoRequestRecord extends Omit<CtoRequestSummary, 'dates'> {
   employeeNumber: string;
   employeeName: string;
   pendingAction: CtoRequestPendingAction | null;
+  dates: CtoRequestRecordDate[];
 }
 
 /** One decision on one of the request's Approval Requests, oldest first. */

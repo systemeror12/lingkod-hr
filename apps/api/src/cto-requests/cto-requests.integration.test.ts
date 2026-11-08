@@ -93,7 +93,6 @@ function services(fixture: AttendanceWorkflowFixture) {
   const attendance = new AttendanceCtoInputsService(days);
   const approve = new ApproveCtoRequestService(audit, approvals, days, coc, attendance);
   const reject = new RejectCtoRequestService(audit, approvals);
-  const read = new ReadCtoRequestsService();
   const { services: attendanceServices } = fixture;
   const corrections = new AttendanceCorrectionsService(
     attendanceCorrectionAuditWriter,
@@ -107,6 +106,7 @@ function services(fixture: AttendanceWorkflowFixture) {
   );
   corrections.onModuleInit();
   const cancel = new CancelCtoRequestService(audit, coc, attendance, corrections);
+  const read = new ReadCtoRequestsService(corrections);
   return {
     approvals,
     create,
@@ -2100,13 +2100,21 @@ it.skipIf(!enabled)(
         correctionId,
         'The recall order is unsigned.',
       );
-      const statuses = await withDatabaseContext({ agencyId }, (transaction) =>
-        corrections.ctoInputHandoffStatusesInTransaction(transaction, agencyId, [correctionId]),
+      const detail = await fixture.read.detail(reader(canceller, 'AGENCY'), request.id);
+      expect(detail.status).toBe('CANCELLED');
+      expect(detail.dates.map((date) => date.attendanceHandoff)).toEqual([
+        {
+          correctionId,
+          status: 'FOR_AUTHORIZATION',
+          blockingReason: 'The recall order is unsigned.',
+          blockedAt: expect.any(String),
+        },
+        null,
+      ]);
+      const [listed] = await fixture.read.list(reader(canceller, 'AGENCY'), {});
+      expect(listed?.dates[0]?.attendanceHandoff?.blockingReason).toBe(
+        'The recall order is unsigned.',
       );
-      expect(statuses.get(correctionId)).toMatchObject({
-        status: 'FOR_AUTHORIZATION',
-        blockingReason: 'The recall order is unsigned.',
-      });
 
       // A replay writes nothing more.
       expect(await cancel.execute(canceller, request.id, input, 'locked-key')).toEqual(cancelled);

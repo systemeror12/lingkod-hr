@@ -1,7 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { getConfig } from '@lingkod-hr/config';
-import { expect, test, type APIResponse, type Browser, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Browser,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 import { activateInvitation, MARISOL_EMAIL, signIn } from './sign-in';
 
 interface MailpitMessagesResponse {
@@ -285,22 +292,104 @@ async function seedCtoJourney(
 }
 
 /**
- * A Monday at least a week out, and the Tuesday after it, with no holiday on either:
- * consecutive Work Dates CTO can still be approved for.
+ * A Monday at least a week out, and the Tuesday and Wednesday after it, with no holiday
+ * on any: consecutive Work Dates CTO can still be approved for.
  */
-async function workDates(admin: PrismaClient, agencyId: string): Promise<[string, string]> {
+async function workDates(admin: PrismaClient, agencyId: string): Promise<[string, string, string]> {
   const date = new Date();
   date.setUTCDate(date.getUTCDate() + 7);
   for (;;) {
     while (date.getUTCDay() !== 1) date.setUTCDate(date.getUTCDate() + 1);
-    const monday = date.toISOString().slice(0, 10);
-    const tuesday = new Date(date.getTime() + 86_400_000).toISOString().slice(0, 10);
+    const day = (offset: number) =>
+      new Date(date.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
+    const dates: [string, string, string] = [day(0), day(1), day(2)];
     const holidays = await admin.holidayCalendarEntry.count({
-      where: { agencyId, holidayDate: { in: [new Date(monday), new Date(tuesday)] } },
+      where: { agencyId, holidayDate: { in: dates.map((value) => new Date(value)) } },
     });
-    if (holidays === 0) return [monday, tuesday];
+    if (holidays === 0) return dates;
     date.setUTCDate(date.getUTCDate() + 1);
   }
+}
+
+/**
+ * Locking an Attendance Period goes through submission, review, and lock approvals this
+ * journey does not cover. Record an already-locked version over the calculated days, as
+ * the Leave journey does, so a later cancellation meets a locked Work Date.
+ */
+async function lockAttendancePeriod(input: {
+  agencyId: string;
+  employeeId: string;
+  periodId: string;
+  approvalRouteVersionId: string;
+  submitterMembershipId: string;
+  reviewerMembershipId: string;
+}): Promise<void> {
+  await withAdmin(async (admin) => {
+    const days = await admin.attendanceDay.findMany({
+      where: {
+        agencyId: input.agencyId,
+        attendancePeriodId: input.periodId,
+        employeeId: input.employeeId,
+        isCurrent: true,
+      },
+      select: { id: true },
+    });
+    const now = new Date();
+    const reviewed = {
+      submittedByMembershipId: input.submitterMembershipId,
+      submittedAt: now,
+      reviewedByMembershipId: input.reviewerMembershipId,
+      reviewedAt: now,
+      reviewReason: 'CTO cancellation journey fixture.',
+    };
+    const submission = await admin.employeeAttendanceSubmission.create({
+      data: {
+        agencyId: input.agencyId,
+        attendancePeriodId: input.periodId,
+        employeeId: input.employeeId,
+        versionNo: 1,
+        status: 'APPROVED',
+        ...reviewed,
+      },
+    });
+    const version = await admin.attendancePeriodVersion.create({
+      data: {
+        agencyId: input.agencyId,
+        attendancePeriodId: input.periodId,
+        versionNo: 1,
+        status: 'LOCKED',
+        approvalRouteVersionId: input.approvalRouteVersionId,
+        ...reviewed,
+        lockedByMembershipId: input.submitterMembershipId,
+        lockedAt: now,
+        reconciliation: { source: 'E2E_CTO_CANCELLATION_FIXTURE' },
+      },
+    });
+    for (const { id: attendanceDayId } of days) {
+      await admin.employeeAttendanceSubmissionDay.create({
+        data: {
+          agencyId: input.agencyId,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId,
+        },
+      });
+      await admin.attendancePeriodVersionDay.create({
+        data: {
+          agencyId: input.agencyId,
+          attendancePeriodVersionId: version.id,
+          employeeAttendanceSubmissionId: submission.id,
+          attendanceDayId,
+        },
+      });
+    }
+    await admin.$transaction(async (transaction) => {
+      await transaction.$queryRaw`SELECT set_config('app.attendance_transition', 'on', true)`;
+      await transaction.attendancePeriod.update({
+        where: { id: input.periodId },
+        data: { status: 'FINALIZED' },
+      });
+    });
+  });
 }
 
 function dateText(value: string): string {
@@ -312,7 +401,7 @@ function dateText(value: string): string {
   });
 }
 
-test('requests, recommends, and approves CTO, then shows it on the DTR preview', async ({
+test('requests, recommends, approves, and cancels CTO, and shows the Attendance handoff', async ({
   page,
   browser,
 }) => {
@@ -340,14 +429,16 @@ test('requests, recommends, and approves CTO, then shows it on the DTR preview',
     await setRoles(admin, agencyId, employee.membershipId, ['employee']);
     await grantOwnAttendanceRead(admin, agencyId, employee.membershipId);
     await setRoles(admin, agencyId, supervisor.membershipId, ['supervisor']);
-    await setRoles(admin, agencyId, approver.membershipId, ['appointing_authority']);
+    // The Approving Official is an Employee too; that role lets their cancellation open
+    // the Attendance Correction a locked Work Date needs.
+    await setRoles(admin, agencyId, approver.membershipId, ['employee', 'appointing_authority']);
     const seeded = await seedCtoJourney(admin, agencyId, stamp, {
       employee: employee.membershipId,
       supervisor: supervisor.membershipId,
     });
     return { ...seeded, dates: await workDates(admin, agencyId) };
   });
-  const [monday, tuesday] = dates;
+  const [monday, tuesday, wednesday] = dates;
 
   // hris-controls §5.19: the Supervisor recommends, then the Approving Official decides.
   const route = await apiBody<{ id: string }>(
@@ -570,5 +661,168 @@ test('requests, recommends, and approves CTO, then shows it on the DTR preview',
   await expect(preview.getByRole('row').filter({ hasText: monday })).toContainText('CTO 8:00');
   await expect(preview.getByRole('row').filter({ hasText: tuesday })).toContainText('CTO 4:00');
 
+  // The Approving Official recalls the Tuesday of the approved request, in an open period.
+  await approverRecord.getByRole('tab', { name: 'Request' }).click();
+  const cancelForm = approverRecord.getByRole('region', { name: 'Cancel or recall CTO' });
+  await cancelForm.getByLabel(new RegExp(dateText(monday))).uncheck();
+  await cancelForm.getByLabel('Cancellation reason').fill('Recalled for the records audit.');
+  const cancels: string[] = [];
+  approverUi.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/cancel'))
+      cancels.push(request.postData() ?? '');
+  });
+  await cancelForm.getByRole('button', { name: 'Recall selected dates' }).dblclick();
+  await expect(
+    approverUi.getByRole('status').filter({ hasText: 'The selected Work Dates were cancelled' }),
+  ).toBeVisible();
+  expect(cancels).toHaveLength(1);
+  expect(JSON.parse(cancels[0]!)).toEqual({
+    kind: 'RECALL',
+    reason: 'Recalled for the records audit.',
+    workDates: [tuesday],
+  });
+  await expect(approverRecord.locator('header')).toContainText('Approved');
+  await expect(dateRowOf(approverRecord, dateText(tuesday))).toContainText('Cancelled');
+  await expect(approverAvailable.getByRole('definition')).toHaveText(`${remaining + 240} minutes`);
+  await approverRecord.getByRole('tab', { name: 'Attendance' }).click();
+  await expect(dateRowOf(approverRecord, dateText(tuesday))).toContainText(
+    'Cancelled · Attendance recalculated',
+  );
+  await expect(dateRowOf(approverRecord, dateText(monday))).toContainText(
+    'CTO input recorded in Attendance',
+  );
+
+  // A second request covers the Wednesday, approved before its Attendance Period locks.
+  const marisol = await apiBody<{ membershipId: string }>(
+    await page.request.get('/api/v1/auth/me', { headers }),
+  );
+  const lockedPeriod = await apiBody<{ period: { id: string } }>(
+    await page.request.post(`${agencyBase}/attendance-days/calculate`, {
+      headers,
+      data: {
+        periodCode: `E2E-CTO-LOCKED-${stamp}`,
+        dateFrom: wednesday,
+        dateTo: wednesday,
+        employeeIds: [employeeId],
+      },
+    }),
+  );
+  const as = (person: { page: Page }) => ({
+    origin: new URL(person.page.url()).origin,
+    'Idempotency-Key': randomUUID(),
+  });
+  const locked = await apiBody<{ id: string }>(
+    await ui.request.post(`${agencyBase}/cto-requests`, {
+      headers: as(employee),
+      data: { employeeId, dates: [{ workDate: wednesday, unit: 'WHOLE' }] },
+    }),
+  );
+  const lockedPath = `${agencyBase}/cto-requests/${locked.id}`;
+  await apiBody(await ui.request.post(`${lockedPath}/submit`, { headers: as(employee) }));
+  await apiBody(
+    await supervisorUi.request.post(`${lockedPath}/recommend`, {
+      headers: as(supervisor),
+      data: {},
+    }),
+  );
+  await apiBody(
+    await approverUi.request.post(`${lockedPath}/approve`, { headers: as(approver), data: {} }),
+  );
+  await lockAttendancePeriod({
+    agencyId,
+    employeeId,
+    periodId: lockedPeriod.period.id,
+    approvalRouteVersionId: route.id,
+    submitterMembershipId: marisol.membershipId,
+    reviewerMembershipId: supervisor.membershipId,
+  });
+
+  // With no route for the Attendance Correction, Attendance refuses and the reason shows.
+  await approverUi.goto(`/cto-requests?view=form&record=${locked.id}`);
+  const lockedForm = approverRecord.getByRole('region', { name: 'Cancel or recall CTO' });
+  await lockedForm.getByLabel('Basis').selectOption('EMPLOYEE_REQUEST');
+  await lockedForm.getByLabel('Cancellation reason').fill('The Employee will report for duty.');
+  await lockedForm.getByRole('button', { name: 'Cancel whole request' }).click();
+  await expect(
+    approverUi
+      .getByRole('alert')
+      .filter({ hasText: `Attendance refused the correction for locked Work Date ${wednesday}.` }),
+  ).toBeVisible();
+  await expect(approverRecord.locator('header')).toContainText('Approved');
+
+  // An HR Administrator other than the canceller authorizes the Locked Attendance Adjustment.
+  const handoffRoute = await apiBody<{ id: string }>(
+    await page.request.post(`${agencyBase}/approval-routes`, {
+      headers,
+      data: {
+        routeCode: 'ATTENDANCE_CORRECTION_CTO_INPUT',
+        domain: 'ATTENDANCE',
+        versionNo: 1,
+        effectiveFrom: '2026-01-01',
+        stepDefinition: {
+          steps: [
+            {
+              stepNo: 1,
+              stepMode: 'SEQUENTIAL',
+              requiredPermission: 'attendance.corrections.authorize_locked',
+              approvePermission: 'attendance.corrections.authorize_locked',
+              returnPermission: 'attendance.corrections.authorize_locked',
+              rejectPermission: 'attendance.corrections.authorize_locked',
+              assignment: { kind: 'MEMBERSHIP', membershipId: marisol.membershipId },
+              requiresSeparateReview: true,
+            },
+          ],
+        },
+      },
+    }),
+  );
+  await apiBody(
+    await page.request.post(`${agencyBase}/approval-routes/${handoffRoute.id}/activate`, {
+      headers,
+      data: { reason: 'CTO cancellation handoff route verified for the workspace journey.' },
+    }),
+  );
+
+  // The same command now cancels the whole request, and Attendance holds the locked date.
+  await lockedForm.getByRole('button', { name: 'Cancel whole request' }).click();
+  await expect(
+    approverUi.getByRole('status').filter({ hasText: 'The CTO Request was cancelled' }),
+  ).toBeVisible();
+  const banner = approverRecord.locator('header');
+  await expect(banner).toContainText('Cancelled');
+  await expect(banner).toContainText('Cancellation of 1 locked Work Date with Attendance');
+  await approverRecord.getByRole('tab', { name: 'Attendance' }).click();
+  await expect(dateRowOf(approverRecord, dateText(wednesday))).toContainText(
+    'Awaiting Attendance authorization',
+  );
+
+  // The status is Attendance's own: a recorded blocking reason shows after a reload.
+  const lockedDetail = await apiBody<{
+    dates: Array<{ attendanceCorrectionId: string | null }>;
+  }>(await approverUi.request.get(lockedPath, { headers: as(approver) }));
+  const correctionId = lockedDetail.dates[0]?.attendanceCorrectionId;
+  if (!correctionId) throw new Error('The locked Work Date was not handed to Attendance.');
+  await apiBody(
+    await page.request.post(
+      `${agencyBase}/attendance-corrections/${correctionId}/block-authorization`,
+      { headers, data: { reason: 'The recall order is unsigned.' } },
+    ),
+  );
+  await approverUi.reload();
+  await approverRecord.getByRole('tab', { name: 'Attendance' }).click();
+  await expect(dateRowOf(approverRecord, dateText(wednesday))).toContainText(
+    'Blocked: The recall order is unsigned.',
+  );
+  const lockedRow = approverUi
+    .getByRole('region', { name: 'CTO Request register' })
+    .getByRole('row')
+    .filter({ hasText: dateText(wednesday) });
+  await approverUi.goto('/cto-requests');
+  await expect(lockedRow).toContainText('Cancellation of 1 locked Work Date with Attendance');
+
   for (const person of [employee, supervisor, approver]) await person.page.context().close();
 });
+
+function dateRowOf(record: Locator, label: string): Locator {
+  return record.getByRole('row').filter({ hasText: label });
+}
