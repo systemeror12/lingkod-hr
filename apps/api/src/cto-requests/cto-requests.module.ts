@@ -1,6 +1,7 @@
 import { Inject, Module, type OnModuleInit } from '@nestjs/common';
 import { ApprovalModule } from '../approvals/approval.module';
 import { ApprovalCompletionRegistry } from '../approvals/approval.service';
+import { AttendanceCorrectionsModule } from '../attendance-corrections/attendance-corrections.module';
 import { AttendanceCtoInputsModule } from '../attendance-cto-inputs/attendance-cto-inputs.module';
 import { AttendanceDaysModule } from '../attendance-days/attendance-days.module';
 import { AuthModule } from '../auth/auth.module';
@@ -29,6 +30,7 @@ import { WithdrawCtoRequestService } from './withdraw-cto-request.service';
     ApprovalModule,
     AttendanceDaysModule,
     AttendanceCtoInputsModule,
+    AttendanceCorrectionsModule,
     CocAccountsModule,
   ],
   controllers: [CtoRequestsController],
