@@ -816,6 +816,7 @@ test('requests, recommends, approves, and cancels CTO, and shows the Attendance 
   const lockedRow = approverUi
     .getByRole('region', { name: 'CTO Request register' })
     .getByRole('row')
+    .filter({ hasText: `CTO Employee ${stamp}` })
     .filter({ hasText: dateText(wednesday) });
   await approverUi.goto('/cto-requests');
   await expect(lockedRow).toContainText('Cancellation of 1 locked Work Date with Attendance');
