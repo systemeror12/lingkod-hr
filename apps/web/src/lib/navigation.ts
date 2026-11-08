@@ -229,6 +229,12 @@ const destinations: readonly (Destination & {
     permission: 'overtime.authorities.read',
   },
   {
+    href: '/coc-accounts',
+    label: 'COC Accounts',
+    stage: 'Overtime',
+    permission: 'overtime.coc.read',
+  },
+  {
     href: '/cto-requests',
     label: 'CTO Requests',
     stage: 'Overtime',

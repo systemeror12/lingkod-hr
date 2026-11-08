@@ -198,6 +198,44 @@ export interface CocOwnBalanceRead extends CocBalanceRead {
   employeeId: string;
 }
 
+/** One COC Account as the COC Accounts register lists it. */
+export interface CocAccountSummary {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  employeeNumber: string;
+  status: string;
+  openedAt: string;
+  closedAt: string | null;
+  /** The balance as of today for an active account; `null` for a closed one. */
+  balanceMinutes: string | null;
+}
+
+/** One posted COC Ledger Entry, with what it reverses and what reversed it. */
+export interface CocLedgerEntryView {
+  id: string;
+  /** Signed, at one decimal place. */
+  minutes: string;
+  effectiveDate: string;
+  validUntil: string;
+  earnedMonth: string | null;
+  sourceType: string;
+  sourceId: string;
+  ruleCode: string;
+  reason: string | null;
+  supportingDocumentVersionId: string | null;
+  reversesEntryId: string | null;
+  reversedByEntryId: string | null;
+  postedAt: string;
+  /** The authority whose certified service a certificate entry credits. */
+  overtimeAuthority: { id: string; authorityNo: string } | null;
+}
+
+export interface CocLedger {
+  account: Omit<CocAccountSummary, 'balanceMinutes'>;
+  entries: CocLedgerEntryView[];
+}
+
 export type CocRefusalCode =
   | CocEarningRefusalCode
   | 'COC_AWARD_INVALID'
