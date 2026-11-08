@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseConfig } from './env';
+import { findRootEnvFile, parseConfig } from './env';
 
 const keys = {
   DATA_ENCRYPTION_KEY: '07'.repeat(32),
@@ -74,4 +77,21 @@ describe.each(['development', 'test', 'production'])('in %s', (environment) => {
     expect(() => parseConfig({ ...complete, [field]: ' '.repeat(32) })).toThrow(new RegExp(field));
     expect(() => parseConfig({ ...complete, [field]: 'too-short' })).toThrow(new RegExp(field));
   });
+});
+
+// The Next server bundles this package and rewrites __dirname to a virtual
+// path, so the root .env is found from the working directory instead (#583).
+it('finds the root .env from any directory inside the workspace', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'lingkod-config-'));
+  try {
+    const app = join(workspace, 'apps', 'web');
+    mkdirSync(app, { recursive: true });
+    expect(findRootEnvFile(app)).toBeUndefined();
+
+    writeFileSync(join(workspace, 'pnpm-workspace.yaml'), 'packages: []\n');
+    expect(findRootEnvFile(app)).toBe(join(workspace, '.env'));
+    expect(findRootEnvFile(workspace)).toBe(join(workspace, '.env'));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });
