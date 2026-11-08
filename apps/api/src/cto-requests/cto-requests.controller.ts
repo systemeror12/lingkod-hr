@@ -74,8 +74,16 @@ function translateServiceError(error: unknown, requestId: string): never {
     error instanceof AttendanceDayServiceError ||
     error instanceof CocServiceError
   ) {
+    const reasons = error instanceof CtoRequestError && error.reasons.length > 0;
     throw new HttpException(
-      { error: { code: error.code, message: error.message, requestId } },
+      {
+        error: {
+          code: error.code,
+          message: error.message,
+          ...(reasons ? { reasons: error.reasons } : {}),
+          requestId,
+        },
+      },
       error.statusCode,
     );
   }

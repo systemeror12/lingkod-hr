@@ -60,6 +60,7 @@ export default async function CtoRequestsPage() {
       canReturn={hasPermission(session, 'overtime.cto.return')}
       canApprove={hasPermission(session, 'overtime.cto.approve')}
       canReject={hasPermission(session, 'overtime.cto.reject')}
+      canCancel={hasPermission(session, 'overtime.cto.cancel')}
     />
   );
 }

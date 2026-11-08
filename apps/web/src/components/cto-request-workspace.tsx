@@ -32,6 +32,15 @@ export interface CtoRequestDate {
   chargedMinutes: number;
   attendanceCtoInputId: string | null;
   cancelledByCtoCancellationId: string | null;
+  /** The Attendance Correction a cancelled date in a locked period was handed to. */
+  attendanceCorrectionId: string | null;
+  /** Attendance's own live status for that correction. */
+  attendanceHandoff: {
+    correctionId: string;
+    status: string;
+    blockingReason: string | null;
+    blockedAt: string | null;
+  } | null;
 }
 
 export interface CtoRequest {
@@ -83,6 +92,8 @@ interface EmployeeOption {
   employeeNumber: string;
   legalName: string;
 }
+
+type CancellationKind = 'RECALL' | 'EMPLOYEE_REQUEST';
 
 type View = 'tree' | 'form' | 'kanban';
 type FormTab = 'request' | 'decisions' | 'attendance' | 'history';
@@ -204,8 +215,36 @@ function decisionLabel(decision: CtoRequestDetail['decisions'][number]): string 
   return decision.stepNo === 1 ? 'Recommended' : 'Approved';
 }
 
+/**
+ * A cancelled Work Date's Attendance effect, from Attendance's own status. A locked
+ * date's cancellation is never shown as done before Attendance applies it.
+ */
+function attendanceEffectLabel(date: CtoRequestDate): string {
+  if (!date.cancelledByCtoCancellationId) {
+    return date.attendanceCtoInputId
+      ? 'CTO input recorded in Attendance'
+      : 'Recorded in Attendance when approved';
+  }
+  if (!date.attendanceCorrectionId) return 'Cancelled · Attendance recalculated';
+  const handoff = date.attendanceHandoff;
+  if (!handoff) return 'Cancelled · Attendance status unavailable';
+  if (handoff.status === 'APPLIED') return 'Cancelled · applied by Attendance';
+  if (handoff.status === 'REJECTED') return 'Attendance rejected the correction';
+  if (handoff.status === 'CANCELLED') return 'Attendance cancelled the correction';
+  if (handoff.blockingReason) return `Blocked: ${handoff.blockingReason}`;
+  return 'Awaiting Attendance authorization';
+}
+
+/** Cancelled dates Attendance has not yet applied, so the cancellation is not finished. */
+function pendingHandoffs(request: CtoRequest): number {
+  return request.dates.filter(
+    (date) => date.attendanceCorrectionId && date.attendanceHandoff?.status !== 'APPLIED',
+  ).length;
+}
+
 function StatusCell({ request }: { request: CtoRequest }) {
   const pending = pendingLabel(request);
+  const handoffs = pendingHandoffs(request);
   return (
     <>
       <StatusTag tone={STATUS_DISPLAY[request.status].tone}>
@@ -213,6 +252,11 @@ function StatusCell({ request }: { request: CtoRequest }) {
       </StatusTag>
       {pending ? (
         <span className="block text-caption text-ink-muted">Awaiting {pending}</span>
+      ) : null}
+      {handoffs > 0 ? (
+        <span className="block text-caption text-ink-muted">
+          Cancellation of {handoffs} locked Work Date{handoffs === 1 ? '' : 's'} with Attendance
+        </span>
       ) : null}
     </>
   );
@@ -236,6 +280,7 @@ export function CtoRequestWorkspace({
   canReturn,
   canApprove,
   canReject,
+  canCancel,
 }: {
   agencyId: string;
   initial: CtoRequestListResponse;
@@ -248,6 +293,7 @@ export function CtoRequestWorkspace({
   canReturn: boolean;
   canApprove: boolean;
   canReject: boolean;
+  canCancel: boolean;
 }) {
   const [requests, setRequests] = useState(initial.requests);
   const [statusFilter, setStatusFilter] = useState<'ALL' | CtoRequestStatus>('ALL');
@@ -687,6 +733,7 @@ export function CtoRequestWorkspace({
                       return: canReturn,
                       approve: canApprove,
                       reject: canReject,
+                      cancel: canCancel,
                     }}
                     act={act}
                   />
@@ -992,7 +1039,7 @@ function RequestSection({
   busy: boolean;
   request: (path: string) => Promise<unknown>;
   can: Record<
-    'create' | 'submit' | 'withdraw' | 'recommend' | 'return' | 'approve' | 'reject',
+    'create' | 'submit' | 'withdraw' | 'recommend' | 'return' | 'approve' | 'reject' | 'cancel',
     boolean
   >;
   act: (path: string, body: unknown, message: string) => Promise<void>;
@@ -1002,7 +1049,12 @@ function RequestSection({
     request,
     detail.employeeId,
     false,
-    detail.status + (detail.approvedAt ?? ''),
+    // A partial cancellation returns COC without changing the status.
+    [
+      detail.status,
+      detail.approvedAt,
+      ...detail.dates.map((date) => date.cancelledByCtoCancellationId),
+    ].join(),
   );
   const trimmed = comment.trim();
   const optional = trimmed ? { comment: trimmed } : {};
@@ -1024,7 +1076,12 @@ function RequestSection({
         <tbody>
           {detail.dates.map((date) => (
             <Tr key={date.id}>
-              <RowHeader>{dateLabel(date.workDate)}</RowHeader>
+              <RowHeader>
+                {dateLabel(date.workDate)}
+                {date.cancelledByCtoCancellationId ? (
+                  <span className="block text-caption font-normal text-ink-muted">Cancelled</span>
+                ) : null}
+              </RowHeader>
               <Td>{unitLabel(date)}</Td>
               <Td kind="numeric">{date.chargedMinutes}</Td>
             </Tr>
@@ -1039,6 +1096,16 @@ function RequestSection({
           Approved{detail.approvedAt ? ` ${instantLabel(detail.approvedAt)}` : ''}. The COC usage
           and the Attendance CTO inputs were posted with the approval.
         </p>
+      ) : null}
+
+      {detail.status === 'APPROVED' && can.cancel ? (
+        <CancelSection
+          // A partial cancellation keeps the request APPROVED; start over on what is left.
+          key={detail.dates.map((date) => date.cancelledByCtoCancellationId ?? '').join()}
+          detail={detail}
+          busy={busy}
+          act={act}
+        />
       ) : null}
 
       {detail.status === 'DRAFT' && (can.submit || can.create) ? (
@@ -1160,6 +1227,94 @@ function RequestSection({
   );
 }
 
+/**
+ * The Approving Official recalls approved CTO in the exigency of the service, or
+ * cancels it at the Employee's request, for the whole request or named Work Dates
+ * (hris-controls §5.19). Every uncancelled date chosen sends the whole request.
+ */
+function CancelSection({
+  detail,
+  busy,
+  act,
+}: {
+  detail: CtoRequestDetail;
+  busy: boolean;
+  act: (path: string, body: unknown, message: string) => Promise<void>;
+}) {
+  const open = detail.dates.filter((date) => !date.cancelledByCtoCancellationId);
+  const [kind, setKind] = useState<CancellationKind>('RECALL');
+  const [picked, setPicked] = useState<string[]>(() => open.map((date) => date.workDate));
+  const [reason, setReason] = useState('');
+  const trimmed = reason.trim();
+  const whole = picked.length === open.length;
+  const verb = kind === 'RECALL' ? 'Recall' : 'Cancel';
+  if (open.length === 0) return null;
+  return (
+    <section className="grid gap-3" aria-label="Cancel or recall CTO">
+      <h3 className={sectionTitleClass}>Cancel or recall CTO</h3>
+      <Field label="Basis">
+        <select
+          className={inputClass + ' max-w-md'}
+          value={kind}
+          onChange={(event) => setKind(valueOf(event) as CancellationKind)}
+        >
+          <option value="RECALL">Recall in the exigency of the service</option>
+          <option value="EMPLOYEE_REQUEST">At the Employee’s request</option>
+        </select>
+      </Field>
+      <fieldset className="m-0 grid gap-1 border-0 p-0">
+        <legend className="text-small font-[600] text-ink">Work Dates to cancel</legend>
+        {open.map((date) => (
+          <label key={date.id} className="flex items-center gap-2 text-small text-ink">
+            <input
+              type="checkbox"
+              checked={picked.includes(date.workDate)}
+              onChange={(event) => {
+                const checked = (event.currentTarget as unknown as { checked: boolean }).checked;
+                setPicked((held) =>
+                  checked
+                    ? [...held, date.workDate]
+                    : held.filter((workDate) => workDate !== date.workDate),
+                );
+              }}
+            />
+            {dateLabel(date.workDate)} · {unitLabel(date)}
+          </label>
+        ))}
+      </fieldset>
+      <Field label="Cancellation reason">
+        <textarea
+          className={inputClass + ' max-w-xl py-2'}
+          rows={2}
+          value={reason}
+          onChange={(event) => setReason(valueOf(event))}
+        />
+      </Field>
+      <p className="m-0 text-caption text-ink-muted">
+        The COC used on each date is returned. A date in a locked Attendance Period is handed to
+        Attendance and stays awaiting authorization until it is applied.
+      </p>
+      <div>
+        <Button
+          variant="secondary"
+          disabled={busy || trimmed === '' || picked.length === 0}
+          onClick={() =>
+            void act(
+              '/cancel',
+              { kind, reason: trimmed, ...(whole ? {} : { workDates: picked }) },
+              whole
+                ? 'The CTO Request was cancelled and its COC returned. The Attendance tab shows each date’s Attendance status.'
+                : 'The selected Work Dates were cancelled and their COC returned. The Attendance tab shows each date’s Attendance status.',
+            )
+          }
+        >
+          {whole ? `${verb} whole request` : `${verb} selected dates`}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function DecisionsSection({ detail }: { detail: CtoRequestDetail }) {
   if (detail.decisions.length === 0) {
     return <p className="m-0 text-small text-ink-muted">No decisions yet.</p>;
@@ -1200,19 +1355,14 @@ function AttendanceSection({ detail }: { detail: CtoRequestDetail }) {
             <Tr key={date.id}>
               <RowHeader>{dateLabel(date.workDate)}</RowHeader>
               <Td>{unitLabel(date)}</Td>
-              <Td>
-                {date.cancelledByCtoCancellationId
-                  ? 'Cancelled'
-                  : date.attendanceCtoInputId
-                    ? 'CTO input recorded in Attendance'
-                    : 'Recorded in Attendance when approved'}
-              </Td>
+              <Td>{attendanceEffectLabel(date)}</Td>
             </Tr>
           ))}
         </tbody>
       </Table>
       <p className="m-0 text-small text-ink-muted">
-        Attendance counts CTO as covered, paid time.{' '}
+        Attendance counts CTO as covered, paid time. Cancelling a date in a locked Attendance Period
+        waits for an HR Administrator to authorize the Locked Attendance Adjustment.{' '}
         <a className="text-primary underline-offset-2 hover:underline" href="/attendance-dtrs">
           Open Daily Time Records
         </a>

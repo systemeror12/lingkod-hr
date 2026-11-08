@@ -1,3 +1,5 @@
+import type { CtoInputHandoffStatus } from '../attendance-corrections/attendance-corrections.types';
+
 export const CTO_REQUEST_STATUSES = [
   'DRAFT',
   'SUBMITTED',
@@ -89,6 +91,11 @@ export interface CtoRequestDateSummary {
   chargedMinutes: number;
   attendanceCtoInputId: string | null;
   cancelledByCtoCancellationId: string | null;
+  /**
+   * The Attendance Correction a cancellation handed a locked Work Date to. Its own
+   * status, not the request's, says whether Attendance has applied the change.
+   */
+  attendanceCorrectionId: string | null;
 }
 
 export interface CtoRequestSummary {
@@ -116,10 +123,16 @@ export interface CtoRequestPendingAction {
   assigneeName: string | null;
 }
 
-export interface CtoRequestRecord extends CtoRequestSummary {
+/** A read Work Date, with Attendance's live status for a locked date's correction. */
+export interface CtoRequestRecordDate extends CtoRequestDateSummary {
+  attendanceHandoff: CtoInputHandoffStatus | null;
+}
+
+export interface CtoRequestRecord extends Omit<CtoRequestSummary, 'dates'> {
   employeeNumber: string;
   employeeName: string;
   pendingAction: CtoRequestPendingAction | null;
+  dates: CtoRequestRecordDate[];
 }
 
 /** One decision on one of the request's Approval Requests, oldest first. */
@@ -156,6 +169,8 @@ export class CtoRequestError extends Error {
     message: string,
     readonly statusCode: number,
     readonly code: string,
+    /** Machine-readable detail, such as the refusing module's own code. */
+    readonly reasons: readonly string[] = [],
   ) {
     super(message);
     this.name = 'CtoRequestError';

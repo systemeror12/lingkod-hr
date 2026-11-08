@@ -3,13 +3,16 @@ import type { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { manilaToday } from '../attendance-configuration/attendance-configuration.types';
-import { CTO_CANCELLATION_SOURCE_TYPE } from '../attendance-corrections/attendance-corrections.types';
-import { AttendanceCtoInputsService } from '../attendance-cto-inputs/attendance-cto-inputs.service';
+import { ApprovalServiceError } from '../approvals/approval.service';
+import { AttendanceCorrectionsService } from '../attendance-corrections/attendance-corrections.service';
 import {
-  ATTENDANCE_WORK_DATE_LOCKED,
-  findLockedWorkDate,
-  lockedWorkDateMessage,
-} from '../attendance-work-date-lock';
+  AttendanceCorrectionServiceError,
+  CTO_CANCELLATION_SOURCE_TYPE,
+} from '../attendance-corrections/attendance-corrections.types';
+import { AttendanceCtoInputsService } from '../attendance-cto-inputs/attendance-cto-inputs.service';
+import { AttendanceCtoInputError } from '../attendance-cto-inputs/attendance-cto-inputs.types';
+import { AttendanceDayServiceError } from '../attendance-days/attendance-days.types';
+import { findLockedWorkDate } from '../attendance-work-date-lock';
 import { CocAccountsService } from '../coc-accounts/coc-accounts.service';
 import { requestDatabaseContext } from '../database-context';
 import {
@@ -42,15 +45,13 @@ export function ctoCancellationEffectKey(cancellationId: string, workDate: strin
  * The Approving Official cancels approved CTO, as a recall in the exigency of the
  * service (JC 2, s. 2004 item 5.9.3) or at the Employee's request, for the whole
  * request or named Work Dates (hris-controls §5.19). In one transaction it records
- * the cancellation, exactly reverses each cancelled date's usage entries, gives each
- * date's Attendance CTO input a `NONE` successor, and marks the dates cancelled. The
+ * the cancellation, exactly reverses each cancelled date's usage entries, takes each
+ * date's Attendance effect (see `cancelWorkDate`), and marks the dates cancelled. The
  * request becomes CANCELLED once no uncancelled date remains, and otherwise stays
- * APPROVED. Any refusal rolls everything back.
- *
- * A Work Date in a locked Attendance Period is refused with
- * `ATTENDANCE_WORK_DATE_LOCKED` before anything is written; #549 hands those dates
- * to Attendance Correction instead. A retry with the same `Idempotency-Key` returns
- * the request and writes nothing.
+ * APPROVED. Any refusal rolls everything back, so a cancellation Attendance refuses
+ * leaves the request as it was, and the same command retried once the cause is fixed
+ * (such as a missing Approval Route) completes it. A retry with the same
+ * `Idempotency-Key` after success returns the request and writes nothing.
  */
 @Injectable()
 export class CancelCtoRequestService {
@@ -59,6 +60,8 @@ export class CancelCtoRequestService {
     private readonly auditWriter: OvertimeAuthorityAuditWriter,
     @Inject(CocAccountsService) private readonly coc: CocAccountsService,
     @Inject(AttendanceCtoInputsService) private readonly attendance: AttendanceCtoInputsService,
+    @Inject(AttendanceCorrectionsService)
+    private readonly corrections: AttendanceCorrectionsService,
   ) {}
 
   async execute(
@@ -68,7 +71,9 @@ export class CancelCtoRequestService {
     idempotencyKey?: string,
   ): Promise<CtoRequestSummary> {
     const today = manilaToday();
-    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+    // A locked Work Date's handoff opens an Attendance Correction approval.
+    const database = requestDatabaseContext(context, 'approval-transition');
+    return withDatabaseContext(database, async (transaction) => {
       const { agencyId, membershipId } = context;
       const current = await lockRequest(transaction, agencyId, requestId);
       await assertEmployeeAccess(transaction, context, CANCEL_PERMISSION, current.employeeId);
@@ -88,13 +93,6 @@ export class CancelCtoRequestService {
       assertStatus(current, ['APPROVED'], 'cancelled');
       const dates = datesToCancel(current.dates, input.workDates);
       const workDates = dates.map((date) => date.workDate);
-
-      // Refused before any write. #549 replaces this with a per-date choice in
-      // cancelWorkDate: supersede an open date, or hand a locked one to Attendance.
-      const locked = await findLockedWorkDate(transaction, agencyId, workDates);
-      if (locked) {
-        throw new CtoRequestError(lockedWorkDateMessage(locked), 409, ATTENDANCE_WORK_DATE_LOCKED);
-      }
 
       // The same lock approval takes, so a cancellation and an approval on one
       // account serialize. Credit is not restored to a closed account (§5.18).
@@ -120,7 +118,7 @@ export class CancelCtoRequestService {
           reason: input.reason,
           cancelledByMembershipId: membershipId,
         },
-        select: { id: true },
+        select: { id: true, cancelledAt: true },
       });
       const ledger = await this.coc.reverseCtoUsageInTransaction(transaction, agencyId, {
         cocAccountId: current.cocAccountId,
@@ -134,7 +132,13 @@ export class CancelCtoRequestService {
       const inputs = [];
       for (const date of dates) {
         inputs.push(
-          await this.cancelWorkDate(transaction, context, current, cancellation.id, date),
+          await this.cancelWorkDate(
+            transaction,
+            context,
+            current,
+            { ...cancellation, reason: input.reason },
+            date,
+          ),
         );
       }
 
@@ -177,31 +181,91 @@ export class CancelCtoRequestService {
   }
 
   /**
-   * One cancelled Work Date's effect outside the ledger: Attendance gives its CTO
-   * input a `NONE` successor and recalculates the date, then the date names its
-   * cancellation. #549 adds the locked-date handoff here.
+   * One cancelled Work Date's effect outside the ledger, chosen per date. An open
+   * date's CTO input gets a `NONE` successor and Attendance recalculates it now. A
+   * date in a locked Attendance Period is handed to Attendance as a `CTO_INPUT`
+   * correction at FOR_AUTHORIZATION instead (hris-controls §5.19, §5.12): the
+   * cancellation is its factual basis, and the date names the correction until a
+   * different HR Administrator authorizes it. Either way the date names its
+   * cancellation.
    */
   private async cancelWorkDate(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     request: CtoRequestSummary,
-    cancellationId: string,
+    cancellation: { id: string; cancelledAt: Date; reason: string },
     date: CtoRequestDateSummary,
-  ): Promise<{ workDate: string; attendanceCtoInputId: string }> {
+  ): Promise<CancelledWorkDateEffect> {
     if (!date.attendanceCtoInputId) {
       throw new Error(`Approved CTO on ${date.workDate} has no Attendance CTO input.`);
     }
-    const { id } = await this.attendance.voidInTransaction(transaction, context, {
-      sourceKey: ctoCancellationEffectKey(cancellationId, date.workDate),
-      employeeId: request.employeeId,
-      predecessorInputId: date.attendanceCtoInputId,
-      sourceType: CTO_CANCELLATION_SOURCE_TYPE,
-      sourceId: cancellationId,
-    });
+    const effectKey = ctoCancellationEffectKey(cancellation.id, date.workDate);
+    const locked = await findLockedWorkDate(transaction, context.agencyId, [date.workDate]);
+    let effect: CancelledWorkDateEffect;
+    if (locked) {
+      const correction = await this.corrections
+        .handOffCtoInputInTransaction(transaction, context, {
+          effectKey,
+          employeeId: request.employeeId,
+          predecessorInputId: date.attendanceCtoInputId,
+          coverageMode: 'NONE',
+          cancellation: {
+            id: cancellation.id,
+            approvingOfficialMembershipId: context.membershipId,
+            approvedAt: cancellation.cancelledAt,
+            reason: cancellation.reason,
+          },
+        })
+        .catch((error: unknown) => {
+          throw attendanceRefusal(date.workDate, error);
+        });
+      effect = { workDate: date.workDate, attendanceCorrectionId: correction.id };
+    } else {
+      const { id } = await this.attendance.voidInTransaction(transaction, context, {
+        sourceKey: effectKey,
+        employeeId: request.employeeId,
+        predecessorInputId: date.attendanceCtoInputId,
+        sourceType: CTO_CANCELLATION_SOURCE_TYPE,
+        sourceId: cancellation.id,
+      });
+      effect = { workDate: date.workDate, attendanceCtoInputId: id };
+    }
     await transaction.ctoRequestDate.update({
       where: { agencyId_id: { agencyId: context.agencyId, id: date.id } },
-      data: { cancelledByCtoCancellationId: cancellationId },
+      data: {
+        cancelledByCtoCancellationId: cancellation.id,
+        ...('attendanceCorrectionId' in effect
+          ? { attendanceCorrectionId: effect.attendanceCorrectionId }
+          : {}),
+      },
     });
-    return { workDate: date.workDate, attendanceCtoInputId: id };
+    return effect;
   }
+}
+
+/** The successor input an open date got, or the correction a locked date waits on. */
+type CancelledWorkDateEffect =
+  | { workDate: string; attendanceCtoInputId: string }
+  | { workDate: string; attendanceCorrectionId: string };
+
+/**
+ * Attendance's refusal of a locked date's correction, including a missing or
+ * unreadable Approval Route, blocks the whole cancellation: nothing is written, and
+ * Attendance's own code is kept in `reasons`.
+ */
+function attendanceRefusal(workDate: string, error: unknown): unknown {
+  if (
+    error instanceof AttendanceCorrectionServiceError ||
+    error instanceof AttendanceCtoInputError ||
+    error instanceof AttendanceDayServiceError ||
+    error instanceof ApprovalServiceError
+  ) {
+    return new CtoRequestError(
+      `Attendance refused the correction for locked Work Date ${workDate}. ${error.message}`,
+      409,
+      'CTO_CANCELLATION_ATTENDANCE_REFUSED',
+      [error.code, `WORK_DATE:${workDate}`],
+    );
+  }
+  return error;
 }
