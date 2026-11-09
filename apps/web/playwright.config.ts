@@ -21,7 +21,8 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  // CI retries a failed test once; a pass on retry is reported as flaky, not hidden (#587).
+  retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? 'github' : 'list',
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',

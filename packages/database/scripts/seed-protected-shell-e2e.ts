@@ -1,3 +1,17 @@
+/**
+ * Seeds the protected shell and the E2E fixtures (`pnpm --filter @lingkod-hr/database
+ * e2e:seed:shell`). Search for these anchors to reach each part:
+ * - `seed()`: the Work Queue Agency `E2E-WORK-QUEUE`. `resetProfile(agency)` and the
+ *   `deleteMany` transaction after the `seedInvitation` calls clear its rows, Overtime and COC
+ *   included, under `session_replication_role = 'replica'` so immutability triggers allow it.
+ *   Marisol Santos holds the roles in the `for (const roleCode` loop. Approval routes are the
+ *   `routeCode:` entries. Employees include `E2E-0001` (Alex Rivera), `E2E-PA-001`, and
+ *   `E2E-MOVE-001`. `E2E-FOREIGN-RECORDS` and `FOREIGN-0001` back Agency isolation checks.
+ * - `seedDtrFixture()`: its own Agency `E2E-DTR`, Employee `E2E-DTR-0001`, and Attendance Period
+ *   `E2E-DTR-2026-01`, locked through route `DTR-PERIOD-LOCK`.
+ * - `seededUserEmails` and `seedLocalCredentials()`: each seeded User's local passphrase, TOTP
+ *   factor, and Recovery Codes, as the README documents.
+ */
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import {
