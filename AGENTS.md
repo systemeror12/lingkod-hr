@@ -30,10 +30,6 @@ Use this language in code, documentation, and conversation:
 - **agent** means a coding agent run through Codex, OpenCode, or Claude Code.
   Depending on context, this can include you.
 - **client** means the LingkodHR web application.
-- **environment** means the runtime hosting LingkodHR and the machine,
-  filesystem, provider credentials, and state it owns.
-- **project** means an environment-local workspace record rooted at a
-  directory.
 
 ## Project sources
 
@@ -49,6 +45,12 @@ Use these project documents as primary sources:
 - `docs/data-model/physical-schema/` — tables, columns, and constraints per
   module; `pnpm db:policies <table>` prints a table's live grants and RLS
   policies, which migrations otherwise spread across many files
+- `packages/database/prisma/migrations/NNNN_snake_name/migration.sql` —
+  migrations, numbered in sequence rather than by Prisma timestamp. A new one
+  takes the number its brief reserves, else the next free on `origin/dev`.
+- `packages/database/scripts/seed-protected-shell-e2e.ts` — E2E and
+  protected-shell fixture data; its header maps Users, Employees, and periods
+- `docs/research/` — the cited authorities behind public-sector rules
 
 Read only the sources that apply to the task.
 
@@ -84,7 +86,6 @@ Do not invent public-sector business rules.
   `pnpm test:db --filter @lingkod-hr/api -- src/auth/global-user-lock.test.ts`.
 - Use shell commands and repo-native tools by default. Use computer-use or
   browser automation only when the user explicitly asks for it.
-- Apply `$unslop-response` to every user-facing response.
 
 ## Cross-machine setup gate
 
@@ -116,9 +117,8 @@ first, then leave the setup reproducible for the next machine.
   hatch: use `unknown`, then narrow it.
 - Put comments on APIs and functions when callers need usage context. Keep
   comments beside the code they describe; do not narrate line-by-line behavior.
-- Users drive agents all day and notice dropped frames, lying spinners, and
-  stale labels. Keep UI motion bounded, loading states truthful, and labels
-  synchronized with their source data. Avoid continuously repainting
+- Keep UI motion bounded, loading states truthful, and labels synchronized
+  with their source data. Avoid continuously repainting
   animations that waste GPU time on high-refresh displays.
 - If a rule here conflicts with the requested task, name the conflict and get
   explicit developer approval before breaking the rule.
