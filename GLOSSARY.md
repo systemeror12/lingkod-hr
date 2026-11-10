@@ -232,6 +232,10 @@ _Avoid_: Manager, Approving Official
 An Employee serving in an Organization Unit the Supervisor heads, or the head of one of its immediate child units, on the date of the read. It covers one level only (ADR 0007).
 _Avoid_: Team member, subordinate, everyone below
 
+**Employee Scope**:
+The Employees one permission reaches for an Agency Membership: the whole Agency, or an exact set built from its own Employee, its Direct Reports, and its assigned office.
+_Avoid_: Access scope, read scope, reach
+
 **HR Officer**:
 An agency-scoped operational HR role that inherits Employee access and may review, return, and approve attendance records within assigned scope. Attendance settings and period locking remain HR Administrator responsibilities.
 _Avoid_: Attendance Administrator, HR Certifying Officer
