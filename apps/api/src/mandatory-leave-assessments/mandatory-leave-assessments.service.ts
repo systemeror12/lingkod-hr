@@ -458,8 +458,10 @@ export class MandatoryLeaveAssessmentsService {
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.year ? { assessmentYear: filters.year } : {}),
           ...(filters.result ? { result: filters.result } : {}),
-          ...(readable ? { employeeId: { in: readable } } : {}),
-          ...(cursor ? { AND: [afterCursor(cursor)] } : {}),
+          AND: [
+            ...(readable ? [{ employeeId: { in: readable } }] : []),
+            ...(cursor ? [afterCursor(cursor)] : []),
+          ],
         },
         orderBy: [
           { assessmentYear: 'desc' },
