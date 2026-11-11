@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import {
   ATTENDANCE_WORK_DATE_LOCKED,
   findLockedWorkDate,
@@ -163,12 +164,6 @@ function associationOf(resolution: AttendanceResolution): AttendanceCaptureAssoc
   };
 }
 
-function scopeAllowsEmployee(scope: ResolvedReadScope, employeeId: string): boolean {
-  return scope.kind === 'AGENCY' || scope.employeeIds.includes(employeeId);
-}
-
-type ResolvedReadScope = { kind: 'AGENCY' } | { kind: 'SCOPED'; employeeIds: string[] };
-
 interface CapturedEventInput {
   employeeId: string;
   eventType: AttendanceEventType;
@@ -308,13 +303,16 @@ export class AttendanceService {
     context: RequestContext,
     filter: AttendanceEventListFilter = {},
   ): Promise<AttendanceEventSummary[]> {
-    const scope = await this.readScope(context);
-    const from = filter.from ? toDatabaseDate(filter.from) : null;
-    const to = filter.to ? toDatabaseDate(filter.to) : null;
-    if (from && to && to < from) throw this.rangeInvalid();
     return withDatabaseContext(this.databaseContext(context), async (transaction) => {
+      const scope = await resolveEmployeeScope(transaction, context, 'attendance.events.read');
+      if (scope.kind === 'NONE' || (scope.kind === 'SCOPED' && scope.employeeIds.length === 0)) {
+        throw this.readForbidden();
+      }
+      const from = filter.from ? toDatabaseDate(filter.from) : null;
+      const to = filter.to ? toDatabaseDate(filter.to) : null;
+      if (from && to && to < from) throw this.rangeInvalid();
       const timezone = await this.agencyTimezone(transaction, context.agencyId);
-      if (filter.employeeId && !scopeAllowsEmployee(scope, filter.employeeId)) {
+      if (filter.employeeId && !scopeCovers(scope, filter.employeeId)) {
         throw this.readForbidden();
       }
       const employeeFilter = filter.employeeId
@@ -338,9 +336,9 @@ export class AttendanceService {
     employeeId: string,
     workDateValue: string,
   ): Promise<AttendanceWorkDateContext> {
-    const scope = await this.readScope(context);
-    if (!scopeAllowsEmployee(scope, employeeId)) throw this.readForbidden();
     return withDatabaseContext(this.databaseContext(context), async (transaction) => {
+      const scope = await resolveEmployeeScope(transaction, context, 'attendance.events.read');
+      if (!scopeCovers(scope, employeeId)) throw this.readForbidden();
       const employee = await transaction.employee.findFirst({
         where: { agencyId: context.agencyId, id: employeeId },
         select: { id: true },
@@ -1148,35 +1146,6 @@ export class AttendanceService {
       select: { defaultTimezone: true },
     });
     return agency?.defaultTimezone ?? 'Asia/Manila';
-  }
-
-  private async readScope(context: RequestContext): Promise<ResolvedReadScope> {
-    const grants = context.permissions.filter((grant) => grant.code === 'attendance.events.read');
-    if (grants.some((grant) => grant.scopePolicy === 'AGENCY')) return { kind: 'AGENCY' };
-    const employeeIds = new Set<string>();
-    const scopePolicies = new Set(grants.map((grant) => grant.scopePolicy));
-    await withDatabaseContext(this.databaseContext(context), async (transaction) => {
-      if (scopePolicies.has('OWN')) {
-        const membership = await transaction.agencyMembership.findFirst({
-          where: { agencyId: context.agencyId, id: context.membershipId },
-          select: { employeeId: true },
-        });
-        if (membership?.employeeId) employeeIds.add(membership.employeeId);
-      }
-      if (scopePolicies.has('ASSIGNED_OFFICE') && context.primaryOrganizationUnitId) {
-        const segments = await transaction.serviceSegment.findMany({
-          where: {
-            agencyId: context.agencyId,
-            organizationUnitId: context.primaryOrganizationUnitId,
-            status: 'ACTIVE',
-          },
-          select: { employeeId: true },
-        });
-        for (const segment of segments) employeeIds.add(segment.employeeId);
-      }
-    });
-    if (employeeIds.size === 0) throw this.readForbidden();
-    return { kind: 'SCOPED', employeeIds: [...employeeIds] };
   }
 
   /**
