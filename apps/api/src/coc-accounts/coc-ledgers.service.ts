@@ -38,8 +38,8 @@ export class CocLedgersService {
    */
   async list(context: RequestContext): Promise<{ accounts: CocAccountSummary[] }> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const scope = await resolveEmployeeScope(context, READ, transaction);
-      if (!scope) throw forbidden();
+      const scope = await resolveEmployeeScope(transaction, context, READ);
+      if (scope.kind === 'NONE') throw forbidden();
       const accounts = await transaction.cocAccount.findMany({
         where: {
           agencyId: context.agencyId,
@@ -92,8 +92,8 @@ export class CocLedgersService {
    */
   async ledger(context: RequestContext, cocAccountId: string): Promise<CocLedger> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const scope = await resolveEmployeeScope(context, READ, transaction);
-      if (!scope) throw forbidden();
+      const scope = await resolveEmployeeScope(transaction, context, READ);
+      if (scope.kind === 'NONE') throw forbidden();
       const account = await transaction.cocAccount.findFirst({
         where: { agencyId: context.agencyId, id: cocAccountId },
         select: {

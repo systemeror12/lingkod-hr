@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { AttendanceLockedDaysService } from '../attendance-locked-days/attendance-locked-days.service';
 import {
@@ -675,9 +675,8 @@ async function assertEmployeesAccess(
   employeeIds: readonly string[],
 ): Promise<void> {
   if (!context.agencyId || !context.userId || !context.membershipId) throw forbidden();
-  if (hasPermission(context, permission, { agencyId: context.agencyId })) return;
-  const scope = await resolveEmployeeScope(context, permission, transaction);
-  if (!scope) throw forbidden();
+  const scope = await resolveEmployeeScope(transaction, context, permission);
+  if (scope.kind === 'NONE') throw forbidden();
   if (employeeIds.some((employeeId) => !scopeCovers(scope, employeeId))) {
     throw new OvertimeServiceRecordError(
       'The Employee is outside the scope of the current Agency Membership.',

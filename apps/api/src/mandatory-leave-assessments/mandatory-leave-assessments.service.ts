@@ -855,8 +855,10 @@ function hasScope(context: RequestContext, code: string, scopePolicy: string): b
  * Employee's direct reports today.
  */
 async function readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
-  const scope = await resolveEmployeeScope(context, 'leave.mandatory_assessments.read');
-  if (!scope) {
+  const scope = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+    resolveEmployeeScope(transaction, context, 'leave.mandatory_assessments.read'),
+  );
+  if (scope.kind === 'NONE') {
     throw new MandatoryLeaveAssessmentServiceError(
       'The leave.mandatory_assessments.read permission is required.',
       403,
