@@ -1401,22 +1401,22 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     filters: AttendanceCorrectionListFilters = {},
   ): Promise<AttendanceCorrectionSummary[]> {
-    const scope = await this.days.readScope(context);
-    if (
-      scope.kind === 'SCOPED' &&
-      filters.employeeId &&
-      !scope.employeeIds.includes(filters.employeeId)
-    ) {
-      return [];
-    }
-    const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
-    const employeeFilter =
-      scope.kind === 'SCOPED'
-        ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
-        : filters.employeeId
-          ? { employeeId: filters.employeeId }
-          : {};
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.days.readScope(transaction, context);
+      if (
+        scope.kind === 'SCOPED' &&
+        filters.employeeId &&
+        !scope.employeeIds.includes(filters.employeeId)
+      ) {
+        return [];
+      }
+      const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+      const employeeFilter =
+        scope.kind === 'SCOPED'
+          ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
+          : filters.employeeId
+            ? { employeeId: filters.employeeId }
+            : {};
       const records = await transaction.attendanceCorrection.findMany({
         where: {
           agencyId: context.agencyId,
@@ -1443,10 +1443,10 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     correctionId: string,
   ): Promise<AttendanceCorrectionDetail> {
-    await this.days.readScope(context);
-    return withDatabaseContext(databaseContext(context), (transaction) =>
-      this.findByIdInTransaction(transaction, context, correctionId),
-    );
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      await this.days.readScope(transaction, context);
+      return this.findByIdInTransaction(transaction, context, correctionId);
+    });
   }
 
   private async completeApproval(
@@ -2461,11 +2461,10 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     record: CorrectionRecord,
   ): Promise<void> {
-    const scope = await this.days.readScope(context);
+    const scope = await this.days.readScope(transaction, context);
     if (scope.kind === 'SCOPED' && !scope.employeeIds.includes(record.employeeId)) {
       throw this.notFound();
     }
-    void transaction;
   }
 
   private async requireActiveApprovalRequest(

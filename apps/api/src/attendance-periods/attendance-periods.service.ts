@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
-import { resolveAttendanceEmployeeScope } from '../attendance-scope';
+import { resolveEmployeeScope, type EmployeeScope } from '../employee-scope';
 import {
   formatDate,
   toDatabaseDate,
@@ -189,9 +189,9 @@ export class AttendancePeriodsService {
     context: RequestContext,
     filters: AttendancePeriodListFilters = {},
   ): Promise<AttendancePeriodVersionSummary[]> {
-    const scope = await this.readScope(context);
     const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
       const records = await transaction.attendancePeriodVersion.findMany({
         where: {
           agencyId: context.agencyId,
@@ -231,8 +231,8 @@ export class AttendancePeriodsService {
     context: RequestContext,
     versionId: string,
   ): Promise<AttendancePeriodVersionDetail> {
-    const scope = await this.readScope(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
       const record = await this.requireVersion(transaction, context, versionId);
       await this.assertVersionInScope(transaction, context.agencyId, record.id, scope);
       const counts = await this.membershipCounts(transaction, context.agencyId, [record.id]);
@@ -381,9 +381,9 @@ export class AttendancePeriodsService {
     input: { reason: string },
     idempotencyKey?: string,
   ): Promise<AttendancePeriodVersionDetail> {
-    const scope = await this.decideScope(context, 'attendance.periods.return');
     const command = 'ATTENDANCE_PERIOD_VERSION_RETURNED';
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.decideScope(transaction, context, 'attendance.periods.return');
       if (idempotencyKey) {
         const completed = await this.completedCommand(transaction, context, {
           action: command,
@@ -440,9 +440,9 @@ export class AttendancePeriodsService {
     input: { reason?: string | undefined },
     idempotencyKey?: string,
   ): Promise<AttendancePeriodVersionDetail> {
-    const scope = await this.decideScope(context, 'attendance.periods.approve');
     const command = 'ATTENDANCE_PERIOD_VERSION_APPROVED';
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.decideScope(transaction, context, 'attendance.periods.approve');
       if (idempotencyKey) {
         const completed = await this.completedCommand(transaction, context, {
           action: command,
@@ -507,8 +507,8 @@ export class AttendancePeriodsService {
     context: RequestContext,
     versionId: string,
   ): Promise<AttendancePeriodReconciliation> {
-    const scope = await this.readScope(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
       const record = await this.requireVersion(transaction, context, versionId);
       await this.assertVersionInScope(transaction, context.agencyId, record.id, scope);
       return this.reconcileInTransaction(transaction, context, record);
@@ -647,8 +647,8 @@ export class AttendancePeriodsService {
     context: RequestContext,
     versionId: string,
   ): Promise<AttendancePayrollPublicationDetail> {
-    const scope = await this.publicationScope(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.publicationScope(transaction, context);
       const record = await this.requireVersion(transaction, context, versionId);
       await this.assertVersionInScope(transaction, context.agencyId, record.id, scope);
       const publication = await transaction.attendancePayrollPublication.findFirst({
@@ -1553,9 +1553,9 @@ export class AttendancePeriodsService {
     transaction: Prisma.TransactionClient,
     agencyId: string,
     versionId: string,
-    scope: Awaited<ReturnType<typeof resolveAttendanceEmployeeScope>>,
+    scope: Exclude<EmployeeScope, { kind: 'NONE' }>,
   ): Promise<void> {
-    if (!scope || scope.kind === 'AGENCY') return;
+    if (scope.kind === 'AGENCY') return;
     const outside = await transaction.attendancePeriodVersionDay.findFirst({
       where: {
         agencyId,
@@ -1567,40 +1567,50 @@ export class AttendancePeriodsService {
     if (outside) throw this.versionNotFound();
   }
 
-  private async readScope(context: RequestContext) {
-    const scope = await resolveAttendanceEmployeeScope(context, 'attendance.reports.read');
-    if (!scope) {
-      throw new AttendancePeriodServiceError(
-        'The attendance.reports.read permission is required.',
-        403,
-        'ATTENDANCE_PERIOD_READ_FORBIDDEN',
-      );
-    }
-    return scope;
+  private async readScope(transaction: Prisma.TransactionClient, context: RequestContext) {
+    return this.employeeScope(
+      transaction,
+      context,
+      'attendance.reports.read',
+      'ATTENDANCE_PERIOD_READ_FORBIDDEN',
+    );
   }
 
-  private async publicationScope(context: RequestContext) {
-    const scope = await resolveAttendanceEmployeeScope(
+  private async publicationScope(transaction: Prisma.TransactionClient, context: RequestContext) {
+    return this.employeeScope(
+      transaction,
       context,
       'attendance.payroll_publications.read',
+      'ATTENDANCE_PAYROLL_PUBLICATION_READ_FORBIDDEN',
     );
-    if (!scope) {
-      throw new AttendancePeriodServiceError(
-        'The attendance.payroll_publications.read permission is required.',
-        403,
-        'ATTENDANCE_PAYROLL_PUBLICATION_READ_FORBIDDEN',
-      );
-    }
-    return scope;
   }
 
-  private async decideScope(context: RequestContext, permissionCode: string) {
-    const scope = await resolveAttendanceEmployeeScope(context, permissionCode);
-    if (!scope) {
+  private async decideScope(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    permissionCode: string,
+  ) {
+    return this.employeeScope(
+      transaction,
+      context,
+      permissionCode,
+      'ATTENDANCE_PERIOD_DECIDE_FORBIDDEN',
+    );
+  }
+
+  /** Resolve one permission's Employee Scope, denying a scope that reaches no Employee. */
+  private async employeeScope(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    permissionCode: string,
+    forbiddenCode: string,
+  ) {
+    const scope = await resolveEmployeeScope(transaction, context, permissionCode);
+    if (scope.kind === 'NONE' || (scope.kind === 'SCOPED' && scope.employeeIds.length === 0)) {
       throw new AttendancePeriodServiceError(
         `The ${permissionCode} permission is required.`,
         403,
-        'ATTENDANCE_PERIOD_DECIDE_FORBIDDEN',
+        forbiddenCode,
       );
     }
     return scope;
