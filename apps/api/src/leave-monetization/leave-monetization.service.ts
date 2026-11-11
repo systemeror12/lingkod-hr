@@ -341,32 +341,35 @@ export class LeaveMonetizationService implements OnModuleInit {
     context: RequestContext,
     filter: MonetizationListFilters = {},
   ): Promise<MonetizationPage> {
-    const scope = await this.requireScope(
-      context,
-      'leave.accounts.read',
-      'MONETIZATION_READ_FORBIDDEN',
-    );
     const limit = Math.min(Math.max(filter.limit ?? 50, 1), 100);
     const offset = Math.max(filter.offset ?? 0, 0);
     const { records, actorEmployeeId } = await withDatabaseContext(
       this.databaseContext(context),
-      async (transaction) => ({
-        records: await transaction.leaveMonetizationRequest.findMany({
-          where: {
-            agencyId: context.agencyId,
-            ...(filter.employeeId ? { employeeId: filter.employeeId } : {}),
-            ...(scope.kind === 'SCOPED'
-              ? { AND: [{ employeeId: { in: scope.employeeIds } }] }
-              : {}),
-            ...(filter.status ? { status: filter.status } : {}),
-          },
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          skip: offset,
-          take: limit + 1,
-          include: this.requestInclude(),
-        }),
-        actorEmployeeId: await this.actorEmployeeId(transaction, context),
-      }),
+      async (transaction) => {
+        const scope = await this.requireScope(
+          transaction,
+          context,
+          'leave.accounts.read',
+          'MONETIZATION_READ_FORBIDDEN',
+        );
+        return {
+          records: await transaction.leaveMonetizationRequest.findMany({
+            where: {
+              agencyId: context.agencyId,
+              ...(filter.employeeId ? { employeeId: filter.employeeId } : {}),
+              ...(scope.kind === 'SCOPED'
+                ? { AND: [{ employeeId: { in: scope.employeeIds } }] }
+                : {}),
+              ...(filter.status ? { status: filter.status } : {}),
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            skip: offset,
+            take: limit + 1,
+            include: this.requestInclude(),
+          }),
+          actorEmployeeId: await this.actorEmployeeId(transaction, context),
+        };
+      },
     );
     const hasMore = records.length > limit;
     return {
@@ -378,20 +381,21 @@ export class LeaveMonetizationService implements OnModuleInit {
   }
 
   async findById(context: RequestContext, requestId: string): Promise<MonetizationDetail | null> {
-    const scope = await this.requireScope(
-      context,
-      'leave.accounts.read',
-      'MONETIZATION_READ_FORBIDDEN',
-    );
-    const record = await withDatabaseContext(this.databaseContext(context), (transaction) =>
-      transaction.leaveMonetizationRequest.findFirst({
+    const record = await withDatabaseContext(this.databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(
+        transaction,
+        context,
+        'leave.accounts.read',
+        'MONETIZATION_READ_FORBIDDEN',
+      );
+      const found = await transaction.leaveMonetizationRequest.findFirst({
         where: { agencyId: context.agencyId, id: requestId },
         include: this.requestInclude(),
-      }),
-    );
-    if (!record) return null;
-    if (!scopeCovers(scope, record.employeeId)) throw notFound();
-    return this.detail(record);
+      });
+      if (found && !scopeCovers(scope, found.employeeId)) throw notFound();
+      return found;
+    });
+    return record ? this.detail(record) : null;
   }
 
   async create(
@@ -400,20 +404,21 @@ export class LeaveMonetizationService implements OnModuleInit {
     rawIdempotencyKey?: string,
   ): Promise<MonetizationRequestSummary> {
     this.assertPermission(context, 'leave.monetization.create', 'MONETIZATION_CREATE_FORBIDDEN');
-    const scope = await this.requireScope(
-      context,
-      'leave.monetization.create',
-      'MONETIZATION_CREATE_FORBIDDEN',
-    );
-    const employeeId =
-      scope.kind === 'SCOPED'
-        ? (input.employeeId ?? (await this.requireMembershipEmployeeId(context)))
-        : input.employeeId;
-    if (!employeeId) throw employeeRequired();
-    if (!scopeCovers(scope, employeeId)) throw scopeForbidden();
     const idempotencyKey = rawIdempotencyKey?.trim() || null;
-    const fingerprint = canonicalJson({ employeeId });
     return withDatabaseContext(this.databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(
+        transaction,
+        context,
+        'leave.monetization.create',
+        'MONETIZATION_CREATE_FORBIDDEN',
+      );
+      const employeeId =
+        scope.kind === 'SCOPED'
+          ? (input.employeeId ?? (await this.requireMembershipEmployeeId(transaction, context)))
+          : input.employeeId;
+      if (!employeeId) throw employeeRequired();
+      if (!scopeCovers(scope, employeeId)) throw scopeForbidden();
+      const fingerprint = canonicalJson({ employeeId });
       if (idempotencyKey) {
         const completed = await this.completedWrite(transaction, context, {
           action: 'LEAVE_MONETIZATION_REQUEST_CREATED',
@@ -2686,16 +2691,12 @@ export class LeaveMonetizationService implements OnModuleInit {
   }
 
   private async requireScope(
+    transaction: Prisma.TransactionClient,
     context: RequestContext,
     permission: string,
     code: string,
-    transaction?: Prisma.TransactionClient,
   ): Promise<EmployeeScope> {
-    const scope = transaction
-      ? await resolveEmployeeScope(transaction, context, permission)
-      : await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
-          resolveEmployeeScope(transaction, context, permission),
-        );
+    const scope = await resolveEmployeeScope(transaction, context, permission);
     if (scope.kind === 'NONE')
       throw new LeaveMonetizationServiceError(
         `The ${permission} permission is required.`,
@@ -2712,10 +2713,10 @@ export class LeaveMonetizationService implements OnModuleInit {
     permission: string,
   ): Promise<void> {
     const scope = await this.requireScope(
+      transaction,
       context,
       permission,
       `${permission.toUpperCase()}_FORBIDDEN`,
-      transaction,
     );
     if (!scopeCovers(scope, request.employeeId)) throw scopeForbidden();
   }
@@ -2732,16 +2733,17 @@ export class LeaveMonetizationService implements OnModuleInit {
     return actor?.employeeId ?? null;
   }
 
-  private async requireMembershipEmployeeId(context: RequestContext): Promise<string> {
-    const employee = await withDatabaseContext(this.databaseContext(context), (transaction) =>
-      transaction.employee.findFirst({
-        where: {
-          agencyId: context.agencyId,
-          memberships: { some: { id: context.membershipId } },
-        },
-        select: { id: true },
-      }),
-    );
+  private async requireMembershipEmployeeId(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+  ): Promise<string> {
+    const employee = await transaction.employee.findFirst({
+      where: {
+        agencyId: context.agencyId,
+        memberships: { some: { id: context.membershipId } },
+      },
+      select: { id: true },
+    });
     if (!employee) {
       throw new LeaveMonetizationServiceError(
         'The current Membership is not linked to an Employee.',
