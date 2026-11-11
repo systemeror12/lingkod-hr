@@ -1315,8 +1315,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     context: RequestContext,
     filters: LeaveApplicationListFilters = {},
   ): Promise<LeaveApplicationSummary[]> {
-    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(transaction, context, 'leave.applications.create');
       const records = await transaction.leaveApplication.findMany({
         where: {
           agencyId: context.agencyId,
@@ -1337,10 +1337,10 @@ export class LeaveApplicationsService implements OnModuleInit {
     context: RequestContext,
     applicationId: string,
   ): Promise<LeaveApplicationDetail | null> {
-    const scope = await this.requireScope(context, 'leave.applications.create');
-    return withDatabaseContext(databaseContext(context), (transaction) =>
-      this.detailInTransaction(transaction, context, applicationId, scope),
-    );
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(transaction, context, 'leave.applications.create');
+      return this.detailInTransaction(transaction, context, applicationId, scope);
+    });
   }
 
   async create(
@@ -1521,8 +1521,8 @@ export class LeaveApplicationsService implements OnModuleInit {
   }
 
   async preview(context: RequestContext, applicationId: string): Promise<LeaveEligibilityOutcome> {
-    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(transaction, context, 'leave.applications.create');
       const application = await transaction.leaveApplication.findFirst({
         where: { agencyId: context.agencyId, id: applicationId },
         select: applicationSelect,
@@ -5063,10 +5063,12 @@ export class LeaveApplicationsService implements OnModuleInit {
     return completed;
   }
 
-  private async requireScope(context: RequestContext, permission: string): Promise<EmployeeScope> {
-    const scope = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
-      resolveEmployeeScope(transaction, context, permission),
-    );
+  private async requireScope(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    permission: string,
+  ): Promise<EmployeeScope> {
+    const scope = await resolveEmployeeScope(transaction, context, permission);
     if (scope.kind !== 'NONE') return scope;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required.`,

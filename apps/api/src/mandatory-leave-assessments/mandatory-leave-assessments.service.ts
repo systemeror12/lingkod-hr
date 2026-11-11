@@ -448,10 +448,10 @@ export class MandatoryLeaveAssessmentsService {
     filters: MandatoryLeaveAssessmentFilters = {},
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveAssessmentPage> {
-    const readable = await readableEmployeeIds(context);
-    const limit = page.limit ?? 25;
-    const cursor = page.cursor ? decodeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context);
+      const limit = page.limit ?? 25;
+      const cursor = page.cursor ? decodeCursor(page.cursor) : null;
       const records = await transaction.mandatoryLeaveAssessment.findMany({
         where: {
           agencyId: context.agencyId,
@@ -501,10 +501,10 @@ export class MandatoryLeaveAssessmentsService {
     assessmentYear: number,
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveEmployeeLatestPage> {
-    const readable = await readableEmployeeIds(context);
-    const limit = page.limit ?? 25;
-    const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context);
+      const limit = page.limit ?? 25;
+      const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
       const employees = await transaction.employee.findMany({
         where: {
           agencyId: context.agencyId,
@@ -556,8 +556,8 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentId: string,
   ): Promise<MandatoryLeaveAssessmentDetail | null> {
-    const readable = await readableEmployeeIds(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context);
       const record = await transaction.mandatoryLeaveAssessment.findFirst({
         where: { agencyId: context.agencyId, id: assessmentId },
         select: assessmentSelect,
@@ -854,9 +854,14 @@ function hasScope(context: RequestContext, code: string, scopePolicy: string): b
  * Agency. OWN adds the caller's linked Employee; DIRECT_REPORTS adds that
  * Employee's direct reports today.
  */
-async function readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
-  const scope = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
-    resolveEmployeeScope(transaction, context, 'leave.mandatory_assessments.read'),
+async function readableEmployeeIds(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+): Promise<string[] | null> {
+  const scope = await resolveEmployeeScope(
+    transaction,
+    context,
+    'leave.mandatory_assessments.read',
   );
   if (scope.kind === 'NONE') {
     throw new MandatoryLeaveAssessmentServiceError(
