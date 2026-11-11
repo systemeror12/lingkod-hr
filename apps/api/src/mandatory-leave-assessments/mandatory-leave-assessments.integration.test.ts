@@ -1197,6 +1197,21 @@ it.skipIf(!enabled)('shows a Supervisor only the assessments of their direct rep
     expect(latest.items.map((row) => row.employeeId)).toEqual([member.id, sectionHead.id]);
     const { items } = await service.list(directReportsContext, { year });
     expect(items.map((row) => row.employeeId)).toEqual([member.id, sectionHead.id]);
+
+    // An Employee filter narrows the scope; it neither widens nor replaces it.
+    const filtered = await service.list(directReportsContext, { year, employeeId: member.id });
+    expect(filtered.items.map((row) => row.employeeId)).toEqual([member.id]);
+    await expect(
+      service.list(directReportsContext, { year, employeeId: outsider.id }),
+    ).resolves.toMatchObject({ items: [] });
+    const agencyContext = context(agency.id, user.id, membership.id, [
+      { code: 'leave.mandatory_assessments.read', scopePolicy: 'AGENCY' },
+    ]);
+    const agencyFiltered = await service.list(agencyContext, { year, employeeId: outsider.id });
+    expect(agencyFiltered.items.map((row) => row.employeeId)).toEqual([outsider.id]);
+    const agencyAll = await service.list(agencyContext, { year });
+    expect(agencyAll.items).toHaveLength(6);
+
     await expect(
       service.findById(directReportsContext, assessments.get(member.id)!),
     ).resolves.toMatchObject({ employeeId: member.id });
