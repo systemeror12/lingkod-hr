@@ -389,7 +389,7 @@ it.skipIf(!enabled)('maintains ordered qualification rows and exact evidence saf
     });
     await expect(
       pds.listOutputs(
-        context(agency.id, '00000000-0000-4000-8000-000000000099', membership.id, [
+        context(agency.id, otherUser.id, otherMembership.id, [
           { code: 'personnel.pds.read', scopePolicy: 'OWN' },
         ]),
         created.id,

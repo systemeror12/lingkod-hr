@@ -1,10 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
-import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { ownEmployeeId, resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import {
   PDS_FORM_VERSION,
   PDS_CITIZENSHIP_COUNTRIES,
@@ -414,18 +415,8 @@ const pdsSummarySelect = {
   rowVersion: true,
 } as unknown as Prisma.PdsVersionSelect;
 
-const pdsSummaryWithOwnerSelect = {
-  ...pdsSummarySelect,
-  employee: {
-    select: {
-      memberships: { select: { userId: true } },
-      currentServiceSegment: { select: { organizationUnitId: true } },
-    },
-  },
-} as unknown as Prisma.PdsVersionSelect;
-
 const pdsSelect = {
-  ...pdsSummaryWithOwnerSelect,
+  ...pdsSummarySelect,
   personalDetails: {
     select: {
       surname: true,
@@ -672,7 +663,7 @@ const pdsSelect = {
 } as unknown as Prisma.PdsVersionSelect;
 
 const pdsRedactedSelect = {
-  ...pdsSummaryWithOwnerSelect,
+  ...pdsSummarySelect,
   educationRecords: {
     orderBy: [{ level: 'asc' }, { sequenceNo: 'asc' }],
     select: {
@@ -722,14 +713,6 @@ type PdsSummaryRecord = {
   updatedByMembershipId: string;
   updatedAt: Date;
   rowVersion: number;
-};
-
-type PdsOwnerRecord = {
-  agencyId: string;
-  employee: {
-    memberships: { userId: string }[];
-    currentServiceSegment: { organizationUnitId: string | null } | null;
-  };
 };
 
 type PdsPersonalRecord = {
@@ -895,29 +878,27 @@ type PdsTransitionEventRecord = {
   occurredAt: Date;
 };
 
-type PdsRecord = PdsSummaryRecord &
-  PdsOwnerRecord & {
-    personalDetails: PdsPersonalRecord | null;
-    familyRecords: PdsFamilyRecord[];
-    educationRecords: PdsEducationRecord[];
-    eligibilityRecords: PdsEligibilityRecord[];
-    workExperienceRecords: PdsWorkExperienceRecord[];
-    voluntaryWorkRecords: PdsVoluntaryWorkRecord[];
-    learningDevelopmentRecords: PdsLearningDevelopmentRecord[];
-    wesArtifacts: PdsWesArtifactRecord[];
-    otherInformation: PdsOtherInformationView | null;
-    declarationDetails: PdsDeclarationDetailsRecord | null;
-    referenceRecords: PdsReferenceRecordView[];
-    certificationDetails: PdsCertificationDetailsRecord | null;
-    pageSignatures: PdsPageSignatureRecord[];
-    transitionEvents: PdsTransitionEventRecord[];
-  };
+type PdsRecord = PdsSummaryRecord & {
+  personalDetails: PdsPersonalRecord | null;
+  familyRecords: PdsFamilyRecord[];
+  educationRecords: PdsEducationRecord[];
+  eligibilityRecords: PdsEligibilityRecord[];
+  workExperienceRecords: PdsWorkExperienceRecord[];
+  voluntaryWorkRecords: PdsVoluntaryWorkRecord[];
+  learningDevelopmentRecords: PdsLearningDevelopmentRecord[];
+  wesArtifacts: PdsWesArtifactRecord[];
+  otherInformation: PdsOtherInformationView | null;
+  declarationDetails: PdsDeclarationDetailsRecord | null;
+  referenceRecords: PdsReferenceRecordView[];
+  certificationDetails: PdsCertificationDetailsRecord | null;
+  pageSignatures: PdsPageSignatureRecord[];
+  transitionEvents: PdsTransitionEventRecord[];
+};
 
-type PdsRedactedRecord = PdsSummaryRecord &
-  PdsOwnerRecord & {
-    educationRecords: PdsEducationRecord[];
-    eligibilityRecords: PdsEligibilityRecord[];
-  };
+type PdsRedactedRecord = PdsSummaryRecord & {
+  educationRecords: PdsEducationRecord[];
+  eligibilityRecords: PdsEligibilityRecord[];
+};
 
 type PdsOutputRecord = {
   id: string;
@@ -2843,65 +2824,70 @@ function redactedDetail(record: PdsRedactedRecord, fieldScope: PdsFieldScope): P
   };
 }
 
-function ownerUserId(record: PdsOwnerRecord): string | null {
-  return record.employee.memberships[0]?.userId ?? null;
-}
-
 function hasPermissionGrant(context: RequestContext, permission: string): boolean {
   return context.permissions.some((grant) => grant.code === permission);
 }
 
-function permissionScope(context: RequestContext, permission: string): 'AGENCY' | 'OWN' | null {
-  if (
-    context.permissions.some(
-      (candidate) => candidate.code === permission && candidate.scopePolicy === 'AGENCY',
-    )
-  ) {
-    return 'AGENCY';
-  }
-  return context.permissions.some(
-    (candidate) => candidate.code === permission && candidate.scopePolicy === 'OWN',
-  )
-    ? 'OWN'
-    : null;
+/**
+ * The PDS fields the acting Agency Membership may read for one Employee: null
+ * outside the `personnel.pds.read` Employee Scope, FULL when the
+ * `personnel.pds.read_sensitive` Employee Scope also covers the Employee, and
+ * REDACTED otherwise.
+ */
+async function readFieldScope(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  employeeId: string,
+): Promise<PdsFieldScope | null> {
+  const read = await resolveEmployeeScope(transaction, context, 'personnel.pds.read');
+  if (!scopeCovers(read, employeeId)) return null;
+  const sensitive = await resolveEmployeeScope(
+    transaction,
+    context,
+    'personnel.pds.read_sensitive',
+  );
+  return scopeCovers(sensitive, employeeId) ? 'FULL' : 'REDACTED';
 }
 
-function readFieldScope(context: RequestContext, record: PdsOwnerRecord): PdsFieldScope | null {
-  if (!hasPermissionGrant(context, 'personnel.pds.read')) return null;
-  const owner = ownerUserId(record);
-  const organizationUnitId = record.employee.currentServiceSegment?.organizationUnitId ?? null;
-  const accessRecord = {
-    agencyId: record.agencyId,
-    ...(owner ? { ownerUserId: owner } : {}),
-    ...(organizationUnitId ? { organizationUnitId } : {}),
-  };
-  if (!canAccessRecord(context, 'personnel.pds.read', accessRecord)) {
-    return null;
-  }
-  return context.permissions.some(
-    (candidate) =>
-      candidate.code === 'personnel.pds.read_sensitive' &&
-      (candidate.scopePolicy === 'AGENCY' ||
-        (candidate.scopePolicy === 'OWN' && owner === context.userId)),
-  )
-    ? 'FULL'
-    : 'REDACTED';
-}
-
-function scopedDetail(context: RequestContext, record: PdsRecord): PdsVersionDetail {
-  const fieldScope = readFieldScope(context, record);
+async function scopedDetail(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  record: PdsRecord,
+): Promise<PdsVersionDetail> {
+  const fieldScope = await readFieldScope(transaction, context, record.employeeId);
   return fieldScope === 'FULL'
     ? detail(record, fieldScope)
     : redactedDetail(record, fieldScope ?? 'REDACTED');
 }
 
-function canAccess(
+/** Whether the `personnel.pds.update` Employee Scope covers the Employee. */
+async function canUpdate(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+  employeeId: string,
+): Promise<boolean> {
+  return scopeCovers(
+    await resolveEmployeeScope(transaction, context, 'personnel.pds.update'),
+    employeeId,
+  );
+}
+
+/**
+ * Submit and certify stay with the Employee: the PDS must be the actor's own,
+ * and the actor must hold the permission with an OWN grant (#591 decides
+ * whether this grant check stays).
+ */
+async function isOwnWithOwnGrant(
+  transaction: Prisma.TransactionClient,
   context: RequestContext,
   permission: string,
-  employeeOwnerUserId: string | null,
-): boolean {
-  const scope = permissionScope(context, permission);
-  return scope === 'AGENCY' || (scope === 'OWN' && employeeOwnerUserId === context.userId);
+  employeeId: string,
+): Promise<boolean> {
+  if (
+    !context.permissions.some((grant) => grant.code === permission && grant.scopePolicy === 'OWN')
+  )
+    return false;
+  return (await ownEmployeeId(transaction, context)) === employeeId;
 }
 
 function databaseContext(context: RequestContext, pdsMutation = false) {
@@ -2952,7 +2938,9 @@ export class PdsService {
     context: RequestContext,
     records: readonly { documentId?: string | null; documentVersionId?: string | null }[],
   ): Promise<void> {
-    const ownWorkflow = permissionScope(context, 'personnel.pds.update') === 'OWN';
+    const ownWorkflow = !hasPermission(context, 'personnel.pds.update', {
+      agencyId: context.agencyId,
+    });
     for (const record of records) {
       if (!record.documentId && !record.documentVersionId) continue;
       if (!record.documentId || !record.documentVersionId || !this.documentsService) {
@@ -3190,7 +3178,7 @@ export class PdsService {
   async listOwn(context: RequestContext): Promise<PdsVersionList> {
     this.assertContext(context, 'personnel.pds.read', 'PDS_READ_FORBIDDEN');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const employeeId = await this.ownEmployeeId(transaction, context);
+      const employeeId = await ownEmployeeId(transaction, context);
       if (!employeeId) throw this.notFound();
       return this.listInTransaction(transaction, context, employeeId);
     });
@@ -3201,10 +3189,10 @@ export class PdsService {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const summaryRecord = (await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, id: pdsVersionId },
-        select: pdsSummaryWithOwnerSelect,
-      })) as unknown as (PdsSummaryRecord & PdsOwnerRecord) | null;
+        select: pdsSummarySelect,
+      })) as unknown as PdsSummaryRecord | null;
       if (!summaryRecord) return null;
-      const fieldScope = readFieldScope(context, summaryRecord);
+      const fieldScope = await readFieldScope(transaction, context, summaryRecord.employeeId);
       if (!fieldScope) return null;
       await this.auditRead(transaction, context, pdsVersionId, fieldScope, 'DETAIL');
       if (fieldScope === 'REDACTED') {
@@ -3226,22 +3214,20 @@ export class PdsService {
     this.assertContext(context, 'personnel.pds.update', 'PDS_UPDATE_FORBIDDEN');
     this.validateQualificationInput(input);
     return withDatabaseContext(databaseContext(context, true), async (transaction) => {
-      const employeeId = input.employeeId ?? (await this.ownEmployeeId(transaction, context));
+      const employeeId = input.employeeId ?? (await ownEmployeeId(transaction, context));
       if (!employeeId) throw this.employeeRequired();
       await this.lockEmployee(transaction, context.agencyId, employeeId);
       const employee = await transaction.employee.findUnique({
         where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
-        select: { id: true, memberships: { select: { userId: true } } },
+        select: { id: true },
       });
       if (!employee) throw this.notFound();
-      if (!canAccess(context, 'personnel.pds.update', employee.memberships[0]?.userId ?? null)) {
-        throw this.notFound();
-      }
+      if (!(await canUpdate(transaction, context, employeeId))) throw this.notFound();
       const existing = (await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, employeeId, status: { in: ['DRAFT', 'RETURNED'] } },
         select: pdsSelect,
       })) as unknown as PdsRecord | null;
-      if (existing) return scopedDetail(context, existing);
+      if (existing) return scopedDetail(transaction, context, existing);
 
       const latest = await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, employeeId },
@@ -3333,7 +3319,7 @@ export class PdsService {
       });
       const record = await this.record(transaction, context.agencyId, created.id);
       if (!record) throw this.notFound();
-      return scopedDetail(context, record);
+      return scopedDetail(transaction, context, record);
     });
   }
 
@@ -3348,7 +3334,7 @@ export class PdsService {
       await this.lockVersion(transaction, context.agencyId, pdsVersionId);
       const existing = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!existing) throw this.notFound();
-      if (!canAccess(context, 'personnel.pds.update', ownerUserId(existing))) throw this.notFound();
+      if (!(await canUpdate(transaction, context, existing.employeeId))) throw this.notFound();
       if (!['DRAFT', 'RETURNED'].includes(existing.status)) throw this.immutable();
       if (input.rowVersion !== undefined && input.rowVersion !== existing.rowVersion) {
         throw new PdsServiceError(
@@ -3521,7 +3507,7 @@ export class PdsService {
       await this.writeCompletionSections(transaction, context, pdsVersionId, input);
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
-      return scopedDetail(context, updated);
+      return scopedDetail(transaction, context, updated);
     });
   }
 
@@ -3531,12 +3517,9 @@ export class PdsService {
       await this.lockVersion(transaction, context.agencyId, pdsVersionId);
       const record = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!record) throw this.notFound();
-      if (!canAccess(context, 'personnel.pds.update', ownerUserId(record))) throw this.notFound();
+      if (!(await canUpdate(transaction, context, record.employeeId))) throw this.notFound();
       if (
-        !context.permissions.some(
-          (grant) => grant.code === 'personnel.pds.update' && grant.scopePolicy === 'OWN',
-        ) ||
-        ownerUserId(record) !== context.userId
+        !(await isOwnWithOwnGrant(transaction, context, 'personnel.pds.update', record.employeeId))
       ) {
         throw new PdsServiceError(
           'Employees may submit only their own PDS.',
@@ -3574,7 +3557,7 @@ export class PdsService {
       });
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
-      return scopedDetail(context, updated);
+      return scopedDetail(transaction, context, updated);
     });
   }
 
@@ -3616,7 +3599,7 @@ export class PdsService {
       });
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
-      return scopedDetail(context, updated);
+      return scopedDetail(transaction, context, updated);
     });
   }
 
@@ -3638,10 +3621,7 @@ export class PdsService {
       const record = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!record) throw this.notFound();
       if (
-        !context.permissions.some(
-          (grant) => grant.code === 'personnel.pds.certify' && grant.scopePolicy === 'OWN',
-        ) ||
-        ownerUserId(record) !== context.userId
+        !(await isOwnWithOwnGrant(transaction, context, 'personnel.pds.certify', record.employeeId))
       ) {
         throw new PdsServiceError(
           'Employees may certify only their own PDS.',
@@ -3676,7 +3656,7 @@ export class PdsService {
       });
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
-      return scopedDetail(context, updated);
+      return scopedDetail(transaction, context, updated);
     });
   }
 
@@ -3749,7 +3729,7 @@ export class PdsService {
       }
       const updated = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!updated) throw this.notFound();
-      return scopedDetail(context, updated);
+      return scopedDetail(transaction, context, updated);
     });
   }
 
@@ -3766,7 +3746,7 @@ export class PdsService {
       await this.lockVersion(transaction, context.agencyId, pdsVersionId);
       const source = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!source) throw this.notFound();
-      if (!canAccess(context, 'personnel.pds.update', ownerUserId(source))) throw this.notFound();
+      if (!(await canUpdate(transaction, context, source.employeeId))) throw this.notFound();
       if (source.status !== 'CERTIFIED') {
         throw new PdsServiceError(
           'Only a Certified PDS can be corrected.',
@@ -3783,7 +3763,7 @@ export class PdsService {
         },
         select: pdsSelect,
       })) as unknown as PdsRecord | null;
-      if (open) return scopedDetail(context, open);
+      if (open) return scopedDetail(transaction, context, open);
       const latest = await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, employeeId: source.employeeId },
         orderBy: { versionNo: 'desc' },
@@ -3816,7 +3796,7 @@ export class PdsService {
         reason,
         false,
       );
-      return scopedDetail(context, draft);
+      return scopedDetail(transaction, context, draft);
     });
   }
 
@@ -3825,7 +3805,7 @@ export class PdsService {
     return withDatabaseContext(databaseContext(context, true), async (transaction) => {
       const record = await this.record(transaction, context.agencyId, pdsVersionId);
       if (!record) throw this.notFound();
-      const fieldScope = readFieldScope(context, record);
+      const fieldScope = await readFieldScope(transaction, context, record.employeeId);
       if (fieldScope !== 'FULL') throw this.notFound();
       if (record.status !== 'CERTIFIED') {
         throw new PdsServiceError(
@@ -3867,10 +3847,10 @@ export class PdsService {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const summaryRecord = (await transaction.pdsVersion.findFirst({
         where: { agencyId: context.agencyId, id: pdsVersionId },
-        select: pdsSummaryWithOwnerSelect,
-      })) as unknown as (PdsSummaryRecord & PdsOwnerRecord) | null;
+        select: pdsSummarySelect,
+      })) as unknown as PdsSummaryRecord | null;
       if (!summaryRecord) throw this.notFound();
-      const fieldScope = readFieldScope(context, summaryRecord);
+      const fieldScope = await readFieldScope(transaction, context, summaryRecord.employeeId);
       if (!fieldScope) throw this.notFound();
       const records = await this.outputRecords(transaction, context.agencyId, pdsVersionId);
       await this.auditRead(
@@ -3892,7 +3872,7 @@ export class PdsService {
 
   private assertAgencyAction(context: RequestContext, permission: string, code: string): void {
     this.assertContext(context, permission, code);
-    if (permissionScope(context, permission) !== 'AGENCY') {
+    if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
       throw new PdsServiceError('This PDS action requires Agency scope.', 403, code);
     }
   }
@@ -4531,17 +4511,10 @@ export class PdsService {
   ): Promise<PdsVersionList> {
     const employee = await transaction.employee.findUnique({
       where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
-      select: {
-        id: true,
-        memberships: { select: { userId: true } },
-        currentServiceSegment: { select: { organizationUnitId: true } },
-      },
+      select: { id: true },
     });
     if (!employee) throw this.notFound();
-    const fieldScope = readFieldScope(context, {
-      agencyId: context.agencyId,
-      employee,
-    });
+    const fieldScope = await readFieldScope(transaction, context, employeeId);
     if (!fieldScope) throw this.notFound();
     const records = (await transaction.pdsVersion.findMany({
       where: { agencyId: context.agencyId, employeeId },
@@ -4568,19 +4541,6 @@ export class PdsService {
       draft: versions.find((version) => ['DRAFT', 'RETURNED'].includes(version.status)) ?? null,
       versions,
     };
-  }
-
-  private async ownEmployeeId(
-    transaction: Prisma.TransactionClient,
-    context: RequestContext,
-  ): Promise<string | null> {
-    const membership = await transaction.agencyMembership.findUnique({
-      where: { agencyId_id: { agencyId: context.agencyId, id: context.membershipId } },
-      select: { userId: true, employeeId: true },
-    });
-    return membership && membership.userId === context.userId
-      ? (membership.employeeId ?? null)
-      : null;
   }
 
   private async lockEmployee(
