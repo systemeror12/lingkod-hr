@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import type { RequestContext } from '@lingkod-hr/auth';
 import { z } from 'zod';
 import type { ApprovalRequestSummary } from '../approvals/approval.service';
 import { resolveEmployeeScope, scopeCovers, type EmployeeScope } from '../employee-scope';
@@ -354,9 +354,8 @@ export async function accessScope(
   permission: string,
 ): Promise<EmployeeScope> {
   if (!context.agencyId || !context.userId || !context.membershipId) throw forbidden();
-  if (hasPermission(context, permission, { agencyId: context.agencyId })) return { kind: 'AGENCY' };
-  const scope = await resolveEmployeeScope(context, permission, transaction);
-  if (!scope) throw forbidden();
+  const scope = await resolveEmployeeScope(transaction, context, permission);
+  if (scope.kind === 'NONE') throw forbidden();
   return scope;
 }
 

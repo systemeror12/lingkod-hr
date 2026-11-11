@@ -2691,8 +2691,12 @@ export class LeaveMonetizationService implements OnModuleInit {
     code: string,
     transaction?: Prisma.TransactionClient,
   ): Promise<EmployeeScope> {
-    const scope = await resolveEmployeeScope(context, permission, transaction);
-    if (!scope)
+    const scope = transaction
+      ? await resolveEmployeeScope(transaction, context, permission)
+      : await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+          resolveEmployeeScope(transaction, context, permission),
+        );
+    if (scope.kind === 'NONE')
       throw new LeaveMonetizationServiceError(
         `The ${permission} permission is required.`,
         403,

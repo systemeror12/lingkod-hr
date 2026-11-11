@@ -1346,8 +1346,10 @@ export class LeaveAccountsService {
    * whole Agency.
    */
   private async readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
-    const scope = await resolveEmployeeScope(context, 'leave.accounts.read');
-    if (!scope) {
+    const scope = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      resolveEmployeeScope(transaction, context, 'leave.accounts.read'),
+    );
+    if (scope.kind === 'NONE') {
       throw new LeaveAccountServiceError(
         'The leave.accounts.read permission is required.',
         403,

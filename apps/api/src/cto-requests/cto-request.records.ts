@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import type { RequestContext } from '@lingkod-hr/auth';
 import type { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import { datesBetween } from './cto-request-rule';
@@ -127,9 +127,8 @@ export async function assertEmployeeAccess(
     'CTO_REQUEST_FORBIDDEN',
   );
   if (!context.agencyId || !context.userId || !context.membershipId) throw forbidden;
-  if (hasPermission(context, permission, { agencyId: context.agencyId })) return;
-  const scope = await resolveEmployeeScope(context, permission, transaction);
-  if (!scope) throw forbidden;
+  const scope = await resolveEmployeeScope(transaction, context, permission);
+  if (scope.kind === 'NONE') throw forbidden;
   if (!scopeCovers(scope, employeeId)) {
     throw new CtoRequestError(
       'The Employee is outside the scope of the current Agency Membership.',

@@ -4010,8 +4010,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     permission: string,
   ) {
     if (employeeId) {
-      const scope = await resolveEmployeeScope(context, permission, transaction);
-      if (!scope || !scopeCovers(scope, employeeId)) {
+      const scope = await resolveEmployeeScope(transaction, context, permission);
+      if (!scopeCovers(scope, employeeId)) {
         throw new LeaveApplicationServiceError(
           "Only an Agency recorder or the Employee's Supervisor may prepare a Leave Application for another Employee.",
           403,
@@ -5064,8 +5064,10 @@ export class LeaveApplicationsService implements OnModuleInit {
   }
 
   private async requireScope(context: RequestContext, permission: string): Promise<EmployeeScope> {
-    const scope = await resolveEmployeeScope(context, permission);
-    if (scope) return scope;
+    const scope = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      resolveEmployeeScope(transaction, context, permission),
+    );
+    if (scope.kind !== 'NONE') return scope;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required.`,
       403,
@@ -5095,8 +5097,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     record: ApplicationRecord,
     permission: string,
   ): Promise<void> {
-    const scope = await resolveEmployeeScope(context, permission, transaction);
-    if (scope && scopeCovers(scope, record.employeeId)) return;
+    const scope = await resolveEmployeeScope(transaction, context, permission);
+    if (scopeCovers(scope, record.employeeId)) return;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required for this Leave Application.`,
       403,

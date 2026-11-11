@@ -48,8 +48,8 @@ export class CocBalancesService {
 
   async read(context: RequestContext, employeeId: string): Promise<CocBalanceRead> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const scope = await resolveEmployeeScope(context, READ, transaction);
-      if (!scope || !scopeCovers(scope, employeeId)) {
+      const scope = await resolveEmployeeScope(transaction, context, READ);
+      if (!scopeCovers(scope, employeeId)) {
         throw new CocServiceError(
           'The Employee is outside the scope of the current Agency Membership.',
           403,
