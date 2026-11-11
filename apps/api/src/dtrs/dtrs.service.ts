@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
-import { resolveAttendanceEmployeeScope } from '../attendance-scope';
+import { ownEmployeeId, resolveEmployeeScope } from '../employee-scope';
 import { AttendanceEventType } from '../attendance/attendance.types';
 import { presentWorkDateEvents } from '../attendance/attendance-matching';
 import {
@@ -422,22 +422,22 @@ export class DtrsService {
   }
 
   async list(context: RequestContext, filters: DtrListFilters = {}): Promise<DtrDocumentSummary[]> {
-    const scope = await this.reportsScope(context);
-    if (
-      scope.kind === 'SCOPED' &&
-      filters.employeeId !== undefined &&
-      !scope.employeeIds.includes(filters.employeeId)
-    ) {
-      return [];
-    }
-    const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
-    const employeeFilter =
-      scope.kind === 'SCOPED'
-        ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
-        : filters.employeeId
-          ? { employeeId: filters.employeeId }
-          : {};
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.reportsScope(transaction, context);
+      if (
+        scope.kind === 'SCOPED' &&
+        filters.employeeId !== undefined &&
+        !scope.employeeIds.includes(filters.employeeId)
+      ) {
+        return [];
+      }
+      const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+      const employeeFilter =
+        scope.kind === 'SCOPED'
+          ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
+          : filters.employeeId
+            ? { employeeId: filters.employeeId }
+            : {};
       const records = await transaction.dtrDocument.findMany({
         where: {
           agencyId: context.agencyId,
@@ -469,8 +469,8 @@ export class DtrsService {
     context: RequestContext,
     attendancePeriodId: string,
   ): Promise<DtrPeriodVersionSummary[]> {
-    await this.daysScope(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      await this.daysScope(transaction, context);
       const versions = await transaction.attendancePeriodVersion.findMany({
         where: { agencyId: context.agencyId, attendancePeriodId },
         orderBy: [{ versionNo: 'desc' }, { id: 'asc' }],
@@ -497,8 +497,8 @@ export class DtrsService {
   }
 
   async findById(context: RequestContext, dtrDocumentId: string): Promise<DtrDocumentDetail> {
-    const scope = await this.reportsScope(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.reportsScope(transaction, context);
       const record = await transaction.dtrDocument.findFirst({
         where: { agencyId: context.agencyId, id: dtrDocumentId },
         select: { ...dtrSelect, sourceManifest: true },
@@ -733,20 +733,19 @@ export class DtrsService {
     context: RequestContext,
     input: DtrPreviewInput,
   ): Promise<{ period: DtrManifestPeriod; employee: DtrManifestEmployee; days: DtrManifestDay[] }> {
-    const scope = await this.daysScope(context);
-    const ownEmployeeId = await this.ownEmployeeId(context);
-    const employeeId = input.employeeId ?? ownEmployeeId;
-    if (!employeeId) {
-      throw new DtrServiceError(
-        'The Agency Membership is not linked to an Employee record.',
-        409,
-        'DTR_PREVIEW_SUBJECT_REQUIRED',
-      );
-    }
-    if (scope.kind === 'SCOPED' && !scope.employeeIds.includes(employeeId)) {
-      throw this.notFound();
-    }
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.daysScope(transaction, context);
+      const employeeId = input.employeeId ?? (await ownEmployeeId(transaction, context));
+      if (!employeeId) {
+        throw new DtrServiceError(
+          'The Agency Membership is not linked to an Employee record.',
+          409,
+          'DTR_PREVIEW_SUBJECT_REQUIRED',
+        );
+      }
+      if (scope.kind === 'SCOPED' && !scope.employeeIds.includes(employeeId)) {
+        throw this.notFound();
+      }
       const period = await transaction.attendancePeriod.findFirst({
         where: { agencyId: context.agencyId, id: input.attendancePeriodId },
         select: { id: true, code: true, dateFrom: true, dateTo: true, status: true },
@@ -888,16 +887,6 @@ export class DtrsService {
     return latest;
   }
 
-  private async ownEmployeeId(context: RequestContext): Promise<string | null> {
-    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const membership = await transaction.agencyMembership.findFirst({
-        where: { agencyId: context.agencyId, id: context.membershipId },
-        select: { employeeId: true },
-      });
-      return membership?.employeeId ?? null;
-    });
-  }
-
   private async agencyName(context: RequestContext): Promise<string> {
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) =>
       this.agencyNameInTransaction(transaction, context.agencyId),
@@ -915,23 +904,24 @@ export class DtrsService {
     return agency?.name ?? 'Agency';
   }
 
-  private async daysScope(context: RequestContext) {
-    const scope = await resolveAttendanceEmployeeScope(context, 'attendance.days.read');
-    if (!scope) {
-      throw new DtrServiceError(
-        'The attendance.days.read permission is required.',
-        403,
-        'DTR_READ_FORBIDDEN',
-      );
-    }
-    return scope;
+  private async daysScope(transaction: Prisma.TransactionClient, context: RequestContext) {
+    return this.readScope(transaction, context, 'attendance.days.read');
   }
 
-  private async reportsScope(context: RequestContext) {
-    const scope = await resolveAttendanceEmployeeScope(context, 'attendance.reports.read');
-    if (!scope) {
+  private async reportsScope(transaction: Prisma.TransactionClient, context: RequestContext) {
+    return this.readScope(transaction, context, 'attendance.reports.read');
+  }
+
+  /** Resolve one read permission's Employee Scope, denying a scope that reaches no Employee. */
+  private async readScope(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    permissionCode: string,
+  ) {
+    const scope = await resolveEmployeeScope(transaction, context, permissionCode);
+    if (scope.kind === 'NONE' || (scope.kind === 'SCOPED' && scope.employeeIds.length === 0)) {
       throw new DtrServiceError(
-        'The attendance.reports.read permission is required.',
+        `The ${permissionCode} permission is required.`,
         403,
         'DTR_READ_FORBIDDEN',
       );

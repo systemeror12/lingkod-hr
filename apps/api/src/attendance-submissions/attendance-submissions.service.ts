@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
-import { resolveAttendanceEmployeeScope } from '../attendance-scope';
+import { ownEmployeeId, resolveEmployeeScope } from '../employee-scope';
 import { formatDate } from '../attendance-configuration/attendance-configuration.types';
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
 import { DocumentsService } from '../documents/documents.service';
@@ -188,8 +188,8 @@ export class AttendanceSubmissionsService {
         });
         if (completed) return this.findByIdInTransaction(transaction, context, completed);
       }
-      const ownEmployeeId = await this.ownEmployeeId(transaction, context);
-      const subjectEmployeeId = input.employeeId ?? ownEmployeeId;
+      const ownEmployee = await ownEmployeeId(transaction, context);
+      const subjectEmployeeId = input.employeeId ?? ownEmployee;
       if (!subjectEmployeeId) {
         throw new AttendanceSubmissionServiceError(
           'The Agency Membership is not linked to an Employee record.',
@@ -197,7 +197,7 @@ export class AttendanceSubmissionsService {
           'ATTENDANCE_SUBMISSION_SUBJECT_REQUIRED',
         );
       }
-      const onBehalf = input.employeeId !== undefined && input.employeeId !== ownEmployeeId;
+      const onBehalf = input.employeeId !== undefined && input.employeeId !== ownEmployee;
       if (onBehalf) {
         this.assertAgencyPermission(context, 'attendance.submissions.create_on_behalf');
         if (!input.onBehalfReason || !input.evidenceDocumentVersionId) {
@@ -406,7 +406,12 @@ export class AttendanceSubmissionsService {
     }
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const record = await this.requireSubmission(transaction, context, submissionId);
-      await this.assertEmployeeInScope(context, record.employeeId, 'attendance.submissions.return');
+      await this.assertEmployeeInScope(
+        transaction,
+        context,
+        record.employeeId,
+        'attendance.submissions.return',
+      );
       if (record.status !== 'SUBMITTED') throw this.invalidState(record.status, 'return');
       const now = new Date();
       await transaction.employeeAttendanceSubmission.update({
@@ -458,6 +463,7 @@ export class AttendanceSubmissionsService {
       await this.lockSubmission(transaction, context.agencyId, submissionId);
       const record = await this.requireSubmission(transaction, context, submissionId);
       await this.assertEmployeeInScope(
+        transaction,
         context,
         record.employeeId,
         'attendance.submissions.approve',
@@ -583,22 +589,22 @@ export class AttendanceSubmissionsService {
     context: RequestContext,
     filters: AttendanceSubmissionListFilters = {},
   ): Promise<AttendanceSubmissionSummary[]> {
-    const scope = await this.readScope(context);
-    if (
-      scope.kind === 'SCOPED' &&
-      filters.employeeId !== undefined &&
-      !scope.employeeIds.includes(filters.employeeId)
-    ) {
-      return [];
-    }
-    const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
-    const employeeFilter =
-      scope.kind === 'SCOPED'
-        ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
-        : filters.employeeId
-          ? { employeeId: filters.employeeId }
-          : {};
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
+      if (
+        scope.kind === 'SCOPED' &&
+        filters.employeeId !== undefined &&
+        !scope.employeeIds.includes(filters.employeeId)
+      ) {
+        return [];
+      }
+      const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+      const employeeFilter =
+        scope.kind === 'SCOPED'
+          ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
+          : filters.employeeId
+            ? { employeeId: filters.employeeId }
+            : {};
       const records = await transaction.employeeAttendanceSubmission.findMany({
         where: {
           agencyId: context.agencyId,
@@ -619,8 +625,8 @@ export class AttendanceSubmissionsService {
     context: RequestContext,
     submissionId: string,
   ): Promise<AttendanceSubmissionDetail> {
-    const scope = await this.readScope(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
       const record = await this.requireSubmission(transaction, context, submissionId);
       if (scope.kind === 'SCOPED' && !scope.employeeIds.includes(record.employeeId)) {
         throw this.notFound();
@@ -629,9 +635,9 @@ export class AttendanceSubmissionsService {
     });
   }
 
-  private async readScope(context: RequestContext) {
-    const scope = await resolveAttendanceEmployeeScope(context, 'attendance.days.read');
-    if (!scope) {
+  private async readScope(transaction: Prisma.TransactionClient, context: RequestContext) {
+    const scope = await resolveEmployeeScope(transaction, context, 'attendance.days.read');
+    if (scope.kind === 'NONE' || (scope.kind === 'SCOPED' && scope.employeeIds.length === 0)) {
       throw new AttendanceSubmissionServiceError(
         'The attendance.days.read permission is required.',
         403,
@@ -706,24 +712,14 @@ export class AttendanceSubmissionsService {
     return record;
   }
 
-  private async ownEmployeeId(
-    transaction: Prisma.TransactionClient,
-    context: RequestContext,
-  ): Promise<string | null> {
-    const membership = await transaction.agencyMembership.findFirst({
-      where: { agencyId: context.agencyId, id: context.membershipId },
-      select: { employeeId: true },
-    });
-    return membership?.employeeId ?? null;
-  }
-
   private async assertEmployeeInScope(
+    transaction: Prisma.TransactionClient,
     context: RequestContext,
     employeeId: string,
     permissionCode: string,
   ): Promise<void> {
-    const scope = await resolveAttendanceEmployeeScope(context, permissionCode);
-    if (!scope) {
+    const scope = await resolveEmployeeScope(transaction, context, permissionCode);
+    if (scope.kind === 'NONE' || (scope.kind === 'SCOPED' && scope.employeeIds.length === 0)) {
       throw new AttendanceSubmissionServiceError(
         `The ${permissionCode} permission is required.`,
         403,

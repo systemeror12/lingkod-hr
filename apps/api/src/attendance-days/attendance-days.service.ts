@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
-import { resolveAttendanceEmployeeScope } from '../attendance-scope';
+import { resolveEmployeeScope } from '../employee-scope';
 import { AttendanceContextsService } from '../attendance-contexts/attendance-contexts.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import {
@@ -751,22 +751,22 @@ export class AttendanceDaysService {
     context: RequestContext,
     filters: AttendanceDayListFilters = {},
   ): Promise<AttendanceDaySummary[]> {
-    const scope = await this.readScope(context);
-    if (
-      scope.kind === 'SCOPED' &&
-      filters.employeeId !== undefined &&
-      !scope.employeeIds.includes(filters.employeeId)
-    ) {
-      return [];
-    }
-    const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
-    const employeeFilter =
-      scope.kind === 'SCOPED'
-        ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
-        : filters.employeeId
-          ? { employeeId: filters.employeeId }
-          : {};
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
+      if (
+        scope.kind === 'SCOPED' &&
+        filters.employeeId !== undefined &&
+        !scope.employeeIds.includes(filters.employeeId)
+      ) {
+        return [];
+      }
+      const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+      const employeeFilter =
+        scope.kind === 'SCOPED'
+          ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
+          : filters.employeeId
+            ? { employeeId: filters.employeeId }
+            : {};
       const records = await transaction.attendanceDay.findMany({
         where: {
           agencyId: context.agencyId,
@@ -792,8 +792,8 @@ export class AttendanceDaysService {
   }
 
   async listPeriods(context: RequestContext): Promise<AttendancePeriodSummary[]> {
-    await this.readScope(context);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      await this.readScope(transaction, context);
       const records = await transaction.attendancePeriod.findMany({
         where: { agencyId: context.agencyId },
         orderBy: [{ dateFrom: 'desc' }, { code: 'asc' }],
@@ -805,8 +805,8 @@ export class AttendanceDaysService {
   }
 
   async findById(context: RequestContext, attendanceDayId: string): Promise<AttendanceDayDetail> {
-    const scope = await this.readScope(context);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.readScope(transaction, context);
       const record = await transaction.attendanceDay.findFirst({
         where: { agencyId: context.agencyId, id: attendanceDayId },
         select: daySelect,
@@ -1427,13 +1427,19 @@ export class AttendanceDaysService {
   }
 
   /**
-   * Resolve the exact Attendance Employee scope of the current Agency
-   * Membership. Attendance Corrections reuse the Attendance Day read scope so
-   * an Employee only lists their own requests while HR scopes stay unchanged.
+   * Resolve the Attendance Day read scope of the current Agency Membership in
+   * the caller's transaction, denying a scope that reaches no Employee.
+   * Attendance Corrections reuse it so an Employee only lists their own
+   * requests while HR scopes stay unchanged.
    */
-  async readScope(context: RequestContext): Promise<AttendanceDayReadScope> {
-    const scope = await resolveAttendanceEmployeeScope(context, 'attendance.days.read');
-    if (!scope) throw this.readForbidden();
+  async readScope(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+  ): Promise<AttendanceDayReadScope> {
+    const scope = await resolveEmployeeScope(transaction, context, 'attendance.days.read');
+    if (scope.kind === 'NONE' || (scope.kind === 'SCOPED' && scope.employeeIds.length === 0)) {
+      throw this.readForbidden();
+    }
     return scope;
   }
 
