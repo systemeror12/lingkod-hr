@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { requestDatabaseContext } from '../database-context';
@@ -166,7 +166,7 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentYear: number,
   ): Promise<MandatoryLeaveAgencyEvaluation> {
-    if (!hasScope(context, 'leave.mandatory_assessments.evaluate', 'AGENCY')) {
+    if (!holdsAgencyWide(context, 'leave.mandatory_assessments.evaluate')) {
       throw new MandatoryLeaveAssessmentServiceError(
         'The leave.mandatory_assessments.evaluate permission is required.',
         403,
@@ -841,12 +841,6 @@ function readStringArray(value: unknown, key: string): string[] | null {
   if (entry === undefined || entry === null) return [];
   if (!Array.isArray(entry) || entry.some((item) => typeof item !== 'string')) return null;
   return entry as string[];
-}
-
-function hasScope(context: RequestContext, code: string, scopePolicy: string): boolean {
-  return context.permissions.some(
-    (grant) => grant.code === code && grant.scopePolicy === scopePolicy,
-  );
 }
 
 /**

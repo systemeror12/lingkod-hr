@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import type { CocDayClassification } from '../coc-accounts/coc-earning-rule';
 import {
   CocEarnedCertificateServiceError,
@@ -132,9 +132,7 @@ export function assertAgencyGrant(context: RequestContext, ...permissions: strin
     !context.agencyId ||
     !context.userId ||
     !context.membershipId ||
-    !permissions.some((permission) =>
-      hasPermission(context, permission, { agencyId: context.agencyId }),
-    )
+    !permissions.some((permission) => holdsAgencyWide(context, permission))
   ) {
     throw new CocEarnedCertificateServiceError(
       'The current Agency Membership cannot act on Certificates of COC Earned.',

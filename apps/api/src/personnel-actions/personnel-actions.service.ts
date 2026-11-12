@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import {
@@ -1838,9 +1838,7 @@ export class PersonnelActionsService {
         {
           documentId: item.documentId,
           versionId: item.documentVersionId,
-          allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-            agencyId: context.agencyId,
-          }),
+          allowSensitive: holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
           requirement: 'FINALIZED_VERSION',
         },
       );
@@ -2636,7 +2634,7 @@ export class PersonnelActionsService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, permission, { agencyId: context.agencyId })
+      !holdsAgencyWide(context, permission)
     ) {
       throw new PersonnelActionServiceError(
         'The current Agency Membership lacks the required permission.',

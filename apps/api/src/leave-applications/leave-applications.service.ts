@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { resolveEmployeeScope, scopeCovers, type EmployeeScope } from '../employee-scope';
@@ -1653,7 +1653,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         employeeAttestedAt = new Date();
       } else {
         if (
-          !this.hasScope(context, 'leave.applications.submit', 'AGENCY') &&
+          !holdsAgencyWide(context, 'leave.applications.submit') &&
           application.employee.memberships.some(
             (membership) => membership.id === context.membershipId,
           )
@@ -3603,7 +3603,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     return {
       canPost:
         record.status === 'APPROVED' &&
-        this.hasScope(context, 'leave.applications.post', 'AGENCY') &&
+        holdsAgencyWide(context, 'leave.applications.post') &&
         !record.employee.memberships.some(({ id }) => id === context.membershipId) &&
         currentVersion !== undefined &&
         !currentVersion.approvalRequest.steps.some(
@@ -5074,12 +5074,6 @@ export class LeaveApplicationsService implements OnModuleInit {
       `The ${permission} permission is required.`,
       403,
       'LEAVE_APPLICATION_FORBIDDEN',
-    );
-  }
-
-  private hasScope(context: RequestContext, permission: string, scope: 'AGENCY' | 'OWN'): boolean {
-    return context.permissions.some(
-      (grant) => grant.code === permission && grant.scopePolicy === scope,
     );
   }
 

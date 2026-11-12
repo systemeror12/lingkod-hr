@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
@@ -1153,10 +1153,7 @@ export class AttendanceService {
    * grant qualifies. A narrower grant is refused rather than silently scoped.
    */
   private assertManualScope(context: RequestContext): void {
-    const authorized = context.permissions.some(
-      (grant) => grant.code === 'attendance.events.create_manual' && grant.scopePolicy === 'AGENCY',
-    );
-    if (!authorized) throw this.createForbidden();
+    if (!holdsAgencyWide(context, 'attendance.events.create_manual')) throw this.createForbidden();
   }
 
   private async clockEmployee(

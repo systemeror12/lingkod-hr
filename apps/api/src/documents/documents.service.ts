@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { getConfig } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
@@ -594,9 +594,7 @@ export class DocumentsService {
 
   async listForLinking(context: RequestContext): Promise<DocumentSummary[]> {
     this.assertReadPermission(context);
-    const canReadSensitive = hasPermission(context, 'documents.evidence.read_sensitive', {
-      agencyId: context.agencyId,
-    });
+    const canReadSensitive = holdsAgencyWide(context, 'documents.evidence.read_sensitive');
     const records = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.document.findMany({
         where: {
@@ -617,9 +615,7 @@ export class DocumentsService {
     context: RequestContext,
   ): Promise<LinkableDocumentVersionSummary[]> {
     this.assertReadPermission(context);
-    const canReadSensitive = hasPermission(context, 'documents.evidence.read_sensitive', {
-      agencyId: context.agencyId,
-    });
+    const canReadSensitive = holdsAgencyWide(context, 'documents.evidence.read_sensitive');
     const records = await withDatabaseContext(requestDatabaseContext(context), (transaction) =>
       transaction.documentVersion.findMany({
         where: {
@@ -1079,7 +1075,7 @@ export class DocumentsService {
     if (
       classification === 'HIGHLY_SENSITIVE' &&
       !allowSensitive &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId })
+      !holdsAgencyWide(context, 'documents.evidence.read_sensitive')
     ) {
       throw new DocumentsServiceError(
         'The current Agency Membership lacks the required permission.',
@@ -1104,7 +1100,7 @@ export class DocumentsService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, permission, { agencyId: context.agencyId })
+      !holdsAgencyWide(context, permission)
     ) {
       throw new DocumentsServiceError(
         'The current Agency Membership lacks the required permission.',

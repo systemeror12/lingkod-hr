@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { ownEmployeeId, resolveEmployeeScope } from '../employee-scope';
@@ -930,10 +930,7 @@ export class DtrsService {
   }
 
   private assertAgencyPermission(context: RequestContext, permissionCode: string): void {
-    const granted = context.permissions.some(
-      (grant) => grant.code === permissionCode && grant.scopePolicy === 'AGENCY',
-    );
-    if (!granted) {
+    if (!holdsAgencyWide(context, permissionCode)) {
       throw new DtrServiceError(
         `The ${permissionCode} permission with Agency scope is required.`,
         403,

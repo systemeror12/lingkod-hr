@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { resolveEmployeeScope, type EmployeeScope } from '../employee-scope';
@@ -1650,10 +1650,7 @@ export class AttendancePeriodsService {
     permissionCode: string,
     code: string,
   ): void {
-    const granted = context.permissions.some(
-      (grant) => grant.code === permissionCode && grant.scopePolicy === 'AGENCY',
-    );
-    if (!granted) {
+    if (!holdsAgencyWide(context, permissionCode)) {
       throw new AttendancePeriodServiceError(
         `The ${permissionCode} permission with Agency scope is required.`,
         403,
