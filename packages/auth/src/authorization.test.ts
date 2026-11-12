@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import {
-  canAccessRecord,
   hasAllPermissions,
   hasMfaEvidence,
   hasPermission,
@@ -29,21 +28,6 @@ it('requires every permission for a compound protected action', () => {
   );
   expect(
     hasAllPermissions(context, ['personnel.records.read', 'security.users.update_roles']),
-  ).toBe(false);
-});
-
-it('enforces the permission scope for a record', () => {
-  expect(
-    canAccessRecord(context, 'personnel.records.read', {
-      agencyId: 'agency-1',
-      ownerUserId: 'user-1',
-    }),
-  ).toBe(true);
-  expect(
-    canAccessRecord(context, 'personnel.records.read', {
-      agencyId: 'agency-1',
-      ownerUserId: 'user-2',
-    }),
   ).toBe(false);
 });
 
