@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { canAccessRecord, type RequestContext } from '@lingkod-hr/auth';
+import type { RequestContext } from '@lingkod-hr/auth';
 import {
   ProtectedValueError,
   decryptProtectedValue,
@@ -13,6 +13,7 @@ import {
 } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import type {
   GovernmentIdentifierStatus,
   GovernmentIdentifierType,
@@ -151,14 +152,7 @@ const historyEventSelect = {
 
 type HistoryEventRecord = Prisma.AuditEventGetPayload<{ select: typeof historyEventSelect }>;
 
-const employeeAccessSelect = {
-  id: true,
-  memberships: {
-    where: { status: 'ACTIVE' },
-    select: { id: true, userId: true },
-  },
-  currentServiceSegment: { select: { organizationUnitId: true } },
-} as const;
+const employeeAccessSelect = { id: true } as const;
 
 interface IdentifierRecord {
   id: string;
@@ -265,21 +259,6 @@ function optionalDateTime(value: string | null | undefined): Date | null {
 function optionalTrimmed(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function ownerUserId(record: EmployeeAccessRecord): string | null {
-  return record.memberships[0]?.userId ?? null;
-}
-
-function accessRecord(context: RequestContext, employee: EmployeeAccessRecord) {
-  const owner = ownerUserId(employee);
-  return {
-    agencyId: context.agencyId,
-    ...(owner ? { ownerUserId: owner } : {}),
-    ...(employee.currentServiceSegment
-      ? { organizationUnitId: employee.currentServiceSegment.organizationUnitId }
-      : {}),
-  };
 }
 
 function summary(record: IdentifierRecord): GovernmentIdentifierSummary {
@@ -461,7 +440,8 @@ export class GovernmentIdentifiersService {
       async (transaction: Prisma.TransactionClient) => {
         const employee = await this.employeeAccess(transaction, context, employeeId);
         if (!employee) return null;
-        if (!this.canAccess(context, 'personnel.identifiers.read', employee)) return null;
+        if (!(await this.canAccess(transaction, context, 'personnel.identifiers.read', employeeId)))
+          return null;
         const records = await governmentIdentifiers(transaction).findMany({
           where: { agencyId: context.agencyId, employeeId, status: 'ACTIVE' },
           orderBy: [{ identifierType: 'asc' }, { effectiveFrom: 'desc' }],
@@ -494,7 +474,9 @@ export class GovernmentIdentifiersService {
         await this.lockEmployee(transaction, context.agencyId, employeeId);
         const employee = await this.employeeAccess(transaction, context, employeeId);
         if (!employee) throw this.notFound();
-        if (!this.canAccess(context, 'personnel.identifiers.manage', employee))
+        if (
+          !(await this.canAccess(transaction, context, 'personnel.identifiers.manage', employeeId))
+        )
           throw this.notFound();
         await this.assertNoActive(transaction, context.agencyId, employeeId, input.identifierType);
         await this.assertEvidence(transaction, context, input);
@@ -543,7 +525,15 @@ export class GovernmentIdentifiersService {
       async (transaction: Prisma.TransactionClient) => {
         const employee = await this.employeeAccess(transaction, context, employeeId);
         if (!employee) return null;
-        if (!this.canAccess(context, 'personnel.identifiers.history.read', employee)) return null;
+        if (
+          !(await this.canAccess(
+            transaction,
+            context,
+            'personnel.identifiers.history.read',
+            employeeId,
+          ))
+        )
+          return null;
         const selected = identifierId
           ? await this.identifier(transaction, context.agencyId, employeeId, identifierId)
           : null;
@@ -597,7 +587,9 @@ export class GovernmentIdentifiersService {
         await this.lockEmployee(transaction, context.agencyId, employeeId);
         const employee = await this.employeeAccess(transaction, context, employeeId);
         if (!employee) throw this.notFound();
-        if (!this.canAccess(context, 'personnel.identifiers.manage', employee))
+        if (
+          !(await this.canAccess(transaction, context, 'personnel.identifiers.manage', employeeId))
+        )
           throw this.notFound();
         const existing = await this.identifier(
           transaction,
@@ -683,7 +675,9 @@ export class GovernmentIdentifiersService {
         await this.lockEmployee(transaction, context.agencyId, employeeId);
         const employee = await this.employeeAccess(transaction, context, employeeId);
         if (!employee) throw this.notFound();
-        if (!this.canAccess(context, 'personnel.identifiers.manage', employee))
+        if (
+          !(await this.canAccess(transaction, context, 'personnel.identifiers.manage', employeeId))
+        )
           throw this.notFound();
         const existing = await this.identifier(
           transaction,
@@ -744,9 +738,9 @@ export class GovernmentIdentifiersService {
         const employee = await this.employeeAccess(transaction, context, employeeId);
         const base = record ? summary(record) : null;
         const scoped =
-          Boolean(record) &&
-          Boolean(employee) &&
-          this.canAccess(context, 'personnel.identifiers.reveal', employee as EmployeeAccessRecord);
+          record && employee
+            ? await this.canAccess(transaction, context, 'personnel.identifiers.reveal', employeeId)
+            : false;
         const reason = optionalTrimmed(input.reason);
         const allowed = scoped && record?.status === 'ACTIVE' && Boolean(reason);
         let auditStatus: GovernmentIdentifierRevealAuditStatus = 'DENIED';
@@ -925,12 +919,14 @@ export class GovernmentIdentifiersService {
     if (!version) throw this.notFound();
   }
 
-  private canAccess(
+  /** Whether the permission's Employee Scope covers the Employee. */
+  private async canAccess(
+    transaction: Prisma.TransactionClient,
     context: RequestContext,
     permission: string,
-    employee: EmployeeAccessRecord,
-  ): boolean {
-    return canAccessRecord(context, permission, accessRecord(context, employee));
+    employeeId: string,
+  ): Promise<boolean> {
+    return scopeCovers(await resolveEmployeeScope(transaction, context, permission), employeeId);
   }
 
   private assertPermission(context: RequestContext, permission: string, code: string): void {

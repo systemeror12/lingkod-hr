@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { ownEmployeeId, resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import {
   DocumentsService,
   DocumentsServiceError,
@@ -143,13 +144,17 @@ const restrictedPersonnelClassifications = new Set<PersonnelDocumentClassificati
   'BANK_ACCOUNT',
 ]);
 
-const employeeAccessSelect = {
-  id: true,
-  memberships: {
-    where: { status: 'ACTIVE' },
-    select: { id: true, userId: true },
-  },
-} as const;
+/** What the acting Agency Membership may do with one Employee's Personnel Documents. */
+interface EmployeeAccess {
+  /** The Employee is the one linked to the acting Agency Membership. */
+  own: boolean;
+  /** The `personnel.documents.read` Employee Scope covers the Employee. */
+  read: boolean;
+  /** The `personnel.documents.upload` Employee Scope covers the Employee. */
+  upload: boolean;
+  /** The `personnel.documents.read_sensitive` Employee Scope covers the Employee. */
+  readSensitive: boolean;
+}
 
 const employeeDocumentSelect = {
   id: true,
@@ -241,12 +246,7 @@ export class EmployeeDocumentsService {
     return withDatabaseContext(databaseContext(context), async (transaction) => {
       const access = await this.employeeAccess(transaction, context, employeeId);
       if (!access) return null;
-      this.assertRecordPermission(
-        context,
-        'personnel.documents.read',
-        access,
-        'EMPLOYEE_DOCUMENT_READ_FORBIDDEN',
-      );
+      this.assertRead(access);
       const records = await transaction.employeeDocument.findMany({
         where: { agencyId: context.agencyId, employeeId },
         orderBy: { createdAt: 'desc' },
@@ -276,10 +276,7 @@ export class EmployeeDocumentsService {
       const access = await this.employeeAccess(transaction, context, employeeId);
       if (!access) throw this.employeeNotFound();
       const ownWorkflow = !agencyClassifier;
-      if (
-        ownWorkflow &&
-        (!access.own || !this.canRecordPermission(context, 'personnel.documents.upload', access))
-      ) {
+      if (ownWorkflow && (!access.own || !access.upload)) {
         throw this.error(
           'Only the Employee can link evidence through the own-record workflow.',
           'EMPLOYEE_DOCUMENT_LINK_FORBIDDEN',
@@ -412,11 +409,7 @@ export class EmployeeDocumentsService {
     );
     await withDatabaseContext(databaseContext(context), async (transaction) => {
       const access = await this.employeeAccess(transaction, context, employeeId);
-      if (
-        !access ||
-        !access.own ||
-        !this.canRecordPermission(context, 'personnel.documents.upload', access)
-      ) {
+      if (!access || !access.own || !access.upload) {
         throw access
           ? this.error(
               'Only the Employee can upload through the own-record workflow.',
@@ -479,7 +472,7 @@ export class EmployeeDocumentsService {
       if (!agencyClassifier) {
         if (
           !access.own ||
-          !this.canRecordPermission(context, 'personnel.documents.upload', access) ||
+          !access.upload ||
           record.createdByMembershipId !== context.membershipId
         ) {
           throw this.error(
@@ -524,12 +517,7 @@ export class EmployeeDocumentsService {
     const value = await withDatabaseContext(databaseContext(context), async (transaction) => {
       const access = await this.employeeAccess(transaction, context, employeeId);
       if (!access) return null;
-      this.assertRecordPermission(
-        context,
-        'personnel.documents.read',
-        access,
-        'EMPLOYEE_DOCUMENT_READ_FORBIDDEN',
-      );
+      this.assertRead(access);
       const record = await this.findRecord(transaction, context.agencyId, employeeId, linkId);
       if (!record || !this.canExpose(context, access, record)) return null;
       return {
@@ -567,17 +555,20 @@ export class EmployeeDocumentsService {
     transaction: Prisma.TransactionClient,
     context: RequestContext,
     employeeId: string,
-  ): Promise<{ ownerUserId?: string; own: boolean } | null> {
+  ): Promise<EmployeeAccess | null> {
     const employee = await transaction.employee.findUnique({
       where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
-      select: employeeAccessSelect,
+      select: { id: true },
     });
     if (!employee) return null;
-    const own = employee.memberships.some(
-      (membership) =>
-        membership.id === context.membershipId && membership.userId === context.userId,
-    );
-    return own ? { ownerUserId: context.userId, own: true } : { own: false };
+    const covers = async (permission: string) =>
+      scopeCovers(await resolveEmployeeScope(transaction, context, permission), employeeId);
+    return {
+      own: (await ownEmployeeId(transaction, context)) === employeeId,
+      read: await covers('personnel.documents.read'),
+      upload: await covers('personnel.documents.upload'),
+      readSensitive: await covers('personnel.documents.read_sensitive'),
+    };
   }
 
   private async findRecord(
@@ -616,7 +607,7 @@ export class EmployeeDocumentsService {
 
   private canExpose(
     context: RequestContext,
-    access: { ownerUserId?: string; own: boolean },
+    access: EmployeeAccess,
     record: EmployeeDocumentRecord,
   ): boolean {
     const classification = record.document.classification as DocumentClassification;
@@ -624,7 +615,7 @@ export class EmployeeDocumentsService {
       record.personnelClassification as PersonnelDocumentClassification;
     if (record.personnelClassification === 'SALN') return false;
     if (record.document.status === 'VOIDED') return false;
-    if (!this.canRecordPermission(context, 'personnel.documents.read', access)) return false;
+    if (!access.read) return false;
     if (
       record.releaseState === 'WITHHELD' &&
       !this.hasAgencyPermission(context, 'personnel.documents.read')
@@ -643,42 +634,19 @@ export class EmployeeDocumentsService {
     );
   }
 
-  private hasSensitivePermission(
-    context: RequestContext,
-    access: { ownerUserId?: string; own: boolean },
-  ): boolean {
+  private hasSensitivePermission(context: RequestContext, access: EmployeeAccess): boolean {
     return (
       access.own ||
-      this.hasAgencyPermission(context, 'personnel.documents.read_sensitive') ||
-      this.canRecordPermission(context, 'personnel.documents.read_sensitive', access) ||
+      access.readSensitive ||
       this.hasAgencyPermission(context, 'documents.evidence.read_sensitive')
     );
   }
 
-  private canRecordPermission(
-    context: RequestContext,
-    permission: string,
-    access: { ownerUserId?: string; own: boolean },
-  ): boolean {
-    return canAccessRecord(
-      context,
-      permission,
-      access.ownerUserId
-        ? { agencyId: context.agencyId, ownerUserId: access.ownerUserId }
-        : { agencyId: context.agencyId },
-    );
-  }
-
-  private assertRecordPermission(
-    context: RequestContext,
-    permission: string,
-    access: { ownerUserId?: string; own: boolean },
-    code: string,
-  ): void {
-    if (!this.canRecordPermission(context, permission, access)) {
+  private assertRead(access: EmployeeAccess): void {
+    if (!access.read) {
       throw this.error(
         'The current Agency Membership lacks the required Personnel Document permission.',
-        code,
+        'EMPLOYEE_DOCUMENT_READ_FORBIDDEN',
       );
     }
   }
