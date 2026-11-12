@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
@@ -151,7 +151,9 @@ export class SalnComplianceService {
         take: 100,
         select: recordSelect,
       });
-      return records.map(this.hasAgencyRead(context) ? fullSummary : ownSummary);
+      return records.map(
+        holdsAgencyWide(context, 'personnel.saln_compliance.read') ? fullSummary : ownSummary,
+      );
     });
   }
 
@@ -171,7 +173,7 @@ export class SalnComplianceService {
         select: recordSelect,
       });
       return record
-        ? this.hasAgencyRead(context)
+        ? holdsAgencyWide(context, 'personnel.saln_compliance.read')
           ? fullSummary(record)
           : ownSummary(record)
         : null;
@@ -183,7 +185,7 @@ export class SalnComplianceService {
     employeeId: string,
   ): Promise<SalnComplianceSummary[] | null> {
     this.assertPermission(context, 'personnel.saln_compliance.read');
-    if (!this.hasAgencyRead(context)) return null;
+    if (!holdsAgencyWide(context, 'personnel.saln_compliance.read')) return null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       if (
         !(await this.canAccess(transaction, context, 'personnel.saln_compliance.read', employeeId))
@@ -355,13 +357,6 @@ export class SalnComplianceService {
     });
     if (!employee) return false;
     return scopeCovers(await resolveEmployeeScope(transaction, context, permission), employeeId);
-  }
-
-  private hasAgencyRead(context: RequestContext): boolean {
-    return context.permissions.some(
-      ({ code, scopePolicy }) =>
-        code === 'personnel.saln_compliance.read' && scopePolicy === 'AGENCY',
-    );
   }
 
   private async lockEmployee(

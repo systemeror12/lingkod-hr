@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { manilaToday } from '../attendance-configuration/attendance-configuration.types';
 import { requestDatabaseContext } from '../database-context';
@@ -243,7 +243,7 @@ export class CocLedgerCorrectionsService {
   }
 
   private assertPermission(context: RequestContext, permission: string): void {
-    if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, permission)) {
       throw new CocServiceError(
         `The ${permission} permission is required.`,
         403,
@@ -371,7 +371,7 @@ export class CocLedgerCorrectionsService {
     context: RequestContext,
     versionId: string,
   ): Promise<void> {
-    if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, 'documents.evidence.read')) {
       throw new CocServiceError(
         'The documents.evidence.read permission is required to link supporting evidence.',
         403,
@@ -386,9 +386,7 @@ export class CocLedgerCorrectionsService {
       ? await this.documents.resolveExternalEvidenceInTransaction(transaction, context, {
           documentId: version.documentId,
           versionId,
-          allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-            agencyId: context.agencyId,
-          }),
+          allowSensitive: holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
           requirement: 'FINALIZED_VERSION',
         })
       : null;

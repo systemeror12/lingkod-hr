@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
@@ -308,9 +308,7 @@ export class ServiceRecordsService {
           {
             documentId: input.evidenceDocumentId,
             versionId: input.evidenceDocumentVersionId,
-            allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-              agencyId: context.agencyId,
-            }),
+            allowSensitive: holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
             requirement: 'FINALIZED_VERSION',
           },
         );
@@ -557,7 +555,7 @@ export class ServiceRecordsService {
   }
 
   private assertPermission(context: RequestContext, permission: string, code: string): void {
-    if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, permission)) {
       throw new ServiceRecordServiceError(
         'You do not have permission to perform this Service Record operation.',
         403,

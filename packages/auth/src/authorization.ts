@@ -35,28 +35,25 @@ export interface RequestContext {
   permissions: readonly PermissionGrant[];
 }
 
-export interface AgencyRecord {
-  agencyId: string;
+/** Whether `code` is held at any scope. This is the route guard's check. */
+export function hasPermission(context: RequestContext, code: string): boolean {
+  return context.permissions.some((grant) => grant.code === code);
 }
 
-export function hasPermission(
-  context: RequestContext,
-  code: string,
-  record?: AgencyRecord,
-): boolean {
-  if (record && record.agencyId !== context.agencyId) return false;
+/** Whether every one of `codes` is held at any scope. */
+export function hasAllPermissions(context: RequestContext, codes: readonly string[]): boolean {
+  return codes.every((code) => hasPermission(context, code));
+}
 
+/**
+ * Whether `permission` is held through an `AGENCY` grant, so it reaches the
+ * whole acting Agency. A service asks this, or the Employee Scope module, when
+ * a narrower grant must not be enough.
+ */
+export function holdsAgencyWide(context: RequestContext, permission: string): boolean {
   return context.permissions.some(
-    (grant) => grant.code === code && (!record || grant.scopePolicy === 'AGENCY'),
+    (grant) => grant.code === permission && grant.scopePolicy === 'AGENCY',
   );
-}
-
-export function hasAllPermissions(
-  context: RequestContext,
-  codes: readonly string[],
-  record?: AgencyRecord,
-): boolean {
-  return codes.every((code) => hasPermission(context, code, record));
 }
 
 export class AuthorizationError extends Error {

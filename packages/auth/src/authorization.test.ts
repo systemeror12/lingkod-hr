@@ -3,6 +3,7 @@ import {
   hasAllPermissions,
   hasMfaEvidence,
   hasPermission,
+  holdsAgencyWide,
   permissionsRequireMfa,
 } from './authorization';
 
@@ -18,8 +19,16 @@ const context = {
   ],
 };
 
-it('denies a permission outside the authenticated agency', () => {
-  expect(hasPermission(context, 'organization.units.read', { agencyId: 'agency-2' })).toBe(false);
+it('holds a permission at any scope', () => {
+  expect(hasPermission(context, 'personnel.records.read')).toBe(true);
+  expect(hasPermission(context, 'organization.units.read')).toBe(true);
+  expect(hasPermission(context, 'security.users.update_roles')).toBe(false);
+});
+
+it('holds a permission Agency-wide only through an AGENCY grant', () => {
+  expect(holdsAgencyWide(context, 'organization.units.read')).toBe(true);
+  expect(holdsAgencyWide(context, 'personnel.records.read')).toBe(false);
+  expect(holdsAgencyWide(context, 'security.users.update_roles')).toBe(false);
 });
 
 it('requires every permission for a compound protected action', () => {

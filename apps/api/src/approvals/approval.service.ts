@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { findDirectReportEmployeeIds, findSupervisorEmployeeIds } from '../direct-reports';
@@ -1996,7 +1996,7 @@ export class ApprovalsService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, permission, { agencyId: context.agencyId })
+      !holdsAgencyWide(context, permission)
     ) {
       throw new ApprovalServiceError(
         'The current Agency Membership lacks the required permission.',

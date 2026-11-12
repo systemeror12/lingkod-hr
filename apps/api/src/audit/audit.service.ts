@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { auditEventCursorSchema } from './audit.schemas';
@@ -336,7 +336,7 @@ export class AuditService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, 'audit.events.read', { agencyId: context.agencyId })
+      !holdsAgencyWide(context, 'audit.events.read')
     ) {
       throw new AuditServiceError(
         'The current Agency Membership lacks the required permission.',

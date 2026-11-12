@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { ownEmployeeId, resolveEmployeeScope, scopeCovers } from '../employee-scope';
@@ -652,7 +652,7 @@ export class EmployeeDocumentsService {
   }
 
   private hasAgencyPermission(context: RequestContext, permission: string): boolean {
-    return hasPermission(context, permission, { agencyId: context.agencyId });
+    return holdsAgencyWide(context, permission);
   }
 
   private hasAnyPermission(context: RequestContext, permission: string): boolean {

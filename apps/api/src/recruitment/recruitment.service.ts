@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { setDatabaseContext, withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
@@ -2244,7 +2244,7 @@ export class RecruitmentService {
   }
 
   private assertPositionReadPermission(context: RequestContext): void {
-    if (!hasPermission(context, 'positions.items.read', { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, 'positions.items.read')) {
       throw new RecruitmentServiceError(
         'The current Agency Membership lacks Plantilla Position read permission.',
         403,
@@ -3209,7 +3209,7 @@ export class RecruitmentService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, permission, { agencyId: context.agencyId })
+      !holdsAgencyWide(context, permission)
     )
       throw new RecruitmentServiceError(
         'The current Agency Membership lacks the required permission.',

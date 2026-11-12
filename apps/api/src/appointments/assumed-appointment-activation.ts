@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { EmployeesService, EmployeeServiceError } from '../employees/employees.service';
@@ -291,7 +291,7 @@ export class AssumedAppointmentActivation {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, 'personnel.employees.activate', { agencyId: context.agencyId })
+      !holdsAgencyWide(context, 'personnel.employees.activate')
     ) {
       throw new AppointmentServiceError(
         'The current Agency Membership cannot perform this Appointment action.',

@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
@@ -2938,9 +2938,7 @@ export class PdsService {
     context: RequestContext,
     records: readonly { documentId?: string | null; documentVersionId?: string | null }[],
   ): Promise<void> {
-    const ownWorkflow = !hasPermission(context, 'personnel.pds.update', {
-      agencyId: context.agencyId,
-    });
+    const ownWorkflow = !holdsAgencyWide(context, 'personnel.pds.update');
     for (const record of records) {
       if (!record.documentId && !record.documentVersionId) continue;
       if (!record.documentId || !record.documentVersionId || !this.documentsService) {
@@ -2957,10 +2955,7 @@ export class PdsService {
           documentId: record.documentId,
           versionId: record.documentVersionId,
           allowSensitive:
-            ownWorkflow ||
-            hasPermission(context, 'documents.evidence.read_sensitive', {
-              agencyId: context.agencyId,
-            }),
+            ownWorkflow || holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
           requirement: ownWorkflow ? 'NOT_VOIDED' : 'FINALIZED_VERSION',
         },
       );
@@ -2993,7 +2988,7 @@ export class PdsService {
         }
         continue;
       }
-      if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
+      if (!holdsAgencyWide(context, 'documents.evidence.read')) {
         throw new PdsServiceError(
           'The current Agency Membership cannot inspect shared Agency Documents.',
           403,
@@ -3872,7 +3867,7 @@ export class PdsService {
 
   private assertAgencyAction(context: RequestContext, permission: string, code: string): void {
     this.assertContext(context, permission, code);
-    if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, permission)) {
       throw new PdsServiceError('This PDS action requires Agency scope.', 403, code);
     }
   }
