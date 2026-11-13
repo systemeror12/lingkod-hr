@@ -51,6 +51,7 @@ subtree below a Supervisor was considered and not chosen.
   reports' records from earlier years.
 - Delegated team members and acting heads are not covered; they need a
   separate decision.
-- The Supervisor role receives each `S` grant only when the owning module
-  resolves `DIRECT_REPORTS`. A service that checks only the permission code
-  would otherwise give a Supervisor Agency-wide access.
+- Every module resolves `DIRECT_REPORTS` through the Employee Scope module
+  (ADR 0011), so a Supervisor `S` grant takes effect as soon as it is seeded.
+  A service that checks only the permission code would still give a
+  Supervisor Agency-wide access.

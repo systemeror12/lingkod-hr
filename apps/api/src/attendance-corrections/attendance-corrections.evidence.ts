@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import type { DocumentsService } from '../documents/documents.service';
 import {
   AttendanceCorrectionServiceError,
@@ -27,9 +27,7 @@ type CorrectionEvidenceRecord = Prisma.AttendanceCorrectionEvidenceGetPayload<{
 }>;
 
 export function canReadSensitiveEvidence(context: RequestContext): boolean {
-  return hasPermission(context, 'documents.evidence.read_sensitive', {
-    agencyId: context.agencyId,
-  });
+  return holdsAgencyWide(context, 'documents.evidence.read_sensitive');
 }
 
 /**

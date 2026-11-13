@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import {
@@ -674,9 +674,7 @@ export class PlantillaPositionsService {
     );
     const asOf = toDatabaseDate(asOfValue);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const canReadEvidence = hasPermission(context, 'documents.evidence.read', {
-        agencyId: context.agencyId,
-      });
+      const canReadEvidence = holdsAgencyWide(context, 'documents.evidence.read');
       const record = await transaction.plantillaPosition.findFirst({
         where: { id: positionId, agencyId: context.agencyId },
         select: positionSelect,
@@ -761,9 +759,7 @@ export class PlantillaPositionsService {
           context,
           {
             documentId: input.documentId,
-            allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-              agencyId: context.agencyId,
-            }),
+            allowSensitive: holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
             requirement: 'LINKABLE_STATUS',
           },
         );
@@ -2232,9 +2228,7 @@ export class PlantillaPositionsService {
     if (!record || !record.document.currentVersion) throw this.positionEvidenceRequired(purpose);
     if (
       record.document.classification === 'HIGHLY_SENSITIVE' &&
-      !hasPermission(context, 'documents.evidence.read_sensitive', {
-        agencyId: context.agencyId,
-      })
+      !holdsAgencyWide(context, 'documents.evidence.read_sensitive')
     ) {
       throw this.evidenceSensitiveForbidden();
     }
@@ -2340,7 +2334,7 @@ export class PlantillaPositionsService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, permission, { agencyId: context.agencyId })
+      !holdsAgencyWide(context, permission)
     ) {
       throw new PlantillaPositionServiceError(
         'The current Agency Membership lacks the required permission.',
@@ -2351,7 +2345,7 @@ export class PlantillaPositionsService {
   }
 
   private assertEvidenceReadPermission(context: RequestContext): void {
-    if (!hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, 'documents.evidence.read')) {
       throw new PlantillaPositionServiceError(
         'The current Agency Membership lacks permission to inspect External Evidence.',
         403,
@@ -2366,9 +2360,7 @@ export class PlantillaPositionsService {
   ): boolean {
     return (
       record.classification !== 'HIGHLY_SENSITIVE' ||
-      hasPermission(context, 'documents.evidence.read_sensitive', {
-        agencyId: context.agencyId,
-      })
+      holdsAgencyWide(context, 'documents.evidence.read_sensitive')
     );
   }
 

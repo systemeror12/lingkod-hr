@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import { DocumentsService } from '../documents/documents.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { addDateValueDays, localDateValue } from '../attendance/attendance.types';
@@ -100,9 +101,7 @@ function metadataString(metadata: Prisma.JsonValue, key: string): string | null 
 }
 
 function canReadSensitiveEvidence(context: RequestContext): boolean {
-  return hasPermission(context, 'documents.evidence.read_sensitive', {
-    agencyId: context.agencyId,
-  });
+  return holdsAgencyWide(context, 'documents.evidence.read_sensitive');
 }
 
 function evidenceSummary(
@@ -254,17 +253,18 @@ export class AttendanceContextsService {
     context: RequestContext,
     filters: AttendanceContextListFilters = {},
   ): Promise<AttendanceContextSummary[]> {
-    const scope = this.requireReadScope(context);
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await resolveEmployeeScope(transaction, context, 'attendance.contexts.read');
+      if (scope.kind === 'NONE') throw this.readForbidden();
       const records = await transaction.attendanceContext.findMany({
         where: {
           agencyId: context.agencyId,
-          ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
+          AND: [
+            filters.employeeId ? { employeeId: filters.employeeId } : {},
+            scope.kind === 'SCOPED' ? { employeeId: { in: scope.employeeIds } } : {},
+          ],
           ...(filters.contextType ? { contextType: filters.contextType } : {}),
           ...(filters.coverageMode ? { coverageMode: filters.coverageMode } : {}),
-          ...(scope === 'OWN'
-            ? { employee: { memberships: { some: { id: context.membershipId } } } }
-            : {}),
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: 500,
@@ -401,30 +401,25 @@ export class AttendanceContextsService {
     workDateValue: string,
     window: AttendanceContextWorkDateWindow,
   ): Promise<AttendanceContextResolution> {
-    const scope = this.requireReadScope(context);
-    const workDate = toDatabaseDate(workDateValue);
-    const windowStartsAt = toDatabaseInstant(window.startsAt);
-    const windowEndsAt = toDatabaseInstant(window.endsAt);
-    if (windowEndsAt.getTime() <= windowStartsAt.getTime()) {
-      throw new AttendanceContextServiceError(
-        'The Work Date window must end after it starts.',
-        400,
-        'ATTENDANCE_CONTEXT_WINDOW_INVALID',
-      );
-    }
     return withDatabaseContext(databaseContext(context), async (transaction) => {
-      const employee = await transaction.employee.findFirst({
-        where: { agencyId: context.agencyId, id: employeeId },
-        select: { id: true, memberships: { select: { id: true } } },
-      });
-      if (!employee) throw this.employeeNotFound();
-      if (scope === 'OWN' && !employee.memberships.some((m) => m.id === context.membershipId)) {
+      const scope = await resolveEmployeeScope(transaction, context, 'attendance.contexts.read');
+      if (scope.kind === 'NONE') throw this.readForbidden();
+      const workDate = toDatabaseDate(workDateValue);
+      const windowStartsAt = toDatabaseInstant(window.startsAt);
+      const windowEndsAt = toDatabaseInstant(window.endsAt);
+      if (windowEndsAt.getTime() <= windowStartsAt.getTime()) {
         throw new AttendanceContextServiceError(
-          'The attendance.contexts.read permission is required.',
-          403,
-          'ATTENDANCE_CONTEXT_READ_FORBIDDEN',
+          'The Work Date window must end after it starts.',
+          400,
+          'ATTENDANCE_CONTEXT_WINDOW_INVALID',
         );
       }
+      const employee = await transaction.employee.findFirst({
+        where: { agencyId: context.agencyId, id: employeeId },
+        select: { id: true },
+      });
+      if (!employee) throw this.employeeNotFound();
+      if (!scopeCovers(scope, employeeId)) throw this.readForbidden();
       return this.coverageInTransaction(
         transaction,
         context.agencyId,
@@ -619,22 +614,8 @@ export class AttendanceContextsService {
     return evidence.document.currentVersion.id;
   }
 
-  private requireReadScope(context: RequestContext): 'AGENCY' | 'OWN' {
-    if (
-      context.permissions.some(
-        (grant) => grant.code === 'attendance.contexts.read' && grant.scopePolicy === 'AGENCY',
-      )
-    ) {
-      return 'AGENCY';
-    }
-    if (
-      context.permissions.some(
-        (grant) => grant.code === 'attendance.contexts.read' && grant.scopePolicy === 'OWN',
-      )
-    ) {
-      return 'OWN';
-    }
-    throw new AttendanceContextServiceError(
+  private readForbidden(): AttendanceContextServiceError {
+    return new AttendanceContextServiceError(
       'The attendance.contexts.read permission is required.',
       403,
       'ATTENDANCE_CONTEXT_READ_FORBIDDEN',

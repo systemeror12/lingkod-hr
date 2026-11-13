@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { AttendanceDaysService } from '../attendance-days/attendance-days.service';
@@ -1362,7 +1362,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
       const record = await this.requireCorrection(transaction, context, correctionId);
       if (!['DRAFT', 'SUBMITTED'].includes(record.status))
         throw this.invalidState(record.status, 'cancel');
-      const agencyWide = this.hasAgencyScope(context, 'attendance.corrections.cancel');
+      const agencyWide = holdsAgencyWide(context, 'attendance.corrections.cancel');
       const isPreparer =
         context.membershipId === record.initiatedByMembershipId ||
         context.membershipId === record.recordedByMembershipId;
@@ -1401,22 +1401,22 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     filters: AttendanceCorrectionListFilters = {},
   ): Promise<AttendanceCorrectionSummary[]> {
-    const scope = await this.days.readScope(context);
-    if (
-      scope.kind === 'SCOPED' &&
-      filters.employeeId &&
-      !scope.employeeIds.includes(filters.employeeId)
-    ) {
-      return [];
-    }
-    const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
-    const employeeFilter =
-      scope.kind === 'SCOPED'
-        ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
-        : filters.employeeId
-          ? { employeeId: filters.employeeId }
-          : {};
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.days.readScope(transaction, context);
+      if (
+        scope.kind === 'SCOPED' &&
+        filters.employeeId &&
+        !scope.employeeIds.includes(filters.employeeId)
+      ) {
+        return [];
+      }
+      const limit = Math.min(Math.max(filters.limit ?? DEFAULT_LIST_LIMIT, 1), MAX_LIST_LIMIT);
+      const employeeFilter =
+        scope.kind === 'SCOPED'
+          ? { employeeId: { in: filters.employeeId ? [filters.employeeId] : scope.employeeIds } }
+          : filters.employeeId
+            ? { employeeId: filters.employeeId }
+            : {};
       const records = await transaction.attendanceCorrection.findMany({
         where: {
           agencyId: context.agencyId,
@@ -1443,10 +1443,10 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     correctionId: string,
   ): Promise<AttendanceCorrectionDetail> {
-    await this.days.readScope(context);
-    return withDatabaseContext(databaseContext(context), (transaction) =>
-      this.findByIdInTransaction(transaction, context, correctionId),
-    );
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      await this.days.readScope(transaction, context);
+      return this.findByIdInTransaction(transaction, context, correctionId);
+    });
   }
 
   private async completeApproval(
@@ -2392,7 +2392,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     if (!employee) throw this.employeeNotFound();
     if (
       employeeId !== ownEmployeeId &&
-      !this.hasAgencyScope(context, 'attendance.corrections.create')
+      !holdsAgencyWide(context, 'attendance.corrections.create')
     ) {
       throw this.createForbidden();
     }
@@ -2403,7 +2403,7 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     const isPreparer =
       context.membershipId === record.initiatedByMembershipId ||
       context.membershipId === record.recordedByMembershipId;
-    if (!isPreparer && !this.hasAgencyScope(context, 'attendance.corrections.submit')) {
+    if (!isPreparer && !holdsAgencyWide(context, 'attendance.corrections.submit')) {
       throw this.separationRequired(
         'Only the initiator, recorder, or a scoped HR Administrator can prepare this Attendance Correction.',
       );
@@ -2461,11 +2461,10 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     context: RequestContext,
     record: CorrectionRecord,
   ): Promise<void> {
-    const scope = await this.days.readScope(context);
+    const scope = await this.days.readScope(transaction, context);
     if (scope.kind === 'SCOPED' && !scope.employeeIds.includes(record.employeeId)) {
       throw this.notFound();
     }
-    void transaction;
   }
 
   private async requireActiveApprovalRequest(
@@ -2585,12 +2584,6 @@ export class AttendanceCorrectionsService implements OnModuleInit {
     command: 'APPROVE' | 'AUTHORIZE' | 'RETURN' | 'REJECT',
   ): ApprovalEffectContext {
     return { kind: ATTENDANCE_CORRECTION_APPROVAL_EFFECT_KIND, payload: { command } };
-  }
-
-  private hasAgencyScope(context: RequestContext, permission: string): boolean {
-    return context.permissions.some(
-      (grant) => grant.code === permission && grant.scopePolicy === 'AGENCY',
-    );
   }
 
   private assertPermission(context: RequestContext, permission: string, code: string): void {

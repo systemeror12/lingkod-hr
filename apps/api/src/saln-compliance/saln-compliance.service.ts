@@ -1,9 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { canAccessRecord, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService } from '../documents/documents.service';
+import { ownEmployeeId, resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import type { z } from 'zod';
 import type {
   salnComplianceCorrectionSchema,
@@ -92,14 +93,7 @@ const recordSelect = {
   correctedByRecord: { select: { id: true } },
 } as const;
 
-const employeeSelect = {
-  agencyId: true,
-  memberships: { where: { status: 'ACTIVE' }, select: { userId: true } },
-  currentServiceSegment: { select: { organizationUnitId: true } },
-} as const;
-
 type RecordRow = Prisma.SalnComplianceRecordGetPayload<{ select: typeof recordSelect }>;
-type EmployeeRow = Prisma.EmployeeGetPayload<{ select: typeof employeeSelect }>;
 
 function ownSummary(record: RecordRow): SalnComplianceOwnSummary {
   return {
@@ -136,18 +130,9 @@ export class SalnComplianceService {
 
   async findOwnEmployeeId(context: RequestContext): Promise<string | null> {
     this.assertPermission(context, 'personnel.saln_compliance.read');
-    return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const employee = await transaction.employee.findFirst({
-        where: {
-          agencyId: context.agencyId,
-          memberships: {
-            some: { id: context.membershipId, userId: context.userId, status: 'ACTIVE' },
-          },
-        },
-        select: { id: true },
-      });
-      return employee?.id ?? null;
-    });
+    return withDatabaseContext(requestDatabaseContext(context), (transaction) =>
+      ownEmployeeId(transaction, context),
+    );
   }
 
   async list(
@@ -156,8 +141,9 @@ export class SalnComplianceService {
   ): Promise<Array<SalnComplianceSummary | SalnComplianceOwnSummary> | null> {
     this.assertPermission(context, 'personnel.saln_compliance.read');
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const employee = await this.employee(transaction, context, employeeId);
-      if (!employee || !this.canAccess(context, 'personnel.saln_compliance.read', employee))
+      if (
+        !(await this.canAccess(transaction, context, 'personnel.saln_compliance.read', employeeId))
+      )
         return null;
       const records = await transaction.salnComplianceRecord.findMany({
         where: { agencyId: context.agencyId, employeeId, correctedByRecord: null },
@@ -165,7 +151,9 @@ export class SalnComplianceService {
         take: 100,
         select: recordSelect,
       });
-      return records.map(this.hasAgencyRead(context) ? fullSummary : ownSummary);
+      return records.map(
+        holdsAgencyWide(context, 'personnel.saln_compliance.read') ? fullSummary : ownSummary,
+      );
     });
   }
 
@@ -176,15 +164,16 @@ export class SalnComplianceService {
   ): Promise<SalnComplianceSummary | SalnComplianceOwnSummary | null> {
     this.assertPermission(context, 'personnel.saln_compliance.read');
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const employee = await this.employee(transaction, context, employeeId);
-      if (!employee || !this.canAccess(context, 'personnel.saln_compliance.read', employee))
+      if (
+        !(await this.canAccess(transaction, context, 'personnel.saln_compliance.read', employeeId))
+      )
         return null;
       const record = await transaction.salnComplianceRecord.findFirst({
         where: { agencyId: context.agencyId, employeeId, id: recordId },
         select: recordSelect,
       });
       return record
-        ? this.hasAgencyRead(context)
+        ? holdsAgencyWide(context, 'personnel.saln_compliance.read')
           ? fullSummary(record)
           : ownSummary(record)
         : null;
@@ -196,10 +185,11 @@ export class SalnComplianceService {
     employeeId: string,
   ): Promise<SalnComplianceSummary[] | null> {
     this.assertPermission(context, 'personnel.saln_compliance.read');
-    if (!this.hasAgencyRead(context)) return null;
+    if (!holdsAgencyWide(context, 'personnel.saln_compliance.read')) return null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
-      const employee = await this.employee(transaction, context, employeeId);
-      if (!employee || !this.canAccess(context, 'personnel.saln_compliance.read', employee))
+      if (
+        !(await this.canAccess(transaction, context, 'personnel.saln_compliance.read', employeeId))
+      )
         return null;
       const records = await transaction.salnComplianceRecord.findMany({
         where: { agencyId: context.agencyId, employeeId },
@@ -254,10 +244,16 @@ export class SalnComplianceService {
       requestDatabaseContext(context, 'saln-compliance-transition'),
       async (transaction) => {
         await this.lockEmployee(transaction, context.agencyId, employeeId);
-        const employee = await this.employee(transaction, context, employeeId);
-        const permission = 'personnel.saln_compliance.update';
         let previousStatus = 'NONE';
-        if (!employee || !this.canAccess(context, permission, employee)) throw this.notFound();
+        if (
+          !(await this.canAccess(
+            transaction,
+            context,
+            'personnel.saln_compliance.update',
+            employeeId,
+          ))
+        )
+          throw this.notFound();
         if (correctsRecordId) {
           const source = await transaction.salnComplianceRecord.findFirst({
             where: {
@@ -345,32 +341,22 @@ export class SalnComplianceService {
     throw this.notFound();
   }
 
-  private employee(
+  /**
+   * Whether the permission's Employee Scope covers an Employee of this Agency.
+   * An Employee outside the Agency is never covered.
+   */
+  private async canAccess(
     transaction: Prisma.TransactionClient,
     context: RequestContext,
+    permission: string,
     employeeId: string,
-  ): Promise<EmployeeRow | null> {
-    return transaction.employee.findUnique({
+  ): Promise<boolean> {
+    const employee = await transaction.employee.findUnique({
       where: { agencyId_id: { agencyId: context.agencyId, id: employeeId } },
-      select: employeeSelect,
+      select: { id: true },
     });
-  }
-
-  private canAccess(context: RequestContext, permission: string, employee: EmployeeRow): boolean {
-    return canAccessRecord(context, permission, {
-      agencyId: employee.agencyId,
-      ...(employee.memberships[0]?.userId ? { ownerUserId: employee.memberships[0].userId } : {}),
-      ...(employee.currentServiceSegment
-        ? { organizationUnitId: employee.currentServiceSegment.organizationUnitId }
-        : {}),
-    });
-  }
-
-  private hasAgencyRead(context: RequestContext): boolean {
-    return context.permissions.some(
-      ({ code, scopePolicy }) =>
-        code === 'personnel.saln_compliance.read' && scopePolicy === 'AGENCY',
-    );
+    if (!employee) return false;
+    return scopeCovers(await resolveEmployeeScope(transaction, context, permission), employeeId);
   }
 
   private async lockEmployee(

@@ -198,8 +198,8 @@ async function readScope(
   transaction: Prisma.TransactionClient,
   context: RequestContext,
 ): Promise<EmployeeScope> {
-  const scope = await resolveEmployeeScope(context, READ_PERMISSION, transaction);
-  if (!scope) {
+  const scope = await resolveEmployeeScope(transaction, context, READ_PERMISSION);
+  if (scope.kind === 'NONE') {
     throw new CtoRequestError(
       'The current Agency Membership lacks the required permission.',
       403,

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { isNonWorkingHoliday } from '../attendance-configuration/holiday-effect-rules';
 import { requestDatabaseContext } from '../database-context';
@@ -166,7 +166,7 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentYear: number,
   ): Promise<MandatoryLeaveAgencyEvaluation> {
-    if (!hasScope(context, 'leave.mandatory_assessments.evaluate', 'AGENCY')) {
+    if (!holdsAgencyWide(context, 'leave.mandatory_assessments.evaluate')) {
       throw new MandatoryLeaveAssessmentServiceError(
         'The leave.mandatory_assessments.evaluate permission is required.',
         403,
@@ -448,18 +448,20 @@ export class MandatoryLeaveAssessmentsService {
     filters: MandatoryLeaveAssessmentFilters = {},
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveAssessmentPage> {
-    const readable = await readableEmployeeIds(context);
-    const limit = page.limit ?? 25;
-    const cursor = page.cursor ? decodeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context);
+      const limit = page.limit ?? 25;
+      const cursor = page.cursor ? decodeCursor(page.cursor) : null;
       const records = await transaction.mandatoryLeaveAssessment.findMany({
         where: {
           agencyId: context.agencyId,
           ...(filters.employeeId ? { employeeId: filters.employeeId } : {}),
           ...(filters.year ? { assessmentYear: filters.year } : {}),
           ...(filters.result ? { result: filters.result } : {}),
-          ...(readable ? { employeeId: { in: readable } } : {}),
-          ...(cursor ? { AND: [afterCursor(cursor)] } : {}),
+          AND: [
+            ...(readable ? [{ employeeId: { in: readable } }] : []),
+            ...(cursor ? [afterCursor(cursor)] : []),
+          ],
         },
         orderBy: [
           { assessmentYear: 'desc' },
@@ -499,10 +501,10 @@ export class MandatoryLeaveAssessmentsService {
     assessmentYear: number,
     page: MandatoryLeaveAssessmentPageRequest = {},
   ): Promise<MandatoryLeaveEmployeeLatestPage> {
-    const readable = await readableEmployeeIds(context);
-    const limit = page.limit ?? 25;
-    const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context);
+      const limit = page.limit ?? 25;
+      const cursor = page.cursor ? decodeEmployeeCursor(page.cursor) : null;
       const employees = await transaction.employee.findMany({
         where: {
           agencyId: context.agencyId,
@@ -554,8 +556,8 @@ export class MandatoryLeaveAssessmentsService {
     context: RequestContext,
     assessmentId: string,
   ): Promise<MandatoryLeaveAssessmentDetail | null> {
-    const readable = await readableEmployeeIds(context);
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const readable = await readableEmployeeIds(transaction, context);
       const record = await transaction.mandatoryLeaveAssessment.findFirst({
         where: { agencyId: context.agencyId, id: assessmentId },
         select: assessmentSelect,
@@ -841,20 +843,21 @@ function readStringArray(value: unknown, key: string): string[] | null {
   return entry as string[];
 }
 
-function hasScope(context: RequestContext, code: string, scopePolicy: string): boolean {
-  return context.permissions.some(
-    (grant) => grant.code === code && grant.scopePolicy === scopePolicy,
-  );
-}
-
 /**
  * The Employees whose assessments the caller may read, or null for the whole
  * Agency. OWN adds the caller's linked Employee; DIRECT_REPORTS adds that
  * Employee's direct reports today.
  */
-async function readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
-  const scope = await resolveEmployeeScope(context, 'leave.mandatory_assessments.read');
-  if (!scope) {
+async function readableEmployeeIds(
+  transaction: Prisma.TransactionClient,
+  context: RequestContext,
+): Promise<string[] | null> {
+  const scope = await resolveEmployeeScope(
+    transaction,
+    context,
+    'leave.mandatory_assessments.read',
+  );
+  if (scope.kind === 'NONE') {
     throw new MandatoryLeaveAssessmentServiceError(
       'The leave.mandatory_assessments.read permission is required.',
       403,

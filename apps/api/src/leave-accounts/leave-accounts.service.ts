@@ -440,13 +440,12 @@ export class LeaveAccountsService {
     context: RequestContext,
     filters: LeaveAccountListFilters = {},
   ): Promise<LeaveAccountSummary[]> {
-    const readable = await this.readableEmployeeIds(context);
-    const asOfValue = filters.asOf ?? manilaToday();
-    const asOf = toDatabaseDate(asOfValue);
-    const recordedThrough = filters.recordedThrough
-      ? toDatabaseInstant(filters.recordedThrough)
-      : new Date();
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const readable = await this.readableEmployeeIds(transaction, context);
+      const asOf = toDatabaseDate(filters.asOf ?? manilaToday());
+      const recordedThrough = filters.recordedThrough
+        ? toDatabaseInstant(filters.recordedThrough)
+        : new Date();
       const records = await transaction.leaveAccount.findMany({
         where: {
           agencyId: context.agencyId,
@@ -479,12 +478,12 @@ export class LeaveAccountsService {
     accountId: string,
     options: { asOf?: string | undefined; recordedThrough?: string | undefined } = {},
   ): Promise<LeaveAccountDetail | null> {
-    const readable = await this.readableEmployeeIds(context);
-    const asOf = toDatabaseDate(options.asOf ?? manilaToday());
-    const recordedThrough = options.recordedThrough
-      ? toDatabaseInstant(options.recordedThrough)
-      : new Date();
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const readable = await this.readableEmployeeIds(transaction, context);
+      const asOf = toDatabaseDate(options.asOf ?? manilaToday());
+      const recordedThrough = options.recordedThrough
+        ? toDatabaseInstant(options.recordedThrough)
+        : new Date();
       const record = await transaction.leaveAccount.findFirst({
         where: { agencyId: context.agencyId, id: accountId },
         select: accountSelect,
@@ -1345,9 +1344,12 @@ export class LeaveAccountsService {
    * The Employees whose Leave Accounts the caller may read, or null for the
    * whole Agency.
    */
-  private async readableEmployeeIds(context: RequestContext): Promise<string[] | null> {
-    const scope = await resolveEmployeeScope(context, 'leave.accounts.read');
-    if (!scope) {
+  private async readableEmployeeIds(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+  ): Promise<string[] | null> {
+    const scope = await resolveEmployeeScope(transaction, context, 'leave.accounts.read');
+    if (scope.kind === 'NONE') {
       throw new LeaveAccountServiceError(
         'The leave.accounts.read permission is required.',
         403,

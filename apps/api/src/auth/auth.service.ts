@@ -13,7 +13,7 @@ import {
   hashRecoveryCode,
   hashSessionToken,
   hasMfaEvidence,
-  hasPermission,
+  holdsAgencyWide,
   isSessionActive,
   normalizeRecoveryCode,
   passwordNeedsRehash,
@@ -533,7 +533,7 @@ function assertLockPermission(
   context: RequestContext,
   permission: 'security.users.lock' | 'security.users.unlock',
 ): void {
-  if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+  if (!holdsAgencyWide(context, permission)) {
     throw new AuthServiceError(
       'The current Membership cannot lock or unlock Users.',
       403,
@@ -2311,7 +2311,7 @@ export class AuthService {
     verification: FactorResetVerification,
     request: SignInRequest,
   ): Promise<{ revokedSessions: number; notice: MailMessage }> {
-    if (!hasPermission(context, 'security.mfa.reset_factor', { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, 'security.mfa.reset_factor')) {
       throw new AuthServiceError(
         'The current Membership cannot reset authenticators.',
         403,
@@ -3049,15 +3049,14 @@ export class AuthService {
   }
 
   private assertInvitationManagementAccess(context: RequestContext): void {
-    const agencyRecord = { agencyId: context.agencyId };
-    if (!hasPermission(context, 'security.users.invite', agencyRecord)) {
+    if (!holdsAgencyWide(context, 'security.users.invite')) {
       throw new AuthServiceError(
         'The current Membership cannot invite users.',
         403,
         'INVITATION_FORBIDDEN',
       );
     }
-    if (!hasPermission(context, 'security.users.update_roles', agencyRecord)) {
+    if (!holdsAgencyWide(context, 'security.users.update_roles')) {
       throw new AuthServiceError(
         'The current Membership cannot assign Agency roles.',
         403,

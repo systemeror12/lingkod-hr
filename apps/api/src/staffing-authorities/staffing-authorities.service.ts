@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { DocumentsService, type DocumentSummary } from '../documents/documents.service';
@@ -249,9 +249,9 @@ function canExposeEvidence(
 ): boolean {
   if (!context) return true;
   return (
-    hasPermission(context, 'documents.evidence.read', { agencyId: context.agencyId }) &&
+    holdsAgencyWide(context, 'documents.evidence.read') &&
     (classification !== 'HIGHLY_SENSITIVE' ||
-      hasPermission(context, 'documents.evidence.read_sensitive', { agencyId: context.agencyId }))
+      holdsAgencyWide(context, 'documents.evidence.read_sensitive'))
   );
 }
 
@@ -981,9 +981,7 @@ export class StaffingAuthorityService {
       context,
       {
         documentId,
-        allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-          agencyId: context.agencyId,
-        }),
+        allowSensitive: holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
         requirement: 'NOT_VOIDED',
       },
     );
@@ -1014,7 +1012,7 @@ export class StaffingAuthorityService {
       !context.agencyId ||
       !context.userId ||
       !context.membershipId ||
-      !hasPermission(context, permission, { agencyId: context.agencyId })
+      !holdsAgencyWide(context, permission)
     ) {
       throw new StaffingAuthorityServiceError(
         'The current Agency Membership lacks the required permission.',

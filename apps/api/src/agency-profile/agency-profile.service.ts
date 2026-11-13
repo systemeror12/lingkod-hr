@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { AGENCY_PROFILE_TYPES, type agencyProfileDraftSchema } from './agency-profile.schemas';
@@ -576,7 +576,7 @@ export class AgencyProfileService {
   }
 
   private assertPermission(context: RequestContext, permission: string, code: string): void {
-    if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, permission)) {
       throw new AgencyProfileServiceError(
         'The current Agency Membership lacks the required permission.',
         403,

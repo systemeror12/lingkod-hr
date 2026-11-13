@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { RequestContext } from '@lingkod-hr/auth';
 import { attendancePeriodAuditWriter } from './attendance-periods.audit';
 import { AttendancePeriodsService } from './attendance-periods.service';
+
+// Each gate refuses before the transaction reads anything: without a grant the
+// Employee Scope resolves to NONE without a query, so no database is needed.
+vi.mock('@lingkod-hr/database', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@lingkod-hr/database')>()),
+  withDatabaseContext: (_context: unknown, work: (client: unknown) => unknown) => work({}),
+}));
 
 function context(permissions: RequestContext['permissions']): RequestContext {
   return {

@@ -167,6 +167,9 @@ To sign in locally:
    accepts each 30-second code once, so `dev:totp` waits for the next code when
    the current one was already used.
 
+To switch to another seeded User, first choose Sign out beside your name in
+the navigation, then sign in as the other User.
+
 The gate is complete when migrations report no pending work, each health check
 responds successfully, and a seeded User can sign in at `/sign-in` and reach
 `/dashboard`. Diagnose setup failures before changing application code; do not

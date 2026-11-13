@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { canAccessRecord, type RequestContext } from '@lingkod-hr/auth';
+import type { RequestContext } from '@lingkod-hr/auth';
 import {
   ProtectedValueError,
   decryptProtectedValue,
@@ -13,6 +13,7 @@ import {
 } from '@lingkod-hr/config';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import { DocumentsService } from '../documents/documents.service';
 import type { PayrollBankAccountStatus } from './payroll-bank-accounts.constants';
 
@@ -162,11 +163,7 @@ const accountSelect = {
   updatedAt: true,
 } as const;
 
-const employeeAccessSelect = {
-  id: true,
-  memberships: { where: { status: 'ACTIVE' }, select: { userId: true } },
-  currentServiceSegment: { select: { organizationUnitId: true } },
-} as const;
+const employeeAccessSelect = { id: true } as const;
 
 const historyEventSelect = {
   id: true,
@@ -390,7 +387,10 @@ export class PayrollBankAccountsService {
     );
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const employee = await this.employeeAccess(transaction, context, employeeId);
-      if (!employee || !this.canAccess(context, 'payroll.bank_accounts.read', employee))
+      if (
+        !employee ||
+        !(await this.canAccess(transaction, context, 'payroll.bank_accounts.read', employeeId))
+      )
         return null;
       const records = await transaction.payrollBankAccount.findMany({
         where: { agencyId: context.agencyId, employeeId, status: { in: currentStatuses } },
@@ -422,7 +422,10 @@ export class PayrollBankAccountsService {
       async (transaction) => {
         await this.lockEmployee(transaction, context.agencyId, employeeId);
         const employee = await this.employeeAccess(transaction, context, employeeId);
-        if (!employee || !this.canAccess(context, 'payroll.bank_accounts.manage', employee)) {
+        if (
+          !employee ||
+          !(await this.canAccess(transaction, context, 'payroll.bank_accounts.manage', employeeId))
+        ) {
           throw this.notFound();
         }
         await this.assertEvidence(transaction, context, input);
@@ -481,7 +484,12 @@ export class PayrollBankAccountsService {
         const source = await this.account(transaction, context.agencyId, employeeId, accountId);
         if (
           !employee ||
-          !this.canAccess(context, 'payroll.bank_accounts.manage', employee) ||
+          !(await this.canAccess(
+            transaction,
+            context,
+            'payroll.bank_accounts.manage',
+            employeeId,
+          )) ||
           source?.status !== 'ACTIVE'
         ) {
           throw this.notFound();
@@ -557,7 +565,12 @@ export class PayrollBankAccountsService {
         const pending = await this.account(transaction, context.agencyId, employeeId, accountId);
         if (
           !employee ||
-          !this.canAccess(context, 'payroll.bank_accounts.manage', employee) ||
+          !(await this.canAccess(
+            transaction,
+            context,
+            'payroll.bank_accounts.manage',
+            employeeId,
+          )) ||
           pending?.status !== 'PENDING_VERIFICATION'
         ) {
           throw this.notFound();
@@ -651,7 +664,12 @@ export class PayrollBankAccountsService {
         const source = await this.account(transaction, context.agencyId, employeeId, accountId);
         if (
           !employee ||
-          !this.canAccess(context, 'payroll.bank_accounts.manage', employee) ||
+          !(await this.canAccess(
+            transaction,
+            context,
+            'payroll.bank_accounts.manage',
+            employeeId,
+          )) ||
           source?.status !== 'ACTIVE'
         ) {
           throw this.notFound();
@@ -707,7 +725,12 @@ export class PayrollBankAccountsService {
         const source = await this.account(transaction, context.agencyId, employeeId, accountId);
         if (
           !employee ||
-          !this.canAccess(context, 'payroll.bank_accounts.manage', employee) ||
+          !(await this.canAccess(
+            transaction,
+            context,
+            'payroll.bank_accounts.manage',
+            employeeId,
+          )) ||
           !source ||
           source.status === 'CORRECTED'
         ) {
@@ -775,7 +798,15 @@ export class PayrollBankAccountsService {
     );
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
       const employee = await this.employeeAccess(transaction, context, employeeId);
-      if (!employee || !this.canAccess(context, 'payroll.bank_accounts.history.read', employee))
+      if (
+        !employee ||
+        !(await this.canAccess(
+          transaction,
+          context,
+          'payroll.bank_accounts.history.read',
+          employeeId,
+        ))
+      )
         return null;
       const selected = accountId
         ? await this.account(transaction, context.agencyId, employeeId, accountId)
@@ -819,8 +850,9 @@ export class PayrollBankAccountsService {
         const employee = await this.employeeAccess(transaction, context, employeeId);
         const base = record ? accountSummary(record) : null;
         const scoped =
-          Boolean(record && employee) &&
-          this.canAccess(context, 'payroll.bank_accounts.reveal', employee as EmployeeAccessRecord);
+          record && employee
+            ? await this.canAccess(transaction, context, 'payroll.bank_accounts.reveal', employeeId)
+            : false;
         const reason = input.reason.trim();
         let outcome: 'DENIED' | 'FAILED' | 'REVEALED' = 'DENIED';
         let reveal: RevealResult;
@@ -1036,19 +1068,14 @@ export class PayrollBankAccountsService {
     throw this.notFound();
   }
 
-  private canAccess(
+  /** Whether the permission's Employee Scope covers the Employee. */
+  private async canAccess(
+    transaction: Prisma.TransactionClient,
     context: RequestContext,
     permission: string,
-    employee: EmployeeAccessRecord,
-  ): boolean {
-    const ownerUserId = employee.memberships[0]?.userId;
-    return canAccessRecord(context, permission, {
-      agencyId: context.agencyId,
-      ...(ownerUserId ? { ownerUserId } : {}),
-      ...(employee.currentServiceSegment
-        ? { organizationUnitId: employee.currentServiceSegment.organizationUnitId }
-        : {}),
-    });
+    employeeId: string,
+  ): Promise<boolean> {
+    return scopeCovers(await resolveEmployeeScope(transaction, context, permission), employeeId);
   }
 
   private reason(value: string): string {

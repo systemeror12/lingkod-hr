@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Inject, Injectable, type OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { hasPermission, holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
 import { resolveEmployeeScope, scopeCovers, type EmployeeScope } from '../employee-scope';
@@ -1315,8 +1315,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     context: RequestContext,
     filters: LeaveApplicationListFilters = {},
   ): Promise<LeaveApplicationSummary[]> {
-    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(transaction, context, 'leave.applications.create');
       const records = await transaction.leaveApplication.findMany({
         where: {
           agencyId: context.agencyId,
@@ -1337,10 +1337,10 @@ export class LeaveApplicationsService implements OnModuleInit {
     context: RequestContext,
     applicationId: string,
   ): Promise<LeaveApplicationDetail | null> {
-    const scope = await this.requireScope(context, 'leave.applications.create');
-    return withDatabaseContext(databaseContext(context), (transaction) =>
-      this.detailInTransaction(transaction, context, applicationId, scope),
-    );
+    return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(transaction, context, 'leave.applications.create');
+      return this.detailInTransaction(transaction, context, applicationId, scope);
+    });
   }
 
   async create(
@@ -1521,8 +1521,8 @@ export class LeaveApplicationsService implements OnModuleInit {
   }
 
   async preview(context: RequestContext, applicationId: string): Promise<LeaveEligibilityOutcome> {
-    const scope = await this.requireScope(context, 'leave.applications.create');
     return withDatabaseContext(databaseContext(context), async (transaction) => {
+      const scope = await this.requireScope(transaction, context, 'leave.applications.create');
       const application = await transaction.leaveApplication.findFirst({
         where: { agencyId: context.agencyId, id: applicationId },
         select: applicationSelect,
@@ -1653,7 +1653,7 @@ export class LeaveApplicationsService implements OnModuleInit {
         employeeAttestedAt = new Date();
       } else {
         if (
-          !this.hasScope(context, 'leave.applications.submit', 'AGENCY') &&
+          !holdsAgencyWide(context, 'leave.applications.submit') &&
           application.employee.memberships.some(
             (membership) => membership.id === context.membershipId,
           )
@@ -3603,7 +3603,7 @@ export class LeaveApplicationsService implements OnModuleInit {
     return {
       canPost:
         record.status === 'APPROVED' &&
-        this.hasScope(context, 'leave.applications.post', 'AGENCY') &&
+        holdsAgencyWide(context, 'leave.applications.post') &&
         !record.employee.memberships.some(({ id }) => id === context.membershipId) &&
         currentVersion !== undefined &&
         !currentVersion.approvalRequest.steps.some(
@@ -4010,8 +4010,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     permission: string,
   ) {
     if (employeeId) {
-      const scope = await resolveEmployeeScope(context, permission, transaction);
-      if (!scope || !scopeCovers(scope, employeeId)) {
+      const scope = await resolveEmployeeScope(transaction, context, permission);
+      if (!scopeCovers(scope, employeeId)) {
         throw new LeaveApplicationServiceError(
           "Only an Agency recorder or the Employee's Supervisor may prepare a Leave Application for another Employee.",
           403,
@@ -5063,19 +5063,17 @@ export class LeaveApplicationsService implements OnModuleInit {
     return completed;
   }
 
-  private async requireScope(context: RequestContext, permission: string): Promise<EmployeeScope> {
-    const scope = await resolveEmployeeScope(context, permission);
-    if (scope) return scope;
+  private async requireScope(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    permission: string,
+  ): Promise<EmployeeScope> {
+    const scope = await resolveEmployeeScope(transaction, context, permission);
+    if (scope.kind !== 'NONE') return scope;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required.`,
       403,
       'LEAVE_APPLICATION_FORBIDDEN',
-    );
-  }
-
-  private hasScope(context: RequestContext, permission: string, scope: 'AGENCY' | 'OWN'): boolean {
-    return context.permissions.some(
-      (grant) => grant.code === permission && grant.scopePolicy === scope,
     );
   }
 
@@ -5095,8 +5093,8 @@ export class LeaveApplicationsService implements OnModuleInit {
     record: ApplicationRecord,
     permission: string,
   ): Promise<void> {
-    const scope = await resolveEmployeeScope(context, permission, transaction);
-    if (scope && scopeCovers(scope, record.employeeId)) return;
+    const scope = await resolveEmployeeScope(transaction, context, permission);
+    if (scopeCovers(scope, record.employeeId)) return;
     throw new LeaveApplicationServiceError(
       `The ${permission} permission is required for this Leave Application.`,
       403,

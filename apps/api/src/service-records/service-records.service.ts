@@ -1,8 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { canAccessRecord, hasPermission, type RequestContext } from '@lingkod-hr/auth';
+import { holdsAgencyWide, type RequestContext } from '@lingkod-hr/auth';
 import { withDatabaseContext } from '@lingkod-hr/database';
 import { requestDatabaseContext } from '../database-context';
+import { resolveEmployeeScope, scopeCovers } from '../employee-scope';
 import { DocumentsService } from '../documents/documents.service';
 
 const RENDERING_CONTRACT_VERSION = 'service-record-printable-v1';
@@ -119,7 +120,6 @@ const serviceRecordSelect = {
       id: true,
       employeeNumber: true,
       legalName: true,
-      memberships: { select: { userId: true } },
     },
   },
   generatedBy: { select: { id: true, user: { select: { displayName: true } } } },
@@ -202,16 +202,16 @@ export class ServiceRecordsService {
     input: { cursor?: string | undefined; limit: number } = { limit: 50 },
   ): Promise<{ records: ServiceRecordSummary[]; nextCursor: string | null }> {
     this.assertAnyReadPermission(context);
-    const agencyWide = hasPermission(context, 'personnel.service_records.read', {
-      agencyId: context.agencyId,
-    });
     return withDatabaseContext(requestDatabaseContext(context), async (transaction) => {
+      const scope = await resolveEmployeeScope(
+        transaction,
+        context,
+        'personnel.service_records.read',
+      );
       const rows = await transaction.serviceRecordSnapshot.findMany({
         where: {
           agencyId: context.agencyId,
-          ...(!agencyWide
-            ? { employee: { memberships: { some: { userId: context.userId } } } }
-            : {}),
+          ...(scope.kind === 'SCOPED' ? { employeeId: { in: scope.employeeIds } } : {}),
         },
         orderBy: [{ generatedAt: 'desc' }, { id: 'desc' }],
         take: input.limit + 1,
@@ -238,7 +238,7 @@ export class ServiceRecordsService {
         select: serviceRecordSelect,
       });
       if (!row) return null;
-      this.assertRecordRead(context, row);
+      await this.assertRecordRead(transaction, context, row);
       await this.writeAudit(transaction, context, {
         action: 'SERVICE_RECORD_ACCESSED',
         entityId: row.id,
@@ -308,9 +308,7 @@ export class ServiceRecordsService {
           {
             documentId: input.evidenceDocumentId,
             versionId: input.evidenceDocumentVersionId,
-            allowSensitive: hasPermission(context, 'documents.evidence.read_sensitive', {
-              agencyId: context.agencyId,
-            }),
+            allowSensitive: holdsAgencyWide(context, 'documents.evidence.read_sensitive'),
             requirement: 'FINALIZED_VERSION',
           },
         );
@@ -537,13 +535,17 @@ export class ServiceRecordsService {
     }
   }
 
-  private assertRecordRead(context: RequestContext, row: ServiceRecordRow): void {
-    if (
-      !canAccessRecord(context, 'personnel.service_records.read', {
-        agencyId: row.agencyId,
-        ...(row.employee.memberships[0] ? { ownerUserId: row.employee.memberships[0].userId } : {}),
-      })
-    ) {
+  private async assertRecordRead(
+    transaction: Prisma.TransactionClient,
+    context: RequestContext,
+    row: ServiceRecordRow,
+  ): Promise<void> {
+    const scope = await resolveEmployeeScope(
+      transaction,
+      context,
+      'personnel.service_records.read',
+    );
+    if (!scopeCovers(scope, row.employee.id)) {
       throw new ServiceRecordServiceError(
         'This Service Record is outside your permitted record scope.',
         403,
@@ -553,7 +555,7 @@ export class ServiceRecordsService {
   }
 
   private assertPermission(context: RequestContext, permission: string, code: string): void {
-    if (!hasPermission(context, permission, { agencyId: context.agencyId })) {
+    if (!holdsAgencyWide(context, permission)) {
       throw new ServiceRecordServiceError(
         'You do not have permission to perform this Service Record operation.',
         403,
