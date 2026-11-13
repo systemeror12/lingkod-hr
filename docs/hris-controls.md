@@ -231,6 +231,27 @@ SUSPENDED → password reset that silently restores access
 DEACTIVATED → ACTIVE on the same Agency Membership
 ```
 
+### User Session
+
+A User Session is one sign-in to one Agency Membership, held by the `hris_session` cookie. An ended session never resumes; the User signs in again at `/sign-in`. A session ends in one of these ways:
+
+| How it ends                                                                         | Sessions ended                                   | Recorded reason                                                                               |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| The User signs out                                                                  | This session only                                | `USER_LOGOUT`                                                                                 |
+| It expires: 30 minutes idle or 8 hours in total (ADR 0004)                          | This session                                     | `SESSION_EXPIRED_OR_ACCESS_REMOVED`, at its next request                                      |
+| A Global User Lock is placed or lifted                                              | Every session of the User                        | `USER_LOCKED` or `USER_UNLOCKED`                                                              |
+| A Factor Reset                                                                      | Every session of the User                        | `MFA_FACTOR_RESET`                                                                            |
+| Agency Membership suspension or deactivation, including deactivation for separation | The sessions of each Agency Membership that ends | The deactivation reason, or `SESSION_EXPIRED_OR_ACCESS_REMOVED` at the session's next request |
+
+Credential changes also end sessions. A password change or authenticator replacement ends the User's other sessions, and a Password Reset or a sign-in with a Recovery Code ends all of them. Switching Agency ends the current session and starts one for the selected Agency Membership.
+
+Sign-out controls:
+
+- Signing out needs only a signed-in session. No permission is checked.
+- It ends only the current session. Sessions in other browsers and other Agencies stay open.
+- It is recorded as a `SESSION_REVOKED` Security Event and audit event with reason `USER_LOGOUT`, and the server clears the `hris_session` cookie.
+- The client says the User is signed out only after the server confirms it. A `401` means the session had already ended and counts as confirmed; any other failure leaves the User signed in.
+
 ---
 
 ## 5.2 Organization Unit

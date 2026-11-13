@@ -14,6 +14,7 @@ import {
 } from '../lib/navigation';
 import type { ActiveSession } from '../lib/session';
 import { cn } from '../lib/class-names';
+import { SignOutButton } from './sign-out-button';
 
 const iconPaths: Record<LifecycleStage | 'Work queue', string> = {
   'Work queue': 'M4 4h6v6H4zM14 4h6v4h-6zM14 12h6v8h-6zM4 14h6v6H4z',
@@ -324,31 +325,39 @@ export function ApplicationShell({
           })}
         </nav>
 
-        <Link
-          href="/account-security"
-          onClick={closeMenu}
-          aria-label={`Account security for ${session.identity.displayName}`}
-          aria-current={pathname === '/account-security' ? 'page' : undefined}
+        <div
           className={cn(
-            'items-center gap-2.5 border-t border-white/10 px-4 py-3 no-underline hover:bg-white/6 min-[980px]:flex',
+            'items-center gap-1 border-t border-white/10 p-2 min-[980px]:flex',
             menuOpen ? 'flex' : 'hidden',
-            collapsed && 'min-[980px]:justify-center min-[980px]:px-0',
+            collapsed && 'min-[980px]:flex-col',
           )}
-          title={`${session.identity.displayName} · ${session.agency.name} · ${roleNames}`}
         >
-          <span
-            className="grid size-8 shrink-0 place-items-center rounded-full bg-nav-focus text-[11px] font-bold text-nav"
-            aria-hidden="true"
+          <Link
+            href="/account-security"
+            onClick={closeMenu}
+            aria-label={`Account security for ${session.identity.displayName}`}
+            aria-current={pathname === '/account-security' ? 'page' : undefined}
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-2.5 rounded-panel px-2 py-1 no-underline hover:bg-white/6',
+              collapsed && 'min-[980px]:flex-none',
+            )}
+            title={`${session.identity.displayName} · ${session.agency.name} · ${roleNames}`}
           >
-            {initials(session.identity.displayName)}
-          </span>
-          <span className={cn('min-w-0', collapsed && 'min-[980px]:hidden')}>
-            <strong className="block truncate text-small font-semibold">
-              {session.identity.displayName}
-            </strong>
-            <span className="block truncate text-caption text-nav-muted">{roleNames}</span>
-          </span>
-        </Link>
+            <span
+              className="grid size-8 shrink-0 place-items-center rounded-full bg-nav-focus text-[11px] font-bold text-nav"
+              aria-hidden="true"
+            >
+              {initials(session.identity.displayName)}
+            </span>
+            <span className={cn('min-w-0', collapsed && 'min-[980px]:hidden')}>
+              <strong className="block truncate text-small font-semibold">
+                {session.identity.displayName}
+              </strong>
+              <span className="block truncate text-caption text-nav-muted">{roleNames}</span>
+            </span>
+          </Link>
+          <SignOutButton />
+        </div>
       </aside>
 
       <main

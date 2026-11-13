@@ -85,7 +85,18 @@ flowchart TD
     R --> S[Load role, office scope, and permissions]
     S --> T[Create secure session]
     T --> U[Open authorized dashboard]
+    U --> W{How does the session end?}
+    W -- User signs out --> X[Revoke this session only]
+    W -- 30 minutes idle or 8 hours in total --> Y[Session expires]
+    W -- Lock, Factor Reset, suspension, or deactivation --> Z[Revoke the affected sessions]
+    X --> AA[Return to sign-in]
+    Y --> AA
+    Z --> AA
 ```
+
+Sign-out ends only the current session and records a `SESSION_REVOKED` Security
+Event with reason `USER_LOGOUT`. `docs/hris-controls.md` §5.1, User Session,
+lists every way a session ends.
 
 User states:
 
