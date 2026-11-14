@@ -10,6 +10,33 @@
 
 ---
 
+## Scope and rule model
+
+These tables serve one Appointed Personnel Payroll Rule Set. No table carries a
+payroll profile: pay basis is an effective-dated fact of the Employee's
+compensation, with monthly full-time, proportional part-time, and casual
+daily-wage variants. JO/COS Service Payments are outside payroll and have no
+table here (#21, #27).
+
+`salary_schedules`, `salary_grade_rates`, and `pay_component_rule_versions`
+hold National Payroll Rule Versions. A version is immutable, keeps its issuing
+authority, source, verification date, effectivity, supersession, and
+applicability, and is activated by an Agency but never copied or overridden
+(#27). Whether a version is a platform-wide record or an Agency-scoped row is
+decided in #328; `agency_id` on those tables is unchanged until then.
+
+`pay_components` holds Native Payroll Components and the lawful components
+that accept Authorized Payroll Component Inputs. Tables for Agency Payroll
+Applicability and Authorized Payroll Component Inputs are not specified here
+yet. `docs/data-model/payroll-logical-erd.md` states what each must carry, the
+three variants that fail closed without an authorized input, and the yearly
+GAA revalidation (#27, #43).
+
+No table stores a free-form formula or an override of a calculated line (#27,
+#43).
+
+---
+
 ## 1. Salary Schedules
 
 ```sql
@@ -43,7 +70,7 @@ CREATE TABLE salary_grade_rates (
 );
 ```
 
-Add an exclusion constraint for overlapping active salary schedules in the same payroll profile if the agency can maintain multiple profiles.
+Add an exclusion constraint for overlapping active salary schedules. One rule set serves every pay basis, so there is no per-profile schedule (#27).
 
 `daily_rate_rule` holds the daily-rate derivation only; its sourced basis is the 22-working-day divisor of RA No. 6758, sec. 7. It does not prorate a partial month of a monthly-paid Employee: no rule is recorded for that case, and it blocks until an authority is found ([authorities](../../research/partial-month-basic-salary-authorities.md)).
 
@@ -71,7 +98,7 @@ CREATE TABLE pay_component_rule_versions (
   pay_component_id uuid NOT NULL,
   version_no integer NOT NULL CHECK (version_no > 0),
   calculation_method text NOT NULL
-    CHECK (calculation_method IN ('FIXED','RATE','FORMULA','TABLE','MANUAL')),
+    CHECK (calculation_method IN ('FIXED','RATE','TABLE')),
   tax_treatment jsonb NOT NULL,
   contribution_treatment jsonb NOT NULL,
   accounting_category text,
@@ -88,7 +115,7 @@ CREATE TABLE pay_component_rule_versions (
 );
 ```
 
-Rule definitions are validated and executed by a safe payroll rule engine, never by arbitrary SQL or JavaScript evaluation.
+A rule definition holds the validated rate, amount, or table for a fixed calculation. It never holds a formula to evaluate, and there is no manual method (#27, #43).
 
 ---
 
@@ -131,7 +158,7 @@ CREATE TABLE payroll_inputs (
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   employee_id uuid NOT NULL,
   source_module text NOT NULL
-    CHECK (source_module IN ('ATTENDANCE','LEAVE','OVERTIME','PERSONNEL','MANUAL')),
+    CHECK (source_module IN ('ATTENDANCE','LEAVE','OVERTIME','PERSONNEL')),
   source_type text NOT NULL,
   source_id uuid NOT NULL,
   pay_component_id uuid NOT NULL,
@@ -153,6 +180,10 @@ CREATE TABLE payroll_inputs (
 
 Consumed inputs are immutable.
 
+There is no manual source. An amount or quantity that no source module owns
+enters only as an Authorized Payroll Component Input (#27). Whether that input
+shares this inbox is decided in #328.
+
 For a Leave Monetization input, Payroll resolves the authoritative salary source
 and computes `amount`; Leave may not supply either as an unrestricted value. The
 immutable `payload_snapshot` must bind the exact Monetization Posting, approved
@@ -172,8 +203,6 @@ CREATE TABLE payroll_periods (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   agency_id uuid NOT NULL REFERENCES agencies(id) ON DELETE RESTRICT,
   code citext NOT NULL,
-  payroll_profile text NOT NULL
-    CHECK (payroll_profile IN ('PLANTILLA','CASUAL','CONTRACTUAL','JO_COS')),
   period_from date NOT NULL,
   period_to date NOT NULL,
   cutoff_at timestamptz NOT NULL,
@@ -189,6 +218,9 @@ CREATE TABLE payroll_periods (
   UNIQUE (agency_id, id)
 );
 ```
+
+A period carries no payroll profile. One run covers every pay basis of the
+Appointed Personnel Payroll Rule Set (#27).
 
 ---
 
@@ -267,10 +299,7 @@ CREATE TABLE payroll_lines (
   taxable_amount numeric(19,4) NOT NULL DEFAULT 0,
   contribution_base numeric(19,4) NOT NULL DEFAULT 0,
   source_snapshot jsonb NOT NULL,
-  is_manual_override boolean NOT NULL DEFAULT false,
-  override_reason text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (NOT is_manual_override OR override_reason IS NOT NULL),
   FOREIGN KEY (agency_id, payroll_employee_id)
     REFERENCES payroll_employees (agency_id, id),
   FOREIGN KEY (agency_id, pay_component_id)
@@ -284,6 +313,8 @@ CREATE TABLE payroll_lines (
 ```
 
 A trigger prevents update/delete when the parent payroll period is `FINALIZED` or `VOIDED`.
+
+A calculated line has no override column. A wrong amount is corrected at its source, or after finalization through `payroll_adjustments` (#27).
 
 ---
 
@@ -388,7 +419,15 @@ Create metadata tables for:
 - payslips;
 - payroll registers;
 - remittance schedules;
-- payment exports.
+- Payment Exports, their Payment Instructions, and Disbursement Outcomes (#28);
+- the Certified Payroll Review Export and the Finalized Payroll Accounting
+  Support Export (#29).
+
+A Payment Export is an immutable, checksummed snapshot with no status of its
+own. Generating it marks no one paid; the Cashier records each Payment
+Instruction's Disbursement Outcome separately (#28). The two #29 exports are
+Structured Exports that assert no external validation, obligation, or posting.
+`docs/data-model/payroll-logical-erd.md` lists the columns and rules.
 
 Files are stored through the shared document service.
 
@@ -406,4 +445,5 @@ Application permissions separately control:
 - approval;
 - finalization;
 - payslip self-service;
-- payment exports.
+- Payment Exports;
+- Disbursement Outcomes.

@@ -560,7 +560,7 @@ erDiagram
     AGENCY ||--o{ SALARY_SCHEDULE : adopts
     SALARY_SCHEDULE ||--o{ SALARY_GRADE_RATE : contains
 
-    AGENCY ||--o{ PAY_COMPONENT : configures
+    AGENCY ||--o{ PAY_COMPONENT : applies
     PAY_COMPONENT ||--o{ PAY_COMPONENT_RULE_VERSION : governed_by
     EMPLOYEE ||--o{ EMPLOYEE_COMPENSATION : receives
     PAY_COMPONENT ||--o{ EMPLOYEE_COMPENSATION : classifies
@@ -581,6 +581,8 @@ erDiagram
     PAYROLL_PERIOD ||--o{ PAYROLL_REGISTER : produces
     PAYROLL_PERIOD ||--o{ REMITTANCE_SCHEDULE : produces
     PAYROLL_PERIOD ||--o{ PAYMENT_EXPORT : produces
+    PAYMENT_EXPORT ||--o{ PAYMENT_INSTRUCTION : contains
+    PAYMENT_INSTRUCTION ||--o{ DISBURSEMENT_OUTCOME : records
 
     PAYROLL_INPUT ||--o{ PAYROLL_LINE : consumed_by
     PAYROLL_PERIOD ||--o{ PAYROLL_ADJUSTMENT : contains
@@ -602,6 +604,15 @@ erDiagram
 | `PAYROLL_EXCEPTION`     | Warning or blocking issue                             |
 | `PAYSLIP`               | Employee payroll statement                            |
 | `PAYROLL_ADJUSTMENT`    | Supplemental, correction, refund, or replacement item |
+| `PAYMENT_EXPORT`        | Payment Instructions from one finalized payroll       |
+| `PAYMENT_INSTRUCTION`   | Positive net pay for one result to one destination    |
+| `DISBURSEMENT_OUTCOME`  | External evidence of a Payment Instruction's progress |
+
+One Appointed Personnel Payroll Rule Set calculates every payroll, with pay
+basis as an effective-dated variant rather than a payroll profile. Salary
+schedules and component rules are National Payroll Rule Versions that an
+Agency applies but never overrides. JO/COS Service Payments are outside this
+domain (#27). A Payment Export marks no one paid (#28).
 
 ---
 

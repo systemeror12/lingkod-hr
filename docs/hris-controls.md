@@ -751,6 +751,26 @@ POSTED
   authoritative effect or none. A failed cancellation effect leaves the
   cancellation approved and the original posting effective. Accepted Attendance
   or Payroll adjustment handoffs retain their own truthful pending status.
+- An Attendance Deficit Charge is system-created after an Attendance Period
+  Lock or Locked Attendance Adjustment, one per `TARDINESS` or `UNDERTIME`
+  Attendance Payroll Fact and unique by that fact (MC41 section 34, ADR 0012).
+  It converts the fact's minutes through MC41 Table II and charges the vacation
+  Leave Account only. `ABSENCE` facts and sick leave are never charged.
+- A charge draws on the posted vacation balance as of the Work Date, or the
+  current posted balance when lower, less active commitments, in Work Date
+  order. The covered part is one negative Leave Ledger Entry effective on the
+  Work Date; the Unpaid Deficit Remainder is one Payroll Input obtained in the
+  same transaction. A rejected or retryable Payroll answer rolls the
+  Employee's charges back for a recorded retry.
+- A charge is immutable and decided once. Later ledger entries never reopen
+  it. Only an adjustment publication replaces it, through an exact reversal of
+  its ledger entry, a linked successor charge, and a linked correcting Payroll
+  Input.
+- A fact stays uncharged with a recorded reason when its Work Date's expected
+  duty is not 480 minutes or when no vacation Leave Policy Version and Leave
+  Account apply (#654). No conversion is guessed. Leave reports each
+  publication's uncharged facts, and Payroll treats them as a blocking
+  exception for the Employee.
 - Commitments do not silently expire. A route interruption blocks progression
   until authorized rerouting creates a new Leave Application Version and
   recertification, unless an authoritative policy provides a different result.
@@ -1029,7 +1049,7 @@ VOIDED
 
 | Current     | Action                     | Next        | Actor                                       | Permission                             | Validations                                       | Side effects and audit                     |
 | ----------- | -------------------------- | ----------- | ------------------------------------------- | -------------------------------------- | ------------------------------------------------- | ------------------------------------------ |
-| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate profile/period                       | Create period                              |
+| None        | Create period              | DRAFT       | Payroll Preparer                            | `payroll.periods.create`               | No duplicate period                               | Create period                              |
 | DRAFT       | Start calculation          | CALCULATING | Payroll Preparer                            | `payroll.periods.calculate`            | Rule snapshot; source cutoff complete             | Queue calculation                          |
 | CALCULATING | Complete calculation       | FOR_REVIEW  | System                                      | Internal                               | No technical failure; results stored              | Run validations                            |
 | CALCULATING | Return on failure          | DRAFT       | System / Payroll Preparer                   | `payroll.periods.reopen`               | Failure or blocking setup issue                   | Record failure                             |
@@ -1475,6 +1495,8 @@ Sensitive PDS fields require field-level authorization even when the role has ge
 | `leave.applications.cancel`             |           — |        C |            — |          — |        — |              — |                  A |                — |       — |
 | `leave.applications.reject_cancel`      |           — |        C |            — |          — |        — |              — |                  A |                — |       — |
 | `leave.applications.apply_cancellation` |           A |        C |            — |          — |        — |              — |                  — |                C |       — |
+| `leave.deficit_charges.read`            |           A |        A |            R |          S |        O |              — |                  R |                R |       R |
+| `leave.deficit_charges.run`             |           A |        C |            — |          — |        — |              — |                  — |                — |       — |
 | `leave.mandatory_assessments.read`      |           A |        A |            — |          S |        O |              — |                  — |                — |       R |
 | `leave.mandatory_assessments.evaluate`  |           A |        C |            — |          — |        — |              — |                  — |                — |       — |
 | `leave.monetization.create`             |           A |        C |            — |          S |        O |              — |                  — |                — |       — |
@@ -1739,11 +1761,13 @@ Overrides requiring additional approval include:
 - leave-credit adjustment;
 - locked attendance adjustment;
 - COC adjustment;
-- payroll-line override;
 - finalized payroll void;
 - performance-rating amendment;
 - clearance waiver;
 - Agency Membership reactivation after Agency Membership Suspension.
+
+A payroll line is not on this list. No user overrides a National Payroll Rule
+Version or a calculated line (#27).
 
 ---
 

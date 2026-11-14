@@ -661,7 +661,7 @@ Submitting an Attendance Period for review shall create an immutable Attendance 
 
 An HR Officer shall approve an Attendance Period Version, and a different HR Administrator shall lock it. Lock shall fail closed unless Attendance Period Reconciliation proves complete applicability, current approved submissions and Attendance Day versions, no unresolved exceptions or corrections, unchanged source bindings, valid routed authority, and matching DTR and payroll-publication counts and minute totals.
 
-Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects.
+Locking shall atomically create Finalized Daily Time Records, one immutable and idempotent Attendance Payroll Publication, and audit and outbox records. Attendance Payroll Facts shall identify the Employee, Work Date, classification, exact nonnegative minutes, source Attendance Day version, holiday classification, and stable source key without assigning a rate, amount, deduction, or target payroll period. Posted leave remains Leave-owned for payroll effects, and Leave charges tardiness and undertime facts through Attendance Deficit Charges.
 
 A Locked Attendance Adjustment shall create and lock a complete successor Attendance Period Version rather than reopen its predecessor. Its adjustment publication shall link the predecessor, omit unchanged facts, and state each changed fact's prior value, corrected value, and nonnegative `INCREASE` or `DECREASE` difference. Outside-schedule and statutory-night-window minutes shall remain separate factual candidate-hours handoffs to Overtime and COC processing.
 
@@ -737,6 +737,36 @@ The balance contract shall distinguish:
 - active Leave Credit Commitments, which never enter the ledger; and
 - currently available credits after those commitments and the transaction under
   review.
+
+Tardiness and undertime shall be charged to vacation leave through Attendance
+Deficit Charges (CSC MC No. 41, s. 1998, section 34;
+[ADR 0012](adr/0012-charge-each-attendance-deficit-fact-once.md)). After each
+Attendance Period Lock or Locked Attendance Adjustment, Leave shall read the
+Attendance Payroll Publication through Attendance's application service and,
+with no human step, create one immutable charge for each `TARDINESS` or
+`UNDERTIME` Attendance Payroll Fact, unique by that fact. An `ABSENCE` fact
+shall never be charged (section 50).
+
+Each charge shall convert the fact's minutes to a fraction of a day through
+MC No. 41 Table II and draw on the Employee's vacation Leave Account in Work
+Date order: the posted balance as of the Work Date, or the current posted
+balance when lower, less active Leave Credit Commitments. The covered part
+shall post one negative Leave Ledger Entry effective on the Work Date. The
+uncovered part shall be the Unpaid Deficit Remainder (section 56), which Leave
+shall send to Payroll as one Payroll Input in the same transaction. Sick leave
+shall never be charged; undertime for health reasons shall be an ordinary sick
+Leave Application over those hours.
+
+A charge shall be decided once. A later credit posting, restoration, or
+cancellation shall not reopen it. Only an adjustment publication shall change
+it: Leave shall reverse the earlier charge's ledger entry, create a successor
+charge from the corrected minutes, and send Payroll a linked correcting input.
+
+A fact shall stay uncharged, with its reason, when its Work Date's expected
+duty is not 480 minutes or when the Employee has no applicable vacation Leave
+Policy Version and Leave Account. No authority located states the conversion
+for those days (#654). Rerunning the charge shall pick the fact up once the
+missing fact exists.
 
 Ordinary vacation and sick leave rules, category-specific units, transfers,
 restorations, forfeitures, and Agency configuration boundaries are documented in
@@ -1021,13 +1051,27 @@ The rule engine shall support restrictions based on employee category, work arra
 
 # 17. Government Payroll Requirements
 
-## PAY-001 Payroll profiles
+## PAY-001 Appointed Personnel Payroll Rule Set
 
-Payroll rules shall be separated by personnel category:
+Payroll shall calculate pay for admitted Appointed Personnel through one
+Appointed Personnel Payroll Rule Set (#27). It covers civilian NGA personnel
+appointed to authorized plantilla items, appointed casual personnel, and
+appointed contractual personnel. There are no separate plantilla, casual, or
+contractual payroll profiles.
 
-- plantilla personnel;
-- casual or contractual personnel where covered by the agency profile;
-- Job Order or Contract of Service personnel through a distinct payment profile.
+The rule set shall support these pay bases as effective-dated variants (#27):
+
+- monthly full-time salary;
+- proportional part-time salary;
+- the official casual daily wage.
+
+Special-regime populations are outside the Reference Agency Profile. An
+unsupported category-specific rule shall block processing rather than inherit
+plantilla behavior (#27).
+
+JO/COS Service Payments are outside payroll. A Service Payment and its
+contributions and taxes are never a Payroll Employee result or a Payroll Line
+(#21, #27).
 
 ## PAY-002 Salary basis
 
@@ -1045,30 +1089,91 @@ Basic salary for a monthly-paid Employee who assumes duty or separates inside a 
 
 ## PAY-003 Compensation components
 
-The system shall support effective-dated:
+Every earning shall come from a Native Payroll Component or an Authorized
+Payroll Component Input. The system shall provide no free-form formula and no
+free-form pay item (#27, #43).
 
-- basic salary;
-- PERA and other authorized allowances;
-- RATA where applicable;
-- hazard, subsistence, laundry, or special-law benefits where configured;
-- overtime pay;
-- leave monetization;
-- bonuses and incentives authorized by current issuances;
-- deductions for absence, tardiness, and undertime;
-- loans and agency deductions;
-- adjustments and refunds.
+The rule set shall calculate these Native Payroll Components from an applicable
+National Payroll Rule Version and authoritative source facts (#27, as narrowed
+by #43):
+
+- basic salary on the monthly full-time, proportional part-time, and casual
+  daily-wage bases;
+- the salary effect of absence without pay, with tardiness and undertime first
+  charged under the government leave rules;
+- PERA;
+- a cash uniform or clothing allowance, after the Agency activates it;
+- commutable RATA for eligible incumbents;
+- mid-year bonus, year-end bonus, and cash gift;
+- overtime pay from approved overtime quantities;
+- leave monetization from an approved number of days.
+
+Adjustments and refunds follow PAY-008.
+
+Three variants are calculated only from an Authorized Payroll Component Input
+that carries its authority. A missing input shall block the affected line
+(#43):
+
+- a medical-allowance cash line requires the Agency grant mode, amount and
+  schedule, qualification, and supporting authority. A procured group HMO is
+  outside payroll;
+- night-shift differential requires the effective-dated percentage the agency
+  head selected within the national 20% ceiling. Approved night hours remain
+  native source quantities;
+- reimbursable RATA requires the approved actual amount. The national
+  calculation enforces eligibility and ceilings.
+
+Honoraria, hazard, subsistence, laundry, Magna Carta or other special-law
+benefits, and agency-specific compensation shall enter only as Authorized
+Payroll Component Inputs until a complete applicable authority and calculation
+rule are sourced. Each input shall carry its authority, source, effective
+period, eligible person or population, amount or quantity, and approval. A
+component without lawful authority or an allowed classification is unsupported
+(#27).
+
+Salary schedules and tranche rules, and each annual GAA's component
+definitions, eligibility constraints, caps, amounts, and exclusions, are
+immutable, effective-dated National Payroll Rule Versions. An Agency may
+activate an applicable version but shall not copy or override its substance. A
+conditional component stays disabled until the Agency records its Agency
+Payroll Applicability: the authority, eligible population, funding, and
+effective period (#27).
+
+PERA, the clothing and medical allowances, RATA, the bonuses, the cash gift,
+and their conditions and amounts shall be revalidated against each fiscal
+year's GAA (#43). A missing, expired, or unverified required rule shall block
+the affected calculation. It shall never fall back to an older version, a
+default rate, or a formula (#27, #43).
+
+Payroll shall deduct salary for tardiness and undertime only from the Unpaid
+Deficit Remainder that Leave sends as a Payroll Input, never from Attendance
+Payroll Facts. It shall read `ABSENCE` facts from Attendance. An Employee whose
+tardiness and undertime facts in a consumed Attendance Payroll Publication are
+not all charged shall raise a blocking exception.
 
 ## PAY-004 Deductions and employer shares
 
-The system shall support configurable:
+The system shall support:
 
 - GSIS premiums and loan deductions;
 - PhilHealth contributions;
 - Pag-IBIG contributions and loans;
+- employer-only Employees' Compensation;
 - BIR withholding tax;
 - employee association or cooperative deductions;
 - court or legal deductions;
 - other authorized deductions.
+
+Contribution coverage, bases, rates, floors, ceilings, and share rules, and BIR
+tax tables and treatment, are National Payroll Rule Versions, not Agency
+configuration. The system shall calculate expected statutory contributions
+from the applicable version and reconcile them against issuer-validated
+billing. An unresolved discrepancy shall block finalization (#27).
+
+Loans and third-party deductions are issuer-validated obligations that the
+Agency records or imports. Payroll shall apply the national payee
+restrictions, priority order, and net-take-home floor to them. It shall not
+calculate external loan interest or amortization (#27).
 
 ## PAY-005 Payroll workflow
 
@@ -1105,8 +1210,11 @@ Each employee calculation shall preserve:
 - amount;
 - rule version;
 - employee/employer share;
-- accounting or reporting category;
-- override and reason.
+- accounting or reporting category.
+
+No user shall override a National Payroll Rule Version or a calculated line
+(#27). A wrong amount is corrected at its source, or after finalization
+through PAY-008.
 
 ## PAY-008 Finalization
 
@@ -1122,10 +1230,26 @@ The system shall produce:
 - agency and employee contribution summaries;
 - loan-remittance summaries;
 - tax summaries;
-- bank or payment export;
+- the Payment Export and its Payment Instructions (#28);
+- the Certified Payroll Review Export (#29);
+- the Finalized Payroll Accounting Support Export (#29);
 - funding and cost-center summaries;
 - accounting-support schedules;
 - variance and exception reports.
+
+A Payment Export is a provider-neutral handoff generated only from a FINALIZED
+payroll, with one Payment Instruction for each positive-net-pay Payroll
+Employee result. It claims no bank format, acceptance, or settlement, and
+generating it marks no one paid. The Cashier records each Payment
+Instruction's Disbursement Outcome separately as SUBMITTED, ACCEPTED,
+REJECTED, SETTLED, or RETURNED (#28).
+
+The Certified Payroll Review Export is taken from the certified payroll
+snapshot for budget and accounting review before approval. The Finalized
+Payroll Accounting Support Export is taken from the immutable finalized
+payroll result. Creating or downloading either never asserts that funds were
+validated or obligated, that an accounting entry was posted, or that a
+receiving system accepted the data (#29).
 
 ## PAY-010 Direct filing boundary
 

@@ -49,6 +49,10 @@ erDiagram
     LEAVE_TYPES ||--o{ LEAVE_ACCOUNTS : categorizes
     LEAVE_ACCOUNTS ||--o{ LEAVE_LEDGER_ENTRIES : records
     LEAVE_ACCOUNTS ||--o{ LEAVE_CREDIT_COMMITMENTS : reserves
+    ATTENDANCE_PAYROLL_FACTS ||--o| ATTENDANCE_DEFICIT_CHARGES : charged_by
+    LEAVE_ACCOUNTS ||--o{ ATTENDANCE_DEFICIT_CHARGES : charges
+    ATTENDANCE_DEFICIT_CHARGES ||--o| LEAVE_LEDGER_ENTRIES : posts
+    ATTENDANCE_DEFICIT_CHARGES ||--o| ATTENDANCE_DEFICIT_CHARGES : superseded_by
     EMPLOYEES ||--o{ LEAVE_APPLICATIONS : submits
     LEAVE_APPLICATIONS ||--o{ LEAVE_APPLICATION_DRAFT_PERIODS : drafts
     LEAVE_APPLICATIONS ||--o{ LEAVE_APPLICATION_DRAFT_DOCUMENTS : drafts
@@ -598,6 +602,48 @@ Unposted claim considered when calculating available credits
   recertification.
 
 **Deletion behavior:** Retain.
+
+## `attendance_deficit_charges`
+
+Leave's conversion and charge of one tardiness or undertime Attendance Payroll Fact
+
+| Column                     | Logical type | Null? | Key / rule                    | Description                                         |
+| -------------------------- | ------------ | ----- | ----------------------------- | --------------------------------------------------- |
+| id                         | uuid         | No    | PK                            | Charge                                              |
+| agency_id                  | uuid         | No    | FK agencies                   | Tenant                                              |
+| employee_id                | uuid         | No    | FK employees                  | Employee                                            |
+| attendance_payroll_fact_id | uuid         | No    | FK attendance_payroll_facts   | The fact charged                                    |
+| work_date                  | date         | No    |                               | The fact's Work Date and the entry's effective date |
+| deficit_type               | enum         | No    |                               | TARDINESS, UNDERTIME                                |
+| deficit_minutes            | integer      | No    |                               | The fact's corrected minutes                        |
+| expected_minutes           | integer      | No    |                               | The Work Date's expected duty the conversion used   |
+| leave_account_id           | uuid         | No    | FK leave_accounts             | Vacation Leave Account                              |
+| policy_version_id          | uuid         | No    | FK leave_policy_versions      | Vacation policy effective on the Work Date          |
+| converted_quantity         | decimal      | No    |                               | MC41 Table II fraction of a day                     |
+| charged_quantity           | decimal      | No    |                               | Part covered by available credits                   |
+| unpaid_quantity            | decimal      | No    |                               | Unpaid Deficit Remainder                            |
+| leave_ledger_entry_id      | uuid         | Yes   | FK leave_ledger_entries       | Entry for the charged part                          |
+| payroll_input_id           | uuid         | Yes   |                               | Payroll Input returned for the remainder            |
+| supersedes_charge_id       | uuid         | Yes   | FK attendance_deficit_charges | Earlier charge an adjustment publication replaced   |
+| created_at                 | datetime     | No    |                               | Charge time                                         |
+
+**Constraints and indexes**
+
+- Unique `attendance_payroll_fact_id`, so a retry returns the existing charge,
+  and unique `supersedes_charge_id`.
+- `converted_quantity = charged_quantity + unpaid_quantity`. A ledger entry
+  exists exactly when the charged part is positive, and a Payroll Input exactly
+  when the remainder is positive.
+- The ledger entry's source is the charge. Its quantity is the negated charged
+  part, and its effective date is the Work Date.
+- A successor charge names the charge whose ledger entry it reversed, for the
+  same Employee, Work Date, and deficit type. A fact corrected to zero minutes
+  creates a successor with zero quantities.
+- No row exists for a fact Leave could not convert. Leave derives those from the
+  publication's facts that have no charge, with the reason.
+- Rows are immutable.
+
+**Deletion behavior:** Never delete.
 
 ## `leave_applications`
 
@@ -1400,6 +1446,12 @@ One preserved Leave Account balance
 - Posted leave balances are derived from immutable signed ledger entries; active
   commitments affect availability without changing the posted balance.
 - The source record owns a ledger posting's business meaning.
+- Each tardiness or undertime Attendance Payroll Fact is charged once to
+  vacation leave through an Attendance Deficit Charge. Absence and sick leave
+  are never charged, a charge is decided once against available credits, and
+  only an adjustment publication replaces it (ADR 0012).
+- Payroll learns a tardiness or undertime salary effect only from the Unpaid
+  Deficit Remainder's Payroll Input.
 - Historical eligibility assessments and credit certifications are immutable.
 - Mandatory leave uses a policy-derived assessment per Employee and calendar
   year and the ordinary leave application and posting path. Phase 7 posts no
