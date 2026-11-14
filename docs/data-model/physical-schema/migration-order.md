@@ -323,25 +323,27 @@ Create:
 4. `agency_payroll_applicabilities`
 5. `payroll_periods`
 6. `payroll_period_components`
-7. `authorized_payroll_component_inputs`
-8. `payroll_inputs`
-9. `payroll_rule_snapshots`
-10. `payroll_rule_snapshot_items`
-11. `payroll_employees`
-12. `payroll_exceptions`
-13. `payroll_holds`
-14. `payroll_lines`
-15. `payroll_line_sources`
-16. `payroll_consumed_attendance_facts`
-17. `contribution_lines`
-18. `tax_lines`
-19. `loan_deduction_lines`
-20. `payroll_adjustments`
-21. `payslips`
-22. `remittance_schedules`
-23. `payment_exports`
-24. `payment_instructions`
-25. `disbursement_outcomes`
+7. `payroll_period_actors`
+8. `authorized_payroll_component_inputs`
+9. `payroll_inputs`
+10. `payroll_rule_snapshots`
+11. `payroll_rule_snapshot_items`
+12. `payroll_employees`
+13. `payroll_exceptions`
+14. `payroll_holds`
+15. `payroll_adjustments`
+16. `payroll_adjustment_causes`
+17. `payroll_lines`
+18. `payroll_line_sources`
+19. `payroll_consumed_attendance_facts`
+20. `contribution_lines`
+21. `tax_lines`
+22. `loan_deduction_lines`
+23. `payslips`
+24. `remittance_schedules`
+25. `payment_exports`
+26. `payment_instructions`
+27. `disbursement_outcomes`
 
 The first three are platform-wide: no `agency_id`, no Agency policy, `SELECT`
 only for `hris_app`, and rows loaded by the `hris_operator` command (#328, ADR

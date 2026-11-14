@@ -762,8 +762,8 @@ no default for gaps left by national sources. The unresolved solo-parent
 forfeiture and cash-conversion conflict creates no automatic earning.
 
 Monetization Adjustment is a separate authorized source. Pending Payroll Inputs
-may be cancelled or replaced; consumed inputs receive a linked Payroll
-adjustment, and finalized results remain immutable. Leave restores credits only
+may be cancelled or replaced; an input that a finalized payroll consumed opens
+a Payroll Adjustment (#330), and finalized results remain immutable. Leave restores credits only
 after Payroll accepts the correction handoff. A failed or rejected handoff
 leaves the original posting effective and the adjustment available for recorded
 retry or correction.

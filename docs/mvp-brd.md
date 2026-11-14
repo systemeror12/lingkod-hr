@@ -1119,7 +1119,7 @@ by #43):
 - overtime pay from approved overtime quantities;
 - leave monetization from an approved number of days.
 
-Adjustments and refunds follow PAY-008.
+Payroll Adjustments follow PAY-008.
 
 Three variants are calculated only from an Authorized Payroll Component Input
 that carries its authority. A missing input shall block the affected line
@@ -1224,14 +1224,16 @@ A regular Payroll Period shall cover exactly one calendar month and have one
 payment date. The Agency sets only its cutoff and payment date. An Agency that
 pays salary in installments is unsupported
 ([ADR 0015](adr/0015-regular-payroll-period-is-one-calendar-month.md)). A
-special Payroll Period shall pay only the components it names. It shall pay no
-basic salary and no contributions, read no attendance, and withhold tax on its
-taxable lines through the same calculator and year-to-date figures as a regular
-period (#328).
+special Payroll Period shall pay only the components it names. It shall
+calculate no basic salary and no contributions for its own dates, read no
+attendance, and withhold tax on its taxable lines through the same calculator
+and year-to-date figures as a regular period (#328). It may name Payroll
+Adjustments as its content (PAY-008).
 
 A second regular period for a month already covered by one that is not `VOIDED`
 is a duplicate. An Agency shall have at most one regular period that is not
-`FINALIZED` or `VOIDED`.
+`FINALIZED` or `VOIDED`. The Payroll Preparer may cancel a `DRAFT` period, with
+a reason, which makes it `VOIDED` (#330).
 
 A calculation shall use every Payroll Input accepted, and every Attendance
 Payroll Fact published, at or before the period's cutoff that no finalized
@@ -1258,7 +1260,7 @@ silently (#328):
 | `DRAFT`                 | The next calculation uses it                                                     |
 | `FOR_REVIEW`            | Blocking exception; certification is refused until the period is recalculated    |
 | `CERTIFIED`, `APPROVED` | The snapshot stands and the period is flagged for return or for later correction |
-| `FINALIZED`             | Correction only, through PAY-008                                                 |
+| `FINALIZED`             | Payroll Adjustment only, through PAY-008                                         |
 
 No blocking exception shall be waived. A warning, such as a variance, zero net
 pay, or an unlocked Attendance Period that ended before the cutoff, is
@@ -1266,18 +1268,35 @@ acknowledged with a reason. The Payroll Preparer may place a Payroll Hold, with
 a reason, to leave one Employee who has a blocking exception out of the period
 so the rest can proceed. The held Employee gets no Payroll Employee Result,
 stays on the exception report, and keeps their sources unconsumed. An exception
-that affects the whole period cannot be held out (#328).
+that affects the whole period cannot be held out (#328). The held month is paid
+later as a Payroll Adjustment (PAY-008).
+
+Budget and Accounting review are not Payroll Period statuses. A Budget Officer
+and an Accounting Reviewer shall each record a Payroll Export Checkpoint Review
+against the current Certified Payroll Review Export, in either order, and
+approval shall need both confirmed. A returned review shall move the period
+back to `FOR_REVIEW`, revoke its certification, supersede the export, and
+revoke the other review (#29, #330).
 
 ## PAY-006 Segregation of duties
 
-The system shall support different users for:
+On one Payroll Period a person shall act in at most one of these functions,
+counted across every calculation version of the period (#330):
 
 - preparation;
 - HR certification;
-- budget or fund validation;
-- accounting review;
-- approval;
-- payment or disbursement.
+- Budget review;
+- Accounting review;
+- approval, which includes finalization, void approval, and Payslip release;
+- disbursement, which is recording a Disbursement Outcome.
+
+The system shall refuse a second function. It shall offer no warning mode and
+no override. Returning a payroll for correction, requesting a void, opening a
+Payroll Adjustment, and generating an export assign no function.
+
+There is no subject rule: every officer is an Employee paid in the same period.
+This is a project rule modelled on the monetization contract (#161). No
+national rule on payroll segregation is on file.
 
 ## PAY-007 Payroll details
 
@@ -1293,11 +1312,61 @@ Each employee calculation shall preserve:
 
 No user shall override a National Payroll Rule Version or a calculated line
 (#27). A wrong amount is corrected at its source, or after finalization
-through PAY-008.
+through a Payroll Adjustment (PAY-008).
 
-## PAY-008 Finalization
+## PAY-008 Finalization and correction
 
-Finalized payroll lines shall be immutable. Corrections shall use adjustment, supplemental payroll, refund, or void-and-replace workflows.
+Finalized payroll lines shall be immutable. A finalized payroll shall be
+corrected only by a Payroll Adjustment or by void-and-replace (#330,
+[ADR 0016](adr/0016-payroll-corrections-are-recalculated-differences.md)).
+
+A Payroll Adjustment is Payroll's recalculation of one Employee's result for
+one past Payroll Period, kept as the line-by-line difference. No user shall
+enter its amount. A positive difference is additional pay, and a negative one
+is a recovery. An adjustment opens:
+
+- when a source module corrects a Payroll Input that a finalized payroll
+  consumed;
+- when a period that left an Employee out under a Payroll Hold is finalized;
+- when an authorized user asks for a recalculation after a retroactive
+  National Payroll Rule Version or Personnel fact, with a reason, for one
+  finalized period and one Employee or all of its Employees.
+
+Payroll shall never open a recalculation on its own. The next regular Payroll
+Period shall carry every open adjustment as Payroll Lines linked to it, compute
+the difference in its own calculation, and take it through its own review
+chain. An adjustment has no separate approval. A special Payroll Period may
+name adjustments as its content to pay positive ones earlier; this is the
+supplemental payroll.
+
+An Employee under a Payroll Hold shall be paid the held month as an adjustment
+against an empty original, calculated for the held month's dates, rules, and
+salary. A hold does not carry over to the next period. An Employee with no pay
+in the carrying period, such as a separated Employee, shall get a Payroll
+Employee Result that holds only the adjustment lines.
+
+No authority on file says how an Agency may recover a salary overpayment: the
+Employee's consent, installments, the net-take-home floor, or collection from
+an Employee with no later pay. Until one is recorded, a negative adjustment
+shall stay open and reported, and no period shall carry it (#661). LingkodHR
+records no cash collection.
+
+A source module corrects an effect it posted by asking Payroll to withdraw the
+Payroll Input. A pending input shall be cancelled, and a replacement is a new
+linked input. A period that already calculated with it and is past `DRAFT`
+shall get a blocking exception until it is returned and recalculated. An input
+that a finalized payroll consumed shall stay unchanged and open a Payroll
+Adjustment. An Attendance adjustment publication needs none of this, because
+the next period consumes its delta facts (ADR 0014).
+
+A payroll shall be voided only when the whole payroll is wrong and no money has
+moved. A void shall be refused when the Agency has a later regular period that
+is not `VOIDED`, or when any Payment Instruction of the period has `SUBMITTED`,
+`ACCEPTED`, or `SETTLED` as its latest Disbursement Outcome. One person shall
+request it with a reason and a supporting Document Version, and a different
+person shall approve it. The voided payroll stays readable, its sources are
+released, its Payslips and exports are superseded, and a new regular period for
+the same month replaces it through the normal workflow.
 
 ## PAY-009 Outputs
 
@@ -1326,6 +1395,16 @@ payslip layout (`research/official-forms-security-records-baselines.md` §1.4),
 and the MVP files and remits nothing (PAY-010). Reproducing a named official
 form is a separate decision that needs that form's controlling issuance
 (#617).
+
+A Payslip states one finalized Payroll Employee Result and is not proof of
+payment. The Payroll Approver shall release Payslips by hand, with one command
+for the whole finalized period. Nothing shall release automatically, and
+release shall not wait on Disbursement Outcomes. The Payroll Approver may
+withhold one Payslip that is not yet released, with a reason. Withholding hides
+the Payslip and never stops payment. A Payslip is superseded only when its
+payroll is voided. An Employee shall read only their own released Payslips. No
+national rule on issuing a payslip is on file, so this is a project policy
+(#330).
 
 A Payment Export is a provider-neutral handoff generated only from a FINALIZED
 payroll, with one Payment Instruction for each positive-net-pay Payroll
