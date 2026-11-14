@@ -333,6 +333,8 @@ Create:
 16. `payslips`
 17. `remittance_schedules`
 18. `payment_exports`
+19. `payment_instructions`
+20. `disbursement_outcomes`
 
 Add deferred FKs:
 
@@ -460,7 +462,7 @@ Seed only stable baseline data:
 
 Do not hard-code current statutory rates as timeless seed data.
 
-Salary schedules, contribution tables, and tax rules are versioned agency/configuration data.
+Salary schedules, contribution tables, and tax rules are immutable, effective-dated National Payroll Rule Versions (#27).
 
 ---
 
